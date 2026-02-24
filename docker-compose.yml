@@ -1,0 +1,433 @@
+# AgentsSpore - Docker Compose
+# Run: docker-compose up -d
+# With Frontend: docker-compose --profile frontend up -d
+# With Agents API: docker-compose --profile agents up -d
+# With Scheduler (autonomous agents): docker-compose --profile scheduler up -d
+# With Reddit agent: docker-compose --profile reddit-agent up -d
+# Full stack: docker-compose --profile frontend --profile agents --profile scheduler --profile reddit-agent up -d
+
+services:
+  # PostgreSQL database
+  db:
+    image: postgres:16-alpine
+    container_name: agentspore-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sporeai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sporeai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sporeai-network
+
+  # Flyway database migrations
+  flyway:
+    image: flyway/flyway:10
+    container_name: agentspore-flyway
+    command: -url=jdbc:postgresql://db:5432/sporeai -user=postgres -password=postgres migrate
+    volumes:
+      - ./db/migrations:/flyway/sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+
+  # Redis for caching and queues
+  redis:
+    image: redis:7-alpine
+    container_name: agentspore-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sporeai-network
+
+  # FastAPI Backend (main API)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agentspore-backend
+    restart: unless-stopped
+    environment:
+      # App
+      DEBUG: "true"
+
+      # Database
+      DATABASE_URL: "postgresql+asyncpg://postgres:postgres@db:5432/sporeai"
+
+      # Redis
+      REDIS_URL: "redis://redis:6379"
+
+      # OpenRouter LLM
+      LLM_API_KEY: "${OPENROUTER_API_KEY:-}"
+      LLM_BASE_URL: "https://openrouter.ai/api/v1"
+      LLM_MODEL: "${LLM_MODEL:-anthropic/claude-3.5-sonnet}"
+
+      # GitHub (production Git provider)
+      GITHUB_ORG: "${GITHUB_ORG:-AgentsSpore}"
+      GITHUB_PAT: "${GITHUB_PAT:-}"
+      GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
+      GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
+      GITHUB_APP_INSTALLATION_ID: "${GITHUB_APP_INSTALLATION_ID:-}"
+
+      # GitHub OAuth
+      GITHUB_OAUTH_CLIENT_ID: "${GITHUB_OAUTH_CLIENT_ID:-}"
+      GITHUB_OAUTH_CLIENT_SECRET: "${GITHUB_OAUTH_CLIENT_SECRET:-}"
+      GITHUB_OAUTH_REDIRECT_URI: "${GITHUB_OAUTH_REDIRECT_URI:-http://localhost:8000/api/v1/agents/github/callback}"
+
+      # Web3 / Base (mainnet)
+      ORACLE_PRIVATE_KEY: "${ORACLE_PRIVATE_KEY:-}"
+      BASE_RPC_URL: "${BASE_RPC_URL:-https://mainnet.base.org}"
+      FACTORY_CONTRACT_ADDRESS: "${FACTORY_CONTRACT_ADDRESS:-}"
+
+      # Render (auto-deploy)
+      RENDER_API_KEY: "${RENDER_API_KEY:-}"
+      RENDER_OWNER_ID: "${RENDER_OWNER_ID:-}"
+
+      # CORS
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost:8080","http://localhost:5173","*"]'
+    ports:
+      - "8000:8000"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+    volumes:
+      - ./backend/app:/app/app:ro  # Hot-reload in dev
+      - ./skill.md:/app/skill.md:ro  # skill.md for agents
+
+  # RedditScout — autonomous agent that discovers ideas on Reddit and builds MVPs
+  reddit-agent:
+    build:
+      context: ./agents
+      dockerfile: Dockerfile
+    container_name: agentspore-reddit-agent
+    restart: unless-stopped
+    command: ["uv", "run", "python", "-m", "reddit_bot"]
+    volumes:
+      - reddit_agent_data:/data
+    environment:
+      # OpenRouter (pydantic-ai reads OPENAI_API_KEY)
+      OPENAI_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENAI_BASE_URL: "https://openrouter.ai/api/v1"
+      LLM_MODEL: "${LLM_MODEL:-anthropic/claude-3.5-sonnet}"
+
+      # AgentsSpore backend
+      BACKEND_URL: "http://backend:8000"
+
+      # Agent identity
+      AGENT_NAME: "RedditScout"
+
+      # Persistent state
+      STATE_FILE: "/data/agent_state.json"
+
+      # Schedule (hours)
+      DISCOVER_INTERVAL_HOURS: "${REDDIT_DISCOVER_INTERVAL_HOURS:-6}"
+      HEARTBEAT_INTERVAL_HOURS: "${REDDIT_HEARTBEAT_INTERVAL_HOURS:-4}"
+
+      # Reddit API (optional; without them uses RSS feed)
+      # Register an app: https://www.reddit.com/prefs/apps
+      REDDIT_CLIENT_ID: "${REDDIT_CLIENT_ID:-}"
+      REDDIT_CLIENT_SECRET: "${REDDIT_CLIENT_SECRET:-}"
+
+      # Collection parameters
+      MAX_POSTS_PER_SUBREDDIT: "25"
+      MIN_OPPORTUNITY_SCORE: "6"
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+    profiles:
+      - reddit-agent
+
+
+  # CodeReviewerAgent — autonomous agent that reviews code in repos and chats
+  code-reviewer:
+    build:
+      context: ./agents
+      dockerfile: Dockerfile
+    container_name: agentspore-code-reviewer
+    restart: unless-stopped
+    command: ["uv", "run", "python", "-m", "code_reviewer"]
+    volumes:
+      - code_reviewer_data:/data
+    environment:
+      # LLM (pydantic-ai reads OPENAI_*)
+      OPENAI_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENAI_BASE_URL: "https://openrouter.ai/api/v1"
+
+      # Model tiers:
+      #   fast     — shallow file scan, chat messages
+      #   standard — regular code review
+      #   strong   — security review and deep analysis
+      LLM_MODEL_FAST: "${LLM_MODEL_FAST:-z-ai/glm-5}"
+      LLM_MODEL_STANDARD: "${LLM_MODEL_STANDARD:-anthropic/claude-sonnet-4-5}"
+      LLM_MODEL_STRONG: "${LLM_MODEL_STRONG:-anthropic/claude-sonnet-4-6}"
+
+      # AgentsSpore backend
+      BACKEND_URL: "http://backend:8000"
+
+      # Agent identity
+      AGENT_NAME: "CodeReviewerAgent"
+
+      # Persistent state
+      STATE_FILE: "/data/reviewer_state.json"
+
+      # Schedule (hours)
+      REVIEW_INTERVAL_HOURS: "${REVIEWER_REVIEW_INTERVAL_HOURS:-2}"
+      HEARTBEAT_INTERVAL_HOURS: "${REVIEWER_HEARTBEAT_INTERVAL_HOURS:-4}"
+
+      # Projects per cycle
+      MAX_PROJECTS_PER_CYCLE: "${REVIEWER_MAX_PROJECTS:-3}"
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+    profiles:
+      - code-reviewer
+
+  # DeveloperAgent — reads GitHub issues, fixes or disputes them
+  developer:
+    build:
+      context: ./agents
+      dockerfile: Dockerfile
+    container_name: agentspore-developer
+    restart: unless-stopped
+    command: ["uv", "run", "python", "-m", "developer"]
+    volumes:
+      - developer_data:/data
+    environment:
+      # LLM
+      OPENAI_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENAI_BASE_URL: "https://openrouter.ai/api/v1"
+
+      # Model tiers:
+      #   fast     — issue analysis (valid/dispute/discuss)
+      #   standard — fix or comment generation
+      #   strong   — security fixes (critical/high severity)
+      LLM_MODEL_FAST: "${LLM_MODEL_FAST:-z-ai/glm-5}"
+      LLM_MODEL_STANDARD: "${LLM_MODEL_STANDARD:-anthropic/claude-sonnet-4-5}"
+      LLM_MODEL_STRONG: "${LLM_MODEL_STRONG:-anthropic/claude-sonnet-4-6}"
+
+      # AgentsSpore backend
+      BACKEND_URL: "http://backend:8000"
+
+      # Agent identity
+      AGENT_NAME: "DeveloperAgent"
+
+      # Persistent state
+      STATE_FILE: "/data/developer_state.json"
+
+      # Schedule
+      WORK_INTERVAL_HOURS: "${DEVELOPER_WORK_INTERVAL_HOURS:-1}"
+      HEARTBEAT_INTERVAL_HOURS: "${DEVELOPER_HEARTBEAT_INTERVAL_HOURS:-4}"
+
+      # Issues per cycle
+      MAX_ISSUES_PER_CYCLE: "${DEVELOPER_MAX_ISSUES:-5}"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+    profiles:
+      - developer
+
+  # FinanceScoutAgent — generates fintech ideas and builds MVPs via full skill.md cycle
+  finscout:
+    build:
+      context: ./agents
+      dockerfile: Dockerfile
+    container_name: agentspore-finscout
+    restart: unless-stopped
+    command: ["uv", "run", "python", "-m", "finscout"]
+    volumes:
+      - finscout_data:/data
+    environment:
+      # LLM (pydantic-ai reads OPENAI_*)
+      OPENAI_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENAI_BASE_URL: "https://openrouter.ai/api/v1"
+
+      # Model tiers:
+      #   fast     — dedup, heartbeat
+      #   standard — idea analysis
+      #   strong   — MVP code generation (CODEGEN tier)
+      LLM_MODEL_FAST: "${LLM_MODEL_FAST:-z-ai/glm-5}"
+      LLM_MODEL_STANDARD: "${LLM_MODEL_STANDARD:-anthropic/claude-sonnet-4-5}"
+      LLM_MODEL_STRONG: "${LLM_MODEL_STRONG:-anthropic/claude-sonnet-4-6}"
+
+      # AgentsSpore backend
+      BACKEND_URL: "http://backend:8000"
+
+      # Agent identity
+      AGENT_NAME: "FinanceScout"
+
+      # Persistent state
+      STATE_FILE: "/data/finscout_state.json"
+
+      # Schedule (hours)
+      WORK_INTERVAL_HOURS: "${FINSCOUT_WORK_INTERVAL_HOURS:-24}"
+      HEARTBEAT_INTERVAL_HOURS: "${FINSCOUT_HEARTBEAT_INTERVAL_HOURS:-4}"
+
+      # Projects to build per cycle
+      MAX_PROJECTS_PER_CYCLE: "${FINSCOUT_MAX_PROJECTS:-1}"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+    profiles:
+      - finscout
+
+  # ScienceScout — arXiv-based autonomous agent
+  sciencescout:
+    build:
+      context: ./agents
+      dockerfile: Dockerfile
+    container_name: agentspore-sciencescout
+    restart: unless-stopped
+    command: ["uv", "run", "python", "-m", "sciencescout"]
+    volumes:
+      - sciencescout_data:/data
+    environment:
+      # LLM (pydantic-ai reads OPENAI_*)
+      OPENAI_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENAI_BASE_URL: "https://openrouter.ai/api/v1"
+
+      # Model tiers:
+      #   fast     — paper filtering, heartbeat
+      #   standard — paper analysis for commercial potential
+      #   strong   — MVP code generation (CODEGEN tier)
+      LLM_MODEL_FAST: "${LLM_MODEL_FAST:-z-ai/glm-5}"
+      LLM_MODEL_STANDARD: "${LLM_MODEL_STANDARD:-anthropic/claude-sonnet-4-5}"
+      LLM_MODEL_STRONG: "${LLM_MODEL_STRONG:-anthropic/claude-sonnet-4-6}"
+
+      # AgentsSpore backend
+      BACKEND_URL: "http://backend:8000"
+
+      # Agent identity
+      AGENT_NAME: "ScienceScout"
+
+      # Persistent state
+      STATE_FILE: "/data/sciencescout_state.json"
+
+      # Schedule (hours)
+      WORK_INTERVAL_HOURS: "${SCIENCESCOUT_WORK_INTERVAL_HOURS:-12}"
+      HEARTBEAT_INTERVAL_HOURS: "${SCIENCESCOUT_HEARTBEAT_INTERVAL_HOURS:-4}"
+
+      # Projects to build per cycle
+      MAX_PROJECTS_PER_CYCLE: "${SCIENCESCOUT_MAX_PROJECTS:-1}"
+
+      # arXiv parameters
+      MAX_PAPERS_PER_QUERY: "${SCIENCESCOUT_MAX_PAPERS:-50}"
+      MIN_OPPORTUNITY_SCORE: "${SCIENCESCOUT_MIN_SCORE:-7}"
+      ARXIV_CATEGORIES: '${SCIENCESCOUT_CATEGORIES:-["cs.AI","cs.LG","cs.CL","cs.CV","physics.comp-ph","q-bio.BM","stat.ML","eess.SP","cond-mat.mtrl-sci"]}'
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      backend:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+    profiles:
+      - sciencescout
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: agentspore-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:8000}"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - sporeai-network
+    profiles:
+      - frontend
+
+  # Adminer for DB management
+  adminer:
+    image: adminer:4
+    container_name: agentspore-adminer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    depends_on:
+      - db
+    networks:
+      - sporeai-network
+    profiles:
+      - tools
+
+  # RedisInsight for Redis monitoring
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: agentspore-redisinsight
+    restart: unless-stopped
+    ports:
+      - "5540:5540"
+    depends_on:
+      - redis
+    networks:
+      - sporeai-network
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+  redis_data:
+  reddit_agent_data:
+  code_reviewer_data:
+  developer_data:
+  finscout_data:
+  sciencescout_data:
+
+networks:
+  sporeai-network:
+    driver: bridge
