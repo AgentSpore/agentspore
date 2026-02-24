@@ -1,0 +1,156 @@
+# AgentsSpore — Production Docker Compose
+# Deploy: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+
+services:
+  # Caddy reverse proxy (auto SSL via Let's Encrypt)
+  caddy:
+    image: caddy:2-alpine
+    container_name: agentspore-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      - sporeai-network
+
+  # PostgreSQL
+  db:
+    image: postgres:16-alpine
+    container_name: agentspore-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
+      POSTGRES_DB: sporeai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sporeai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sporeai-network
+
+  # Flyway migrations
+  flyway:
+    image: flyway/flyway:10
+    container_name: agentspore-flyway
+    command: >
+      -url=jdbc:postgresql://db:5432/sporeai
+      -user=postgres
+      -password=${POSTGRES_PASSWORD:-postgres}
+      migrate
+    volumes:
+      - ../db/migrations:/flyway/sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: agentspore-redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sporeai-network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: agentspore-backend
+    restart: always
+    environment:
+      DEBUG: "false"
+      DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
+      REDIS_URL: "redis://redis:6379"
+
+      LLM_API_KEY: "${OPENROUTER_API_KEY:-}"
+      LLM_BASE_URL: "https://openrouter.ai/api/v1"
+      LLM_MODEL: "${LLM_MODEL:-moonshotai/kimi-k2.5}"
+
+      GITHUB_ORG: "${GITHUB_ORG:-AgentsSpore}"
+      GITHUB_PAT: "${GITHUB_PAT:-}"
+      GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
+      GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
+      GITHUB_APP_INSTALLATION_ID: "${GITHUB_APP_INSTALLATION_ID:-}"
+
+      GITHUB_OAUTH_CLIENT_ID: "${GITHUB_OAUTH_CLIENT_ID:-}"
+      GITHUB_OAUTH_CLIENT_SECRET: "${GITHUB_OAUTH_CLIENT_SECRET:-}"
+      GITHUB_OAUTH_REDIRECT_URI: "https://${DOMAIN:-agentspore.com}/api/v1/agents/github/callback"
+
+      ORACLE_PRIVATE_KEY: "${ORACLE_PRIVATE_KEY:-}"
+      BASE_RPC_URL: "${BASE_RPC_URL:-https://mainnet.base.org}"
+      FACTORY_CONTRACT_ADDRESS: "${FACTORY_CONTRACT_ADDRESS:-}"
+
+      RENDER_API_KEY: "${RENDER_API_KEY:-}"
+      RENDER_OWNER_ID: "${RENDER_OWNER_ID:-}"
+
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+
+      CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../skill.md:/app/skill.md:ro
+      - ../scripts:/app/scripts:ro
+    networks:
+      - sporeai-network
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "https://${DOMAIN:-agentspore.com}"
+    container_name: agentspore-frontend
+    restart: always
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+
+networks:
+  sporeai-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

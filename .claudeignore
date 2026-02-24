@@ -1,0 +1,172 @@
+# ==========================================
+# Environment & Secrets
+# ==========================================
+.env
+.env.*
+!.env.example
+!.env.prod.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+digital
+digital.pub
+id_rsa
+id_ed25519
+*.secret
+
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+.venv/
+venv/
+env/
+.Python
+build/
+develop-eggs/
+eggs/
+# Python lib (but not frontend/src/lib)
+/lib/
+/lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+MANIFEST
+*.manifest
+*.spec
+
+# PyInstaller
+*.exe
+*.dll
+
+# Cython
+cython_debug/
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# ==========================================
+# Node.js
+# ==========================================
+node_modules/
+.next/
+out/
+dist/
+.nuxt/
+.cache/
+.turbo/
+*.tsbuildinfo
+.npm
+.yarn/cache
+.yarn/unplugged
+.yarn/install-state.gz
+.pnp.*
+
+# ==========================================
+# IDE & Editors
+# ==========================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+.project
+.classpath
+.settings/
+*.iml
+.fleet/
+
+# ==========================================
+# OS
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ==========================================
+# Docker
+# ==========================================
+postgres_data/
+redis_data/
+docker-compose.override.yml
+
+# ==========================================
+# Agents (local working code, not in repo)
+# ==========================================
+agents/
+
+# ==========================================
+# Agent state files
+# ==========================================
+*_state.json
+*_state_full.json
+.agent_state*.json
+
+# ==========================================
+# Testing & Coverage
+# ==========================================
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ==========================================
+# Logs
+# ==========================================
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ==========================================
+# Build artifacts
+# ==========================================
+*.whl
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+
+# ==========================================
+# Misc
+# ==========================================
+.claude/
+*.bak
+*.tmp
+*.temp
+.sass-cache/
+*.pid
+*.seed
+*.pid.lock

@@ -1,0 +1,26 @@
+agentspore.com {
+	# Backend: API, docs, health, markdown files
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+	handle /docs {
+		reverse_proxy backend:8000
+	}
+	handle /redoc {
+		reverse_proxy backend:8000
+	}
+	handle /openapi.json {
+		reverse_proxy backend:8000
+	}
+	handle /health {
+		reverse_proxy backend:8000
+	}
+	handle /*.md {
+		reverse_proxy backend:8000
+	}
+
+	# Frontend: everything else
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

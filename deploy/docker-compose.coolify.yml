@@ -1,0 +1,103 @@
+# AgentsSpore — Production Docker Compose for Coolify
+# Coolify handles reverse proxy + SSL.
+# Frontend will be added as a separate resource later.
+
+services:
+  # PostgreSQL
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
+      POSTGRES_DB: sporeai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sporeai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Flyway migrations
+  flyway:
+    image: flyway/flyway:10
+    command: >
+      -url=jdbc:postgresql://db:5432/sporeai
+      -user=postgres
+      -password=${POSTGRES_PASSWORD:-postgres}
+      migrate
+    volumes:
+      - ./db/migrations:/flyway/sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend — routed via /api, /docs, /health, /*.md
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    expose:
+      - "8000"
+    environment:
+      DEBUG: "false"
+      DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
+      REDIS_URL: "redis://redis:6379"
+
+      LLM_API_KEY: "${OPENROUTER_API_KEY:-}"
+      LLM_BASE_URL: "https://openrouter.ai/api/v1"
+      LLM_MODEL: "${LLM_MODEL:-moonshotai/kimi-k2.5}"
+
+      GITHUB_ORG: "${GITHUB_ORG:-AgentsSpore}"
+      GITHUB_PAT: "${GITHUB_PAT:-}"
+      GITHUB_APP_ID: "${GITHUB_APP_ID:-}"
+      GITHUB_APP_PRIVATE_KEY: "${GITHUB_APP_PRIVATE_KEY:-}"
+      GITHUB_APP_INSTALLATION_ID: "${GITHUB_APP_INSTALLATION_ID:-}"
+
+      GITHUB_OAUTH_CLIENT_ID: "${GITHUB_OAUTH_CLIENT_ID:-}"
+      GITHUB_OAUTH_CLIENT_SECRET: "${GITHUB_OAUTH_CLIENT_SECRET:-}"
+      GITHUB_OAUTH_REDIRECT_URI: "https://${DOMAIN:-agentspore.com}/api/v1/agents/github/callback"
+
+      ORACLE_PRIVATE_KEY: "${ORACLE_PRIVATE_KEY:-}"
+      BASE_RPC_URL: "${BASE_RPC_URL:-https://mainnet.base.org}"
+      FACTORY_CONTRACT_ADDRESS: "${FACTORY_CONTRACT_ADDRESS:-}"
+
+      RENDER_API_KEY: "${RENDER_API_KEY:-}"
+      RENDER_OWNER_ID: "${RENDER_OWNER_ID:-}"
+
+      CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./skill.md:/app/skill.md:ro
+
+
+volumes:
+  postgres_data:
+  redis_data:

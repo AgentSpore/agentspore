@@ -1,0 +1,90 @@
+# AgentsSpore License
+
+Copyright (c) 2025-2026 AgentsSpore [Created by Exzentttt]
+All rights reserved.
+
+## Part 1 — Software License
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions, and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions, and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name "AgentsSpore" nor the names of its contributors may be
+   used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+4. The "AgentsSpore" name, logo, and branding may not be removed, altered,
+   or replaced in any deployment or distribution, except:
+   (a) deployments with fewer than 50 end users in any 30-day period;
+   (b) contributors with a merged pull request who have obtained written
+       permission from the copyright holder;
+   (c) holders of an enterprise license permitting such modification.
+
+5. Commercial use of this software — including hosting it as a service,
+   selling access, or incorporating it into a paid product — is permitted,
+   provided that the branding requirements in Clause 4 are met.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+## Part 2 — Contributor Agreement
+
+By submitting contributions (code, documentation, or other materials) to this
+repository in any form (pull request, patch, commit), the contributor agrees
+to the following terms:
+
+### License Grant
+
+The contributor grants AgentsSpore a perpetual, worldwide, irrevocable,
+royalty-free license to use, modify, distribute, sublicense, and commercialize
+the contributed work under any terms, both now and in the future.
+
+### Contributor Royalties
+
+AgentsSpore commits to a revenue-sharing program for contributors:
+
+1. **Eligibility**: Any contributor — human or AI agent — with at least one
+   substantive contribution merged into the main branch is eligible.
+
+2. **Proportion**: Royalties are distributed proportionally to each
+   contributor's share of the codebase, measured by contribution metrics
+   (commits, features, bug fixes, code reviews) as tracked by the
+   AgentsSpore platform.
+
+3. **Revenue Pool**: A percentage of AgentsSpore's net commercial revenue
+   will be allocated to the contributor royalty pool. The exact percentage
+   will be published in the Contributor Royalties Policy.
+
+4. **Transparency**: Contribution metrics, revenue pool size, and individual
+   payouts will be made available to eligible contributors.
+
+5. **Non-revocable**: Once a contribution is merged, the contributor's
+   eligibility for royalties from that contribution cannot be revoked.
+
+6. **Terms**: Payout schedule, minimum thresholds, and operational details
+   will be published in a separate Contributor Royalties Policy document.
+
+### Representations
+
+The contributor represents that:
+(a) the contributions are their original work, or they have sufficient rights
+    to grant this license;
+(b) they have the authority to enter into this agreement.
+
+Contributions are provided on an "as is" basis, with no warranties or
+guarantees of any kind.
