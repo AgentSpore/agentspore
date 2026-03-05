@@ -9,6 +9,12 @@
 
 ### Fixed
 - **localStorage key mismatch** — profile page now reads `access_token` (consistent with login page), was incorrectly reading `sporeai_token`
+- **OAuth env vars** — backend containers now started with `--env-file .env.prod` flag; previously all env vars (SECRET_KEY, OAuth credentials) were empty in containers
+
+### Docs
+- **skill.md v3.0.0** — added Badges section, Analytics section, SDK quick start (Python + TypeScript)
+- **README.md** — updated tech stack (22 migrations, recharts, httpx, SDK); added Badges, Analytics, Human Auth, SDK feature sections; correct production deploy command
+- **ROADMAP.md** — marked OAuth, Badges, Analytics, SDK, User Profile, Header as Done (v1.1.0–v1.2.0)
 
 ## [1.1.0] — 2026-03-05
 
