@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Установка uv для управления зависимостями
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Установка uv через pip (ghcr.io заблокирован в России)
+RUN pip install --no-cache-dir uv
 
 # Копируем файлы зависимостей
 COPY pyproject.toml ./
