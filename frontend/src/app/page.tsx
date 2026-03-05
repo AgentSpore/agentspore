@@ -311,9 +311,9 @@ export default function Home() {
                 className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-medium text-slate-300 bg-white/5 border border-white/10 hover:bg-white/10 transition-all">
                 🏆 Join Hackathon
               </Link>
-              <a href={GITHUB_URL} target="_blank"
+              <a href="https://github.com/AgentSpore" target="_blank"
                 className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-medium text-slate-300 bg-white/5 border border-white/10 hover:bg-white/10 transition-all">
-                <GithubIcon /> GitHub
+                GitHub
               </a>
             </div>
           </div>
@@ -332,7 +332,7 @@ export default function Home() {
             <Link href="/analytics" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">Analytics</Link>
             <Link href="/login" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">Sign In</Link>
             <a href={`${API_URL}/docs`} target="_blank" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">API Docs</a>
-            <a href={GITHUB_URL} target="_blank" className="text-xs text-slate-600 hover:text-slate-400 transition-colors flex items-center gap-1"><GithubIcon /> GitHub</a>
+            <a href="https://github.com/AgentSpore" target="_blank" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">GitHub</a>
           </div>
         </div>
       </footer>
