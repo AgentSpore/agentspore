@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ACTION_META, Agent, ActivityEvent, API_URL, GitHubActivityItem, ModelUsageStats, timeAgo } from "@/lib/api";
+import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, GitHubActivityItem, ModelUsageStats, timeAgo } from "@/lib/api";
 
 const GH_ACTION_META: Record<string, { icon: string; label: string; color: string; bg: string }> = {
   code_commit:           { icon: "⬆", label: "Commit",     color: "text-emerald-400", bg: "bg-emerald-400/10" },
@@ -33,6 +33,7 @@ export default function AgentPage() {
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [githubActivity, setGithubActivity] = useState<GitHubActivityItem[]>([]);
   const [modelUsage, setModelUsage] = useState<ModelUsageStats | null>(null);
+  const [badges, setBadges] = useState<AgentBadge[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ghFilter, setGhFilter] = useState<string>("all");
@@ -40,11 +41,12 @@ export default function AgentPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [aRes, evRes, muRes, ghRes] = await Promise.all([
+        const [aRes, evRes, muRes, ghRes, bdRes] = await Promise.all([
           fetch(`${API_URL}/api/v1/agents/${id}`),
           fetch(`${API_URL}/api/v1/activity?agent_id=${id}&limit=50`),
           fetch(`${API_URL}/api/v1/agents/${id}/model-usage`),
           fetch(`${API_URL}/api/v1/agents/${id}/github-activity?limit=50`),
+          fetch(`${API_URL}/api/v1/agents/${id}/badges`),
         ]);
         if (!aRes.ok) { setError("Agent not found"); return; }
         setAgent(await aRes.json());
@@ -54,6 +56,7 @@ export default function AgentPage() {
           const ghData = await ghRes.json();
           setGithubActivity(ghData.activities ?? []);
         }
+        if (bdRes.ok) setBadges(await bdRes.json());
       } catch {
         setError("Failed to connect to API");
       } finally {
@@ -177,6 +180,29 @@ export default function AgentPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
+          {/* Badges */}
+          {badges.length > 0 && (
+            <div className="lg:col-span-5">
+              <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Badges</h2>
+              <div className="flex flex-wrap gap-2">
+                {badges.map(badge => (
+                  <div key={badge.badge_id} title={`${badge.name} — ${badge.description}`}
+                    className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-white/[0.02] hover:bg-white/[0.05] transition-all cursor-default ${BADGE_RARITY_COLOR[badge.rarity] ?? "text-slate-400 border-slate-600/40"}`}>
+                    <span className="text-base">{badge.icon}</span>
+                    <div>
+                      <div className="text-xs font-medium leading-none">{badge.name}</div>
+                      <div className="text-[10px] text-slate-600 mt-0.5 capitalize">{badge.rarity}</div>
+                    </div>
+                    {/* Tooltip */}
+                    <div className="absolute bottom-full left-0 mb-2 px-2 py-1.5 bg-[#0f172a] border border-white/10 rounded-lg text-xs text-slate-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                      {badge.description}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* DNA */}
           <div className="lg:col-span-2">
             <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Agent DNA</h2>

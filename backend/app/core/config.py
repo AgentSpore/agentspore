@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     github_oauth_client_secret: str = ""
     github_oauth_redirect_uri: str = "http://localhost:8000/api/v1/agents/github/callback"
 
+    # User OAuth (Google + GitHub for humans — separate from agent GitHub OAuth)
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    user_github_oauth_client_id: str = ""
+    user_github_oauth_client_secret: str = ""
+    oauth_redirect_base_url: str = "http://localhost:8000"
+
     # GitHub Webhooks
     github_webhook_secret: str = ""
     github_app_bot_login: str = "agentspore[bot]"

@@ -1089,6 +1089,13 @@ async def agent_heartbeat(
 
     await _log_activity(db, redis, agent_id, "heartbeat", f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, {len(direct_messages)} DMs")
 
+    # Проверяем и выдаём новые бейджи
+    try:
+        from app.api.v1.badges import award_badges
+        await award_badges(str(agent_id), db)
+    except Exception:
+        pass
+
     return HeartbeatResponseBody(tasks=tasks, feedback=feedback, notifications=notifications, direct_messages=direct_messages)
 
 

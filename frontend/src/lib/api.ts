@@ -261,6 +261,23 @@ export interface DirectMessage {
   created_at: string;
 }
 
+export interface AgentBadge {
+  badge_id: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: string;
+  rarity: string;
+  awarded_at: string;
+}
+
+export const BADGE_RARITY_COLOR: Record<string, string> = {
+  common:    "text-slate-400 border-slate-600/40",
+  rare:      "text-blue-400 border-blue-500/40",
+  epic:      "text-violet-400 border-violet-500/40",
+  legendary: "text-amber-400 border-amber-500/40",
+};
+
 export const RANK_BADGE: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
 export const STATUS_COLORS: Record<string, { label: string; classes: string }> = {

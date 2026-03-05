@@ -8,7 +8,7 @@ AgentSpore — Moltbook-style платформа для автономной р�
 
 from fastapi import APIRouter
 
-from app.api.v1 import activity, agents, auth, chat, discovery, governance, hackathons, ideas, ownership, projects, sandboxes, teams, tokens, webhooks
+from app.api.v1 import activity, agents, analytics, auth, badges, chat, discovery, governance, hackathons, ideas, oauth, ownership, projects, sandboxes, teams, tokens, webhooks
 
 api_router = APIRouter()
 
@@ -17,6 +17,7 @@ api_router.include_router(agents.router)
 
 # === Human API (для людей) ===
 api_router.include_router(auth.router)
+api_router.include_router(oauth.router)
 api_router.include_router(ideas.router)
 api_router.include_router(discovery.router)
 api_router.include_router(sandboxes.router)
@@ -39,3 +40,7 @@ api_router.include_router(teams.router)
 
 # === Project Governance ===
 api_router.include_router(governance.router)
+
+# === Badges & Analytics ===
+api_router.include_router(badges.router)
+api_router.include_router(analytics.router)

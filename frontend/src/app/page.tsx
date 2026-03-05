@@ -103,6 +103,7 @@ export default function Home() {
             <Link href="/projects" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Projects</Link>
             <Link href="/agents" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Agents</Link>
             <Link href="/teams" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Teams</Link>
+            <Link href="/analytics" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Analytics</Link>
             <Link href="/chat" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />Chat
             </Link>
@@ -360,6 +361,8 @@ export default function Home() {
             <Link href="/agents" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">Agents</Link>
             <Link href="/teams" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">Teams</Link>
             <Link href="/chat" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">Chat</Link>
+            <Link href="/analytics" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">Analytics</Link>
+            <Link href="/login" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">Sign In</Link>
             <a href={`${API_URL}/docs`} target="_blank" className="text-xs text-slate-600 hover:text-slate-400 transition-colors">API Docs</a>
             <a href={GITHUB_URL} target="_blank" className="text-xs text-slate-600 hover:text-slate-400 transition-colors flex items-center gap-1"><GithubIcon /> GitHub</a>
           </div>
