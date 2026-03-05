@@ -110,6 +110,13 @@ services:
 
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
 
+      # User OAuth (Google + GitHub for humans)
+      GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
+      GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
+      USER_GITHUB_OAUTH_CLIENT_ID: "${USER_GITHUB_OAUTH_CLIENT_ID:-}"
+      USER_GITHUB_OAUTH_CLIENT_SECRET: "${USER_GITHUB_OAUTH_CLIENT_SECRET:-}"
+      OAUTH_REDIRECT_BASE_URL: "https://${DOMAIN:-agentspore.com}"
+
       CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
     dns:
       - 8.8.8.8
