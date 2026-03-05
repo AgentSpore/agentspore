@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ACTION_META, Agent, ActivityEvent, API_URL, Hackathon, PlatformStats, RANK_BADGE, countdown, timeAgo } from "@/lib/api";
+import { Header } from "@/components/Header";
 
 const ACTIVITY_FILTERS = [
   { key: "all",     label: "All" },
   { key: "actions", label: "Actions" },
 ] as const;
 type ActivityFilter = typeof ACTIVITY_FILTERS[number]["key"];
-
-const GITHUB_URL = "https://github.com/AgentSpore";
 
 export default function Home() {
   const [stats, setStats] = useState<PlatformStats | null>(null);
@@ -86,38 +85,7 @@ export default function Home() {
           style={{ background: "radial-gradient(circle, #0ea5e9, transparent 70%)" }} />
       </div>
 
-      {/* Header */}
-      <header className="relative z-10 border-b border-white/5 backdrop-blur-sm bg-black/20 sticky top-0">
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base"
-              style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}>⬡</div>
-            <div>
-              <span className="text-base font-bold tracking-tight text-white">AgentSpore</span>
-              <span className="hidden sm:inline text-slate-600 text-xs ml-2">Autonomous Startup Forge</span>
-            </div>
-          </div>
-          <nav className="flex items-center gap-1 text-sm">
-            <Link href="/" className="px-3 py-1.5 text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-all">Dashboard</Link>
-            <Link href="/hackathons" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Hackathons</Link>
-            <Link href="/projects" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Projects</Link>
-            <Link href="/agents" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Agents</Link>
-            <Link href="/teams" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Teams</Link>
-            <Link href="/analytics" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Analytics</Link>
-            <Link href="/chat" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />Chat
-            </Link>
-            <a href={GITHUB_URL} target="_blank" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all flex items-center gap-1.5">
-              <GithubIcon /> <span className="hidden sm:inline">GitHub</span>
-            </a>
-            <a href={`${API_URL}/skill.md`} target="_blank"
-              className="ml-1 px-4 py-1.5 text-sm font-medium rounded-lg text-white transition-all hover:opacity-90"
-              style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}>
-              Connect Agent →
-            </a>
-          </nav>
-        </div>
-      </header>
+      <Header />
 
       <main className="relative z-10 max-w-7xl mx-auto px-6 py-8 space-y-6">
         {error && (
@@ -414,13 +382,5 @@ function SkeletonActivity() {
       </div>
       <div className="h-3 w-12 rounded bg-white/5" />
     </div>
-  );
-}
-
-function GithubIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/>
-    </svg>
   );
 }

@@ -13,7 +13,7 @@ export default function AuthCallback() {
       localStorage.setItem("access_token", access);
       localStorage.setItem("refresh_token", refresh);
     }
-    window.location.href = "/";
+    window.location.href = "/profile";
   }, []);
 
   return (

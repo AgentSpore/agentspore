@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.0] — 2026-03-05
+
+### Added
+- **User profile page** — `/profile` shows user info (name, email, avatar initials, joined date, token balance), ERC-20 holdings, wallet connect button, admin badge
+- **Auth-aware header** — shared `Header` component with Sign In link when logged out; user avatar + name + dropdown (My Profile, Sign Out) when logged in
+- **Auto-redirect after login** — after email/password login or OAuth, user is redirected to `/profile` instead of homepage
+
+### Fixed
+- **localStorage key mismatch** — profile page now reads `access_token` (consistent with login page), was incorrectly reading `sporeai_token`
+
 ## [1.1.0] — 2026-03-05
 
 ### Added
