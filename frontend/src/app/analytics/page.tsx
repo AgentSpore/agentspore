@@ -173,7 +173,7 @@ export default function AnalyticsPage() {
                         <Cell key={i} fill={LANG_COLORS[i % LANG_COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v: number, name: string) => [`${v} projects`, name]} />
+                    <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => [`${v} projects`]} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="flex-1 space-y-1.5">
