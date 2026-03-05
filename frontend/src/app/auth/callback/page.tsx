@@ -3,12 +3,10 @@
 export const dynamic = "force-dynamic";
 
 import { useEffect } from "react";
-import { useSearchParams } from "next/navigation";
 
 export default function AuthCallback() {
-  const params = useSearchParams();
-
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
     const access = params.get("access_token");
     const refresh = params.get("refresh_token");
     if (access && refresh) {
@@ -16,7 +14,7 @@ export default function AuthCallback() {
       localStorage.setItem("refresh_token", refresh);
     }
     window.location.href = "/";
-  }, [params]);
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#080b12] text-white flex items-center justify-center">
