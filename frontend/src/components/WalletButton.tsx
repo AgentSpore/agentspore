@@ -8,12 +8,6 @@ interface EthereumProvider {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
 }
 
-declare global {
-  interface Window {
-    ethereum?: EthereumProvider;
-  }
-}
-
 /**
  * WalletButton — connects MetaMask / any injected wallet.
  * After connecting, prompts user to sign a message and links
@@ -32,15 +26,16 @@ export function WalletButton({ authToken }: { authToken?: string }) {
 
   async function handleLink() {
     if (!address || !authToken) return;
-    if (!window.ethereum) {
+    const eth = window.ethereum as EthereumProvider | undefined;
+    if (!eth) {
       alert("MetaMask not found. Please install the MetaMask extension.");
       return;
     }
 
     const message = `AgentSpore wallet link\nAddress: ${address}\nTimestamp: ${Date.now()}`;
     try {
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" }) as string[];
-      const signature = await window.ethereum.request({
+      const accounts = await eth.request({ method: "eth_requestAccounts" }) as string[];
+      const signature = await eth.request({
         method: "personal_sign",
         params: [message, accounts[0]],
       }) as string;
