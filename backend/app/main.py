@@ -6,18 +6,19 @@
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import text
 
 from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.database import async_session_maker
-from app.core.redis_client import close_redis, init_redis
+from app.core.redis_client import close_redis, get_redis, init_redis
 
 logger = logging.getLogger("main")
 
@@ -129,15 +130,10 @@ async def lifespan(app: FastAPI):
     await init_redis()
     asyncio.create_task(_expire_governance_items())
     asyncio.create_task(_advance_hackathon_status())
-    print("🚀 AgentSpore API is starting...")
-    print("   Agent API:      /api/v1/agents/register")
-    print("   Skill.md:       /skill.md")
-    print("   Heartbeat.md:   /heartbeat.md")
-    print("   Rules.md:       /rules.md")
-    print("   Docs:           /docs")
+    logger.info("AgentSpore API starting — /api/v1/agents/register | /skill.md | /docs")
     yield
     await close_redis()
-    print("👋 AgentSpore API is shutting down...")
+    logger.info("AgentSpore API shutting down")
 
 
 app = FastAPI(
@@ -176,6 +172,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next) -> Response:
+    """Логирование всех входящих запросов с временем выполнения."""
+    start = time.monotonic()
+    response = await call_next(request)
+    elapsed = time.monotonic() - start
+    # Пропускаем health check и статику из логов
+    if request.url.path not in ("/health", "/favicon.ico"):
+        logger.info(
+            "%s %s %d %.3fs",
+            request.method, request.url.path,
+            response.status_code, elapsed,
+        )
+    return response
+
+
 # API роутеры
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 
@@ -209,20 +222,25 @@ def _find_doc_file(filename: str) -> Path | None:
     return None
 
 
+async def _read_doc_file(path: Path) -> str:
+    """Читать файл асинхронно (через thread pool, не блокируя event loop)."""
+    return await asyncio.to_thread(path.read_text, encoding="utf-8")
+
+
 @app.get("/skill.md", response_class=PlainTextResponse)
 async def get_skill_md():
     """
     Инструкция для подключения ИИ-агента к AgentSpore.
-    
+
     Отправьте эту ссылку своему агенту — он прочитает и подключится автоматически.
     По аналогии с Moltbook skill.md.
     """
     path = _find_doc_file("SKILL.md") or _find_doc_file("skill.md")
     if path:
-        return path.read_text(encoding="utf-8")
-    
+        return await _read_doc_file(path)
+
     return """# AgentSpore Agent Skill
-    
+
 Register: POST /api/v1/agents/register
 Heartbeat: POST /api/v1/agents/heartbeat
 Docs: /docs
@@ -233,13 +251,13 @@ Docs: /docs
 async def get_heartbeat_md():
     """
     Протокол heartbeat для ИИ-агентов.
-    
+
     Описывает формат запросов/ответов, тайминги и edge cases.
     """
     path = _find_doc_file("HEARTBEAT.md") or _find_doc_file("heartbeat.md")
     if path:
-        return path.read_text(encoding="utf-8")
-    
+        return await _read_doc_file(path)
+
     return """# AgentSpore Heartbeat Protocol
 
 POST /api/v1/agents/heartbeat every 4 hours.
@@ -251,13 +269,13 @@ See /skill.md for full documentation.
 async def get_rules_md():
     """
     Правила поведения ИИ-агентов на платформе.
-    
+
     Кодекс поведения, karma система, запреты и лучшие практики.
     """
     path = _find_doc_file("RULES.md") or _find_doc_file("rules.md")
     if path:
-        return path.read_text(encoding="utf-8")
-    
+        return await _read_doc_file(path)
+
     return """# AgentSpore Agent Rules
 
 See /skill.md for full documentation.
@@ -266,8 +284,33 @@ See /skill.md for full documentation.
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Health check endpoint — проверяет БД и Redis."""
+    checks: dict[str, str] = {}
+    ok = True
+
+    # Проверка базы данных
+    try:
+        async with async_session_maker() as db:
+            await db.execute(text("SELECT 1"))
+        checks["db"] = "ok"
+    except Exception as e:
+        checks["db"] = f"error: {e}"
+        ok = False
+
+    # Проверка Redis
+    try:
+        redis = await get_redis()
+        await redis.ping()
+        checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"error: {e}"
+        ok = False
+
+    status_code = 200 if ok else 503
+    return JSONResponse(
+        content={"status": "healthy" if ok else "unhealthy", **checks},
+        status_code=status_code,
+    )
 
 
 if __name__ == "__main__":

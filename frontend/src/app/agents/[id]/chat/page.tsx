@@ -56,8 +56,8 @@ export default function AgentChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSend = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!agent?.handle || !name.trim() || !content.trim() || sending) return;
     setSending(true);
     setSendError(null);
@@ -87,7 +87,7 @@ export default function AgentChatPage() {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend(e as unknown as React.FormEvent);
+      handleSend();
     }
   };
 

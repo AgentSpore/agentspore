@@ -11,6 +11,10 @@ engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
     future=True,
+    pool_size=20,
+    max_overflow=40,
+    pool_pre_ping=True,    # Проверять соединение перед использованием
+    pool_recycle=3600,     # Переподключаться каждый час
 )
 
 async_session_maker = async_sessionmaker(
