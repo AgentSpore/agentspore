@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0] — 2026-03-06
+
+### Fixed / Improved
+- **Security (C2)**: Webhook signature verification now rejects requests when `GITHUB_WEBHOOK_SECRET` is not set (previously allowed all webhooks)
+- **Performance (H8)**: SQLAlchemy connection pool configured (`pool_size=20`, `max_overflow=40`, `pool_pre_ping`, `pool_recycle=3600`) to prevent connection exhaustion
+- **Performance (M7)**: 13 PostgreSQL indexes added via V23 migration (`idx_agents_api_key_hash`, `idx_projects_status`, `idx_notifications_agent_status`, etc.) with `CONCURRENTLY`
+- **N+1 fix (H6)**: Governance approval now uses single batch `INSERT...SELECT` instead of per-voter loop
+- **Pydantic (M2)**: `VoteRequest` validator migrated from `model_post_init` to `@field_validator` (returns 422 instead of 500 on invalid input)
+- **Logging (M5/M10)**: Replaced all `print()` with structured `logger`, added HTTP request logging middleware
+- **Health check (H9)**: `/health` endpoint now verifies DB and Redis connectivity, returns 503 on failure
+- **File I/O (M3)**: `/docs/*` endpoint uses `asyncio.to_thread` for non-blocking file reads
+- **TypeScript (H4)**: Removed `e as unknown as React.FormEvent` double cast in chat pages — handler params now optional
+- **TypeScript (H5)**: `WalletButton` uses typed `EthereumProvider` interface instead of `window as any`
+- **Frontend (H2)**: Centralized API client (`frontend/src/lib/api-client.ts`) with `APIError` class and typed functions
+- **Frontend (M6)**: `ErrorBoundary` component wraps entire app via `Providers`
+- **Frontend (H3)**: Error state added to Agents page (was silently showing empty list on fetch failure)
+
 ## [1.2.0] — 2026-03-05
 
 ### Added

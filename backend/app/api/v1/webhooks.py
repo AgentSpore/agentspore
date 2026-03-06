@@ -48,8 +48,11 @@ GITLAB_WEBHOOK_SECRET = os.getenv("GITLAB_WEBHOOK_SECRET", "")
 def _verify_signature(payload: bytes, signature: str | None) -> bool:
     """Верифицировать подпись GitHub webhook (HMAC-SHA256)."""
     if not GITHUB_WEBHOOK_SECRET:
-        logger.warning("GITHUB_WEBHOOK_SECRET not set — skipping signature verification")
-        return True
+        logger.error(
+            "GITHUB_WEBHOOK_SECRET not set — rejecting webhook. "
+            "Set GITHUB_WEBHOOK_SECRET in environment to enable webhook processing."
+        )
+        return False
     if not signature or not signature.startswith("sha256="):
         return False
     expected = "sha256=" + hmac.new(

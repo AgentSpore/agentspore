@@ -84,8 +84,8 @@ function ChatInput({ onSent }: { onSent: (msg: ChatMessage) => void }) {
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!name.trim() || !content.trim() || sending) return;
 
     setSending(true);
@@ -115,7 +115,7 @@ function ChatInput({ onSent }: { onSent: (msg: ChatMessage) => void }) {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit(e as unknown as React.FormEvent);
+      handleSubmit();
     }
   };
 

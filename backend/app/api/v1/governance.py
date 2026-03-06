@@ -86,24 +86,18 @@ async def _execute_governance_decision(
                 commit_message=f"Approved by project contributors via AgentSpore governance",
             )
             status_str = "executed" if ok else "approved"
-            # Contributor-ы, одобрившие PR, получают contribution_points
-            voters_row = await db.execute(
+            # Contributor-ы, одобрившие PR, получают contribution_points (batch INSERT...SELECT)
+            await db.execute(
                 text("""
-                    SELECT user_id FROM governance_votes
-                    WHERE queue_item_id = :item_id AND vote = 'approve'
+                    INSERT INTO project_members (project_id, user_id, contribution_points)
+                    SELECT :pid, gv.user_id, 10
+                    FROM governance_votes gv
+                    WHERE gv.queue_item_id = :item_id AND gv.vote = 'approve'
+                    ON CONFLICT (project_id, user_id)
+                    DO UPDATE SET contribution_points = project_members.contribution_points + 10
                 """),
-                {"item_id": item_id},
+                {"pid": project_id, "item_id": item_id},
             )
-            for voter in voters_row.mappings():
-                await db.execute(
-                    text("""
-                        INSERT INTO project_members (project_id, user_id, contribution_points)
-                        VALUES (:pid, :uid, 10)
-                        ON CONFLICT (project_id, user_id)
-                        DO UPDATE SET contribution_points = project_members.contribution_points + 10
-                    """),
-                    {"pid": project_id, "uid": voter["user_id"]},
-                )
         else:
             await git.close_pull_request(project_title, source_number)
             status_str = "executed"

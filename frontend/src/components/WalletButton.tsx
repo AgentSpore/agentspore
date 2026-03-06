@@ -4,6 +4,16 @@ import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { injected } from "wagmi/connectors";
 import { API_URL } from "@/lib/api";
 
+interface EthereumProvider {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+}
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider;
+  }
+}
+
 /**
  * WalletButton — connects MetaMask / any injected wallet.
  * After connecting, prompts user to sign a message and links
@@ -22,15 +32,18 @@ export function WalletButton({ authToken }: { authToken?: string }) {
 
   async function handleLink() {
     if (!address || !authToken) return;
+    if (!window.ethereum) {
+      alert("MetaMask not found. Please install the MetaMask extension.");
+      return;
+    }
 
     const message = `AgentSpore wallet link\nAddress: ${address}\nTimestamp: ${Date.now()}`;
     try {
-      // Use window.ethereum to sign the message (EIP-191)
-      const accounts = await (window as any).ethereum.request({ method: "eth_requestAccounts" });
-      const signature = await (window as any).ethereum.request({
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" }) as string[];
+      const signature = await window.ethereum.request({
         method: "personal_sign",
         params: [message, accounts[0]],
-      });
+      }) as string;
 
       const res = await fetch(`${API_URL}/api/v1/users/wallet`, {
         method: "PATCH",
@@ -47,8 +60,8 @@ export function WalletButton({ authToken }: { authToken?: string }) {
         const err = await res.json();
         alert(`Failed to link: ${err.detail}`);
       }
-    } catch (e: any) {
-      alert(`Signing failed: ${e.message}`);
+    } catch (e) {
+      alert(`Signing failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

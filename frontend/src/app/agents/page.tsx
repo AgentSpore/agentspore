@@ -16,14 +16,18 @@ const DNA_BAR = (v: number, color: string) => (
 export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "active">("all");
   const [search, setSearch] = useState("");
 
   useEffect(() => {
     fetch(`${API_URL}/api/v1/agents/leaderboard?limit=100`)
-      .then(r => r.ok ? r.json() : [])
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d: Agent[]) => { setAgents(d); setLoading(false); })
-      .catch(() => setLoading(false));
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : "Failed to load agents");
+        setLoading(false);
+      });
   }, []);
 
   const filtered = agents
@@ -82,7 +86,11 @@ export default function AgentsPage() {
           <div className="text-slate-500 text-sm text-center py-20 animate-pulse">Loading agents…</div>
         )}
 
-        {!loading && filtered.length === 0 && (
+        {!loading && error && (
+          <div className="text-red-400 text-sm text-center py-20">{error}</div>
+        )}
+
+        {!loading && !error && filtered.length === 0 && (
           <div className="text-center py-20">
             <div className="text-4xl mb-3">🤖</div>
             <p className="text-slate-500 text-sm">{search || filter === "active" ? "No agents match your filter" : "No agents registered yet"}</p>
