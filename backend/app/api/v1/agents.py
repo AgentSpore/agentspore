@@ -25,11 +25,10 @@ from uuid import UUID, uuid4
 import httpx
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.schemas import (
+from app.schemas.agents import (
     AgentDNARequest,
     AgentProfile,
     AgentRegisterRequest,
@@ -56,6 +55,7 @@ from app.api.v1.schemas import (
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.redis_client import get_redis
+from app.repositories import agent_repo
 from app.services.git_service import get_git_service
 from app.services.github_oauth_service import get_github_oauth_service
 from app.services.gitlab_oauth_service import get_gitlab_oauth_service
@@ -93,34 +93,13 @@ async def _ensure_github_token(agent: dict, db: AsyncSession) -> str | None:
     if new_token is None:
         # Токен протух и refresh не удался — очищаем в БД
         logger.warning("GitHub OAuth token invalid for agent %s, clearing", agent["id"])
-        await db.execute(
-            text("""
-                UPDATE agents SET
-                    github_oauth_token = NULL,
-                    github_oauth_refresh_token = NULL,
-                    github_oauth_expires_at = NULL
-                WHERE id = :id
-            """),
-            {"id": agent["id"]},
-        )
+        await agent_repo.clear_github_oauth(db, agent["id"])
         await db.commit()
         return None
 
     # Токен обновлён — сохраняем в БД
-    await db.execute(
-        text("""
-            UPDATE agents SET
-                github_oauth_token = :token,
-                github_oauth_refresh_token = :refresh,
-                github_oauth_expires_at = :expires_at
-            WHERE id = :id
-        """),
-        {
-            "id": agent["id"],
-            "token": new_token,
-            "refresh": result["refresh_token"],
-            "expires_at": result["expires_at"],
-        },
+    await agent_repo.update_github_oauth_tokens(
+        db, agent["id"], new_token, result["refresh_token"], result["expires_at"]
     )
     await db.commit()
     return new_token
@@ -140,19 +119,7 @@ async def _log_activity(
     metadata: dict | None = None,
 ) -> None:
     """Записать активность в БД и опубликовать событие в Redis pub/sub."""
-    await db.execute(
-        text("""
-            INSERT INTO agent_activity (agent_id, project_id, action_type, description, metadata)
-            VALUES (:agent_id, :project_id, :action_type, :description, CAST(:metadata AS jsonb))
-        """),
-        {
-            "agent_id": agent_id,
-            "project_id": project_id,
-            "action_type": action_type,
-            "description": description,
-            "metadata": json.dumps(metadata or {}),
-        },
-    )
+    await agent_repo.insert_activity(db, agent_id, action_type, description, project_id, metadata)
     event = {
         "agent_id": str(agent_id),
         "action_type": action_type,
@@ -179,8 +146,7 @@ async def _generate_handle(db: AsyncSession, name: str) -> str:
     handle = base
     counter = 2
     while True:
-        exists = await db.execute(text("SELECT 1 FROM agents WHERE handle = :h"), {"h": handle})
-        if not exists.first():
+        if not await agent_repo.handle_exists(db, handle):
             return handle
         handle = f"{base}-{counter}"
         counter += 1
@@ -276,43 +242,20 @@ async def _create_notification_task(
     source_ref — прямая ссылка на GitHub (агент откроет её сам, текст в БД не хранится).
     source_key — ключ дедупликации вида "<project_id>:issue:<n>" или "<project_id>:pr:<n>".
     """
-    # Dedup check (separate query avoids asyncpg AmbiguousParameterError with WHERE NOT EXISTS)
-    existing = await db.execute(
-        text("""
-            SELECT 1 FROM tasks
-            WHERE assigned_to_agent_id = :assigned_to
-              AND source_key = :source_key
-              AND status = 'pending'
-        """),
-        {"assigned_to": assigned_to_agent_id, "source_key": source_key},
-    )
-    if existing.first():
+    if await agent_repo.check_notification_exists(db, assigned_to_agent_id, source_key):
         return
 
-    await db.execute(
-        text("""
-            INSERT INTO tasks (
-                type, title, project_id, priority, status,
-                assigned_to_agent_id, created_by_agent_id,
-                source_ref, source_key, source_type, created_by
-            ) VALUES (
-                :type, :title, :project_id, :priority, 'pending',
-                :assigned_to, :created_by_agent,
-                :source_ref, :source_key, :source_type, 'platform'
-            )
-        """),
-        {
-            "type": task_type,
-            "title": title,
-            "project_id": project_id,
-            "priority": priority,
-            "assigned_to": assigned_to_agent_id,
-            "created_by_agent": created_by_agent_id,
-            "source_ref": source_ref,
-            "source_key": source_key,
-            "source_type": source_type,
-        },
-    )
+    await agent_repo.insert_notification_task(db, {
+        "type": task_type,
+        "title": title,
+        "project_id": project_id,
+        "priority": priority,
+        "assigned_to": assigned_to_agent_id,
+        "created_by_agent": created_by_agent_id,
+        "source_ref": source_ref,
+        "source_key": source_key,
+        "source_type": source_type,
+    })
 
 
 async def _complete_notification_tasks(
@@ -321,15 +264,7 @@ async def _complete_notification_tasks(
     source_key: str,
 ) -> None:
     """Отметить pending-таски как completed когда агент ответил."""
-    await db.execute(
-        text("""
-            UPDATE tasks SET status = 'completed', completed_at = NOW()
-            WHERE assigned_to_agent_id = :agent_id
-              AND source_key = :source_key
-              AND status = 'pending'
-        """),
-        {"agent_id": agent_id, "source_key": source_key},
-    )
+    await agent_repo.complete_notification_tasks(db, agent_id, source_key)
 
 
 async def _cancel_notification_tasks(
@@ -337,13 +272,7 @@ async def _cancel_notification_tasks(
     source_key: str,
 ) -> None:
     """Отменить все pending-таски для закрытого issue/PR."""
-    await db.execute(
-        text("""
-            UPDATE tasks SET status = 'cancelled'
-            WHERE source_key = :source_key AND status = 'pending'
-        """),
-        {"source_key": source_key},
-    )
+    await agent_repo.cancel_notification_tasks(db, source_key)
 
 
 async def get_agent_by_api_key(
@@ -352,17 +281,10 @@ async def get_agent_by_api_key(
 ) -> dict:
     """Аутентификация агента по API-ключу из заголовка X-API-Key."""
     key_hash = _hash_api_key(x_api_key)
-    
-    result = await db.execute(
-        text("SELECT * FROM agents WHERE api_key_hash = :hash AND is_active = TRUE"),
-        {"hash": key_hash},
-    )
-    agent = result.mappings().first()
-    
+    agent = await agent_repo.get_agent_by_api_key_hash(db, key_hash)
     if not agent:
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
-    
-    return dict(agent)
+    return agent
 
 
 # ==========================================
@@ -398,27 +320,16 @@ async def register_agent(
 
     # Создаём агента сразу активным; GitHub OAuth опционально для атрибуции
     try:
-        await db.execute(
-            text("""
-                INSERT INTO agents (id, name, handle, agent_type, model_provider, model_name,
-                                  specialization, skills, description, api_key_hash,
-                                  is_active, github_oauth_state,
-                                  dna_risk, dna_speed, dna_verbosity, dna_creativity, bio)
-                VALUES (:id, :name, :handle, 'external', :provider, :model, :spec, :skills, :desc, :api_key,
-                        TRUE, :oauth_state,
-                        :dna_risk, :dna_speed, :dna_verbosity, :dna_creativity, :bio)
-            """),
-            {
-                "id": agent_id, "name": body.name, "handle": handle,
-                "provider": body.model_provider,
-                "model": body.model_name, "spec": body.specialization,
-                "skills": body.skills, "desc": body.description, "api_key": api_key_hash,
-                "oauth_state": oauth_state,
-                "dna_risk": body.dna_risk, "dna_speed": body.dna_speed,
-                "dna_verbosity": body.dna_verbosity, "dna_creativity": body.dna_creativity,
-                "bio": body.bio,
-            },
-        )
+        await agent_repo.insert_agent(db, {
+            "id": agent_id, "name": body.name, "handle": handle,
+            "provider": body.model_provider,
+            "model": body.model_name, "spec": body.specialization,
+            "skills": body.skills, "desc": body.description, "api_key": api_key_hash,
+            "oauth_state": oauth_state,
+            "dna_risk": body.dna_risk, "dna_speed": body.dna_speed,
+            "dna_verbosity": body.dna_verbosity, "dna_creativity": body.dna_creativity,
+            "bio": body.bio,
+        })
     except IntegrityError:
         raise HTTPException(
             status_code=409,
@@ -478,10 +389,7 @@ async def rotate_api_key(
     new_api_key = f"af_{secrets.token_urlsafe(32)}"
     new_hash = _hash_api_key(new_api_key)
 
-    await db.execute(
-        text("UPDATE agents SET api_key_hash = :hash WHERE id = :id"),
-        {"hash": new_hash, "id": agent["id"]},
-    )
+    await agent_repo.update_api_key_hash(db, agent["id"], new_hash)
     await db.commit()
 
     return {
@@ -510,11 +418,7 @@ async def github_oauth_callback(
     активирует агента.
     """
     # Находим агента по state
-    result = await db.execute(
-        text("SELECT id FROM agents WHERE github_oauth_state = :state"),
-        {"state": state},
-    )
-    agent = result.mappings().first()
+    agent = await agent_repo.get_agent_by_github_state(db, state)
 
     if not agent:
         return GitHubOAuthCallbackResponse(
@@ -551,46 +455,24 @@ async def github_oauth_callback(
     github_email = user_info.get("email", "")
 
     # Вычисляем время истечения токена
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     expires_at = datetime.utcnow() + timedelta(seconds=expires_in) if expires_in else None
 
     # Обновляем агента: активируем и сохраняем OAuth данные
-    await db.execute(
-        text("""
-            UPDATE agents SET
-                is_active = TRUE,
-                github_oauth_id = :github_id,
-                github_oauth_token = :token,
-                github_oauth_refresh_token = :refresh_token,
-                github_oauth_scope = :scope,
-                github_oauth_expires_at = :expires_at,
-                github_user_login = :login,
-                github_oauth_state = NULL,
-                github_oauth_connected_at = NOW()
-            WHERE id = :id
-        """),
-        {
-            "id": agent_id,
-            "github_id": github_id,
-            "token": access_token,
-            "refresh_token": refresh_token,
-            "scope": scope,
-            "expires_at": expires_at,
-            "login": github_login,
-        },
-    )
+    await agent_repo.update_github_oauth(db, agent_id, {
+        "github_id": github_id,
+        "token": access_token,
+        "refresh_token": refresh_token,
+        "scope": scope,
+        "expires_at": expires_at,
+        "login": github_login,
+    })
 
     # Логируем активацию
-    await db.execute(
-        text("""
-            INSERT INTO agent_activity (agent_id, action_type, description, metadata)
-            VALUES (:agent_id, 'oauth_connected', :desc, :meta)
-        """),
-        {
-            "agent_id": agent_id,
-            "desc": f"GitHub OAuth connected: {github_login}",
-            "meta": json.dumps({"github_login": github_login, "scope": scope}),
-        },
+    await agent_repo.insert_activity_simple(
+        db, agent_id, "oauth_connected",
+        f"GitHub OAuth connected: {github_login}",
+        json.dumps({"github_login": github_login, "scope": scope}),
     )
 
     logger.info(f"Agent {agent_id} activated with GitHub identity: {github_login}")
@@ -668,10 +550,7 @@ async def get_github_connect_url(
     oauth_svc = get_github_oauth_service()
     result = oauth_svc.get_authorization_url(str(agent["id"]))
     # Сохраняем state в БД — callback валидирует его
-    await db.execute(
-        text("UPDATE agents SET github_oauth_state = :state WHERE id = :id"),
-        {"state": result["state"], "id": agent["id"]},
-    )
+    await agent_repo.update_github_oauth_state(db, agent["id"], result["state"])
     await db.commit()
     return {"auth_url": result["auth_url"]}
 
@@ -695,19 +574,7 @@ async def revoke_github_oauth(
         await oauth_service.revoke_token(token)
 
     # Деактивируем агента и очищаем OAuth данные
-    await db.execute(
-        text("""
-            UPDATE agents SET
-                is_active = FALSE,
-                github_oauth_token = NULL,
-                github_oauth_refresh_token = NULL,
-                github_oauth_scope = NULL,
-                github_oauth_expires_at = NULL,
-                github_oauth_connected_at = NULL
-            WHERE id = :id
-        """),
-        {"id": agent["id"]},
-    )
+    await agent_repo.revoke_github_oauth(db, agent["id"])
 
     return {
         "status": "revoked",
@@ -732,10 +599,7 @@ async def get_github_reconnect_url(
     oauth_data = oauth_service.get_authorization_url(str(agent_id))
 
     # Обновляем state
-    await db.execute(
-        text("UPDATE agents SET github_oauth_state = :state WHERE id = :id"),
-        {"id": agent_id, "state": oauth_data["state"]},
-    )
+    await agent_repo.update_github_oauth_state(db, agent_id, oauth_data["state"])
 
     return {
         "github_auth_url": oauth_data["auth_url"],
@@ -758,10 +622,7 @@ async def gitlab_oauth_login(
     oauth_service = get_gitlab_oauth_service()
     oauth_data = oauth_service.get_authorization_url(str(agent_id))
 
-    await db.execute(
-        text("UPDATE agents SET gitlab_oauth_state = :state WHERE id = :id"),
-        {"id": agent_id, "state": oauth_data["state"]},
-    )
+    await agent_repo.update_gitlab_oauth_state(db, agent_id, oauth_data["state"])
     await db.commit()
 
     return {"gitlab_auth_url": oauth_data["auth_url"], "message": "Open this URL to connect your GitLab account."}
@@ -774,11 +635,7 @@ async def gitlab_oauth_callback(
     db: AsyncSession = Depends(get_db),
 ):
     """Callback для GitLab OAuth авторизации."""
-    result = await db.execute(
-        text("SELECT id FROM agents WHERE gitlab_oauth_state = :state"),
-        {"state": state},
-    )
-    agent = result.mappings().first()
+    agent = await agent_repo.get_agent_by_gitlab_state(db, state)
 
     if not agent:
         return GitLabOAuthCallbackResponse(
@@ -812,43 +669,22 @@ async def gitlab_oauth_callback(
     gitlab_id = str(user_info.get("id", ""))
     gitlab_login = user_info.get("username", "")
 
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     expires_at = datetime.utcnow() + timedelta(seconds=expires_in) if expires_in else None
 
-    await db.execute(
-        text("""
-            UPDATE agents SET
-                gitlab_oauth_id = :gitlab_id,
-                gitlab_oauth_token = :token,
-                gitlab_oauth_refresh_token = :refresh_token,
-                gitlab_oauth_scope = :scope,
-                gitlab_oauth_expires_at = :expires_at,
-                gitlab_user_login = :login,
-                gitlab_oauth_state = NULL,
-                gitlab_oauth_connected_at = NOW()
-            WHERE id = :id
-        """),
-        {
-            "id": agent_id,
-            "gitlab_id": gitlab_id,
-            "token": access_token,
-            "refresh_token": refresh_token,
-            "scope": scope,
-            "expires_at": expires_at,
-            "login": gitlab_login,
-        },
-    )
+    await agent_repo.update_gitlab_oauth(db, agent_id, {
+        "gitlab_id": gitlab_id,
+        "token": access_token,
+        "refresh_token": refresh_token,
+        "scope": scope,
+        "expires_at": expires_at,
+        "login": gitlab_login,
+    })
 
-    await db.execute(
-        text("""
-            INSERT INTO agent_activity (agent_id, action_type, description, metadata)
-            VALUES (:agent_id, 'oauth_connected', :desc, :meta)
-        """),
-        {
-            "agent_id": agent_id,
-            "desc": f"GitLab OAuth connected: {gitlab_login}",
-            "meta": {"gitlab_login": gitlab_login, "scope": scope, "provider": "gitlab"},
-        },
+    await agent_repo.insert_activity_simple(
+        db, agent_id, "oauth_connected",
+        f"GitLab OAuth connected: {gitlab_login}",
+        {"gitlab_login": gitlab_login, "scope": scope, "provider": "gitlab"},
     )
 
     logger.info("Agent %s connected GitLab identity: %s", agent_id, gitlab_login)
@@ -892,18 +728,7 @@ async def revoke_gitlab_oauth(
     db: AsyncSession = Depends(get_db),
 ):
     """Отозвать GitLab OAuth доступ."""
-    await db.execute(
-        text("""
-            UPDATE agents SET
-                gitlab_oauth_token = NULL,
-                gitlab_oauth_refresh_token = NULL,
-                gitlab_oauth_scope = NULL,
-                gitlab_oauth_expires_at = NULL,
-                gitlab_oauth_connected_at = NULL
-            WHERE id = :id
-        """),
-        {"id": agent["id"]},
-    )
+    await agent_repo.revoke_gitlab_oauth(db, agent["id"])
     await db.commit()
     return {"status": "revoked", "message": "GitLab OAuth access revoked. Use /gitlab/login to reconnect."}
 
@@ -925,44 +750,23 @@ async def agent_heartbeat(
     Агент выполняет задачи АВТОНОМНО.
     """
     agent_id = agent["id"]
-    
+
     # Обновить heartbeat
-    await db.execute(
-        text("UPDATE agents SET last_heartbeat = NOW(), is_active = TRUE WHERE id = :id"),
-        {"id": agent_id},
-    )
-    
+    await agent_repo.update_heartbeat(db, agent_id)
+
     # Лог heartbeat
-    await db.execute(
-        text("""
-            INSERT INTO heartbeat_logs (agent_id, status, tasks_completed)
-            VALUES (:agent_id, :status, :completed)
-        """),
-        {"agent_id": agent_id, "status": body.status, "completed": len(body.completed_tasks)},
-    )
-    
+    await agent_repo.insert_heartbeat_log(db, agent_id, body.status, len(body.completed_tasks))
+
     # Обработать завершённые задачи
     for task in body.completed_tasks:
         karma = {"write_code": 10, "add_feature": 15, "fix_bug": 10, "code_review": 5}.get(task.get("type", ""), 5)
-        await db.execute(
-            text("UPDATE agents SET karma = karma + :karma WHERE id = :id"),
-            {"karma": karma, "id": agent_id},
-        )
-    
+        await agent_repo.add_karma(db, agent_id, karma)
+
     # Подобрать задачи: feature requests
-    features_result = await db.execute(
-        text("""
-            SELECT fr.id, fr.title, fr.description, fr.votes, fr.project_id
-            FROM feature_requests fr
-            JOIN projects p ON p.id = fr.project_id
-            WHERE fr.status = 'proposed' AND p.creator_agent_id = :agent_id
-            ORDER BY fr.votes DESC LIMIT :limit
-        """),
-        {"agent_id": agent_id, "limit": body.current_capacity},
-    )
-    
+    features = await agent_repo.get_feature_requests_for_agent(db, agent_id, body.current_capacity)
+
     tasks = []
-    for fr in features_result.mappings():
+    for fr in features:
         tasks.append({
             "type": "add_feature",
             "id": str(fr["id"]),
@@ -972,25 +776,12 @@ async def agent_heartbeat(
             "votes": fr["votes"],
             "priority": "high" if fr["votes"] >= 5 else "medium",
         })
-        await db.execute(
-            text("UPDATE feature_requests SET status = 'accepted', assigned_agent_id = :aid WHERE id = :id"),
-            {"aid": agent_id, "id": fr["id"]},
-        )
-    
+        await agent_repo.accept_feature_request(db, fr["id"], agent_id)
+
     # Bug reports
     if len(tasks) < body.current_capacity:
-        bugs_result = await db.execute(
-            text("""
-                SELECT br.id, br.title, br.description, br.severity, br.project_id
-                FROM bug_reports br
-                JOIN projects p ON p.id = br.project_id
-                WHERE br.status = 'open' AND p.creator_agent_id = :agent_id
-                ORDER BY CASE br.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END
-                LIMIT :limit
-            """),
-            {"agent_id": agent_id, "limit": body.current_capacity - len(tasks)},
-        )
-        for bug in bugs_result.mappings():
+        bugs = await agent_repo.get_bug_reports_for_agent(db, agent_id, body.current_capacity - len(tasks))
+        for bug in bugs:
             tasks.append({
                 "type": "fix_bug",
                 "id": str(bug["id"]),
@@ -999,76 +790,38 @@ async def agent_heartbeat(
                 "description": bug["description"],
                 "severity": bug["severity"],
             })
-            await db.execute(
-                text("UPDATE bug_reports SET status = 'in_progress', assigned_agent_id = :aid WHERE id = :id"),
-                {"aid": agent_id, "id": bug["id"]},
-            )
-    
+            await agent_repo.assign_bug_report(db, bug["id"], agent_id)
+
     # Фидбэк от людей
-    comments_result = await db.execute(
-        text("""
-            SELECT pc.content, u.name as user_name, p.title as project_title, pc.created_at
-            FROM project_comments pc
-            JOIN users u ON u.id = pc.user_id
-            JOIN projects p ON p.id = pc.project_id
-            WHERE p.creator_agent_id = :agent_id
-            ORDER BY pc.created_at DESC LIMIT 10
-        """),
-        {"agent_id": agent_id},
-    )
+    comments_raw = await agent_repo.get_project_comments_for_agent(db, agent_id)
     feedback = [
         {"type": "comment", "content": c["content"], "user": c["user_name"],
          "project": c["project_title"], "timestamp": str(c["created_at"])}
-        for c in comments_result.mappings()
+        for c in comments_raw
     ]
 
     # Notification tasks — направленные уведомления от других агентов/людей
-    notif_result = await db.execute(
-        text("""
-            SELECT t.id, t.type, t.title, t.project_id, t.source_ref, t.source_key,
-                   t.priority, t.created_at,
-                   a.handle as from_handle, a.name as from_name
-            FROM tasks t
-            LEFT JOIN agents a ON a.id = t.created_by_agent_id
-            WHERE t.assigned_to_agent_id = :agent_id AND t.status = 'pending'
-            ORDER BY
-                CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
-                t.created_at
-            LIMIT 20
-        """),
-        {"agent_id": agent_id},
-    )
+    notif_raw = await agent_repo.get_pending_notifications(db, agent_id)
     notifications = [
         {
             "id": str(n["id"]),
             "type": n["type"],
             "title": n["title"],
             "project_id": str(n["project_id"]) if n["project_id"] else None,
-            "source_ref": n["source_ref"],   # прямая ссылка на GitHub
-            "source_key": n["source_key"],   # для dedup при ответе
+            "source_ref": n["source_ref"],
+            "source_key": n["source_key"],
             "priority": n["priority"],
             "from": f"@{n['from_handle']}" if n["from_handle"] else n["from_name"] or "system",
             "created_at": str(n["created_at"]),
         }
-        for n in notif_result.mappings()
+        for n in notif_raw
     ]
 
     # Direct messages — непрочитанные личные сообщения
-    dm_result = await db.execute(
-        text("""
-            SELECT d.id, d.content, d.from_agent_id, d.human_name, d.created_at,
-                   a.name as from_agent_name, a.handle as from_agent_handle
-            FROM agent_dms d
-            LEFT JOIN agents a ON a.id = d.from_agent_id
-            WHERE d.to_agent_id = :agent_id AND d.is_read = FALSE
-            ORDER BY d.created_at
-            LIMIT 20
-        """),
-        {"agent_id": agent_id},
-    )
+    dm_raw = await agent_repo.get_unread_dms(db, agent_id)
     direct_messages = []
     dm_ids = []
-    for dm in dm_result.mappings():
+    for dm in dm_raw:
         dm_ids.append(str(dm["id"]))
         direct_messages.append({
             "id": str(dm["id"]),
@@ -1079,13 +832,7 @@ async def agent_heartbeat(
         })
 
     # Пометить как прочитанные
-    if dm_ids:
-        placeholders = ", ".join(f":id_{i}" for i in range(len(dm_ids)))
-        params = {f"id_{i}": uid for i, uid in enumerate(dm_ids)}
-        await db.execute(
-            text(f"UPDATE agent_dms SET is_read = TRUE WHERE id IN ({placeholders})"),
-            params,
-        )
+    await agent_repo.mark_dms_read(db, dm_ids)
 
     await _log_activity(db, redis, agent_id, "heartbeat", f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, {len(direct_messages)} DMs")
 
@@ -1110,15 +857,7 @@ async def complete_notification(
     db: AsyncSession = Depends(get_db),
 ):
     """Агент отмечает notification-задачу как выполненную (не переотправлять)."""
-    await db.execute(
-        text("""
-            UPDATE tasks SET status = 'completed', completed_at = NOW()
-            WHERE id = :task_id
-              AND assigned_to_agent_id = :agent_id
-              AND status = 'pending'
-        """),
-        {"task_id": task_id, "agent_id": agent["id"]},
-    )
+    await agent_repo.complete_notification_by_id(db, task_id, agent["id"])
     await db.commit()
     return {"status": "ok"}
 
@@ -1163,25 +902,11 @@ async def create_project(
                 logger.warning("add_repo_collaborator failed for %s/%s: %s", body.title, github_login, e)
 
     # Fetch owner user for README provenance
-    owner_row = await db.execute(
-        text("""
-            SELECT u.name as owner_name
-            FROM agents a
-            LEFT JOIN users u ON u.id = a.owner_user_id
-            WHERE a.id = :aid
-        """),
-        {"aid": agent_id},
-    )
-    owner_info = owner_row.mappings().first()
-    owner_name = owner_info["owner_name"] if owner_info else None
+    owner_name = await agent_repo.get_project_owner_name(db, agent_id)
 
     # Validate hackathon status — only 'active' hackathons accept submissions
     if body.hackathon_id:
-        h_row = await db.execute(
-            text("SELECT status FROM hackathons WHERE id = :hid"),
-            {"hid": body.hackathon_id},
-        )
-        h = h_row.mappings().first()
+        h = await agent_repo.get_hackathon_status(db, body.hackathon_id)
         if not h:
             raise HTTPException(status_code=404, detail="Hackathon not found")
         if h["status"] != "active":
@@ -1190,17 +915,11 @@ async def create_project(
                 detail=f"Cannot submit to hackathon with status '{h['status']}' — only 'active' hackathons accept projects",
             )
 
-    await db.execute(
-        text("""
-            INSERT INTO projects (id, title, description, category, creator_agent_id, tech_stack, status, repo_url, hackathon_id, vcs_provider)
-            VALUES (:id, :title, :desc, :cat, :agent_id, :stack, 'building', :git_url, :hackathon_id, :vcs)
-        """),
-        {
-            "id": project_id, "title": body.title, "desc": body.description,
-            "cat": body.category, "agent_id": agent_id, "stack": body.tech_stack,
-            "git_url": git_repo_url, "hackathon_id": body.hackathon_id, "vcs": vcs,
-        },
-    )
+    await agent_repo.insert_project(db, {
+        "id": project_id, "title": body.title, "desc": body.description,
+        "cat": body.category, "agent_id": agent_id, "stack": body.tech_stack,
+        "git_url": git_repo_url, "hackathon_id": body.hackathon_id, "vcs": vcs,
+    })
 
     # Push provenance README.md to the GitHub repo
     if git_repo_url:
@@ -1225,10 +944,7 @@ async def create_project(
         if not readme_ok:
             logger.warning("README push failed for project %s", project_id)
 
-    await db.execute(
-        text("UPDATE agents SET projects_created = projects_created + 1, karma = karma + 20 WHERE id = :id"),
-        {"id": agent_id},
-    )
+    await agent_repo.increment_projects_created(db, agent_id)
 
     # Deploy ERC-20 token for the project (non-blocking; skip on error)
     try:
@@ -1239,21 +955,13 @@ async def create_project(
         if contract_address:
             words = body.title.upper().split()
             symbol = "".join(w[0] for w in words if w)[:6] or "SPORE"
-            await db.execute(
-                text("""
-                    INSERT INTO project_tokens (project_id, chain_id, contract_address, token_symbol, deploy_tx_hash)
-                    VALUES (:pid, 8453, :addr, :sym, :tx)
-                    ON CONFLICT (project_id) DO NOTHING
-                """),
-                {"pid": project_id, "addr": contract_address, "sym": symbol, "tx": deploy_tx or None},
-            )
+            await agent_repo.insert_project_token(db, project_id, contract_address, symbol, deploy_tx or None)
     except Exception as exc:
         logger.warning("Token deploy failed for project %s: %s", project_id, exc)
 
     await _log_activity(db, redis, agent_id, "project_created", f"Created: {body.title}", project_id=project_id)
 
-    result = await db.execute(text("SELECT * FROM projects WHERE id = :id"), {"id": project_id})
-    project = result.mappings().first()
+    project = await agent_repo.get_project_full(db, project_id)
     return _project_response(project)
 
 
@@ -1277,14 +985,10 @@ async def list_projects(
 
     if mine is True and x_api_key:
         key_hash = _hash_api_key(x_api_key)
-        agent_row = await db.execute(
-            text("SELECT id FROM agents WHERE api_key_hash = :hash AND is_active = TRUE"),
-            {"hash": key_hash},
-        )
-        agent_row_data = agent_row.mappings().first()
-        if agent_row_data:
+        agent_id = await agent_repo.get_agent_id_by_api_key_hash(db, key_hash)
+        if agent_id:
             where.append("p.creator_agent_id = :mine_agent_id")
-            params["mine_agent_id"] = agent_row_data["id"]
+            params["mine_agent_id"] = agent_id
 
     if category:
         where.append("p.category = :category")
@@ -1297,24 +1001,12 @@ async def list_projects(
         params["tech"] = tech_stack
     if needs_review is True:
         where.append("NOT EXISTS (SELECT 1 FROM code_reviews cr WHERE cr.project_id = p.id)")
-        # Проект с кодом: есть code_files ИЛИ есть repo_url (код пушится напрямую в VCS)
         where.append("(EXISTS (SELECT 1 FROM code_files cf WHERE cf.project_id = p.id) OR p.repo_url IS NOT NULL)")
     if has_open_issues is True:
         where.append("EXISTS (SELECT 1 FROM bug_reports br WHERE br.project_id = p.id AND br.status = 'open')")
 
     where_clause = " AND ".join(where)
-    result = await db.execute(
-        text(f"""
-            SELECT p.id, p.title, p.description, p.status, p.repo_url,
-                   p.category, p.tech_stack, p.created_at,
-                   p.creator_agent_id, a.handle as creator_handle, a.name as creator_name
-            FROM projects p
-            LEFT JOIN agents a ON a.id = p.creator_agent_id
-            WHERE {where_clause}
-            ORDER BY p.created_at DESC LIMIT :limit
-        """),
-        params,
-    )
+    rows = await agent_repo.list_agent_projects(db, where_clause, params)
     return [
         {
             "id": str(r["id"]),
@@ -1328,7 +1020,7 @@ async def list_projects(
             "creator_handle": r["creator_handle"] or "",
             "creator_name": r["creator_name"] or "",
         }
-        for r in result.mappings()
+        for r in rows
     ]
 
 
@@ -1343,24 +1035,12 @@ async def get_project_files(
     Приоритет: code_files таблица → GitHub/GitLab API (fallback).
     """
     # 1. Попробовать из code_files таблицы
-    result = await db.execute(
-        text("""
-            SELECT DISTINCT ON (path) path, content, language, version
-            FROM code_files WHERE project_id = :pid
-            ORDER BY path, version DESC
-        """),
-        {"pid": project_id},
-    )
-    db_files = [dict(f) for f in result.mappings()]
+    db_files = await agent_repo.get_project_code_files(db, project_id)
     if db_files:
         return db_files
 
     # 2. Fallback: подтянуть из VCS (GitHub/GitLab)
-    proj = await db.execute(
-        text("SELECT title, repo_url, vcs_provider FROM projects WHERE id = :pid"),
-        {"pid": project_id},
-    )
-    project = proj.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title, repo_url, vcs_provider")
     if not project or not project["repo_url"]:
         return []
 
@@ -1403,24 +1083,7 @@ async def get_project_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """Получить фидбэк от людей (для автономной итерации агентом)."""
-    features = await db.execute(
-        text("SELECT id, title, description, votes, status FROM feature_requests WHERE project_id = :pid AND status IN ('proposed', 'accepted') ORDER BY votes DESC"),
-        {"pid": project_id},
-    )
-    bugs = await db.execute(
-        text("SELECT id, title, description, severity, status FROM bug_reports WHERE project_id = :pid AND status IN ('open', 'in_progress') ORDER BY severity"),
-        {"pid": project_id},
-    )
-    comments = await db.execute(
-        text("SELECT pc.content, u.name as user_name, pc.created_at FROM project_comments pc JOIN users u ON u.id = pc.user_id WHERE pc.project_id = :pid ORDER BY pc.created_at DESC LIMIT 20"),
-        {"pid": project_id},
-    )
-    
-    return {
-        "feature_requests": [dict(f) for f in features.mappings()],
-        "bug_reports": [dict(b) for b in bugs.mappings()],
-        "recent_comments": [dict(c) for c in comments.mappings()],
-    }
+    return await agent_repo.get_project_feedback(db, project_id)
 
 
 @router.post("/projects/{project_id}/reviews")
@@ -1433,38 +1096,21 @@ async def create_review(
 ):
     """Агент создаёт code review. Найденные проблемы (high/critical) → GitHub Issues."""
     review_id = uuid4()
-    await db.execute(
-        text("INSERT INTO code_reviews (id, project_id, reviewer_agent_id, status, summary, model_used) VALUES (:id, :pid, :aid, :st, :sum, :model)"),
-        {"id": review_id, "pid": project_id, "aid": agent["id"], "st": body.status, "sum": body.summary, "model": body.model_used},
-    )
+    await agent_repo.insert_code_review(db, review_id, project_id, agent["id"], body.status, body.summary, body.model_used)
 
     # Фиксируем использование модели в статистике
     if body.model_used:
-        await db.execute(
-            text("""
-                INSERT INTO agent_model_usage (agent_id, model, task_type, ref_id, ref_type)
-                VALUES (:agent_id, :model, 'review', :ref_id, 'review')
-            """),
-            {"agent_id": agent["id"], "model": body.model_used, "ref_id": review_id},
-        )
+        await agent_repo.insert_model_usage(db, agent["id"], body.model_used, "review", review_id, "review")
+
     for c in body.comments:
-        await db.execute(
-            text("INSERT INTO review_comments (review_id, file_path, line_number, comment, suggestion) VALUES (:rid, :fp, :ln, :c, :s)"),
-            {"rid": review_id, "fp": c.get("file_path"), "ln": c.get("line_number"), "c": c.get("comment", ""), "s": c.get("suggestion")},
-        )
-    await db.execute(
-        text("UPDATE agents SET reviews_done = reviews_done + 1, karma = karma + 5 WHERE id = :id"),
-        {"id": agent["id"]},
-    )
+        await agent_repo.insert_review_comment(db, review_id, c.get("file_path"), c.get("line_number"), c.get("comment", ""), c.get("suggestion"))
+
+    await agent_repo.increment_reviews_done(db, agent["id"])
 
     # Создаём GitHub Issues для серьёзных проблем
     issues_created = []
     if body.status in ("needs_changes", "rejected") and body.comments:
-        project_row = await db.execute(
-            text("SELECT title, repo_url, creator_agent_id FROM projects WHERE id = :id"),
-            {"id": project_id},
-        )
-        project = project_row.mappings().first()
+        project = await agent_repo.get_project_for_review(db, project_id)
         repo_url = project["repo_url"] if project else None
 
         if repo_url:
@@ -1552,11 +1198,7 @@ async def deploy_project(
     redis: aioredis.Redis = Depends(get_redis),
 ):
     """Агент деплоит проект. Если настроен Render — реальный деплой."""
-    result = await db.execute(
-        text("SELECT id, title, repo_url FROM projects WHERE id = :id"),
-        {"id": project_id},
-    )
-    project = result.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "id, title, repo_url")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1577,10 +1219,7 @@ async def deploy_project(
         except Exception as e:
             logger.warning("Render deploy failed for '%s': %s (using fallback URL)", project["title"], e)
 
-    await db.execute(
-        text("UPDATE projects SET status = 'deployed', deploy_url = :url, preview_url = :url WHERE id = :id"),
-        {"url": deploy_url, "id": project_id},
-    )
+    await agent_repo.update_project_deployed(db, project_id, deploy_url)
     await _log_activity(
         db, redis, agent["id"], "deploy",
         f"Deployed to {deploy_url}",
@@ -1624,13 +1263,11 @@ async def update_agent_dna(
         # Only allow known fields to prevent injection
         safe_keys = [k for k in updates if k in ALLOWED_DNA_FIELDS]
         if safe_keys:
-            set_clause = ", ".join(f"{k} = :{k}" for k in safe_keys)
-            updates["id"] = agent_id
-            await db.execute(text(f"UPDATE agents SET {set_clause} WHERE id = :id"), updates)
+            await agent_repo.update_agent_dna(db, agent_id, safe_keys, updates)
         await _log_activity(db, redis, agent_id, "dna_updated", "Agent DNA updated")
 
-    result = await db.execute(text("SELECT * FROM agents WHERE id = :id"), {"id": agent_id})
-    return _agent_profile(result.mappings().first())
+    result = await agent_repo.get_agent_by_id(db, agent_id)
+    return _agent_profile(result)
 
 
 # ==========================================
@@ -1654,11 +1291,7 @@ async def list_my_issues(
     Возвращает issues из всех проектов, созданных этим агентом,
     с прямыми ссылками на GitHub. Не требует знания GitHub API.
     """
-    result = await db.execute(
-        text("SELECT id, title FROM projects WHERE creator_agent_id = :aid ORDER BY created_at DESC LIMIT :limit"),
-        {"aid": agent["id"], "limit": limit},
-    )
-    projects = list(result.mappings())
+    projects = await agent_repo.get_agent_project_ids(db, agent["id"], limit)
 
     git = get_git_service()
     all_issues = []
@@ -1695,8 +1328,7 @@ async def list_issue_comments(
     Возвращает список комментариев с автором, типом (Bot/User), датой и прямой ссылкой.
     Используйте author_type == 'User' чтобы отфильтровать человеческие комментарии.
     """
-    row = await db.execute(text("SELECT title FROM projects WHERE id = :id"), {"id": project_id})
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1719,8 +1351,7 @@ async def post_issue_comment(
     db: AsyncSession = Depends(get_db),
 ):
     """Оставить комментарий на GitHub/GitLab Issue от имени пользователя-владельца агента."""
-    row = await db.execute(text("SELECT title, repo_url FROM projects WHERE id = :id"), {"id": project_id})
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title, repo_url")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1749,11 +1380,7 @@ async def get_project_git_token(
     1. OAuth-токен пользователя (коммиты от имени пользователя)
     2. App JWT (агент обменивает на scoped installation token — agentspore[bot])
     """
-    row = await db.execute(
-        text("SELECT title, repo_url, vcs_provider FROM projects WHERE id = :id"),
-        {"id": project_id},
-    )
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title, repo_url, vcs_provider")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if project["vcs_provider"] != "github":
@@ -1794,11 +1421,7 @@ async def merge_project_pr(
     if not pr_number or not isinstance(pr_number, int):
         raise HTTPException(status_code=422, detail="pr_number (int) is required")
 
-    row = await db.execute(
-        text("SELECT title, creator_agent_id, vcs_provider FROM projects WHERE id = :id"),
-        {"id": project_id},
-    )
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title, creator_agent_id, vcs_provider")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1824,26 +1447,14 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
 ):
     """Удалить проект. Только владелец проекта может удалять."""
-    row = await db.execute(
-        text("SELECT title, creator_agent_id, repo_url, vcs_provider FROM projects WHERE id = :id"),
-        {"id": project_id},
-    )
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title, creator_agent_id, repo_url, vcs_provider")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     if str(project["creator_agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=403, detail="Only project creator can delete projects")
 
-    # Удалить связанные данные (hardcoded table names — safe from injection)
-    RELATED_TABLES = ("project_contributors", "code_reviews", "agent_activity", "governance_queue", "tasks")
-    for table in RELATED_TABLES:
-        await db.execute(
-            text(f"DELETE FROM {table} WHERE project_id = :id"),  # noqa: S608 — table name from constant
-            {"id": project_id},
-        )
-
-    await db.execute(text("DELETE FROM projects WHERE id = :id"), {"id": project_id})
+    await agent_repo.delete_project_and_related(db, project_id)
     await db.commit()
 
     # Удалить GitHub репо (best effort)
@@ -1858,10 +1469,7 @@ async def delete_project(
             pass  # Не критично — репо можно удалить вручную
 
     # Обновить статистику агента
-    await db.execute(
-        text("UPDATE agents SET projects_created = (SELECT COUNT(*) FROM projects WHERE creator_agent_id = :aid) WHERE id = :aid"),
-        {"aid": agent["id"]},
-    )
+    await agent_repo.recount_agent_projects(db, agent["id"])
     await db.commit()
 
     return {
@@ -1880,10 +1488,7 @@ async def list_project_issues(
     db: AsyncSession = Depends(get_db),
 ):
     """Список GitHub/GitLab Issues проекта. Агент может видеть открытые баги и задачи."""
-    row = await db.execute(
-        text("SELECT title, repo_url, vcs_provider FROM projects WHERE id = :id"), {"id": project_id}
-    )
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title, repo_url, vcs_provider")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1910,10 +1515,7 @@ async def list_project_pull_requests(
     db: AsyncSession = Depends(get_db),
 ):
     """Список Pull Requests / Merge Requests репозитория проекта."""
-    row = await db.execute(
-        text("SELECT title, vcs_provider FROM projects WHERE id = :id"), {"id": project_id}
-    )
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title, vcs_provider")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -1941,11 +1543,7 @@ async def list_my_prs(
     Возвращает PRs из всех проектов, созданных этим агентом,
     с прямыми ссылками на GitHub. Не требует знания GitHub API.
     """
-    result = await db.execute(
-        text("SELECT id, title FROM projects WHERE creator_agent_id = :aid ORDER BY created_at DESC LIMIT :limit"),
-        {"aid": agent["id"], "limit": limit},
-    )
-    projects = list(result.mappings())
+    projects = await agent_repo.get_agent_project_ids(db, agent["id"], limit)
 
     git = get_git_service()
     all_prs = []
@@ -1982,8 +1580,7 @@ async def list_pr_comments(
     Возвращает список комментариев с автором, типом (Bot/User), датой и прямой ссылкой.
     Используйте author_type == 'User' чтобы отфильтровать человеческие комментарии.
     """
-    row = await db.execute(text("SELECT title FROM projects WHERE id = :id"), {"id": project_id})
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -2010,8 +1607,7 @@ async def list_pr_review_comments(
     Каждый комментарий содержит path (файл), line (строка), body, author.
     Используйте для понимания что именно нужно исправить в коде.
     """
-    row = await db.execute(text("SELECT title FROM projects WHERE id = :id"), {"id": project_id})
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -2038,8 +1634,7 @@ async def list_project_commits(
     db: AsyncSession = Depends(get_db),
 ):
     """История коммитов проекта из GitHub."""
-    row = await db.execute(text("SELECT title FROM projects WHERE id = :id"), {"id": project_id})
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -2057,8 +1652,7 @@ async def get_project_file(
     db: AsyncSession = Depends(get_db),
 ):
     """Получить содержимое конкретного файла из GitHub репозитория."""
-    row = await db.execute(text("SELECT title FROM projects WHERE id = :id"), {"id": project_id})
-    project = row.mappings().first()
+    project = await agent_repo.get_project_basic(db, project_id, "title")
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -2092,21 +1686,7 @@ async def list_tasks(
         params["project_id"] = project_id
 
     where_clause = " AND ".join(where)
-    result = await db.execute(
-        text(f"""
-            SELECT t.id, t.project_id, t.type, t.title, t.description,
-                   t.priority, t.status, t.source_type, t.created_at,
-                   p.title as project_title
-            FROM tasks t
-            LEFT JOIN projects p ON p.id = t.project_id
-            WHERE {where_clause}
-            ORDER BY
-                CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
-                t.created_at ASC
-            LIMIT :limit
-        """),
-        params,
-    )
+    rows = await agent_repo.list_open_tasks(db, where_clause, params)
     return [
         {
             "id": str(r["id"]),
@@ -2120,7 +1700,7 @@ async def list_tasks(
             "source_type": r["source_type"],
             "created_at": str(r["created_at"]),
         }
-        for r in result.mappings()
+        for r in rows
     ]
 
 
@@ -2132,21 +1712,13 @@ async def claim_task(
     redis: aioredis.Redis = Depends(get_redis),
 ):
     """Взять задачу. Задача переходит в статус 'claimed'. Другие агенты не могут взять."""
-    row = await db.execute(text("SELECT * FROM tasks WHERE id = :id"), {"id": task_id})
-    task = row.mappings().first()
+    task = await agent_repo.get_task_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if task["status"] != "open":
         raise HTTPException(status_code=409, detail=f"Task is already '{task['status']}'")
 
-    await db.execute(
-        text("""
-            UPDATE tasks
-            SET status = 'claimed', claimed_by_agent_id = :agent_id, claimed_at = NOW(), updated_at = NOW()
-            WHERE id = :id AND status = 'open'
-        """),
-        {"id": task_id, "agent_id": agent["id"]},
-    )
+    await agent_repo.claim_task(db, task_id, agent["id"])
     await _log_activity(
         db, redis, agent["id"], "task_claimed",
         f"Agent '{agent['name']}' claimed task: {task['title']}",
@@ -2165,8 +1737,7 @@ async def complete_task(
     redis: aioredis.Redis = Depends(get_redis),
 ):
     """Завершить задачу. Только агент, взявший задачу, может её завершить."""
-    row = await db.execute(text("SELECT * FROM tasks WHERE id = :id"), {"id": task_id})
-    task = row.mappings().first()
+    task = await agent_repo.get_task_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if str(task["claimed_by_agent_id"]) != str(agent["id"]):
@@ -2174,18 +1745,8 @@ async def complete_task(
     if task["status"] not in ("claimed",):
         raise HTTPException(status_code=409, detail=f"Task is '{task['status']}', cannot complete")
 
-    await db.execute(
-        text("""
-            UPDATE tasks
-            SET status = 'completed', result = :result, completed_at = NOW(), updated_at = NOW()
-            WHERE id = :id
-        """),
-        {"id": task_id, "result": body.result},
-    )
-    await db.execute(
-        text("UPDATE agents SET karma = karma + 15 WHERE id = :id"),
-        {"id": agent["id"]},
-    )
+    await agent_repo.complete_task(db, task_id, body.result)
+    await agent_repo.add_karma(db, agent["id"], 15)
     await _log_activity(
         db, redis, agent["id"], "task_completed",
         f"Agent '{agent['name']}' completed task: {task['title']}",
@@ -2202,21 +1763,13 @@ async def unclaim_task(
     db: AsyncSession = Depends(get_db),
 ):
     """Вернуть задачу в очередь. Если агент не справляется."""
-    row = await db.execute(text("SELECT * FROM tasks WHERE id = :id"), {"id": task_id})
-    task = row.mappings().first()
+    task = await agent_repo.get_task_by_id(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if str(task["claimed_by_agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=403, detail="Only the claiming agent can unclaim this task")
 
-    await db.execute(
-        text("""
-            UPDATE tasks
-            SET status = 'open', claimed_by_agent_id = NULL, claimed_at = NULL, updated_at = NOW()
-            WHERE id = :id
-        """),
-        {"id": task_id},
-    )
+    await agent_repo.unclaim_task(db, task_id)
     return {"status": "open", "task_id": str(task_id), "message": "Task returned to queue"}
 
 
@@ -2234,19 +1787,8 @@ async def agent_leaderboard(
         "commits": "code_commits DESC",
     }
     order_clause = ALLOWED_ORDER[sort]  # sort is Literal, safe
-    params: dict = {"limit": limit}
-    if specialization:
-        query = text(
-            "SELECT * FROM agents WHERE is_active = TRUE AND specialization = :spec"
-            f" ORDER BY {order_clause} LIMIT :limit"
-        )
-        params["spec"] = specialization
-    else:
-        query = text(
-            f"SELECT * FROM agents WHERE is_active = TRUE ORDER BY {order_clause} LIMIT :limit"
-        )
-    result = await db.execute(query, params)
-    return [_agent_profile(a) for a in result.mappings()]
+    rows = await agent_repo.get_leaderboard(db, order_clause, specialization, limit)
+    return [_agent_profile(a) for a in rows]
 
 
 @router.get("/stats", response_model=PlatformStats)
@@ -2260,19 +1802,8 @@ async def get_platform_stats(
     if cached:
         return PlatformStats(**json.loads(cached))
 
-    result = await db.execute(text("""
-        SELECT
-            (SELECT COUNT(*) FROM agents) as total_agents,
-            (SELECT COUNT(*) FROM agents WHERE is_active = TRUE) as active_agents,
-            (SELECT COUNT(*) FROM projects) as total_projects,
-            (SELECT COALESCE(SUM(code_commits), 0) FROM agents) as total_code_commits,
-            (SELECT COALESCE(SUM(reviews_done), 0) FROM agents) as total_reviews,
-            (SELECT COUNT(*) FROM projects WHERE status = 'deployed') as total_deploys,
-            (SELECT COUNT(*) FROM feature_requests) as total_feature_requests,
-            (SELECT COUNT(*) FROM bug_reports) as total_bug_reports
-    """))
-    row = result.mappings().first()
-    stats = PlatformStats(**dict(row))
+    row = await agent_repo.get_platform_stats(db)
+    stats = PlatformStats(**row)
     await redis.setex(cache_key, 30, stats.model_dump_json())
     return stats
 
@@ -2287,21 +1818,7 @@ async def get_agent_model_usage(
     Показывает какие LLM использовал агент, для каких задач и сколько раз.
     Полезно когда один агент работает с разными моделями (fast/standard/strong).
     """
-    result = await db.execute(
-        text("""
-            SELECT
-                model,
-                task_type,
-                COUNT(*) AS call_count,
-                MAX(created_at) AS last_used
-            FROM agent_model_usage
-            WHERE agent_id = :agent_id
-            GROUP BY model, task_type
-            ORDER BY call_count DESC
-        """),
-        {"agent_id": agent_id},
-    )
-    rows = result.mappings().all()
+    rows = await agent_repo.get_model_usage(db, agent_id)
 
     total_calls = sum(r["call_count"] for r in rows)
     unique_models = len({r["model"] for r in rows})
@@ -2350,20 +1867,7 @@ async def get_agent_github_activity(
         types_sql = ", ".join(f"'{t}'" for t in github_types)
         where.append(f"aa.action_type IN ({types_sql})")
 
-    result = await db.execute(
-        text(f"""
-            SELECT aa.id, aa.action_type, aa.description, aa.metadata,
-                   aa.project_id, aa.created_at,
-                   p.title AS project_title, p.repo_url AS project_repo_url
-            FROM agent_activity aa
-            LEFT JOIN projects p ON p.id = aa.project_id
-            WHERE {" AND ".join(where)}
-            ORDER BY aa.created_at DESC
-            LIMIT :limit
-        """),
-        params,
-    )
-    rows = result.mappings().all()
+    rows = await agent_repo.get_github_activity(db, " AND ".join(where), params)
 
     items = []
     for row in rows:
@@ -2397,8 +1901,7 @@ async def get_agent_profile_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """Публичный профиль агента."""
-    result = await db.execute(text("SELECT * FROM agents WHERE id = :id"), {"id": agent_id})
-    agent = result.mappings().first()
+    agent = await agent_repo.get_agent_by_id(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return _agent_profile(agent)
@@ -2465,13 +1968,7 @@ async def reinvite_github_users(
     Полезно после добавления members:write permission в GitHub App.
     Не требует аутентификации — предназначен для одноразового вызова.
     """
-    rows = await db.execute(
-        text(
-            "SELECT id, github_user_login FROM agents "
-            "WHERE github_oauth_token IS NOT NULL AND github_user_login IS NOT NULL"
-        )
-    )
-    agents_to_invite = rows.mappings().all()
+    agents_to_invite = await agent_repo.get_agents_with_github(db)
 
     if not agents_to_invite:
         return {"invited": 0, "details": "No agents with GitHub connected"}

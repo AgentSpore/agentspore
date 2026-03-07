@@ -26,10 +26,10 @@ import logging
 import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.repositories import agent_repo, webhook_repo
 from app.api.v1.agents import (
     _cancel_notification_tasks,
     _complete_notification_tasks,
@@ -80,14 +80,8 @@ async def _award_contribution_points(
     if files_changed <= 0:
         return
 
-    login_field = "gitlab_user_login" if vcs == "gitlab" else "github_user_login"
     login_value = gitlab_login if vcs == "gitlab" else github_login
-
-    agent_row = await db.execute(
-        text(f"SELECT id, owner_user_id FROM agents WHERE {login_field} = :login AND is_active = TRUE LIMIT 1"),
-        {"login": login_value},
-    )
-    agent = agent_row.mappings().first()
+    agent = await webhook_repo.get_agent_by_vcs_login(db, login_value, vcs)
     if not agent:
         return  # внешний пользователь — не агент
 
@@ -95,49 +89,12 @@ async def _award_contribution_points(
     owner_user_id = agent["owner_user_id"]
     contribution_points = files_changed * 10
 
-    await db.execute(
-        text("UPDATE agents SET code_commits = code_commits + 1, karma = karma + 10 WHERE id = :id"),
-        {"id": agent_id},
-    )
-
-    await db.execute(
-        text("""
-            INSERT INTO project_contributors (project_id, agent_id, owner_user_id, contribution_points, tokens_minted)
-            VALUES (:pid, :aid, :uid, :pts, 0)
-            ON CONFLICT (project_id, agent_id)
-            DO UPDATE SET
-                contribution_points = project_contributors.contribution_points + EXCLUDED.contribution_points,
-                owner_user_id = COALESCE(EXCLUDED.owner_user_id, project_contributors.owner_user_id),
-                updated_at = NOW()
-        """),
-        {"pid": project_id, "aid": agent_id, "uid": owner_user_id, "pts": contribution_points},
-    )
-
-    await db.execute(
-        text("""
-            UPDATE project_contributors pc
-            SET share_pct = ROUND(
-                pc.contribution_points * 100.0 /
-                NULLIF((SELECT SUM(contribution_points) FROM project_contributors WHERE project_id = :pid), 0),
-                2
-            )
-            WHERE pc.project_id = :pid
-        """),
-        {"pid": project_id},
-    )
+    await webhook_repo.increment_commits_and_karma(db, agent_id)
+    await webhook_repo.upsert_contributor_points(db, project_id, agent_id, owner_user_id, contribution_points)
+    await webhook_repo.recalculate_share_pct(db, project_id)
 
     # Mint tokens if owner has a wallet
-    wallet_row = await db.execute(
-        text("""
-            SELECT u.wallet_address, pt.contract_address
-            FROM agents a
-            LEFT JOIN users u ON u.id = a.owner_user_id
-            LEFT JOIN project_tokens pt ON pt.project_id = :pid
-            WHERE a.id = :aid
-        """),
-        {"pid": project_id, "aid": agent_id},
-    )
-    wallet_info = wallet_row.fetchone()
+    wallet_info = await webhook_repo.get_wallet_and_contract(db, project_id, agent_id)
     if wallet_info and wallet_info.wallet_address and wallet_info.contract_address:
         try:
             from app.services.web3_service import get_web3_service
@@ -149,18 +106,8 @@ async def _award_contribution_points(
                 reason=f"push:{files_changed}_files",
             )
             if mint_tx:
-                await db.execute(
-                    text("""
-                        UPDATE project_contributors
-                        SET tokens_minted = tokens_minted + :pts
-                        WHERE project_id = :pid AND agent_id = :aid
-                    """),
-                    {"pts": contribution_points, "pid": project_id, "aid": agent_id},
-                )
-                await db.execute(
-                    text("UPDATE project_tokens SET total_minted = total_minted + :pts WHERE project_id = :pid"),
-                    {"pts": contribution_points, "pid": project_id},
-                )
+                await webhook_repo.increment_tokens_minted(db, project_id, agent_id, contribution_points)
+                await webhook_repo.increment_project_total_minted(db, project_id, contribution_points)
         except Exception as exc:
             logger.warning("Token mint failed for project %s agent %s: %s", project_id, agent_id, exc)
 
@@ -186,39 +133,12 @@ async def _add_to_governance_queue(
 
     Возвращает True если запись создана, False если дубль.
     """
-    # Dedup check (separate query avoids asyncpg AmbiguousParameterError with WHERE NOT EXISTS)
-    existing = await db.execute(
-        text("""
-            SELECT 1 FROM governance_queue
-            WHERE project_id = :pid
-              AND action_type = :action_type
-              AND source_number IS NOT DISTINCT FROM :source_number
-              AND status = 'pending'
-        """),
-        {"pid": project_id, "action_type": action_type, "source_number": source_number},
-    )
-    if existing.first():
+    if await webhook_repo.governance_item_exists(db, project_id, action_type, source_number):
         return False
 
-    await db.execute(
-        text("""
-            INSERT INTO governance_queue
-                (project_id, action_type, source_ref, source_number,
-                 actor_login, actor_type, meta, votes_required)
-            VALUES
-                (:pid, :action_type, :source_ref, :source_number,
-                 :actor_login, :actor_type, CAST(:meta AS jsonb), :votes_req)
-        """),
-        {
-            "pid": project_id,
-            "action_type": action_type,
-            "source_ref": source_ref,
-            "source_number": source_number,
-            "actor_login": actor_login,
-            "actor_type": actor_type,
-            "meta": json.dumps(meta),
-            "votes_req": votes_required,
-        },
+    await webhook_repo.insert_governance_item(
+        db, project_id, action_type, source_ref, source_number,
+        actor_login, actor_type, meta, votes_required,
     )
     return True
 
@@ -264,17 +184,7 @@ async def github_webhook(
         return {"status": "ignored", "reason": "no repo"}
 
     # Найти проект по repo_url (case-insensitive — GitHub slugs могут быть в разном регистре)
-    project_row = await db.execute(
-        text("""
-            SELECT p.id, p.title, p.creator_agent_id
-            FROM projects p
-            WHERE LOWER(p.repo_url) LIKE LOWER(:slug_pattern)
-            ORDER BY p.created_at DESC
-            LIMIT 1
-        """),
-        {"slug_pattern": f"%/{repo_slug}"},
-    )
-    project = project_row.mappings().first()
+    project = await webhook_repo.find_project_by_repo_slug(db, repo_slug)
     if not project:
         return {"status": "ignored", "reason": "project not found"}
 
@@ -283,11 +193,7 @@ async def github_webhook(
     project_title = project["title"]
 
     # Кол-во contributor-ов → votes_required
-    cnt_row = await db.execute(
-        text("SELECT COUNT(*) as cnt FROM project_members WHERE project_id = :pid"),
-        {"pid": project_id},
-    )
-    contributor_count = cnt_row.mappings().first()["cnt"]
+    contributor_count = await webhook_repo.count_project_members(db, project_id)
     votes_required = max(1, min(2, contributor_count))
 
     sender = data.get("sender", {})
@@ -310,11 +216,7 @@ async def github_webhook(
         source_key = f"{project_id}:pr:{issue_number}" if is_pr else f"{project_id}:issue:{issue_number}"
 
         # Если комментатор — зарегистрированный агент, закрываем его pending-таск
-        agent_commenter = await db.execute(
-            text("SELECT id FROM agents WHERE github_user_login = :login AND is_active = TRUE LIMIT 1"),
-            {"login": sender_login},
-        )
-        commenter_agent = agent_commenter.mappings().first()
+        commenter_agent = await webhook_repo.get_agent_by_github_login(db, sender_login)
         completed_task = False
         if commenter_agent:
             await _complete_notification_tasks(db, commenter_agent["id"], source_key)
@@ -323,16 +225,7 @@ async def github_webhook(
         # Определить кого уведомить: создателя issue (из tasks) или owner проекта
         notify_agent_id = owner_id
         if not is_pr:
-            issue_creator_row = await db.execute(
-                text("""
-                    SELECT created_by_agent_id FROM tasks
-                    WHERE source_key = :sk AND type = 'respond_to_issue'
-                      AND created_by_agent_id IS NOT NULL
-                    LIMIT 1
-                """),
-                {"sk": source_key},
-            )
-            issue_creator = issue_creator_row.scalars().first()
+            issue_creator = await webhook_repo.get_issue_creator_agent(db, source_key)
             if issue_creator:
                 notify_agent_id = issue_creator
 
@@ -445,14 +338,7 @@ async def github_webhook(
         source_key = f"{project_id}:pr:{pr_number}"
 
         # Отменяем pending governance item и notification-таски для этого PR
-        await db.execute(
-            text("""
-                UPDATE governance_queue
-                SET status = :new_status, resolved_at = NOW()
-                WHERE project_id = :pid AND source_number = :pr_num AND status = 'pending'
-            """),
-            {"new_status": "approved" if merged else "rejected", "pid": project_id, "pr_num": pr_number},
-        )
+        await webhook_repo.resolve_governance_by_pr(db, project_id, pr_number, merged)
         await _cancel_notification_tasks(db, source_key=source_key)
 
         if merged and owner_id:
@@ -495,11 +381,7 @@ async def github_webhook(
             return {"status": "ignored", "reason": "pr_merge_commit"}
 
         # Проверяем: pusher — зарегистрированный агент?
-        agent_push_row = await db.execute(
-            text("SELECT id FROM agents WHERE github_user_login = :login AND is_active = TRUE LIMIT 1"),
-            {"login": sender_login},
-        )
-        is_agent_push = agent_push_row.mappings().first() is not None
+        is_agent_push = await webhook_repo.get_agent_by_github_login(db, sender_login) is not None
 
         if is_agent_push:
             # Считаем уникальные файлы по всем коммитам
@@ -600,18 +482,7 @@ async def gitlab_webhook(
         return {"status": "ignored", "reason": "no repo"}
 
     # Найти проект в БД по repo_url (GitLab URL содержит slug)
-    project_row = await db.execute(
-        text("""
-            SELECT p.id, p.title, p.creator_agent_id
-            FROM projects p
-            WHERE LOWER(p.repo_url) LIKE LOWER(:slug_pattern)
-              AND p.vcs_provider = 'gitlab'
-            ORDER BY p.created_at DESC
-            LIMIT 1
-        """),
-        {"slug_pattern": f"%/{repo_slug}"},
-    )
-    project = project_row.mappings().first()
+    project = await webhook_repo.find_project_by_repo_slug(db, repo_slug, vcs_provider="gitlab")
     if not project:
         return {"status": "ignored", "reason": "project not found"}
 
@@ -619,11 +490,7 @@ async def gitlab_webhook(
     project_id = project["id"]
     project_title = project["title"]
 
-    cnt_row = await db.execute(
-        text("SELECT COUNT(*) as cnt FROM project_members WHERE project_id = :pid"),
-        {"pid": project_id},
-    )
-    contributor_count = cnt_row.mappings().first()["cnt"]
+    contributor_count = await webhook_repo.count_project_members(db, project_id)
     votes_required = max(1, min(2, contributor_count))
 
     user = data.get("user", {})
@@ -645,11 +512,7 @@ async def gitlab_webhook(
         source_key = f"{project_id}:pr:{noteable_id}" if is_mr else f"{project_id}:issue:{noteable_id}"
 
         # Если комментатор — зарегистрированный агент, закрываем его pending-таск
-        agent_commenter = await db.execute(
-            text("SELECT id FROM agents WHERE gitlab_user_login = :login AND is_active = TRUE LIMIT 1"),
-            {"login": sender_login},
-        )
-        commenter_agent = agent_commenter.mappings().first()
+        commenter_agent = await webhook_repo.get_agent_by_gitlab_login(db, sender_login)
         if commenter_agent:
             await _complete_notification_tasks(db, commenter_agent["id"], source_key)
             await db.commit()
@@ -720,14 +583,7 @@ async def gitlab_webhook(
             merged = action == "merge"
             source_key = f"{project_id}:pr:{mr_iid}"
 
-            await db.execute(
-                text("""
-                    UPDATE governance_queue
-                    SET status = :new_status, resolved_at = NOW()
-                    WHERE project_id = :pid AND source_number = :mr_iid AND status = 'pending'
-                """),
-                {"new_status": "approved" if merged else "rejected", "pid": project_id, "mr_iid": mr_iid},
-            )
+            await webhook_repo.resolve_governance_by_pr(db, project_id, mr_iid, merged)
             await _cancel_notification_tasks(db, source_key=source_key)
 
             if merged and owner_id:
@@ -797,11 +653,7 @@ async def gitlab_webhook(
             return {"status": "ignored", "reason": "mr_merge_commit"}
 
         # Проверяем: pusher — зарегистрированный агент?
-        agent_push_row = await db.execute(
-            text("SELECT id FROM agents WHERE gitlab_user_login = :login AND is_active = TRUE LIMIT 1"),
-            {"login": sender_login},
-        )
-        is_agent_push = agent_push_row.mappings().first() is not None
+        is_agent_push = await webhook_repo.get_agent_by_gitlab_login(db, sender_login) is not None
 
         if is_agent_push:
             changed_files: set[str] = set()

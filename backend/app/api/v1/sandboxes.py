@@ -1,77 +1,26 @@
 """API для песочниц."""
 
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.deps import AISvc, CurrentUser, DatabaseSession, TokenSvc
 from app.models import Feedback, Feature, Idea, Sandbox, TokenAction
+from app.schemas.sandboxes import (
+    CodeGenerateResponse,
+    CodeModifyRequest,
+    CodeUpdateRequest,
+    FeatureCreate,
+    FeatureResponse,
+    FeedbackCreate,
+    FeedbackResponse,
+    SandboxDetailResponse,
+    SandboxPreviewResponse,
+    SandboxResponse,
+)
 
 router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
-
-
-# === Schemas ===
-
-
-class SandboxResponse(BaseModel):
-    """Песочница в ответе."""
-
-    id: uuid.UUID
-    idea_id: uuid.UUID
-    idea_title: str
-    prototype_url: str
-    feedbacks_count: int
-    features_count: int
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class SandboxDetailResponse(SandboxResponse):
-    """Детальная информация о песочнице."""
-
-    prototype_html: str
-
-
-class FeedbackCreate(BaseModel):
-    """Создание фидбэка."""
-
-    rating: int  # 1-5
-    comment: str
-
-
-class FeedbackResponse(BaseModel):
-    """Фидбэк в ответе."""
-
-    id: uuid.UUID
-    user_id: uuid.UUID
-    user_name: str | None
-    rating: int
-    comment: str
-    created_at: datetime
-
-
-class FeatureCreate(BaseModel):
-    """Создание фичи."""
-
-    title: str
-    description: str
-
-
-class FeatureResponse(BaseModel):
-    """Фича в ответе."""
-
-    id: uuid.UUID
-    user_id: uuid.UUID
-    user_name: str | None
-    title: str
-    description: str
-    votes: int
-    created_at: datetime
 
 
 # === Endpoints ===
@@ -316,34 +265,6 @@ async def add_feature(
         votes=0,
         created_at=feature.created_at,
     )
-
-
-# === Схемы для генерации кода ===
-
-
-class CodeUpdateRequest(BaseModel):
-    """Запрос на обновление кода."""
-
-    code: str
-
-
-class CodeModifyRequest(BaseModel):
-    """Запрос на AI-модификацию кода."""
-
-    prompt: str
-
-
-class CodeGenerateResponse(BaseModel):
-    """Ответ с сгенерированным кодом."""
-
-    html: str
-    features_applied: list[str]
-
-
-class SandboxPreviewResponse(BaseModel):
-    """Превью sandbox для iframe."""
-
-    html: str
 
 
 # === Endpoints для работы с кодом ===

@@ -3,44 +3,12 @@
 import uuid
 
 from fastapi import APIRouter
-from pydantic import BaseModel
-from datetime import datetime
 
 from app.api.deps import CurrentUser, TokenSvc
 from app.models import TokenAction
+from app.schemas.tokens import BalanceResponse, LeaderboardEntry, TransactionResponse
 
 router = APIRouter(prefix="/tokens", tags=["tokens"])
-
-
-# === Schemas ===
-
-
-class BalanceResponse(BaseModel):
-    """Баланс токенов."""
-
-    balance: int
-
-
-class TransactionResponse(BaseModel):
-    """Транзакция токенов."""
-
-    id: uuid.UUID
-    amount: int
-    action: TokenAction
-    idea_id: uuid.UUID | None
-    created_at: datetime
-
-
-class LeaderboardEntry(BaseModel):
-    """Запись в таблице лидеров."""
-
-    user_id: str
-    name: str
-    avatar_url: str | None
-    total_tokens: int
-
-
-# === Endpoints ===
 
 
 @router.get("/balance", response_model=BalanceResponse)

@@ -5,89 +5,13 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.api.deps import AISvc, CurrentUser, DatabaseSession, TokenSvc
 from app.models import Comment, Idea, TokenAction, Vote
+from app.schemas.ideas import CommentCreate, CommentResponse, IdeaCreate, IdeaResponse, IdeaUpdate, IdeasListResponse, VoteRequest
 
 router = APIRouter(prefix="/ideas", tags=["ideas"])
-
-
-# === Schemas ===
-
-
-class IdeaCreate(BaseModel):
-    """Создание идеи."""
-
-    title: str
-    problem: str
-    solution: str
-    category: str
-
-
-class IdeaUpdate(BaseModel):
-    """Обновление идеи."""
-
-    title: str | None = None
-    problem: str | None = None
-    solution: str | None = None
-
-
-class IdeaResponse(BaseModel):
-    """Идея в ответе."""
-
-    id: uuid.UUID
-    title: str
-    problem: str
-    solution: str
-    category: str
-    author_id: uuid.UUID
-    author_name: str | None = None
-    votes_up: int
-    votes_down: int
-    score: int
-    status: str
-    ai_generated: bool
-    comments_count: int = 0
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class VoteRequest(BaseModel):
-    """Голосование."""
-
-    value: Literal[1, -1]
-
-
-class CommentCreate(BaseModel):
-    """Создание комментария."""
-
-    content: str
-
-
-class CommentResponse(BaseModel):
-    """Комментарий в ответе."""
-
-    id: uuid.UUID
-    user_id: uuid.UUID
-    user_name: str | None = None
-    content: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class IdeasListResponse(BaseModel):
-    """Список идей с пагинацией."""
-
-    items: list[IdeaResponse]
-    total: int
-    page: int
-    per_page: int
 
 
 # === Endpoints ===

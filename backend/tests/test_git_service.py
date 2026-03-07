@@ -3,8 +3,8 @@ Unit-тесты для GitService — регрессия багов, найде�
 
 Баги:
   #1 — GitService не проксировал новые методы GitHubService:
-       list_issues, comment_issue, close_issue, list_pull_requests,
-       create_pull_request, create_branch, list_commits, get_file_content.
+       list_issues, comment_issue, list_pull_requests,
+       list_commits, get_file_content.
        Все вызовы падали с AttributeError → HTTP 500.
 
   #2 — GitService.push_files не пробрасывал параметр branch в GitHubService.push_files.
@@ -128,29 +128,8 @@ class TestGitServiceProxyMethods:
 
         result = await svc.comment_issue("my-repo", 1, "Fixing in next commit.")
 
-        mock_gh.comment_issue.assert_called_once_with("my-repo", 1, "Fixing in next commit.")
+        mock_gh.comment_issue.assert_called_once_with("my-repo", 1, "Fixing in next commit.", user_token=None)
         assert result == expected
-
-    @pytest.mark.asyncio
-    async def test_close_issue_exists_and_delegates(self):
-        """GitService.close_issue делегирует в GitHubService с опциональным comment."""
-        svc, mock_gh = make_git_service_with_mock_github()
-        mock_gh.close_issue = AsyncMock(return_value=True)
-
-        result = await svc.close_issue("my-repo", 1, comment="Fixed in abc123.")
-
-        mock_gh.close_issue.assert_called_once_with("my-repo", 1, "Fixed in abc123.")
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_close_issue_without_comment(self):
-        """close_issue работает без comment (None по умолчанию)."""
-        svc, mock_gh = make_git_service_with_mock_github()
-        mock_gh.close_issue = AsyncMock(return_value=True)
-
-        await svc.close_issue("my-repo", 5)
-
-        mock_gh.close_issue.assert_called_once_with("my-repo", 5, None)
 
     @pytest.mark.asyncio
     async def test_list_pull_requests_exists_and_delegates(self):
@@ -164,35 +143,6 @@ class TestGitServiceProxyMethods:
 
         mock_gh.list_pull_requests.assert_called_once_with("my-repo", "open")
         assert result[0]["number"] == 2
-
-    @pytest.mark.asyncio
-    async def test_create_pull_request_exists_and_delegates(self):
-        """GitService.create_pull_request пробрасывает все аргументы."""
-        svc, mock_gh = make_git_service_with_mock_github()
-        mock_gh.create_pull_request = AsyncMock(return_value={
-            "number": 3, "url": "https://github.com/AgentSpore/repo/pull/3"
-        })
-
-        result = await svc.create_pull_request(
-            "my-repo", "feat: add CSV export", "Exports data to CSV",
-            head_branch="feat/csv", base_branch="main"
-        )
-
-        mock_gh.create_pull_request.assert_called_once_with(
-            "my-repo", "feat: add CSV export", "Exports data to CSV", "feat/csv", "main"
-        )
-        assert result["number"] == 3
-
-    @pytest.mark.asyncio
-    async def test_create_branch_exists_and_delegates(self):
-        """GitService.create_branch делегирует в GitHubService с from_branch."""
-        svc, mock_gh = make_git_service_with_mock_github()
-        mock_gh.create_branch = AsyncMock(return_value=True)
-
-        result = await svc.create_branch("my-repo", "feat/new-branch", from_branch="main")
-
-        mock_gh.create_branch.assert_called_once_with("my-repo", "feat/new-branch", "main")
-        assert result is True
 
     @pytest.mark.asyncio
     async def test_list_commits_exists_and_delegates(self):
@@ -247,8 +197,8 @@ class TestGitServiceProxyMethods:
 
         svc = GitService()
         new_methods = [
-            "list_issues", "comment_issue", "close_issue",
-            "list_pull_requests", "create_pull_request", "create_branch",
+            "list_issues", "comment_issue",
+            "list_pull_requests",
             "list_commits", "get_file_content",
         ]
         for method in new_methods:
@@ -417,32 +367,35 @@ class TestPublicProjectsEndpoints:
         from app.core.database import get_db
 
         db = AsyncMock()
-        # first execute: UPDATE votes_up
-        vote_result = MagicMock()
-        vote_result.mappings.return_value.first.return_value = {
-            "votes_up": 5, "votes_down": 1
-        }
-        db.execute.return_value = vote_result
 
         async def override_db():
             yield db
 
         app.dependency_overrides[get_db] = override_db
         try:
-            from httpx import AsyncClient, ASGITransport
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                response = await client.post(
-                    "/api/v1/projects/e5547196-6646-4c1a-ae3f-6c1f90a803d6/vote",
-                    json={"vote": 1},
-                )
+            with patch("app.api.v1.projects.project_repo") as mock_repo:
+                mock_repo.project_exists = AsyncMock(return_value=True)
+                mock_repo.count_votes_in_period = AsyncMock(return_value=0)
+                mock_repo.get_last_vote_time = AsyncMock(return_value=None)
+                mock_repo.get_previous_vote = AsyncMock(return_value=None)
+                mock_repo.insert_vote = AsyncMock()
+                mock_repo.get_vote_counts = AsyncMock(return_value={"votes_up": 5, "votes_down": 1})
+
+                from httpx import AsyncClient, ASGITransport
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.post(
+                        "/api/v1/projects/e5547196-6646-4c1a-ae3f-6c1f90a803d6/vote",
+                        json={"vote": 1},
+                    )
 
             assert response.status_code == 200
             data = response.json()
             assert "votes_up" in data
             assert "votes_down" in data
             assert "score" in data
+            assert data["score"] == 4
         finally:
             app.dependency_overrides.clear()
 

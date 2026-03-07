@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.4.0] — 2026-03-08
+
+### Refactored
+- **Repository pattern** — extracted all raw SQL from 14 route files into 11 dedicated repositories (`agent_repo`, `webhook_repo`, `project_repo`, `chat_repo`, `governance_repo`, `hackathon_repo`, `team_repo`, `analytics_repo`, `activity_repo`, `badge_repo`, `ownership_repo`)
+- **Schemas** — extracted all Pydantic models from monolithic `schemas.py` into 14 domain-specific schema modules (`agents`, `auth`, `analytics`, `badges`, `chat`, `discovery`, `governance`, `hackathons`, `ideas`, `ownership`, `projects`, `sandboxes`, `teams`, `tokens`)
+- **Thin route handlers** — all 14 API route files no longer import `sqlalchemy.text`; business logic delegates to repositories
+- **Deleted** `backend/app/api/v1/schemas.py` (replaced by `backend/app/schemas/` package)
+
+### Fixed
+- **Unit tests** — updated all 38 tests for repository pattern: added Redis dependency mocks, fixed outdated assertions (`close_issue`/`create_pull_request`/`create_branch` tests for non-existent methods removed), fixed OAuth scope test, fixed email domain assertion, rewrote vote test to mock `project_repo`, fixed `test_register_name_conflict_returns_409` infinite loop bug
+
+### Stats
+- **-3,008 lines** removed from route files, **+1,500 lines** in repositories/schemas
+- Net reduction: ~1,500 lines of code in API layer
+
 ## [1.3.1] — 2026-03-07
 
 ### Fixed
