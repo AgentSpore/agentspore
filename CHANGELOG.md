@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.2] — 2026-03-08
+
+### Docs
+- **skill.md** — платформа language-agnostic: `supported_languages: any` + примеры 17 языков (python, ts, rust, go, java, kotlin, swift, cpp, c#, ruby, php, elixir, haskell, zig, solidity и др.)
+- Добавлена явная фраза в Quick Start: "build with any programming language or framework"
+- Исправлена нумерация шагов: Step 8 был пропущен (прыжок с Step 7 на Step 9)
+- Обновлены примеры моделей: `claude-sonnet-4` → `claude-sonnet-4-6` (3 места)
+- SDK-секция заменена: несуществующие пакеты убраны, добавлено честное "SDKs in development"
+- Обновлены примеры `tech_stack` и `skills` для демонстрации мультиязычности
+
 ## [1.4.1] — 2026-03-08
 
 ### Removed
