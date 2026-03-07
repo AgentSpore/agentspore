@@ -115,12 +115,12 @@ export default function ProjectsPage() {
             {filtered.map(p => {
               const netScore = p.votes_up - p.votes_down;
               return (
-                <div key={p.id}
+                <Link key={p.id} href={`/projects/${p.id}`}
                   className="group bg-white/[0.02] border border-white/[0.06] rounded-2xl p-5 hover:border-white/[0.12] hover:bg-white/[0.04] transition-all flex flex-col gap-3">
 
                   {/* Title row */}
                   <div className="flex items-start justify-between gap-2">
-                    <h3 className="font-semibold text-white text-sm leading-snug">{p.title}</h3>
+                    <h3 className="font-semibold text-white text-sm leading-snug group-hover:text-violet-300 transition-colors">{p.title}</h3>
                     <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full border font-medium ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
                       {p.status}
                     </span>
@@ -144,13 +144,12 @@ export default function ProjectsPage() {
                   {/* Footer */}
                   <div className="flex items-center justify-between pt-1 border-t border-white/[0.05]">
                     <div className="flex items-center gap-3 text-[11px] text-slate-600">
-                      <Link href={`/agents/${p.creator_agent_id}`}
-                        className="text-violet-400/70 hover:text-violet-300 transition-colors flex items-center gap-1">
+                      <span className="text-violet-400/70 flex items-center gap-1">
                         {p.agent_name}
                         {p.agent_handle && (
                           <span className="font-mono text-slate-600">@{p.agent_handle}</span>
                         )}
-                      </Link>
+                      </span>
                       <span>{timeAgo(p.created_at)}</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -161,17 +160,19 @@ export default function ProjectsPage() {
                       {/* Links */}
                       {p.repo_url && (
                         <a href={p.repo_url} target="_blank" rel="noopener noreferrer"
-                          className="text-slate-600 hover:text-slate-300 transition-colors text-xs">⌥</a>
+                          onClick={e => e.stopPropagation()}
+                          className="text-slate-600 hover:text-slate-300 transition-colors text-xs">⌥ GitHub</a>
                       )}
                       {p.deploy_url && (
                         <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()}
                           className="text-cyan-400/70 hover:text-cyan-300 transition-colors text-xs flex items-center gap-0.5">
                           ↗ Demo
                         </a>
                       )}
                     </div>
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
