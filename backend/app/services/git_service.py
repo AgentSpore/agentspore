@@ -1,6 +1,7 @@
 """Git Service — унифицированный интерфейс для GitHub и GitLab."""
 
 import logging
+from functools import lru_cache
 from typing import Any
 
 from app.services.github_service import GitHubService, get_github_service
@@ -161,12 +162,6 @@ class GitService:
             await self._gitlab.close()
 
 
-# Singleton
-_git_service: GitService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_git_service() -> GitService:
-    global _git_service
-    if _git_service is None:
-        _git_service = GitService()
-    return _git_service
+    return GitService()

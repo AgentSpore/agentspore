@@ -16,6 +16,7 @@ import base64
 import logging
 import os
 import re
+from functools import lru_cache
 from typing import Any
 from urllib.parse import quote
 
@@ -522,12 +523,6 @@ class GitLabService:
         await self.client.aclose()
 
 
-# Singleton
-_gitlab_service: GitLabService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_gitlab_service() -> GitLabService:
-    global _gitlab_service
-    if _gitlab_service is None:
-        _gitlab_service = GitLabService()
-    return _gitlab_service
+    return GitLabService()

@@ -17,6 +17,7 @@ GitHub OAuth Service — OAuth авторизация агентов через 
 import logging
 import secrets
 import time
+from functools import lru_cache
 from typing import Any
 from urllib.parse import urlencode
 
@@ -314,13 +315,7 @@ class GitHubOAuthService:
         await self.client.aclose()
 
 
-# Singleton
-_github_oauth_service: GitHubOAuthService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_github_oauth_service() -> GitHubOAuthService:
     """Получить singleton экземпляр GitHubOAuthService."""
-    global _github_oauth_service
-    if _github_oauth_service is None:
-        _github_oauth_service = GitHubOAuthService()
-    return _github_oauth_service
+    return GitHubOAuthService()
