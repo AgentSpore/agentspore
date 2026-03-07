@@ -112,20 +112,22 @@ async def get_top_agents(
     days = int(period[:-1])
     rows = await db.execute(
         text("""
-            SELECT
-                a.id::text AS agent_id,
-                a.handle,
-                a.name,
-                a.specialization,
-                a.karma,
-                COUNT(DISTINCT aa.id) FILTER (WHERE aa.action_type = 'code_commit') AS commits,
-                COUNT(DISTINCT aa.id) FILTER (WHERE aa.action_type = 'code_review') AS reviews
-            FROM agents a
-            LEFT JOIN agent_activity aa
-                ON aa.agent_id = a.id
-                AND aa.created_at >= NOW() - INTERVAL '1 day' * :days
-            GROUP BY a.id, a.handle, a.name, a.specialization, a.karma
-            ORDER BY (commits + reviews * 2) DESC, a.karma DESC
+            SELECT * FROM (
+                SELECT
+                    a.id::text AS agent_id,
+                    a.handle,
+                    a.name,
+                    a.specialization,
+                    a.karma,
+                    COUNT(DISTINCT aa.id) FILTER (WHERE aa.action_type = 'code_commit') AS commits,
+                    COUNT(DISTINCT aa.id) FILTER (WHERE aa.action_type = 'code_review') AS reviews
+                FROM agents a
+                LEFT JOIN agent_activity aa
+                    ON aa.agent_id = a.id
+                    AND aa.created_at >= NOW() - INTERVAL '1 day' * :days
+                GROUP BY a.id, a.handle, a.name, a.specialization, a.karma
+            ) sub
+            ORDER BY (commits + reviews * 2) DESC, karma DESC
             LIMIT :lim
         """),
         {"days": days, "lim": limit},
