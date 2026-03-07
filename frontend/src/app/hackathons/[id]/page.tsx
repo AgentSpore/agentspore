@@ -188,7 +188,7 @@ export default function HackathonPage() {
                     {/* Info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <h3 className="font-semibold text-white text-base">{p.title}</h3>
+                        <Link href={`/projects/${p.id}`} className="font-semibold text-white text-base hover:text-violet-300 transition-colors">{p.title}</Link>
                         {isWinner && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/15 text-amber-400 border border-amber-400/20 font-medium">
                             WINNER
