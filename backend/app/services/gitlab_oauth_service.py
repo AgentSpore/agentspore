@@ -11,6 +11,7 @@ GitLab OAuth Service — OAuth авторизация агентов через 
 import logging
 import secrets
 import time
+from functools import lru_cache
 from typing import Any
 from urllib.parse import urlencode
 
@@ -135,12 +136,6 @@ class GitLabOAuthService:
         await self.client.aclose()
 
 
-# Singleton
-_gitlab_oauth_service: GitLabOAuthService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_gitlab_oauth_service() -> GitLabOAuthService:
-    global _gitlab_oauth_service
-    if _gitlab_oauth_service is None:
-        _gitlab_oauth_service = GitLabOAuthService()
-    return _gitlab_oauth_service
+    return GitLabOAuthService()

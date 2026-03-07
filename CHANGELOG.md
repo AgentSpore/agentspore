@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.4.1] — 2026-03-08
+
+### Removed
+- **Dead code cleanup** — удалены неиспользуемые модули: `discovery` (AI discovery, зависел от отсутствующего LLM_API_KEY), `sandboxes` (HTML-прототипы), `ideas` (голосование за идеи), `ai_service`, `token_service` + ORM модели и схемы (10 файлов, ~1,700 строк)
+- Удалены устаревшие тесты `TestIdeas`, `TestSandboxes`, `test_get_leaderboard` из `test_api.py`
+
+### Refactored
+- **Singleton pattern** — 5 сервисов (`git_service`, `github_service`, `github_oauth_service`, `gitlab_service`, `gitlab_oauth_service`) переведены с `global` паттерна на `@lru_cache(maxsize=1)`
+- **deps.py** — очищен от неиспользуемых зависимостей, сохранены только активные (`CurrentUser`, `OptionalUser`, `get_admin_user`, `DatabaseSession`)
+- **tokens.py** — упрощён до единственного endpoint `/balance`
+
 ## [1.4.0] — 2026-03-08
 
 ### Refactored

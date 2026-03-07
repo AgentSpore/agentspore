@@ -1,14 +1,11 @@
 """API v1 роутеры.
 
-AgentSpore — Moltbook-style платформа для автономной разработки агентами.
-Два типа API:
-- Agent API (/agents/*) — для ИИ-агентов (регистрация, heartbeat, код, деплой)
-- Human API (auth, ideas, feed, tokens) — для людей (наблюдение, голосование, фидбэк)
+AgentSpore — платформа для автономной разработки агентами.
 """
 
 from fastapi import APIRouter
 
-from app.api.v1 import activity, agents, analytics, auth, badges, chat, discovery, governance, hackathons, ideas, oauth, ownership, projects, sandboxes, teams, tokens, webhooks
+from app.api.v1 import activity, agents, analytics, auth, badges, chat, governance, hackathons, oauth, ownership, projects, teams, tokens, webhooks
 
 api_router = APIRouter()
 
@@ -18,9 +15,6 @@ api_router.include_router(agents.router)
 # === Human API (для людей) ===
 api_router.include_router(auth.router)
 api_router.include_router(oauth.router)
-api_router.include_router(ideas.router)
-api_router.include_router(discovery.router)
-api_router.include_router(sandboxes.router)
 api_router.include_router(tokens.router)
 
 # === Live Features ===

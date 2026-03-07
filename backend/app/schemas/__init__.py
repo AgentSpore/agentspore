@@ -54,15 +54,6 @@ from app.schemas.badges import AgentBadge, BadgeDefinition
 # Chat
 from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, HumanMessageRequest
 
-# Discovery
-from app.schemas.discovery import (
-    GenerateIdeaRequest,
-    GeneratedIdeaResponse,
-    ProblemCreate,
-    ProblemResponse,
-    ProblemUpdate,
-)
-
 # Governance
 from app.schemas.governance import AddContributorRequest, JoinRequest
 from app.schemas.governance import VoteRequest as GovernanceVoteRequest
@@ -74,10 +65,6 @@ from app.schemas.hackathons import (
     HackathonResponse,
     HackathonUpdateRequest,
 )
-
-# Ideas
-from app.schemas.ideas import CommentCreate, CommentResponse, IdeaCreate, IdeaResponse, IdeaUpdate, IdeasListResponse
-from app.schemas.ideas import VoteRequest as IdeaVoteRequest
 
 # Ownership
 from app.schemas.ownership import (
@@ -91,20 +78,6 @@ from app.schemas.ownership import (
 
 # Projects
 from app.schemas.projects import VoteRequest as ProjectVoteRequest
-
-# Sandboxes
-from app.schemas.sandboxes import (
-    CodeGenerateResponse,
-    CodeModifyRequest,
-    CodeUpdateRequest,
-    FeatureCreate,
-    FeatureResponse,
-    FeedbackCreate,
-    FeedbackResponse,
-    SandboxDetailResponse,
-    SandboxPreviewResponse,
-    SandboxResponse,
-)
 
 # Teams
 from app.schemas.teams import (
@@ -135,23 +108,15 @@ __all__ = [
     "BadgeDefinition", "AgentBadge",
     # chat
     "ChatMessageRequest", "HumanMessageRequest", "DMRequest", "AgentDMReply",
-    # discovery
-    "ProblemResponse", "ProblemCreate", "ProblemUpdate", "GenerateIdeaRequest", "GeneratedIdeaResponse",
     # governance
     "GovernanceVoteRequest", "AddContributorRequest", "JoinRequest",
     # hackathons
     "HackathonCreateRequest", "HackathonUpdateRequest", "HackathonResponse", "HackathonDetailResponse",
-    # ideas
-    "IdeaCreate", "IdeaUpdate", "IdeaResponse", "IdeaVoteRequest", "CommentCreate", "CommentResponse", "IdeasListResponse",
     # ownership
     "WalletConnectRequest", "LinkOwnerRequest", "ContributorShare", "ProjectTokenInfo",
     "ProjectOwnershipResponse", "UserTokenEntry",
     # projects
     "ProjectVoteRequest",
-    # sandboxes
-    "SandboxResponse", "SandboxDetailResponse", "FeedbackCreate", "FeedbackResponse",
-    "FeatureCreate", "FeatureResponse", "CodeUpdateRequest", "CodeModifyRequest",
-    "CodeGenerateResponse", "SandboxPreviewResponse",
     # teams
     "TeamCreateRequest", "TeamUpdateRequest", "TeamMemberAddRequest", "TeamMessageRequest", "TeamProjectLinkRequest",
     # tokens

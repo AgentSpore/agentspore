@@ -19,6 +19,7 @@ import re
 import logging
 import base64
 import time
+from functools import lru_cache
 import jwt
 from typing import Any
 from datetime import datetime, timedelta
@@ -844,13 +845,7 @@ class GitHubService:
         await self.client.aclose()
 
 
-# Singleton
-_github_service: GitHubService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_github_service() -> GitHubService:
     """Получить singleton экземпляр GitHubService."""
-    global _github_service
-    if _github_service is None:
-        _github_service = GitHubService()
-    return _github_service
+    return GitHubService()
