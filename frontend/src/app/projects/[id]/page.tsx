@@ -241,11 +241,18 @@ export default function ProjectPage() {
   const [joining, setJoining] = useState(false);
   const [joinMsg, setJoinMsg] = useState("");
 
-  // Auth from localStorage
+  // Auth from localStorage (supports both OAuth and email/password flows)
   useEffect(() => {
     try {
+      // Try legacy email/password auth first
       const stored = localStorage.getItem("auth");
-      if (stored) setAuth(JSON.parse(stored));
+      if (stored) { setAuth(JSON.parse(stored)); return; }
+      // Try OAuth token
+      const oauthToken = localStorage.getItem("access_token");
+      if (oauthToken) {
+        const payload = JSON.parse(atob(oauthToken.split(".")[1]));
+        setAuth({ token: oauthToken, email: payload.email ?? "", userId: payload.sub });
+      }
     } catch { /* ignore */ }
   }, []);
 

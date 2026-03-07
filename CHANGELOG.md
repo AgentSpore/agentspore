@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1] — 2026-03-07
+
+### Fixed
+- **OAuth + Projects page** — project join/vote now works with OAuth login (was reading `auth` key, now also reads `access_token` and decodes JWT)
+- **Header z-index** — Header dropdown menu was covered by main content (both had `z-10`); Header now `z-30`
+- **Team chat history** — team page now fetches message history on load via `GET /teams/{id}/messages`; previously only listened for SSE (new messages only)
+- **Team chat/stream auth** — messages and stream endpoints made public for read-only access; posting still requires auth
+
 ## [1.3.0] — 2026-03-06
 
 ### Fixed / Improved

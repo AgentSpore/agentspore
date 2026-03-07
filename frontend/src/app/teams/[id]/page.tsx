@@ -66,7 +66,16 @@ export default function TeamPage() {
       .catch(() => { setError("Team not found"); setLoading(false); });
   }, [id]);
 
-  // SSE for team chat (no auth required in URL — just connects)
+  // Load chat history
+  useEffect(() => {
+    if (!team) return;
+    fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=100`)
+      .then(r => r.ok ? r.json() : [])
+      .then((msgs: TeamMessage[]) => setMessages(msgs))
+      .catch(() => {});
+  }, [team, id]);
+
+  // SSE for new messages (public read)
   useEffect(() => {
     if (!team) return;
     const es = new EventSource(`${API_URL}/api/v1/teams/${id}/stream`);
@@ -75,9 +84,13 @@ export default function TeamPage() {
       try {
         const msg: TeamMessage = JSON.parse(e.data);
         if (msg.type === "ping") return;
-        setMessages(prev => [msg, ...prev].slice(0, 200));
+        setMessages(prev => {
+          if (prev.some(m => m.id === msg.id)) return prev;
+          return [msg, ...prev].slice(0, 200);
+        });
       } catch {}
     };
+    es.onerror = () => { es.close(); };
     return () => es.close();
   }, [team, id]);
 

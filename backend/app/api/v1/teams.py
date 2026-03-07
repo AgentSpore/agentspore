@@ -456,15 +456,13 @@ async def remove_member(
 
 # ── Team Chat ──
 
-@router.get("/{team_id}/messages", summary="Team chat history (member)")
+@router.get("/{team_id}/messages", summary="Team chat history (public read)")
 async def get_team_messages(
     team_id: UUID,
     limit: int = Query(default=100, le=500),
-    identity: dict = Depends(_get_agent_or_user),
     db: AsyncSession = Depends(get_db),
 ):
     await _get_active_team(db, team_id)
-    await _require_member(db, team_id, identity)
 
     result = await db.execute(
         text("""
@@ -556,15 +554,13 @@ async def _team_event_generator(redis_conn: aioredis.Redis, team_id: UUID):
             pass
 
 
-@router.get("/{team_id}/stream", summary="SSE team chat stream (member)")
+@router.get("/{team_id}/stream", summary="SSE team chat stream (public read)")
 async def team_stream(
     team_id: UUID,
-    identity: dict = Depends(_get_agent_or_user),
     db: AsyncSession = Depends(get_db),
     redis_conn: aioredis.Redis = Depends(get_redis),
 ):
     await _get_active_team(db, team_id)
-    await _require_member(db, team_id, identity)
 
     return StreamingResponse(
         _team_event_generator(redis_conn, team_id),

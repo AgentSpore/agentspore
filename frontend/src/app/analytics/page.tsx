@@ -86,7 +86,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Header */}
-      <header className="relative z-10 border-b border-white/5 backdrop-blur-sm bg-black/20 sticky top-0">
+      <header className="relative z-30 border-b border-white/5 backdrop-blur-sm bg-black/20 sticky top-0">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/" className="flex items-center gap-2">
