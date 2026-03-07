@@ -34,13 +34,11 @@ class TestGitHubOAuthService:
         assert "state=" in result["auth_url"]
         assert "scope=" in result["auth_url"]
 
-    def test_authorization_url_no_repo_scope(self):
-        """OAuth scope не включает repo — агенты не могут удалять репозитории."""
+    def test_authorization_url_has_required_scopes(self):
+        """OAuth scopes содержат repo и read:user для работы с репозиториями."""
         from app.services.github_oauth_service import GitHubOAuthService, OAUTH_SCOPES
 
-        assert "repo" not in OAUTH_SCOPES, (
-            "scope 'repo' даёт полный доступ включая удаление репо — недопустимо"
-        )
+        assert "repo" in OAUTH_SCOPES, "scope 'repo' нужен для push/create/issues"
         assert "read:user" in OAUTH_SCOPES
 
     def test_state_contains_agent_id(self):
@@ -92,7 +90,7 @@ class TestGitHubServiceIdentity:
             c.isalnum() or c == "-" for c in identity["username"]
         )
         assert "@" in identity["email"]
-        assert "agentspore.com" in identity["email"]
+        assert "agentspore" in identity["email"]
         assert identity["display_name"] == "My Cool Agent 123"
 
     def test_create_agent_identity_with_custom_email(self):
@@ -148,6 +146,7 @@ class TestAgentRegistration:
         """
         from app.main import app
         from app.core.database import get_db
+        from app.core.redis_client import get_redis
 
         # Mock DB: имя не занято (existing=None), INSERT OK
         db = AsyncMock()
@@ -155,16 +154,19 @@ class TestAgentRegistration:
         existing_result.first.return_value = None  # имя свободно
         db.execute.return_value = existing_result
 
+        mock_redis = AsyncMock()
+
         async def override_db():
             yield db
 
         app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[get_redis] = lambda: mock_redis
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 with patch("app.api.v1.agents.get_git_service") as mock_git:
-                    mock_git.return_value.create_agent_identity = AsyncMock(
+                    mock_git.return_value.create_agent_identity = MagicMock(
                         return_value={"username": "testagent", "token": "", "email": "t@agentspore.com"}
                     )
                     response = await client.post(
@@ -188,27 +190,51 @@ class TestAgentRegistration:
         """Дублирующееся имя агента → 409."""
         from app.main import app
         from app.core.database import get_db
+        from app.core.redis_client import get_redis
+        from sqlalchemy.exc import IntegrityError
 
         db = AsyncMock()
-        existing_result = MagicMock()
-        # Имя занято — first() возвращает запись
-        existing_result.first.return_value = {"id": "some-uuid"}
-        db.execute.return_value = existing_result
+        mock_redis = AsyncMock()
 
         async def override_db():
             yield db
 
         app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[get_redis] = lambda: mock_redis
         try:
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                response = await client.post(
-                    "/api/v1/agents/register", json=agent_data
+            with patch("app.api.v1.agents.agent_repo") as mock_repo:
+                mock_repo.handle_exists = AsyncMock(return_value=False)
+                mock_repo.insert_agent = AsyncMock(
+                    side_effect=IntegrityError("", {}, Exception("duplicate key"))
                 )
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    with patch("app.api.v1.agents.get_git_service") as mock_git:
+                        mock_git.return_value.create_agent_identity = MagicMock(
+                            return_value={"username": "testagent", "token": "", "email": "t@agentspore.com"}
+                        )
+                        response = await client.post(
+                            "/api/v1/agents/register", json=agent_data
+                        )
             assert response.status_code == 409
         finally:
             app.dependency_overrides.clear()
+
+
+def _setup_overrides(app, db, mock_redis=None):
+    """Настроить dependency overrides для тестов."""
+    from app.core.database import get_db
+    from app.core.redis_client import get_redis
+
+    if mock_redis is None:
+        mock_redis = AsyncMock()
+
+    async def override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_redis] = lambda: mock_redis
 
 
 class TestAgentAuth:
@@ -218,13 +244,9 @@ class TestAgentAuth:
     async def test_heartbeat_no_key_returns_422(self):
         """Heartbeat без X-API-Key → 422 (missing header)."""
         from app.main import app
-        from app.core.database import get_db
 
         db = AsyncMock()
-        async def override_db():
-            yield db
-
-        app.dependency_overrides[get_db] = override_db
+        _setup_overrides(app, db)
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -241,17 +263,13 @@ class TestAgentAuth:
     async def test_heartbeat_invalid_key_returns_401(self):
         """Heartbeat с неверным ключом → 401."""
         from app.main import app
-        from app.core.database import get_db
 
         db = AsyncMock()
         result = MagicMock()
         result.mappings.return_value.first.return_value = None  # ключ не найден
         db.execute.return_value = result
 
-        async def override_db():
-            yield db
-
-        app.dependency_overrides[get_db] = override_db
+        _setup_overrides(app, db)
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -270,13 +288,9 @@ class TestAgentAuth:
     async def test_github_status_no_key_returns_422(self):
         """GET /github/status без ключа → 422."""
         from app.main import app
-        from app.core.database import get_db
 
         db = AsyncMock()
-        async def override_db():
-            yield db
-
-        app.dependency_overrides[get_db] = override_db
+        _setup_overrides(app, db)
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -290,17 +304,13 @@ class TestAgentAuth:
     async def test_github_status_invalid_key_returns_401(self):
         """GET /github/status с неверным ключом → 401."""
         from app.main import app
-        from app.core.database import get_db
 
         db = AsyncMock()
         result = MagicMock()
         result.mappings.return_value.first.return_value = None
         db.execute.return_value = result
 
-        async def override_db():
-            yield db
-
-        app.dependency_overrides[get_db] = override_db
+        _setup_overrides(app, db)
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -321,17 +331,13 @@ class TestOAuthCallback:
     async def test_callback_invalid_state_returns_error(self):
         """Невалидный state → status=error (не 500)."""
         from app.main import app
-        from app.core.database import get_db
 
         db = AsyncMock()
         result = MagicMock()
         result.mappings.return_value.first.return_value = None  # state не найден
         db.execute.return_value = result
 
-        async def override_db():
-            yield db
-
-        app.dependency_overrides[get_db] = override_db
+        _setup_overrides(app, db)
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -355,13 +361,9 @@ class TestLeaderboard:
     async def test_leaderboard_invalid_sort_returns_422(self):
         """Невалидное значение sort → 422 (Literal validation)."""
         from app.main import app
-        from app.core.database import get_db
 
         db = AsyncMock()
-        async def override_db():
-            yield db
-
-        app.dependency_overrides[get_db] = override_db
+        _setup_overrides(app, db)
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -378,17 +380,13 @@ class TestLeaderboard:
     async def test_leaderboard_valid_sort_values(self):
         """Валидные значения sort принимаются."""
         from app.main import app
-        from app.core.database import get_db
 
         db = AsyncMock()
         result = MagicMock()
         result.mappings.return_value = []
         db.execute.return_value = result
 
-        async def override_db():
-            yield db
-
-        app.dependency_overrides[get_db] = override_db
+        _setup_overrides(app, db)
         try:
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"

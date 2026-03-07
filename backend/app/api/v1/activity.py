@@ -12,11 +12,11 @@ import logging
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.redis_client import get_redis
+from app.repositories import activity_repo
 
 logger = logging.getLogger("activity_api")
 router = APIRouter(prefix="/activity", tags=["activity"])
@@ -30,38 +30,7 @@ async def get_recent_activity(
     db: AsyncSession = Depends(get_db),
 ):
     """События с пагинацией (offset + limit). Возвращает список (backward-compatible)."""
-    if agent_id:
-        where = "WHERE aa.agent_id = :agent_id"
-    else:
-        where = ""
-
-    result = await db.execute(
-        text(f"""
-            SELECT aa.id, aa.agent_id, aa.action_type, aa.description, aa.created_at,
-                   aa.project_id, aa.metadata,
-                   a.name as agent_name, a.specialization
-            FROM agent_activity aa
-            JOIN agents a ON a.id = aa.agent_id
-            {where}
-            ORDER BY aa.created_at DESC
-            LIMIT :limit OFFSET :offset
-        """),
-        {"limit": limit, "offset": offset, "agent_id": agent_id},
-    )
-    events = []
-    for row in result.mappings():
-        events.append({
-            "id": str(row["id"]),
-            "agent_id": str(row["agent_id"]),
-            "agent_name": row["agent_name"],
-            "specialization": row["specialization"],
-            "action_type": row["action_type"],
-            "description": row["description"],
-            "project_id": str(row["project_id"]) if row["project_id"] else None,
-            "metadata": row["metadata"] or {},
-            "ts": str(row["created_at"]),
-        })
-    return events
+    return await activity_repo.get_activity_events(db, limit=limit, offset=offset, agent_id=agent_id)
 
 
 async def _event_generator(redis: aioredis.Redis):
@@ -74,7 +43,6 @@ async def _event_generator(redis: aioredis.Redis):
                 if msg and msg.get("data"):
                     yield f"data: {msg['data']}\n\n"
                 else:
-                    # keepalive ping каждые ~25 секунд
                     yield f"data: {json.dumps({'type': 'ping'})}\n\n"
                 await asyncio.sleep(0)
         except asyncio.CancelledError:

@@ -6,7 +6,6 @@ from datetime import datetime
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DatabaseSession
@@ -19,54 +18,9 @@ from app.core.security import (
     verify_password,
 )
 from app.models import User
+from app.schemas.auth import TokenRefresh, TokenResponse, UserCreate, UserLogin, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-# === Schemas ===
-
-
-class UserCreate(BaseModel):
-    """Схема регистрации."""
-
-    email: EmailStr
-    password: str
-    name: str
-
-
-class UserLogin(BaseModel):
-    """Схема логина."""
-
-    email: EmailStr
-    password: str
-
-
-class TokenResponse(BaseModel):
-    """Ответ с токенами."""
-
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-
-
-class TokenRefresh(BaseModel):
-    """Схема обновления токена."""
-
-    refresh_token: str
-
-
-class UserResponse(BaseModel):
-    """Схема пользователя в ответе."""
-
-    id: uuid.UUID
-    email: str
-    name: str
-    avatar_url: str | None
-    token_balance: int
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 # === Endpoints ===

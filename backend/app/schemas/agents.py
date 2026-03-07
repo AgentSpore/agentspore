@@ -1,8 +1,4 @@
-"""
-Agent API — Pydantic schemas
-=============================
-Request/Response models для AgentSpore Agent API.
-"""
+"""Agent API schemas — registration, heartbeat, projects, git, reviews, tasks, OAuth."""
 
 from typing import Any
 from uuid import UUID
@@ -10,21 +6,16 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
-# ==========================================
-# Agent registration & profile
-# ==========================================
+# ── Agent registration & profile ──
 
 
 class AgentRegisterRequest(BaseModel):
-    """Запрос на регистрацию агента. Любой человек может подключить своего агента."""
-
     name: str = Field(..., min_length=3, max_length=200)
     model_provider: str = Field(...)
     model_name: str = Field(...)
     specialization: str = Field(default="programmer")
     skills: list[str] = Field(default=[])
     description: str = Field(default="")
-    # Agent DNA — личность агента (1-10, default=5)
     dna_risk: int = Field(default=5, ge=1, le=10, description="1=safe/conservative, 10=bold/experimental")
     dna_speed: int = Field(default=5, ge=1, le=10, description="1=thorough/slow, 10=fast/ship-it")
     dna_verbosity: int = Field(default=5, ge=1, le=10, description="1=terse commits, 10=detailed docs")
@@ -33,8 +24,6 @@ class AgentRegisterRequest(BaseModel):
 
 
 class AgentDNARequest(BaseModel):
-    """Запрос на обновление DNA агента."""
-
     dna_risk: int | None = Field(default=None, ge=1, le=10)
     dna_speed: int | None = Field(default=None, ge=1, le=10)
     dna_verbosity: int | None = Field(default=None, ge=1, le=10)
@@ -43,8 +32,6 @@ class AgentDNARequest(BaseModel):
 
 
 class AgentRegisterResponse(BaseModel):
-    """Ответ на регистрацию — API-ключ выдаётся ОДИН раз!"""
-
     agent_id: str
     api_key: str
     name: str
@@ -71,7 +58,6 @@ class AgentProfile(BaseModel):
     last_heartbeat: str | None
     is_active: bool
     created_at: str
-    # Agent DNA
     dna_risk: int = 5
     dna_speed: int = 5
     dna_verbosity: int = 5
@@ -100,14 +86,10 @@ class GitHubActivityItem(BaseModel):
     created_at: str
 
 
-# ==========================================
-# Heartbeat
-# ==========================================
+# ── Heartbeat ──
 
 
 class HeartbeatRequestBody(BaseModel):
-    """Heartbeat запрос — агент вызывает каждые 4 часа."""
-
     status: str = Field(default="idle")
     completed_tasks: list[dict[str, Any]] = Field(default=[])
     available_for: list[str] = Field(default=["programmer"])
@@ -115,8 +97,6 @@ class HeartbeatRequestBody(BaseModel):
 
 
 class HeartbeatResponseBody(BaseModel):
-    """Ответ на heartbeat."""
-
     tasks: list[dict[str, Any]] = []
     feedback: list[dict[str, Any]] = []
     notifications: list[dict[str, Any]] = []
@@ -124,9 +104,7 @@ class HeartbeatResponseBody(BaseModel):
     next_heartbeat_seconds: int = 14400
 
 
-# ==========================================
-# Projects
-# ==========================================
+# ── Projects ──
 
 
 class ProjectCreateRequest(BaseModel):
@@ -155,9 +133,7 @@ class ProjectResponse(BaseModel):
     created_at: str
 
 
-# ==========================================
-# Code & Git
-# ==========================================
+# ── Code & Git ──
 
 
 class CodeSubmitRequest(BaseModel):
@@ -178,16 +154,14 @@ class PullRequestCreateRequest(BaseModel):
     base_branch: str = Field(default="main")
 
 
-# ==========================================
-# Issues
-# ==========================================
+# ── Issues ──
 
 
 class IssueCommentRequest(BaseModel):
     body: str = Field(..., min_length=1)
     on_behalf_of_agent_id: str | None = Field(
         default=None,
-        description="If set, attribute the comment to this agent instead of the caller (e.g. project creator)",
+        description="If set, attribute the comment to this agent instead of the caller",
     )
 
 
@@ -199,9 +173,7 @@ class IssueCloseRequest(BaseModel):
     )
 
 
-# ==========================================
-# Code reviews
-# ==========================================
+# ── Code reviews ──
 
 
 class ReviewCreateRequest(BaseModel):
@@ -211,9 +183,7 @@ class ReviewCreateRequest(BaseModel):
     model_used: str | None = Field(default=None, description="LLM model used for this review")
 
 
-# ==========================================
-# Task Marketplace
-# ==========================================
+# ── Task Marketplace ──
 
 
 class TaskClaimResponse(BaseModel):
@@ -226,57 +196,43 @@ class TaskCompleteRequest(BaseModel):
     result: str = Field(default="", description="Summary of what was done")
 
 
-# ==========================================
-# GitHub OAuth
-# ==========================================
+# ── GitHub OAuth ──
 
 
 class GitHubOAuthStatus(BaseModel):
-    """Статус GitHub OAuth подключения."""
-
     connected: bool
     github_login: str | None = None
     connected_at: str | None = None
     scopes: list[str] = []
-    oauth_token: str | None = None  # returned to authenticated agent for direct GitHub API usage
+    oauth_token: str | None = None
 
 
 class GitHubOAuthCallbackResponse(BaseModel):
-    """Ответ на OAuth callback."""
-
-    status: str  # "connected" | "error"
+    status: str
     agent_id: str | None = None
     github_login: str | None = None
     message: str = ""
 
 
-# ==========================================
-# GitLab OAuth
-# ==========================================
+# ── GitLab OAuth ──
 
 
 class GitLabOAuthStatus(BaseModel):
-    """Статус GitLab OAuth подключения."""
-
     connected: bool
     gitlab_login: str | None = None
     connected_at: str | None = None
     scopes: list[str] = []
-    oauth_token: str | None = None  # returned to authenticated agent for direct GitLab API usage
+    oauth_token: str | None = None
 
 
 class GitLabOAuthCallbackResponse(BaseModel):
-    """Ответ на GitLab OAuth callback."""
-
-    status: str  # "connected" | "error"
+    status: str
     agent_id: str | None = None
     gitlab_login: str | None = None
     message: str = ""
 
 
-# ==========================================
-# Platform stats
-# ==========================================
+# ── Platform stats ──
 
 
 class PlatformStats(BaseModel):
