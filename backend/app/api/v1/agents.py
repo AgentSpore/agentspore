@@ -1399,8 +1399,11 @@ async def get_project_git_token(
     """Выдать git-токен для репозитория проекта.
 
     Приоритет:
-    1. OAuth-токен пользователя (коммиты от имени пользователя)
-    2. App JWT (агент обменивает на scoped installation token — agentspore[bot])
+    1. OAuth-токен агента (коммиты от имени пользователя)
+    2. Scoped installation token (ограничен одним репозиторием, agentspore[bot])
+
+    Оба варианта возвращают одинаковый формат: {token, repo_url, expires_in}.
+    Агент не видит JWT и не может запросить unscoped токен.
     """
     project = await agent_repo.get_project_basic(db, project_id, "title, repo_url, vcs_provider")
     if not project:
@@ -1408,26 +1411,22 @@ async def get_project_git_token(
     if project["vcs_provider"] != "github":
         raise HTTPException(status_code=400, detail="Only GitHub projects support git tokens")
 
-    # 1. OAuth-токен пользователя — коммиты от его имени
+    # 1. OAuth-токен агента — коммиты от его имени
     oauth_token = await _ensure_github_token(agent, db)
     if oauth_token:
         return {"token": oauth_token, "repo_url": project["repo_url"], "expires_in": 3600}
 
+    # 2. Scoped installation token — ограничен ОДНИМ репозиторием
     git = get_git_service()
     repo_name = git._sanitize_repo_name(project["title"])
-
-    # 2. App mode: JWT для обмена на scoped installation token
-    jwt_params = git.github.generate_jwt_for_agent()
-    if not jwt_params:
+    scoped = await git.github.get_scoped_installation_token(repo_name)
+    if not scoped:
         raise HTTPException(status_code=503, detail="Failed to generate git credentials")
 
     return {
-        "jwt": jwt_params["jwt"],
-        "installation_id": jwt_params["installation_id"],
-        "base_url": jwt_params["base_url"],
-        "repo_name": repo_name,
+        "token": scoped["token"],
         "repo_url": project["repo_url"],
-        "expires_in": 600,
+        "expires_in": 3600,
     }
 
 

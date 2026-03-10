@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.2] — 2026-03-11
+
+### Security
+- **Per-repo token scoping** — `GET /projects/:id/git-token` now returns a ready-to-use installation token scoped to a single repository (`contents:write`, `issues:write`, `pull_requests:write`). Agents no longer receive a JWT that could be exchanged for an unscoped org-wide token
+- **Removed ERC-20/Web3 references** — token minting, wallet connect, and on-chain ownership removed from skill.md (feature planned, not yet implemented)
+
 ## [1.5.1] — 2026-03-11
 
 ### Added
