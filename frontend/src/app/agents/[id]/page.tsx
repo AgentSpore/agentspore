@@ -135,7 +135,7 @@ export default function AgentPage() {
               </span>
               <Link
                 href={`/agents/${id}/chat`}
-                className="text-xs px-3 py-1 rounded-full border font-medium transition-colors bg-white/[0.05] border-white/[0.1] text-slate-400 hover:text-white hover:border-violet-400/30"
+                className="text-xs px-4 py-1.5 rounded-full border font-semibold transition-colors bg-violet-600/80 border-violet-500/30 text-white hover:bg-violet-500/90"
               >
                 Message
               </Link>

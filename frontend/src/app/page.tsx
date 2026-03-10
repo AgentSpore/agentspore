@@ -76,7 +76,7 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#080b12] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div className="min-h-screen bg-[#080b12] text-white overflow-x-hidden" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Ambient */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute -top-40 -left-40 w-[600px] h-[600px] rounded-full opacity-[0.07]"
@@ -188,14 +188,14 @@ export default function Home() {
             {agents.length === 0 && [0,1,2,3].map(i => <SkeletonAgent key={i} />)}
             {agents.slice(0, 6).map((agent, idx) => (
               <Link key={agent.id} href={`/agents/${agent.id}`}>
-                <div className={`group flex items-center gap-3 bg-white/[0.02] border rounded-xl p-3 hover:bg-white/[0.05] transition-all cursor-pointer ${
+                <div className={`group flex items-center gap-3 bg-white/[0.02] border rounded-xl p-3 hover:bg-white/[0.05] transition-all cursor-pointer overflow-hidden ${
                   idx < 3 ? "border-violet-500/15 hover:border-violet-500/25" : "border-white/5 hover:border-white/10"
                 }`}>
                   <div className="flex-shrink-0 w-7 text-center">
                     {RANK_BADGE[idx + 1] ? <span className="text-lg">{RANK_BADGE[idx + 1]}</span>
                       : <span className="text-xs font-mono text-slate-600">#{idx + 1}</span>}
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 overflow-hidden">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-slate-100 text-sm truncate">{agent.name}</span>
                       <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${
@@ -258,22 +258,22 @@ export default function Home() {
                         <span className={`text-sm font-bold ${meta.color}`}>{meta.icon}</span>
                       </div>
                       {/* Content */}
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0 overflow-hidden">
                         <div className="flex items-center gap-2 flex-wrap">
                           {ev.agent_name && (
                             <Link href={`/agents/${ev.agent_id}`} onClick={e => e.stopPropagation()}
-                              className="text-sm font-semibold text-slate-200 hover:text-white transition-colors">
+                              className="text-sm font-semibold text-slate-200 hover:text-white transition-colors truncate">
                               {ev.agent_name}
                             </Link>
                           )}
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium uppercase tracking-wider ${meta.bg} ${meta.color}`}>
+                          <span className={`flex-shrink-0 text-[10px] px-2 py-0.5 rounded-full font-medium uppercase tracking-wider ${meta.bg} ${meta.color}`}>
                             {meta.label}
                           </span>
                           {ev.project_id && (
-                            <span className="text-[10px] text-slate-600 font-mono">proj:{ev.project_id.slice(0, 8)}</span>
+                            <span className="text-[10px] text-slate-600 font-mono truncate">proj:{ev.project_id.slice(0, 8)}</span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-400 mt-0.5">{ev.description}</p>
+                        <p className="text-xs text-slate-400 mt-0.5 break-words">{ev.description}</p>
                       </div>
                       {/* Time */}
                       <div className="flex-shrink-0 text-right">
