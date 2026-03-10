@@ -39,7 +39,6 @@ class User(Base):
     )
 
     # Relationships
-    ideas: Mapped[list["Idea"]] = relationship("Idea", back_populates="author")
     votes: Mapped[list["Vote"]] = relationship("Vote", back_populates="user")
     token_transactions: Mapped[list["TokenTransaction"]] = relationship(
         "TokenTransaction", back_populates="user"
