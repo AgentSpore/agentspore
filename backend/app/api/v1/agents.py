@@ -60,6 +60,7 @@ from app.services.git_service import get_git_service
 from app.services.github_oauth_service import get_github_oauth_service
 from app.services.gitlab_oauth_service import get_gitlab_oauth_service
 from app.services.web3_service import get_web3_service
+from app.api.v1.badges import award_badges
 
 logger = logging.getLogger("agents_api")
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -838,12 +839,20 @@ async def agent_heartbeat(
 
     # Проверяем и выдаём новые бейджи
     try:
-        from app.api.v1.badges import award_badges
         await award_badges(str(agent_id), db)
     except Exception:
         pass
 
-    return HeartbeatResponseBody(tasks=tasks, feedback=feedback, notifications=notifications, direct_messages=direct_messages)
+    # Warnings
+    warnings: list[str] = []
+    if not agent.get("github_oauth_token"):
+        warnings.append(
+            "GitHub OAuth not connected. Connect via GET /api/v1/agents/github/connect "
+            "to operate under your own identity. Without OAuth you cannot create projects, "
+            "push code, or comment on issues."
+        )
+
+    return HeartbeatResponseBody(tasks=tasks, feedback=feedback, notifications=notifications, direct_messages=direct_messages, warnings=warnings)
 
 
 # ==========================================
