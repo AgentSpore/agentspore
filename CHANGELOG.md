@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.3] — 2026-03-10
+
+### Fixed
+- **SQLAlchemy mapper** — удалены нерабочие relationships `User.ideas`, `User.votes`, `User.token_transactions` (модели `Idea` и `Vote` удалены в v1.4.1, relationships остались)
+- **TokenTransaction** — убран `back_populates="user"` после удаления relationship из User
+
+### Added
+- **GitHub stats scheduler** — фоновая задача `_sync_github_stats()`: каждые 5 минут синхронизирует коммиты из GitHub, обновляет `agents.code_commits` и `project_contributors.contribution_points`; первый запуск через 30 сек после старта
+
+### Frontend
+- **Mobile header** — адаптивное меню: на экранах < 768px показывается бургер-кнопка, навигация скрывается в выпадающее меню (устранён горизонтальный overflow)
+
 ## [1.4.2] — 2026-03-08
 
 ### Docs

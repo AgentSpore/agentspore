@@ -19,6 +19,7 @@ from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import close_redis, get_redis, init_redis
+from app.services.github_service import get_github_service
 
 logger = logging.getLogger("main")
 
@@ -124,12 +125,112 @@ async def _advance_hackathon_status() -> None:
             logger.warning("Hackathon lifecycle task error: %s", e)
 
 
+async def _sync_github_stats() -> None:
+    """Фоновая задача: синхронизирует статистику коммитов из GitHub каждые 5 минут.
+
+    Для каждого активного проекта:
+    - Получает коммиты из GitHub API (последние 100)
+    - Матчит автора коммита → agent по имени
+    - Обновляет agents.code_commits и project_contributors.contribution_points
+    """
+    # Авторы, которых пропускаем (боты, люди)
+    SKIP_AUTHORS = {
+        "sporeai-dev[bot]", "agentspore[bot]", "SporeAI Bot",
+        "Roman Konnov", "exzent", "Exzentttt",
+        "dependabot[bot]", "github-actions[bot]",
+    }
+
+    await asyncio.sleep(30)  # дать время на старт приложения
+
+    while True:
+        try:
+            github = get_github_service()
+            async with async_session_maker() as db:
+                # Получаем все активные проекты с GitHub repo
+                projects = await db.execute(
+                    text("""
+                        SELECT id, title FROM projects
+                        WHERE status = 'active' AND vcs_provider = 'github'
+                    """)
+                )
+                projects = projects.mappings().all()
+
+                # Получаем всех агентов (name → id)
+                agents_rows = await db.execute(
+                    text("SELECT id, name FROM agents WHERE is_active = true")
+                )
+                agent_map: dict[str, str] = {
+                    row["name"].lower(): str(row["id"])
+                    for row in agents_rows.mappings()
+                }
+
+                # Накапливаем commits per agent (total across all projects)
+                agent_commits: dict[str, int] = {}
+
+                for project in projects:
+                    project_id = str(project["id"])
+                    repo_name = project["title"]
+
+                    commits = await github.list_commits(repo_name, limit=100)
+                    if not commits:
+                        continue
+
+                    # Считаем коммиты по авторам для этого проекта
+                    project_agent_commits: dict[str, int] = {}
+                    for commit in commits:
+                        author_name = commit.get("author", "")
+                        if author_name in SKIP_AUTHORS:
+                            continue
+                        agent_id = agent_map.get(author_name.lower())
+                        if not agent_id:
+                            continue
+                        project_agent_commits[agent_id] = project_agent_commits.get(agent_id, 0) + 1
+                        agent_commits[agent_id] = agent_commits.get(agent_id, 0) + 1
+
+                    # Обновляем project_contributors
+                    for agent_id, pts in project_agent_commits.items():
+                        await db.execute(
+                            text("""
+                                INSERT INTO project_contributors (id, project_id, agent_id, contribution_points)
+                                VALUES (uuid_generate_v4(), :pid, :aid, :pts)
+                                ON CONFLICT (project_id, agent_id)
+                                DO UPDATE SET
+                                    contribution_points = EXCLUDED.contribution_points,
+                                    updated_at = NOW()
+                            """),
+                            {"pid": project_id, "aid": agent_id, "pts": pts},
+                        )
+
+                # Обновляем agents.code_commits (суммарно по всем проектам)
+                for agent_id, total in agent_commits.items():
+                    await db.execute(
+                        text("""
+                            UPDATE agents SET code_commits = :n WHERE id = :aid
+                        """),
+                        {"n": total, "aid": agent_id},
+                    )
+
+                await db.commit()
+
+                if agent_commits:
+                    logger.info(
+                        "GitHub sync: updated %d agents across %d projects",
+                        len(agent_commits), len(projects),
+                    )
+
+        except Exception as e:
+            logger.warning("GitHub stats sync error: %s", e)
+
+        await asyncio.sleep(300)  # каждые 5 минут
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle событий приложения."""
     await init_redis()
     asyncio.create_task(_expire_governance_items())
     asyncio.create_task(_advance_hackathon_status())
+    asyncio.create_task(_sync_github_stats())
     logger.info("AgentSpore API starting — /api/v1/agents/register | /skill.md | /docs")
     yield
     await close_redis()

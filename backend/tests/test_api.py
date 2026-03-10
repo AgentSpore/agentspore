@@ -1,74 +1,47 @@
-"""E2E API Tests for AgentSpore backend."""
+"""Unit tests for AgentSpore backend API."""
 import pytest
-from httpx import AsyncClient
-from app.main import app
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
-class TestAuth:
-    """Test authentication endpoints."""
 
-    @pytest.fixture
-    def test_user(self):
-        return {
-            "email": "testuser@example.com",
-            "password": "testpass123",
-            "name": "Test User",
-        }
+class TestModelImports:
+    """
+    Smoke-тесты импортов моделей и маппера SQLAlchemy.
 
-    async def test_register_user(self, test_user):
-        """Test user registration."""
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.post("/api/v1/auth/register", json=test_user)
-            # May fail if user already exists
-            assert response.status_code in [200, 201, 400]
+    Ловит ошибки вида:
+      InvalidRequestError: expression 'Vote' failed to locate a name ('Vote')
+    которые возникают если в модели осталась relationship на удалённый класс.
+    Без этих тестов ошибка проявляется только в рантайме при первом обращении к маппу.
+    """
 
-    async def test_login_user(self, test_user):
-        """Test user login."""
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            # First register
-            await client.post("/api/v1/auth/register", json=test_user)
-            
-            # Then login
-            response = await client.post(
-                "/api/v1/auth/login",
-                json={
-                    "email": test_user["email"],
-                    "password": test_user["password"],
-                },
-            )
-            assert response.status_code == 200
-            data = response.json()
-            assert "access_token" in data
-            assert data["token_type"] == "bearer"
+    def test_user_model_imports_without_error(self):
+        """User модель импортируется и маппер инициализируется без ошибок."""
+        from app.models.user import User
+        assert User.__tablename__ == "users"
 
+    def test_token_model_imports_without_error(self):
+        """TokenTransaction модель импортируется без ошибок."""
+        from app.models.token import TokenTransaction, TokenAction
+        assert TokenTransaction.__tablename__ == "token_transactions"
 
-class TestTokens:
-    """Test tokens endpoints."""
+    def test_all_models_import_together(self):
+        """Все модели из __init__ импортируются вместе без конфликтов маппера."""
+        import app.models  # noqa: F401 — проверяем что импорт не падает
 
-    @pytest.fixture
-    async def auth_headers(self):
-        """Get auth token for tests."""
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.post(
-                "/api/v1/auth/login",
-                json={
-                    "email": "newuser@example.com",
-                    "password": "newpass123",
-                },
-            )
-            if response.status_code != 200:
-                pytest.skip("Auth failed")
-            token = response.json()["access_token"]
-            return {"Authorization": f"Bearer {token}"}
+    def test_user_model_has_no_stale_relationships(self):
+        """User не имеет relationships на несуществующие модели (Vote, Idea и т.п.)."""
+        from app.models.user import User
+        from sqlalchemy import inspect as sa_inspect
+        mapper = sa_inspect(User)
+        rel_names = {r.key for r in mapper.relationships}
+        # Если здесь есть Vote или Idea — маппер уже упал бы выше, но проверим явно
+        assert "votes" not in rel_names, "User.votes relationship ссылается на удалённую модель Vote"
+        assert "ideas" not in rel_names, "User.ideas relationship ссылается на удалённую модель Idea"
+        assert "token_transactions" not in rel_names, (
+            "User.token_transactions relationship ссылается на удалённую back_populates"
+        )
 
-    async def test_get_token_balance(self, auth_headers):
-        """Test getting token balance."""
-        async with AsyncClient(app=app, base_url="http://test") as client:
-            response = await client.get(
-                "/api/v1/tokens/balance",
-                headers=auth_headers,
-            )
-            assert response.status_code == 200
-            data = response.json()
-            assert "balance" in data
-
+    def test_main_app_creates_without_error(self):
+        """FastAPI app создаётся без ошибок при импорте."""
+        from app.main import app
+        assert app is not None

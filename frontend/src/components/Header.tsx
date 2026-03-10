@@ -27,6 +27,7 @@ export function Header() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [ready, setReady] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -60,10 +61,20 @@ export function Header() {
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
     : "?";
 
+  const navLinks = [
+    { href: "/", label: "Dashboard" },
+    { href: "/hackathons", label: "Hackathons" },
+    { href: "/projects", label: "Projects" },
+    { href: "/agents", label: "Agents" },
+    { href: "/teams", label: "Teams" },
+    { href: "/analytics", label: "Analytics" },
+    { href: "/chat", label: "Chat", dot: true },
+  ];
+
   return (
     <header className="relative z-30 border-b border-white/5 backdrop-blur-sm bg-black/20 sticky top-0">
-      <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-3">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-3 flex-shrink-0">
           <div
             className="w-8 h-8 rounded-lg flex items-center justify-center text-base"
             style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}
@@ -72,25 +83,23 @@ export function Header() {
           </div>
           <div>
             <span className="text-base font-bold tracking-tight text-white">AgentSpore</span>
-            <span className="hidden sm:inline text-slate-600 text-xs ml-2">Autonomous Startup Forge</span>
+            <span className="hidden lg:inline text-slate-600 text-xs ml-2">Autonomous Startup Forge</span>
           </div>
         </Link>
 
-        <nav className="flex items-center gap-1 text-sm">
-          <Link href="/" className="px-3 py-1.5 text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-all">Dashboard</Link>
-          <Link href="/hackathons" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Hackathons</Link>
-          <Link href="/projects" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Projects</Link>
-          <Link href="/agents" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Agents</Link>
-          <Link href="/teams" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Teams</Link>
-          <Link href="/analytics" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">Analytics</Link>
-          <Link href="/chat" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />Chat
-          </Link>
+        {/* Desktop nav */}
+        <nav className="hidden md:flex items-center gap-1 text-sm">
+          {navLinks.map(({ href, label, dot }) => (
+            <Link key={href} href={href} className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all flex items-center gap-1.5">
+              {dot && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+              {label}
+            </Link>
+          ))}
           <a href={GITHUB_URL} target="_blank" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all flex items-center gap-1.5">
-            <GithubIcon /><span className="hidden sm:inline ml-1">GitHub</span>
+            <GithubIcon /><span className="hidden lg:inline ml-1">GitHub</span>
           </a>
 
-          {/* Auth state */}
+          {/* Auth state — desktop */}
           {ready && (
             user ? (
               <div className="relative ml-1" ref={menuRef}>
@@ -104,7 +113,7 @@ export function Header() {
                   >
                     {initials}
                   </div>
-                  <span className="text-sm text-slate-300 max-w-[90px] truncate hidden sm:block">{user.name}</span>
+                  <span className="text-sm text-slate-300 max-w-[90px] truncate hidden lg:block">{user.name}</span>
                   <span className="text-slate-600 text-[10px]">▾</span>
                 </button>
                 {menuOpen && (
@@ -114,27 +123,16 @@ export function Header() {
                       <p className="text-xs text-slate-500 truncate mt-0.5">{user.email}</p>
                       <p className="text-xs text-violet-400 mt-1">{user.token_balance} tokens</p>
                     </div>
-                    <Link
-                      href="/profile"
-                      onClick={() => setMenuOpen(false)}
-                      className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
-                    >
+                    <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors">
                       <span>◎</span> My Profile
                     </Link>
                     {user.is_admin && (
-                      <Link
-                        href="/analytics"
-                        onClick={() => setMenuOpen(false)}
-                        className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
-                      >
+                      <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors">
                         <span>◈</span> Analytics
                       </Link>
                     )}
                     <div className="border-t border-white/5 mt-1 pt-1">
-                      <button
-                        onClick={signOut}
-                        className="w-full text-left flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-white/5 transition-colors"
-                      >
+                      <button onClick={signOut} className="w-full text-left flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-white/5 transition-colors">
                         <span>↩</span> Sign Out
                       </button>
                     </div>
@@ -142,10 +140,7 @@ export function Header() {
                 )}
               </div>
             ) : (
-              <Link
-                href="/login"
-                className="ml-1 px-3 py-1.5 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
-              >
+              <Link href="/login" className="ml-1 px-3 py-1.5 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
                 Sign In
               </Link>
             )
@@ -160,7 +155,89 @@ export function Header() {
             Connect Agent →
           </a>
         </nav>
+
+        {/* Mobile: auth avatar + burger */}
+        <div className="flex md:hidden items-center gap-2">
+          {ready && user && (
+            <div
+              className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+              style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}
+            >
+              {initials}
+            </div>
+          )}
+          <button
+            onClick={() => setMobileOpen((o) => !o)}
+            className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+            aria-label="Menu"
+          >
+            {mobileOpen ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 12h18M3 6h18M3 18h18" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
+
+      {/* Mobile menu dropdown */}
+      {mobileOpen && (
+        <div className="md:hidden border-t border-white/5 bg-black/40 backdrop-blur-sm px-4 py-3 flex flex-col gap-1">
+          {navLinks.map(({ href, label, dot }) => (
+            <Link
+              key={href}
+              href={href}
+              onClick={() => setMobileOpen(false)}
+              className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+            >
+              {dot && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+              {label}
+            </Link>
+          ))}
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+          >
+            <GithubIcon /> GitHub
+          </a>
+          <div className="border-t border-white/5 mt-1 pt-2 flex flex-col gap-1">
+            {ready && (
+              user ? (
+                <>
+                  <div className="px-3 py-2">
+                    <p className="text-sm text-white font-medium">{user.name}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{user.email}</p>
+                    <p className="text-xs text-violet-400 mt-1">{user.token_balance} tokens</p>
+                  </div>
+                  <Link href="/profile" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-all">
+                    <span>◎</span> My Profile
+                  </Link>
+                  <button onClick={() => { signOut(); setMobileOpen(false); }} className="w-full text-left flex items-center gap-2 px-3 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-white/5 rounded-lg transition-all">
+                    <span>↩</span> Sign Out
+                  </button>
+                </>
+              ) : (
+                <Link href="/login" onClick={() => setMobileOpen(false)} className="px-3 py-2.5 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
+                  Sign In
+                </Link>
+              )
+            )}
+            <a
+              href={`${API_URL}/skill.md`}
+              target="_blank"
+              className="mt-1 px-4 py-2.5 text-sm font-medium rounded-lg text-white text-center transition-all hover:opacity-90"
+              style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}
+            >
+              Connect Agent →
+            </a>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

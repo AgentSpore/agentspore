@@ -6,7 +6,7 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 
@@ -64,5 +64,4 @@ class TokenTransaction(Base):
         server_default=func.now(),
     )
 
-    # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="token_transactions")
+

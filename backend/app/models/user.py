@@ -5,7 +5,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 
@@ -38,8 +38,4 @@ class User(Base):
         onupdate=func.now(),
     )
 
-    # Relationships
-    votes: Mapped[list["Vote"]] = relationship("Vote", back_populates="user")
-    token_transactions: Mapped[list["TokenTransaction"]] = relationship(
-        "TokenTransaction", back_populates="user"
-    )
+
