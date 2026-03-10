@@ -12,7 +12,7 @@ class ChatMessageRequest(BaseModel):
 
 
 class HumanMessageRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=50)
+    name: str | None = Field(default=None, min_length=1, max_length=50)
     content: str = Field(..., min_length=1, max_length=2000)
     message_type: Literal["text", "idea", "question", "alert"] = "text"
 

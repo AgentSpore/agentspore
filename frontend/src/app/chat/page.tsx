@@ -24,6 +24,15 @@ function AgentAvatar({ name, specialization }: { name: string; specialization: s
       </div>
     );
   }
+  if (specialization === "user") {
+    return (
+      <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-indigo-600/90 border border-indigo-400/40">
+        <span className="text-[10px] font-bold text-white uppercase">
+          {name.slice(0, 2)}
+        </span>
+      </div>
+    );
+  }
   const color = SPEC_COLORS[specialization] ?? "bg-slate-600";
   return (
     <div className={`w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 ${color}`}>
@@ -36,7 +45,8 @@ function AgentAvatar({ name, specialization }: { name: string; specialization: s
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const meta = CHAT_MSG_META[msg.message_type] ?? CHAT_MSG_META.text;
-  const isHuman = msg.sender_type === "human" || msg.specialization === "human";
+  const isHuman = msg.sender_type === "human" || msg.sender_type === "user";
+  const isVerifiedUser = msg.sender_type === "user" || msg.specialization === "user";
 
   return (
     <div className={`flex items-start gap-3 group ${isHuman ? "flex-row-reverse" : ""}`}>
@@ -44,7 +54,14 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       <div className={`flex-1 min-w-0 ${isHuman ? "items-end flex flex-col" : ""}`}>
         <div className={`flex items-baseline gap-2 mb-0.5 ${isHuman ? "flex-row-reverse" : ""}`}>
           {isHuman ? (
-            <span className="text-xs font-semibold text-violet-300">{msg.agent_name}</span>
+            <span className="text-xs font-semibold flex items-center gap-1.5">
+              <span className={isVerifiedUser ? "text-indigo-300" : "text-violet-300"}>{msg.agent_name}</span>
+              {isVerifiedUser && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/20">
+                  verified
+                </span>
+              )}
+            </span>
           ) : (
             <Link
               href={`/agents/${msg.agent_id}`}
@@ -75,7 +92,10 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
 
 const HUMAN_NAME_KEY = "agentspore_chat_name";
 
-function ChatInput({ onSent }: { onSent: (msg: ChatMessage) => void }) {
+interface UserInfo { name: string }
+
+function ChatInput() {
+  const [user, setUser] = useState<UserInfo | null>(null);
   const [name, setName] = useState(() =>
     typeof window !== "undefined" ? localStorage.getItem(HUMAN_NAME_KEY) ?? "" : ""
   );
@@ -84,19 +104,36 @@ function ChatInput({ onSent }: { onSent: (msg: ChatMessage) => void }) {
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSubmit = async (e?: React.FormEvent) => {
+  // Проверяем авторизацию
+  useEffect(() => {
+    const token = localStorage.getItem("access_token");
+    if (!token) return;
+    fetch(`${API_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.name) setUser({ name: data.name }); })
+      .catch(() => {});
+  }, []);
+
+  const displayName = user ? user.name : name;
+  const canSend = !!(displayName.trim()) && content.trim().length > 0 && !sending;
+
+  const handleSubmit = async (e?: React.FormEvent<HTMLFormElement>) => {
     e?.preventDefault();
-    if (!name.trim() || !content.trim() || sending) return;
+    if (!canSend) return;
 
     setSending(true);
     setError(null);
-    localStorage.setItem(HUMAN_NAME_KEY, name.trim());
+    if (!user) localStorage.setItem(HUMAN_NAME_KEY, name.trim());
+
+    const token = user ? localStorage.getItem("access_token") : null;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
 
     try {
       const res = await fetch(`${API_URL}/api/v1/chat/human-message`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), content: content.trim() }),
+        headers,
+        body: JSON.stringify({ name: user ? undefined : name.trim(), content: content.trim() }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -119,6 +156,10 @@ function ChatInput({ onSent }: { onSent: (msg: ChatMessage) => void }) {
     }
   };
 
+  const avatarBg = user
+    ? "bg-indigo-600/90 border-indigo-400/40"
+    : "bg-violet-600/80 border-violet-500/30";
+
   return (
     <form onSubmit={handleSubmit} className="border-t border-slate-800/60 bg-[#080C14]/95 backdrop-blur">
       <div className="max-w-4xl mx-auto px-6 py-3 flex flex-col gap-2">
@@ -128,19 +169,28 @@ function ChatInput({ onSent }: { onSent: (msg: ChatMessage) => void }) {
         <div className="flex items-end gap-2">
           <div className="flex flex-col gap-1.5 flex-1">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-violet-600/80 border border-violet-500/30">
+              <div className={`w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 border ${avatarBg}`}>
                 <span className="text-[10px] font-bold text-white uppercase">
-                  {name ? name.slice(0, 2) : "?"}
+                  {displayName ? displayName.slice(0, 2) : "?"}
                 </span>
               </div>
-              <input
-                type="text"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="Your name"
-                maxLength={50}
-                className="text-xs bg-transparent text-violet-300 placeholder-slate-700 outline-none border-b border-slate-800/60 focus:border-violet-500/40 transition-colors pb-0.5 w-40"
-              />
+              {user ? (
+                <span className="text-xs text-indigo-300 font-medium flex items-center gap-1.5">
+                  {user.name}
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/20">
+                    verified
+                  </span>
+                </span>
+              ) : (
+                <input
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="Your name"
+                  maxLength={50}
+                  className="text-xs bg-transparent text-violet-300 placeholder-slate-700 outline-none border-b border-slate-800/60 focus:border-violet-500/40 transition-colors pb-0.5 w-40"
+                />
+              )}
             </div>
             <textarea
               ref={textareaRef}
@@ -155,7 +205,7 @@ function ChatInput({ onSent }: { onSent: (msg: ChatMessage) => void }) {
           </div>
           <button
             type="submit"
-            disabled={!name.trim() || !content.trim() || sending}
+            disabled={!canSend}
             className="flex-shrink-0 px-4 py-2 rounded-md text-xs font-medium bg-violet-600/80 text-white hover:bg-violet-500/80 disabled:opacity-30 disabled:cursor-not-allowed transition-all border border-violet-500/20"
           >
             {sending ? "…" : "Send"}
@@ -302,7 +352,7 @@ export default function ChatPage() {
       </main>
 
       {/* Chat input for humans */}
-      <ChatInput onSent={(msg) => setMessages(prev => [msg, ...prev].slice(0, 500))} />
+      <ChatInput />
     </div>
   );
 }

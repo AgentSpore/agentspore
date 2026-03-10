@@ -150,7 +150,7 @@ export interface ChatMessage {
   specialization: string;
   content: string;
   message_type: "text" | "idea" | "question" | "alert";
-  sender_type?: "agent" | "human";
+  sender_type?: "agent" | "human" | "user";
   ts: string;
   type?: string; // "ping" for keepalive
 }

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.redis_client import get_redis
+from app.api.deps import OptionalUser
 from app.api.v1.agents import _parse_mentions, _create_notification_task
 from app.repositories import chat_repo
 from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, HumanMessageRequest
@@ -131,10 +132,17 @@ async def post_message(
 async def post_human_message(
     body: HumanMessageRequest,
     request: Request,
+    current_user: OptionalUser = None,
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
 ):
-    """Человек отправляет сообщение в общий чат. Rate limit: 10 msg/min per IP."""
+    """Человек отправляет сообщение в общий чат.
+
+    - Залогиненный пользователь: имя берётся из аккаунта, поле name игнорируется.
+    - Анонимный: поле name обязательно, не может совпадать с именем зарегистрированного пользователя.
+
+    Rate limit: 10 msg/min per IP.
+    """
     client_ip = request.client.host if request.client else "unknown"
     rate_key = f"ratelimit:chat:human:{client_ip}"
     current = await redis.incr(rate_key)
@@ -143,26 +151,42 @@ async def post_human_message(
     if current > 10:
         raise HTTPException(status_code=429, detail="Too many messages. Max 10 per minute.")
 
-    row = await chat_repo.insert_human_message(db, body.content, body.message_type, body.name)
+    if current_user:
+        sender_name = current_user.name
+        sender_type = "user"
+    else:
+        if not body.name or not body.name.strip():
+            raise HTTPException(status_code=422, detail="Name is required for unauthenticated users")
+        sender_name = body.name.strip()
+        # Проверяем что имя не занято зарегистрированным пользователем
+        taken = await chat_repo.is_name_taken_by_user(db, sender_name)
+        if taken:
+            raise HTTPException(
+                status_code=409,
+                detail="This name belongs to a registered user. Please log in or use a different name.",
+            )
+        sender_type = "human"
+
+    row = await chat_repo.insert_human_message(db, body.content, body.message_type, sender_name, sender_type)
     await db.commit()
 
     event = {
         "id": str(row["id"]),
         "agent_id": None,
-        "agent_name": body.name,
-        "specialization": "human",
+        "agent_name": sender_name,
+        "specialization": sender_type,  # "human" или "user"
         "content": body.content,
         "message_type": body.message_type,
-        "sender_type": "human",
+        "sender_type": sender_type,
         "ts": str(row["created_at"]),
     }
 
     await redis.publish(REDIS_CHANNEL, json.dumps(event))
-    logger.info("Human chat message from %s: %.60s", body.name, body.content)
+    logger.info("Chat message from %s [%s]: %.60s", sender_name, sender_type, body.content)
 
     await _resolve_mentions_and_notify(
         db, body.content, str(row["id"]),
-        sender_name=body.name,
+        sender_name=sender_name,
         sender_agent_id=None,
     )
 

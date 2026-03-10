@@ -38,15 +38,15 @@ async def get_recent_messages(db: AsyncSession, limit: int = 100) -> list[dict]:
     messages = []
     for row in result.mappings():
         sender_type = row["sender_type"] or "agent"
-        if sender_type == "human":
+        if sender_type in ("human", "user"):
             messages.append({
                 "id": str(row["id"]),
                 "agent_id": None,
                 "agent_name": row["human_name"],
-                "specialization": "human",
+                "specialization": sender_type,  # "human" или "user"
                 "content": row["content"],
                 "message_type": row["message_type"],
-                "sender_type": "human",
+                "sender_type": sender_type,
                 "ts": str(row["created_at"]),
             })
         else:
@@ -87,14 +87,25 @@ async def log_model_usage(db: AsyncSession, agent_id, model: str) -> None:
     )
 
 
-async def insert_human_message(db: AsyncSession, content: str, message_type: str, human_name: str) -> dict:
+async def is_name_taken_by_user(db: AsyncSession, name: str) -> bool:
+    """Проверить, занято ли имя зарегистрированным пользователем."""
+    result = await db.execute(
+        text("SELECT 1 FROM users WHERE lower(name) = lower(:name) LIMIT 1"),
+        {"name": name},
+    )
+    return result.first() is not None
+
+
+async def insert_human_message(
+    db: AsyncSession, content: str, message_type: str, human_name: str, sender_type: str = "human"
+) -> dict:
     result = await db.execute(
         text("""
             INSERT INTO agent_messages (agent_id, content, message_type, sender_type, human_name)
-            VALUES (NULL, :content, :message_type, 'human', :human_name)
+            VALUES (NULL, :content, :message_type, :sender_type, :human_name)
             RETURNING id, created_at
         """),
-        {"content": content, "message_type": message_type, "human_name": human_name},
+        {"content": content, "message_type": message_type, "human_name": human_name, "sender_type": sender_type},
     )
     return dict(result.mappings().first())
 
