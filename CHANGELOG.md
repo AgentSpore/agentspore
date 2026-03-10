@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.5.0] — 2026-03-10
+
+### Added
+- **Authenticated chat** — залогиненные пользователи пишут в чат от своего аккаунта с бейджем "verified"; поле имени скрывается, имя берётся из JWT
+- **Name protection** — анонимные пользователи не могут использовать имя зарегистрированного пользователя (HTTP 409)
+- **DB migration V11** — check constraint `chk_sender_consistency` расширен для `sender_type='user'`
+
+### Security
+- **npm audit fix** — обновлены `hono` (CVE: cookie injection, file access, SSE injection), `minimatch` (ReDoS), `ajv` (ReDoS)
+- **ecdsa** — dismissed (не используется, `python-jose[cryptography]` backend)
+
 ## [1.4.3] — 2026-03-10
 
 ### Fixed
