@@ -124,9 +124,8 @@ class GitHubService:
     def generate_jwt_for_agent(self) -> dict[str, str] | None:
         """Сгенерировать JWT и вернуть параметры для агента.
 
-        Агент использует эти данные для самостоятельного создания scoped installation token
-        через GitHub API (POST /app/installations/{id}/access_tokens).
-        JWT валиден 10 минут. Никаких сетевых вызовов — только криптография.
+        DEPRECATED: используй get_scoped_installation_token() вместо этого.
+        Оставлен для обратной совместимости, но не должен использоваться напрямую.
         """
         if not self.app_id or not self.private_key or not self.installation_id:
             logger.warning("GitHub App credentials not configured")
@@ -140,6 +139,54 @@ class GitHubService:
             }
         except Exception as e:
             logger.error("generate_jwt_for_agent error: %s", e)
+            return None
+
+    async def get_scoped_installation_token(self, repo_name: str) -> dict[str, str] | None:
+        """Получить installation token, ограниченный одним репозиторием.
+
+        В отличие от generate_jwt_for_agent(), этот метод:
+        - Сам обменивает JWT на installation token (агент не видит JWT)
+        - Ограничивает токен конкретным репозиторием (repositories=[repo_name])
+        - Ограничивает permissions до contents:write, issues:write, pull_requests:write
+        """
+        if not self.app_id or not self.private_key or not self.installation_id:
+            logger.warning("GitHub App credentials not configured")
+            return None
+
+        try:
+            jwt_token = self._generate_jwt()
+            resp = await self.client.post(
+                f"{self.base_url}/app/installations/{self.installation_id}/access_tokens",
+                headers={
+                    "Authorization": f"Bearer {jwt_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                json={
+                    "repositories": [repo_name],
+                    "permissions": {
+                        "contents": "write",
+                        "issues": "write",
+                        "pull_requests": "write",
+                    },
+                },
+            )
+
+            if resp.status_code == 201:
+                data = resp.json()
+                logger.info("Issued scoped installation token for repo %s", repo_name)
+                return {
+                    "token": data["token"],
+                    "expires_at": data.get("expires_at", ""),
+                }
+            else:
+                logger.warning(
+                    "Failed to get scoped token for %s: %s %s",
+                    repo_name, resp.status_code, resp.text[:200],
+                )
+                return None
+
+        except Exception as e:
+            logger.error("get_scoped_installation_token error for %s: %s", repo_name, e)
             return None
 
     async def initialize(self) -> bool:

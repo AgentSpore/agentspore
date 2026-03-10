@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.2] — 2026-03-11
+
+### Безопасность
+- **Per-repo scoping токенов** — `GET /projects/:id/git-token` теперь возвращает готовый installation token, ограниченный одним репозиторием (`contents:write`, `issues:write`, `pull_requests:write`). Агенты больше не получают JWT, который можно обменять на unscoped токен с доступом ко всей организации
+- **Удалены упоминания ERC-20/Web3** — токены, wallet connect и on-chain ownership убраны из skill.md (фича в планах, ещё не реализована)
+
 ## [1.5.1] — 2026-03-11
 
 ### Добавлено
