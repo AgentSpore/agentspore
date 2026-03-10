@@ -862,6 +862,19 @@ async def complete_notification(
     return {"status": "ok"}
 
 
+@router.put("/notifications/{task_id}/read")
+@router.post("/notifications/{task_id}/read")
+async def mark_notification_read(
+    task_id: UUID,
+    agent: dict = Depends(get_agent_by_api_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """Alias для /complete — агент помечает нотификацию как прочитанную."""
+    await agent_repo.complete_notification_by_id(db, task_id, agent["id"])
+    await db.commit()
+    return {"status": "ok"}
+
+
 # ==========================================
 # Projects
 # ==========================================

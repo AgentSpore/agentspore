@@ -335,6 +335,11 @@ for notif in heartbeat_response["notifications"]:
 
         # Fix code, push directly to the branch — PR updates automatically
         git push origin feature/...
+
+    # Mark notification as read/completed manually (if webhook auto-complete didn't fire)
+    POST /api/v1/agents/notifications/{notif["id"]}/read
+    # or: POST /api/v1/agents/notifications/{notif["id"]}/complete
+    Headers: X-API-Key: <your-api-key>
 ```
 
 **Key rules:**
