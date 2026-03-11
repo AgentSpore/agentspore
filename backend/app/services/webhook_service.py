@@ -264,9 +264,9 @@ class GitHubWebhookService:
             for c in commits:
                 changed_files.update(c.get("added", []))
                 changed_files.update(c.get("modified", []))
-            await self._award_contribution_points(project_id, ctx["sender_login"], len(changed_files), vcs="github")
-            logger.info("Agent push: @%s → %d files on %s", ctx["sender_login"], len(changed_files), ctx["project"]["title"])
-            return {"status": "ok", "type": "agent_push", "files": len(changed_files)}
+            await self._award_contribution_points(project_id, ctx["sender_login"], len(changed_files), len(commits), vcs="github")
+            logger.info("Agent push: @%s → %d files, %d commits on %s", ctx["sender_login"], len(changed_files), len(commits), ctx["project"]["title"])
+            return {"status": "ok", "type": "agent_push", "files": len(changed_files), "commits": len(commits)}
 
         is_main = branch in ("main", "master")
         gv_required = min(3, max(1, ctx["contributor_count"])) if (forced or is_main) else 1
@@ -326,6 +326,7 @@ class GitHubWebhookService:
 
     async def _on_star(self, data: dict, ctx: dict) -> dict:
         stars = data.get("repository", {}).get("stargazers_count", 0)
+        await self.repo.update_project_stars(ctx["project"]["id"], stars)
         logger.info("Star %s on project %s — total: %d", ctx["action"], ctx["project"]["title"], stars)
         return {"status": "ok", "stars": stars}
 
@@ -337,7 +338,7 @@ class GitHubWebhookService:
         await self.repo.insert_governance_item(project_id, action_type, source_ref, source_number, actor_login, actor_type, meta, votes_required)
         return True
 
-    async def _award_contribution_points(self, project_id, login: str, files_changed: int, vcs: str = "github") -> None:
+    async def _award_contribution_points(self, project_id, login: str, files_changed: int, commit_count: int = 1, vcs: str = "github") -> None:
         if files_changed <= 0:
             return
         agent = await self.repo.get_agent_by_vcs_login(login, vcs)
@@ -346,7 +347,7 @@ class GitHubWebhookService:
         agent_id = agent["id"]
         owner_user_id = agent["owner_user_id"]
         points = files_changed * 10
-        await self.repo.increment_commits_and_karma(agent_id)
+        await self.repo.increment_commits_and_karma(agent_id, commit_count)
         await self.repo.upsert_contributor_points(project_id, agent_id, owner_user_id, points)
         await self.repo.recalculate_share_pct(project_id)
         wallet_info = await self.repo.get_wallet_and_contract(project_id, agent_id)
@@ -363,7 +364,7 @@ class GitHubWebhookService:
                     await self.repo.increment_project_total_minted(project_id, points)
             except Exception as exc:
                 logger.warning("Token mint failed for project %s agent %s: %s", project_id, agent_id, exc)
-        logger.info("Contribution: @%s pushed %d files to project %s (+%d pts)", login, files_changed, project_id, points)
+        logger.info("Contribution: @%s pushed %d files (%d commits) to project %s (+%d pts)", login, files_changed, commit_count, project_id, points)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -549,7 +550,7 @@ class GitLabWebhookService:
             for c in commits:
                 changed_files.update(c.get("added", []))
                 changed_files.update(c.get("modified", []))
-            await self._award_contribution_points(project_id, ctx["sender_login"], len(changed_files), vcs="gitlab")
+            await self._award_contribution_points(project_id, ctx["sender_login"], len(changed_files), len(commits), vcs="gitlab")
             logger.info("Agent push (GitLab): @%s → %d files on %s", ctx["sender_login"], len(changed_files), ctx["project"]["title"])
             return {"status": "ok", "type": "agent_push", "files": len(changed_files)}
 
@@ -585,7 +586,7 @@ class GitLabWebhookService:
         await self.repo.insert_governance_item(project_id, action_type, source_ref, source_number, actor_login, actor_type, meta, votes_required)
         return True
 
-    async def _award_contribution_points(self, project_id, login: str, files_changed: int, vcs: str = "gitlab") -> None:
+    async def _award_contribution_points(self, project_id, login: str, files_changed: int, commit_count: int = 1, vcs: str = "gitlab") -> None:
         if files_changed <= 0:
             return
         agent = await self.repo.get_agent_by_vcs_login(login, vcs)
@@ -594,7 +595,7 @@ class GitLabWebhookService:
         agent_id = agent["id"]
         owner_user_id = agent["owner_user_id"]
         points = files_changed * 10
-        await self.repo.increment_commits_and_karma(agent_id)
+        await self.repo.increment_commits_and_karma(agent_id, commit_count)
         await self.repo.upsert_contributor_points(project_id, agent_id, owner_user_id, points)
         await self.repo.recalculate_share_pct(project_id)
         wallet_info = await self.repo.get_wallet_and_contract(project_id, agent_id)

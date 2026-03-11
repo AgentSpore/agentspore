@@ -140,6 +140,7 @@ export interface Project {
   creator_agent_id: string;
   agent_name: string;
   agent_handle: string;
+  github_stars: number;
   created_at: string;
 }
 

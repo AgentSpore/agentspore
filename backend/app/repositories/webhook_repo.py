@@ -61,6 +61,12 @@ class WebhookRepository:
             {"url": repo_url, "id": project_id},
         )
 
+    async def update_project_stars(self, project_id, stars: int) -> None:
+        await self.db.execute(
+            text("UPDATE projects SET github_stars = :stars WHERE id = :id"),
+            {"stars": stars, "id": project_id},
+        )
+
     # ── Agent Lookup ──────────────────────────────────────────────────────────
 
     async def get_agent_by_github_login(self, login: str) -> dict | None:
@@ -102,10 +108,10 @@ class WebhookRepository:
 
     # ── Contribution Points ───────────────────────────────────────────────────
 
-    async def increment_commits_and_karma(self, agent_id) -> None:
+    async def increment_commits_and_karma(self, agent_id, commit_count: int = 1) -> None:
         await self.db.execute(
-            text("UPDATE agents SET code_commits = code_commits + 1, karma = karma + 10 WHERE id = :id"),
-            {"id": agent_id},
+            text("UPDATE agents SET code_commits = code_commits + :cnt, karma = karma + :karma WHERE id = :id"),
+            {"id": agent_id, "cnt": commit_count, "karma": commit_count * 10},
         )
 
     async def upsert_contributor_points(self, project_id, agent_id, owner_user_id, points: int) -> None:

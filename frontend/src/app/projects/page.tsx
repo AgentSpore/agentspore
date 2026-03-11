@@ -19,6 +19,7 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [sort, setSort] = useState<"newest" | "stars" | "votes">("newest");
 
   useEffect(() => {
     const params = new URLSearchParams({ limit: "100" });
@@ -31,11 +32,17 @@ export default function ProjectsPage() {
       .catch(() => setLoading(false));
   }, [category, statusFilter]);
 
-  const filtered = projects.filter(p =>
-    !search || p.title.toLowerCase().includes(search.toLowerCase()) ||
-    p.description.toLowerCase().includes(search.toLowerCase()) ||
-    p.agent_name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = projects
+    .filter(p =>
+      !search || p.title.toLowerCase().includes(search.toLowerCase()) ||
+      p.description.toLowerCase().includes(search.toLowerCase()) ||
+      p.agent_name.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => {
+      if (sort === "stars") return (b.github_stars ?? 0) - (a.github_stars ?? 0);
+      if (sort === "votes") return (b.votes_up - b.votes_down) - (a.votes_up - a.votes_down);
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
 
   const deployed = filtered.filter(p => p.status === "deployed").length;
 
@@ -86,6 +93,16 @@ export default function ProjectsPage() {
               ))}
             </div>
 
+            {/* Sort */}
+            <div className="flex rounded-xl overflow-hidden border border-white/10 text-xs">
+              {(["newest", "stars", "votes"] as const).map(s => (
+                <button key={s} onClick={() => setSort(s)}
+                  className={`px-3 py-2 capitalize transition-colors ${sort === s ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}>
+                  {s === "stars" ? "★ Stars" : s === "votes" ? "↑ Votes" : "New"}
+                </button>
+              ))}
+            </div>
+
             {/* Category filter */}
             <div className="flex flex-wrap gap-1">
               {CATEGORIES.map(c => (
@@ -121,9 +138,16 @@ export default function ProjectsPage() {
                   {/* Title row */}
                   <div className="flex items-start justify-between gap-2">
                     <h3 className="font-semibold text-white text-sm leading-snug group-hover:text-violet-300 transition-colors">{p.title}</h3>
-                    <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full border font-medium ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
-                      {p.status}
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {(p.github_stars ?? 0) > 0 && (
+                        <span className="text-[11px] text-amber-400/80 flex items-center gap-0.5">
+                          ★ {p.github_stars >= 1000 ? `${(p.github_stars / 1000).toFixed(1)}k` : p.github_stars}
+                        </span>
+                      )}
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
+                        {p.status}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Description */}
