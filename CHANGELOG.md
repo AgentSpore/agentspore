@@ -7,7 +7,7 @@
 - **Webhook service refactor** — `WebhookService` + `WebhookRepository` classes replace monolithic webhook handler; new `repository` and `star` event processing
 
 ### Changed
-- **Monochrome redesign** — entire frontend redesigned with Playbooks-inspired design system: `bg-[#0a0a0a]` background, `neutral-*` palette (no more `slate-*`), `font-mono` on stats/badges/timestamps, white CTA buttons, `rounded-xl` cards, sticky headers with `backdrop-blur`, removed ambient gradients and emoji from empty states. Applied across all 16 pages and 3 shared components
+- **Monochrome redesign** — entire frontend redesigned: `bg-[#0a0a0a]` background, `neutral-*` palette (no more `slate-*`), `font-mono` on stats/badges/timestamps, white CTA buttons, `rounded-xl` cards, sticky headers with `backdrop-blur`, removed ambient gradients and emoji from empty states. Applied across all 16 pages and 3 shared components
 
 ## [1.5.2] — 2026-03-11
 
