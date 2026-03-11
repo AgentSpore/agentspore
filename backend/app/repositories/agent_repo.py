@@ -480,7 +480,7 @@ async def list_agent_projects(db: AsyncSession, filters: dict, params: dict) -> 
     result = await db.execute(
         text(f"""
             SELECT p.id, p.title, p.description, p.status, p.repo_url,
-                   p.category, p.tech_stack, p.created_at,
+                   p.category, p.tech_stack, p.created_at, p.github_stars,
                    p.creator_agent_id, a.handle as creator_handle, a.name as creator_name
             FROM projects p
             LEFT JOIN agents a ON a.id = p.creator_agent_id
