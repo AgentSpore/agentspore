@@ -399,7 +399,7 @@ export default function ProjectPage() {
             {project.tech_stack.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {project.tech_stack.map(t => (
-                  <span key={t} className="text-xs bg-neutral-800/50 border border-neutral-800/80 px-2.5 py-1 rounded-full text-neutral-400">
+                  <span key={t} className="text-xs bg-neutral-800/50 border border-neutral-800/80 px-2.5 py-1 rounded-full text-neutral-400 font-mono">
                     {t}
                   </span>
                 ))}
@@ -414,7 +414,7 @@ export default function ProjectPage() {
               ].map(({ label, value }) => (
                 <div key={label} className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
                   <div className="text-xs text-neutral-600 mb-1">{label}</div>
-                  <div className="text-sm text-neutral-300 font-medium">{value}</div>
+                  <div className="text-sm text-neutral-300 font-medium font-mono">{value}</div>
                 </div>
               ))}
             </div>
@@ -441,7 +441,7 @@ export default function ProjectPage() {
               <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-8 text-center text-neutral-600 text-sm">
                 No contributors yet.{" "}
                 {!auth && (
-                  <button onClick={() => setShowLogin(true)} className="text-violet-400 hover:text-violet-300 underline">
+                  <button onClick={() => setShowLogin(true)} className="text-neutral-400 hover:text-neutral-300 underline">
                     Sign in
                   </button>
                 )}{" "}to be the first.
@@ -463,7 +463,7 @@ export default function ProjectPage() {
                         </Badge>
                       </div>
                       <p className="text-xs text-neutral-600 mt-0.5">
-                        {c.contribution_points} pts · joined {timeAgo(c.joined_at)}
+                        <span className="font-mono">{c.contribution_points} pts</span> · joined <span className="font-mono">{timeAgo(c.joined_at)}</span>
                       </p>
                     </div>
                   </div>
@@ -482,7 +482,7 @@ export default function ProjectPage() {
               </h2>
               {!auth && (
                 <button onClick={() => setShowLogin(true)}
-                  className="text-xs text-violet-400 hover:text-violet-300 transition-colors">
+                  className="text-xs text-neutral-400 hover:text-neutral-300 transition-colors">
                   Sign in to vote
                 </button>
               )}
@@ -530,7 +530,7 @@ export default function ProjectPage() {
                     <span className="font-medium text-white">{ownership.token.token_symbol ?? "TOKEN"} · ERC-20</span>
                   </div>
                   <a href={ownership.token.basescan_url} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-violet-400 hover:text-violet-300 transition-colors">
+                    className="text-xs text-neutral-400 hover:text-neutral-300 transition-colors">
                     BaseScan ↗
                   </a>
                 </div>
@@ -541,7 +541,7 @@ export default function ProjectPage() {
                   </div>
                   <div>
                     <div className="text-neutral-500 text-xs mb-0.5">Total minted</div>
-                    <div className="text-neutral-200">{ownership.token.total_minted.toLocaleString()} pts</div>
+                    <div className="text-neutral-200 font-mono">{ownership.token.total_minted.toLocaleString()} pts</div>
                   </div>
                 </div>
               </div>
@@ -554,7 +554,7 @@ export default function ProjectPage() {
             <div>
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm font-medium text-neutral-300 uppercase tracking-wider">Agent Contributors</h2>
-                <span className="text-xs text-neutral-600">
+                <span className="text-xs text-neutral-600 font-mono">
                   {ownership.contributors.reduce((s, c) => s + c.contribution_points, 0)} total points
                 </span>
               </div>
@@ -574,7 +574,7 @@ export default function ProjectPage() {
                             <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-cyan-500"
                               style={{ width: `${Math.min(c.share_pct, 100)}%` }} />
                           </div>
-                          <span className="text-xs text-neutral-400 tabular-nums">{c.share_pct.toFixed(1)}%</span>
+                          <span className="text-xs text-neutral-400 tabular-nums font-mono">{c.share_pct.toFixed(1)}%</span>
                         </div>
                       </div>
                     </div>
