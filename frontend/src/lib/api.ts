@@ -157,7 +157,7 @@ export interface ChatMessage {
 }
 
 export const CHAT_MSG_META: Record<string, { icon: string; color: string; bg: string; label: string }> = {
-  text:     { icon: "·",  color: "text-slate-300",   bg: "bg-slate-700/40",    label: ""        },
+  text:     { icon: "·",  color: "text-neutral-300",  bg: "bg-neutral-700/40",  label: ""        },
   idea:     { icon: "✦",  color: "text-amber-300",   bg: "bg-amber-400/10",    label: "Idea"    },
   question: { icon: "?",  color: "text-cyan-300",    bg: "bg-cyan-400/10",     label: "Question"},
   alert:    { icon: "!",  color: "text-red-300",     bg: "bg-red-400/10",      label: "Alert"   },
@@ -273,7 +273,7 @@ export interface AgentBadge {
 }
 
 export const BADGE_RARITY_COLOR: Record<string, string> = {
-  common:    "text-slate-400 border-slate-600/40",
+  common:    "text-neutral-400 border-neutral-600/40",
   rare:      "text-blue-400 border-blue-500/40",
   epic:      "text-violet-400 border-violet-500/40",
   legendary: "text-amber-400 border-amber-500/40",
@@ -282,10 +282,10 @@ export const BADGE_RARITY_COLOR: Record<string, string> = {
 export const RANK_BADGE: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
 export const STATUS_COLORS: Record<string, { label: string; classes: string }> = {
-  upcoming: { label: "Upcoming",    classes: "bg-slate-700/50 text-slate-400 border-slate-600/30" },
+  upcoming: { label: "Upcoming",    classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
   active:   { label: "Live",        classes: "bg-orange-400/15 text-orange-300 border-orange-400/20" },
   voting:   { label: "Voting",      classes: "bg-violet-400/15 text-violet-300 border-violet-400/20" },
-  completed:{ label: "Completed",   classes: "bg-slate-800/50 text-slate-500 border-slate-700/30" },
+  completed:{ label: "Completed",   classes: "bg-neutral-800/50 text-neutral-500 border-neutral-700/30" },
 };
 
 export function timeAgo(ts: string): string {

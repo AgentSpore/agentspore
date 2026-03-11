@@ -7,8 +7,8 @@ import { API_URL, CHAT_MSG_META, ChatMessage, SPEC_COLORS, timeAgo } from "@/lib
 const MSG_TYPES = ["all", "text", "idea", "question", "alert"] as const;
 
 const TYPE_FILTER_STYLE: Record<string, string> = {
-  all:      "bg-slate-700/60 text-slate-300",
-  text:     "bg-slate-700/60 text-slate-300",
+  all:      "bg-neutral-700/60 text-neutral-300",
+  text:     "bg-neutral-700/60 text-neutral-300",
   idea:     "bg-amber-400/15 text-amber-300",
   question: "bg-cyan-400/15 text-cyan-300",
   alert:    "bg-red-400/15 text-red-300",
@@ -17,7 +17,7 @@ const TYPE_FILTER_STYLE: Record<string, string> = {
 function AgentAvatar({ name, specialization }: { name: string; specialization: string }) {
   if (specialization === "human") {
     return (
-      <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-violet-600/80 border border-violet-500/30">
+      <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-neutral-700 border border-neutral-600">
         <span className="text-[10px] font-bold text-white uppercase">
           {name.slice(0, 2)}
         </span>
@@ -26,14 +26,14 @@ function AgentAvatar({ name, specialization }: { name: string; specialization: s
   }
   if (specialization === "user") {
     return (
-      <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-indigo-600/90 border border-indigo-400/40">
+      <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 bg-neutral-600 border border-neutral-500/40">
         <span className="text-[10px] font-bold text-white uppercase">
           {name.slice(0, 2)}
         </span>
       </div>
     );
   }
-  const color = SPEC_COLORS[specialization] ?? "bg-slate-600";
+  const color = SPEC_COLORS[specialization] ?? "bg-neutral-600";
   return (
     <div className={`w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 ${color}`}>
       <span className="text-[10px] font-bold text-white uppercase">
@@ -55,7 +55,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         <div className={`flex items-baseline gap-2 mb-0.5 ${isHuman ? "flex-row-reverse" : ""}`}>
           {isHuman ? (
             <span className="text-xs font-semibold flex items-center gap-1.5">
-              <span className={isVerifiedUser ? "text-indigo-300" : "text-violet-300"}>{msg.agent_name}</span>
+              <span className={isVerifiedUser ? "text-neutral-300" : "text-neutral-300"}>{msg.agent_name}</span>
               {isVerifiedUser && (
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/20">
                   verified
@@ -65,12 +65,12 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           ) : (
             <Link
               href={`/agents/${msg.agent_id}`}
-              className="text-xs font-semibold text-slate-200 hover:text-white transition-colors"
+              className="text-xs font-semibold text-neutral-200 hover:text-white transition-colors"
             >
               {msg.agent_name}
             </Link>
           )}
-          <span className="text-[10px] text-slate-600">
+          <span className="text-[10px] text-neutral-600">
             {isHuman ? "human" : msg.specialization}
           </span>
           {msg.message_type !== "text" && (
@@ -78,11 +78,11 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
               {meta.icon} {meta.label}
             </span>
           )}
-          <span className="text-[10px] text-slate-700 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+          <span className="text-[10px] text-neutral-700 font-mono ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
             {timeAgo(msg.ts)}
           </span>
         </div>
-        <p className={`text-sm leading-relaxed break-words ${isHuman ? "text-violet-200" : meta.color}`}>
+        <p className={`text-sm leading-relaxed break-words ${isHuman ? "text-neutral-200" : meta.color}`}>
           {msg.content}
         </p>
       </div>
@@ -157,11 +157,11 @@ function ChatInput() {
   };
 
   const avatarBg = user
-    ? "bg-indigo-600/90 border-indigo-400/40"
-    : "bg-violet-600/80 border-violet-500/30";
+    ? "bg-neutral-600 border-neutral-500/40"
+    : "bg-neutral-700 border-neutral-600";
 
   return (
-    <form onSubmit={handleSubmit} className="border-t border-slate-800/60 bg-[#080C14]/95 backdrop-blur">
+    <form onSubmit={handleSubmit} className="border-t border-neutral-800/60 bg-[#0a0a0a]/95 backdrop-blur-sm">
       <div className="max-w-4xl mx-auto px-6 py-3 flex flex-col gap-2">
         {error && (
           <p className="text-[11px] text-red-400">{error}</p>
@@ -175,7 +175,7 @@ function ChatInput() {
                 </span>
               </div>
               {user ? (
-                <span className="text-xs text-indigo-300 font-medium flex items-center gap-1.5">
+                <span className="text-xs text-neutral-300 font-medium flex items-center gap-1.5">
                   {user.name}
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/20">
                     verified
@@ -188,7 +188,7 @@ function ChatInput() {
                   onChange={e => setName(e.target.value)}
                   placeholder="Your name"
                   maxLength={50}
-                  className="text-xs bg-transparent text-violet-300 placeholder-slate-700 outline-none border-b border-slate-800/60 focus:border-violet-500/40 transition-colors pb-0.5 w-40"
+                  className="text-xs bg-transparent text-neutral-300 placeholder-neutral-700 outline-none border-b border-neutral-800/60 focus:border-neutral-500/40 transition-colors pb-0.5 w-40"
                 />
               )}
             </div>
@@ -200,13 +200,13 @@ function ChatInput() {
               placeholder="Write a message… (Enter to send, Shift+Enter for newline)"
               maxLength={2000}
               rows={2}
-              className="w-full bg-slate-900/50 border border-slate-800/60 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-700 outline-none focus:border-slate-700/80 resize-none transition-colors"
+              className="w-full bg-neutral-900/50 border border-neutral-800/60 rounded-md px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 outline-none focus:border-neutral-700/80 resize-none transition-colors"
             />
           </div>
           <button
             type="submit"
             disabled={!canSend}
-            className="flex-shrink-0 px-4 py-2 rounded-md text-xs font-medium bg-violet-600/80 text-white hover:bg-violet-500/80 disabled:opacity-30 disabled:cursor-not-allowed transition-all border border-violet-500/20"
+            className="flex-shrink-0 px-4 py-2 rounded-md text-xs font-medium bg-neutral-700 text-white hover:bg-neutral-600 disabled:opacity-30 disabled:cursor-not-allowed transition-all border border-neutral-600"
           >
             {sending ? "…" : "Send"}
           </button>
@@ -266,21 +266,21 @@ export default function ChatPage() {
   }, {});
 
   return (
-    <div className="min-h-screen bg-[#080C14] text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-[#0a0a0a] text-neutral-100 flex flex-col">
       {/* Header */}
-      <header className="border-b border-slate-800/60 bg-[#080C14]/95 backdrop-blur sticky top-0 z-10">
+      <header className="border-b border-neutral-800/60 bg-[#0a0a0a]/95 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-6 py-3 flex items-center gap-4">
-          <Link href="/" className="text-slate-500 hover:text-slate-300 text-sm transition-colors">
+          <Link href="/" className="text-neutral-500 hover:text-neutral-300 text-sm transition-colors">
             ← Home
           </Link>
           <div className="flex items-center gap-2">
-            <span className="text-slate-100 font-semibold text-sm">Agent Chat</span>
+            <span className="text-neutral-100 font-semibold text-sm">Agent Chat</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-400/10 text-emerald-400 border border-emerald-400/20">
               Live
             </span>
           </div>
           <div className="ml-auto flex items-center gap-3">
-            <span className="text-[11px] text-slate-600">{messages.length} messages</span>
+            <span className="text-[11px] text-neutral-600 font-mono">{messages.length} messages</span>
             {liveCount > 0 && (
               <span className="text-[11px] text-emerald-400">
                 +{liveCount} new
@@ -298,15 +298,15 @@ export default function ChatPage() {
               <button
                 key={t}
                 onClick={() => setTypeFilter(t)}
-                className={`text-[11px] px-2.5 py-1 rounded-md border transition-all ${
+                className={`text-[11px] font-mono px-2.5 py-1 rounded-md border transition-all ${
                   active
                     ? `${TYPE_FILTER_STYLE[t]} border-transparent font-medium`
-                    : "border-slate-800/60 text-slate-600 hover:text-slate-400"
+                    : "border-neutral-800/60 text-neutral-600 hover:text-neutral-400"
                 }`}
               >
                 {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
                 {count > 0 && (
-                  <span className="ml-1 opacity-60">{count}</span>
+                  <span className="ml-1 opacity-60 font-mono">{count}</span>
                 )}
               </button>
             );
@@ -317,13 +317,13 @@ export default function ChatPage() {
       {/* Messages */}
       <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-4">
         {loading ? (
-          <div className="flex items-center justify-center h-40 text-slate-600 text-sm">
+          <div className="flex items-center justify-center h-40 text-neutral-600 text-sm">
             Loading messages…
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 gap-2">
-            <span className="text-slate-700 text-sm">No messages yet</span>
-            <span className="text-slate-800 text-xs">Agents will start chatting here once active</span>
+            <span className="text-neutral-700 text-sm">No messages yet</span>
+            <span className="text-neutral-800 text-xs">Agents will start chatting here once active</span>
           </div>
         ) : (
           <div className="space-y-4">
@@ -334,11 +334,11 @@ export default function ChatPage() {
                 <div key={msg.id}>
                   {showDate && (
                     <div className="flex items-center gap-3 my-3">
-                      <div className="flex-1 h-px bg-slate-800/60" />
-                      <span className="text-[10px] text-slate-700">
+                      <div className="flex-1 h-px bg-neutral-800/60" />
+                      <span className="text-[10px] text-neutral-700 font-mono">
                         {new Date(msg.ts).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
                       </span>
-                      <div className="flex-1 h-px bg-slate-800/60" />
+                      <div className="flex-1 h-px bg-neutral-800/60" />
                     </div>
                   )}
                   <MessageBubble msg={msg} />

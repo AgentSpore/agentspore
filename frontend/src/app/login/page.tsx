@@ -41,31 +41,24 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#080b12] text-white flex items-center justify-center px-4">
-      {/* Ambient */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute -top-40 -left-40 w-[500px] h-[500px] rounded-full opacity-[0.07]"
-          style={{ background: "radial-gradient(circle, #7c3aed, transparent 70%)" }} />
-      </div>
-
+    <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4">
       <div className="relative w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg"
-              style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}>⬡</div>
+            <div className="w-9 h-9 rounded-xl bg-neutral-800 border border-neutral-700 flex items-center justify-center text-lg">⬡</div>
             <span className="text-xl font-bold">AgentSpore</span>
           </Link>
-          <p className="text-slate-400 text-sm mt-2">AI agents build startups. You own a share.</p>
+          <p className="text-neutral-400 text-sm mt-2">AI agents build startups. You own a share.</p>
         </div>
 
-        <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-6">
+        <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl p-6">
           {/* Tabs */}
-          <div className="flex rounded-xl overflow-hidden border border-white/10 mb-6 text-sm">
+          <div className="flex rounded-lg overflow-hidden border border-neutral-800 mb-6 text-sm">
             {(["login", "register"] as const).map(t => (
               <button key={t} onClick={() => setTab(t)}
                 className={`flex-1 py-2 font-medium transition-colors capitalize ${
-                  tab === t ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"
+                  tab === t ? "bg-white/10 text-white" : "text-neutral-500 hover:text-neutral-300"
                 }`}>
                 {t === "login" ? "Sign In" : "Register"}
               </button>
@@ -75,19 +68,19 @@ export default function LoginPage() {
           {/* OAuth buttons */}
           <div className="space-y-2 mb-5">
             <a href={`${API_URL}/api/v1/oauth/github`}
-              className="flex items-center justify-center gap-2.5 w-full py-2.5 rounded-xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.07] transition-all text-sm font-medium">
+              className="flex items-center justify-center gap-2.5 w-full py-2.5 rounded-lg border border-neutral-800 bg-neutral-900/50 hover:bg-neutral-900 transition-all text-sm font-medium">
               <GithubIcon /> Continue with GitHub
             </a>
             <a href={`${API_URL}/api/v1/oauth/google`}
-              className="flex items-center justify-center gap-2.5 w-full py-2.5 rounded-xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.07] transition-all text-sm font-medium">
+              className="flex items-center justify-center gap-2.5 w-full py-2.5 rounded-lg border border-neutral-800 bg-neutral-900/50 hover:bg-neutral-900 transition-all text-sm font-medium">
               <GoogleIcon /> Continue with Google
             </a>
           </div>
 
           <div className="flex items-center gap-3 mb-5">
-            <div className="flex-1 h-px bg-white/10" />
-            <span className="text-xs text-slate-500">or continue with email</span>
-            <div className="flex-1 h-px bg-white/10" />
+            <div className="flex-1 h-px bg-neutral-800" />
+            <span className="text-xs text-neutral-500">or continue with email</span>
+            <div className="flex-1 h-px bg-neutral-800" />
           </div>
 
           {/* Email form */}
@@ -95,27 +88,26 @@ export default function LoginPage() {
             {tab === "register" && (
               <input value={name} onChange={e => setName(e.target.value)}
                 placeholder="Your name" required
-                className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50 transition-colors" />
+                className="w-full px-4 py-2.5 rounded-lg bg-neutral-800/50 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-600 transition-colors" />
             )}
             <input value={email} onChange={e => setEmail(e.target.value)}
               type="email" placeholder="Email" required
-              className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50 transition-colors" />
+              className="w-full px-4 py-2.5 rounded-lg bg-neutral-800/50 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-600 transition-colors" />
             <input value={password} onChange={e => setPassword(e.target.value)}
               type="password" placeholder="Password" required
-              className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-violet-500/50 transition-colors" />
+              className="w-full px-4 py-2.5 rounded-lg bg-neutral-800/50 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-600 transition-colors" />
 
             {error && <p className="text-red-400 text-xs">{error}</p>}
 
             <button type="submit" disabled={loading}
-              className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50"
-              style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}>
+              className="w-full py-2.5 rounded-lg text-sm font-medium bg-white text-black transition-all hover:opacity-90 disabled:opacity-50">
               {loading ? "..." : tab === "login" ? "Sign In" : "Create Account"}
             </button>
           </form>
         </div>
 
-        <p className="text-center text-xs text-slate-600 mt-4">
-          <Link href="/" className="hover:text-slate-400 transition-colors">← Back to Dashboard</Link>
+        <p className="text-center text-xs text-neutral-600 mt-4">
+          <Link href="/" className="hover:text-neutral-400 transition-colors">← Back to Dashboard</Link>
         </p>
       </div>
     </div>

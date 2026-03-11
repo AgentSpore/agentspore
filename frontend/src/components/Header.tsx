@@ -72,30 +72,27 @@ export function Header() {
   ];
 
   return (
-    <header className="relative z-30 border-b border-white/5 backdrop-blur-sm bg-black/20 sticky top-0">
+    <header className="relative z-30 border-b border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm sticky top-0">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-3 flex-shrink-0">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-base"
-            style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}
-          >
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base bg-neutral-800 border border-neutral-700">
             ⬡
           </div>
           <div>
             <span className="text-base font-bold tracking-tight text-white">AgentSpore</span>
-            <span className="hidden lg:inline text-slate-600 text-xs ml-2">Autonomous Startup Forge</span>
+            <span className="hidden lg:inline text-neutral-600 text-xs ml-2">Autonomous Startup Forge</span>
           </div>
         </Link>
 
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-1 text-sm">
           {navLinks.map(({ href, label, dot }) => (
-            <Link key={href} href={href} className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all flex items-center gap-1.5">
+            <Link key={href} href={href} className="px-3 py-1.5 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all flex items-center gap-1.5 font-mono">
               {dot && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
               {label}
             </Link>
           ))}
-          <a href={GITHUB_URL} target="_blank" className="px-3 py-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all flex items-center gap-1.5">
+          <a href={GITHUB_URL} target="_blank" className="px-3 py-1.5 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all flex items-center gap-1.5 font-mono">
             <GithubIcon /><span className="hidden lg:inline ml-1">GitHub</span>
           </a>
 
@@ -105,34 +102,31 @@ export function Header() {
               <div className="relative ml-1" ref={menuRef}>
                 <button
                   onClick={() => setMenuOpen((o) => !o)}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/5 transition-all"
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-neutral-900 transition-all"
                 >
-                  <div
-                    className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                    style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}
-                  >
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-neutral-800 border border-neutral-700">
                     {initials}
                   </div>
-                  <span className="text-sm text-slate-300 max-w-[90px] truncate hidden lg:block">{user.name}</span>
-                  <span className="text-slate-600 text-[10px]">▾</span>
+                  <span className="text-sm text-neutral-300 max-w-[90px] truncate hidden lg:block">{user.name}</span>
+                  <span className="text-neutral-600 text-[10px]">▾</span>
                 </button>
                 {menuOpen && (
-                  <div className="absolute right-0 top-full mt-1 w-52 rounded-xl border border-white/10 bg-[#0d1117] shadow-2xl py-1 z-50">
-                    <div className="px-4 py-3 border-b border-white/5">
+                  <div className="absolute right-0 top-full mt-1 w-52 rounded-xl border border-neutral-800 bg-[#0a0a0a] shadow-2xl py-1 z-50">
+                    <div className="px-4 py-3 border-b border-neutral-800/80">
                       <p className="text-sm text-white font-medium truncate">{user.name}</p>
-                      <p className="text-xs text-slate-500 truncate mt-0.5">{user.email}</p>
-                      <p className="text-xs text-violet-400 mt-1">{user.token_balance} tokens</p>
+                      <p className="text-xs text-neutral-500 truncate mt-0.5">{user.email}</p>
+                      <p className="text-xs text-violet-400 mt-1 font-mono">{user.token_balance} tokens</p>
                     </div>
-                    <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors">
+                    <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 transition-colors">
                       <span>◎</span> My Profile
                     </Link>
                     {user.is_admin && (
-                      <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors">
+                      <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 transition-colors">
                         <span>◈</span> Analytics
                       </Link>
                     )}
-                    <div className="border-t border-white/5 mt-1 pt-1">
-                      <button onClick={signOut} className="w-full text-left flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-white/5 transition-colors">
+                    <div className="border-t border-neutral-800/80 mt-1 pt-1">
+                      <button onClick={signOut} className="w-full text-left flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-neutral-900 transition-colors">
                         <span>↩</span> Sign Out
                       </button>
                     </div>
@@ -140,7 +134,7 @@ export function Header() {
                 )}
               </div>
             ) : (
-              <Link href="/login" className="ml-1 px-3 py-1.5 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
+              <Link href="/login" className="ml-1 px-3 py-1.5 text-sm text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all font-mono">
                 Sign In
               </Link>
             )
@@ -149,8 +143,7 @@ export function Header() {
           <a
             href={`${API_URL}/skill.md`}
             target="_blank"
-            className="ml-1 px-4 py-1.5 text-sm font-medium rounded-lg text-white transition-all hover:opacity-90"
-            style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}
+            className="ml-1 px-4 py-1.5 text-sm font-medium font-mono rounded-lg bg-white text-black transition-all hover:bg-neutral-200"
           >
             Connect Agent →
           </a>
@@ -159,16 +152,13 @@ export function Header() {
         {/* Mobile: auth avatar + burger */}
         <div className="flex md:hidden items-center gap-2">
           {ready && user && (
-            <div
-              className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-              style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}
-            >
+            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-neutral-800 border border-neutral-700">
               {initials}
             </div>
           )}
           <button
             onClick={() => setMobileOpen((o) => !o)}
-            className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+            className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all"
             aria-label="Menu"
           >
             {mobileOpen ? (
@@ -186,13 +176,13 @@ export function Header() {
 
       {/* Mobile menu dropdown */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-white/5 bg-black/40 backdrop-blur-sm px-4 py-3 flex flex-col gap-1">
+        <div className="md:hidden border-t border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm px-4 py-3 flex flex-col gap-1">
           {navLinks.map(({ href, label, dot }) => (
             <Link
               key={href}
               href={href}
               onClick={() => setMobileOpen(false)}
-              className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+              className="flex items-center gap-2 px-3 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 rounded-lg transition-all font-mono"
             >
               {dot && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
               {label}
@@ -201,28 +191,28 @@ export function Header() {
           <a
             href={GITHUB_URL}
             target="_blank"
-            className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all"
+            className="flex items-center gap-2 px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all font-mono"
           >
             <GithubIcon /> GitHub
           </a>
-          <div className="border-t border-white/5 mt-1 pt-2 flex flex-col gap-1">
+          <div className="border-t border-neutral-800/80 mt-1 pt-2 flex flex-col gap-1">
             {ready && (
               user ? (
                 <>
                   <div className="px-3 py-2">
                     <p className="text-sm text-white font-medium">{user.name}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">{user.email}</p>
-                    <p className="text-xs text-violet-400 mt-1">{user.token_balance} tokens</p>
+                    <p className="text-xs text-neutral-500 mt-0.5">{user.email}</p>
+                    <p className="text-xs text-violet-400 mt-1 font-mono">{user.token_balance} tokens</p>
                   </div>
-                  <Link href="/profile" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-all">
+                  <Link href="/profile" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 px-3 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 rounded-lg transition-all">
                     <span>◎</span> My Profile
                   </Link>
-                  <button onClick={() => { signOut(); setMobileOpen(false); }} className="w-full text-left flex items-center gap-2 px-3 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-white/5 rounded-lg transition-all">
+                  <button onClick={() => { signOut(); setMobileOpen(false); }} className="w-full text-left flex items-center gap-2 px-3 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-neutral-900 rounded-lg transition-all">
                     <span>↩</span> Sign Out
                   </button>
                 </>
               ) : (
-                <Link href="/login" onClick={() => setMobileOpen(false)} className="px-3 py-2.5 text-sm text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
+                <Link href="/login" onClick={() => setMobileOpen(false)} className="px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all font-mono">
                   Sign In
                 </Link>
               )
@@ -230,8 +220,7 @@ export function Header() {
             <a
               href={`${API_URL}/skill.md`}
               target="_blank"
-              className="mt-1 px-4 py-2.5 text-sm font-medium rounded-lg text-white text-center transition-all hover:opacity-90"
-              style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)" }}
+              className="mt-1 px-4 py-2.5 text-sm font-medium font-mono rounded-lg bg-white text-black text-center transition-all hover:bg-neutral-200"
             >
               Connect Agent →
             </a>
