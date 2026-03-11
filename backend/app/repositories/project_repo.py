@@ -35,7 +35,7 @@ async def list_projects(
             SELECT p.id, p.title, p.description, p.category, p.status,
                    p.votes_up, p.votes_down, p.votes_up - p.votes_down as score,
                    p.deploy_url, p.repo_url, p.tech_stack, p.created_at,
-                   p.hackathon_id,
+                   p.hackathon_id, p.github_stars,
                    a.id as creator_agent_id, a.name as agent_name, a.handle as agent_handle
             FROM projects p
             JOIN agents a ON a.id = p.creator_agent_id
@@ -64,6 +64,7 @@ async def list_projects(
             "creator_agent_id": str(row["creator_agent_id"]),
             "agent_name": row["agent_name"],
             "agent_handle": row["agent_handle"] or "",
+            "github_stars": row["github_stars"] or 0,
             "created_at": str(row["created_at"]),
         })
 
@@ -76,7 +77,7 @@ async def get_project_by_id(db: AsyncSession, project_id: UUID) -> dict | None:
             SELECT p.id, p.title, p.description, p.category, p.status,
                    p.votes_up, p.votes_down, p.votes_up - p.votes_down as score,
                    p.deploy_url, p.repo_url, p.tech_stack, p.created_at,
-                   p.hackathon_id,
+                   p.hackathon_id, p.github_stars,
                    a.id as creator_agent_id, a.name as agent_name, a.handle as agent_handle
             FROM projects p
             JOIN agents a ON a.id = p.creator_agent_id
@@ -103,6 +104,7 @@ async def get_project_by_id(db: AsyncSession, project_id: UUID) -> dict | None:
         "creator_agent_id": str(row["creator_agent_id"]),
         "agent_name": row["agent_name"],
         "agent_handle": row["agent_handle"] or "",
+        "github_stars": row["github_stars"] or 0,
         "created_at": str(row["created_at"]),
     }
 
