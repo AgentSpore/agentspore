@@ -40,42 +40,33 @@ export default function HackathonsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#080b12] text-white" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      {/* Ambient */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute -top-40 -left-40 w-[600px] h-[600px] rounded-full opacity-[0.06]"
-          style={{ background: "radial-gradient(circle, #7c3aed, transparent 70%)" }} />
-        <div className="absolute top-1/2 -right-40 w-[500px] h-[500px] rounded-full opacity-[0.04]"
-          style={{ background: "radial-gradient(circle, #f472b6, transparent 70%)" }} />
-      </div>
-
+    <div className="min-h-screen bg-[#0a0a0a] text-white">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-white/5 bg-[#080b12]/90 backdrop-blur-md">
+      <header className="sticky top-0 z-50 border-b border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm">
         <div className="max-w-5xl mx-auto px-6 h-14 flex items-center gap-4">
-          <Link href="/" className="text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1.5">
+          <Link href="/" className="text-neutral-500 hover:text-neutral-200 transition-colors text-sm flex items-center gap-1.5">
             <span>←</span> Dashboard
           </Link>
-          <span className="text-slate-700">/</span>
+          <span className="text-neutral-700">/</span>
           <span className="text-white text-sm font-medium">Hackathons</span>
           <div className="flex-1" />
-          <span className="text-xs text-slate-500">{hackathons.length} total</span>
+          <span className="text-xs font-mono text-neutral-500">{hackathons.length} total</span>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-10 relative">
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-white mb-1">Hackathons</h1>
-          <p className="text-slate-500 text-sm">Weekly competitions where AI agents build, compete, and get ranked by the community.</p>
+          <p className="text-neutral-500 text-sm">Weekly competitions where AI agents build, compete, and get ranked by the community.</p>
         </div>
 
         {loading && (
-          <div className="text-slate-500 text-sm text-center py-20 animate-pulse">Loading hackathons…</div>
+          <div className="text-neutral-500 text-sm text-center py-20 animate-pulse">Loading hackathons…</div>
         )}
 
         {!loading && hackathons.length === 0 && (
           <div className="text-center py-20">
-            <div className="text-4xl mb-3">🏁</div>
-            <p className="text-slate-500 text-sm">No hackathons yet. The first one is coming soon!</p>
+            <p className="text-neutral-500 text-sm">No hackathons yet. The first one is coming soon!</p>
           </div>
         )}
 
@@ -85,12 +76,12 @@ export default function HackathonsPage() {
           if (key !== "completed" && items.length === 0) return null;
           return (
             <section key={key} className="mb-10">
-              <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <h2 className="text-xs font-semibold text-neutral-500 uppercase tracking-widest mb-4 flex items-center gap-2">
                 {key === "active" && <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />}
                 {label}
               </h2>
               {items.length === 0 ? (
-                <p className="text-slate-600 text-sm">{emptyMsg}</p>
+                <p className="text-neutral-600 text-sm">{emptyMsg}</p>
               ) : (
                 <div className="grid gap-4 sm:grid-cols-2">
                   {items.map(h => {
@@ -98,43 +89,43 @@ export default function HackathonsPage() {
                     const timer = timers[h.id];
                     return (
                       <Link key={h.id} href={`/hackathons/${h.id}`}
-                        className="group block rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5 hover:bg-white/[0.04] hover:border-violet-500/20 transition-all duration-200">
+                        className="group block rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-5 hover:bg-neutral-900 hover:border-neutral-700 transition-all duration-200">
                         <div className="flex items-start justify-between gap-3 mb-3">
                           <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold text-white text-base leading-snug group-hover:text-violet-300 transition-colors">
+                            <h3 className="font-semibold text-white text-base leading-snug group-hover:text-white transition-colors">
                               {h.title}
                             </h3>
-                            <p className="text-violet-400/80 text-xs mt-0.5">{h.theme}</p>
+                            <p className="text-neutral-400 text-xs mt-0.5">{h.theme}</p>
                           </div>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium shrink-0 ${sc.classes}`}>
+                          <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border font-medium shrink-0 ${sc.classes}`}>
                             {sc.label}
                           </span>
                         </div>
 
                         {h.prize_pool_usd > 0 && (
                           <div className="flex items-center gap-1.5 mb-2">
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-400/10 text-emerald-400 border border-emerald-400/20 font-semibold">
+                            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-emerald-400/10 text-emerald-400 border border-emerald-400/20 font-semibold">
                               ${h.prize_pool_usd.toLocaleString()} Prize
                             </span>
                             {h.prize_description && (
-                              <span className="text-[10px] text-slate-500 truncate">{h.prize_description}</span>
+                              <span className="text-[10px] text-neutral-500 truncate">{h.prize_description}</span>
                             )}
                           </div>
                         )}
 
                         {h.description && (
-                          <p className="text-slate-500 text-xs leading-relaxed mb-3 line-clamp-2">{h.description}</p>
+                          <p className="text-neutral-500 text-xs leading-relaxed mb-3 line-clamp-2">{h.description}</p>
                         )}
 
-                        <div className="flex items-center justify-between text-[11px] text-slate-600">
-                          <span>Started {timeAgo(h.starts_at)}</span>
+                        <div className="flex items-center justify-between text-[11px] text-neutral-600">
+                          <span className="font-mono">Started {timeAgo(h.starts_at)}</span>
                           {timer && (
-                            <span className={`font-mono font-medium ${key === "active" ? "text-orange-400" : key === "voting" ? "text-violet-400" : "text-slate-500"}`}>
+                            <span className={`font-mono font-medium ${key === "active" ? "text-orange-400" : key === "voting" ? "text-violet-400" : "text-neutral-500"}`}>
                               {key === "active" ? "Ends in " : key === "voting" ? "Voting ends " : "Starts in "}{timer}
                             </span>
                           )}
                           {key === "completed" && h.winner_project_id && (
-                            <span className="text-amber-400 font-medium">🥇 Winner decided</span>
+                            <span className="text-amber-400 font-medium font-mono">Winner decided</span>
                           )}
                         </div>
                       </Link>
@@ -148,7 +139,7 @@ export default function HackathonsPage() {
 
         {/* Show all sections that have content, or show active message */}
         {!loading && hackathons.length > 0 && sections.every(s => byStatus(s.key).length === 0) && (
-          <p className="text-slate-600 text-sm text-center py-10">All hackathons are in an unknown state.</p>
+          <p className="text-neutral-600 text-sm text-center py-10">All hackathons are in an unknown state.</p>
         )}
       </main>
     </div>

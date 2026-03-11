@@ -29,10 +29,10 @@ export default class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="flex flex-col items-center justify-center min-h-[200px] gap-3 text-center px-4">
           <span className="text-red-400 text-sm font-medium">Something went wrong</span>
-          <span className="text-slate-600 text-xs">{this.state.message}</span>
+          <span className="text-neutral-600 text-xs">{this.state.message}</span>
           <button
             onClick={() => this.setState({ hasError: false, message: "" })}
-            className="text-xs text-violet-400 hover:text-violet-300 transition-colors underline"
+            className="text-xs text-neutral-400 hover:text-white transition-colors underline"
           >
             Try again
           </button>

@@ -92,63 +92,56 @@ export default function AgentChatPage() {
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-[#080b12] flex items-center justify-center">
-      <div className="text-slate-400 text-sm animate-pulse">Loading chat...</div>
+    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+      <div className="text-neutral-400 text-sm animate-pulse">Loading chat...</div>
     </div>
   );
 
   if (error || !agent) return (
-    <div className="min-h-screen bg-[#080b12] flex flex-col items-center justify-center gap-4">
+    <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
       <div className="text-red-400 text-sm">{error || "Not found"}</div>
-      <Link href="/" className="text-violet-400 text-sm hover:text-violet-300">← Back to dashboard</Link>
+      <Link href="/" className="text-neutral-400 text-sm hover:text-white">← Back to dashboard</Link>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-[#080b12] text-white flex flex-col" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      {/* Ambient */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute -top-40 left-1/4 w-[600px] h-[600px] rounded-full opacity-[0.05]"
-          style={{ background: "radial-gradient(circle, #7c3aed, transparent 70%)" }} />
-      </div>
-
+    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-white/5 bg-[#080b12]/90 backdrop-blur-md">
+      <header className="sticky top-0 z-50 border-b border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-6 h-14 flex items-center gap-4">
-          <Link href="/" className="text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1.5">
+          <Link href="/" className="text-neutral-500 hover:text-neutral-200 transition-colors text-sm flex items-center gap-1.5">
             <span>←</span> Dashboard
           </Link>
-          <span className="text-slate-700">/</span>
-          <Link href="/agents" className="text-slate-400 hover:text-white transition-colors text-sm">Agents</Link>
-          <span className="text-slate-700">/</span>
-          <Link href={`/agents/${id}`} className="text-slate-400 hover:text-white transition-colors text-sm truncate max-w-[120px]">
+          <span className="text-neutral-700">/</span>
+          <Link href="/agents" className="text-neutral-500 hover:text-neutral-200 transition-colors text-sm">Agents</Link>
+          <span className="text-neutral-700">/</span>
+          <Link href={`/agents/${id}`} className="text-neutral-500 hover:text-neutral-200 transition-colors text-sm truncate max-w-[120px]">
             {agent.name}
           </Link>
-          <span className="text-slate-700">/</span>
+          <span className="text-neutral-700">/</span>
           <span className="text-white text-sm font-medium">Chat</span>
           <div className="flex-1" />
           <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${agent.is_active ? "bg-emerald-400" : "bg-slate-600"}`} />
-            <span className="text-xs text-slate-500">{agent.is_active ? "Online" : "Offline"}</span>
+            <span className={`w-2 h-2 rounded-full ${agent.is_active ? "bg-emerald-400" : "bg-neutral-600"}`} />
+            <span className="text-xs text-neutral-500 font-mono">{agent.is_active ? "Online" : "Offline"}</span>
           </div>
         </div>
       </header>
 
       {/* Agent info bar */}
-      <div className="border-b border-white/[0.05] bg-white/[0.01]">
+      <div className="border-b border-neutral-800/80 bg-neutral-900/50">
         <div className="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: "linear-gradient(135deg, #7c3aed22, #0ea5e922)", border: "1px solid #7c3aed33" }}>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-neutral-800 border border-neutral-700">
             <span className="text-sm">{agent.is_active ? "🟢" : "⚪"}</span>
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-medium text-white text-sm">{agent.name}</span>
-              {agent.handle && <span className="text-xs text-slate-500 font-mono">@{agent.handle}</span>}
+              {agent.handle && <span className="text-xs text-neutral-500 font-mono">@{agent.handle}</span>}
             </div>
-            <p className="text-[11px] text-slate-500">{agent.specialization} · {agent.model_provider}/{agent.model_name}</p>
+            <p className="text-[11px] text-neutral-500">{agent.specialization} · {agent.model_provider}/{agent.model_name}</p>
           </div>
-          <div className="ml-auto text-[11px] text-slate-600">
+          <div className="ml-auto text-[11px] text-neutral-600 font-mono">
             {messages.length} messages
           </div>
         </div>
@@ -160,8 +153,8 @@ export default function AgentChatPage() {
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
               <div className="text-4xl">💬</div>
-              <p className="text-slate-500 text-sm">No messages yet</p>
-              <p className="text-slate-600 text-xs">Send a message — the agent will receive it at next heartbeat</p>
+              <p className="text-neutral-500 text-sm">No messages yet</p>
+              <p className="text-neutral-600 text-xs">Send a message — the agent will receive it at next heartbeat</p>
             </div>
           ) : messages.map((msg, i) => {
             const prev = messages[i - 1];
@@ -172,11 +165,11 @@ export default function AgentChatPage() {
               <div key={msg.id}>
                 {showDate && (
                   <div className="flex items-center gap-3 my-4">
-                    <div className="flex-1 h-px bg-slate-800/60" />
-                    <span className="text-[10px] text-slate-700">
+                    <div className="flex-1 h-px bg-neutral-800/60" />
+                    <span className="text-[10px] text-neutral-700 font-mono">
                       {new Date(msg.created_at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
                     </span>
-                    <div className="flex-1 h-px bg-slate-800/60" />
+                    <div className="flex-1 h-px bg-neutral-800/60" />
                   </div>
                 )}
                 <div className={`flex gap-3 ${isAgent ? "" : "flex-row-reverse"}`}>
@@ -195,18 +188,18 @@ export default function AgentChatPage() {
                       <span className={`text-xs font-semibold ${isAgent ? "text-cyan-300" : "text-violet-300"}`}>
                         {isAgent ? agent.name : msg.from_name}
                       </span>
-                      <span className="text-[10px] text-slate-600">
+                      <span className="text-[10px] text-neutral-600 font-mono">
                         {isAgent ? "agent" : "you"}
                       </span>
                     </div>
-                    <div className={`rounded-2xl px-4 py-2.5 ${
+                    <div className={`rounded-xl px-4 py-2.5 ${
                       isAgent
-                        ? "bg-white/[0.04] border border-white/[0.07] rounded-tl-md"
+                        ? "bg-neutral-900 border border-neutral-800/80 rounded-tl-md"
                         : "bg-violet-500/10 border border-violet-500/15 rounded-tr-md"
                     }`}>
-                      <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                      <p className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                     </div>
-                    <span className="text-[10px] text-slate-700 mt-1">{timeAgo(msg.created_at)}</span>
+                    <span className="text-[10px] text-neutral-700 mt-1 font-mono">{timeAgo(msg.created_at)}</span>
                   </div>
                 </div>
               </div>
@@ -217,13 +210,13 @@ export default function AgentChatPage() {
       </main>
 
       {/* Input */}
-      <form onSubmit={handleSend} className="border-t border-white/[0.06] bg-[#080b12]/95 backdrop-blur-md">
+      <form onSubmit={handleSend} className="border-t border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-6 py-3 space-y-2">
           {sendError && <p className="text-[11px] text-red-400">{sendError}</p>}
           <div className="flex items-end gap-3">
             <div className="flex flex-col gap-1.5 flex-1">
               <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-md flex items-center justify-center bg-violet-600/80 border border-violet-500/30 shrink-0">
+                <div className="w-7 h-7 rounded-md flex items-center justify-center bg-neutral-800 border border-neutral-700 shrink-0">
                   <span className="text-[10px] font-bold text-white uppercase">{name ? name.slice(0, 2) : "?"}</span>
                 </div>
                 <input
@@ -232,7 +225,7 @@ export default function AgentChatPage() {
                   onChange={e => setName(e.target.value)}
                   placeholder="Your name"
                   maxLength={50}
-                  className="text-xs bg-transparent text-violet-300 placeholder-slate-700 outline-none border-b border-slate-800/60 focus:border-violet-500/40 transition-colors pb-0.5 w-40"
+                  className="text-xs bg-transparent text-neutral-300 placeholder-neutral-700 outline-none border-b border-neutral-800/60 focus:border-neutral-700 transition-colors pb-0.5 w-40 font-mono"
                 />
               </div>
               <textarea
@@ -243,13 +236,13 @@ export default function AgentChatPage() {
                 placeholder="Write a message... (Enter to send, Shift+Enter for newline)"
                 maxLength={2000}
                 rows={2}
-                className="w-full bg-slate-900/50 border border-slate-800/60 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-700 outline-none focus:border-slate-700/80 resize-none transition-colors"
+                className="w-full bg-neutral-900/50 border border-neutral-800/60 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 outline-none focus:border-neutral-700/80 resize-none transition-colors"
               />
             </div>
             <button
               type="submit"
               disabled={!name.trim() || !content.trim() || sending}
-              className="flex-shrink-0 px-4 py-2 rounded-lg text-xs font-medium bg-violet-600/80 text-white hover:bg-violet-500/80 disabled:opacity-30 disabled:cursor-not-allowed transition-all border border-violet-500/20"
+              className="flex-shrink-0 bg-white text-black font-medium font-mono text-xs px-4 py-1.5 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all"
             >
               {sending ? "..." : "Send"}
             </button>

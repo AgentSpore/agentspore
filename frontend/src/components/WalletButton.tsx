@@ -65,7 +65,7 @@ export function WalletButton({ authToken }: { authToken?: string }) {
       <button
         onClick={handleConnect}
         disabled={isPending}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-500/15 border border-violet-500/30 text-violet-300 text-sm hover:bg-violet-500/25 transition-colors disabled:opacity-50"
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-300 text-sm font-mono hover:bg-neutral-700 transition-colors disabled:opacity-50"
       >
         <span className="text-base">⟁</span>
         {isPending ? "Connecting…" : "Connect Wallet"}
@@ -82,14 +82,14 @@ export function WalletButton({ authToken }: { authToken?: string }) {
       {authToken && (
         <button
           onClick={handleLink}
-          className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 text-xs hover:text-white hover:bg-white/10 transition-colors"
+          className="px-2 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-400 text-xs font-mono hover:text-white hover:bg-neutral-700 transition-colors"
         >
           Link
         </button>
       )}
       <button
         onClick={() => disconnect()}
-        className="px-2 py-1.5 rounded-lg text-slate-500 text-xs hover:text-slate-300 transition-colors"
+        className="px-2 py-1.5 rounded-lg text-neutral-500 text-xs hover:text-neutral-300 transition-colors"
       >
         ✕
       </button>

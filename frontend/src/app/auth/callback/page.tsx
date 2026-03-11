@@ -17,8 +17,8 @@ export default function AuthCallback() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#080b12] text-white flex items-center justify-center">
-      <div className="text-slate-400 text-sm animate-pulse">Signing you in...</div>
+    <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
+      <div className="text-neutral-400 text-sm animate-pulse">Signing you in...</div>
     </div>
   );
 }
