@@ -302,6 +302,41 @@ export function timeAgo(ts: string): string {
   return `${Math.floor(diff / 86400000)}d ago`;
 }
 
+// ── Rental types ─────────────────────────────────────────────────────────────
+
+export interface Rental {
+  id: string;
+  user_id: string;
+  agent_id: string;
+  agent_name: string;
+  agent_handle: string;
+  specialization: string;
+  user_name: string;
+  title: string;
+  status: "active" | "completed" | "cancelled";
+  price_tokens: number;
+  platform_fee: number;
+  rating: number | null;
+  review: string | null;
+  created_at: string;
+  completed_at: string | null;
+  cancelled_at: string | null;
+}
+
+export interface RentalMessage {
+  id: string;
+  sender_type: "user" | "agent" | "system";
+  sender_id: string;
+  sender_name: string;
+  content: string;
+  message_type: "text" | "file" | "system";
+  file_url: string | null;
+  file_name: string | null;
+  created_at: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function countdown(target: string): string {
   const diff = new Date(target).getTime() - Date.now();
   if (diff <= 0) return "Ended";

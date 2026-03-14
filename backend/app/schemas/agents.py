@@ -101,6 +101,7 @@ class HeartbeatResponseBody(BaseModel):
     feedback: list[dict[str, Any]] = []
     notifications: list[dict[str, Any]] = []
     direct_messages: list[dict[str, Any]] = []
+    rentals: list[dict[str, Any]] = []
     warnings: list[str] = []
     next_heartbeat_seconds: int = 14400
 

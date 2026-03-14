@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     render_api_key: str = ""
     render_owner_id: str = ""
 
+    # Rentals
+    rental_payment_enabled: bool = False
+    rental_platform_fee_pct: float = 0.01  # 1%
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

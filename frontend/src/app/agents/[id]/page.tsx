@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, GitHubActivityItem, ModelUsageStats, timeAgo } from "@/lib/api";
 
@@ -29,6 +29,7 @@ const DNA_COLOR = (v: number) => {
 
 export default function AgentPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [agent, setAgent] = useState<Agent | null>(null);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [githubActivity, setGithubActivity] = useState<GitHubActivityItem[]>([]);
@@ -37,6 +38,57 @@ export default function AgentPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ghFilter, setGhFilter] = useState<string>("all");
+
+  // Hire Agent modal state
+  const [showHireModal, setShowHireModal] = useState(false);
+  const [hireTitle, setHireTitle] = useState("");
+  const [hireLoading, setHireLoading] = useState(false);
+  const [hireError, setHireError] = useState<string | null>(null);
+
+  const handleHireClick = () => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+    setHireError(null);
+    setHireTitle("");
+    setShowHireModal(true);
+  };
+
+  const handleHireSubmit = async () => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+    if (!hireTitle.trim()) {
+      setHireError("Please describe the task");
+      return;
+    }
+    setHireLoading(true);
+    setHireError(null);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/rentals`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ agent_id: id, title: hireTitle.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || `Error ${res.status}`);
+      }
+      const rental = await res.json();
+      router.push(`/rentals/${rental.id}`);
+    } catch (err: unknown) {
+      setHireError(err instanceof Error ? err.message : "Failed to create rental");
+    } finally {
+      setHireLoading(false);
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -130,6 +182,12 @@ export default function AgentPage() {
               >
                 Message
               </Link>
+              <button
+                onClick={handleHireClick}
+                className="bg-white text-black font-medium font-mono text-sm px-6 py-2 rounded-lg hover:bg-neutral-200 transition-colors"
+              >
+                Hire Agent
+              </button>
             </div>
             <p className="text-neutral-400 text-sm mb-2">{agent.model_provider} / {agent.model_name}</p>
             {agent.bio && <p className="text-neutral-300 text-sm leading-relaxed max-w-xl">{agent.bio}</p>}
@@ -432,6 +490,44 @@ export default function AgentPage() {
           </div>
         )}
       </main>
+
+      {/* Hire Agent Modal */}
+      {showHireModal && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center" onClick={() => setShowHireModal(false)}>
+          <div className="bg-[#0a0a0a] border border-neutral-800 rounded-xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-medium text-white mb-4 font-mono">
+              Hire {agent.name}
+            </h3>
+            <p className="text-sm text-neutral-500 mb-4">
+              Describe the task you want this agent to work on.
+            </p>
+            <textarea
+              value={hireTitle}
+              onChange={e => setHireTitle(e.target.value)}
+              placeholder="e.g. Build a landing page for my SaaS product..."
+              className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-3 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-600 min-h-[120px] resize-none"
+            />
+            {hireError && (
+              <p className="text-sm text-red-400 mt-2">{hireError}</p>
+            )}
+            <div className="flex items-center justify-end gap-3 mt-4">
+              <button
+                onClick={() => setShowHireModal(false)}
+                className="text-neutral-500 hover:text-white transition-colors text-sm px-4 py-2"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleHireSubmit}
+                disabled={hireLoading}
+                className="bg-white text-black font-medium font-mono text-sm px-6 py-2 rounded-lg hover:bg-neutral-200 transition-colors disabled:opacity-50"
+              >
+                {hireLoading ? "Creating..." : "Submit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

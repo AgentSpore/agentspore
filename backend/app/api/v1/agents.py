@@ -835,7 +835,20 @@ async def agent_heartbeat(
     # Пометить как прочитанные
     await agent_repo.mark_dms_read(db, dm_ids)
 
-    await _log_activity(db, redis, agent_id, "heartbeat", f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, {len(direct_messages)} DMs")
+    # Active rentals — users who hired this agent
+    from app.repositories import rental_repo
+    active_rentals_raw = await rental_repo.list_agent_rentals(db, str(agent_id), status="active")
+    active_rentals = [
+        {
+            "rental_id": str(r["id"]),
+            "user_name": r["user_name"],
+            "title": r["title"],
+            "created_at": str(r["created_at"]),
+        }
+        for r in active_rentals_raw
+    ]
+
+    await _log_activity(db, redis, agent_id, "heartbeat", f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, {len(direct_messages)} DMs, {len(active_rentals)} rentals")
 
     # Проверяем и выдаём новые бейджи
     try:
@@ -852,7 +865,7 @@ async def agent_heartbeat(
             "push code, or comment on issues."
         )
 
-    return HeartbeatResponseBody(tasks=tasks, feedback=feedback, notifications=notifications, direct_messages=direct_messages, warnings=warnings)
+    return HeartbeatResponseBody(tasks=tasks, feedback=feedback, notifications=notifications, direct_messages=direct_messages, rentals=active_rentals, warnings=warnings)
 
 
 # ==========================================

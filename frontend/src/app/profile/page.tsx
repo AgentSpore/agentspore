@@ -2,10 +2,31 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { API_URL, UserTokenEntry } from "@/lib/api";
+import { API_URL, UserTokenEntry, timeAgo } from "@/lib/api";
 import { WalletButton } from "@/components/WalletButton";
 import { Header } from "@/components/Header";
 import { useAccount } from "wagmi";
+
+interface RentalSummary {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  agent_handle: string;
+  specialization: string;
+  title: string;
+  status: "active" | "completed" | "cancelled";
+  price_tokens: number;
+  rating: number | null;
+  created_at: string;
+  completed_at: string | null;
+  cancelled_at: string | null;
+}
+
+const RENTAL_STATUS: Record<string, { label: string; classes: string }> = {
+  active: { label: "Active", classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
+  completed: { label: "Completed", classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
+  cancelled: { label: "Cancelled", classes: "bg-red-400/10 text-red-400 border-red-400/20" },
+};
 
 interface UserInfo {
   id: string;
@@ -33,6 +54,8 @@ export default function ProfilePage() {
   const [loadingUser, setLoadingUser] = useState(true);
   const [loadingTokens, setLoadingTokens] = useState(false);
   const [tokensError, setTokensError] = useState("");
+  const [rentals, setRentals] = useState<RentalSummary[]>([]);
+  const [loadingRentals, setLoadingRentals] = useState(false);
 
   useEffect(() => {
     const t = localStorage.getItem("access_token");
@@ -56,6 +79,17 @@ export default function ProfilePage() {
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((d: UserTokenEntry[]) => { setTokens(d); setLoadingTokens(false); })
       .catch((e) => { setTokensError(`Error ${e}`); setLoadingTokens(false); });
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!authToken) return;
+    setLoadingRentals(true);
+    fetch(`${API_URL}/api/v1/rentals`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: RentalSummary[]) => { setRentals(d); setLoadingRentals(false); })
+      .catch(() => setLoadingRentals(false));
   }, [authToken]);
 
   const initials = user?.name
@@ -131,6 +165,67 @@ export default function ProfilePage() {
                 <WalletButton authToken={authToken ?? undefined} />
               </div>
             </div>
+          </div>
+        )}
+
+        {/* My Rentals */}
+        {user && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">My Rentals</h2>
+                <p className="text-neutral-500 text-xs mt-1">Agents you hired for tasks</p>
+              </div>
+              {rentals.filter(r => r.status === "active").length > 0 && (
+                <span className="text-xs font-mono text-emerald-400">
+                  {rentals.filter(r => r.status === "active").length} active
+                </span>
+              )}
+            </div>
+
+            {loadingRentals && <p className="text-neutral-600 text-sm">Loading rentals...</p>}
+
+            {!loadingRentals && rentals.length === 0 && (
+              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-8 text-center text-neutral-600 text-sm">
+                No rentals yet. Visit an agent&apos;s page to hire them for a task.
+              </div>
+            )}
+
+            {rentals.length > 0 && (
+              <div className="space-y-2">
+                {rentals.map((r) => {
+                  const st = RENTAL_STATUS[r.status] || RENTAL_STATUS.active;
+                  return (
+                    <Link
+                      key={r.id}
+                      href={`/rentals/${r.id}`}
+                      className="block rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 hover:border-neutral-700 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-white font-medium text-sm truncate">{r.title}</div>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <span className="text-neutral-500 text-xs font-mono">@{r.agent_handle}</span>
+                            <span className="text-neutral-700">·</span>
+                            <span className="text-neutral-600 text-xs font-mono">{timeAgo(r.created_at)}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {r.rating && (
+                            <span className="text-amber-400 text-xs font-mono">
+                              {"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}
+                            </span>
+                          )}
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono ${st.classes}`}>
+                            {st.label}
+                          </span>
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
