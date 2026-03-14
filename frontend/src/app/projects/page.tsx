@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { API_URL, Project, timeAgo } from "@/lib/api";
 
 const STATUS_BADGE: Record<string, string> = {
@@ -13,6 +13,104 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 const CATEGORIES = ["all", "productivity", "saas", "ai", "fintech", "devtools", "social", "other"];
+
+function ProjectCard({ project: p }: { project: Project }) {
+  const [votesUp, setVotesUp] = useState(p.votes_up);
+  const [votesDown, setVotesDown] = useState(p.votes_down);
+  const [voting, setVoting] = useState(false);
+  const repoPath = p.repo_url?.replace("https://github.com/", "") || "";
+
+  const vote = async (value: 1 | -1, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (voting) return;
+    setVoting(true);
+    try {
+      const r = await fetch(`${API_URL}/api/v1/projects/${p.id}/vote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vote: value }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        setVotesUp(d.votes_up);
+        setVotesDown(d.votes_down);
+      }
+    } catch {}
+    setVoting(false);
+  };
+
+  return (
+    <Link href={`/projects/${p.id}`}
+      className="group bg-neutral-900/50 border border-neutral-800/80 rounded-xl p-4 hover:border-neutral-700 hover:bg-neutral-900 transition-all flex flex-col gap-2.5">
+
+      {/* Title row */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors truncate">{p.title}</h3>
+          {repoPath && (
+            <span className="text-[11px] font-mono text-neutral-600 truncate block mt-0.5">{repoPath}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {(p.github_stars ?? 0) > 0 && (
+            <span className="text-[11px] text-neutral-400 font-mono flex items-center gap-0.5">
+              <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+              {p.github_stars >= 1000 ? `${(p.github_stars / 1000).toFixed(1)}k` : p.github_stars}
+            </span>
+          )}
+          <span className={`text-[10px] px-2 py-0.5 rounded-md border font-mono ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
+            {p.status}
+          </span>
+        </div>
+      </div>
+
+      {/* Description */}
+      <p className="text-neutral-500 text-xs line-clamp-2 leading-relaxed flex-1">{p.description || "No description."}</p>
+
+      {/* Tech stack */}
+      {p.tech_stack.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {p.tech_stack.slice(0, 4).map(t => (
+            <span key={t} className="text-[10px] px-2 py-0.5 rounded-md bg-neutral-800/80 text-neutral-500 font-mono">{t}</span>
+          ))}
+          {p.tech_stack.length > 4 && (
+            <span className="text-[10px] text-neutral-700 font-mono">+{p.tech_stack.length - 4}</span>
+          )}
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60">
+        <div className="flex items-center gap-2 text-[11px] text-neutral-600 font-mono">
+          <span className="text-neutral-400">{p.agent_name}</span>
+          {p.agent_handle && <span className="text-neutral-700">@{p.agent_handle}</span>}
+          <span className="text-neutral-700">{timeAgo(p.created_at)}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button onClick={(e) => vote(1, e)} disabled={voting}
+            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-emerald-500 hover:bg-emerald-500/10 transition-all disabled:opacity-50">
+            ↑{votesUp}
+          </button>
+          <button onClick={(e) => vote(-1, e)} disabled={voting}
+            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50">
+            ↓{votesDown}
+          </button>
+          {p.repo_url && (
+            <a href={p.repo_url} target="_blank" rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              className="text-neutral-600 hover:text-neutral-300 transition-colors text-[11px] font-mono ml-1">github</a>
+          )}
+          {p.deploy_url && (
+            <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              className="text-neutral-500 hover:text-white transition-colors text-[11px] font-mono">demo &rarr;</a>
+          )}
+        </div>
+      </div>
+    </Link>
+  );
+}
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -123,79 +221,9 @@ export default function ProjectsPage() {
           </div>
         ) : (
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {filtered.map(p => {
-              const netScore = p.votes_up - p.votes_down;
-              const repoPath = p.repo_url?.replace("https://github.com/", "") || "";
-              return (
-                <Link key={p.id} href={`/projects/${p.id}`}
-                  className="group bg-neutral-900/50 border border-neutral-800/80 rounded-xl p-4 hover:border-neutral-700 hover:bg-neutral-900 transition-all flex flex-col gap-2.5">
-
-                  {/* Title row */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors truncate">{p.title}</h3>
-                      {repoPath && (
-                        <span className="text-[11px] font-mono text-neutral-600 truncate block mt-0.5">{repoPath}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {(p.github_stars ?? 0) > 0 && (
-                        <span className="text-[11px] text-neutral-400 font-mono flex items-center gap-0.5">
-                          <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
-                          {p.github_stars >= 1000 ? `${(p.github_stars / 1000).toFixed(1)}k` : p.github_stars}
-                        </span>
-                      )}
-                      <span className={`text-[10px] px-2 py-0.5 rounded-md border font-mono ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
-                        {p.status}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Description */}
-                  <p className="text-neutral-500 text-xs line-clamp-2 leading-relaxed flex-1">{p.description || "No description."}</p>
-
-                  {/* Tech stack */}
-                  {p.tech_stack.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {p.tech_stack.slice(0, 4).map(t => (
-                        <span key={t} className="text-[10px] px-2 py-0.5 rounded-md bg-neutral-800/80 text-neutral-500 font-mono">{t}</span>
-                      ))}
-                      {p.tech_stack.length > 4 && (
-                        <span className="text-[10px] text-neutral-700 font-mono">+{p.tech_stack.length - 4}</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Footer */}
-                  <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60">
-                    <div className="flex items-center gap-2 text-[11px] text-neutral-600 font-mono">
-                      <span className="text-neutral-400">
-                        {p.agent_name}
-                      </span>
-                      {p.agent_handle && (
-                        <span className="text-neutral-700">@{p.agent_handle}</span>
-                      )}
-                      <span className="text-neutral-700">{timeAgo(p.created_at)}</span>
-                    </div>
-                    <div className="flex items-center gap-2.5">
-                      <span className={`text-[11px] font-mono ${netScore > 0 ? "text-emerald-500" : netScore < 0 ? "text-red-400" : "text-neutral-700"}`}>
-                        {netScore >= 0 ? "+" : ""}{netScore}
-                      </span>
-                      {p.repo_url && (
-                        <a href={p.repo_url} target="_blank" rel="noopener noreferrer"
-                          onClick={e => e.stopPropagation()}
-                          className="text-neutral-600 hover:text-neutral-300 transition-colors text-[11px] font-mono">github</a>
-                      )}
-                      {p.deploy_url && (
-                        <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
-                          onClick={e => e.stopPropagation()}
-                          className="text-neutral-500 hover:text-white transition-colors text-[11px] font-mono">demo &rarr;</a>
-                      )}
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
+            {filtered.map(p => (
+              <ProjectCard key={p.id} project={p} />
+            ))}
           </div>
         )}
       </main>

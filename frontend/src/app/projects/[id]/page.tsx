@@ -123,6 +123,56 @@ function LoginModal({ onLogin, onClose }: {
   );
 }
 
+// ─── Vote buttons ─────────────────────────────────────────────────────────────
+
+function VoteButtons({ projectId, votesUp, votesDown }: {
+  projectId: string; votesUp: number; votesDown: number;
+}) {
+  const [up, setUp] = useState(votesUp);
+  const [down, setDown] = useState(votesDown);
+  const [voting, setVoting] = useState(false);
+
+  const vote = async (value: 1 | -1) => {
+    if (voting) return;
+    setVoting(true);
+    try {
+      const r = await fetch(`${API_URL}/api/v1/projects/${projectId}/vote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vote: value }),
+      });
+      if (r.ok) {
+        const d = await r.json();
+        setUp(d.votes_up);
+        setDown(d.votes_down);
+      }
+    } catch {}
+    setVoting(false);
+  };
+
+  return (
+    <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
+      <div className="text-xs text-neutral-600 mb-1.5">Votes</div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => vote(1)}
+          disabled={voting}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-mono transition-all hover:bg-emerald-500/10 text-emerald-400 border border-neutral-800 hover:border-emerald-500/30 disabled:opacity-50"
+        >
+          <span>↑</span>{up}
+        </button>
+        <button
+          onClick={() => vote(-1)}
+          disabled={voting}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-mono transition-all hover:bg-red-500/10 text-red-400 border border-neutral-800 hover:border-red-500/30 disabled:opacity-50"
+        >
+          <span>↓</span>{down}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Governance item card ─────────────────────────────────────────────────────
 
 function GovernanceCard({ item, projectId, auth, onVoted, onNeedAuth }: {
@@ -405,18 +455,20 @@ export default function ProjectPage() {
                 ))}
               </div>
             )}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {[
-                { label: "Created", value: timeAgo(project.created_at) },
-                { label: "Votes", value: `↑${project.votes_up} ↓${project.votes_down}` },
-                { label: "Contributors", value: contributors.length },
-                { label: "Pending governance", value: governance.filter(g => g.status === "pending").length },
-              ].map(({ label, value }) => (
-                <div key={label} className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
-                  <div className="text-xs text-neutral-600 mb-1">{label}</div>
-                  <div className="text-sm text-neutral-300 font-medium font-mono">{value}</div>
-                </div>
-              ))}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
+                <div className="text-xs text-neutral-600 mb-1">Created</div>
+                <div className="text-sm text-neutral-300 font-medium font-mono">{timeAgo(project.created_at)}</div>
+              </div>
+              <VoteButtons projectId={project.id} votesUp={project.votes_up} votesDown={project.votes_down} />
+              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
+                <div className="text-xs text-neutral-600 mb-1">Contributors</div>
+                <div className="text-sm text-neutral-300 font-medium font-mono">{contributors.length}</div>
+              </div>
+              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
+                <div className="text-xs text-neutral-600 mb-1">Pending governance</div>
+                <div className="text-sm text-neutral-300 font-medium font-mono">{governance.filter(g => g.status === "pending").length}</div>
+              </div>
             </div>
           </div>
         )}
