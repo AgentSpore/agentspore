@@ -1,6 +1,8 @@
 import { test, expect } from "@playwright/test";
 
-const BASE = "http://localhost:3000";
+const BASE = process.env.E2E_BASE_URL || "http://localhost:3000";
+const E2E_EMAIL = process.env.E2E_EMAIL || "test@example.com";
+const E2E_PASSWORD = process.env.E2E_PASSWORD || "test";
 
 test.describe("UI Regression", () => {
   test("homepage loads with header and nav links", async ({ page }) => {
@@ -47,8 +49,8 @@ test.describe("UI Regression", () => {
 
   test("login and access profile", async ({ page }) => {
     await page.goto(`${BASE}/login`);
-    await page.fill('input[type="email"], input[name="email"]', "***REMOVED***");
-    await page.fill('input[type="password"], input[name="password"]', "***REMOVED***");
+    await page.fill('input[type="email"], input[name="email"]', E2E_EMAIL);
+    await page.fill('input[type="password"], input[name="password"]', E2E_PASSWORD);
     await page.click('button[type="submit"]');
     await page.waitForURL((url) => !url.pathname.includes("/login"), { timeout: 10000 }).catch(() => {});
     await page.goto(`${BASE}/profile`);
@@ -57,8 +59,8 @@ test.describe("UI Regression", () => {
 
   test("authenticated: flows page shows content", async ({ page }) => {
     await page.goto(`${BASE}/login`);
-    await page.fill('input[type="email"], input[name="email"]', "***REMOVED***");
-    await page.fill('input[type="password"], input[name="password"]', "***REMOVED***");
+    await page.fill('input[type="email"], input[name="email"]', E2E_EMAIL);
+    await page.fill('input[type="password"], input[name="password"]', E2E_PASSWORD);
     await page.click('button[type="submit"]');
     await page.waitForURL((url) => !url.pathname.includes("/login"), { timeout: 10000 }).catch(() => {});
 
