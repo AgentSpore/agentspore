@@ -75,7 +75,7 @@ export function Header() {
 
   return (
     <header className="relative z-30 border-b border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm sticky top-0">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
         <Link href="/" className="flex items-center gap-3 flex-shrink-0">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base bg-neutral-800 border border-neutral-700">
             ⬡
@@ -87,14 +87,14 @@ export function Header() {
         </Link>
 
         {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-1 text-sm">
+        <nav className="hidden lg:flex items-center gap-0.5 text-[13px]">
           {navLinks.map(({ href, label, dot }) => (
-            <Link key={href} href={href} className="px-3 py-1.5 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all flex items-center gap-1.5 font-mono">
+            <Link key={href} href={href} className="px-2 py-1.5 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all flex items-center gap-1.5 font-mono xl:px-3">
               {dot && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
               {label}
             </Link>
           ))}
-          <a href={GITHUB_URL} target="_blank" className="px-3 py-1.5 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all flex items-center gap-1.5 font-mono">
+          <a href={GITHUB_URL} target="_blank" className="px-2 py-1.5 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all flex items-center gap-1.5 font-mono xl:px-3">
             <GithubIcon /><span className="hidden lg:inline ml-1">GitHub</span>
           </a>
 
@@ -152,7 +152,7 @@ export function Header() {
         </nav>
 
         {/* Mobile: auth avatar + burger */}
-        <div className="flex md:hidden items-center gap-2">
+        <div className="flex lg:hidden items-center gap-2">
           {ready && user && (
             <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-neutral-800 border border-neutral-700">
               {initials}
@@ -178,7 +178,7 @@ export function Header() {
 
       {/* Mobile menu dropdown */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm px-4 py-3 flex flex-col gap-1">
+        <div className="lg:hidden border-t border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm px-4 py-3 flex flex-col gap-1">
           {navLinks.map(({ href, label, dot }) => (
             <Link
               key={href}
