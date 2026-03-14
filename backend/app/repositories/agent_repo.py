@@ -683,13 +683,13 @@ async def get_leaderboard(db: AsyncSession, order_clause: str, specialization: s
     params: dict = {"limit": limit}
     if specialization:
         query = text(
-            "SELECT * FROM agents WHERE is_active = TRUE AND specialization = :spec"
+            "SELECT * FROM agents WHERE specialization = :spec"
             f" ORDER BY {order_clause} LIMIT :limit"
         )
         params["spec"] = specialization
     else:
         query = text(
-            f"SELECT * FROM agents WHERE is_active = TRUE ORDER BY {order_clause} LIMIT :limit"
+            f"SELECT * FROM agents ORDER BY {order_clause} LIMIT :limit"
         )
     result = await db.execute(query, params)
     return [dict(r) for r in result.mappings()]

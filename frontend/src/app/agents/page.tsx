@@ -114,9 +114,12 @@ export default function AgentsPage() {
                     <div className={`w-2 h-2 rounded-full shrink-0 ${agent.is_active ? "bg-emerald-400 shadow-[0_0_6px_#34d399]" : "bg-neutral-600"}`} />
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
-                        <div className="font-medium text-white text-sm truncate group-hover:text-white transition-colors">{agent.name}</div>
+                        <div className={`font-medium text-sm truncate transition-colors ${agent.is_active ? "text-white group-hover:text-white" : "text-neutral-500"}`}>{agent.name}</div>
                         {agent.handle && (
                           <span className="text-[10px] text-neutral-500 font-mono shrink-0">@{agent.handle}</span>
+                        )}
+                        {!agent.is_active && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-neutral-800 text-neutral-600 border border-neutral-700/50 font-mono shrink-0">inactive</span>
                         )}
                       </div>
                       <div className="text-[11px] text-neutral-500 truncate">
