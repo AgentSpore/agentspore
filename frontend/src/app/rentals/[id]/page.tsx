@@ -111,11 +111,13 @@ export default function RentalChatPage() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
+  const [uploading, setUploading] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ─── Auth guard ───────────────────────────────────────────────────────
@@ -156,7 +158,9 @@ export default function RentalChatPage() {
   useEffect(() => {
     if (!rental) return;
     loadMessages();
-    pollRef.current = setInterval(loadMessages, 5000);
+    if (rental.status === "active") {
+      pollRef.current = setInterval(loadMessages, 5000);
+    }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [rental, loadMessages]);
 
@@ -197,6 +201,66 @@ export default function RentalChatPage() {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  // ─── Upload file ───────────────────────────────────────────────────────
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Reset input so the same file can be re-selected
+    e.target.value = "";
+
+    if (file.size > 10 * 1024 * 1024) {
+      setSendError("File too large (max 10 MB)");
+      return;
+    }
+
+    setUploading(true);
+    setSendError(null);
+
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const uploadRes = await fetch(`${API_URL}/api/v1/rentals/${id}/upload`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+
+      if (!uploadRes.ok) {
+        const data = await uploadRes.json().catch(() => ({}));
+        setSendError(data.detail ?? "Upload failed");
+        return;
+      }
+
+      const uploaded = await uploadRes.json();
+
+      // Send file message
+      const msgRes = await fetch(`${API_URL}/api/v1/rentals/${id}/messages`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          content: uploaded.filename || file.name,
+          message_type: "file",
+          file_url: uploaded.url,
+          file_name: uploaded.filename || file.name,
+        }),
+      });
+
+      if (!msgRes.ok) {
+        const data = await msgRes.json().catch(() => ({}));
+        setSendError(data.detail ?? "Failed to send file message");
+        return;
+      }
+
+      await loadMessages();
+    } catch {
+      setSendError("Network error during upload");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -274,8 +338,8 @@ export default function RentalChatPage() {
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
       {/* ─── Header ────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 bg-neutral-900/50 border-b border-neutral-800/80 backdrop-blur-sm">
-        <div className="max-w-3xl mx-auto px-6 py-4">
+      <header className="sticky top-0 z-50 bg-neutral-900/50 border-b border-neutral-800/80 backdrop-blur-sm overflow-hidden">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4">
           {/* Back link */}
           <Link
             href={`/agents/${rental.agent_id}`}
@@ -285,20 +349,20 @@ export default function RentalChatPage() {
           </Link>
 
           {/* Title row */}
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start justify-between gap-4 min-w-0">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-lg font-medium text-white font-mono truncate">{rental.title}</h1>
+              <div className="flex items-center gap-3 min-w-0">
+                <h1 className="text-lg font-medium text-white font-mono truncate min-w-0">{rental.title}</h1>
                 <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-mono rounded-md ${STATUS_BADGE[rental.status] || STATUS_BADGE.active}`}>
                   {rental.status}
                 </span>
               </div>
-              <div className="flex items-center gap-2 mt-1.5">
-                <span className="text-neutral-400 text-xs font-mono">{rental.agent_name}</span>
-                <span className="text-neutral-700 text-xs">·</span>
-                <span className="text-neutral-500 text-xs font-mono">{rental.specialization}</span>
-                <span className="text-neutral-700 text-xs">·</span>
-                <span className="text-neutral-600 text-xs font-mono">{timeAgo(rental.created_at)}</span>
+              <div className="flex items-center gap-2 mt-1.5 min-w-0 overflow-hidden">
+                <span className="text-neutral-400 text-xs font-mono truncate">{rental.agent_name}</span>
+                <span className="text-neutral-700 text-xs shrink-0">·</span>
+                <span className="text-neutral-500 text-xs font-mono truncate">{rental.specialization}</span>
+                <span className="text-neutral-700 text-xs shrink-0">·</span>
+                <span className="text-neutral-600 text-xs font-mono shrink-0">{timeAgo(rental.created_at)}</span>
               </div>
             </div>
 
@@ -343,7 +407,7 @@ export default function RentalChatPage() {
 
       {/* ─── Messages ──────────────────────────────────────────────────── */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-6 space-y-4">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-4">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
               <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-neutral-800/60 border border-neutral-700/50">
@@ -447,13 +511,39 @@ export default function RentalChatPage() {
       {isActive ? (
         <form
           onSubmit={handleSend}
-          className="bg-neutral-900/50 border-t border-neutral-800/80 px-6 py-4"
+          className="bg-neutral-900/50 border-t border-neutral-800/80 px-4 sm:px-6 py-4"
         >
           <div className="max-w-3xl mx-auto">
             {sendError && (
               <p className="text-[11px] text-red-400 mb-2">{sendError}</p>
             )}
             <div className="flex items-end gap-3">
+              {/* Attach button */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                title="Attach file (max 10 MB)"
+                className="text-neutral-500 hover:text-white transition-colors disabled:opacity-30 shrink-0 pb-3"
+              >
+                {uploading ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="animate-spin">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                )}
+              </button>
+
               <textarea
                 ref={textareaRef}
                 value={content}
@@ -475,7 +565,7 @@ export default function RentalChatPage() {
           </div>
         </form>
       ) : (
-        <div className="bg-neutral-900/50 border-t border-neutral-800/80 px-6 py-4">
+        <div className="bg-neutral-900/50 border-t border-neutral-800/80 px-4 sm:px-6 py-4">
           <div className="max-w-3xl mx-auto text-center">
             <p className="text-neutral-500 text-sm font-mono">
               This rental has been {rental.status}. Messaging is disabled.
