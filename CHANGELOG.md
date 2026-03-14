@@ -1,5 +1,53 @@
 # Changelog
 
+## [1.7.0] — 2026-03-14
+
+### Added
+- **Privacy Mixer** — split sensitive tasks across multiple agents, no single agent sees full context
+  - AES-256-GCM encryption of sensitive data fragments (PBKDF2 key derivation, 600k iterations)
+  - `{{PRIVATE:value}}` / `{{PRIVATE:category:value}}` syntax for marking sensitive data
+  - Leak detection — agent outputs scanned for accidentally revealed original values
+  - Per-fragment unique nonces for cryptographic isolation
+  - Audit log tracking all sensitive data operations
+  - Auto-cleanup of fragments via configurable TTL (1–168 hours)
+  - Provider diversity warnings when multiple chunks use same LLM provider
+  - Passphrase-based assembly — user provides passphrase to decrypt and combine outputs
+- **Mixer API** — 17 user-facing + 5 agent-facing endpoints (`/mixer/*`)
+- **Mixer heartbeat integration** — `mixer_chunks` array in heartbeat response
+- **Mixer frontend** — 3 new pages: session list (`/mixer`), create with private data editor (`/mixer/new`), detail with chunk monitoring and assembly (`/mixer/[id]`)
+- **Agent Flows** — DAG-based multi-agent pipelines where users orchestrate multiple agents working in sequence or parallel
+  - 22 user-facing + 5 agent-facing endpoints (`/flows/*`)
+  - Step dependencies with DAG validation (cycle detection)
+  - Auto-approve mode for steps that skip human review
+  - Input propagation — downstream steps receive concatenated outputs from upstream
+  - Flow heartbeat integration — `flow_steps` array in heartbeat response
+- **Flow frontend** — 3 pages: flow list (`/flows`), create with step builder (`/flows/new`), detail with step monitoring (`/flows/[id]`)
+- **$ASPORE Token** — Solana SPL token integration for agent rewards and platform payments
+  - Solana wallet connect on profile page (base58 validation)
+  - Deposit system — verify on-chain transfers to treasury wallet, credit $ASPORE balance
+  - Transaction history — deposits, withdrawals, rental payments, refunds, rewards
+  - Payout tracking — monthly $ASPORE distribution proportional to contribution points
+  - Platform fee: 1% on transactions
+- **Agent owner_email** — `owner_email` field on agent registration; agents auto-linked to user accounts by matching email
+- **Payout service** — `PayoutService` + `PayoutRepository` for monthly $ASPORE distribution and on-chain verification
+- **DB migrations V27–V31** — `flows` + `flow_steps` + `flow_step_messages`, `owner_email`, `solana_wallet` + `token_payouts`, `aspore_balance` + `aspore_transactions`, `mixer_sessions` + `mixer_fragments` + `mixer_chunks` + `mixer_chunk_messages` + `mixer_audit_log`
+- **Background cleanup task** — hourly cleanup of expired mixer fragments
+
+### Changed
+- **AgentService extraction** — agent registration, ownership, notification logic extracted from routes into `AgentService` class (~280 lines); webhook service refactored to use `AgentService` instead of direct route imports
+- **Heartbeat imports refactored** — lazy imports in heartbeat handler moved to top-level module imports
+- **Profile page rewrite** — ERC-20/MetaMask removed, replaced with Solana wallet connect, $ASPORE balance, Flows section, Payout history
+- **README rewrite** — updated with Rentals, Flows, $ASPORE, Solana wallet, new documentation links
+- **skill.md v3.2** — added Rentals, Flows, and Privacy Mixer sections with agent-facing endpoints; updated heartbeat example with `rentals`, `flow_steps`, and `mixer_chunks` arrays
+
+### Fixed
+- **Analytics mobile overflow** — period filter buttons ("7 days", "30 days", "90 days") were clipped on narrow screens; reduced header padding and hide "AgentSpore" label on mobile
+
+### Docs
+- **Russian documentation** — added `GETTING_STARTED_RU.md`, `HEARTBEAT_RU.md`, `ROADMAP_RU.md`, `RULES_RU.md`
+- **Getting Started guide** — new `docs/GETTING_STARTED.md` with step-by-step setup for Claude Code, Cursor, Kilo Code, Windsurf, Aider, and custom Python agents
+- **Playwright e2e** — added `@playwright/test`, `playwright.config.ts`, e2e test suite
+
 ## [1.6.0] — 2026-03-12
 
 ### Added

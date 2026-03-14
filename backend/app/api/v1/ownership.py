@@ -3,9 +3,12 @@ Ownership API — Web3 wallet + on-chain token endpoints
 =======================================================
 Endpoints:
   PATCH  /api/v1/users/wallet         — connect wallet (EIP-191 sig verify)
-  POST   /api/v1/agents/link-owner    — link agent to human user (JWT + X-API-Key)
+  PATCH  /api/v1/users/solana-wallet   — connect Solana wallet for $ASPORE payouts
+  DELETE /api/v1/users/solana-wallet   — disconnect Solana wallet
+  GET    /api/v1/users/me/payouts      — payout history
+  POST   /api/v1/agents/link-owner     — link agent to human user (JWT + X-API-Key)
   GET    /api/v1/projects/{id}/ownership — per-project contributor shares + token info
-  GET    /api/v1/users/me/tokens      — all tokens owned by current user
+  GET    /api/v1/users/me/tokens       — all tokens owned by current user
 """
 
 from __future__ import annotations
@@ -15,11 +18,12 @@ import logging
 
 from eth_account import Account
 from eth_account.messages import encode_defunct
-from fastapi import APIRouter, Header, HTTPException, status
-from app.schemas.ownership import ContributorShare, LinkOwnerRequest, ProjectOwnershipResponse, ProjectTokenInfo, UserTokenEntry, WalletConnectRequest
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from app.schemas.ownership import ContributorShare, LinkOwnerRequest, ProjectOwnershipResponse, ProjectTokenInfo, SolanaWalletConnectRequest, UserTokenEntry, WalletConnectRequest
 
 from app.api.deps import CurrentUser, DatabaseSession
 from app.repositories import ownership_repo
+from app.services.payout_service import PayoutService, get_payout_service
 from app.services.web3_service import get_web3_service
 
 logger = logging.getLogger(__name__)
@@ -60,6 +64,104 @@ async def connect_wallet(
     await ownership_repo.update_user_wallet(db, str(current_user.id), body.wallet_address)
     await db.commit()
     return {"wallet_address": body.wallet_address.lower(), "status": "connected"}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PATCH /users/solana-wallet — connect Solana wallet for $ASPORE payouts
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.patch("/users/solana-wallet")
+async def connect_solana_wallet(
+    body: SolanaWalletConnectRequest,
+    current_user: CurrentUser,
+    db: DatabaseSession,
+    svc: PayoutService = Depends(get_payout_service),
+):
+    """
+    Connect a Solana wallet to the user account for $ASPORE token payouts.
+    No signature verification — just saves the address (user is already authenticated via JWT).
+    """
+    try:
+        await svc.connect_solana_wallet(str(current_user.id), body.solana_wallet)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    await db.commit()
+    return {"solana_wallet": body.solana_wallet, "status": "connected"}
+
+
+@router.delete("/users/solana-wallet")
+async def disconnect_solana_wallet(
+    current_user: CurrentUser,
+    db: DatabaseSession,
+    svc: PayoutService = Depends(get_payout_service),
+):
+    """Disconnect Solana wallet from user account."""
+    await svc.disconnect_solana_wallet(str(current_user.id))
+    await db.commit()
+    return {"status": "disconnected"}
+
+
+@router.get("/users/me/payouts")
+async def get_my_payouts(
+    current_user: CurrentUser,
+    svc: PayoutService = Depends(get_payout_service),
+):
+    """Get current user's $ASPORE payout history."""
+    return await svc.get_user_payouts(str(current_user.id))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# $ASPORE Balance & Deposits
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/users/me/aspore")
+async def get_aspore_balance(
+    current_user: CurrentUser,
+    svc: PayoutService = Depends(get_payout_service),
+):
+    """Get current user's $ASPORE deposit balance."""
+    balance = await svc.get_balance(str(current_user.id))
+    return {"aspore_balance": balance}
+
+
+@router.post("/users/me/aspore/deposit")
+async def deposit_aspore(
+    body: dict,
+    current_user: CurrentUser,
+    db: DatabaseSession,
+    svc: PayoutService = Depends(get_payout_service),
+):
+    """
+    Verify a Solana tx that sent $ASPORE to treasury and credit user's balance.
+    Body: {"tx_signature": "..."}
+    """
+    tx_signature = body.get("tx_signature")
+    if not tx_signature:
+        raise HTTPException(status_code=422, detail="tx_signature is required")
+
+    try:
+        result = await svc.verify_and_credit_deposit(str(current_user.id), tx_signature)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    await db.commit()
+    return {
+        "status": "deposited",
+        "amount": result["amount"],
+        "balance_after": result["balance_after"],
+        "tx_signature": tx_signature,
+    }
+
+
+@router.get("/users/me/aspore/transactions")
+async def get_aspore_transactions(
+    current_user: CurrentUser,
+    svc: PayoutService = Depends(get_payout_service),
+):
+    """Get current user's $ASPORE transaction history."""
+    return await svc.get_transactions(str(current_user.id))
 
 
 # ──────────────────────────────────────────────────────────────────────────────

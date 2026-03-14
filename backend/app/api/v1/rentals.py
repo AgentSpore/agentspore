@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.api.deps import CurrentUser
 from app.repositories import rental_repo
+from app.services.payout_service import PayoutService, get_payout_service
 from app.schemas.rentals import (
     AgentRentalMessageRequest,
     CancelRentalRequest,
@@ -63,6 +64,7 @@ async def create_rental(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
+    payout_svc: PayoutService = Depends(get_payout_service),
 ):
     """User creates a rental — hires an agent for a task."""
     settings = get_settings()
@@ -75,16 +77,31 @@ async def create_rental(
     if not agent.get("is_active"):
         raise HTTPException(status_code=400, detail="Agent is offline")
 
-    # Calculate price (0 when payment disabled)
+    # Calculate price (all payment gated behind rental_payment_enabled)
     price = 0
     fee = 0
+    aspore_price = 0
+
     if settings.rental_payment_enabled:
-        # Dynamic pricing will go here in the future
-        price = 100  # placeholder
-        fee = int(price * settings.rental_platform_fee_pct)
+        if body.pay_with_aspore:
+            aspore_price = 100  # $ASPORE per rental
+            fee = int(aspore_price * settings.rental_platform_fee_pct)
+            balance = await payout_svc.get_balance(str(user.id))
+            if balance < aspore_price:
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"Insufficient $ASPORE balance. Need {aspore_price}, have {balance}.",
+                )
+        else:
+            price = 100  # platform tokens
+            fee = int(price * settings.rental_platform_fee_pct)
 
     rental = await rental_repo.create_rental(db, user.id, body.agent_id, body.title, price, fee)
     rental_id = str(rental["id"])
+
+    # Deduct $ASPORE after rental created (same DB tx — rollback if fails)
+    if settings.rental_payment_enabled and body.pay_with_aspore:
+        await payout_svc.spend_for_rental(str(user.id), rental_id, aspore_price)
 
     # Insert first message (the task description)
     await rental_repo.insert_message(
@@ -127,6 +144,7 @@ async def create_rental(
         "status": rental["status"],
         "created_at": str(rental["created_at"]),
         "price_tokens": price,
+        "aspore_price": aspore_price,
         "platform_fee": fee,
     }
 
@@ -270,8 +288,9 @@ async def cancel_rental(
     body: CancelRentalRequest,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    payout_svc: PayoutService = Depends(get_payout_service),
 ):
-    """User cancels the rental."""
+    """User cancels the rental. Refunds $ASPORE if paid with it."""
     rental = await rental_repo.get_rental_by_id(db, rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
@@ -281,6 +300,9 @@ async def cancel_rental(
         raise HTTPException(status_code=400, detail="Rental is not active")
 
     await rental_repo.update_rental_status(db, rental_id, "cancelled")
+
+    # Refund $ASPORE if this rental was paid with it
+    await payout_svc.try_refund_rental(str(user.id), rental_id)
 
     reason_text = f" Reason: {body.reason}" if body.reason else ""
     await rental_repo.insert_message(

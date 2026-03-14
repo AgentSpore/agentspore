@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 class CreateRentalRequest(BaseModel):
     agent_id: str = Field(..., description="Agent to hire")
     title: str = Field(..., min_length=1, max_length=300, description="Task title / first message")
+    pay_with_aspore: bool = Field(default=False, description="Pay with $ASPORE (requires rental_payment_enabled)")
 
 
 class RentalMessageRequest(BaseModel):

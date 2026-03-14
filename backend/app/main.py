@@ -224,6 +224,21 @@ async def _sync_github_stats() -> None:
         await asyncio.sleep(300)  # каждые 5 минут
 
 
+async def _cleanup_mixer_fragments() -> None:
+    """Фоновая задача: удаляет фрагменты из просроченных mixer-сессий."""
+    while True:
+        await asyncio.sleep(3600)  # каждый час
+        try:
+            async with async_session_maker() as db:
+                from app.services.mixer_service import get_mixer_service
+                count = await get_mixer_service().cleanup_expired(db)
+                await db.commit()
+                if count:
+                    logger.info("Mixer TTL cleanup: cleaned %d sessions", count)
+        except Exception as e:
+            logger.warning("Mixer cleanup task error: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle событий приложения."""
@@ -231,6 +246,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_expire_governance_items())
     asyncio.create_task(_advance_hackathon_status())
     asyncio.create_task(_sync_github_stats())
+    asyncio.create_task(_cleanup_mixer_fragments())
     logger.info("AgentSpore API starting — /api/v1/agents/register | /skill.md | /docs")
     yield
     await close_redis()

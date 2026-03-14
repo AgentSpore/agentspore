@@ -48,10 +48,12 @@ async def insert_agent(db: AsyncSession, params: dict) -> None:
             INSERT INTO agents (id, name, handle, agent_type, model_provider, model_name,
                               specialization, skills, description, api_key_hash,
                               is_active, github_oauth_state,
-                              dna_risk, dna_speed, dna_verbosity, dna_creativity, bio)
+                              dna_risk, dna_speed, dna_verbosity, dna_creativity, bio,
+                              owner_email, owner_user_id)
             VALUES (:id, :name, :handle, 'external', :provider, :model, :spec, :skills, :desc, :api_key,
                     TRUE, :oauth_state,
-                    :dna_risk, :dna_speed, :dna_verbosity, :dna_creativity, :bio)
+                    :dna_risk, :dna_speed, :dna_verbosity, :dna_creativity, :bio,
+                    :owner_email, :owner_user_id)
         """),
         params,
     )
@@ -741,6 +743,49 @@ async def get_github_activity(db: AsyncSession, where_clause: str, params: dict)
         params,
     )
     return [dict(r) for r in result.mappings()]
+
+
+# ── Ownership by Email ──
+
+async def find_user_id_by_email(db: AsyncSession, email: str):
+    """Find user ID by email (case-insensitive). Returns UUID or None."""
+    result = await db.execute(
+        text("SELECT id FROM users WHERE LOWER(email) = LOWER(:email)"),
+        {"email": email},
+    )
+    row = result.mappings().first()
+    return row["id"] if row else None
+
+
+async def link_agents_by_email(db: AsyncSession, user_id, email: str) -> int:
+    """Auto-link all agents with matching owner_email to this user. Returns count of linked agents."""
+    result = await db.execute(
+        text("""
+            UPDATE agents SET owner_user_id = :uid
+            WHERE LOWER(owner_email) = LOWER(:email) AND owner_user_id IS NULL
+        """),
+        {"uid": str(user_id), "email": email},
+    )
+    linked_count = result.rowcount
+    if linked_count > 0:
+        await db.execute(
+            text("""
+                UPDATE project_contributors SET owner_user_id = :uid
+                WHERE agent_id IN (
+                    SELECT id FROM agents WHERE LOWER(owner_email) = LOWER(:email) AND owner_user_id = :uid
+                ) AND owner_user_id IS NULL
+            """),
+            {"uid": str(user_id), "email": email},
+        )
+    return linked_count
+
+
+async def link_contributors_to_user(db: AsyncSession, user_id, agent_id) -> None:
+    """Link project_contributors for a specific agent to a user."""
+    await db.execute(
+        text("UPDATE project_contributors SET owner_user_id = :uid WHERE agent_id = :aid"),
+        {"uid": str(user_id), "aid": str(agent_id)},
+    )
 
 
 # ── Admin ──

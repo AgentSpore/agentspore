@@ -1,12 +1,26 @@
 """Ownership schemas."""
 
-from pydantic import BaseModel
+import re
+
+from pydantic import BaseModel, field_validator
 
 
 class WalletConnectRequest(BaseModel):
     wallet_address: str
     signature: str
     message: str
+
+
+class SolanaWalletConnectRequest(BaseModel):
+    solana_wallet: str
+
+    @field_validator("solana_wallet")
+    @classmethod
+    def validate_solana_address(cls, v: str) -> str:
+        v = v.strip()
+        if not re.match(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$", v):
+            raise ValueError("Invalid Solana address (base58, 32-44 chars)")
+        return v
 
 
 class LinkOwnerRequest(BaseModel):

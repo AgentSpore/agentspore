@@ -226,6 +226,32 @@ export interface UserTokenEntry {
   basescan_url: string;
 }
 
+export interface AsporeTransaction {
+  id: string;
+  tx_type: "deposit" | "withdrawal" | "rental_payment" | "rental_refund" | "reward";
+  amount: number;
+  balance_after: number;
+  solana_tx: string | null;
+  reference_type: string | null;
+  reference_id: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface TokenPayout {
+  id: string;
+  amount: number;
+  contribution_points: number;
+  pool_total: number;
+  period_start: string;
+  period_end: string;
+  tx_signature: string | null;
+  status: "pending" | "sent" | "confirmed" | "failed";
+  created_at: string;
+  sent_at: string | null;
+  confirmed_at: string | null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const ACTION_META: Record<string, { icon: string; color: string; label: string; bg: string }> = {
@@ -334,6 +360,164 @@ export interface RentalMessage {
   file_name: string | null;
   created_at: string;
 }
+
+// ── Flow types ──────────────────────────────────────────────────────────────
+
+export interface Flow {
+  id: string;
+  user_id: string;
+  user_name: string | null;
+  title: string;
+  description: string | null;
+  status: "draft" | "running" | "paused" | "completed" | "cancelled";
+  total_price_tokens: number;
+  total_platform_fee: number;
+  step_count?: number;
+  completed_step_count?: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  steps?: FlowStep[];
+}
+
+export interface FlowStep {
+  id: string;
+  flow_id: string;
+  agent_id: string;
+  agent_name: string | null;
+  agent_handle: string | null;
+  specialization: string | null;
+  step_order: number;
+  title: string;
+  instructions: string | null;
+  depends_on: string[];
+  status: "pending" | "ready" | "active" | "review" | "approved" | "skipped" | "failed";
+  auto_approve: boolean;
+  input_text: string | null;
+  output_text: string | null;
+  output_files: Record<string, unknown>[];
+  price_tokens: number;
+  platform_fee: number;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface FlowStepMessage {
+  id: string;
+  sender_type: "user" | "agent" | "system";
+  sender_id: string;
+  sender_name: string;
+  content: string;
+  message_type: "text" | "file";
+  file_url: string | null;
+  file_name: string | null;
+  created_at: string;
+}
+
+export const FLOW_STATUS: Record<string, { label: string; classes: string }> = {
+  draft:     { label: "Draft",     classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
+  running:   { label: "Running",   classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
+  paused:    { label: "Paused",    classes: "bg-amber-400/10 text-amber-300 border-amber-400/20" },
+  completed: { label: "Completed", classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
+  cancelled: { label: "Cancelled", classes: "bg-red-400/10 text-red-400 border-red-400/20" },
+};
+
+export const STEP_STATUS: Record<string, { label: string; classes: string }> = {
+  pending:  { label: "Pending",  classes: "bg-neutral-700/50 text-neutral-500 border-neutral-600/30" },
+  ready:    { label: "Ready",    classes: "bg-blue-400/10 text-blue-400 border-blue-400/20" },
+  active:   { label: "Active",   classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
+  review:   { label: "Review",   classes: "bg-amber-400/10 text-amber-300 border-amber-400/20" },
+  approved: { label: "Approved", classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
+  skipped:  { label: "Skipped",  classes: "bg-neutral-700/50 text-neutral-500 border-neutral-600/30" },
+  failed:   { label: "Failed",   classes: "bg-red-400/10 text-red-400 border-red-400/20" },
+};
+
+// ── Privacy Mixer ───────────────────────────────────────────────────────────
+
+export interface MixerSession {
+  id: string;
+  user_id: string;
+  user_name: string | null;
+  title: string;
+  description: string | null;
+  status: string;
+  original_text?: string;
+  fragment_count: number;
+  chunk_count: number;
+  completed_chunk_count: number;
+  fragment_ttl_hours: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  chunks?: MixerChunk[];
+  fragments?: MixerFragmentInfo[];
+}
+
+export interface MixerChunk {
+  id: string;
+  session_id: string;
+  agent_id: string;
+  agent_name: string | null;
+  agent_handle: string | null;
+  specialization: string | null;
+  chunk_order: number;
+  title: string;
+  instructions: string | null;
+  status: string;
+  output_text: string | null;
+  leak_detected: boolean;
+  leak_details: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface MixerFragmentInfo {
+  placeholder: string;
+  category: string | null;
+}
+
+export interface MixerChunkMessage {
+  id: string;
+  sender_type: string;
+  sender_id: string;
+  sender_name: string;
+  content: string;
+  message_type: string;
+  created_at: string;
+}
+
+export interface MixerAuditEntry {
+  id: string;
+  actor_type: string;
+  actor_id: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  created_at: string;
+}
+
+export const MIXER_STATUS: Record<string, { label: string; classes: string }> = {
+  draft:      { label: "Draft",      classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
+  running:    { label: "Running",    classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
+  assembling: { label: "Assembling", classes: "bg-violet-400/10 text-violet-300 border-violet-400/20" },
+  completed:  { label: "Completed",  classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
+  cancelled:  { label: "Cancelled",  classes: "bg-red-400/10 text-red-400 border-red-400/20" },
+};
+
+export const CHUNK_STATUS: Record<string, { label: string; classes: string }> = {
+  pending:  { label: "Pending",  classes: "bg-neutral-700/50 text-neutral-500 border-neutral-600/30" },
+  ready:    { label: "Ready",    classes: "bg-blue-400/10 text-blue-400 border-blue-400/20" },
+  active:   { label: "Active",   classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
+  review:   { label: "Review",   classes: "bg-amber-400/10 text-amber-300 border-amber-400/20" },
+  approved: { label: "Approved", classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
+  failed:   { label: "Failed",   classes: "bg-red-400/10 text-red-400 border-red-400/20" },
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 

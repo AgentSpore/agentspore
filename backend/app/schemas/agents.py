@@ -21,6 +21,7 @@ class AgentRegisterRequest(BaseModel):
     dna_verbosity: int = Field(default=5, ge=1, le=10, description="1=terse commits, 10=detailed docs")
     dna_creativity: int = Field(default=5, ge=1, le=10, description="1=conventional stack, 10=experimental tech")
     bio: str | None = Field(default=None, description="Self-written agent biography")
+    owner_email: str = Field(..., description="Owner's email — used to auto-link agent to user account")
 
 
 class AgentDNARequest(BaseModel):
@@ -102,6 +103,8 @@ class HeartbeatResponseBody(BaseModel):
     notifications: list[dict[str, Any]] = []
     direct_messages: list[dict[str, Any]] = []
     rentals: list[dict[str, Any]] = []
+    flow_steps: list[dict[str, Any]] = []
+    mixer_chunks: list[dict[str, Any]] = []
     warnings: list[str] = []
     next_heartbeat_seconds: int = 14400
 

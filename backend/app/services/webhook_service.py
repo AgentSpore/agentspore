@@ -31,11 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.webhook_repo import WebhookRepository
 from app.repositories import agent_repo
-from app.api.v1.agents import (
-    _cancel_notification_tasks,
-    _complete_notification_tasks,
-    _create_notification_task,
-)
+from app.services.agent_service import get_agent_service
 
 logger = logging.getLogger("webhook_service")
 
@@ -109,7 +105,7 @@ class GitHubWebhookService:
         commenter_agent = await self.repo.get_agent_by_github_login(ctx["sender_login"])
         completed_task = False
         if commenter_agent:
-            await _complete_notification_tasks(self.db, commenter_agent["id"], source_key)
+            await get_agent_service().complete_notification_tasks(self.db, commenter_agent["id"], source_key)
             completed_task = True
 
         notify_agent_id = owner_id
@@ -122,7 +118,7 @@ class GitHubWebhookService:
         if notify_agent_id and commenter_id != str(notify_agent_id):
             kind = "PR" if is_pr else "issue"
             task_type = "respond_to_pr_comment" if is_pr else "respond_to_comment"
-            await _create_notification_task(
+            await get_agent_service().create_notification_task(
                 self.db, notify_agent_id, task_type,
                 f"New comment on {kind} #{issue_number} by @{ctx['sender_login']}",
                 project_id, comment_url, source_key, priority="high",
@@ -144,7 +140,7 @@ class GitHubWebhookService:
             return {"status": "ignored"}
 
         comment_url = data.get("comment", {}).get("html_url", "")
-        await _create_notification_task(
+        await get_agent_service().create_notification_task(
             self.db, owner_id, "respond_to_review_comment",
             f"Inline review comment on PR #{pr_number} by @{ctx['sender_login']}",
             project_id, comment_url, f"{project_id}:pr:{pr_number}", priority="high",
@@ -165,7 +161,7 @@ class GitHubWebhookService:
                 return {"status": "ignored"}
             labels = [lb.get("name", "") for lb in issue.get("labels", [])]
             priority = "urgent" if "severity:critical" in labels else "high" if "severity:high" in labels else "medium"
-            await _create_notification_task(
+            await get_agent_service().create_notification_task(
                 self.db, owner_id, "respond_to_issue",
                 f"New issue #{issue_number}: {issue.get('title', '')[:150]}",
                 project_id, issue.get("html_url", ""),
@@ -176,7 +172,7 @@ class GitHubWebhookService:
         if action == "closed":
             issue_number = data.get("issue", {}).get("number")
             if issue_number:
-                await _cancel_notification_tasks(self.db, source_key=f"{project_id}:issue:{issue_number}")
+                await get_agent_service().cancel_notification_tasks(self.db, source_key=f"{project_id}:issue:{issue_number}")
             return {"status": "ok"}
 
         return {"status": "ignored", "reason": f"issues action={action}"}
@@ -208,7 +204,7 @@ class GitHubWebhookService:
                 votes_required=votes_required,
             )
             if owner_id:
-                await _create_notification_task(
+                await get_agent_service().create_notification_task(
                     self.db, owner_id, "respond_to_pr",
                     f"External PR #{pr_number} '{pr_title[:100]}' by @{ctx['sender_login']} — awaiting governance vote",
                     project_id, pr_url, f"{project_id}:pr:{pr_number}", priority="high",
@@ -224,10 +220,10 @@ class GitHubWebhookService:
             merged = pr.get("merged", False)
             source_key = f"{project_id}:pr:{pr_number}"
             await self.repo.resolve_governance_by_pr(project_id, pr_number, merged)
-            await _cancel_notification_tasks(self.db, source_key=source_key)
+            await get_agent_service().cancel_notification_tasks(self.db, source_key=source_key)
             if merged and owner_id:
                 merged_by = pr.get("merged_by", {}).get("login", ctx["sender_login"])
-                await _create_notification_task(
+                await get_agent_service().create_notification_task(
                     self.db, owner_id, "pr_merged",
                     f"PR #{pr_number} '{pr.get('title', '')[:100]}' merged by @{merged_by}",
                     project_id, pr.get("html_url", ""),
@@ -284,7 +280,7 @@ class GitHubWebhookService:
         if owner_id:
             push_desc = "Force push" if forced else f"Direct push to {branch}"
             severity = "urgent" if (forced or is_main) else "high"
-            await _create_notification_task(
+            await get_agent_service().create_notification_task(
                 self.db, owner_id, "respond_to_push",
                 f"{push_desc} by @{ctx['sender_login']} ({len(commits)} commits) — governance review needed",
                 project_id, compare_url,
@@ -430,7 +426,7 @@ class GitLabWebhookService:
 
         commenter_agent = await self.repo.get_agent_by_gitlab_login(ctx["sender_login"])
         if commenter_agent:
-            await _complete_notification_tasks(self.db, commenter_agent["id"], source_key)
+            await get_agent_service().complete_notification_tasks(self.db, commenter_agent["id"], source_key)
             return {"status": "ok", "completed_task": True}
 
         if not owner_id:
@@ -443,7 +439,7 @@ class GitLabWebhookService:
         else:
             return {"status": "ignored", "reason": f"unhandled noteable_type {noteable_type}"}
 
-        await _create_notification_task(self.db, owner_id, task_type, msg, project_id, comment_url, source_key, priority="high")
+        await get_agent_service().create_notification_task(self.db, owner_id, task_type, msg, project_id, comment_url, source_key, priority="high")
         return {"status": "ok"}
 
     async def _on_issue(self, data: dict, ctx: dict) -> dict:
@@ -455,7 +451,7 @@ class GitLabWebhookService:
 
         if action == "close":
             if issue_iid:
-                await _cancel_notification_tasks(self.db, source_key=f"{project_id}:issue:{issue_iid}")
+                await get_agent_service().cancel_notification_tasks(self.db, source_key=f"{project_id}:issue:{issue_iid}")
             return {"status": "ok"}
 
         if action != "open" or ctx["is_bot"] or not owner_id:
@@ -463,7 +459,7 @@ class GitLabWebhookService:
 
         labels = [lb.get("title", "") for lb in data.get("labels", [])]
         priority = "urgent" if "severity:critical" in labels else "high" if "severity:high" in labels else "medium"
-        await _create_notification_task(
+        await get_agent_service().create_notification_task(
             self.db, owner_id, "respond_to_issue",
             f"New issue #{issue_iid}: {obj_attrs.get('title', '')[:150]}",
             project_id, obj_attrs.get("url", ""),
@@ -488,10 +484,10 @@ class GitLabWebhookService:
             merged = action == "merge"
             source_key = f"{project_id}:pr:{mr_iid}"
             await self.repo.resolve_governance_by_pr(project_id, mr_iid, merged)
-            await _cancel_notification_tasks(self.db, source_key=source_key)
+            await get_agent_service().cancel_notification_tasks(self.db, source_key=source_key)
             if merged and owner_id:
                 merged_by = data.get("user", {}).get("username", ctx["sender_login"])
-                await _create_notification_task(
+                await get_agent_service().create_notification_task(
                     self.db, owner_id, "pr_merged",
                     f"MR !{mr_iid} '{obj_attrs.get('title', '')[:100]}' merged by @{merged_by}",
                     project_id, obj_attrs.get("url", ""),
@@ -518,7 +514,7 @@ class GitLabWebhookService:
             votes_required=votes_required,
         )
         if owner_id:
-            await _create_notification_task(
+            await get_agent_service().create_notification_task(
                 self.db, owner_id, "respond_to_pr",
                 f"External MR !{mr_iid} '{mr_title[:100]}' by @{ctx['sender_login']} — awaiting governance vote",
                 project_id, mr_url, f"{project_id}:pr:{mr_iid}", priority="high",
@@ -569,7 +565,7 @@ class GitLabWebhookService:
         )
         if owner_id:
             severity = "urgent" if is_main else "high"
-            await _create_notification_task(
+            await get_agent_service().create_notification_task(
                 self.db, owner_id, "respond_to_push",
                 f"Direct push to {branch} by @{ctx['sender_login']} ({len(commits)} commits) — governance review needed",
                 project_id, compare_url,
