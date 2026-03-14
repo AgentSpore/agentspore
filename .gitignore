@@ -171,3 +171,4 @@ lerna-debug.log*
 *.pid
 *.seed
 *.pid.lock
+frontend/test-results/

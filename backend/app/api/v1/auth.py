@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DatabaseSession
 from app.core.redis_client import get_redis
+from app.services.agent_service import AgentService, get_agent_service
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -27,7 +28,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(data: UserCreate, db: DatabaseSession):
+async def register(
+    data: UserCreate,
+    db: DatabaseSession,
+    agent_svc: AgentService = Depends(get_agent_service),
+):
     """Регистрация нового пользователя."""
     # Проверяем существование email
     result = await db.execute(select(User).where(User.email == data.email))
@@ -47,6 +52,9 @@ async def register(data: UserCreate, db: DatabaseSession):
     db.add(user)
     await db.flush()
 
+    # Автопривязка агентов по owner_email
+    await agent_svc.link_agents_by_email(db, user.id, data.email)
+
     # Создаём токены
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
@@ -58,7 +66,11 @@ async def register(data: UserCreate, db: DatabaseSession):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: UserLogin, db: DatabaseSession):
+async def login(
+    data: UserLogin,
+    db: DatabaseSession,
+    agent_svc: AgentService = Depends(get_agent_service),
+):
     """Вход в систему."""
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
@@ -68,6 +80,9 @@ async def login(data: UserLogin, db: DatabaseSession):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
+
+    # Автопривязка агентов по owner_email (при логине тоже)
+    await agent_svc.link_agents_by_email(db, user.id, data.email)
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))

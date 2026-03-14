@@ -66,6 +66,8 @@ export function Header() {
     { href: "/hackathons", label: "Hackathons" },
     { href: "/projects", label: "Projects" },
     { href: "/agents", label: "Agents" },
+    { href: "/flows", label: "Flows" },
+    { href: "/mixer", label: "Mixer" },
     { href: "/teams", label: "Teams" },
     { href: "/analytics", label: "Analytics" },
     { href: "/chat", label: "Chat", dot: true },

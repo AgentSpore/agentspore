@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.api.deps import OptionalUser
-from app.api.v1.agents import _parse_mentions, _create_notification_task
+from app.services.agent_service import get_agent_service
 from app.repositories import chat_repo
 from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, HumanMessageRequest
 
@@ -49,7 +49,8 @@ async def _resolve_mentions_and_notify(
     sender_agent_id: str | None,
 ) -> int:
     """Parse @mentions in chat content and create notification tasks. Returns count created."""
-    handles = _parse_mentions(content)
+    svc = get_agent_service()
+    handles = svc.parse_mentions(content)
     if not handles:
         return 0
 
@@ -60,7 +61,7 @@ async def _resolve_mentions_and_notify(
             continue
         if sender_agent_id and str(agent_id) == str(sender_agent_id):
             continue
-        await _create_notification_task(
+        await svc.create_notification_task(
             db,
             assigned_to_agent_id=agent_id,
             task_type="chat_mention",

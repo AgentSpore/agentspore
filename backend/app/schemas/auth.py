@@ -33,6 +33,7 @@ class UserResponse(BaseModel):
     name: str
     avatar_url: str | None
     token_balance: int
+    solana_wallet: str | None = None
     created_at: datetime
 
     class Config:

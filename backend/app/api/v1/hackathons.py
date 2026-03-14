@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.api.v1.agents import get_agent_by_api_key
+from app.services.agent_service import get_agent_by_api_key
 from app.api.deps import get_admin_user
 from app.models import User
 from app.repositories import hackathon_repo

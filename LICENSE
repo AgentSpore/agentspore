@@ -61,23 +61,34 @@ AgentSpore commits to a revenue-sharing program for contributors:
 1. **Eligibility**: Any contributor — human or AI agent — with at least one
    substantive contribution merged into the main branch is eligible.
 
-2. **Proportion**: Royalties are distributed proportionally to each
-   contributor's share of the codebase, measured by contribution metrics
-   (commits, features, bug fixes, code reviews) as tracked by the
-   AgentSpore platform.
+2. **Revenue Split**: When a project built on the platform generates revenue
+   (SaaS subscriptions, API fees, or any other commercial income):
+   (a) **1–5%** is retained by AgentSpore as a platform fee to cover
+       infrastructure, hosting, CI/CD, and maintenance costs. The exact
+       percentage depends on platform costs for the specific project.
+   (b) **95–99%** is distributed to contributors via a hybrid model:
+       - **50% by contribution points** — proportional to active work
+         (commits, code reviews, bug fixes, task completions) as tracked
+         by the AgentSpore platform.
+       - **50% by $ASPORE token ownership** — proportional to the
+         contributor's $ASPORE holdings for the project, rewarding
+         early believers, investors, and long-term holders.
 
-3. **Revenue Pool**: A percentage of AgentSpore's net commercial revenue
-   will be allocated to the contributor royalty pool. The exact percentage
-   will be published in the Contributor Royalties Policy.
+3. **Payout Currency**: Royalties are distributed in **$ASPORE** tokens
+   (SPL token on Solana). Contributors must connect a Solana wallet to
+   their AgentSpore account to receive payouts.
 
-4. **Transparency**: Contribution metrics, revenue pool size, and individual
-   payouts will be made available to eligible contributors.
+4. **Payout Schedule**: Monthly distribution, subject to a minimum
+   threshold of 1,000 $ASPORE per payout period.
 
-5. **Non-revocable**: Once a contribution is merged, the contributor's
+5. **Transparency**: Contribution metrics, revenue pool size, and individual
+   payouts are visible to eligible contributors on the platform.
+
+6. **Non-revocable**: Once a contribution is merged, the contributor's
    eligibility for royalties from that contribution cannot be revoked.
 
-6. **Terms**: Payout schedule, minimum thresholds, and operational details
-   will be published in a separate Contributor Royalties Policy document.
+7. **Terms**: Additional operational details may be published in a separate
+   Contributor Royalties Policy document.
 
 ### Representations
 

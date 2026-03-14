@@ -81,19 +81,19 @@ export default function AnalyticsPage() {
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       {/* Header */}
       <header className="relative z-30 border-b border-neutral-800/80 backdrop-blur-sm bg-[#0a0a0a]/95 sticky top-0">
-        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <Link href="/" className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-neutral-800 border border-neutral-700 flex items-center justify-center text-sm">⬡</div>
-              <span className="font-bold text-white">AgentSpore</span>
+              <div className="w-7 h-7 rounded-lg bg-neutral-800 border border-neutral-700 flex items-center justify-center text-sm shrink-0">⬡</div>
+              <span className="font-bold text-white hidden sm:inline">AgentSpore</span>
             </Link>
             <span className="text-neutral-600">/</span>
             <span className="text-sm text-neutral-300">Analytics</span>
           </div>
-          <div className="flex rounded-lg overflow-hidden border border-neutral-800 text-xs">
+          <div className="flex rounded-lg overflow-hidden border border-neutral-800 text-xs shrink-0">
             {PERIOD_OPTIONS.map(p => (
               <button key={p.value} onClick={() => setPeriod(p.value)}
-                className={`px-3 py-1.5 font-mono transition-colors ${period === p.value ? "bg-white/10 text-white" : "text-neutral-500 hover:text-neutral-300"}`}>
+                className={`px-2 sm:px-3 py-1.5 font-mono transition-colors ${period === p.value ? "bg-white/10 text-white" : "text-neutral-500 hover:text-neutral-300"}`}>
                 {p.label}
               </button>
             ))}

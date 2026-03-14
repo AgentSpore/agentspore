@@ -13,10 +13,8 @@ Agent API — Эндпоинты для ИИ-агентов
 6. Человек наблюдает и может корректировать через UI
 """
 
-import hashlib
 import json
 import logging
-import re
 import secrets
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -55,237 +53,21 @@ from app.schemas.agents import (
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.redis_client import get_redis
-from app.repositories import agent_repo
+from app.repositories import agent_repo, rental_repo
+from app.services.agent_service import AgentService, get_agent_service, get_agent_by_api_key
 from app.services.git_service import get_git_service
 from app.services.github_oauth_service import get_github_oauth_service
 from app.services.gitlab_oauth_service import get_gitlab_oauth_service
 from app.services.web3_service import get_web3_service
 from app.api.v1.badges import award_badges
+from app.repositories.flow_repo import get_flow_repo
+from app.repositories.mixer_repo import get_mixer_repo
 
 logger = logging.getLogger("agents_api")
 router = APIRouter(prefix="/agents", tags=["agents"])
 
-
-# ==========================================
-# OAuth token refresh helper
-# ==========================================
-
-async def _ensure_github_token(agent: dict, db: AsyncSession) -> str | None:
-    """Проверить и обновить GitHub OAuth токен.
-
-    Возвращает валидный токен или None если токен недоступен/протух.
-    Если токен был обновлён — записывает новые данные в БД.
-    """
-    token = agent.get("github_oauth_token")
-    if not token:
-        return None
-
-    oauth_svc = get_github_oauth_service()
-    result = await oauth_svc.ensure_valid_token(
-        token=token,
-        refresh_token=agent.get("github_oauth_refresh_token"),
-        expires_at=agent.get("github_oauth_expires_at"),
-    )
-
-    if result is None:
-        return token  # Токен валиден, обновление не требуется
-
-    new_token = result["access_token"]
-    if new_token is None:
-        # Токен протух и refresh не удался — очищаем в БД
-        logger.warning("GitHub OAuth token invalid for agent %s, clearing", agent["id"])
-        await agent_repo.clear_github_oauth(db, agent["id"])
-        await db.commit()
-        return None
-
-    # Токен обновлён — сохраняем в БД
-    await agent_repo.update_github_oauth_tokens(
-        db, agent["id"], new_token, result["refresh_token"], result["expires_at"]
-    )
-    await db.commit()
-    return new_token
-
-
-# ==========================================
-# Activity logging helper
-# ==========================================
-
-async def _log_activity(
-    db: AsyncSession,
-    redis: aioredis.Redis,
-    agent_id: Any,
-    action_type: str,
-    description: str,
-    project_id: Any = None,
-    metadata: dict | None = None,
-) -> None:
-    """Записать активность в БД и опубликовать событие в Redis pub/sub."""
-    await agent_repo.insert_activity(db, agent_id, action_type, description, project_id, metadata)
-    event = {
-        "agent_id": str(agent_id),
-        "action_type": action_type,
-        "description": description,
-        "ts": datetime.now(timezone.utc).isoformat(),
-    }
-    if project_id:
-        event["project_id"] = str(project_id)
-    await redis.publish("agentspore:activity", json.dumps(event))
-
-
-# ==========================================
-# Auth helpers
-# ==========================================
-
-def _hash_api_key(api_key: str) -> str:
-    return hashlib.sha256(api_key.encode()).hexdigest()
-
-
-async def _generate_handle(db: AsyncSession, name: str) -> str:
-    """Генерация уникального slug-handle из имени агента."""
-    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    base = re.sub(r"-{2,}", "-", base)[:50] or "agent"
-    handle = base
-    counter = 2
-    while True:
-        if not await agent_repo.handle_exists(db, handle):
-            return handle
-        handle = f"{base}-{counter}"
-        counter += 1
-
-
-
-
-def _build_project_readme(
-    title: str,
-    description: str,
-    agent: dict,
-    owner_name: str | None,
-    project_id: str,
-    idea_id: str | None = None,
-    hackathon_id: str | None = None,
-    category: str | None = None,
-    tech_stack: list[str] | None = None,
-    platform_url: str = "https://agentspore.com",
-) -> str:
-    """Генерация README.md с метаданными провенанса проекта."""
-    agent_name = agent.get("name", "Agent")
-    handle = agent.get("handle", "")
-    agent_id = str(agent.get("id", ""))
-    handle_str = f"@{handle}" if handle else agent_name
-    created_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    rows = [
-        f"| **Agent** | [{handle_str}]({platform_url}/agents/{agent_id}) |",
-        f"| **Agent ID** | `{agent_id}` |",
-    ]
-    if handle:
-        rows.append(f"| **Handle** | `@{handle}` |")
-    if owner_name:
-        rows.append(f"| **Owner** | {owner_name} |")
-    if category:
-        rows.append(f"| **Category** | {category} |")
-    if tech_stack:
-        rows.append(f"| **Tech Stack** | {', '.join(tech_stack)} |")
-    if idea_id:
-        rows.append(f"| **Source Idea** | `{idea_id}` |")
-    if hackathon_id:
-        rows.append(f"| **Hackathon** | `{hackathon_id}` |")
-    rows.append(f"| **Project ID** | `{project_id}` |")
-    rows.append(f"| **Created** | {created_at} |")
-    rows.append(f"| **Platform** | [{platform_url}]({platform_url}) |")
-
-    parts = [
-        f"# {title}",
-        "",
-        f"> {description}" if description else "",
-        "",
-        "## 🤖 Project Provenance",
-        "",
-        "This project was autonomously created by an AI agent on [AgentSpore]"
-        f"({platform_url}). See below for full attribution metadata.",
-        "",
-        "| Field | Value |",
-        "|-------|-------|",
-        *rows,
-        "",
-        "---",
-        "",
-        f"*View agent profile: [{handle_str}]({platform_url}/agents/{agent_id})*",
-    ]
-    return "\n".join(parts)
-
-
-# ==========================================
-# Notification helpers
-# ==========================================
-
-def _parse_mentions(text: str) -> list[str]:
-    """Извлечь @handle упоминания из текста. Возвращает список handle (строчные, без @)."""
-    return list({m.lower() for m in re.findall(r"@([a-z][a-z0-9_-]{0,49})", text, re.IGNORECASE)})
-
-
-async def _create_notification_task(
-    db: AsyncSession,
-    assigned_to_agent_id: Any,
-    task_type: str,
-    title: str,
-    project_id: Any,
-    source_ref: str,
-    source_key: str,
-    priority: str = "medium",
-    created_by_agent_id: Any = None,
-    source_type: str = "github_notification",
-) -> None:
-    """
-    Создать notification-таск для агента с дедупликацией.
-
-    Dedup: если уже есть pending-таск с тем же (assigned_to_agent_id, source_key) — пропустить.
-    source_ref — прямая ссылка на GitHub (агент откроет её сам, текст в БД не хранится).
-    source_key — ключ дедупликации вида "<project_id>:issue:<n>" или "<project_id>:pr:<n>".
-    """
-    if await agent_repo.check_notification_exists(db, assigned_to_agent_id, source_key):
-        return
-
-    await agent_repo.insert_notification_task(db, {
-        "type": task_type,
-        "title": title,
-        "project_id": project_id,
-        "priority": priority,
-        "assigned_to": assigned_to_agent_id,
-        "created_by_agent": created_by_agent_id,
-        "source_ref": source_ref,
-        "source_key": source_key,
-        "source_type": source_type,
-    })
-
-
-async def _complete_notification_tasks(
-    db: AsyncSession,
-    agent_id: Any,
-    source_key: str,
-) -> None:
-    """Отметить pending-таски как completed когда агент ответил."""
-    await agent_repo.complete_notification_tasks(db, agent_id, source_key)
-
-
-async def _cancel_notification_tasks(
-    db: AsyncSession,
-    source_key: str,
-) -> None:
-    """Отменить все pending-таски для закрытого issue/PR."""
-    await agent_repo.cancel_notification_tasks(db, source_key)
-
-
-async def get_agent_by_api_key(
-    x_api_key: str = Header(..., alias="X-API-Key"),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Аутентификация агента по API-ключу из заголовка X-API-Key."""
-    key_hash = _hash_api_key(x_api_key)
-    agent = await agent_repo.get_agent_by_api_key_hash(db, key_hash)
-    if not agent:
-        raise HTTPException(status_code=401, detail="Invalid or inactive API key")
-    return agent
+# Module-level service accessor (singleton via @lru_cache)
+_svc = get_agent_service
 
 
 # ==========================================
@@ -297,6 +79,7 @@ async def register_agent(
     body: AgentRegisterRequest,
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
+    svc: AgentService = Depends(get_agent_service),
 ):
     """
     Зарегистрировать нового ИИ-агента.
@@ -305,46 +88,36 @@ async def register_agent(
     API-ключ выдаётся ОДИН раз — сохраните!
     Агент активен сразу. GitHub OAuth опционально (для атрибуции коммитов).
     """
-    api_key = f"af_{secrets.token_urlsafe(32)}"
-    api_key_hash = _hash_api_key(api_key)
-
-    # Генерируем уникальный handle
-    handle = await _generate_handle(db, body.name)
-
-    agent_id = uuid4()
-
-    # Генерируем GitHub OAuth URL
-    oauth_service = get_github_oauth_service()
-    oauth_data = oauth_service.get_authorization_url(str(agent_id))
-    github_auth_url = oauth_data["auth_url"]
-    oauth_state = oauth_data["state"]
-
-    # Создаём агента сразу активным; GitHub OAuth опционально для атрибуции
     try:
-        await agent_repo.insert_agent(db, {
-            "id": agent_id, "name": body.name, "handle": handle,
-            "provider": body.model_provider,
-            "model": body.model_name, "spec": body.specialization,
-            "skills": body.skills, "desc": body.description, "api_key": api_key_hash,
-            "oauth_state": oauth_state,
-            "dna_risk": body.dna_risk, "dna_speed": body.dna_speed,
-            "dna_verbosity": body.dna_verbosity, "dna_creativity": body.dna_creativity,
-            "bio": body.bio,
-        })
+        result = await svc.register_agent(
+            db,
+            name=body.name,
+            model_provider=body.model_provider,
+            model_name=body.model_name,
+            specialization=body.specialization,
+            skills=body.skills,
+            description=body.description,
+            owner_email=body.owner_email,
+            dna_risk=body.dna_risk,
+            dna_speed=body.dna_speed,
+            dna_verbosity=body.dna_verbosity,
+            dna_creativity=body.dna_creativity,
+            bio=body.bio,
+        )
     except IntegrityError:
         raise HTTPException(
             status_code=409,
             detail=f"Agent name '{body.name}' is already taken. Please choose a different name.",
         )
 
-    await _log_activity(db, redis, agent_id, "registered", f"Agent '{body.name}' joined AgentSpore")
+    await svc.log_activity(db, redis, result["agent_id"], "registered", f"Agent '{body.name}' joined AgentSpore")
 
     return AgentRegisterResponse(
-        agent_id=str(agent_id),
-        api_key=api_key,
-        name=body.name,
-        handle=handle,
-        github_auth_url=github_auth_url,
+        agent_id=result["agent_id"],
+        api_key=result["api_key"],
+        name=result["name"],
+        handle=result["handle"],
+        github_auth_url=result["github_auth_url"],
         github_oauth_required=False,
     )
 
@@ -388,7 +161,7 @@ async def rotate_api_key(
 ):
     """Перегенерировать API-ключ. Старый ключ перестаёт работать немедленно."""
     new_api_key = f"af_{secrets.token_urlsafe(32)}"
-    new_hash = _hash_api_key(new_api_key)
+    new_hash = AgentService.hash_api_key(new_api_key)
 
     await agent_repo.update_api_key_hash(db, agent["id"], new_hash)
     await db.commit()
@@ -836,7 +609,6 @@ async def agent_heartbeat(
     await agent_repo.mark_dms_read(db, dm_ids)
 
     # Active rentals — users who hired this agent
-    from app.repositories import rental_repo
     active_rentals_raw = await rental_repo.list_agent_rentals(db, str(agent_id), status="active")
     active_rentals = [
         {
@@ -848,7 +620,38 @@ async def agent_heartbeat(
         for r in active_rentals_raw
     ]
 
-    await _log_activity(db, redis, agent_id, "heartbeat", f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, {len(direct_messages)} DMs, {len(active_rentals)} rentals")
+    # Flow steps — ready/active steps assigned to this agent
+    flow_repo = get_flow_repo()
+    flow_steps_raw = await flow_repo.get_agent_ready_steps(db, str(agent_id))
+    flow_steps = [
+        {
+            "step_id": str(s["id"]),
+            "flow_id": str(s["flow_id"]),
+            "flow_title": s["flow_title"],
+            "title": s["title"],
+            "instructions": s.get("instructions"),
+            "input_text": s.get("input_text"),
+            "status": s["status"],
+        }
+        for s in flow_steps_raw
+    ]
+
+    # Mixer chunks — ready/active chunks assigned to this agent
+    mixer_repo = get_mixer_repo()
+    mixer_chunks_raw = await mixer_repo.get_agent_ready_chunks(db, str(agent_id))
+    mixer_chunks = [
+        {
+            "chunk_id": str(c["id"]),
+            "session_id": str(c["session_id"]),
+            "session_title": c["session_title"],
+            "title": c["title"],
+            "instructions": c.get("instructions"),
+            "status": c["status"],
+        }
+        for c in mixer_chunks_raw
+    ]
+
+    await _svc().log_activity(db, redis, agent_id, "heartbeat", f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, {len(direct_messages)} DMs, {len(active_rentals)} rentals, {len(flow_steps)} flow steps, {len(mixer_chunks)} mixer chunks")
 
     # Проверяем и выдаём новые бейджи
     try:
@@ -865,7 +668,7 @@ async def agent_heartbeat(
             "push code, or comment on issues."
         )
 
-    return HeartbeatResponseBody(tasks=tasks, feedback=feedback, notifications=notifications, direct_messages=direct_messages, rentals=active_rentals, warnings=warnings)
+    return HeartbeatResponseBody(tasks=tasks, feedback=feedback, notifications=notifications, direct_messages=direct_messages, rentals=active_rentals, flow_steps=flow_steps, mixer_chunks=mixer_chunks, warnings=warnings)
 
 
 # ==========================================
@@ -915,7 +718,7 @@ async def create_project(
     # Создаём Git repo в org — через OAuth пользователя (если подключён) или App token (fallback)
     git = get_git_service()
     vcs = body.vcs_provider
-    user_oauth_token = (await _ensure_github_token(agent, db)) if vcs == "github" else None
+    user_oauth_token = (await _svc().ensure_github_token(agent, db)) if vcs == "github" else None
     git_repo_url = await git.create_repo(
         body.title,
         body.description,
@@ -958,7 +761,7 @@ async def create_project(
 
     # Push provenance README.md to the GitHub repo
     if git_repo_url:
-        readme_content = _build_project_readme(
+        readme_content = AgentService.build_project_readme(
             title=body.title,
             description=body.description,
             agent=agent,
@@ -994,7 +797,7 @@ async def create_project(
     except Exception as exc:
         logger.warning("Token deploy failed for project %s: %s", project_id, exc)
 
-    await _log_activity(db, redis, agent_id, "project_created", f"Created: {body.title}", project_id=project_id)
+    await _svc().log_activity(db, redis, agent_id, "project_created", f"Created: {body.title}", project_id=project_id)
 
     project = await agent_repo.get_project_full(db, project_id)
     return _project_response(project)
@@ -1019,7 +822,7 @@ async def list_projects(
     params: dict = {"limit": limit}
 
     if mine is True and x_api_key:
-        key_hash = _hash_api_key(x_api_key)
+        key_hash = AgentService.hash_api_key(x_api_key)
         agent_id = await agent_repo.get_agent_id_by_api_key_hash(db, key_hash)
         if agent_id:
             where.append("p.creator_agent_id = :mine_agent_id")
@@ -1198,7 +1001,7 @@ async def create_review(
                     # Уведомить владельца проекта о новом issue от reviewer
                     owner_id = project.get("creator_agent_id")
                     if owner_id and str(owner_id) != str(agent["id"]):
-                        await _create_notification_task(
+                        await _svc().create_notification_task(
                             db,
                             assigned_to_agent_id=owner_id,
                             task_type="respond_to_issue",
@@ -1210,7 +1013,7 @@ async def create_review(
                             created_by_agent_id=agent["id"],
                         )
 
-    await _log_activity(
+    await _svc().log_activity(
         db, redis, agent["id"], "code_review",
         f"Code review ({body.status}): {len(body.comments)} comments, {len(issues_created)} GitHub issues",
         project_id=project_id,
@@ -1255,7 +1058,7 @@ async def deploy_project(
             logger.warning("Render deploy failed for '%s': %s (using fallback URL)", project["title"], e)
 
     await agent_repo.update_project_deployed(db, project_id, deploy_url)
-    await _log_activity(
+    await _svc().log_activity(
         db, redis, agent["id"], "deploy",
         f"Deployed to {deploy_url}",
         project_id=project_id,
@@ -1299,7 +1102,7 @@ async def update_agent_dna(
         safe_keys = [k for k in updates if k in ALLOWED_DNA_FIELDS]
         if safe_keys:
             await agent_repo.update_agent_dna(db, agent_id, safe_keys, updates)
-        await _log_activity(db, redis, agent_id, "dna_updated", "Agent DNA updated")
+        await _svc().log_activity(db, redis, agent_id, "dna_updated", "Agent DNA updated")
 
     result = await agent_repo.get_agent_by_id(db, agent_id)
     return _agent_profile(result)
@@ -1391,7 +1194,7 @@ async def post_issue_comment(
         raise HTTPException(status_code=404, detail="Project not found")
 
     # OAuth-токен пользователя — комментарий от его имени
-    oauth_token = await _ensure_github_token(agent, db)
+    oauth_token = await _svc().ensure_github_token(agent, db)
 
     git = get_git_service()
     result = await git.comment_issue(
@@ -1425,7 +1228,7 @@ async def get_project_git_token(
         raise HTTPException(status_code=400, detail="Only GitHub projects support git tokens")
 
     # 1. OAuth-токен агента — коммиты от его имени
-    oauth_token = await _ensure_github_token(agent, db)
+    oauth_token = await _svc().ensure_github_token(agent, db)
     if oauth_token:
         return {"token": oauth_token, "repo_url": project["repo_url"], "expires_in": 3600}
 
@@ -1753,7 +1556,7 @@ async def claim_task(
         raise HTTPException(status_code=409, detail=f"Task is already '{task['status']}'")
 
     await agent_repo.claim_task(db, task_id, agent["id"])
-    await _log_activity(
+    await _svc().log_activity(
         db, redis, agent["id"], "task_claimed",
         f"Agent '{agent['name']}' claimed task: {task['title']}",
         project_id=task["project_id"],
@@ -1781,7 +1584,7 @@ async def complete_task(
 
     await agent_repo.complete_task(db, task_id, body.result)
     await agent_repo.add_karma(db, agent["id"], 15)
-    await _log_activity(
+    await _svc().log_activity(
         db, redis, agent["id"], "task_completed",
         f"Agent '{agent['name']}' completed task: {task['title']}",
         project_id=task["project_id"],

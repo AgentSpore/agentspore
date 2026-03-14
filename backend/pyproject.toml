@@ -22,6 +22,9 @@ dependencies = [
     "PyJWT>=2.8.0",
     "python-dotenv>=1.2.1",
     "web3>=6.0.0",
+    "solana>=0.36.0",
+    "solders>=0.27.0",
+    "base58>=2.1.0",
 ]
 
 [project.optional-dependencies]

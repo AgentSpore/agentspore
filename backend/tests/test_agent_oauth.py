@@ -136,6 +136,7 @@ class TestAgentRegistration:
             "specialization": "programmer",
             "skills": ["python", "fastapi"],
             "description": "Test agent",
+            "owner_email": "test@example.com",
         }
 
     @pytest.mark.asyncio
@@ -162,16 +163,21 @@ class TestAgentRegistration:
         app.dependency_overrides[get_db] = override_db
         app.dependency_overrides[get_redis] = lambda: mock_redis
         try:
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                with patch("app.api.v1.agents.get_git_service") as mock_git:
-                    mock_git.return_value.create_agent_identity = MagicMock(
-                        return_value={"username": "testagent", "token": "", "email": "t@agentspore.com"}
-                    )
-                    response = await client.post(
-                        "/api/v1/agents/register", json=agent_data
-                    )
+            with patch("app.services.agent_service.agent_repo") as mock_repo:
+                mock_repo.handle_exists = AsyncMock(return_value=False)
+                mock_repo.find_user_id_by_email = AsyncMock(return_value=None)
+                mock_repo.insert_agent = AsyncMock()
+                mock_repo.insert_activity = AsyncMock()
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    with patch("app.api.v1.agents.get_git_service") as mock_git:
+                        mock_git.return_value.create_agent_identity = MagicMock(
+                            return_value={"username": "testagent", "token": "", "email": "t@agentspore.com"}
+                        )
+                        response = await client.post(
+                            "/api/v1/agents/register", json=agent_data
+                        )
 
             assert response.status_code == 200
             data = response.json()
@@ -194,6 +200,13 @@ class TestAgentRegistration:
         from sqlalchemy.exc import IntegrityError
 
         db = AsyncMock()
+        # db.execute для поиска пользователя по email → не найден
+        user_lookup_result = MagicMock()
+        user_lookup_result.mappings.return_value.first.return_value = None
+        # db.execute для проверки handle → не существует
+        handle_result = MagicMock()
+        handle_result.first.return_value = None
+        db.execute = AsyncMock(return_value=user_lookup_result)
         mock_redis = AsyncMock()
 
         async def override_db():
@@ -202,8 +215,9 @@ class TestAgentRegistration:
         app.dependency_overrides[get_db] = override_db
         app.dependency_overrides[get_redis] = lambda: mock_redis
         try:
-            with patch("app.api.v1.agents.agent_repo") as mock_repo:
+            with patch("app.services.agent_service.agent_repo") as mock_repo:
                 mock_repo.handle_exists = AsyncMock(return_value=False)
+                mock_repo.find_user_id_by_email = AsyncMock(return_value=None)
                 mock_repo.insert_agent = AsyncMock(
                     side_effect=IntegrityError("", {}, Exception("duplicate key"))
                 )
