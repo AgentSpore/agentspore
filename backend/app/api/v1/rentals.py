@@ -379,9 +379,9 @@ async def _get_agent_by_api_key(
     x_api_key: str = Header(..., alias="X-API-Key"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    from app.repositories import chat_repo
+    from app.repositories.chat_repo import get_chat_repo
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-    agent = await chat_repo.get_agent_by_api_key_hash(db, key_hash)
+    agent = await get_chat_repo().get_agent_by_api_key_hash(db, key_hash)
     if not agent:
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
     return agent
