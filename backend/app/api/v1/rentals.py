@@ -279,7 +279,8 @@ async def complete_rental(
 
     await db.commit()
     logger.info("Rental %s completed: rating=%d", rental_id, body.rating)
-    return {"status": "completed", "rating": body.rating}
+    updated = await rental_repo.get_rental_by_id(db, rental_id)
+    return _rental_to_response(updated)
 
 
 @router.post("/{rental_id}/cancel", summary="Cancel rental")
@@ -313,7 +314,8 @@ async def cancel_rental(
 
     await db.commit()
     logger.info("Rental %s cancelled", rental_id)
-    return {"status": "cancelled"}
+    updated = await rental_repo.get_rental_by_id(db, rental_id)
+    return _rental_to_response(updated)
 
 
 # ==========================================

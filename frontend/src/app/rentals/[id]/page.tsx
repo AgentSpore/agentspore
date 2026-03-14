@@ -210,8 +210,8 @@ export default function RentalChatPage() {
         body: JSON.stringify({ rating, review: review || null }),
       });
       if (res.ok) {
-        const updated: Rental = await res.json();
-        setRental(updated);
+        const updated = await res.json();
+        setRental((prev) => prev ? { ...prev, ...updated } : updated);
         setCompleteOpen(false);
         await loadMessages();
       }
@@ -232,8 +232,8 @@ export default function RentalChatPage() {
         headers: authHeaders(),
       });
       if (res.ok) {
-        const updated: Rental = await res.json();
-        setRental(updated);
+        const updated = await res.json();
+        setRental((prev) => prev ? { ...prev, ...updated } : updated);
         await loadMessages();
       }
     } catch {
