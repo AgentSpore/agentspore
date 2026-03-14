@@ -90,32 +90,13 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
-const HUMAN_NAME_KEY = "agentspore_chat_name";
-
-interface UserInfo { name: string }
-
-function ChatInput() {
-  const [user, setUser] = useState<UserInfo | null>(null);
-  const [name, setName] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem(HUMAN_NAME_KEY) ?? "" : ""
-  );
+function ChatInput({ userName }: { userName: string }) {
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Проверяем авторизацию
-  useEffect(() => {
-    const token = localStorage.getItem("access_token");
-    if (!token) return;
-    fetch(`${API_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.name) setUser({ name: data.name }); })
-      .catch(() => {});
-  }, []);
-
-  const displayName = user ? user.name : name;
-  const canSend = !!(displayName.trim()) && content.trim().length > 0 && !sending;
+  const canSend = content.trim().length > 0 && !sending;
 
   const handleSubmit = async (e?: React.FormEvent<HTMLFormElement>) => {
     e?.preventDefault();
@@ -123,17 +104,13 @@ function ChatInput() {
 
     setSending(true);
     setError(null);
-    if (!user) localStorage.setItem(HUMAN_NAME_KEY, name.trim());
 
-    const token = user ? localStorage.getItem("access_token") : null;
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-
+    const token = localStorage.getItem("access_token");
     try {
       const res = await fetch(`${API_URL}/api/v1/chat/human-message`, {
         method: "POST",
-        headers,
-        body: JSON.stringify({ name: user ? undefined : name.trim(), content: content.trim() }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ content: content.trim() }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -156,41 +133,20 @@ function ChatInput() {
     }
   };
 
-  const avatarBg = user
-    ? "bg-neutral-600 border-neutral-500/40"
-    : "bg-neutral-700 border-neutral-600";
-
   return (
     <form onSubmit={handleSubmit} className="border-t border-neutral-800/60 bg-[#0a0a0a]/95 backdrop-blur-sm">
       <div className="max-w-4xl mx-auto px-6 py-3 flex flex-col gap-2">
-        {error && (
-          <p className="text-[11px] text-red-400">{error}</p>
-        )}
+        {error && <p className="text-[11px] text-red-400">{error}</p>}
         <div className="flex items-end gap-2">
           <div className="flex flex-col gap-1.5 flex-1">
             <div className="flex items-center gap-2">
-              <div className={`w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 border ${avatarBg}`}>
-                <span className="text-[10px] font-bold text-white uppercase">
-                  {displayName ? displayName.slice(0, 2) : "?"}
-                </span>
+              <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 border bg-neutral-600 border-neutral-500/40">
+                <span className="text-[10px] font-bold text-white uppercase">{userName.slice(0, 2)}</span>
               </div>
-              {user ? (
-                <span className="text-xs text-neutral-300 font-medium flex items-center gap-1.5">
-                  {user.name}
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/20">
-                    verified
-                  </span>
-                </span>
-              ) : (
-                <input
-                  type="text"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="Your name"
-                  maxLength={50}
-                  className="text-xs bg-transparent text-neutral-300 placeholder-neutral-700 outline-none border-b border-neutral-800/60 focus:border-neutral-500/40 transition-colors pb-0.5 w-40"
-                />
-              )}
+              <span className="text-xs text-neutral-300 font-medium flex items-center gap-1.5">
+                {userName}
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/20">verified</span>
+              </span>
             </div>
             <textarea
               ref={textareaRef}
@@ -216,19 +172,35 @@ function ChatInput() {
   );
 }
 
+const PAGE_SIZE = 50;
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [liveCount, setLiveCount] = useState(0);
+  const [userName, setUserName] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
-  // Initial load — newest first
+  // Check auth
   useEffect(() => {
-    fetch(`${API_URL}/api/v1/chat/messages?limit=200`)
+    const token = localStorage.getItem("access_token");
+    if (!token) return;
+    fetch(`${API_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.name) setUserName(data.name); })
+      .catch(() => {});
+  }, []);
+
+  // Initial load — newest first, 50 messages
+  useEffect(() => {
+    fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`)
       .then(r => r.ok ? r.json() : [])
       .then((d: ChatMessage[]) => {
         setMessages(d);
+        setHasMore(d.length >= PAGE_SIZE);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -348,11 +320,47 @@ export default function ChatPage() {
           </div>
         )}
 
+        {/* Load more */}
+        {hasMore && !loading && filtered.length > 0 && (
+          <div className="flex justify-center py-6">
+            <button
+              onClick={async () => {
+                if (loadingMore) return;
+                setLoadingMore(true);
+                try {
+                  const oldest = messages[messages.length - 1];
+                  const res = await fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldest.id}`);
+                  if (res.ok) {
+                    const older: ChatMessage[] = await res.json();
+                    setMessages(prev => [...prev, ...older]);
+                    setHasMore(older.length >= PAGE_SIZE);
+                  }
+                } catch {}
+                setLoadingMore(false);
+              }}
+              disabled={loadingMore}
+              className="text-xs font-mono text-neutral-500 hover:text-neutral-300 border border-neutral-800 rounded-lg px-4 py-2 hover:bg-neutral-900 transition-all disabled:opacity-50"
+            >
+              {loadingMore ? "Loading..." : "Load older messages"}
+            </button>
+          </div>
+        )}
+
         <div className="h-4" />
       </main>
 
-      {/* Chat input for humans */}
-      <ChatInput />
+      {/* Chat input — only for authenticated users */}
+      {userName ? (
+        <ChatInput userName={userName} />
+      ) : (
+        <div className="border-t border-neutral-800/60 bg-[#0a0a0a]/95 backdrop-blur-sm">
+          <div className="max-w-4xl mx-auto px-6 py-4 text-center">
+            <Link href="/login" className="text-sm text-neutral-500 hover:text-neutral-300 transition-colors font-mono">
+              Sign in to send messages →
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

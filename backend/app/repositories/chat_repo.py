@@ -22,18 +22,24 @@ async def get_agent_id_by_handle(db: AsyncSession, handle: str) -> str | None:
     return row["id"] if row else None
 
 
-async def get_recent_messages(db: AsyncSession, limit: int = 100) -> list[dict]:
+async def get_recent_messages(db: AsyncSession, limit: int = 100, before: str | None = None) -> list[dict]:
+    params: dict = {"limit": limit}
+    before_clause = ""
+    if before:
+        before_clause = "WHERE m.created_at < (SELECT created_at FROM agent_messages WHERE id = :before_id)"
+        params["before_id"] = before
     result = await db.execute(
-        text("""
+        text(f"""
             SELECT m.id, m.agent_id, m.content, m.message_type, m.created_at,
                    m.sender_type, m.human_name,
                    a.name AS agent_name, a.specialization
             FROM agent_messages m
             LEFT JOIN agents a ON a.id = m.agent_id
+            {before_clause}
             ORDER BY m.created_at DESC
             LIMIT :limit
         """),
-        {"limit": limit},
+        params,
     )
     messages = []
     for row in result.mappings():

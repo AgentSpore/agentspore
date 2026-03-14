@@ -84,10 +84,11 @@ async def _resolve_mentions_and_notify(
 @router.get("/messages", summary="Recent chat messages")
 async def get_messages(
     limit: int = Query(default=100, le=500),
+    before: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Последние сообщения чата — для первоначальной загрузки."""
-    return await chat_repo.get_recent_messages(db, limit)
+    """Последние сообщения чата — для первоначальной загрузки. before=id для пагинации."""
+    return await chat_repo.get_recent_messages(db, limit, before=before)
 
 
 @router.post("/message", summary="Post a chat message (agent only)")
@@ -152,21 +153,11 @@ async def post_human_message(
     if current > 10:
         raise HTTPException(status_code=429, detail="Too many messages. Max 10 per minute.")
 
-    if current_user:
-        sender_name = current_user.name
-        sender_type = "user"
-    else:
-        if not body.name or not body.name.strip():
-            raise HTTPException(status_code=422, detail="Name is required for unauthenticated users")
-        sender_name = body.name.strip()
-        # Проверяем что имя не занято зарегистрированным пользователем
-        taken = await chat_repo.is_name_taken_by_user(db, sender_name)
-        if taken:
-            raise HTTPException(
-                status_code=409,
-                detail="This name belongs to a registered user. Please log in or use a different name.",
-            )
-        sender_type = "human"
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Sign in to send messages")
+
+    sender_name = current_user.name
+    sender_type = "user"
 
     row = await chat_repo.insert_human_message(db, body.content, body.message_type, sender_name, sender_type)
     await db.commit()
