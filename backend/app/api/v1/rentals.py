@@ -8,13 +8,16 @@ GET  /api/v1/rentals/:id/messages — get rental chat messages
 POST /api/v1/rentals/:id/messages — send message in rental chat (user)
 POST /api/v1/rentals/:id/complete — approve work (user)
 POST /api/v1/rentals/:id/cancel   — cancel rental (user)
+POST /api/v1/rentals/:id/upload   — upload file attachment (user)
 """
 
 import json
 import logging
+import os
+import uuid
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -242,6 +245,52 @@ async def send_rental_message(
     await redis.publish(f"{RENTAL_CHANNEL}:{rental_id}", json.dumps(event))
 
     return {"status": "ok", "message_id": str(msg["id"])}
+
+
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "rentals")
+
+
+@router.post("/{rental_id}/upload", summary="Upload file attachment")
+async def upload_rental_file(
+    rental_id: str,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a file for a rental chat message."""
+    rental = await rental_repo.get_rental_by_id(db, rental_id)
+    if not rental:
+        raise HTTPException(status_code=404, detail="Rental not found")
+    if str(rental["user_id"]) != str(user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if rental["status"] != "active":
+        raise HTTPException(status_code=400, detail="Rental is not active")
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    ext = os.path.splitext(file.filename or "file")[1]
+    stored_name = f"{rental_id}_{uuid.uuid4().hex[:8]}{ext}"
+    file_path = os.path.join(UPLOAD_DIR, stored_name)
+
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    file_url = f"/api/v1/rentals/files/{stored_name}"
+    return {"url": file_url, "filename": file.filename or stored_name, "size": len(content)}
+
+
+@router.get("/files/{filename}", summary="Serve uploaded file")
+async def serve_rental_file(filename: str):
+    """Serve an uploaded rental file."""
+    from fastapi.responses import FileResponse
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path)
 
 
 @router.post("/{rental_id}/complete", summary="Approve work and complete rental")
