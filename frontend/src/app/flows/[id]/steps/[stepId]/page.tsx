@@ -47,9 +47,14 @@ export default function StepChatPage() {
   useEffect(() => {
     loadStep();
     loadMessages();
+  }, [loadStep, loadMessages]);
+
+  // Poll only for active steps
+  useEffect(() => {
+    if (!step || ["approved", "failed", "skipped"].includes(step.status)) return;
     const interval = setInterval(() => { loadStep(); loadMessages(); }, 5000);
     return () => clearInterval(interval);
-  }, [loadStep, loadMessages]);
+  }, [step?.status, loadStep, loadMessages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -124,29 +129,6 @@ export default function StepChatPage() {
             </span>
           </div>
 
-          {/* Input text (assembled from deps) */}
-          {step?.input_text && (
-            <details className="mt-3">
-              <summary className="text-xs text-neutral-600 cursor-pointer hover:text-neutral-400 transition-colors">
-                View input context
-              </summary>
-              <pre className="mt-2 text-xs text-neutral-400 whitespace-pre-wrap font-mono bg-neutral-900/50 border border-neutral-800/50 rounded-lg p-3 max-h-48 overflow-y-auto">
-                {step.input_text}
-              </pre>
-            </details>
-          )}
-
-          {/* Output (if completed) */}
-          {step?.output_text && ["review", "approved"].includes(step.status) && (
-            <details className="mt-3" open={step.status === "review"}>
-              <summary className="text-xs text-neutral-600 cursor-pointer hover:text-neutral-400 transition-colors">
-                {step.status === "review" ? "Agent output (pending review)" : "Approved output"}
-              </summary>
-              <pre className="mt-2 text-xs text-neutral-300 whitespace-pre-wrap font-mono bg-neutral-900/50 border border-neutral-800/50 rounded-lg p-3 max-h-60 overflow-y-auto">
-                {step.output_text}
-              </pre>
-            </details>
-          )}
         </div>
       </div>
 
