@@ -254,9 +254,9 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file
 @router.post("/{rental_id}/upload", summary="Upload file attachment")
 async def upload_rental_file(
     rental_id: str,
-    file: UploadFile = File(...),
-    user: CurrentUser = Depends(),
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
 ):
     """Upload a file for a rental chat message."""
     rental = await rental_repo.get_rental_by_id(db, rental_id)
