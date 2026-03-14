@@ -75,104 +75,123 @@ export function Header() {
 
   return (
     <header className="relative z-30 border-b border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm sticky top-0">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
-        <Link href="/" className="flex items-center gap-3 flex-shrink-0">
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base bg-neutral-800 border border-neutral-700">
-            ⬡
-          </div>
-          <div>
-            <span className="text-base font-bold tracking-tight text-white">AgentSpore</span>
-            <span className="hidden lg:inline text-neutral-600 text-xs ml-2">Autonomous Startup Forge</span>
-          </div>
-        </Link>
-
-        {/* Desktop nav */}
-        <nav className="hidden lg:flex items-center gap-0.5 text-[13px]">
-          {navLinks.map(({ href, label, dot }) => (
-            <Link key={href} href={href} className="px-2 py-1.5 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all flex items-center gap-1.5 font-mono xl:px-3">
-              {dot && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
-              {label}
-            </Link>
-          ))}
-          <a href={GITHUB_URL} target="_blank" className="px-2 py-1.5 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all flex items-center gap-1.5 font-mono xl:px-3">
-            <GithubIcon /><span className="hidden lg:inline ml-1">GitHub</span>
-          </a>
-
-          {/* Auth state — desktop */}
-          {ready && (
-            user ? (
-              <div className="relative ml-1" ref={menuRef}>
-                <button
-                  onClick={() => setMenuOpen((o) => !o)}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-neutral-900 transition-all"
-                >
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-neutral-800 border border-neutral-700">
-                    {initials}
-                  </div>
-                  <span className="text-sm text-neutral-300 max-w-[90px] truncate hidden lg:block">{user.name}</span>
-                  <span className="text-neutral-600 text-[10px]">▾</span>
-                </button>
-                {menuOpen && (
-                  <div className="absolute right-0 top-full mt-1 w-52 rounded-xl border border-neutral-800 bg-[#0a0a0a] shadow-2xl py-1 z-50">
-                    <div className="px-4 py-3 border-b border-neutral-800/80">
-                      <p className="text-sm text-white font-medium truncate">{user.name}</p>
-                      <p className="text-xs text-neutral-500 truncate mt-0.5">{user.email}</p>
-                      <p className="text-xs text-violet-400 mt-1 font-mono">{user.token_balance} tokens</p>
-                    </div>
-                    <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 transition-colors">
-                      <span>◎</span> My Profile
-                    </Link>
-                    {user.is_admin && (
-                      <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 transition-colors">
-                        <span>◈</span> Analytics
-                      </Link>
-                    )}
-                    <div className="border-t border-neutral-800/80 mt-1 pt-1">
-                      <button onClick={signOut} className="w-full text-left flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-neutral-900 transition-colors">
-                        <span>↩</span> Sign Out
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <Link href="/login" className="ml-1 px-3 py-1.5 text-sm text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all font-mono">
-                Sign In
-              </Link>
-            )
-          )}
-
-          <a
-            href={`${API_URL}/skill.md`}
-            target="_blank"
-            className="ml-1 px-4 py-1.5 text-sm font-medium font-mono rounded-lg bg-white text-black transition-all hover:bg-neutral-200"
-          >
-            Connect Agent →
-          </a>
-        </nav>
-
-        {/* Mobile: auth avatar + burger */}
-        <div className="flex lg:hidden items-center gap-2">
-          {ready && user && (
-            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-neutral-800 border border-neutral-700">
-              {initials}
+      {/* Desktop: two rows — logo+actions on top, nav below */}
+      <div className="hidden lg:block">
+        {/* Top row: logo + right actions */}
+        <div className="max-w-7xl mx-auto px-6 pt-3 pb-1 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-3 flex-shrink-0">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base bg-neutral-800 border border-neutral-700">
+              ⬡
             </div>
-          )}
-          <button
-            onClick={() => setMobileOpen((o) => !o)}
-            className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all"
-            aria-label="Menu"
-          >
-            {mobileOpen ? (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
-            ) : (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 12h18M3 6h18M3 18h18" />
-              </svg>
+            <div>
+              <span className="text-base font-bold tracking-tight text-white">AgentSpore</span>
+              <span className="hidden xl:inline text-neutral-600 text-xs ml-2">Autonomous Startup Forge</span>
+            </div>
+          </Link>
+
+          <div className="flex items-center gap-2">
+            <a href={GITHUB_URL} target="_blank" className="px-2.5 py-1.5 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all flex items-center gap-1.5 text-sm font-mono">
+              <GithubIcon /><span className="hidden xl:inline">GitHub</span>
+            </a>
+
+            {ready && (
+              user ? (
+                <div className="relative" ref={menuRef}>
+                  <button
+                    onClick={() => setMenuOpen((o) => !o)}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-neutral-900 transition-all"
+                  >
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-neutral-800 border border-neutral-700">
+                      {initials}
+                    </div>
+                    <span className="text-sm text-neutral-300 max-w-[100px] truncate">{user.name}</span>
+                    <span className="text-neutral-600 text-[10px]">▾</span>
+                  </button>
+                  {menuOpen && (
+                    <div className="absolute right-0 top-full mt-1 w-52 rounded-xl border border-neutral-800 bg-[#0a0a0a] shadow-2xl py-1 z-50">
+                      <div className="px-4 py-3 border-b border-neutral-800/80">
+                        <p className="text-sm text-white font-medium truncate">{user.name}</p>
+                        <p className="text-xs text-neutral-500 truncate mt-0.5">{user.email}</p>
+                        <p className="text-xs text-violet-400 mt-1 font-mono">{user.token_balance} tokens</p>
+                      </div>
+                      <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 transition-colors">
+                        <span>◎</span> My Profile
+                      </Link>
+                      {user.is_admin && (
+                        <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-neutral-300 hover:text-white hover:bg-neutral-900 transition-colors">
+                          <span>◈</span> Analytics
+                        </Link>
+                      )}
+                      <div className="border-t border-neutral-800/80 mt-1 pt-1">
+                        <button onClick={signOut} className="w-full text-left flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-neutral-900 transition-colors">
+                          <span>↩</span> Sign Out
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <Link href="/login" className="px-3 py-1.5 text-sm text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all font-mono">
+                  Sign In
+                </Link>
+              )
             )}
-          </button>
+
+            <a
+              href={`${API_URL}/skill.md`}
+              target="_blank"
+              className="px-4 py-1.5 text-sm font-medium font-mono rounded-lg bg-white text-black transition-all hover:bg-neutral-200"
+            >
+              Connect Agent →
+            </a>
+          </div>
+        </div>
+
+        {/* Bottom row: centered nav links */}
+        <div className="max-w-7xl mx-auto px-6 pb-2">
+          <nav className="flex items-center justify-center gap-1 text-[13px]">
+            {navLinks.map(({ href, label, dot }) => (
+              <Link key={href} href={href} className="px-3 py-1 text-neutral-500 hover:text-white hover:bg-neutral-900 rounded-md transition-all flex items-center gap-1.5 font-mono">
+                {dot && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                {label}
+              </Link>
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      {/* Mobile: single row with logo + burger */}
+      <div className="lg:hidden">
+        <div className="px-4 py-3 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-3 flex-shrink-0">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base bg-neutral-800 border border-neutral-700">
+              ⬡
+            </div>
+            <span className="text-base font-bold tracking-tight text-white">AgentSpore</span>
+          </Link>
+
+          <div className="flex items-center gap-2">
+            {ready && user && (
+              <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-neutral-800 border border-neutral-700">
+                {initials}
+              </div>
+            )}
+            <button
+              onClick={() => setMobileOpen((o) => !o)}
+              className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-900 rounded-lg transition-all"
+              aria-label="Menu"
+            >
+              {mobileOpen ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 12h18M3 6h18M3 18h18" />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
