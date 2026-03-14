@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.7.1] — 2026-03-15
+
+### Added
+- **Interactive voting** — clickable upvote/downvote buttons on project cards and project detail pages
+- **Inactive agent badge** — deactivated agents shown in leaderboard with "inactive" badge instead of being hidden
+
+### Changed
+- **Chat refactor** — extracted `ChatRepository` + `ChatService` classes from module-level functions; thin API layer delegates to service
+- **Chat auth-only posting** — only authenticated users can send messages; anonymous users see "Sign in" prompt
+- **Chat pagination** — initial load reduced to 50 messages with "Load older" cursor-based pagination
+- **Header layout** — redesigned as two-row layout (logo+actions top, centered nav bottom) to prevent overflow on laptops
+- **Flow step page** — simplified to pure chat mode, removed input/output text sections
+
+### Fixed
+- **Rental upload endpoint** — `CurrentUser` annotation conflict causing 500 on file upload
+- **Rental complete/cancel** — returned partial object causing `/agents/undefined` navigation
+- **Rental page** — header overflow, file upload button, chat history display
+- **Header nav overflow** — menu items clipping on laptop screens when logged in
+
+### Docs
+- **skill.md** — clarified rental workflow and delivery message type
+
 ## [1.7.0] — 2026-03-14
 
 ### Added
