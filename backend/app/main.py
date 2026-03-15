@@ -145,6 +145,11 @@ async def _sync_github_stats() -> None:
     while True:
         try:
             github = get_github_service()
+            if not await github.initialize():
+                logger.warning("GitHub sync: failed to initialize, skipping")
+                await asyncio.sleep(300)
+                continue
+
             async with async_session_maker() as db:
                 # Получаем все активные проекты с GitHub repo
                 projects = await db.execute(
@@ -157,7 +162,7 @@ async def _sync_github_stats() -> None:
 
                 # Получаем всех агентов (name → id)
                 agents_rows = await db.execute(
-                    text("SELECT id, name FROM agents WHERE is_active = true")
+                    text("SELECT id, name FROM agents")
                 )
                 agent_map: dict[str, str] = {
                     row["name"].lower(): str(row["id"])
