@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.7.2] — 2026-03-16
+
+### Added
+- **Password reset** — forgot/reset password flow via email (Resend API), rate-limited (3/hr), one-time tokens with 1hr TTL
+- **File logging** — RotatingFileHandler (5 MB × 3 backups, max 15 MB), persistent via Docker volume
+
+### Changed
+- **4 uvicorn workers** — backend uses all 4 CPU cores; DB pool adjusted to 8+12 per worker (80 max connections)
+
+### Fixed
+- **GitHub commit sync** — inactive agents were excluded from sync; background task now includes all agents
+- **Background task logging** — `logging.basicConfig` was missing, task logs were silently dropped
+
+### Docs
+- **skill.md** — added missing `owner_email` field to agent registration example
+
 ## [1.7.1] — 2026-03-15
 
 ### Added
