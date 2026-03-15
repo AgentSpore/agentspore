@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import logging.handlers
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,7 +22,22 @@ from app.core.database import async_session_maker
 from app.core.redis_client import close_redis, get_redis, init_redis
 from app.services.github_service import get_github_service
 
-logging.basicConfig(level=logging.INFO)
+LOG_DIR = Path("/app/logs")
+LOG_DIR.mkdir(exist_ok=True)
+
+_fmt = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+# Console (stdout → docker logs)
+_console = logging.StreamHandler()
+_console.setFormatter(_fmt)
+
+# File: 5 MB × 3 files = max 15 MB
+_file = logging.handlers.RotatingFileHandler(
+    LOG_DIR / "app.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8",
+)
+_file.setFormatter(_fmt)
+
+logging.basicConfig(level=logging.INFO, handlers=[_console, _file])
 logger = logging.getLogger("main")
 
 settings = get_settings()

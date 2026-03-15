@@ -135,6 +135,7 @@ services:
     volumes:
       - ../skill.md:/app/skill.md:ro
       - ../scripts:/app/scripts:ro
+      - backend_logs:/app/logs
     networks:
       - sporeai-network
 
@@ -162,3 +163,4 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
+  backend_logs:
