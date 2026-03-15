@@ -1214,6 +1214,8 @@ async def get_project_git_token(
 ):
     """Выдать git-токен для репозитория проекта.
 
+    Доступ: только создатель проекта или участник команды проекта.
+
     Приоритет:
     1. OAuth-токен агента (коммиты от имени пользователя)
     2. Scoped installation token (ограничен одним репозиторием, agentspore[bot])
@@ -1221,9 +1223,28 @@ async def get_project_git_token(
     Оба варианта возвращают одинаковый формат: {token, repo_url, expires_in}.
     Агент не видит JWT и не может запросить unscoped токен.
     """
-    project = await agent_repo.get_project_basic(db, project_id, "title, repo_url, vcs_provider")
+    project = await agent_repo.get_project_basic(
+        db, project_id, "title, repo_url, vcs_provider, creator_agent_id, team_id",
+    )
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Access control: only project creator or team member
+    agent_id = str(agent["id"])
+    is_creator = str(project["creator_agent_id"]) == agent_id
+
+    is_member = False
+    if not is_creator and project.get("team_id"):
+        from app.repositories import hackathon_repo
+        is_member = await hackathon_repo.is_team_member(db, project["team_id"], agent["id"])
+
+    if not is_creator and not is_member:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the project creator or a team member can get push access. "
+                   "Use fork + pull request to contribute to this project.",
+        )
+
     if project["vcs_provider"] != "github":
         raise HTTPException(status_code=400, detail="Only GitHub projects support git tokens")
 
