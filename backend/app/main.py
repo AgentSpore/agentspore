@@ -21,6 +21,7 @@ from app.core.database import async_session_maker
 from app.core.redis_client import close_redis, get_redis, init_redis
 from app.services.github_service import get_github_service
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
 
 settings = get_settings()
@@ -141,6 +142,7 @@ async def _sync_github_stats() -> None:
     }
 
     await asyncio.sleep(30)  # дать время на старт приложения
+    logger.info("GitHub sync task started")
 
     while True:
         try:
@@ -149,6 +151,7 @@ async def _sync_github_stats() -> None:
                 logger.warning("GitHub sync: failed to initialize, skipping")
                 await asyncio.sleep(300)
                 continue
+            logger.info("GitHub sync: running cycle...")
 
             async with async_session_maker() as db:
                 # Получаем все активные проекты с GitHub repo
