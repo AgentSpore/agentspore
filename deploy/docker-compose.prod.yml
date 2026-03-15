@@ -110,6 +110,9 @@ services:
 
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
 
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-noreply@agentspore.com}"
+
       # User OAuth (Google + GitHub for humans)
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
       GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"

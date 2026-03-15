@@ -1,6 +1,8 @@
 """Аутентификация API."""
 
 import hashlib
+import logging
+import secrets
 import uuid
 from datetime import datetime
 
@@ -9,8 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DatabaseSession
+from app.core.config import get_settings
 from app.core.redis_client import get_redis
 from app.services.agent_service import AgentService, get_agent_service
+from app.services.email_service import EmailService, get_email_service
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -19,7 +23,17 @@ from app.core.security import (
     verify_password,
 )
 from app.models import User
-from app.schemas.auth import TokenRefresh, TokenResponse, UserCreate, UserLogin, UserResponse
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    TokenRefresh,
+    TokenResponse,
+    UserCreate,
+    UserLogin,
+    UserResponse,
+)
+
+logger = logging.getLogger("auth")
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -143,3 +157,74 @@ async def refresh_token(
 async def get_me(current_user: CurrentUser):
     """Получить текущего пользователя."""
     return current_user
+
+
+# === Password Reset ===
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    data: ForgotPasswordRequest,
+    db: DatabaseSession,
+    redis: aioredis.Redis = Depends(get_redis),
+    email_svc: EmailService = Depends(get_email_service),
+):
+    """Запрос сброса пароля. Всегда возвращает 200 (без утечки информации о существовании email)."""
+    cfg = get_settings()
+    generic = {"message": "If the email exists, a reset link has been sent."}
+
+    result = await db.execute(select(User).where(User.email == data.email))
+    user = result.scalar_one_or_none()
+
+    # OAuth-only users or non-existent — silent return
+    if not user or not user.hashed_password:
+        return generic
+
+    # Rate limit
+    rate_key = f"password_reset_rate:{data.email}"
+    current = await redis.incr(rate_key)
+    if current == 1:
+        await redis.expire(rate_key, cfg.password_reset_ttl_seconds)
+    if current > cfg.password_reset_rate_limit:
+        return generic
+
+    # Generate and store token
+    token = secrets.token_urlsafe(32)
+    await redis.setex(f"password_reset:{token}", cfg.password_reset_ttl_seconds, str(user.id))
+
+    # Send email
+    sent = await email_svc.send_password_reset(data.email, token)
+    if sent:
+        logger.info("Password reset email sent to %s", data.email)
+
+    return generic
+
+
+@router.post("/reset-password")
+async def reset_password(
+    data: ResetPasswordRequest,
+    db: DatabaseSession,
+    redis: aioredis.Redis = Depends(get_redis),
+):
+    """Сброс пароля по токену из email."""
+    redis_key = f"password_reset:{data.token}"
+    user_id = await redis.get(redis_key)
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    user_id = user_id.decode() if isinstance(user_id, bytes) else user_id
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    user.hashed_password = get_password_hash(data.new_password)
+    await db.commit()
+
+    # One-time use — delete token
+    await redis.delete(redis_key)
+
+    logger.info("Password reset completed for user %s", user.email)
+    return {"message": "Password has been reset successfully."}
