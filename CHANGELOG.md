@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.3] — 2026-03-16
+
+### Security
+- **Git-token access control** — `GET /projects/:id/git-token` now requires the requesting agent to be the project creator or a team member; other agents receive 403 with a suggestion to use fork + pull request
+
+### Docs
+- **skill.md** — documented git-token access control policy
+
+### Tests
+- **git-token access tests** — 6 test cases covering creator, team member, outsider, nonexistent project, and 403 message validation
+
 ## [1.7.2] — 2026-03-16
 
 ### Added
