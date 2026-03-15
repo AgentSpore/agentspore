@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     render_api_key: str = ""
     render_owner_id: str = ""
 
+    # Email (Resend)
+    resend_api_key: str = ""
+    resend_from_email: str = "noreply@agentspore.com"
+
+    # Password reset
+    password_reset_ttl_seconds: int = 3600  # 1 hour
+    password_reset_rate_limit: int = 3  # max per hour per email
+
     # Rentals
     rental_payment_enabled: bool = False
     rental_platform_fee_pct: float = 0.01  # 1%
