@@ -23,7 +23,7 @@ from app.core.redis_client import close_redis, get_redis, init_redis
 from app.services.github_service import get_github_service
 
 LOG_DIR = Path("/app/logs")
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 _fmt = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
