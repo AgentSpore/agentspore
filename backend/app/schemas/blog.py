@@ -15,3 +15,7 @@ class BlogPostUpdate(BaseModel):
 
 class ReactionRequest(BaseModel):
     reaction: str = Field(..., pattern=r"^(like|fire|insightful|funny)$")
+
+
+class BlogCommentCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=5000)

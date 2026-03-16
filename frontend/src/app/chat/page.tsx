@@ -183,6 +183,8 @@ export default function ChatPage() {
   const [liveCount, setLiveCount] = useState(0);
   const [userName, setUserName] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   // Check auth
   useEffect(() => {
@@ -194,14 +196,15 @@ export default function ChatPage() {
       .catch(() => {});
   }, []);
 
-  // Initial load — newest first, 50 messages
+  // Initial load — newest first, 50 messages, reverse for display
   useEffect(() => {
     fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`)
       .then(r => r.ok ? r.json() : [])
       .then((d: ChatMessage[]) => {
-        setMessages(d);
+        setMessages(d.reverse());
         setHasMore(d.length >= PAGE_SIZE);
         setLoading(false);
+        setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
       })
       .catch(() => setLoading(false));
   }, []);
@@ -215,18 +218,48 @@ export default function ChatPage() {
       try {
         const msg: ChatMessage = JSON.parse(e.data);
         if (msg.type === "ping") return;
-        setMessages(prev => [msg, ...prev].slice(0, 500));
+        setMessages(prev => [...prev, msg].slice(-500));
         setLiveCount(c => c + 1);
+        // Auto-scroll if near bottom
+        const container = containerRef.current;
+        if (container) {
+          const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+          if (isNearBottom) {
+            setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+          }
+        }
       } catch {}
     };
 
     return () => es.close();
   }, []);
 
-  // Scroll to top on new messages
-  useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [messages.length]);
+  // Load older messages on scroll up
+  const loadOlder = async () => {
+    if (!hasMore || loadingMore || messages.length === 0) return;
+    setLoadingMore(true);
+    const oldestId = messages[0].id;
+    const container = containerRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldestId}`);
+      if (res.ok) {
+        const older: ChatMessage[] = await res.json();
+        setMessages(prev => [...older.reverse(), ...prev]);
+        setHasMore(older.length >= PAGE_SIZE);
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = container.scrollHeight - prevHeight;
+        });
+      }
+    } catch {}
+    setLoadingMore(false);
+  };
+
+  const handleScroll = () => {
+    const container = containerRef.current;
+    if (container && container.scrollTop < 50) loadOlder();
+  };
 
   const filtered = messages.filter(m =>
     typeFilter === "all" || m.message_type === typeFilter
@@ -238,7 +271,7 @@ export default function ChatPage() {
   }, {});
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-neutral-100 flex flex-col">
+    <div className="h-screen bg-[#0a0a0a] text-neutral-100 flex flex-col">
       {/* Header */}
       <header className="border-b border-neutral-800/60 bg-[#0a0a0a]/95 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-6 py-3 flex items-center gap-4">
@@ -287,7 +320,11 @@ export default function ChatPage() {
       </header>
 
       {/* Messages */}
-      <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-4">
+      <main
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto max-w-4xl w-full mx-auto px-6 py-4"
+      >
         {loading ? (
           <div className="flex items-center justify-center h-40 text-neutral-600 text-sm">
             Loading messages…
@@ -299,6 +336,11 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="space-y-4">
+            {loadingMore && (
+              <div className="flex justify-center py-2">
+                <span className="text-xs text-neutral-600 font-mono">Loading...</span>
+              </div>
+            )}
             {filtered.map((msg, i) => {
               const prev = filtered[i - 1];
               const showDate = !prev || new Date(msg.ts).toDateString() !== new Date(prev.ts).toDateString();
@@ -320,33 +362,7 @@ export default function ChatPage() {
           </div>
         )}
 
-        {/* Load more */}
-        {hasMore && !loading && filtered.length > 0 && (
-          <div className="flex justify-center py-6">
-            <button
-              onClick={async () => {
-                if (loadingMore) return;
-                setLoadingMore(true);
-                try {
-                  const oldest = messages[messages.length - 1];
-                  const res = await fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldest.id}`);
-                  if (res.ok) {
-                    const older: ChatMessage[] = await res.json();
-                    setMessages(prev => [...prev, ...older]);
-                    setHasMore(older.length >= PAGE_SIZE);
-                  }
-                } catch {}
-                setLoadingMore(false);
-              }}
-              disabled={loadingMore}
-              className="text-xs font-mono text-neutral-500 hover:text-neutral-300 border border-neutral-800 rounded-lg px-4 py-2 hover:bg-neutral-900 transition-all disabled:opacity-50"
-            >
-              {loadingMore ? "Loading..." : "Load older messages"}
-            </button>
-          </div>
-        )}
-
-        <div className="h-4" />
+        <div ref={bottomRef} className="h-4" />
       </main>
 
       {/* Chat input — only for authenticated users */}

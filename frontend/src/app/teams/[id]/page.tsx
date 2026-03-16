@@ -65,6 +65,9 @@ export default function TeamPage() {
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -75,12 +78,16 @@ export default function TeamPage() {
       .catch(() => { setError("Team not found"); setLoading(false); });
   }, [id]);
 
-  // Load chat history
+  // Load chat history (initial load, reversed for display)
   useEffect(() => {
     if (!team) return;
-    fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=100`)
+    fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=50`)
       .then(r => r.ok ? r.json() : [])
-      .then((msgs: TeamMessage[]) => setMessages(msgs))
+      .then((msgs: TeamMessage[]) => {
+        setMessages(msgs.reverse());
+        setHasMore(msgs.length === 50);
+        setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
+      })
       .catch(() => {});
   }, [team, id]);
 
@@ -103,25 +110,59 @@ export default function TeamPage() {
         if (msg.type === "ping") return;
         setMessages(prev => {
           if (prev.some(m => m.id === msg.id)) return prev;
-          return [msg, ...prev].slice(0, 200);
+          return [...prev, msg].slice(-500);
         });
+        // Auto-scroll if near bottom
+        const container = containerRef.current;
+        if (container) {
+          const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+          if (isNearBottom) {
+            setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+          }
+        }
       } catch {}
     };
     es.onerror = () => { es.close(); };
     return () => es.close();
   }, [team, id]);
 
-  // Auto-scroll on new messages
-  useEffect(() => {
-    if (tab === "chat") bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, tab]);
+  // Load older messages on scroll up
+  const loadOlder = useCallback(async () => {
+    if (!hasMore || loadingMore || messages.length === 0) return;
+    setLoadingMore(true);
+    const oldestId = messages[0].id;
+    const container = containerRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=50&before=${oldestId}`);
+      if (res.ok) {
+        const older: TeamMessage[] = await res.json();
+        setMessages(prev => [...older.reverse(), ...prev]);
+        setHasMore(older.length === 50);
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = container.scrollHeight - prevHeight;
+        });
+      }
+    } catch { /* ignore */ }
+    setLoadingMore(false);
+  }, [hasMore, loadingMore, messages, id]);
+
+  const handleChatScroll = () => {
+    const container = containerRef.current;
+    if (container && container.scrollTop < 50) loadOlder();
+  };
 
   const loadMessages = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=100`);
+      const res = await fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=10`);
       if (res.ok) {
         const msgs: TeamMessage[] = await res.json();
-        setMessages(msgs);
+        const newMsgs = msgs.reverse();
+        setMessages(prev => {
+          const toAppend = newMsgs.filter(m => !prev.some(p => p.id === m.id));
+          return toAppend.length > 0 ? [...prev, ...toAppend] : prev;
+        });
       }
     } catch { /* ignore */ }
   }, [id]);
@@ -290,7 +331,16 @@ export default function TeamPage() {
                 <p className="text-neutral-600 text-xs mt-1">Send a message to start the conversation</p>
               </div>
             ) : (
-              <div className="p-4 space-y-4 max-h-[500px] overflow-y-auto">
+              <div
+                ref={containerRef}
+                onScroll={handleChatScroll}
+                className="p-4 space-y-4 max-h-[500px] overflow-y-auto"
+              >
+                {loadingMore && (
+                  <div className="flex justify-center py-2">
+                    <span className="text-xs text-neutral-600 font-mono">Loading...</span>
+                  </div>
+                )}
                 {messages.map(msg => (
                   <ChatBubble key={msg.id} msg={msg} />
                 ))}

@@ -24,7 +24,7 @@ from app.core.security import decode_token
 from app.api.deps import security_optional
 from app.models import User
 from app.services.blog_service import BlogService, get_blog_service
-from app.schemas.blog import BlogPostCreate, BlogPostUpdate, ReactionRequest
+from app.schemas.blog import BlogPostCreate, BlogPostUpdate, BlogCommentCreate, ReactionRequest
 
 from loguru import logger
 router = APIRouter(prefix="/blog", tags=["blog"])
@@ -178,3 +178,41 @@ async def remove_reaction(
     if error:
         raise HTTPException(status_code=404, detail=error)
     return {"status": "removed"}
+
+
+# ── Comments ─────────────────────────────────────────────────────────
+
+@router.get("/posts/{post_id}/comments", summary="List comments (public)")
+async def list_comments(
+    post_id: UUID,
+    limit: int = Query(default=100, le=200),
+    svc: BlogService = Depends(get_blog_service),
+):
+    return await svc.get_comments(post_id, limit)
+
+
+@router.post("/posts/{post_id}/comments", status_code=201, summary="Add comment (agent/user)")
+async def add_comment(
+    post_id: UUID,
+    body: BlogCommentCreate,
+    identity: dict = Depends(_get_agent_or_user),
+    svc: BlogService = Depends(get_blog_service),
+):
+    try:
+        comment = await svc.add_comment(post_id, identity["type"], identity["id"], body.content)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return comment
+
+
+@router.delete("/posts/{post_id}/comments/{comment_id}", summary="Delete comment (author only)")
+async def delete_comment(
+    post_id: UUID,
+    comment_id: UUID,
+    identity: dict = Depends(_get_agent_or_user),
+    svc: BlogService = Depends(get_blog_service),
+):
+    error = await svc.delete_comment(comment_id, identity["type"], identity["id"])
+    if error:
+        raise HTTPException(status_code=404, detail=error)
+    return {"status": "deleted"}

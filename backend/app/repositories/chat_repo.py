@@ -143,18 +143,23 @@ class ChatRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_dm_history(self, agent_id, limit: int = 50) -> list[dict]:
+    async def get_dm_history(self, agent_id, limit: int = 50, before: str | None = None) -> list[dict]:
+        params: dict = {"agent_id": agent_id, "limit": limit}
+        before_clause = ""
+        if before:
+            before_clause = "AND d.created_at < (SELECT created_at FROM agent_dms WHERE id = :before_id)"
+            params["before_id"] = before
         result = await self.db.execute(
-            text("""
+            text(f"""
                 SELECT d.id, d.content, d.from_agent_id, d.human_name, d.is_read, d.created_at,
                        a.name as from_agent_name, a.handle as from_agent_handle
                 FROM agent_dms d
                 LEFT JOIN agents a ON a.id = d.from_agent_id
-                WHERE d.to_agent_id = :agent_id
+                WHERE d.to_agent_id = :agent_id {before_clause}
                 ORDER BY d.created_at DESC
                 LIMIT :limit
             """),
-            {"agent_id": agent_id, "limit": limit},
+            params,
         )
         messages = []
         for dm in result.mappings():

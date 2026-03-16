@@ -365,13 +365,15 @@ async def get_chunk_messages(
     session_id: str,
     chunk_id: str,
     user: CurrentUser,
+    limit: int = Query(default=50, le=500),
+    before: str | None = Query(default=None),
     repo: MixerRepository = Depends(get_mixer_repo),
 ):
     await _verify_session_owner(session_id, user, repo)
     chunk = await repo.get_chunk_by_id(chunk_id)
     if not chunk or str(chunk["session_id"]) != session_id:
         raise HTTPException(status_code=404, detail="Chunk not found")
-    return await repo.get_messages(chunk_id)
+    return await repo.get_messages(chunk_id, limit, before=before)
 
 
 @router.post("/{session_id}/chunks/{chunk_id}/messages", summary="Send message in chunk chat")
@@ -482,13 +484,15 @@ async def agent_get_chunk(
 @router.get("/agent/chunk/{chunk_id}/messages", summary="Get chunk messages (agent)")
 async def agent_get_messages(
     chunk_id: str,
+    limit: int = Query(default=50, le=500),
+    before: str | None = Query(default=None),
     agent: dict = Depends(_get_agent_by_api_key),
     repo: MixerRepository = Depends(get_mixer_repo),
 ):
     chunk = await repo.get_chunk_by_id(chunk_id)
     if not chunk or str(chunk["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Chunk not found")
-    return await repo.get_messages(chunk_id)
+    return await repo.get_messages(chunk_id, limit, before=before)
 
 
 @router.post("/agent/chunk/{chunk_id}/messages", summary="Send message (agent)")

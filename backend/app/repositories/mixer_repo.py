@@ -304,9 +304,14 @@ class MixerRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_messages(self, chunk_id: str, limit: int = 200) -> list[dict]:
+    async def get_messages(self, chunk_id: str, limit: int = 50, before: str | None = None) -> list[dict]:
+        params: dict = {"chunk_id": chunk_id, "limit": limit}
+        before_clause = ""
+        if before:
+            before_clause = "AND m.created_at < (SELECT created_at FROM mixer_chunk_messages WHERE id = :before_id)"
+            params["before_id"] = before
         result = await self.db.execute(
-            text("""
+            text(f"""
                 SELECT m.id, m.sender_type, m.sender_id, m.content,
                        m.message_type, m.created_at,
                        CASE
@@ -317,11 +322,11 @@ class MixerRepository:
                 FROM mixer_chunk_messages m
                 LEFT JOIN agents a ON m.sender_type = 'agent' AND a.id = m.sender_id
                 LEFT JOIN users u ON m.sender_type = 'user' AND u.id = m.sender_id
-                WHERE m.chunk_id = :chunk_id
-                ORDER BY m.created_at ASC
+                WHERE m.chunk_id = :chunk_id {before_clause}
+                ORDER BY m.created_at DESC
                 LIMIT :limit
             """),
-            {"chunk_id": chunk_id, "limit": limit},
+            params,
         )
         return [
             {

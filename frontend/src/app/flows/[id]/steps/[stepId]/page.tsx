@@ -13,6 +13,9 @@ export default function StepChatPage() {
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -31,34 +34,87 @@ export default function StepChatPage() {
       .catch(() => {});
   }, [flowId, stepId, token]);
 
-  const loadMessages = useCallback(() => {
+  const loadInitialMessages = useCallback(() => {
     if (!token) return;
-    fetch(`${API_URL}/api/v1/flows/${flowId}/steps/${stepId}/messages`, {
+    fetch(`${API_URL}/api/v1/flows/${flowId}/steps/${stepId}/messages?limit=50`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => (r.ok ? r.json() : []))
       .then((msgs: FlowStepMessage[]) => {
-        setMessages(msgs);
+        setMessages(msgs.reverse());
+        setHasMore(msgs.length === 50);
         setLoading(false);
+        setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
       })
       .catch(() => setLoading(false));
   }, [flowId, stepId, token]);
 
+  // Poll for new messages only
+  const pollNewMessages = useCallback(() => {
+    if (!token) return;
+    fetch(`${API_URL}/api/v1/flows/${flowId}/steps/${stepId}/messages?limit=10`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((msgs: FlowStepMessage[]) => {
+        const newMsgs = msgs.reverse();
+        setMessages(prev => {
+          if (prev.length === 0) return newMsgs;
+          const toAppend = newMsgs.filter(m => !prev.some(p => p.id === m.id));
+          if (toAppend.length === 0) return prev;
+          const container = containerRef.current;
+          if (container) {
+            const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+            if (isNearBottom) {
+              setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+            }
+          }
+          return [...prev, ...toAppend];
+        });
+      })
+      .catch(() => {});
+  }, [flowId, stepId, token]);
+
+  // Load older messages on scroll up
+  const loadOlder = useCallback(async () => {
+    if (!hasMore || loadingMore || messages.length === 0 || !token) return;
+    setLoadingMore(true);
+    const oldestId = messages[0].id;
+    const container = containerRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/flows/${flowId}/steps/${stepId}/messages?limit=50&before=${oldestId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data: FlowStepMessage[] = await res.json();
+        setMessages(prev => [...data.reverse(), ...prev]);
+        setHasMore(data.length === 50);
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = container.scrollHeight - prevHeight;
+        });
+      }
+    } catch { /* ignore */ }
+    setLoadingMore(false);
+  }, [hasMore, loadingMore, messages, flowId, stepId, token]);
+
+  const handleScroll = () => {
+    const container = containerRef.current;
+    if (container && container.scrollTop < 50) loadOlder();
+  };
+
   useEffect(() => {
     loadStep();
-    loadMessages();
-  }, [loadStep, loadMessages]);
+    loadInitialMessages();
+  }, [loadStep, loadInitialMessages]);
 
   // Poll only for active steps
   useEffect(() => {
     if (!step || ["approved", "failed", "skipped"].includes(step.status)) return;
-    const interval = setInterval(() => { loadStep(); loadMessages(); }, 5000);
+    const interval = setInterval(() => { loadStep(); pollNewMessages(); }, 5000);
     return () => clearInterval(interval);
-  }, [step?.status, loadStep, loadMessages]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [step?.status, loadStep, pollNewMessages]);
 
   const sendMessage = async () => {
     if (!token || !input.trim() || sending) return;
@@ -70,7 +126,7 @@ export default function StepChatPage() {
         body: JSON.stringify({ content: input.trim() }),
       });
       setInput("");
-      loadMessages();
+      pollNewMessages();
     } finally {
       setSending(false);
     }
@@ -100,7 +156,7 @@ export default function StepChatPage() {
   });
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col">
       <Header />
 
       {/* Step header */}
@@ -133,8 +189,13 @@ export default function StepChatPage() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-6 py-4 space-y-1">
+          {loadingMore && (
+            <div className="flex justify-center py-2">
+              <span className="text-xs text-neutral-600 font-mono">Loading...</span>
+            </div>
+          )}
           {loading && <p className="text-neutral-600 text-sm">Loading messages...</p>}
 
           {!loading && messages.length === 0 && (

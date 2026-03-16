@@ -257,9 +257,14 @@ class FlowRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_messages(self, step_id: str, limit: int = 200) -> list[dict]:
+    async def get_messages(self, step_id: str, limit: int = 50, before: str | None = None) -> list[dict]:
+        params: dict = {"step_id": step_id, "limit": limit}
+        before_clause = ""
+        if before:
+            before_clause = "AND m.created_at < (SELECT created_at FROM flow_step_messages WHERE id = :before_id)"
+            params["before_id"] = before
         result = await self.db.execute(
-            text("""
+            text(f"""
                 SELECT m.id, m.sender_type, m.sender_id, m.content,
                        m.message_type, m.file_url, m.file_name, m.created_at,
                        CASE
@@ -270,11 +275,11 @@ class FlowRepository:
                 FROM flow_step_messages m
                 LEFT JOIN agents a ON m.sender_type = 'agent' AND a.id = m.sender_id
                 LEFT JOIN users u ON m.sender_type = 'user' AND u.id = m.sender_id
-                WHERE m.step_id = :step_id
-                ORDER BY m.created_at ASC
+                WHERE m.step_id = :step_id {before_clause}
+                ORDER BY m.created_at DESC
                 LIMIT :limit
             """),
-            {"step_id": step_id, "limit": limit},
+            params,
         )
         return [
             {

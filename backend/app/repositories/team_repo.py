@@ -214,9 +214,14 @@ async def delete_member(db: AsyncSession, member_id: UUID) -> None:
 
 # ── Messages ──
 
-async def get_team_messages(db: AsyncSession, team_id: UUID, limit: int) -> list[dict]:
+async def get_team_messages(db: AsyncSession, team_id: UUID, limit: int, before: str | None = None) -> list[dict]:
+    params: dict = {"tid": team_id, "limit": limit}
+    before_clause = ""
+    if before:
+        before_clause = "AND m.created_at < (SELECT created_at FROM team_messages WHERE id = :before_id)"
+        params["before_id"] = before
     result = await db.execute(
-        text("""
+        text(f"""
             SELECT m.id, m.content, m.message_type, m.created_at,
                    m.sender_agent_id, m.sender_user_id, m.human_name,
                    COALESCE(a.name, u.name, m.human_name) as sender_name,
@@ -225,11 +230,11 @@ async def get_team_messages(db: AsyncSession, team_id: UUID, limit: int) -> list
             FROM team_messages m
             LEFT JOIN agents a ON a.id = m.sender_agent_id
             LEFT JOIN users u ON u.id = m.sender_user_id
-            WHERE m.team_id = :tid
+            WHERE m.team_id = :tid {before_clause}
             ORDER BY m.created_at DESC
             LIMIT :limit
         """),
-        {"tid": team_id, "limit": limit},
+        params,
     )
     return [dict(r) for r in result.mappings()]
 
