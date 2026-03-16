@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import {
   API_URL,
@@ -37,6 +37,10 @@ export default function MixerDetailPage() {
   const [expandedChunk, setExpandedChunk] = useState<string | null>(null);
   const [messages, setMessages] = useState<MixerChunkMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
+  const [chunkHasMore, setChunkHasMore] = useState(true);
+  const [chunkLoadingMore, setChunkLoadingMore] = useState(false);
+  const chunkContainerRef = useRef<HTMLDivElement>(null);
+  const chunkBottomRef = useRef<HTMLDivElement>(null);
 
   // Audit
   const [audit, setAudit] = useState<MixerAuditEntry[]>([]);
@@ -72,16 +76,49 @@ export default function MixerDetailPage() {
       .catch(() => {});
   }, []);
 
-  // Load messages for expanded chunk
+  // Load messages for expanded chunk (initial load)
   useEffect(() => {
     if (!expandedChunk || !token) return;
-    fetch(`${API_URL}/api/v1/mixer/${id}/chunks/${expandedChunk}/messages`, {
+    setChunkHasMore(true);
+    fetch(`${API_URL}/api/v1/mixer/${id}/chunks/${expandedChunk}/messages?limit=50`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => (r.ok ? r.json() : []))
-      .then(setMessages)
+      .then((data: MixerChunkMessage[]) => {
+        setMessages(data.reverse());
+        setChunkHasMore(data.length === 50);
+        setTimeout(() => chunkBottomRef.current?.scrollIntoView(), 100);
+      })
       .catch(() => {});
   }, [expandedChunk, id, token]);
+
+  const loadOlderChunkMessages = async () => {
+    if (!chunkHasMore || chunkLoadingMore || messages.length === 0 || !expandedChunk || !token) return;
+    setChunkLoadingMore(true);
+    const oldestId = messages[0].id;
+    const container = chunkContainerRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/mixer/${id}/chunks/${expandedChunk}/messages?limit=50&before=${oldestId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data: MixerChunkMessage[] = await res.json();
+        setMessages(prev => [...data.reverse(), ...prev]);
+        setChunkHasMore(data.length === 50);
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = container.scrollHeight - prevHeight;
+        });
+      }
+    } catch { /* ignore */ }
+    setChunkLoadingMore(false);
+  };
+
+  const handleChunkScroll = () => {
+    const container = chunkContainerRef.current;
+    if (container && container.scrollTop < 50) loadOlderChunkMessages();
+  };
 
   // Load audit log
   useEffect(() => {
@@ -169,11 +206,19 @@ export default function MixerDetailPage() {
       body: JSON.stringify({ content: newMessage.trim() }),
     });
     setNewMessage("");
-    // Reload messages
-    const res = await fetch(`${API_URL}/api/v1/mixer/${id}/chunks/${expandedChunk}/messages`, {
+    // Reload recent messages and append new
+    const res = await fetch(`${API_URL}/api/v1/mixer/${id}/chunks/${expandedChunk}/messages?limit=10`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (res.ok) setMessages(await res.json());
+    if (res.ok) {
+      const data: MixerChunkMessage[] = await res.json();
+      const newMsgs = data.reverse();
+      setMessages(prev => {
+        const toAppend = newMsgs.filter(m => !prev.some(p => p.id === m.id));
+        return toAppend.length > 0 ? [...prev, ...toAppend] : prev;
+      });
+      setTimeout(() => chunkBottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    }
   };
 
   const addChunk = async () => {
@@ -458,7 +503,16 @@ export default function MixerDetailPage() {
                   {/* Messages */}
                   {isExpanded && (
                     <div className="border-t border-neutral-800/60 p-4 space-y-3">
-                      <div className="max-h-60 overflow-y-auto space-y-2">
+                      <div
+                        ref={chunkContainerRef}
+                        onScroll={handleChunkScroll}
+                        className="max-h-60 overflow-y-auto space-y-2"
+                      >
+                        {chunkLoadingMore && (
+                          <div className="flex justify-center py-1">
+                            <span className="text-[10px] text-neutral-600 font-mono">Loading...</span>
+                          </div>
+                        )}
                         {messages.length === 0 && (
                           <p className="text-xs text-neutral-600">No messages yet</p>
                         )}
@@ -473,6 +527,7 @@ export default function MixerDetailPage() {
                             <span className="text-xs text-neutral-300">{m.content}</span>
                           </div>
                         ))}
+                        <div ref={chunkBottomRef} />
                       </div>
                       <div className="flex gap-2">
                         <input

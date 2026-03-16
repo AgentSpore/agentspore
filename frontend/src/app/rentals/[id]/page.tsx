@@ -115,6 +115,10 @@ export default function RentalChatPage() {
   const [completeOpen, setCompleteOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
+  const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -140,34 +144,84 @@ export default function RentalChatPage() {
       .catch((err) => { if (err.message !== "Unauthorized") { setError(err.message); setLoading(false); } });
   }, [id, router]);
 
-  // ─── Load messages ────────────────────────────────────────────────────
-  const loadMessages = useCallback(async () => {
+  // ─── Initial load ────────────────────────────────────────────────────
+  const loadInitial = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/rentals/${id}/messages`, {
+      const res = await fetch(`${API_URL}/api/v1/rentals/${id}/messages?limit=50`, {
         headers: authHeaders(),
       });
       if (res.ok) {
         const data: RentalMessage[] = await res.json();
-        setMessages(data);
+        setMessages(data.reverse());
+        setHasMore(data.length === 50);
+        setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
       }
-    } catch {
-      /* ignore polling errors */
-    }
+    } catch { /* ignore */ }
   }, [id]);
+
+  // Poll for new messages
+  const pollNewMessages = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/rentals/${id}/messages?limit=10`, {
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        const data: RentalMessage[] = await res.json();
+        const newMsgs = data.reverse();
+        setMessages(prev => {
+          if (prev.length === 0) return newMsgs;
+          const toAppend = newMsgs.filter(m => !prev.some(p => p.id === m.id));
+          if (toAppend.length === 0) return prev;
+          const container = containerRef.current;
+          if (container) {
+            const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+            if (isNearBottom) {
+              setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+            }
+          }
+          return [...prev, ...toAppend];
+        });
+      }
+    } catch { /* ignore */ }
+  }, [id]);
+
+  // Load older messages on scroll up
+  const loadOlder = useCallback(async () => {
+    if (!hasMore || loadingOlder || messages.length === 0) return;
+    setLoadingOlder(true);
+    const oldestId = messages[0].id;
+    const container = containerRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/rentals/${id}/messages?limit=50&before=${oldestId}`, {
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        const data: RentalMessage[] = await res.json();
+        setMessages(prev => [...data.reverse(), ...prev]);
+        setHasMore(data.length === 50);
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = container.scrollHeight - prevHeight;
+        });
+      }
+    } catch { /* ignore */ }
+    setLoadingOlder(false);
+  }, [hasMore, loadingOlder, messages, id]);
+
+  const handleScroll = () => {
+    const container = containerRef.current;
+    if (container && container.scrollTop < 50) loadOlder();
+  };
 
   useEffect(() => {
     if (!rental) return;
-    loadMessages();
+    loadInitial();
     if (rental.status === "active") {
-      pollRef.current = setInterval(loadMessages, 5000);
+      pollRef.current = setInterval(pollNewMessages, 5000);
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [rental, loadMessages]);
-
-  // ─── Auto-scroll ──────────────────────────────────────────────────────
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [rental, loadInitial, pollNewMessages]);
 
   // ─── Send message ─────────────────────────────────────────────────────
   const handleSend = async (e?: React.FormEvent) => {
@@ -189,7 +243,7 @@ export default function RentalChatPage() {
       }
       setContent("");
       textareaRef.current?.focus();
-      await loadMessages();
+      await pollNewMessages();
     } catch {
       setSendError("Network error");
     } finally {
@@ -256,7 +310,7 @@ export default function RentalChatPage() {
         return;
       }
 
-      await loadMessages();
+      await pollNewMessages();
     } catch {
       setSendError("Network error during upload");
     } finally {
@@ -277,7 +331,7 @@ export default function RentalChatPage() {
         const updated = await res.json();
         setRental((prev) => prev ? { ...prev, ...updated } : updated);
         setCompleteOpen(false);
-        await loadMessages();
+        await pollNewMessages();
       }
     } catch {
       /* ignore */
@@ -298,7 +352,7 @@ export default function RentalChatPage() {
       if (res.ok) {
         const updated = await res.json();
         setRental((prev) => prev ? { ...prev, ...updated } : updated);
-        await loadMessages();
+        await pollNewMessages();
       }
     } catch {
       /* ignore */
@@ -336,7 +390,7 @@ export default function RentalChatPage() {
   const isActive = rental.status === "active";
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col">
       {/* ─── Header ────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 bg-neutral-900/50 border-b border-neutral-800/80 backdrop-blur-sm overflow-hidden">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4">
@@ -406,8 +460,13 @@ export default function RentalChatPage() {
       </header>
 
       {/* ─── Messages ──────────────────────────────────────────────────── */}
-      <main className="flex-1 overflow-y-auto">
+      <main ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+          {loadingOlder && (
+            <div className="flex justify-center py-2">
+              <span className="text-xs text-neutral-600 font-mono">Loading...</span>
+            </div>
+          )}
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
               <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-neutral-800/60 border border-neutral-700/50">

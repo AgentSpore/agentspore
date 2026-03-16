@@ -200,16 +200,17 @@ async def get_rental(
 async def get_rental_messages(
     rental_id: str,
     user: CurrentUser,
-    limit: int = Query(default=200, le=500),
+    limit: int = Query(default=50, le=500),
+    before: str | None = Query(default=None),
     rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
-    """Get all chat messages for a rental."""
+    """Get rental chat messages. before=id for cursor pagination."""
     rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["user_id"]) != str(user.id):
         raise HTTPException(status_code=403, detail="Access denied")
-    return await rental_repo.get_messages(rental_id, limit)
+    return await rental_repo.get_messages(rental_id, limit, before=before)
 
 
 @router.post("/{rental_id}/messages", summary="Send message in rental chat")
@@ -400,16 +401,18 @@ async def agent_list_rentals(
 @router.get("/agent/rental/{rental_id}/messages", summary="Agent gets rental messages")
 async def agent_get_messages(
     rental_id: str,
+    limit: int = Query(default=50, le=500),
+    before: str | None = Query(default=None),
     agent: dict = Depends(_get_agent_by_api_key),
     rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
-    """Agent reads rental chat messages."""
+    """Agent reads rental chat messages. before=id for cursor pagination."""
     rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=403, detail="Not your rental")
-    return await rental_repo.get_messages(rental_id)
+    return await rental_repo.get_messages(rental_id, limit, before=before)
 
 
 @router.post("/agent/rental/{rental_id}/messages", summary="Agent sends message in rental chat")

@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from fastapi import Depends
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -138,6 +139,51 @@ class BlogService:
         if not removed:
             return "Reaction not found"
         await self.db.commit()
+        return None
+
+
+    # ── Comments ────────────────────────────────────────────────────
+
+    async def add_comment(self, post_id: UUID, author_type: str, author_id: UUID, content: str) -> dict:
+        """Add a comment to a blog post. Verifies post exists first."""
+        post = await self.repo.get_post_by_id(post_id)
+        if not post:
+            raise ValueError("Post not found")
+        comment = await self.repo.insert_comment(post_id, author_type, author_id, content)
+        await self.db.commit()
+        logger.info("blog comment added post_id={} author={}:{}", post_id, author_type, author_id)
+        return {
+            "id": str(comment["id"]),
+            "post_id": str(comment["post_id"]),
+            "author_type": comment["author_type"],
+            "author_id": str(comment["author_id"]),
+            "content": comment["content"],
+            "created_at": str(comment["created_at"]),
+        }
+
+    async def get_comments(self, post_id: UUID, limit: int = 100) -> list[dict]:
+        """Get comments for a post with author names."""
+        rows = await self.repo.get_comments(post_id, limit)
+        return [
+            {
+                "id": str(r["id"]),
+                "post_id": str(r["post_id"]),
+                "author_type": r["author_type"],
+                "author_id": str(r["author_id"]),
+                "author_name": r["author_name"],
+                "content": r["content"],
+                "created_at": str(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    async def delete_comment(self, comment_id: UUID, author_type: str, author_id: UUID) -> str | None:
+        """Delete a comment. Returns None on success, error string on failure."""
+        deleted = await self.repo.delete_comment(comment_id, author_type, author_id)
+        if not deleted:
+            return "Comment not found or not the author"
+        await self.db.commit()
+        logger.info("blog comment deleted comment_id={} by {}:{}", comment_id, author_type, author_id)
         return None
 
 

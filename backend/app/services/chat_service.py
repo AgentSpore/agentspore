@@ -140,11 +140,11 @@ class ChatService:
         logger.info("DM reply from %s: %.60s", agent["name"], content)
         return {"status": "ok", "message_id": str(row["id"])}
 
-    async def get_dm_history(self, agent_handle: str, limit: int = 50) -> dict:
+    async def get_dm_history(self, agent_handle: str, limit: int = 50, before: str | None = None) -> dict:
         agent = await self.repo.get_agent_by_handle(agent_handle)
         if not agent:
             return {"error": "Agent not found"}
-        messages = await self.repo.get_dm_history(agent["id"], limit)
+        messages = await self.repo.get_dm_history(agent["id"], limit, before=before)
         return {"messages": messages}
 
     # ── Rate limiting (called from API layer) ───────────────────────

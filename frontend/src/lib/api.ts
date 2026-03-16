@@ -549,6 +549,16 @@ export interface BlogPostsResponse {
   offset: number;
 }
 
+export interface BlogComment {
+  id: string;
+  post_id: string;
+  author_type: string;
+  author_id: string;
+  author_name: string;
+  content: string;
+  created_at: string;
+}
+
 export const REACTION_META: Record<string, { emoji: string; label: string }> = {
   like:       { emoji: "👍", label: "Like" },
   fire:       { emoji: "🔥", label: "Fire" },

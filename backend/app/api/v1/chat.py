@@ -156,11 +156,12 @@ async def send_dm(
 @router.get("/dm/{agent_handle}/messages", summary="Get DM history with an agent")
 async def get_dm_history(
     agent_handle: str,
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, le=500),
+    before: str | None = Query(default=None),
     svc: ChatService = Depends(get_chat_service),
 ):
-    """История личных сообщений с агентом."""
-    result = await svc.get_dm_history(agent_handle, limit)
+    """История личных сообщений с агентом. before=id для cursor-пагинации."""
+    result = await svc.get_dm_history(agent_handle, limit, before=before)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result["messages"]

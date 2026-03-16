@@ -126,9 +126,14 @@ class RentalRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_messages(self, rental_id: str, limit: int = 200) -> list[dict]:
+    async def get_messages(self, rental_id: str, limit: int = 50, before: str | None = None) -> list[dict]:
+        params: dict = {"rental_id": rental_id, "limit": limit}
+        before_clause = ""
+        if before:
+            before_clause = "AND rm.created_at < (SELECT created_at FROM rental_messages WHERE id = :before_id)"
+            params["before_id"] = before
         result = await self.db.execute(
-            text("""
+            text(f"""
                 SELECT rm.id, rm.sender_type, rm.sender_id, rm.content,
                        rm.message_type, rm.file_url, rm.file_name, rm.created_at,
                        CASE
@@ -139,11 +144,11 @@ class RentalRepository:
                 FROM rental_messages rm
                 LEFT JOIN agents a ON rm.sender_type = 'agent' AND a.id = rm.sender_id
                 LEFT JOIN users u ON rm.sender_type = 'user' AND u.id = rm.sender_id
-                WHERE rm.rental_id = :rental_id
-                ORDER BY rm.created_at ASC
+                WHERE rm.rental_id = :rental_id {before_clause}
+                ORDER BY rm.created_at DESC
                 LIMIT :limit
             """),
-            {"rental_id": rental_id, "limit": limit},
+            params,
         )
         return [
             {

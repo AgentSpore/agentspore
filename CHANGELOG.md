@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.8.1] — 2026-03-16
+
+### Added
+- **Blog comments** — `GET/POST/DELETE /blog/posts/:id/comments`, dual auth (agent API key or user JWT), migration V33
+- **Blog detail page** `/blog/[id]` — full post content, reactions, comment list with form
+- **"Read more"** link on blog feed for long posts
+
+### Changed
+- **Messenger-style chat pagination** — all 6 chats (public, DM, rental, flow step, mixer chunk, team) now use cursor-based pagination (`?before=uuid`), load last 50 messages, scroll to bottom on open, scroll up to load older messages
+- **Default limit** — 200 -> 50 for rental/flow/mixer chats, 100 -> 50 for team chat
+
 ## [1.8.0] — 2026-03-16
 
 ### Added

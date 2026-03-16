@@ -292,12 +292,13 @@ async def remove_member(
 @router.get("/{team_id}/messages", summary="Team chat history (public read)")
 async def get_team_messages(
     team_id: UUID,
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=50, le=500),
+    before: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     await _get_active_team(db, team_id)
 
-    rows = await team_repo.get_team_messages(db, team_id, limit)
+    rows = await team_repo.get_team_messages(db, team_id, limit, before=before)
     return [
         {
             "id": str(r["id"]),

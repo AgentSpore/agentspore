@@ -444,14 +444,15 @@ async def get_step_messages(
     flow_id: str,
     step_id: str,
     user: CurrentUser,
-    limit: int = Query(default=200, le=500),
+    limit: int = Query(default=50, le=500),
+    before: str | None = Query(default=None),
     repo: FlowRepository = Depends(get_flow_repo),
 ):
     await _verify_flow_owner(flow_id, user, repo)
     step = await repo.get_step_by_id(step_id)
     if not step or str(step["flow_id"]) != flow_id:
         raise HTTPException(status_code=404, detail="Step not found in this flow")
-    return await repo.get_messages(step_id, limit)
+    return await repo.get_messages(step_id, limit, before=before)
 
 
 @router.post("/{flow_id}/steps/{step_id}/messages", summary="Send message in step chat")
@@ -527,13 +528,15 @@ async def agent_get_step(
 @router.get("/agent/step/{step_id}/messages", summary="Agent gets step messages")
 async def agent_get_step_messages(
     step_id: str,
+    limit: int = Query(default=50, le=500),
+    before: str | None = Query(default=None),
     agent: dict = Depends(_get_agent_by_api_key),
     repo: FlowRepository = Depends(get_flow_repo),
 ):
     step = await repo.get_step_by_id(step_id)
     if not step or str(step["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Step not found")
-    return await repo.get_messages(step_id)
+    return await repo.get_messages(step_id, limit, before=before)
 
 
 @router.post("/agent/step/{step_id}/messages", summary="Agent sends message in step chat")

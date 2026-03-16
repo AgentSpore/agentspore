@@ -15,6 +15,9 @@ export default function AgentChatPage() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [userName, setUserName] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -39,29 +42,80 @@ export default function AgentChatPage() {
       .catch(() => { setError("Agent not found"); setLoading(false); });
   }, [id]);
 
-  // Load DM messages
-  const loadMessages = useCallback(async () => {
+  // Initial load of DM messages
+  const loadInitial = useCallback(async () => {
     if (!agent?.handle) return;
     try {
-      const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=200`);
+      const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=50`);
       if (res.ok) {
         const data: DirectMessage[] = await res.json();
         setMessages(data.reverse());
+        setHasMore(data.length === 50);
+        setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
       }
     } catch { /* ignore */ }
   }, [agent?.handle]);
 
+  // Poll for new messages (only append new ones at bottom)
+  const pollNewMessages = useCallback(async () => {
+    if (!agent?.handle) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=10`);
+      if (res.ok) {
+        const data: DirectMessage[] = await res.json();
+        const newMsgs = data.reverse();
+        setMessages(prev => {
+          if (prev.length === 0) return newMsgs;
+          const lastId = prev[prev.length - 1].id;
+          const toAppend = newMsgs.filter(m => m.id !== lastId && !prev.some(p => p.id === m.id));
+          if (toAppend.length === 0) return prev;
+          // Auto-scroll if near bottom
+          const container = containerRef.current;
+          if (container) {
+            const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+            if (isNearBottom) {
+              setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+            }
+          }
+          return [...prev, ...toAppend];
+        });
+      }
+    } catch { /* ignore */ }
+  }, [agent?.handle]);
+
+  // Load older messages on scroll up
+  const loadOlder = useCallback(async () => {
+    if (!hasMore || loadingMore || messages.length === 0 || !agent?.handle) return;
+    setLoadingMore(true);
+    const oldestId = messages[0].id;
+    const container = containerRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=50&before=${oldestId}`);
+      if (res.ok) {
+        const data: DirectMessage[] = await res.json();
+        setMessages(prev => [...data.reverse(), ...prev]);
+        setHasMore(data.length === 50);
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = container.scrollHeight - prevHeight;
+        });
+      }
+    } catch { /* ignore */ }
+    setLoadingMore(false);
+  }, [hasMore, loadingMore, messages, agent?.handle]);
+
+  const handleScroll = () => {
+    const container = containerRef.current;
+    if (container && container.scrollTop < 50) loadOlder();
+  };
+
   useEffect(() => {
     if (!agent) return;
-    loadMessages();
-    pollRef.current = setInterval(loadMessages, 5000);
+    loadInitial();
+    pollRef.current = setInterval(pollNewMessages, 5000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [agent, loadMessages]);
-
-  // Auto-scroll on new messages
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [agent, loadInitial, pollNewMessages]);
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -86,7 +140,7 @@ export default function AgentChatPage() {
       }
       setContent("");
       textareaRef.current?.focus();
-      await loadMessages();
+      await pollNewMessages();
     } catch {
       setSendError("Network error");
     } finally {
@@ -115,7 +169,7 @@ export default function AgentChatPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col">
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-6 h-14 flex items-center gap-4">
@@ -158,8 +212,13 @@ export default function AgentChatPage() {
       </div>
 
       {/* Messages */}
-      <main className="flex-1 overflow-y-auto">
+      <main ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-6 py-6 space-y-4">
+          {loadingMore && (
+            <div className="flex justify-center py-2">
+              <span className="text-xs text-neutral-600 font-mono">Loading...</span>
+            </div>
+          )}
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
               <div className="text-4xl">💬</div>

@@ -171,6 +171,49 @@ class BlogRepository:
         )
         return [r["reaction"] for r in result.mappings()]
 
+    # ── Comments ────────────────────────────────────────────────────
+
+    async def insert_comment(self, post_id: UUID, author_type: str, author_id: UUID, content: str) -> dict:
+        """Insert a new blog comment and return it."""
+        result = await self.db.execute(
+            text("""
+                INSERT INTO blog_comments (post_id, author_type, author_id, content)
+                VALUES (:pid, :atype, :aid, :content)
+                RETURNING id, post_id, author_type, author_id, content, created_at
+            """),
+            {"pid": str(post_id), "atype": author_type, "aid": str(author_id), "content": content},
+        )
+        return dict(result.mappings().first())
+
+    async def get_comments(self, post_id: UUID, limit: int = 100) -> list[dict]:
+        """Get comments for a post, joining with agents/users tables for author_name."""
+        result = await self.db.execute(
+            text("""
+                SELECT c.id, c.post_id, c.author_type, c.author_id, c.content, c.created_at,
+                       COALESCE(a.name, u.name, 'Unknown') AS author_name
+                FROM blog_comments c
+                LEFT JOIN agents a ON c.author_type = 'agent' AND c.author_id = a.id
+                LEFT JOIN users u ON c.author_type = 'user' AND c.author_id = u.id
+                WHERE c.post_id = :pid
+                ORDER BY c.created_at ASC
+                LIMIT :lim
+            """),
+            {"pid": str(post_id), "lim": limit},
+        )
+        return [dict(r) for r in result.mappings()]
+
+    async def delete_comment(self, comment_id: UUID, author_type: str, author_id: UUID) -> bool:
+        """Delete a comment only if the caller is the author. Returns True if deleted."""
+        result = await self.db.execute(
+            text("""
+                DELETE FROM blog_comments
+                WHERE id = :cid AND author_type = :atype AND author_id = :aid
+                RETURNING id
+            """),
+            {"cid": str(comment_id), "atype": author_type, "aid": str(author_id)},
+        )
+        return result.mappings().first() is not None
+
     async def get_user_reactions_batch(self, post_ids: list[str], reactor_type: str, reactor_id: UUID) -> dict[str, list[str]]:
         if not post_ids:
             return {}

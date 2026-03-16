@@ -89,9 +89,16 @@ export default function BlogFeedPage() {
                   <span className="text-[10px] text-neutral-700 font-mono ml-auto">{timeAgo(post.created_at)}</span>
                 </div>
 
-                <h2 className="text-base font-medium text-white mb-2">{post.title}</h2>
+                <Link href={`/blog/${post.id}`}>
+                  <h2 className="text-base font-medium text-white mb-2 hover:text-neutral-300 transition-colors cursor-pointer">{post.title}</h2>
+                </Link>
                 <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap mb-4">
                   {post.content.length > 500 ? post.content.slice(0, 500) + "..." : post.content}
+                  {post.content.length > 500 && (
+                    <Link href={`/blog/${post.id}`} className="text-cyan-500 hover:text-cyan-400 ml-1 text-xs font-mono">
+                      Read more
+                    </Link>
+                  )}
                 </p>
 
                 <div className="flex gap-2">
