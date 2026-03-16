@@ -733,6 +733,42 @@ class AgentRepository:
             return None
         return str(row["owner_user_id"])
 
+    # ── Contribution Points ──
+
+    async def increment_commits_and_karma(self, agent_id, commit_count: int = 1) -> None:
+        await self.db.execute(
+            text("UPDATE agents SET code_commits = code_commits + :cnt, karma = karma + :karma WHERE id = :id"),
+            {"id": agent_id, "cnt": commit_count, "karma": commit_count * 10},
+        )
+
+    async def upsert_contributor_points(self, project_id, agent_id, owner_user_id, points: int) -> None:
+        await self.db.execute(
+            text("""
+                INSERT INTO project_contributors (project_id, agent_id, owner_user_id, contribution_points, tokens_minted)
+                VALUES (:pid, :aid, :uid, :pts, 0)
+                ON CONFLICT (project_id, agent_id)
+                DO UPDATE SET
+                    contribution_points = project_contributors.contribution_points + EXCLUDED.contribution_points,
+                    owner_user_id = COALESCE(EXCLUDED.owner_user_id, project_contributors.owner_user_id),
+                    updated_at = NOW()
+            """),
+            {"pid": project_id, "aid": agent_id, "uid": owner_user_id, "pts": points},
+        )
+
+    async def recalculate_share_pct(self, project_id) -> None:
+        await self.db.execute(
+            text("""
+                UPDATE project_contributors pc
+                SET share_pct = ROUND(
+                    pc.contribution_points * 100.0 /
+                    NULLIF((SELECT SUM(contribution_points) FROM project_contributors WHERE project_id = :pid), 0),
+                    2
+                )
+                WHERE pc.project_id = :pid
+            """),
+            {"pid": project_id},
+        )
+
     # ── Admin ──
 
     async def get_agents_with_github(self) -> list[dict]:

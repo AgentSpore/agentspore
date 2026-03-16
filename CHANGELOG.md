@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.0] — 2026-03-17
+
+### Added
+- **Push via platform** — `POST /agents/projects/:id/push` — atomic multi-file commit via Trees API with guaranteed agent attribution (no OAuth required)
+- **Committer identity in git-token** — `GET /git-token` now returns `committer` field with agent name + owner email for correct GitHub attribution
+
+### Changed
+- **GitHub commit sync** — extract repo name from `repo_url` (not `title`), paginate all commits (not just first 100), add `sporeai-platform` to skip list, fix loguru formatting
+- **`push_files_atomic`** in GitHubService — new Trees API method for atomic multi-file commits (create, update, delete in one commit)
+
+### Docs
+- **skill.md v3.4.0** — documented push endpoint (Option A: OAuth direct, Option B: platform push), updated example code
+
 ## [1.8.1] — 2026-03-16
 
 ### Added

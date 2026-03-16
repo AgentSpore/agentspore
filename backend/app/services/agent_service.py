@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import httpx
 import redis.asyncio as aioredis
 from fastapi import Depends, Header, HTTPException
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -1185,9 +1186,24 @@ class AgentService:
         if project["vcs_provider"] != "github":
             raise HTTPException(status_code=400, detail="Only GitHub projects support git tokens")
 
+        # Get owner email for GitHub credit
+        owner_email = None
+        if agent.get("owner_user_id"):
+            owner_row = await self.db.execute(
+                text("SELECT email FROM users WHERE id = :uid"),
+                {"uid": agent["owner_user_id"]},
+            )
+            owner = owner_row.mappings().first()
+            if owner:
+                owner_email = owner["email"]
+        committer = {
+            "name": agent["name"],
+            "email": owner_email or f"{agent.get('handle', 'agent')}@agents.agentspore.dev",
+        }
+
         oauth_token = await self.ensure_github_token(agent)
         if oauth_token:
-            return {"token": oauth_token, "repo_url": project["repo_url"], "expires_in": 3600}
+            return {"token": oauth_token, "repo_url": project["repo_url"], "committer": committer, "expires_in": 3600}
 
         git = get_git_service()
         repo_name = git._sanitize_repo_name(project["title"])
@@ -1195,7 +1211,109 @@ class AgentService:
         if not scoped:
             raise HTTPException(status_code=503, detail="Failed to generate git credentials")
 
-        return {"token": scoped["token"], "repo_url": project["repo_url"], "expires_in": 3600}
+        return {"token": scoped["token"], "repo_url": project["repo_url"], "committer": committer, "expires_in": 3600}
+
+    async def push_project_files(
+        self,
+        project_id: UUID,
+        agent: dict,
+        files: list[dict],
+        commit_message: str,
+        branch: str = "main",
+    ) -> dict:
+        """Push files to project repo with guaranteed agent attribution."""
+        from app.services.git_service import get_git_service
+
+        project = await self.repo.get_project_basic(
+            project_id, "title, repo_url, vcs_provider, creator_agent_id, team_id",
+        )
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Access control: same as get_project_git_token
+        agent_id = str(agent["id"])
+        is_creator = str(project["creator_agent_id"]) == agent_id
+
+        is_member = False
+        if not is_creator and project.get("team_id"):
+            from app.repositories import hackathon_repo
+            is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
+
+        if not is_creator and not is_member:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the project creator or a team member can push files. "
+                       "Use fork + pull request to contribute to this project.",
+            )
+
+        if project["vcs_provider"] != "github":
+            raise HTTPException(status_code=400, detail="Only GitHub projects support atomic push")
+
+        # Get token: OAuth preferred, fallback to App installation token
+        oauth_token = await self.ensure_github_token(agent)
+        user_token = oauth_token
+        if not user_token:
+            git = get_git_service()
+            repo_name = git._sanitize_repo_name(project["title"])
+            scoped = await git.github.get_scoped_installation_token(repo_name)
+            if not scoped:
+                raise HTTPException(status_code=503, detail="Failed to generate git credentials")
+            user_token = scoped["token"]
+
+        # Build author identity with owner email for GitHub credit
+        owner_email = None
+        if agent.get("owner_user_id"):
+            owner_row = await self.db.execute(
+                text("SELECT email FROM users WHERE id = :uid"),
+                {"uid": agent["owner_user_id"]},
+            )
+            owner = owner_row.mappings().first()
+            if owner:
+                owner_email = owner["email"]
+        author_name = agent["name"]
+        author_email = owner_email or f"{agent.get('handle', 'agent')}@agents.agentspore.dev"
+
+        # Prepare files for GitHub Trees API
+        git = get_git_service()
+        repo_name = git._sanitize_repo_name(project["title"])
+        github_files = [
+            {"path": f["path"], "content": f.get("content"), "delete": f.get("delete", False)}
+            for f in files
+        ]
+
+        result = await git.github.push_files_atomic(
+            repo_name, github_files, commit_message,
+            author_name, author_email, branch, user_token,
+        )
+        if not result:
+            raise HTTPException(status_code=502, detail="Failed to push files to repository")
+
+        # Award contribution points
+        files_changed = result["files_changed"]
+        owner_user_id = await self.repo.get_agent_owner_user_id(agent["id"])
+        await self.repo.increment_commits_and_karma(agent["id"], 1)
+        await self.repo.upsert_contributor_points(project_id, agent["id"], owner_user_id, files_changed * 10)
+        await self.repo.recalculate_share_pct(project_id)
+
+        # Log activity
+        await self.repo.insert_activity(
+            agent["id"], "code_commit",
+            f"Pushed {files_changed} files to {project['title']}/{branch}",
+            project_id=project_id,
+            metadata={"sha": result["sha"], "branch": branch, "files_changed": files_changed},
+        )
+
+        logger.info(
+            "Agent %s pushed %d files to project %s/%s (sha=%s)",
+            agent.get("handle", agent_id), files_changed, project["title"], branch, result["sha"],
+        )
+
+        return {
+            "sha": result["sha"],
+            "files_changed": files_changed,
+            "branch": branch,
+            "commit_message": commit_message,
+        }
 
     async def list_project_issues(self, project_id: UUID, state: str) -> dict:
         """List issues for a project."""

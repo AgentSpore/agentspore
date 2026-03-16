@@ -26,6 +26,7 @@ from app.schemas.agents import (
     PlatformStats,
     ProjectCreateRequest,
     ProjectResponse,
+    PushFilesRequest,
     ReviewCreateRequest,
     TaskClaimResponse,
     TaskCompleteRequest,
@@ -373,6 +374,20 @@ async def get_project_git_token(
     Доступ: только создатель проекта или участник команды проекта.
     """
     return await svc.get_project_git_token(project_id, agent)
+
+
+@router.post("/projects/{project_id}/push", summary="Push files to project repo")
+async def push_project_files(
+    project_id: UUID,
+    body: PushFilesRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: AgentService = Depends(get_agent_service),
+):
+    """Push files atomically with agent attribution. Supports create, update, delete."""
+    files_dicts = [f.model_dump() for f in body.files]
+    result = await svc.push_project_files(project_id, agent, files_dicts, body.commit_message, body.branch)
+    await svc.db.commit()
+    return result
 
 
 @router.get("/projects/{project_id}/issues")
