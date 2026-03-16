@@ -5,23 +5,31 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Agent, API_URL, DirectMessage, timeAgo } from "@/lib/api";
 
-const DM_NAME_KEY = "dm_name";
-
 export default function AgentChatPage() {
   const { id } = useParams<{ id: string }>();
   const [agent, setAgent] = useState<Agent | null>(null);
   const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem(DM_NAME_KEY) ?? "" : ""
-  );
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Check auth
+  useEffect(() => {
+    const token = localStorage.getItem("access_token");
+    if (!token) return;
+    fetch(`${API_URL}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(u => setUserName(u.name))
+      .catch(() => setUserName(null));
+  }, []);
 
   // Load agent
   useEffect(() => {
@@ -46,7 +54,6 @@ export default function AgentChatPage() {
   useEffect(() => {
     if (!agent) return;
     loadMessages();
-    // Poll every 5s
     pollRef.current = setInterval(loadMessages, 5000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [agent, loadMessages]);
@@ -58,16 +65,19 @@ export default function AgentChatPage() {
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!agent?.handle || !name.trim() || !content.trim() || sending) return;
+    if (!agent?.handle || !userName || !content.trim() || sending) return;
     setSending(true);
     setSendError(null);
-    localStorage.setItem(DM_NAME_KEY, name.trim());
 
     try {
+      const token = localStorage.getItem("access_token");
       const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), content: content.trim() }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ name: userName, content: content.trim() }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -173,7 +183,6 @@ export default function AgentChatPage() {
                   </div>
                 )}
                 <div className={`flex gap-3 ${isAgent ? "" : "flex-row-reverse"}`}>
-                  {/* Avatar */}
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                     isAgent ? "bg-cyan-400/10 border border-cyan-400/20" : "bg-violet-400/10 border border-violet-400/20"
                   }`}>
@@ -181,8 +190,6 @@ export default function AgentChatPage() {
                       {isAgent ? (agent.name.slice(0, 2)) : ((msg.from_name || "?").slice(0, 2))}
                     </span>
                   </div>
-
-                  {/* Bubble */}
                   <div className={`max-w-[75%] ${isAgent ? "" : "items-end flex flex-col"}`}>
                     <div className={`flex items-baseline gap-2 mb-0.5 ${isAgent ? "" : "flex-row-reverse"}`}>
                       <span className={`text-xs font-semibold ${isAgent ? "text-cyan-300" : "text-violet-300"}`}>
@@ -210,45 +217,48 @@ export default function AgentChatPage() {
       </main>
 
       {/* Input */}
-      <form onSubmit={handleSend} className="border-t border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm">
-        <div className="max-w-3xl mx-auto px-6 py-3 space-y-2">
-          {sendError && <p className="text-[11px] text-red-400">{sendError}</p>}
-          <div className="flex items-end gap-3">
-            <div className="flex flex-col gap-1.5 flex-1">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-md flex items-center justify-center bg-neutral-800 border border-neutral-700 shrink-0">
-                  <span className="text-[10px] font-bold text-white uppercase">{name ? name.slice(0, 2) : "?"}</span>
+      {userName ? (
+        <form onSubmit={handleSend} className="border-t border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm">
+          <div className="max-w-3xl mx-auto px-6 py-3 space-y-2">
+            {sendError && <p className="text-[11px] text-red-400">{sendError}</p>}
+            <div className="flex items-end gap-3">
+              <div className="flex flex-col gap-1.5 flex-1">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-md flex items-center justify-center bg-violet-400/10 border border-violet-400/20 shrink-0">
+                    <span className="text-[10px] font-bold text-violet-400 uppercase">{userName.slice(0, 2)}</span>
+                  </div>
+                  <span className="text-xs text-neutral-400 font-mono">{userName}</span>
                 </div>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="Your name"
-                  maxLength={50}
-                  className="text-xs bg-transparent text-neutral-300 placeholder-neutral-700 outline-none border-b border-neutral-800/60 focus:border-neutral-700 transition-colors pb-0.5 w-40 font-mono"
+                <textarea
+                  ref={textareaRef}
+                  value={content}
+                  onChange={e => setContent(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Write a message... (Enter to send, Shift+Enter for newline)"
+                  maxLength={2000}
+                  rows={2}
+                  className="w-full bg-neutral-900/50 border border-neutral-800/60 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 outline-none focus:border-neutral-700/80 resize-none transition-colors"
                 />
               </div>
-              <textarea
-                ref={textareaRef}
-                value={content}
-                onChange={e => setContent(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Write a message... (Enter to send, Shift+Enter for newline)"
-                maxLength={2000}
-                rows={2}
-                className="w-full bg-neutral-900/50 border border-neutral-800/60 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 outline-none focus:border-neutral-700/80 resize-none transition-colors"
-              />
+              <button
+                type="submit"
+                disabled={!content.trim() || sending}
+                className="flex-shrink-0 bg-white text-black font-medium font-mono text-xs px-4 py-1.5 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+              >
+                {sending ? "..." : "Send"}
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={!name.trim() || !content.trim() || sending}
-              className="flex-shrink-0 bg-white text-black font-medium font-mono text-xs px-4 py-1.5 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-            >
-              {sending ? "..." : "Send"}
-            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="border-t border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm">
+          <div className="max-w-3xl mx-auto px-6 py-4 text-center">
+            <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors">
+              Sign in to send messages
+            </Link>
           </div>
         </div>
-      </form>
+      )}
     </div>
   );
 }

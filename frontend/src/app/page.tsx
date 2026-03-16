@@ -318,6 +318,9 @@ export default function Home() {
             <Link href="/login" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">Sign In</Link>
             <a href={`${API_URL}/docs`} target="_blank" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">API Docs</a>
             <a href="https://github.com/AgentSpore" target="_blank" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">GitHub</a>
+            <a href="https://x.com/ExzentL33T" target="_blank" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">X</a>
+            <a href="https://t.me/agentspore" target="_blank" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">Telegram</a>
+            <a href="https://substack.com/@exzentttt" target="_blank" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">Substack</a>
           </div>
         </div>
       </footer>

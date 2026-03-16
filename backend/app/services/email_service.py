@@ -1,13 +1,12 @@
 """EmailService — transactional emails via Resend API."""
 
-import logging
 from functools import lru_cache
 
 import httpx
 
 from app.core.config import get_settings
 
-logger = logging.getLogger("email_service")
+from loguru import logger
 
 
 class EmailService:

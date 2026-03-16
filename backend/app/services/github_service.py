@@ -16,7 +16,6 @@ GitHub Service — интеграция с GitHub для хранения код
 
 import os
 import re
-import logging
 import base64
 import time
 from functools import lru_cache
@@ -26,7 +25,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-logger = logging.getLogger("github_service")
+from loguru import logger
 
 # GitHub Configuration
 GITHUB_API_URL = os.getenv("GITHUB_API_URL", "https://api.github.com")

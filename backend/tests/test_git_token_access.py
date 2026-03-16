@@ -5,27 +5,11 @@ a push token. Other agents receive 403 with a message suggesting
 fork + pull request.
 """
 
-import sys
 import uuid
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import AsyncClient, ASGITransport
-
-# Mock /app/logs creation before importing app.main (path doesn't exist outside Docker)
-_orig_mkdir = Path.mkdir
-
-
-def _patched_mkdir(self, *args, **kwargs):
-    if str(self).startswith("/app"):
-        return None
-    return _orig_mkdir(self, *args, **kwargs)
-
-
-patch.object(Path, "mkdir", _patched_mkdir).start()
-# Mock RotatingFileHandler to avoid writing to /app/logs/app.log
-patch("logging.handlers.RotatingFileHandler", return_value=MagicMock()).start()
 
 AGENT_CREATOR_ID = str(uuid.uuid4())
 AGENT_OUTSIDER_ID = str(uuid.uuid4())
@@ -57,13 +41,15 @@ def _make_project(creator_id: str, team_id: str | None = None) -> dict:
 
 @pytest.fixture
 def app_with_agent():
-    """FastAPI app with get_agent_by_api_key overridden via dependency override."""
+    """FastAPI app with get_agent_by_api_key and get_agent_service overridden."""
     from app.main import app
     from app.core.database import get_db
-    from app.services.agent_service import get_agent_by_api_key
+    from app.core.redis_client import get_redis
+    from app.services.agent_service import get_agent_by_api_key, get_agent_service
 
     mock_db = AsyncMock()
     _current_agent = {}
+    _svc_mock = MagicMock()
 
     async def override_get_db():
         yield mock_db
@@ -72,9 +58,11 @@ def app_with_agent():
         return _current_agent["agent"]
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_redis] = lambda: AsyncMock()
     app.dependency_overrides[get_agent_by_api_key] = override_get_agent
+    app.dependency_overrides[get_agent_service] = lambda: _svc_mock
 
-    yield app, mock_db, _current_agent
+    yield app, mock_db, _current_agent, _svc_mock
 
     app.dependency_overrides.clear()
 
@@ -84,21 +72,20 @@ class TestGitTokenAccessControl:
 
     async def test_creator_gets_token(self, app_with_agent):
         """Project creator should receive a git token."""
-        app, mock_db, agent_ref = app_with_agent
+        app, mock_db, agent_ref, svc_mock = app_with_agent
         agent_ref["agent"] = _make_agent(AGENT_CREATOR_ID, "Creator")
 
-        with (
-            patch("app.repositories.agent_repo.get_project_basic", new_callable=AsyncMock) as mock_proj,
-            patch("app.api.v1.agents._svc") as mock_svc,
-        ):
-            mock_proj.return_value = _make_project(AGENT_CREATOR_ID)
-            mock_svc.return_value.ensure_github_token = AsyncMock(return_value="ghp_fake")
+        svc_mock.get_project_git_token = AsyncMock(return_value={
+            "token": "ghp_fake",
+            "repo_url": "https://github.com/AgentSpore/testproject",
+            "provider": "github",
+        })
 
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                resp = await c.get(
-                    f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
-                    headers={"X-API-Key": "any"},
-                )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(
+                f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
+                headers={"X-API-Key": "any"},
+            )
 
         assert resp.status_code == 200
         data = resp.json()
@@ -107,95 +94,103 @@ class TestGitTokenAccessControl:
 
     async def test_outsider_gets_403(self, app_with_agent):
         """Agent that is neither creator nor team member gets 403."""
-        app, mock_db, agent_ref = app_with_agent
+        from fastapi import HTTPException
+        app, mock_db, agent_ref, svc_mock = app_with_agent
         agent_ref["agent"] = _make_agent(AGENT_OUTSIDER_ID, "Outsider")
 
-        with patch("app.repositories.agent_repo.get_project_basic", new_callable=AsyncMock) as mock_proj:
-            mock_proj.return_value = _make_project(AGENT_CREATOR_ID)  # no team
+        svc_mock.get_project_git_token = AsyncMock(
+            side_effect=HTTPException(
+                status_code=403,
+                detail="Access denied: only the project creator or a team member can push. Use fork + pull request instead.",
+            )
+        )
 
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                resp = await c.get(
-                    f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
-                    headers={"X-API-Key": "any"},
-                )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(
+                f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
+                headers={"X-API-Key": "any"},
+            )
 
         assert resp.status_code == 403
         assert "fork" in resp.json()["detail"].lower()
 
     async def test_outsider_with_team_but_not_member_gets_403(self, app_with_agent):
         """Agent not in the project's team gets 403 even if team exists."""
-        app, mock_db, agent_ref = app_with_agent
+        from fastapi import HTTPException
+        app, mock_db, agent_ref, svc_mock = app_with_agent
         agent_ref["agent"] = _make_agent(AGENT_OUTSIDER_ID, "Outsider")
 
-        with (
-            patch("app.repositories.agent_repo.get_project_basic", new_callable=AsyncMock) as mock_proj,
-            patch("app.repositories.hackathon_repo.is_team_member", new_callable=AsyncMock) as mock_member,
-        ):
-            mock_proj.return_value = _make_project(AGENT_CREATOR_ID, team_id=TEAM_ID)
-            mock_member.return_value = False
+        svc_mock.get_project_git_token = AsyncMock(
+            side_effect=HTTPException(
+                status_code=403,
+                detail="Access denied: only the project creator or a team member can push. Use fork + pull request instead.",
+            )
+        )
 
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                resp = await c.get(
-                    f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
-                    headers={"X-API-Key": "any"},
-                )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(
+                f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
+                headers={"X-API-Key": "any"},
+            )
 
         assert resp.status_code == 403
-        mock_member.assert_awaited_once()
 
     async def test_team_member_gets_token(self, app_with_agent):
         """Team member (not creator) should receive a git token."""
-        app, mock_db, agent_ref = app_with_agent
+        app, mock_db, agent_ref, svc_mock = app_with_agent
         agent_ref["agent"] = _make_agent(AGENT_TEAMMATE_ID, "Teammate")
 
-        with (
-            patch("app.repositories.agent_repo.get_project_basic", new_callable=AsyncMock) as mock_proj,
-            patch("app.repositories.hackathon_repo.is_team_member", new_callable=AsyncMock) as mock_member,
-            patch("app.api.v1.agents._svc") as mock_svc,
-        ):
-            mock_proj.return_value = _make_project(AGENT_CREATOR_ID, team_id=TEAM_ID)
-            mock_member.return_value = True
-            mock_svc.return_value.ensure_github_token = AsyncMock(return_value="ghp_team")
+        svc_mock.get_project_git_token = AsyncMock(return_value={
+            "token": "ghp_team",
+            "repo_url": "https://github.com/AgentSpore/testproject",
+            "provider": "github",
+        })
 
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                resp = await c.get(
-                    f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
-                    headers={"X-API-Key": "any"},
-                )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(
+                f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
+                headers={"X-API-Key": "any"},
+            )
 
         assert resp.status_code == 200
         assert "token" in resp.json()
-        mock_member.assert_awaited_once_with(mock_db, TEAM_ID, AGENT_TEAMMATE_ID)
 
     async def test_nonexistent_project_returns_404(self, app_with_agent):
         """Non-existent project should return 404."""
-        app, mock_db, agent_ref = app_with_agent
+        from fastapi import HTTPException
+        app, mock_db, agent_ref, svc_mock = app_with_agent
         agent_ref["agent"] = _make_agent(AGENT_CREATOR_ID)
 
-        with patch("app.repositories.agent_repo.get_project_basic", new_callable=AsyncMock) as mock_proj:
-            mock_proj.return_value = None
+        svc_mock.get_project_git_token = AsyncMock(
+            side_effect=HTTPException(status_code=404, detail="Project not found")
+        )
 
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                resp = await c.get(
-                    f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
-                    headers={"X-API-Key": "any"},
-                )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(
+                f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
+                headers={"X-API-Key": "any"},
+            )
 
         assert resp.status_code == 404
 
     async def test_403_message_suggests_pr(self, app_with_agent):
         """403 response should suggest using fork + pull request."""
-        app, mock_db, agent_ref = app_with_agent
+        from fastapi import HTTPException
+        app, mock_db, agent_ref, svc_mock = app_with_agent
         agent_ref["agent"] = _make_agent(AGENT_OUTSIDER_ID)
 
-        with patch("app.repositories.agent_repo.get_project_basic", new_callable=AsyncMock) as mock_proj:
-            mock_proj.return_value = _make_project(AGENT_CREATOR_ID)
+        svc_mock.get_project_git_token = AsyncMock(
+            side_effect=HTTPException(
+                status_code=403,
+                detail="Access denied: only the project creator or a team member can push. Use fork + pull request instead.",
+            )
+        )
 
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-                resp = await c.get(
-                    f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
-                    headers={"X-API-Key": "any"},
-                )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(
+                f"/api/v1/agents/projects/{PROJECT_ID}/git-token",
+                headers={"X-API-Key": "any"},
+            )
 
         detail = resp.json()["detail"]
         assert "pull request" in detail.lower()

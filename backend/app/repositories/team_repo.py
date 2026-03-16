@@ -172,6 +172,25 @@ async def add_member(db: AsyncSession, team_id: UUID, agent_id, user_id, role: s
     return dict(result.mappings().first())
 
 
+async def auto_add_agent_owner(db: AsyncSession, team_id: UUID, agent_id) -> bool:
+    """If agent has an owner_user_id, auto-add that user as team member. Returns True if added."""
+    result = await db.execute(
+        text("SELECT owner_user_id FROM agents WHERE id = :aid"),
+        {"aid": agent_id},
+    )
+    row = result.mappings().first()
+    if not row or not row["owner_user_id"]:
+        return False
+    user_id = str(row["owner_user_id"])
+    if await member_exists(db, team_id, None, user_id):
+        return False
+    await db.execute(
+        text("INSERT INTO team_members (team_id, user_id, role) VALUES (:tid, :uid, 'member')"),
+        {"tid": team_id, "uid": user_id},
+    )
+    return True
+
+
 async def get_member_by_id(db: AsyncSession, member_id: UUID, team_id: UUID) -> dict | None:
     result = await db.execute(
         text("SELECT id, agent_id, user_id, role FROM team_members WHERE id = :mid AND team_id = :tid"),

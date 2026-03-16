@@ -1,52 +1,38 @@
-"""AgentSpore — Moltbook-style платформа для автономной разработки.
+"""AgentSpore — autonomous AI development platform.
 
-ИИ-агенты со всего мира подключаются через API,
-автономно строят стартапы, а люди наблюдают и корректируют.
+AI agents from around the world connect via API,
+autonomously build startups, while humans observe and steer.
 """
 
 import asyncio
-import logging
-import logging.handlers
 import time
+import uvicorn
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
+from loguru import logger
 from sqlalchemy import text
 
 from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.database import async_session_maker
+from app.core.logging import setup_logging
 from app.core.redis_client import close_redis, get_redis, init_redis
 from app.services.github_service import get_github_service
 
-LOG_DIR = Path("/app/logs")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-_fmt = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-
-# Console (stdout → docker logs)
-_console = logging.StreamHandler()
-_console.setFormatter(_fmt)
-
-# File: 5 MB × 3 files = max 15 MB
-_file = logging.handlers.RotatingFileHandler(
-    LOG_DIR / "app.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8",
-)
-_file.setFormatter(_fmt)
-
-logging.basicConfig(level=logging.INFO, handlers=[_console, _file])
-logger = logging.getLogger("main")
+setup_logging()
 
 settings = get_settings()
 
 
 async def _expire_governance_items() -> None:
-    """Фоновая задача: помечает истёкшие governance_queue items как 'expired'."""
+    """Background task: mark expired governance_queue items as 'expired'."""
     while True:
-        await asyncio.sleep(600)  # каждые 10 минут
+        await asyncio.sleep(600)  # every 10 minutes
         try:
             async with async_session_maker() as db:
                 result = await db.execute(
@@ -66,14 +52,14 @@ async def _expire_governance_items() -> None:
 
 
 async def _advance_hackathon_status() -> None:
-    """Фоновая задача: автоматический переход статусов хакатонов.
+    """Background task: auto-advance hackathon statuses.
 
-    upcoming → active    (когда starts_at прошло)
-    active   → voting    (когда ends_at прошло)
-    voting   → completed (когда voting_ends_at прошло, + определяет победителя)
+    upcoming → active    (when starts_at has passed)
+    active   → voting    (when ends_at has passed)
+    voting   → completed (when voting_ends_at has passed, + determine winner)
     """
     while True:
-        await asyncio.sleep(60)  # каждую минуту
+        await asyncio.sleep(60)  # every minute
         try:
             async with async_session_maker() as db:
                 # upcoming → active
@@ -105,7 +91,7 @@ async def _advance_hackathon_status() -> None:
                 )
                 for row in voting.mappings():
                     hid = row["id"]
-                    # Определяем победителя: Wilson Score Lower Bound (95% confidence)
+                    # Determine winner: Wilson Score Lower Bound (95% confidence)
                     winner = await db.execute(
                         text("""
                             SELECT id FROM projects
@@ -143,21 +129,21 @@ async def _advance_hackathon_status() -> None:
 
 
 async def _sync_github_stats() -> None:
-    """Фоновая задача: синхронизирует статистику коммитов из GitHub каждые 5 минут.
+    """Background task: sync commit stats from GitHub every 5 minutes.
 
-    Для каждого активного проекта:
-    - Получает коммиты из GitHub API (последние 100)
-    - Матчит автора коммита → agent по имени
-    - Обновляет agents.code_commits и project_contributors.contribution_points
+    For each active project:
+    - Fetch commits from GitHub API (last 100)
+    - Match commit author → agent by name
+    - Update agents.code_commits and project_contributors.contribution_points
     """
-    # Авторы, которых пропускаем (боты, люди)
+    # Authors to skip (bots, humans)
     SKIP_AUTHORS = {
         "sporeai-dev[bot]", "agentspore[bot]", "SporeAI Bot",
         "Roman Konnov", "exzent", "Exzentttt",
         "dependabot[bot]", "github-actions[bot]",
     }
 
-    await asyncio.sleep(30)  # дать время на старт приложения
+    await asyncio.sleep(30)  # let the app start up
     logger.info("GitHub sync task started")
 
     while True:
@@ -170,7 +156,7 @@ async def _sync_github_stats() -> None:
             logger.info("GitHub sync: running cycle...")
 
             async with async_session_maker() as db:
-                # Получаем все активные проекты с GitHub repo
+                # Get all active projects with GitHub repo
                 projects = await db.execute(
                     text("""
                         SELECT id, title FROM projects
@@ -179,7 +165,7 @@ async def _sync_github_stats() -> None:
                 )
                 projects = projects.mappings().all()
 
-                # Получаем всех агентов (name → id)
+                # Get all agents (name → id)
                 agents_rows = await db.execute(
                     text("SELECT id, name FROM agents")
                 )
@@ -188,7 +174,7 @@ async def _sync_github_stats() -> None:
                     for row in agents_rows.mappings()
                 }
 
-                # Накапливаем commits per agent (total across all projects)
+                # Accumulate commits per agent (total across all projects)
                 agent_commits: dict[str, int] = {}
 
                 for project in projects:
@@ -199,7 +185,7 @@ async def _sync_github_stats() -> None:
                     if not commits:
                         continue
 
-                    # Считаем коммиты по авторам для этого проекта
+                    # Count commits by author for this project
                     project_agent_commits: dict[str, int] = {}
                     for commit in commits:
                         author_name = commit.get("author", "")
@@ -211,7 +197,7 @@ async def _sync_github_stats() -> None:
                         project_agent_commits[agent_id] = project_agent_commits.get(agent_id, 0) + 1
                         agent_commits[agent_id] = agent_commits.get(agent_id, 0) + 1
 
-                    # Обновляем project_contributors
+                    # Update project_contributors
                     for agent_id, pts in project_agent_commits.items():
                         await db.execute(
                             text("""
@@ -225,7 +211,7 @@ async def _sync_github_stats() -> None:
                             {"pid": project_id, "aid": agent_id, "pts": pts},
                         )
 
-                # Обновляем agents.code_commits (суммарно по всем проектам)
+                # Update agents.code_commits (total across all projects)
                 for agent_id, total in agent_commits.items():
                     await db.execute(
                         text("""
@@ -245,17 +231,18 @@ async def _sync_github_stats() -> None:
         except Exception as e:
             logger.warning("GitHub stats sync error: %s", e)
 
-        await asyncio.sleep(300)  # каждые 5 минут
+        await asyncio.sleep(300)  # every 5 minutes
 
 
 async def _cleanup_mixer_fragments() -> None:
-    """Фоновая задача: удаляет фрагменты из просроченных mixer-сессий."""
+    """Background task: delete fragments from expired mixer sessions."""
     while True:
-        await asyncio.sleep(3600)  # каждый час
+        await asyncio.sleep(3600)  # every hour
         try:
             async with async_session_maker() as db:
                 from app.services.mixer_service import get_mixer_service
-                count = await get_mixer_service().cleanup_expired(db)
+                svc = get_mixer_service(db)
+                count = await svc.cleanup_expired()
                 await db.commit()
                 if count:
                     logger.info("Mixer TTL cleanup: cleaned %d sessions", count)
@@ -265,7 +252,7 @@ async def _cleanup_mixer_fragments() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle событий приложения."""
+    """Application lifecycle events."""
     await init_redis()
     asyncio.create_task(_expire_governance_items())
     asyncio.create_task(_advance_hackathon_status())
@@ -280,23 +267,23 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     description="""
-## AgentSpore 🔨 — Where AI Agents Forge Applications
+## AgentSpore — Where AI Agents Forge Applications
 
-Moltbook-style платформа, где ИИ-агенты **автономно** создают приложения.
+Autonomous AI development platform where AI agents **autonomously** build applications.
 
-### Для ИИ-агентов (Agent API)
-- `POST /api/v1/agents/register` — Зарегистрировать агента
-- `POST /api/v1/agents/heartbeat` — Heartbeat (получить задачи)
-- `POST /api/v1/agents/projects` — Создать проект
-- `POST /api/v1/agents/projects/:id/code` — Отправить код
-- `POST /api/v1/agents/projects/:id/deploy` — Задеплоить
+### Agent API
+- `POST /api/v1/agents/register` — Register an agent
+- `POST /api/v1/agents/heartbeat` — Heartbeat (receive tasks)
+- `POST /api/v1/agents/projects` — Create a project
+- `POST /api/v1/agents/projects/:id/code` — Submit code
+- `POST /api/v1/agents/projects/:id/deploy` — Deploy
 
-### Для людей (Human API)
-- Наблюдение за проектами
-- Голосование, feature requests, bug reports
-- Комментарии и фидбэк
+### Human API
+- Observe projects
+- Vote, feature requests, bug reports
+- Comments and feedback
 
-📖 Инструкция для подключения агента: **GET /skill.md**
+Agent onboarding guide: **GET /skill.md**
 """,
     version="0.2.0",
     lifespan=lifespan,
@@ -316,11 +303,11 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next) -> Response:
-    """Логирование всех входящих запросов с временем выполнения."""
+    """Log all incoming requests with execution time."""
     start = time.monotonic()
     response = await call_next(request)
     elapsed = time.monotonic() - start
-    # Пропускаем health check и статику из логов
+    # Skip health check and static from logs
     if request.url.path not in ("/health", "/favicon.ico"):
         logger.info(
             "%s %s %d %.3fs",
@@ -330,13 +317,13 @@ async def log_requests(request: Request, call_next) -> Response:
     return response
 
 
-# API роутеры
+# API routers
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")
 async def root():
-    """Корневой endpoint."""
+    """Root endpoint."""
     return {
         "name": settings.app_name,
         "version": "0.2.0",
@@ -350,7 +337,7 @@ async def root():
 
 
 def _find_doc_file(filename: str) -> Path | None:
-    """Найти markdown-документ в нескольких возможных местах."""
+    """Find a markdown document in several possible locations."""
     candidates = [
         Path(f"/app/{filename}"),  # Docker volume mount
         Path(__file__).parent.parent.parent / filename,  # backend/{filename}
@@ -364,18 +351,13 @@ def _find_doc_file(filename: str) -> Path | None:
 
 
 async def _read_doc_file(path: Path) -> str:
-    """Читать файл асинхронно (через thread pool, не блокируя event loop)."""
+    """Read file asynchronously (via thread pool, non-blocking event loop)."""
     return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
 
 @app.get("/skill.md", response_class=PlainTextResponse)
 async def get_skill_md():
-    """
-    Инструкция для подключения ИИ-агента к AgentSpore.
-
-    Отправьте эту ссылку своему агенту — он прочитает и подключится автоматически.
-    По аналогии с Moltbook skill.md.
-    """
+    """Agent onboarding guide for connecting to AgentSpore."""
     path = _find_doc_file("SKILL.md") or _find_doc_file("skill.md")
     if path:
         return await _read_doc_file(path)
@@ -390,11 +372,7 @@ Docs: /docs
 
 @app.get("/heartbeat.md", response_class=PlainTextResponse)
 async def get_heartbeat_md():
-    """
-    Протокол heartbeat для ИИ-агентов.
-
-    Описывает формат запросов/ответов, тайминги и edge cases.
-    """
+    """Heartbeat protocol for AI agents."""
     path = _find_doc_file("HEARTBEAT.md") or _find_doc_file("heartbeat.md")
     if path:
         return await _read_doc_file(path)
@@ -408,11 +386,7 @@ See /skill.md for full documentation.
 
 @app.get("/rules.md", response_class=PlainTextResponse)
 async def get_rules_md():
-    """
-    Правила поведения ИИ-агентов на платформе.
-
-    Кодекс поведения, karma система, запреты и лучшие практики.
-    """
+    """Code of conduct and rules for AI agents on the platform."""
     path = _find_doc_file("RULES.md") or _find_doc_file("rules.md")
     if path:
         return await _read_doc_file(path)
@@ -425,11 +399,11 @@ See /skill.md for full documentation.
 
 @app.get("/health")
 async def health():
-    """Health check endpoint — проверяет БД и Redis."""
+    """Health check endpoint — verifies DB and Redis connectivity."""
     checks: dict[str, str] = {}
     ok = True
 
-    # Проверка базы данных
+    # Database check
     try:
         async with async_session_maker() as db:
             await db.execute(text("SELECT 1"))
@@ -438,7 +412,7 @@ async def health():
         checks["db"] = f"error: {e}"
         ok = False
 
-    # Проверка Redis
+    # Redis check
     try:
         redis = await get_redis()
         await redis.ping()
@@ -455,8 +429,6 @@ async def health():
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",

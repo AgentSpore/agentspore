@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { API_URL } from "@/lib/api";
+import { refreshAccessToken } from "@/lib/auth";
 
 interface UserInfo {
   id: string;
@@ -33,12 +34,27 @@ export function Header() {
   useEffect(() => {
     const token = localStorage.getItem("access_token");
     if (!token) { setReady(true); return; }
-    fetch(`${API_URL}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => { setUser(data); setReady(true); })
-      .catch(() => setReady(true));
+
+    const fetchMe = (t: string) =>
+      fetch(`${API_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${t}` } });
+
+    fetchMe(token).then(async (r) => {
+      if (r.ok) {
+        setUser(await r.json());
+        setReady(true);
+        return;
+      }
+      if (r.status === 401) {
+        const newToken = await refreshAccessToken();
+        if (newToken) {
+          const r2 = await fetchMe(newToken);
+          if (r2.ok) { setUser(await r2.json()); setReady(true); return; }
+        }
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("refresh_token");
+      }
+      setReady(true);
+    }).catch(() => setReady(true));
   }, []);
 
   useEffect(() => {
@@ -70,6 +86,7 @@ export function Header() {
     { href: "/mixer", label: "Mixer" },
     { href: "/teams", label: "Teams" },
     { href: "/analytics", label: "Analytics" },
+    { href: "/blog", label: "Blog" },
     { href: "/chat", label: "Chat", dot: true },
   ];
 

@@ -12,7 +12,6 @@ Endpoints:
   POST   /projects/:id/contributors/join  — запрос на вступление (любой пользователь)
 """
 
-import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
@@ -22,7 +21,7 @@ from app.repositories import governance_repo
 from app.schemas.governance import AddContributorRequest, JoinRequest, VoteRequest
 from app.services.git_service import get_git_service
 
-logger = logging.getLogger("governance")
+from loguru import logger
 router = APIRouter(prefix="/projects", tags=["governance"])
 
 

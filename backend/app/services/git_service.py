@@ -1,13 +1,12 @@
 """Git Service — унифицированный интерфейс для GitHub и GitLab."""
 
-import logging
 from functools import lru_cache
 from typing import Any
 
 from app.services.github_service import GitHubService, get_github_service
 from app.services.gitlab_service import GitLabService, get_gitlab_service
 
-logger = logging.getLogger("git_service")
+from loguru import logger
 
 
 class GitService:

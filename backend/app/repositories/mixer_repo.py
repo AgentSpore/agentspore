@@ -1,23 +1,29 @@
 """MixerRepository — data access layer for mixer sessions, fragments, chunks, messages, audit."""
 
-from functools import lru_cache
+import json
 
+from fastapi import Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
 
 
 class MixerRepository:
     """All database operations for the Privacy Mixer feature."""
 
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
     # ── Sessions ────────────────────────────────────────────────────────
 
     async def create_session(
-        self, db: AsyncSession, user_id: str, title: str,
+        self, user_id: str, title: str,
         description: str | None, original_text: str,
         passphrase_salt: bytes, passphrase_hash: str,
         encryption_iv: bytes, fragment_ttl_hours: int,
     ) -> dict:
-        result = await db.execute(
+        result = await self.db.execute(
             text("""
                 INSERT INTO mixer_sessions
                     (user_id, title, description, original_text,
@@ -35,8 +41,8 @@ class MixerRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_session_by_id(self, db: AsyncSession, session_id: str) -> dict | None:
-        result = await db.execute(
+    async def get_session_by_id(self, session_id: str) -> dict | None:
+        result = await self.db.execute(
             text("""
                 SELECT ms.*, u.name AS user_name,
                        (SELECT COUNT(*) FROM mixer_fragments WHERE session_id = ms.id) AS fragment_count,
@@ -52,8 +58,8 @@ class MixerRepository:
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def list_user_sessions(self, db: AsyncSession, user_id: str, limit: int = 50) -> list[dict]:
-        result = await db.execute(
+    async def list_user_sessions(self, user_id: str, limit: int = 50) -> list[dict]:
+        result = await self.db.execute(
             text("""
                 SELECT ms.id, ms.title, ms.description, ms.status,
                        ms.fragment_ttl_hours, ms.created_at, ms.started_at,
@@ -71,23 +77,23 @@ class MixerRepository:
         )
         return [dict(row) for row in result.mappings()]
 
-    async def update_session(self, db: AsyncSession, session_id: str, **fields) -> dict | None:
+    async def update_session(self, session_id: str, **fields) -> dict | None:
         if not fields:
-            return await self.get_session_by_id(db, session_id)
+            return await self.get_session_by_id(session_id)
         set_parts = []
         params: dict = {"id": session_id}
         for key, val in fields.items():
             set_parts.append(f"{key} = :{key}")
             params[key] = val
         set_clause = ", ".join(set_parts)
-        result = await db.execute(
+        result = await self.db.execute(
             text(f"UPDATE mixer_sessions SET {set_clause} WHERE id = :id RETURNING id, status, updated_at"),
             params,
         )
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def update_session_status(self, db: AsyncSession, session_id: str, status: str) -> dict | None:
+    async def update_session_status(self, session_id: str, status: str) -> dict | None:
         set_parts = ["status = :status"]
         params: dict = {"id": session_id, "status": status}
 
@@ -100,15 +106,15 @@ class MixerRepository:
             set_parts.append("cancelled_at = NOW()")
 
         set_clause = ", ".join(set_parts)
-        result = await db.execute(
+        result = await self.db.execute(
             text(f"UPDATE mixer_sessions SET {set_clause} WHERE id = :id RETURNING id, status"),
             params,
         )
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def delete_session(self, db: AsyncSession, session_id: str) -> bool:
-        result = await db.execute(
+    async def delete_session(self, session_id: str) -> bool:
+        result = await self.db.execute(
             text("DELETE FROM mixer_sessions WHERE id = :id AND status = 'draft'"),
             {"id": session_id},
         )
@@ -117,10 +123,10 @@ class MixerRepository:
     # ── Fragments ───────────────────────────────────────────────────────
 
     async def create_fragment(
-        self, db: AsyncSession, session_id: str,
+        self, session_id: str,
         placeholder: str, encrypted_value: bytes, category: str | None = None,
     ) -> dict:
-        result = await db.execute(
+        result = await self.db.execute(
             text("""
                 INSERT INTO mixer_fragments (session_id, placeholder, encrypted_value, category)
                 VALUES (:session_id, :placeholder, :encrypted_value, :category)
@@ -133,8 +139,8 @@ class MixerRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_fragments(self, db: AsyncSession, session_id: str) -> list[dict]:
-        result = await db.execute(
+    async def get_fragments(self, session_id: str) -> list[dict]:
+        result = await self.db.execute(
             text("""
                 SELECT id, session_id, placeholder, encrypted_value, category, created_at
                 FROM mixer_fragments
@@ -145,9 +151,9 @@ class MixerRepository:
         )
         return [dict(row) for row in result.mappings()]
 
-    async def get_fragment_placeholders(self, db: AsyncSession, session_id: str) -> list[dict]:
+    async def get_fragment_placeholders(self, session_id: str) -> list[dict]:
         """Return placeholders and categories only (no encrypted values)."""
-        result = await db.execute(
+        result = await self.db.execute(
             text("""
                 SELECT placeholder, category
                 FROM mixer_fragments
@@ -158,8 +164,8 @@ class MixerRepository:
         )
         return [dict(row) for row in result.mappings()]
 
-    async def delete_fragments(self, db: AsyncSession, session_id: str) -> int:
-        result = await db.execute(
+    async def delete_fragments(self, session_id: str) -> int:
+        result = await self.db.execute(
             text("DELETE FROM mixer_fragments WHERE session_id = :session_id"),
             {"session_id": session_id},
         )
@@ -168,11 +174,11 @@ class MixerRepository:
     # ── Chunks ──────────────────────────────────────────────────────────
 
     async def create_chunk(
-        self, db: AsyncSession, session_id: str, agent_id: str,
+        self, session_id: str, agent_id: str,
         title: str, instructions: str | None = None,
     ) -> dict:
-        next_order = await self._next_chunk_order(db, session_id)
-        result = await db.execute(
+        next_order = await self._next_chunk_order(session_id)
+        result = await self.db.execute(
             text("""
                 INSERT INTO mixer_chunks (session_id, agent_id, chunk_order, title, instructions)
                 VALUES (:session_id, :agent_id, :chunk_order, :title, :instructions)
@@ -186,8 +192,8 @@ class MixerRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_chunk_by_id(self, db: AsyncSession, chunk_id: str) -> dict | None:
-        result = await db.execute(
+    async def get_chunk_by_id(self, chunk_id: str) -> dict | None:
+        result = await self.db.execute(
             text("""
                 SELECT mc.*, a.name AS agent_name, a.handle AS agent_handle,
                        a.specialization, a.model_provider
@@ -200,8 +206,8 @@ class MixerRepository:
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def get_session_chunks(self, db: AsyncSession, session_id: str) -> list[dict]:
-        result = await db.execute(
+    async def get_session_chunks(self, session_id: str) -> list[dict]:
+        result = await self.db.execute(
             text("""
                 SELECT mc.*, a.name AS agent_name, a.handle AS agent_handle,
                        a.specialization, a.model_provider
@@ -214,23 +220,23 @@ class MixerRepository:
         )
         return [dict(row) for row in result.mappings()]
 
-    async def update_chunk(self, db: AsyncSession, chunk_id: str, **fields) -> dict | None:
+    async def update_chunk(self, chunk_id: str, **fields) -> dict | None:
         if not fields:
-            return await self.get_chunk_by_id(db, chunk_id)
+            return await self.get_chunk_by_id(chunk_id)
         set_parts = []
         params: dict = {"id": chunk_id}
         for key, val in fields.items():
             set_parts.append(f"{key} = :{key}")
             params[key] = val
         set_clause = ", ".join(set_parts)
-        result = await db.execute(
+        result = await self.db.execute(
             text(f"UPDATE mixer_chunks SET {set_clause} WHERE id = :id RETURNING id, status, updated_at"),
             params,
         )
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def update_chunk_status(self, db: AsyncSession, chunk_id: str, status: str, **extra) -> dict | None:
+    async def update_chunk_status(self, chunk_id: str, status: str, **extra) -> dict | None:
         set_parts = ["status = :status"]
         params: dict = {"id": chunk_id, "status": status}
 
@@ -244,15 +250,15 @@ class MixerRepository:
             params[key] = val
 
         set_clause = ", ".join(set_parts)
-        result = await db.execute(
+        result = await self.db.execute(
             text(f"UPDATE mixer_chunks SET {set_clause} WHERE id = :id RETURNING id, status"),
             params,
         )
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def delete_chunk(self, db: AsyncSession, chunk_id: str) -> bool:
-        result = await db.execute(
+    async def delete_chunk(self, chunk_id: str) -> bool:
+        result = await self.db.execute(
             text("""
                 DELETE FROM mixer_chunks
                 WHERE id = :id
@@ -262,8 +268,8 @@ class MixerRepository:
         )
         return result.rowcount > 0
 
-    async def get_agent_ready_chunks(self, db: AsyncSession, agent_id: str) -> list[dict]:
-        result = await db.execute(
+    async def get_agent_ready_chunks(self, agent_id: str) -> list[dict]:
+        result = await self.db.execute(
             text("""
                 SELECT mc.id, mc.session_id, mc.title, mc.instructions,
                        mc.status, mc.chunk_order,
@@ -280,10 +286,10 @@ class MixerRepository:
     # ── Messages ────────────────────────────────────────────────────────
 
     async def insert_message(
-        self, db: AsyncSession, chunk_id: str, sender_type: str, sender_id: str,
+        self, chunk_id: str, sender_type: str, sender_id: str,
         content: str, message_type: str = "text",
     ) -> dict:
-        result = await db.execute(
+        result = await self.db.execute(
             text("""
                 INSERT INTO mixer_chunk_messages
                     (chunk_id, sender_type, sender_id, content, message_type)
@@ -298,8 +304,8 @@ class MixerRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_messages(self, db: AsyncSession, chunk_id: str, limit: int = 200) -> list[dict]:
-        result = await db.execute(
+    async def get_messages(self, chunk_id: str, limit: int = 200) -> list[dict]:
+        result = await self.db.execute(
             text("""
                 SELECT m.id, m.sender_type, m.sender_id, m.content,
                        m.message_type, m.created_at,
@@ -333,13 +339,12 @@ class MixerRepository:
     # ── Audit Log ───────────────────────────────────────────────────────
 
     async def log_audit(
-        self, db: AsyncSession, session_id: str,
+        self, session_id: str,
         actor_type: str, actor_id: str, action: str,
         target_type: str | None = None, target_id: str | None = None,
         details: dict | None = None, ip_address: str | None = None,
     ) -> dict:
-        import json
-        result = await db.execute(
+        result = await self.db.execute(
             text("""
                 INSERT INTO mixer_audit_log
                     (session_id, actor_type, actor_id, action, target_type, target_id, details, ip_address)
@@ -357,8 +362,8 @@ class MixerRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_audit_log(self, db: AsyncSession, session_id: str, limit: int = 500) -> list[dict]:
-        result = await db.execute(
+    async def get_audit_log(self, session_id: str, limit: int = 500) -> list[dict]:
+        result = await self.db.execute(
             text("""
                 SELECT id, actor_type, actor_id, action, target_type, target_id,
                        details, ip_address, created_at
@@ -386,8 +391,8 @@ class MixerRepository:
 
     # ── Cleanup ─────────────────────────────────────────────────────────
 
-    async def get_expired_sessions(self, db: AsyncSession) -> list[dict]:
-        result = await db.execute(
+    async def get_expired_sessions(self) -> list[dict]:
+        result = await self.db.execute(
             text("""
                 SELECT id FROM mixer_sessions
                 WHERE expires_at IS NOT NULL AND expires_at < NOW()
@@ -396,13 +401,13 @@ class MixerRepository:
         )
         return [dict(row) for row in result.mappings()]
 
-    async def cleanup_expired_fragments(self, db: AsyncSession, session_id: str) -> int:
-        result = await db.execute(
+    async def cleanup_expired_fragments(self, session_id: str) -> int:
+        result = await self.db.execute(
             text("DELETE FROM mixer_fragments WHERE session_id = :session_id"),
             {"session_id": session_id},
         )
         # Also clear assembled_output
-        await db.execute(
+        await self.db.execute(
             text("UPDATE mixer_sessions SET assembled_output = NULL WHERE id = :id"),
             {"id": session_id},
         )
@@ -410,14 +415,13 @@ class MixerRepository:
 
     # ── Helpers ─────────────────────────────────────────────────────────
 
-    async def _next_chunk_order(self, db: AsyncSession, session_id: str) -> int:
-        result = await db.execute(
+    async def _next_chunk_order(self, session_id: str) -> int:
+        result = await self.db.execute(
             text("SELECT COALESCE(MAX(chunk_order), -1) + 1 AS next_order FROM mixer_chunks WHERE session_id = :sid"),
             {"sid": session_id},
         )
         return result.mappings().first()["next_order"]
 
 
-@lru_cache
-def get_mixer_repo() -> MixerRepository:
-    return MixerRepository()
+def get_mixer_repo(db: AsyncSession = Depends(get_db)) -> MixerRepository:
+    return MixerRepository(db)

@@ -1,34 +1,38 @@
 """ChatRepository — data access layer for agent_messages, agent_dms."""
 
-from functools import lru_cache
-
+from fastapi import Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
 
 
 class ChatRepository:
     """All database operations for chat messages and DMs."""
 
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
     # ── Auth helpers ────────────────────────────────────────────────
 
-    async def get_agent_by_api_key_hash(self, db: AsyncSession, key_hash: str) -> dict | None:
-        result = await db.execute(
+    async def get_agent_by_api_key_hash(self, key_hash: str) -> dict | None:
+        result = await self.db.execute(
             text("SELECT id, name, specialization FROM agents WHERE api_key_hash = :h AND is_active = TRUE"),
             {"h": key_hash},
         )
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def get_agent_id_by_handle(self, db: AsyncSession, handle: str) -> str | None:
-        result = await db.execute(
+    async def get_agent_id_by_handle(self, handle: str) -> str | None:
+        result = await self.db.execute(
             text("SELECT id FROM agents WHERE handle = :handle AND is_active = TRUE"),
             {"handle": handle},
         )
         row = result.mappings().first()
         return str(row["id"]) if row else None
 
-    async def get_agent_by_handle(self, db: AsyncSession, handle: str) -> dict | None:
-        result = await db.execute(
+    async def get_agent_by_handle(self, handle: str) -> dict | None:
+        result = await self.db.execute(
             text("SELECT id, name FROM agents WHERE handle = :handle AND is_active = TRUE"),
             {"handle": handle},
         )
@@ -37,13 +41,13 @@ class ChatRepository:
 
     # ── Messages ────────────────────────────────────────────────────
 
-    async def get_recent_messages(self, db: AsyncSession, limit: int = 100, before: str | None = None) -> list[dict]:
+    async def get_recent_messages(self, limit: int = 100, before: str | None = None) -> list[dict]:
         params: dict = {"limit": limit}
         before_clause = ""
         if before:
             before_clause = "WHERE m.created_at < (SELECT created_at FROM agent_messages WHERE id = :before_id)"
             params["before_id"] = before
-        result = await db.execute(
+        result = await self.db.execute(
             text(f"""
                 SELECT m.id, m.agent_id, m.content, m.message_type, m.created_at,
                        m.sender_type, m.human_name,
@@ -84,9 +88,9 @@ class ChatRepository:
         return messages
 
     async def insert_agent_message(
-        self, db: AsyncSession, agent_id, content: str, message_type: str, model_used: str | None,
+        self, agent_id, content: str, message_type: str, model_used: str | None,
     ) -> dict:
-        result = await db.execute(
+        result = await self.db.execute(
             text("""
                 INSERT INTO agent_messages (agent_id, content, message_type, model_used)
                 VALUES (:agent_id, :content, :message_type, :model_used)
@@ -97,9 +101,9 @@ class ChatRepository:
         return dict(result.mappings().first())
 
     async def insert_human_message(
-        self, db: AsyncSession, content: str, message_type: str, human_name: str, sender_type: str = "human",
+        self, content: str, message_type: str, human_name: str, sender_type: str = "human",
     ) -> dict:
-        result = await db.execute(
+        result = await self.db.execute(
             text("""
                 INSERT INTO agent_messages (agent_id, content, message_type, sender_type, human_name)
                 VALUES (NULL, :content, :message_type, :sender_type, :human_name)
@@ -109,8 +113,8 @@ class ChatRepository:
         )
         return dict(result.mappings().first())
 
-    async def log_model_usage(self, db: AsyncSession, agent_id, model: str) -> None:
-        await db.execute(
+    async def log_model_usage(self, agent_id, model: str) -> None:
+        await self.db.execute(
             text("""
                 INSERT INTO agent_model_usage (agent_id, model, task_type, ref_type)
                 VALUES (:agent_id, :model, 'chat', 'chat_message')
@@ -120,16 +124,16 @@ class ChatRepository:
 
     # ── DMs ─────────────────────────────────────────────────────────
 
-    async def get_dm_by_id(self, db: AsyncSession, dm_id, agent_id) -> dict | None:
-        result = await db.execute(
+    async def get_dm_by_id(self, dm_id, agent_id) -> dict | None:
+        result = await self.db.execute(
             text("SELECT from_agent_id, human_name FROM agent_dms WHERE id = :id AND to_agent_id = :my_id"),
             {"id": dm_id, "my_id": agent_id},
         )
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def insert_dm(self, db: AsyncSession, to_agent_id, from_agent_id, content: str, human_name: str | None = None) -> dict:
-        result = await db.execute(
+    async def insert_dm(self, to_agent_id, from_agent_id, content: str, human_name: str | None = None) -> dict:
+        result = await self.db.execute(
             text("""
                 INSERT INTO agent_dms (to_agent_id, from_agent_id, human_name, content)
                 VALUES (:to_id, :from_id, :name, :content)
@@ -139,8 +143,8 @@ class ChatRepository:
         )
         return dict(result.mappings().first())
 
-    async def get_dm_history(self, db: AsyncSession, agent_id, limit: int = 50) -> list[dict]:
-        result = await db.execute(
+    async def get_dm_history(self, agent_id, limit: int = 50) -> list[dict]:
+        result = await self.db.execute(
             text("""
                 SELECT d.id, d.content, d.from_agent_id, d.human_name, d.is_read, d.created_at,
                        a.name as from_agent_name, a.handle as from_agent_handle
@@ -166,6 +170,5 @@ class ChatRepository:
         return messages
 
 
-@lru_cache
-def get_chat_repo() -> ChatRepository:
-    return ChatRepository()
+def get_chat_repo(db: AsyncSession = Depends(get_db)) -> ChatRepository:
+    return ChatRepository(db)

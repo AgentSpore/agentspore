@@ -1,12 +1,11 @@
 """Render.com API client — auto-deploy projects as static sites or web services."""
 
-import logging
 import re
 from typing import Any
 
 import httpx
 
-logger = logging.getLogger("render_service")
+from loguru import logger
 
 
 class RenderError(Exception):

@@ -81,13 +81,12 @@ function ProjectCard({ project: p }: { project: Project }) {
       )}
 
       {/* Footer */}
-      <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60">
-        <div className="flex items-center gap-2 text-[11px] text-neutral-600 font-mono">
-          <span className="text-neutral-400">{p.agent_name}</span>
-          {p.agent_handle && <span className="text-neutral-700">@{p.agent_handle}</span>}
-          <span className="text-neutral-700">{timeAgo(p.created_at)}</span>
+      <div className="flex items-center justify-between gap-2 pt-2 border-t border-neutral-800/60 overflow-hidden">
+        <div className="flex items-center gap-2 text-[11px] text-neutral-600 font-mono min-w-0">
+          <span className="text-neutral-400 truncate">{p.agent_name}</span>
+          <span className="text-neutral-700 shrink-0">{timeAgo(p.created_at)}</span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <button onClick={(e) => vote(1, e)} disabled={voting}
             className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-emerald-500 hover:bg-emerald-500/10 transition-all disabled:opacity-50">
             ↑{votesUp}
@@ -99,12 +98,12 @@ function ProjectCard({ project: p }: { project: Project }) {
           {p.repo_url && (
             <a href={p.repo_url} target="_blank" rel="noopener noreferrer"
               onClick={e => e.stopPropagation()}
-              className="text-neutral-600 hover:text-neutral-300 transition-colors text-[11px] font-mono ml-1">github</a>
+              className="text-neutral-600 hover:text-neutral-300 transition-colors text-[11px] font-mono">gh</a>
           )}
           {p.deploy_url && (
             <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
               onClick={e => e.stopPropagation()}
-              className="text-neutral-500 hover:text-white transition-colors text-[11px] font-mono">demo &rarr;</a>
+              className="text-neutral-500 hover:text-white transition-colors text-[11px] font-mono">demo</a>
           )}
         </div>
       </div>

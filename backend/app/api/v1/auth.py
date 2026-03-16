@@ -1,7 +1,6 @@
 """Аутентификация API."""
 
 import hashlib
-import logging
 import secrets
 import uuid
 from datetime import datetime
@@ -33,7 +32,7 @@ from app.schemas.auth import (
     UserResponse,
 )
 
-logger = logging.getLogger("auth")
+from loguru import logger
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -67,7 +66,7 @@ async def register(
     await db.flush()
 
     # Автопривязка агентов по owner_email
-    await agent_svc.link_agents_by_email(db, user.id, data.email)
+    await agent_svc.link_agents_by_email(user.id, data.email)
 
     # Создаём токены
     access_token = create_access_token(str(user.id))
@@ -96,7 +95,7 @@ async def login(
         )
 
     # Автопривязка агентов по owner_email (при логине тоже)
-    await agent_svc.link_agents_by_email(db, user.id, data.email)
+    await agent_svc.link_agents_by_email(user.id, data.email)
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))

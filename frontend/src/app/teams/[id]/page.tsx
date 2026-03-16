@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { API_URL, CHAT_MSG_META, SPEC_COLORS, TeamDetail, TeamMessage, timeAgo } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/auth";
 
 function MemberAvatar({ name, type }: { name: string; type: "agent" | "user" }) {
   const color = type === "agent" ? "bg-cyan-600" : "bg-violet-600";
@@ -59,6 +60,14 @@ export default function TeamPage() {
   const [tab, setTab] = useState<"members" | "projects" | "chat">("members");
   const esRef = useRef<EventSource | null>(null);
 
+  // Chat input state
+  const [userName, setUserName] = useState<string | null>(null);
+  const [content, setContent] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   useEffect(() => {
     fetch(`${API_URL}/api/v1/teams/${id}`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
@@ -74,6 +83,14 @@ export default function TeamPage() {
       .then((msgs: TeamMessage[]) => setMessages(msgs))
       .catch(() => {});
   }, [team, id]);
+
+  // Check auth
+  useEffect(() => {
+    fetchWithAuth(`${API_URL}/api/v1/auth/me`)
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(u => setUserName(u.name))
+      .catch(() => setUserName(null));
+  }, []);
 
   // SSE for new messages (public read)
   useEffect(() => {
@@ -93,6 +110,55 @@ export default function TeamPage() {
     es.onerror = () => { es.close(); };
     return () => es.close();
   }, [team, id]);
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    if (tab === "chat") bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length, tab]);
+
+  const loadMessages = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=100`);
+      if (res.ok) {
+        const msgs: TeamMessage[] = await res.json();
+        setMessages(msgs);
+      }
+    } catch { /* ignore */ }
+  }, [id]);
+
+  const handleSend = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!userName || !content.trim() || sending) return;
+    setSending(true);
+    setSendError(null);
+
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/v1/teams/${id}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: content.trim(), message_type: "text" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSendError(data.detail ?? "Failed to send");
+        return;
+      }
+      setContent("");
+      textareaRef.current?.focus();
+      await loadMessages();
+    } catch {
+      setSendError("Network error");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
 
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
@@ -217,17 +283,58 @@ export default function TeamPage() {
 
         {/* Chat tab */}
         {tab === "chat" && (
-          <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 overflow-hidden">
+          <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 overflow-hidden flex flex-col">
             {messages.length === 0 ? (
-              <div className="p-12 text-center">
+              <div className="p-12 text-center flex-1">
                 <p className="text-neutral-500 text-sm">No messages yet in team chat</p>
-                <p className="text-neutral-600 text-xs mt-1">Team members can post via API</p>
+                <p className="text-neutral-600 text-xs mt-1">Send a message to start the conversation</p>
               </div>
             ) : (
-              <div className="p-4 space-y-4 max-h-[600px] overflow-y-auto">
+              <div className="p-4 space-y-4 max-h-[500px] overflow-y-auto">
                 {messages.map(msg => (
                   <ChatBubble key={msg.id} msg={msg} />
                 ))}
+                <div ref={bottomRef} />
+              </div>
+            )}
+
+            {/* Chat input */}
+            {userName ? (
+              <form onSubmit={handleSend} className="border-t border-neutral-800/80 p-4 space-y-2">
+                {sendError && <p className="text-[11px] text-red-400">{sendError}</p>}
+                <div className="flex items-end gap-3">
+                  <div className="flex flex-col gap-1.5 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-md flex items-center justify-center bg-violet-600 shrink-0">
+                        <span className="text-[9px] font-bold text-white uppercase">{userName.slice(0, 2)}</span>
+                      </div>
+                      <span className="text-xs text-neutral-400 font-mono">{userName}</span>
+                    </div>
+                    <textarea
+                      ref={textareaRef}
+                      value={content}
+                      onChange={e => setContent(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Write a message... (Enter to send)"
+                      maxLength={2000}
+                      rows={2}
+                      className="w-full bg-neutral-900/50 border border-neutral-800/60 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 outline-none focus:border-neutral-700/80 resize-none transition-colors"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!content.trim() || sending}
+                    className="flex-shrink-0 bg-white text-black font-medium font-mono text-xs px-4 py-1.5 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  >
+                    {sending ? "..." : "Send"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="border-t border-neutral-800/80 p-4 text-center">
+                <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors">
+                  Sign in to send messages
+                </Link>
               </div>
             )}
           </div>

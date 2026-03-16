@@ -21,6 +21,20 @@ def _setup_overrides(app, db, mock_redis=None):
     app.dependency_overrides[get_redis] = lambda: mock_redis
 
 
+def _override_rental_deps(app, repo_mock=None, agent_repo_mock=None, payout_mock=None):
+    """Override rental-related DI dependencies."""
+    from app.repositories.rental_repo import get_rental_repo
+    from app.repositories.agent_repo import get_agent_repo
+    from app.services.payout_service import get_payout_service
+
+    if repo_mock:
+        app.dependency_overrides[get_rental_repo] = lambda: repo_mock
+    if agent_repo_mock:
+        app.dependency_overrides[get_agent_repo] = lambda: agent_repo_mock
+    if payout_mock:
+        app.dependency_overrides[get_payout_service] = lambda: payout_mock
+
+
 def _mock_user(user_id=None, name="TestUser", email="test@example.com"):
     """Create a mock User object."""
     from app.models import User
@@ -146,7 +160,7 @@ class TestRentalAPIAuth:
 
     @pytest.mark.asyncio
     async def test_create_rental_no_auth_returns_401(self):
-        """POST /rentals without auth → 401/403."""
+        """POST /rentals without auth returns 401/403."""
         from app.main import app
 
         db = AsyncMock()
@@ -165,7 +179,7 @@ class TestRentalAPIAuth:
 
     @pytest.mark.asyncio
     async def test_list_rentals_no_auth_returns_401(self):
-        """GET /rentals without auth → 401/403."""
+        """GET /rentals without auth returns 401/403."""
         from app.main import app
 
         db = AsyncMock()
@@ -181,7 +195,7 @@ class TestRentalAPIAuth:
 
     @pytest.mark.asyncio
     async def test_get_rental_no_auth_returns_401(self):
-        """GET /rentals/:id without auth → 401/403."""
+        """GET /rentals/:id without auth returns 401/403."""
         from app.main import app
 
         db = AsyncMock()
@@ -197,7 +211,7 @@ class TestRentalAPIAuth:
 
     @pytest.mark.asyncio
     async def test_agent_rentals_no_key_returns_422(self):
-        """GET /rentals/agent/my-rentals without X-API-Key → 422."""
+        """GET /rentals/agent/my-rentals without X-API-Key returns 422."""
         from app.main import app
 
         db = AsyncMock()
@@ -213,7 +227,7 @@ class TestRentalAPIAuth:
 
     @pytest.mark.asyncio
     async def test_agent_rentals_invalid_key_returns_401(self):
-        """GET /rentals/agent/my-rentals with invalid key → 401."""
+        """GET /rentals/agent/my-rentals with invalid key returns 401."""
         from app.main import app
 
         db = AsyncMock()
@@ -244,7 +258,7 @@ class TestRentalAPIFunctional:
 
     @pytest.mark.asyncio
     async def test_create_rental_agent_not_found(self):
-        """Create rental for nonexistent agent → 404."""
+        """Create rental for nonexistent agent returns 404."""
         from app.main import app
 
         db = AsyncMock()
@@ -254,18 +268,22 @@ class TestRentalAPIFunctional:
         user = _mock_user()
         _override_current_user(app, user)
 
-        try:
-            with patch("app.api.v1.rentals.rental_repo") as mock_repo, \
-                 patch("app.repositories.agent_repo.get_agent_by_id", new_callable=AsyncMock, return_value=None):
+        agent_repo_mock = MagicMock()
+        agent_repo_mock.get_agent_by_id = AsyncMock(return_value=None)
 
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    response = await client.post(
-                        "/api/v1/rentals",
-                        json={"agent_id": str(uuid.uuid4()), "title": "Build a website"},
-                        headers={"Authorization": "Bearer fake-token"},
-                    )
+        repo_mock = MagicMock()
+
+        _override_rental_deps(app, repo_mock=repo_mock, agent_repo_mock=agent_repo_mock)
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/rentals",
+                    json={"agent_id": str(uuid.uuid4()), "title": "Build a website"},
+                    headers={"Authorization": "Bearer fake-token"},
+                )
             assert response.status_code == 404
             assert "Agent not found" in response.json()["detail"]
         finally:
@@ -273,7 +291,7 @@ class TestRentalAPIFunctional:
 
     @pytest.mark.asyncio
     async def test_create_rental_agent_offline(self):
-        """Create rental for offline agent → 400."""
+        """Create rental for offline agent returns 400."""
         from app.main import app
 
         db = AsyncMock()
@@ -285,20 +303,24 @@ class TestRentalAPIFunctional:
 
         agent_id = str(uuid.uuid4())
 
-        try:
-            with patch("app.api.v1.rentals.rental_repo"), \
-                 patch("app.repositories.agent_repo.get_agent_by_id", new_callable=AsyncMock, return_value={
-                     "id": agent_id, "name": "TestAgent", "is_active": False,
-                 }):
+        agent_repo_mock = MagicMock()
+        agent_repo_mock.get_agent_by_id = AsyncMock(return_value={
+            "id": agent_id, "name": "TestAgent", "is_active": False,
+        })
 
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    response = await client.post(
-                        "/api/v1/rentals",
-                        json={"agent_id": agent_id, "title": "Build a website"},
-                        headers={"Authorization": "Bearer fake-token"},
-                    )
+        repo_mock = MagicMock()
+
+        _override_rental_deps(app, repo_mock=repo_mock, agent_repo_mock=agent_repo_mock)
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/rentals",
+                    json={"agent_id": agent_id, "title": "Build a website"},
+                    headers={"Authorization": "Bearer fake-token"},
+                )
             assert response.status_code == 400
             assert "offline" in response.json()["detail"].lower()
         finally:
@@ -306,7 +328,7 @@ class TestRentalAPIFunctional:
 
     @pytest.mark.asyncio
     async def test_create_rental_success(self):
-        """Create rental for active agent → 200 with rental ID."""
+        """Create rental for active agent returns 200 with rental ID."""
         from app.main import app
 
         db = AsyncMock()
@@ -319,26 +341,35 @@ class TestRentalAPIFunctional:
         agent_id = str(uuid.uuid4())
         rental_id = str(uuid.uuid4())
 
-        try:
-            with patch("app.api.v1.rentals.rental_repo") as mock_repo, \
-                 patch("app.repositories.agent_repo.get_agent_by_id", new_callable=AsyncMock, return_value={
-                     "id": agent_id, "name": "CoolAgent", "is_active": True,
-                 }):
-                mock_repo.create_rental = AsyncMock(return_value={
-                    "id": rental_id, "status": "active", "created_at": "2026-03-14T10:00:00",
-                })
-                mock_repo.insert_message = AsyncMock(return_value={
-                    "id": str(uuid.uuid4()), "created_at": "2026-03-14T10:00:00",
-                })
+        agent_repo_mock = MagicMock()
+        agent_repo_mock.get_agent_by_id = AsyncMock(return_value={
+            "id": agent_id, "name": "CoolAgent", "is_active": True,
+        })
 
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    response = await client.post(
-                        "/api/v1/rentals",
-                        json={"agent_id": agent_id, "title": "Build a landing page"},
-                        headers={"Authorization": "Bearer fake-token"},
-                    )
+        repo_mock = MagicMock()
+        repo_mock.create_rental = AsyncMock(return_value={
+            "id": rental_id, "status": "active", "created_at": "2026-03-14T10:00:00",
+        })
+        repo_mock.insert_message = AsyncMock(return_value={
+            "id": str(uuid.uuid4()), "created_at": "2026-03-14T10:00:00",
+        })
+
+        payout_mock = MagicMock()
+
+        _override_rental_deps(
+            app, repo_mock=repo_mock, agent_repo_mock=agent_repo_mock,
+            payout_mock=payout_mock,
+        )
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/rentals",
+                    json={"agent_id": agent_id, "title": "Build a landing page"},
+                    headers={"Authorization": "Bearer fake-token"},
+                )
 
             assert response.status_code == 200
             data = response.json()
@@ -351,7 +382,7 @@ class TestRentalAPIFunctional:
 
     @pytest.mark.asyncio
     async def test_list_rentals_empty(self):
-        """List rentals with no rentals → empty list."""
+        """List rentals with no rentals returns empty list."""
         from app.main import app
 
         db = AsyncMock()
@@ -360,17 +391,19 @@ class TestRentalAPIFunctional:
         user = _mock_user()
         _override_current_user(app, user)
 
-        try:
-            with patch("app.api.v1.rentals.rental_repo") as mock_repo:
-                mock_repo.list_user_rentals = AsyncMock(return_value=[])
+        repo_mock = MagicMock()
+        repo_mock.list_user_rentals = AsyncMock(return_value=[])
 
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    response = await client.get(
-                        "/api/v1/rentals",
-                        headers={"Authorization": "Bearer fake-token"},
-                    )
+        _override_rental_deps(app, repo_mock=repo_mock)
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get(
+                    "/api/v1/rentals",
+                    headers={"Authorization": "Bearer fake-token"},
+                )
 
             assert response.status_code == 200
             assert response.json() == []
@@ -379,7 +412,7 @@ class TestRentalAPIFunctional:
 
     @pytest.mark.asyncio
     async def test_get_rental_access_denied(self):
-        """Get rental owned by another user → 403."""
+        """Get rental owned by another user returns 403."""
         from app.main import app
 
         db = AsyncMock()
@@ -391,25 +424,27 @@ class TestRentalAPIFunctional:
         rental_id = str(uuid.uuid4())
         other_user_id = uuid.uuid4()
 
-        try:
-            with patch("app.api.v1.rentals.rental_repo") as mock_repo:
-                mock_repo.get_rental_by_id = AsyncMock(return_value={
-                    "id": rental_id, "user_id": other_user_id,
-                    "agent_id": uuid.uuid4(), "title": "Test",
-                    "status": "active", "price_tokens": 0, "platform_fee": 0,
-                    "rating": None, "review": None, "created_at": "2026-03-14",
-                    "completed_at": None, "cancelled_at": None,
-                    "agent_name": "X", "agent_handle": "x", "specialization": "programmer",
-                    "user_name": "Other",
-                })
+        repo_mock = MagicMock()
+        repo_mock.get_rental_by_id = AsyncMock(return_value={
+            "id": rental_id, "user_id": other_user_id,
+            "agent_id": uuid.uuid4(), "title": "Test",
+            "status": "active", "price_tokens": 0, "platform_fee": 0,
+            "rating": None, "review": None, "created_at": "2026-03-14",
+            "completed_at": None, "cancelled_at": None,
+            "agent_name": "X", "agent_handle": "x", "specialization": "programmer",
+            "user_name": "Other",
+        })
 
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    response = await client.get(
-                        f"/api/v1/rentals/{rental_id}",
-                        headers={"Authorization": "Bearer fake-token"},
-                    )
+        _override_rental_deps(app, repo_mock=repo_mock)
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/rentals/{rental_id}",
+                    headers={"Authorization": "Bearer fake-token"},
+                )
 
             assert response.status_code == 403
         finally:
@@ -417,7 +452,7 @@ class TestRentalAPIFunctional:
 
     @pytest.mark.asyncio
     async def test_complete_rental_not_active(self):
-        """Complete an already completed rental → 400."""
+        """Complete an already completed rental returns 400."""
         from app.main import app
 
         db = AsyncMock()
@@ -428,26 +463,30 @@ class TestRentalAPIFunctional:
 
         rental_id = str(uuid.uuid4())
 
-        try:
-            with patch("app.api.v1.rentals.rental_repo") as mock_repo:
-                mock_repo.get_rental_by_id = AsyncMock(return_value={
-                    "id": rental_id, "user_id": user.id,
-                    "agent_id": uuid.uuid4(), "title": "Test",
-                    "status": "completed", "price_tokens": 0, "platform_fee": 0,
-                    "rating": 5, "review": None, "created_at": "2026-03-14",
-                    "completed_at": "2026-03-14", "cancelled_at": None,
-                    "agent_name": "X", "agent_handle": "x", "specialization": "programmer",
-                    "user_name": "Test", "agent_is_active": True,
-                })
+        repo_mock = MagicMock()
+        repo_mock.get_rental_by_id = AsyncMock(return_value={
+            "id": rental_id, "user_id": user.id,
+            "agent_id": uuid.uuid4(), "title": "Test",
+            "status": "completed", "price_tokens": 0, "platform_fee": 0,
+            "rating": 5, "review": None, "created_at": "2026-03-14",
+            "completed_at": "2026-03-14", "cancelled_at": None,
+            "agent_name": "X", "agent_handle": "x", "specialization": "programmer",
+            "user_name": "Test", "agent_is_active": True,
+        })
 
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    response = await client.post(
-                        f"/api/v1/rentals/{rental_id}/complete",
-                        json={"rating": 5},
-                        headers={"Authorization": "Bearer fake-token"},
-                    )
+        agent_repo_mock = MagicMock()
+
+        _override_rental_deps(app, repo_mock=repo_mock, agent_repo_mock=agent_repo_mock)
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/rentals/{rental_id}/complete",
+                    json={"rating": 5},
+                    headers={"Authorization": "Bearer fake-token"},
+                )
 
             assert response.status_code == 400
             assert "not active" in response.json()["detail"].lower()
@@ -456,7 +495,7 @@ class TestRentalAPIFunctional:
 
     @pytest.mark.asyncio
     async def test_cancel_rental_success(self):
-        """Cancel an active rental → status cancelled."""
+        """Cancel an active rental returns status cancelled."""
         from app.main import app
 
         db = AsyncMock()
@@ -467,32 +506,42 @@ class TestRentalAPIFunctional:
 
         rental_id = str(uuid.uuid4())
 
-        try:
-            with patch("app.api.v1.rentals.rental_repo") as mock_repo:
-                mock_repo.get_rental_by_id = AsyncMock(return_value={
-                    "id": rental_id, "user_id": user.id,
-                    "agent_id": uuid.uuid4(), "title": "Test",
-                    "status": "active", "price_tokens": 0, "platform_fee": 0,
-                    "rating": None, "review": None, "created_at": "2026-03-14",
-                    "completed_at": None, "cancelled_at": None,
-                    "agent_name": "X", "agent_handle": "x", "specialization": "programmer",
-                    "user_name": "Test", "agent_is_active": True,
-                })
-                mock_repo.update_rental_status = AsyncMock(return_value={
-                    "id": rental_id, "status": "cancelled",
-                })
-                mock_repo.insert_message = AsyncMock(return_value={
-                    "id": str(uuid.uuid4()), "created_at": "2026-03-14",
-                })
+        agent_id = uuid.uuid4()
+        active_rental = {
+            "id": rental_id, "user_id": user.id,
+            "agent_id": agent_id, "title": "Test",
+            "status": "active", "price_tokens": 0, "platform_fee": 0,
+            "rating": None, "review": None, "created_at": "2026-03-14",
+            "completed_at": None, "cancelled_at": None,
+            "agent_name": "X", "agent_handle": "x", "specialization": "programmer",
+            "user_name": "Test", "agent_is_active": True,
+        }
+        cancelled_rental = {
+            **active_rental,
+            "status": "cancelled", "cancelled_at": "2026-03-14",
+        }
 
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    response = await client.post(
-                        f"/api/v1/rentals/{rental_id}/cancel",
-                        json={"reason": "Agent went offline"},
-                        headers={"Authorization": "Bearer fake-token"},
-                    )
+        repo_mock = MagicMock()
+        repo_mock.get_rental_by_id = AsyncMock(side_effect=[active_rental, cancelled_rental])
+        repo_mock.update_rental_status = AsyncMock()
+        repo_mock.insert_message = AsyncMock(return_value={
+            "id": str(uuid.uuid4()), "created_at": "2026-03-14",
+        })
+
+        payout_mock = MagicMock()
+        payout_mock.try_refund_rental = AsyncMock()
+
+        _override_rental_deps(app, repo_mock=repo_mock, payout_mock=payout_mock)
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/rentals/{rental_id}/cancel",
+                    json={"reason": "Agent went offline"},
+                    headers={"Authorization": "Bearer fake-token"},
+                )
 
             assert response.status_code == 200
             assert response.json()["status"] == "cancelled"
@@ -501,7 +550,7 @@ class TestRentalAPIFunctional:
 
     @pytest.mark.asyncio
     async def test_send_message_to_inactive_rental(self):
-        """Send message to cancelled rental → 400."""
+        """Send message to cancelled rental returns 400."""
         from app.main import app
 
         db = AsyncMock()
@@ -513,26 +562,28 @@ class TestRentalAPIFunctional:
 
         rental_id = str(uuid.uuid4())
 
-        try:
-            with patch("app.api.v1.rentals.rental_repo") as mock_repo:
-                mock_repo.get_rental_by_id = AsyncMock(return_value={
-                    "id": rental_id, "user_id": user.id,
-                    "agent_id": uuid.uuid4(), "title": "Test",
-                    "status": "cancelled", "price_tokens": 0, "platform_fee": 0,
-                    "rating": None, "review": None, "created_at": "2026-03-14",
-                    "completed_at": None, "cancelled_at": "2026-03-14",
-                    "agent_name": "X", "agent_handle": "x", "specialization": "programmer",
-                    "user_name": "Test", "agent_is_active": True,
-                })
+        repo_mock = MagicMock()
+        repo_mock.get_rental_by_id = AsyncMock(return_value={
+            "id": rental_id, "user_id": user.id,
+            "agent_id": uuid.uuid4(), "title": "Test",
+            "status": "cancelled", "price_tokens": 0, "platform_fee": 0,
+            "rating": None, "review": None, "created_at": "2026-03-14",
+            "completed_at": None, "cancelled_at": "2026-03-14",
+            "agent_name": "X", "agent_handle": "x", "specialization": "programmer",
+            "user_name": "Test", "agent_is_active": True,
+        })
 
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    response = await client.post(
-                        f"/api/v1/rentals/{rental_id}/messages",
-                        json={"content": "Hello?"},
-                        headers={"Authorization": "Bearer fake-token"},
-                    )
+        _override_rental_deps(app, repo_mock=repo_mock)
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/rentals/{rental_id}/messages",
+                    json={"content": "Hello?"},
+                    headers={"Authorization": "Bearer fake-token"},
+                )
 
             assert response.status_code == 400
             assert "not active" in response.json()["detail"].lower()

@@ -14,7 +14,6 @@ GitHub OAuth Service — OAuth авторизация агентов через 
 4. Агент активируется с GitHub identity
 """
 
-import logging
 import secrets
 import time
 from functools import lru_cache
@@ -25,7 +24,7 @@ import httpx
 
 from app.core.config import get_settings
 
-logger = logging.getLogger("github_oauth_service")
+from loguru import logger
 
 GITHUB_OAUTH_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"

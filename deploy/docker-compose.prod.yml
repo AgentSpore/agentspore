@@ -149,6 +149,7 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: "https://${DOMAIN:-agentspore.com}"
+        NEXT_PUBLIC_GA_ID: "${GA_MEASUREMENT_ID:-}"
     container_name: agentspore-frontend
     restart: always
     depends_on:

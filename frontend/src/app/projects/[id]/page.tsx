@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL, ContributorShare, ProjectOwnership, timeAgo } from "@/lib/api";
 
@@ -20,30 +20,7 @@ interface HumanContributor {
   user_id: string; user_name: string; user_email: string; wallet_address: string | null;
 }
 
-interface GovernanceItem {
-  id: string; action_type: string; source_ref: string; source_number: number | null;
-  actor_login: string; actor_type: string; meta: Record<string, unknown>;
-  status: string; votes_required: number; votes_approve: number; votes_reject: number;
-  expires_at: string | null; created_at: string; my_vote: string | null;
-}
-
 interface AuthState { token: string; email: string; userId: string }
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const ACTION_LABELS: Record<string, { label: string; icon: string; color: string }> = {
-  external_pr:    { label: "External PR",    icon: "⎇", color: "text-violet-400" },
-  external_push:  { label: "Direct Push",   icon: "↑", color: "text-orange-400" },
-  add_contributor:{ label: "Join Request",  icon: "＋", color: "text-cyan-400"   },
-};
-
-const STATUS_BADGE: Record<string, string> = {
-  pending:  "bg-amber-400/15 text-amber-300 border border-amber-400/20",
-  approved: "bg-emerald-400/15 text-emerald-300 border border-emerald-400/20",
-  rejected: "bg-red-400/15 text-red-300 border border-red-400/20",
-  expired:  "bg-neutral-700/50 text-neutral-500 border border-neutral-600/20",
-  executed: "bg-blue-400/15 text-blue-300 border border-blue-400/20",
-};
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
 
@@ -173,105 +150,9 @@ function VoteButtons({ projectId, votesUp, votesDown }: {
   );
 }
 
-// ─── Governance item card ─────────────────────────────────────────────────────
-
-function GovernanceCard({ item, projectId, auth, onVoted, onNeedAuth }: {
-  item: GovernanceItem;
-  projectId: string;
-  auth: AuthState | null;
-  onVoted: () => void;
-  onNeedAuth: () => void;
-}) {
-  const [voting, setVoting] = useState(false);
-  const meta = ACTION_LABELS[item.action_type] ?? { label: item.action_type, icon: "?", color: "text-neutral-400" };
-  const isPending = item.status === "pending";
-  const myVote = item.my_vote;
-
-  const vote = async (v: "approve" | "reject") => {
-    if (!auth) { onNeedAuth(); return; }
-    setVoting(true);
-    await apiFetch(`/projects/${projectId}/governance/${item.id}/vote`, auth.token, {
-      method: "POST",
-      body: JSON.stringify({ vote: v, comment: "" }),
-    });
-    setVoting(false);
-    onVoted();
-  };
-
-  // extract project_id from the URL context (passed via closure in parent)
-  return (
-    <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`text-base ${meta.color}`}>{meta.icon}</span>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm text-white font-medium">{meta.label}</span>
-              <Badge cls={STATUS_BADGE[item.status] ?? STATUS_BADGE.expired}>{item.status}</Badge>
-            </div>
-            <p className="text-xs text-neutral-500 mt-0.5">
-              by <span className="text-neutral-400">@{item.actor_login}</span>
-              {" · "}<span className="font-mono">{timeAgo(item.created_at)}</span>
-              {item.expires_at && item.status === "pending" && (
-                <span className="text-neutral-600 font-mono"> · expires {timeAgo(item.expires_at)}</span>
-              )}
-            </p>
-          </div>
-        </div>
-        {item.source_ref && (
-          <a href={item.source_ref} target="_blank" rel="noopener noreferrer"
-            className="text-xs text-neutral-400 hover:text-neutral-300 shrink-0">
-            {item.source_number ? `#${item.source_number}` : "View ↗"}
-          </a>
-        )}
-      </div>
-
-      {/* Vote counts */}
-      <div className="flex items-center gap-4 text-xs text-neutral-500">
-        <span className="text-emerald-400 font-mono">{item.votes_approve} approve</span>
-        <span className="text-red-400 font-mono">{item.votes_reject} reject</span>
-        <span className="font-mono">/ {item.votes_required} needed</span>
-        {/* progress bar */}
-        <div className="flex-1 h-1 bg-neutral-800/50 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-emerald-500/60 rounded-full transition-all"
-            style={{ width: `${Math.min(100, (item.votes_approve / item.votes_required) * 100)}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Vote buttons */}
-      {isPending && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => vote("approve")} disabled={voting || myVote === "approve"}
-            className={`flex-1 text-xs py-1.5 rounded-lg border transition-colors ${
-              myVote === "approve"
-                ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
-                : "border-neutral-800/80 text-neutral-400 hover:border-emerald-500/40 hover:text-emerald-300"
-            }`}
-          >
-            ✓ Approve
-          </button>
-          <button
-            onClick={() => vote("reject")} disabled={voting || myVote === "reject"}
-            className={`flex-1 text-xs py-1.5 rounded-lg border transition-colors ${
-              myVote === "reject"
-                ? "bg-red-500/20 border-red-500/40 text-red-300"
-                : "border-neutral-800/80 text-neutral-400 hover:border-red-500/40 hover:text-red-300"
-            }`}
-          >
-            ✕ Reject
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-type Tab = "overview" | "contributors" | "governance" | "ownership";
+type Tab = "overview" | "contributors" | "ownership";
 
 export default function ProjectPage() {
   const params = useParams();
@@ -285,7 +166,6 @@ export default function ProjectPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [ownership, setOwnership] = useState<ProjectOwnership | null>(null);
   const [contributors, setContributors] = useState<HumanContributor[]>([]);
-  const [governance, setGovernance] = useState<GovernanceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [joining, setJoining] = useState(false);
@@ -324,13 +204,7 @@ export default function ProjectPage() {
       .then(d => setContributors(d.contributors ?? []));
   };
 
-  const loadGovernance = () => {
-    apiFetch(`/projects/${projectId}/governance?status=all`, auth?.token)
-      .then(r => r.ok ? r.json() : { items: [] })
-      .then(d => setGovernance(d.items ?? []));
-  };
-
-  useEffect(() => { if (projectId) { loadContributors(); loadGovernance(); } }, [projectId, auth]);
+  useEffect(() => { if (projectId) { loadContributors(); } }, [projectId, auth]);
 
   const handleLogin = (a: AuthState) => { setAuth(a); setShowLogin(false); };
   const handleLogout = () => { setAuth(null); localStorage.removeItem("auth"); };
@@ -363,7 +237,6 @@ export default function ProjectPage() {
   const TABS: { key: Tab; label: string }[] = [
     { key: "overview", label: "Overview" },
     { key: "contributors", label: `Contributors ${contributors.length > 0 ? `(${contributors.length})` : ""}` },
-    { key: "governance", label: `Governance ${governance.filter(g => g.status === "pending").length > 0 ? `· ${governance.filter(g => g.status === "pending").length}` : ""}` },
     { key: "ownership", label: "Ownership" },
   ];
 
@@ -455,7 +328,7 @@ export default function ProjectPage() {
                 ))}
               </div>
             )}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
                 <div className="text-xs text-neutral-600 mb-1">Created</div>
                 <div className="text-sm text-neutral-300 font-medium font-mono">{timeAgo(project.created_at)}</div>
@@ -464,10 +337,6 @@ export default function ProjectPage() {
               <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
                 <div className="text-xs text-neutral-600 mb-1">Contributors</div>
                 <div className="text-sm text-neutral-300 font-medium font-mono">{contributors.length}</div>
-              </div>
-              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
-                <div className="text-xs text-neutral-600 mb-1">Pending governance</div>
-                <div className="text-sm text-neutral-300 font-medium font-mono">{governance.filter(g => g.status === "pending").length}</div>
               </div>
             </div>
           </div>
@@ -521,52 +390,6 @@ export default function ProjectPage() {
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Governance ── */}
-        {tab === "governance" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-neutral-400 uppercase tracking-wider">
-                Governance Queue
-              </h2>
-              {!auth && (
-                <button onClick={() => setShowLogin(true)}
-                  className="text-xs text-neutral-400 hover:text-neutral-300 transition-colors">
-                  Sign in to vote
-                </button>
-              )}
-            </div>
-
-            {governance.length === 0 ? (
-              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-8 text-center text-neutral-600 text-sm">
-                No governance items yet.
-              </div>
-            ) : (
-              <>
-                {/* Pending first */}
-                {governance.filter(g => g.status === "pending").length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-xs text-neutral-600 uppercase tracking-wider">Pending</p>
-                    {governance.filter(g => g.status === "pending").map(item => (
-                      <GovernanceCard key={item.id} item={item} projectId={projectId} auth={auth}
-                        onVoted={loadGovernance} onNeedAuth={() => setShowLogin(true)} />
-                    ))}
-                  </div>
-                )}
-                {/* History */}
-                {governance.filter(g => g.status !== "pending").length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-xs text-neutral-600 uppercase tracking-wider mt-6">History</p>
-                    {governance.filter(g => g.status !== "pending").map(item => (
-                      <GovernanceCard key={item.id} item={item} projectId={projectId} auth={auth}
-                        onVoted={loadGovernance} onNeedAuth={() => setShowLogin(true)} />
-                    ))}
-                  </div>
-                )}
-              </>
             )}
           </div>
         )}

@@ -1,12 +1,11 @@
 """Webhook repository — SQL queries for GitHub/GitLab webhook processing."""
 
 import json
-import logging
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger("webhook_repo")
+from loguru import logger
 
 
 class WebhookRepository:

@@ -13,7 +13,6 @@ GET  /api/v1/chat/dm/{handle}/messages — история DM
 import asyncio
 import hashlib
 import json
-import logging
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -22,12 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.redis_client import get_redis
-from app.api.deps import OptionalUser
-from app.repositories.chat_repo import get_chat_repo
+from app.api.deps import CurrentUser, OptionalUser
+from app.repositories.chat_repo import ChatRepository, get_chat_repo
 from app.services.chat_service import ChatService, get_chat_service
 from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, HumanMessageRequest
 
-logger = logging.getLogger("chat_api")
+from loguru import logger
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 REDIS_CHANNEL = "agentspore:chat"
@@ -35,11 +34,10 @@ REDIS_CHANNEL = "agentspore:chat"
 
 async def _get_agent_by_api_key(
     x_api_key: str = Header(..., alias="X-API-Key"),
-    db: AsyncSession = Depends(get_db),
+    repo: ChatRepository = Depends(get_chat_repo),
 ) -> dict:
-    repo = get_chat_repo()
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-    agent = await repo.get_agent_by_api_key_hash(db, key_hash)
+    agent = await repo.get_agent_by_api_key_hash(key_hash)
     if not agent:
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
     return agent
@@ -52,23 +50,20 @@ async def _get_agent_by_api_key(
 async def get_messages(
     limit: int = Query(default=50, le=500),
     before: str | None = Query(default=None),
-    db: AsyncSession = Depends(get_db),
     svc: ChatService = Depends(get_chat_service),
 ):
     """Последние сообщения чата. before=id для cursor-пагинации."""
-    return await svc.get_messages(db, limit, before=before)
+    return await svc.get_messages(limit, before=before)
 
 
 @router.post("/message", summary="Post a chat message (agent only)")
 async def post_message(
     body: ChatMessageRequest,
     agent: dict = Depends(_get_agent_by_api_key),
-    db: AsyncSession = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis),
     svc: ChatService = Depends(get_chat_service),
 ):
     """Агент отправляет сообщение в общий чат."""
-    return await svc.send_agent_message(db, redis, agent, body.content, body.message_type, body.model_used)
+    return await svc.send_agent_message(agent, body.content, body.message_type, body.model_used)
 
 
 @router.post("/human-message", summary="Post a chat message (authenticated user)")
@@ -76,8 +71,6 @@ async def post_human_message(
     body: HumanMessageRequest,
     request: Request,
     current_user: OptionalUser = None,
-    db: AsyncSession = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis),
     svc: ChatService = Depends(get_chat_service),
 ):
     """Авторизованный пользователь отправляет сообщение в общий чат. Rate limit: 10 msg/min."""
@@ -85,10 +78,10 @@ async def post_human_message(
         raise HTTPException(status_code=401, detail="Sign in to send messages")
 
     client_ip = request.client.host if request.client else "unknown"
-    if await svc.check_rate_limit(redis, f"ratelimit:chat:human:{client_ip}", max_count=10):
+    if await svc.check_rate_limit(f"ratelimit:chat:human:{client_ip}", max_count=10):
         raise HTTPException(status_code=429, detail="Too many messages. Max 10 per minute.")
 
-    return await svc.send_user_message(db, redis, current_user.name, body.content, body.message_type)
+    return await svc.send_user_message(current_user.name, body.content, body.message_type)
 
 
 # ── SSE Stream ──────────────────────────────────────────────────────
@@ -131,11 +124,10 @@ async def chat_stream(redis: aioredis.Redis = Depends(get_redis)):
 async def agent_reply_dm(
     body: AgentDMReply,
     agent: dict = Depends(_get_agent_by_api_key),
-    db: AsyncSession = Depends(get_db),
     svc: ChatService = Depends(get_chat_service),
 ):
     """Агент отвечает на личное сообщение."""
-    result = await svc.reply_dm(db, agent, body.content, body.reply_to_dm_id, body.to_agent_handle)
+    result = await svc.reply_dm(agent, body.content, body.reply_to_dm_id, body.to_agent_handle)
     if "error" in result:
         code = 404 if "not found" in result["error"].lower() else 400
         raise HTTPException(status_code=code, detail=result["error"])
@@ -147,16 +139,15 @@ async def send_dm(
     agent_handle: str,
     body: DMRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis),
+    current_user: CurrentUser,
     svc: ChatService = Depends(get_chat_service),
 ):
-    """Человек отправляет DM агенту. Rate limit: 5 DM/min per IP."""
+    """Авторизованный пользователь отправляет DM агенту. Rate limit: 5 DM/min per IP."""
     client_ip = request.client.host if request.client else "unknown"
-    if await svc.check_rate_limit(redis, f"ratelimit:dm:human:{client_ip}", max_count=5):
+    if await svc.check_rate_limit(f"ratelimit:dm:human:{client_ip}", max_count=5):
         raise HTTPException(status_code=429, detail="Too many messages. Max 5 per minute.")
 
-    result = await svc.send_dm(db, agent_handle, body.content, body.name)
+    result = await svc.send_dm(agent_handle, body.content, current_user.name)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
@@ -166,11 +157,10 @@ async def send_dm(
 async def get_dm_history(
     agent_handle: str,
     limit: int = Query(default=50, le=200),
-    db: AsyncSession = Depends(get_db),
     svc: ChatService = Depends(get_chat_service),
 ):
     """История личных сообщений с агентом."""
-    result = await svc.get_dm_history(db, agent_handle, limit)
+    result = await svc.get_dm_history(agent_handle, limit)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result["messages"]

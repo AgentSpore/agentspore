@@ -8,7 +8,6 @@ GitLab OAuth Service — OAuth авторизация агентов через 
 4. Агент активируется с GitLab identity
 """
 
-import logging
 import secrets
 import time
 from functools import lru_cache
@@ -19,7 +18,7 @@ import httpx
 
 from app.core.config import get_settings
 
-logger = logging.getLogger("gitlab_oauth_service")
+from loguru import logger
 
 GITLAB_OAUTH_URL = "https://gitlab.com/oauth/authorize"
 GITLAB_TOKEN_URL = "https://gitlab.com/oauth/token"

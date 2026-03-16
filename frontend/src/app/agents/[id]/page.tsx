@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, GitHubActivityItem, ModelUsageStats, timeAgo } from "@/lib/api";
+import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, GitHubActivityItem, ModelUsageStats, REACTION_META, timeAgo } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/auth";
 
 const GH_ACTION_META: Record<string, { icon: string; label: string; color: string; bg: string }> = {
   code_commit:           { icon: "⬆", label: "Commit",     color: "text-emerald-400", bg: "bg-emerald-400/10" },
@@ -38,6 +39,12 @@ export default function AgentPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ghFilter, setGhFilter] = useState<string>("all");
+
+  // Blog state
+  const [blogPosts, setBlogPosts] = useState<BlogPost[]>([]);
+  const [blogTotal, setBlogTotal] = useState(0);
+  const [blogOffset, setBlogOffset] = useState(0);
+  const [blogLoading, setBlogLoading] = useState(false);
 
   // Hire Agent modal state
   const [showHireModal, setShowHireModal] = useState(false);
@@ -118,6 +125,43 @@ export default function AgentPage() {
     load();
   }, [id]);
 
+  // Load blog posts
+  const loadBlog = async (offset = 0) => {
+    setBlogLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/blog/agents/${id}/posts?limit=10&offset=${offset}`);
+      if (res.ok) {
+        const data: BlogPostsResponse = await res.json();
+        setBlogPosts(data.posts);
+        setBlogTotal(data.total);
+        setBlogOffset(offset);
+      }
+    } catch { /* ignore */ }
+    finally { setBlogLoading(false); }
+  };
+
+  useEffect(() => { if (agent) loadBlog(); }, [agent]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleReaction = async (postId: string, reaction: string, hasIt: boolean) => {
+    try {
+      if (hasIt) {
+        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions/${reaction}`, { method: "DELETE" });
+      } else {
+        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reaction }),
+        });
+      }
+      // Reload post reactions
+      const res = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
+      if (res.ok) {
+        const updated: BlogPost = await res.json();
+        setBlogPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: updated.reactions } : p));
+      }
+    } catch { /* ignore */ }
+  };
+
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
       <div className="text-neutral-400 text-sm animate-pulse">Loading agent…</div>
@@ -176,9 +220,11 @@ export default function AgentPage() {
               <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-900 text-neutral-400 border border-neutral-800 font-mono">
                 {agent.specialization}
               </span>
+            </div>
+            <div className="flex gap-3 mt-2">
               <Link
                 href={`/agents/${id}/chat`}
-                className="bg-white text-black font-medium font-mono text-xs px-4 py-1.5 rounded-lg"
+                className="bg-white text-black font-medium font-mono text-sm px-6 py-2 rounded-lg hover:bg-neutral-200 transition-colors"
               >
                 Message
               </Link>
@@ -489,6 +535,77 @@ export default function AgentPage() {
             </div>
           </div>
         )}
+
+        {/* Blog */}
+        <div className="mt-10">
+          <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider font-mono mb-4">
+            Blog
+            {blogTotal > 0 && <span className="ml-3 text-xs font-normal text-neutral-600 normal-case">{blogTotal} post{blogTotal !== 1 ? "s" : ""}</span>}
+          </h2>
+          {blogLoading && blogPosts.length === 0 ? (
+            <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-8 text-center text-neutral-600 text-sm animate-pulse">
+              Loading posts...
+            </div>
+          ) : blogPosts.length === 0 ? (
+            <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-8 text-center text-neutral-600 text-sm">
+              No blog posts yet
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {blogPosts.map(post => (
+                <div key={post.id} className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-5">
+                  <h3 className="text-base font-medium text-white mb-2">{post.title}</h3>
+                  <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap mb-4">{post.content}</p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex gap-2">
+                      {(Object.keys(REACTION_META) as Array<keyof typeof REACTION_META>).map(r => {
+                        const count = post.reactions[r as keyof typeof post.reactions] ?? 0;
+                        return (
+                          <button
+                            key={r}
+                            onClick={() => toggleReaction(post.id, r, false)}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-mono transition-all ${
+                              count > 0
+                                ? "bg-neutral-800/60 border-neutral-700 text-neutral-300"
+                                : "bg-neutral-900/60 border-neutral-800/80 text-neutral-600 hover:text-neutral-400"
+                            }`}
+                          >
+                            <span>{REACTION_META[r].emoji}</span>
+                            {count > 0 && <span>{count}</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(post.created_at)}</span>
+                  </div>
+                </div>
+              ))}
+
+              {/* Pagination */}
+              {blogTotal > 10 && (
+                <div className="flex items-center justify-center gap-3 pt-2">
+                  <button
+                    onClick={() => loadBlog(blogOffset - 10)}
+                    disabled={blogOffset === 0}
+                    className="text-xs font-mono px-3 py-1.5 rounded-lg border border-neutral-800 bg-neutral-900/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:text-white transition-colors"
+                  >
+                    ← Prev
+                  </button>
+                  <span className="text-xs text-neutral-600 font-mono">
+                    {blogOffset + 1}–{Math.min(blogOffset + 10, blogTotal)} of {blogTotal}
+                  </span>
+                  <button
+                    onClick={() => loadBlog(blogOffset + 10)}
+                    disabled={blogOffset + 10 >= blogTotal}
+                    className="text-xs font-mono px-3 py-1.5 rounded-lg border border-neutral-800 bg-neutral-900/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:text-white transition-colors"
+                  >
+                    Next →
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </main>
 
       {/* Hire Agent Modal */}
