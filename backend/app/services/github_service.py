@@ -612,6 +612,133 @@ class GitHubService:
             logger.warning(f"All {failed} file pushes failed for {name}")
             return False
 
+    async def push_files_atomic(
+        self,
+        repo_name: str,
+        files: list[dict],
+        commit_message: str,
+        author_name: str,
+        author_email: str,
+        branch: str = "main",
+        user_token: str | None = None,
+    ) -> dict | None:
+        """Atomic multi-file commit via GitHub Trees API.
+
+        Creates, updates, and deletes files in a single commit.
+        files: [{"path": "src/main.py", "content": "..."}, {"path": "old.py", "delete": True}]
+        Returns: {"sha": "abc1234", "files_changed": 5} or None on failure.
+        """
+        if not await self.initialize():
+            return None
+
+        token = user_token or await self._get_installation_token()
+        if not token:
+            logger.warning("No GitHub token available for atomic push")
+            return None
+
+        name = self._sanitize_repo_name(repo_name)
+        headers = self._headers(token)
+
+        try:
+            # 1. Get current branch ref
+            ref_resp = await self.client.get(
+                f"{self.base_url}/repos/{self.org}/{name}/git/ref/heads/{branch}",
+                headers=headers,
+            )
+            if ref_resp.status_code != 200:
+                logger.warning("Failed to get branch ref %s/%s: %d %s", name, branch, ref_resp.status_code, ref_resp.text[:200])
+                return None
+
+            ref_data = ref_resp.json()
+            current_commit_sha = ref_data["object"]["sha"]
+
+            # 2. Get current commit to find tree SHA
+            commit_resp = await self.client.get(
+                f"{self.base_url}/repos/{self.org}/{name}/git/commits/{current_commit_sha}",
+                headers=headers,
+            )
+            if commit_resp.status_code != 200:
+                logger.warning("Failed to get commit %s: %d", current_commit_sha, commit_resp.status_code)
+                return None
+
+            current_tree_sha = commit_resp.json()["tree"]["sha"]
+
+            # 3. Create blobs and build tree entries
+            tree_entries = []
+            for f in files:
+                if f.get("delete"):
+                    tree_entries.append({
+                        "path": f["path"],
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": None,
+                    })
+                else:
+                    blob_resp = await self.client.post(
+                        f"{self.base_url}/repos/{self.org}/{name}/git/blobs",
+                        headers=headers,
+                        json={"content": f.get("content", ""), "encoding": "utf-8"},
+                    )
+                    if blob_resp.status_code != 201:
+                        logger.warning("Failed to create blob for %s: %d %s", f["path"], blob_resp.status_code, blob_resp.text[:200])
+                        return None
+
+                    tree_entries.append({
+                        "path": f["path"],
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": blob_resp.json()["sha"],
+                    })
+
+            # 4. Create new tree
+            tree_resp = await self.client.post(
+                f"{self.base_url}/repos/{self.org}/{name}/git/trees",
+                headers=headers,
+                json={"base_tree": current_tree_sha, "tree": tree_entries},
+            )
+            if tree_resp.status_code != 201:
+                logger.warning("Failed to create tree: %d %s", tree_resp.status_code, tree_resp.text[:200])
+                return None
+
+            new_tree_sha = tree_resp.json()["sha"]
+
+            # 5. Create commit
+            now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            author_info = {"name": author_name, "email": author_email, "date": now_iso}
+            commit_create_resp = await self.client.post(
+                f"{self.base_url}/repos/{self.org}/{name}/git/commits",
+                headers=headers,
+                json={
+                    "message": commit_message,
+                    "tree": new_tree_sha,
+                    "parents": [current_commit_sha],
+                    "author": author_info,
+                    "committer": author_info,
+                },
+            )
+            if commit_create_resp.status_code != 201:
+                logger.warning("Failed to create commit: %d %s", commit_create_resp.status_code, commit_create_resp.text[:200])
+                return None
+
+            new_commit_sha = commit_create_resp.json()["sha"]
+
+            # 6. Update ref
+            update_ref_resp = await self.client.patch(
+                f"{self.base_url}/repos/{self.org}/{name}/git/refs/heads/{branch}",
+                headers=headers,
+                json={"sha": new_commit_sha},
+            )
+            if update_ref_resp.status_code != 200:
+                logger.warning("Failed to update ref: %d %s", update_ref_resp.status_code, update_ref_resp.text[:200])
+                return None
+
+            logger.info("Atomic push: %d files to %s/%s (%s)", len(files), name, branch, new_commit_sha[:7])
+            return {"sha": new_commit_sha[:7], "files_changed": len(files)}
+
+        except Exception as e:
+            logger.error("push_files_atomic error for %s: %s", name, e)
+            return None
+
     async def get_repo_url(self, repo_name: str) -> str:
         """Получить публичный URL репозитория."""
         name = self._sanitize_repo_name(repo_name)
@@ -854,7 +981,7 @@ class GitHubService:
         ]
 
     async def list_commits(self, repo_name: str, branch: str = "main", limit: int = 20) -> list[dict]:
-        """Получить историю коммитов репозитория."""
+        """Get commit history for a repository (single page)."""
         if not await self.initialize():
             return []
 
@@ -874,6 +1001,28 @@ class GitHubService:
                 "author": c["commit"]["author"]["name"],
                 "date": c["commit"]["author"]["date"],
                 "url": c["html_url"],
+            }
+            for c in resp.json()
+        ]
+
+    async def list_commits_page(self, repo_name: str, branch: str = "main", page: int = 1, per_page: int = 100) -> list[dict]:
+        """Get a specific page of commits (for pagination). Returns raw author/sha."""
+        if not await self.initialize():
+            return []
+
+        name = self._sanitize_repo_name(repo_name)
+        resp = await self.client.get(
+            f"{self.base_url}/repos/{self.org}/{name}/commits",
+            headers=self._headers(),
+            params={"sha": branch, "per_page": per_page, "page": page},
+        )
+        if resp.status_code != 200:
+            return []
+
+        return [
+            {
+                "sha": c["sha"][:7],
+                "author": c["commit"]["author"]["name"],
             }
             for c in resp.json()
         ]

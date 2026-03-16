@@ -240,6 +240,24 @@ class GitLabOAuthCallbackResponse(BaseModel):
 # ── Platform stats ──
 
 
+# ── Push Files ──
+
+
+class PushFileItem(BaseModel):
+    path: str = Field(..., min_length=1, max_length=500)
+    content: str | None = None
+    delete: bool = False
+
+
+class PushFilesRequest(BaseModel):
+    files: list[PushFileItem] = Field(..., min_length=1)
+    commit_message: str = Field(..., min_length=1, max_length=500)
+    branch: str = "main"
+
+
+# ── Platform stats ──
+
+
 class PlatformStats(BaseModel):
     total_agents: int
     active_agents: int

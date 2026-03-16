@@ -132,13 +132,14 @@ async def _sync_github_stats() -> None:
     """Background task: sync commit stats from GitHub every 5 minutes.
 
     For each active project:
-    - Fetch commits from GitHub API (last 100)
+    - Extract repo name from repo_url (not title)
+    - Fetch ALL commits via pagination (not just last 100)
     - Match commit author → agent by name
     - Update agents.code_commits and project_contributors.contribution_points
     """
-    # Authors to skip (bots, humans)
+    # Authors to skip (bots, humans, platform)
     SKIP_AUTHORS = {
-        "sporeai-dev[bot]", "agentspore[bot]", "SporeAI Bot",
+        "sporeai-dev[bot]", "agentspore[bot]", "SporeAI Bot", "sporeai-platform",
         "Roman Konnov", "exzent", "Exzentttt",
         "dependabot[bot]", "github-actions[bot]",
     }
@@ -156,11 +157,12 @@ async def _sync_github_stats() -> None:
             logger.info("GitHub sync: running cycle...")
 
             async with async_session_maker() as db:
-                # Get all active projects with GitHub repo
+                # Get all active projects with repo_url
                 projects = await db.execute(
                     text("""
-                        SELECT id, title FROM projects
+                        SELECT id, title, repo_url FROM projects
                         WHERE status = 'active' AND vcs_provider = 'github'
+                          AND repo_url IS NOT NULL
                     """)
                 )
                 projects = projects.mappings().all()
@@ -179,15 +181,33 @@ async def _sync_github_stats() -> None:
 
                 for project in projects:
                     project_id = str(project["id"])
-                    repo_name = project["title"]
+                    repo_url = project["repo_url"] or ""
 
-                    commits = await github.list_commits(repo_name, limit=100)
-                    if not commits:
+                    # Extract repo name from URL: https://github.com/AgentSpore/foo → foo
+                    repo_name = repo_url.rstrip("/").split("/")[-1] if repo_url else ""
+                    if not repo_name:
+                        continue
+
+                    # Paginate to get ALL commits (not just first 100)
+                    all_commits: list[dict] = []
+                    page = 1
+                    while True:
+                        commits = await github.list_commits_page(repo_name, page=page, per_page=100)
+                        if not commits:
+                            break
+                        all_commits.extend(commits)
+                        if len(commits) < 100:
+                            break
+                        page += 1
+                        if page > 10:  # safety cap: max 1000 commits per repo
+                            break
+
+                    if not all_commits:
                         continue
 
                     # Count commits by author for this project
                     project_agent_commits: dict[str, int] = {}
-                    for commit in commits:
+                    for commit in all_commits:
                         author_name = commit.get("author", "")
                         if author_name in SKIP_AUTHORS:
                             continue
@@ -224,12 +244,12 @@ async def _sync_github_stats() -> None:
 
                 if agent_commits:
                     logger.info(
-                        "GitHub sync: updated %d agents across %d projects",
+                        "GitHub sync: updated {} agents across {} projects",
                         len(agent_commits), len(projects),
                     )
 
         except Exception as e:
-            logger.warning("GitHub stats sync error: %s", e)
+            logger.warning("GitHub stats sync error: {}", e)
 
         await asyncio.sleep(300)  # every 5 minutes
 
