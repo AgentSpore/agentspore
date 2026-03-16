@@ -162,7 +162,7 @@ class TestDAGValidation:
 
     def _service(self):
         from app.services.flow_service import FlowService
-        return FlowService(repo=MagicMock())
+        return FlowService(repo=MagicMock(), agent_repo=MagicMock())
 
     def test_valid_linear_dag(self):
         svc = self._service()
@@ -250,7 +250,7 @@ class TestInputAssembly:
 
     def _service(self):
         from app.services.flow_service import FlowService
-        return FlowService(repo=MagicMock())
+        return FlowService(repo=MagicMock(), agent_repo=MagicMock())
 
     def test_no_deps_no_instructions(self):
         svc = self._service()
@@ -575,7 +575,7 @@ class TestFlowAPIFunctional:
         repo_mock.get_flow_steps = AsyncMock(return_value=[])
 
         from app.services.flow_service import FlowService
-        service_mock = FlowService(repo=repo_mock)
+        service_mock = FlowService(repo=repo_mock, agent_repo=MagicMock())
 
         _override_flow_deps(app, repo_mock=repo_mock, service_mock=service_mock)
 
@@ -654,18 +654,22 @@ class TestFlowAPIFunctional:
             "user_name": "TestUser",
         })
 
-        _override_flow_deps(app, repo_mock=repo_mock)
+        from app.services.flow_service import FlowService
+        agent_repo_mock = MagicMock()
+        agent_repo_mock.get_agent_by_id = AsyncMock(return_value=None)
+        service_mock = FlowService(repo=repo_mock, agent_repo=agent_repo_mock)
+
+        _override_flow_deps(app, repo_mock=repo_mock, service_mock=service_mock)
 
         try:
-            with patch("app.repositories.agent_repo.get_agent_by_id", new_callable=AsyncMock, return_value=None):
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    response = await client.post(
-                        f"/api/v1/flows/{flow_id}/steps",
-                        json={"agent_id": str(uuid.uuid4()), "title": "Research"},
-                        headers={"Authorization": "Bearer fake-token"},
-                    )
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/flows/{flow_id}/steps",
+                    json={"agent_id": str(uuid.uuid4()), "title": "Research"},
+                    headers={"Authorization": "Bearer fake-token"},
+                )
 
             assert response.status_code == 404
             assert "agent not found" in response.json()["detail"].lower()

@@ -18,7 +18,6 @@ DELETE /api/v1/teams/{id}/projects/{pid}    — отвязать проект (o
 import asyncio
 import hashlib
 import json
-import logging
 from uuid import UUID
 
 import redis.asyncio as aioredis
@@ -35,7 +34,7 @@ from app.models import User
 from app.repositories import team_repo
 from app.schemas.teams import TeamCreateRequest, TeamMemberAddRequest, TeamMessageRequest, TeamProjectLinkRequest, TeamUpdateRequest
 
-logger = logging.getLogger("teams_api")
+from loguru import logger
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
@@ -104,6 +103,9 @@ async def create_team(
 
     team = await team_repo.create_team(db, body.name, body.description, agent_id, user_id)
     await team_repo.add_owner_member(db, team["id"], agent_id, user_id)
+    # Auto-add agent's owner as team member
+    if agent_id:
+        await team_repo.auto_add_agent_owner(db, team["id"], agent_id)
     await db.commit()
 
     return {
@@ -247,6 +249,9 @@ async def add_member(
         raise HTTPException(status_code=409, detail="Already a team member")
 
     row = await team_repo.add_member(db, team_id, body.agent_id, body.user_id, body.role)
+    # Auto-add agent's owner as team member
+    if body.agent_id:
+        await team_repo.auto_add_agent_owner(db, team_id, body.agent_id)
     await db.commit()
 
     return {"status": "added", "member_id": str(row["id"])}

@@ -7,7 +7,6 @@ GET /api/v1/activity/stream — SSE endpoint, Redis pub/sub канал agentspor
 
 import asyncio
 import json
-import logging
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Query
@@ -18,7 +17,7 @@ from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.repositories import activity_repo
 
-logger = logging.getLogger("activity_api")
+from loguru import logger
 router = APIRouter(prefix="/activity", tags=["activity"])
 
 

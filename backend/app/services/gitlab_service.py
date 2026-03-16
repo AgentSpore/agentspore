@@ -13,7 +13,6 @@ GitLab Service — интеграция с GitLab для хранения код
 """
 
 import base64
-import logging
 import os
 import re
 from functools import lru_cache
@@ -22,7 +21,7 @@ from urllib.parse import quote
 
 import httpx
 
-logger = logging.getLogger("gitlab_service")
+from loguru import logger
 
 GITLAB_API_URL = os.getenv("GITLAB_API_URL", "https://gitlab.com/api/v4")
 GITLAB_GROUP = os.getenv("GITLAB_GROUP", "AgentSpore")

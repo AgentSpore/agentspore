@@ -30,7 +30,6 @@ Agent-facing (X-API-Key):
 
 import hashlib
 import json
-import logging
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -39,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.api.deps import CurrentUser
+from app.repositories.chat_repo import ChatRepository, get_chat_repo
 from app.repositories.flow_repo import FlowRepository, get_flow_repo
 from app.services.flow_service import FlowService, get_flow_service
 from app.schemas.flows import (
@@ -53,7 +53,7 @@ from app.schemas.flows import (
     UpdateStepRequest,
 )
 
-logger = logging.getLogger("flows_api")
+from loguru import logger
 router = APIRouter(prefix="/flows", tags=["flows"])
 
 FLOW_CHANNEL = "agentspore:flow"
@@ -105,21 +105,19 @@ def _step_to_response(s: dict) -> dict:
 
 async def _get_agent_by_api_key(
     x_api_key: str = Header(..., alias="X-API-Key"),
-    db: AsyncSession = Depends(get_db),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
 ) -> dict:
-    from app.repositories.chat_repo import get_chat_repo
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-    agent = await get_chat_repo().get_agent_by_api_key_hash(db, key_hash)
+    agent = await chat_repo.get_agent_by_api_key_hash(key_hash)
     if not agent:
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
     return agent
 
 
 async def _verify_flow_owner(
-    flow_id: str, user: CurrentUser,
-    repo: FlowRepository, db: AsyncSession,
+    flow_id: str, user: CurrentUser, repo: FlowRepository,
 ) -> dict:
-    flow = await repo.get_flow_by_id(db, flow_id)
+    flow = await repo.get_flow_by_id(flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
     if str(flow["user_id"]) != str(user.id):
@@ -136,9 +134,8 @@ async def create_flow(
     body: CreateFlowRequest,
     user: CurrentUser,
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    result = await repo.create_flow(db, user.id, body.title, body.description)
+    result = await repo.create_flow(user.id, body.title, body.description)
     return {"id": str(result["id"]), "status": result["status"], "created_at": str(result["created_at"])}
 
 
@@ -147,9 +144,8 @@ async def list_flows(
     user: CurrentUser,
     limit: int = Query(default=50, le=200),
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    rows = await repo.list_user_flows(db, user.id, limit)
+    rows = await repo.list_user_flows(user.id, limit)
     return [
         {
             "id": str(r["id"]),
@@ -173,10 +169,9 @@ async def get_flow(
     flow_id: str,
     user: CurrentUser,
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    flow = await _verify_flow_owner(flow_id, user, repo, db)
-    steps = await repo.get_flow_steps(db, flow_id)
+    flow = await _verify_flow_owner(flow_id, user, repo)
+    steps = await repo.get_flow_steps(flow_id)
     return {
         **_flow_to_response(flow),
         "steps": [_step_to_response(s) for s in steps],
@@ -189,9 +184,8 @@ async def update_flow(
     body: UpdateFlowRequest,
     user: CurrentUser,
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    flow = await _verify_flow_owner(flow_id, user, repo, db)
+    flow = await _verify_flow_owner(flow_id, user, repo)
     if flow["status"] != "draft":
         raise HTTPException(status_code=400, detail="Can only edit draft flows")
 
@@ -199,7 +193,7 @@ async def update_flow(
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    await repo.update_flow(db, flow_id, **fields)
+    await repo.update_flow(flow_id, **fields)
     return {"status": "ok"}
 
 
@@ -208,12 +202,11 @@ async def delete_flow(
     flow_id: str,
     user: CurrentUser,
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    flow = await _verify_flow_owner(flow_id, user, repo, db)
+    flow = await _verify_flow_owner(flow_id, user, repo)
     if flow["status"] != "draft":
         raise HTTPException(status_code=400, detail="Can only delete draft flows")
-    deleted = await repo.delete_flow(db, flow_id)
+    deleted = await repo.delete_flow(flow_id)
     if not deleted:
         raise HTTPException(status_code=400, detail="Could not delete flow")
     return {"status": "deleted"}
@@ -227,20 +220,19 @@ async def add_step(
     body: AddStepRequest,
     user: CurrentUser,
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
+    service: FlowService = Depends(get_flow_service),
 ):
-    flow = await _verify_flow_owner(flow_id, user, repo, db)
+    flow = await _verify_flow_owner(flow_id, user, repo)
     if flow["status"] != "draft":
         raise HTTPException(status_code=400, detail="Can only add steps to draft flows")
 
-    # Verify agent exists
-    from app.repositories import agent_repo
-    agent = await agent_repo.get_agent_by_id(db, body.agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    try:
+        await service.verify_agent_exists(body.agent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
     step = await repo.create_step(
-        db, flow_id, body.agent_id, body.title,
+        flow_id, body.agent_id, body.title,
         body.instructions, body.depends_on, body.auto_approve,
     )
     return {
@@ -258,13 +250,13 @@ async def update_step(
     body: UpdateStepRequest,
     user: CurrentUser,
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
+    service: FlowService = Depends(get_flow_service),
 ):
-    flow = await _verify_flow_owner(flow_id, user, repo, db)
+    flow = await _verify_flow_owner(flow_id, user, repo)
     if flow["status"] != "draft":
         raise HTTPException(status_code=400, detail="Can only edit steps in draft flows")
 
-    step = await repo.get_step_by_id(db, step_id)
+    step = await repo.get_step_by_id(step_id)
     if not step or str(step["flow_id"]) != flow_id:
         raise HTTPException(status_code=404, detail="Step not found in this flow")
 
@@ -274,12 +266,12 @@ async def update_step(
 
     # Verify agent if changing
     if "agent_id" in fields:
-        from app.repositories import agent_repo
-        agent = await agent_repo.get_agent_by_id(db, fields["agent_id"])
-        if not agent:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        try:
+            await service.verify_agent_exists(fields["agent_id"])
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
 
-    await repo.update_step(db, step_id, **fields)
+    await repo.update_step(step_id, **fields)
     return {"status": "ok"}
 
 
@@ -289,13 +281,12 @@ async def delete_step(
     step_id: str,
     user: CurrentUser,
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    flow = await _verify_flow_owner(flow_id, user, repo, db)
+    flow = await _verify_flow_owner(flow_id, user, repo)
     if flow["status"] != "draft":
         raise HTTPException(status_code=400, detail="Can only delete steps in draft flows")
 
-    deleted = await repo.delete_step(db, step_id)
+    deleted = await repo.delete_step(step_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Step not found")
     return {"status": "deleted"}
@@ -312,9 +303,9 @@ async def start_flow(
     db: AsyncSession = Depends(get_db),
     redis_client: aioredis.Redis = Depends(get_redis),
 ):
-    await _verify_flow_owner(flow_id, user, repo, db)
+    await _verify_flow_owner(flow_id, user, repo)
     try:
-        flow = await service.start_flow(db, flow_id)
+        flow = await service.start_flow(flow_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -333,11 +324,10 @@ async def pause_flow(
     user: CurrentUser,
     service: FlowService = Depends(get_flow_service),
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    await _verify_flow_owner(flow_id, user, repo, db)
+    await _verify_flow_owner(flow_id, user, repo)
     try:
-        flow = await service.pause_flow(db, flow_id)
+        flow = await service.pause_flow(flow_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return _flow_to_response(flow)
@@ -351,9 +341,9 @@ async def resume_flow(
     repo: FlowRepository = Depends(get_flow_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_flow_owner(flow_id, user, repo, db)
+    await _verify_flow_owner(flow_id, user, repo)
     try:
-        flow = await service.resume_flow(db, flow_id)
+        flow = await service.resume_flow(flow_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     await db.commit()
@@ -366,11 +356,10 @@ async def cancel_flow(
     user: CurrentUser,
     service: FlowService = Depends(get_flow_service),
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    await _verify_flow_owner(flow_id, user, repo, db)
+    await _verify_flow_owner(flow_id, user, repo)
     try:
-        flow = await service.cancel_flow(db, flow_id)
+        flow = await service.cancel_flow(flow_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return _flow_to_response(flow)
@@ -389,9 +378,9 @@ async def approve_step(
     db: AsyncSession = Depends(get_db),
     redis_client: aioredis.Redis = Depends(get_redis),
 ):
-    await _verify_flow_owner(flow_id, user, repo, db)
+    await _verify_flow_owner(flow_id, user, repo)
     try:
-        step = await service.approve_step(db, flow_id, step_id, body.edited_output)
+        step = await service.approve_step(flow_id, step_id, body.edited_output)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -414,9 +403,9 @@ async def reject_step(
     db: AsyncSession = Depends(get_db),
     redis_client: aioredis.Redis = Depends(get_redis),
 ):
-    await _verify_flow_owner(flow_id, user, repo, db)
+    await _verify_flow_owner(flow_id, user, repo)
     try:
-        step = await service.reject_step(db, flow_id, step_id, body.feedback)
+        step = await service.reject_step(flow_id, step_id, body.feedback)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -438,9 +427,9 @@ async def skip_step(
     repo: FlowRepository = Depends(get_flow_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_flow_owner(flow_id, user, repo, db)
+    await _verify_flow_owner(flow_id, user, repo)
     try:
-        step = await service.skip_step(db, flow_id, step_id, body.reason)
+        step = await service.skip_step(flow_id, step_id, body.reason)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -457,13 +446,12 @@ async def get_step_messages(
     user: CurrentUser,
     limit: int = Query(default=200, le=500),
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    await _verify_flow_owner(flow_id, user, repo, db)
-    step = await repo.get_step_by_id(db, step_id)
+    await _verify_flow_owner(flow_id, user, repo)
+    step = await repo.get_step_by_id(step_id)
     if not step or str(step["flow_id"]) != flow_id:
         raise HTTPException(status_code=404, detail="Step not found in this flow")
-    return await repo.get_messages(db, step_id, limit)
+    return await repo.get_messages(step_id, limit)
 
 
 @router.post("/{flow_id}/steps/{step_id}/messages", summary="Send message in step chat")
@@ -476,15 +464,15 @@ async def send_step_message(
     db: AsyncSession = Depends(get_db),
     redis_client: aioredis.Redis = Depends(get_redis),
 ):
-    flow = await _verify_flow_owner(flow_id, user, repo, db)
-    step = await repo.get_step_by_id(db, step_id)
+    flow = await _verify_flow_owner(flow_id, user, repo)
+    step = await repo.get_step_by_id(step_id)
     if not step or str(step["flow_id"]) != flow_id:
         raise HTTPException(status_code=404, detail="Step not found in this flow")
     if flow["status"] not in ("running", "paused"):
         raise HTTPException(status_code=400, detail="Flow is not active")
 
     msg = await repo.insert_message(
-        db, step_id, "user", user.id, body.content, body.message_type,
+        step_id, "user", user.id, body.content, body.message_type,
         body.file_url, body.file_name,
     )
     await db.commit()
@@ -507,9 +495,8 @@ async def send_step_message(
 async def agent_list_steps(
     agent: dict = Depends(_get_agent_by_api_key),
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    steps = await repo.get_agent_ready_steps(db, str(agent["id"]))
+    steps = await repo.get_agent_ready_steps(str(agent["id"]))
     return [
         {
             "id": str(s["id"]),
@@ -530,9 +517,8 @@ async def agent_get_step(
     step_id: str,
     agent: dict = Depends(_get_agent_by_api_key),
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    step = await repo.get_step_by_id(db, step_id)
+    step = await repo.get_step_by_id(step_id)
     if not step or str(step["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Step not found")
     return _step_to_response(step)
@@ -543,12 +529,11 @@ async def agent_get_step_messages(
     step_id: str,
     agent: dict = Depends(_get_agent_by_api_key),
     repo: FlowRepository = Depends(get_flow_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    step = await repo.get_step_by_id(db, step_id)
+    step = await repo.get_step_by_id(step_id)
     if not step or str(step["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Step not found")
-    return await repo.get_messages(db, step_id)
+    return await repo.get_messages(step_id)
 
 
 @router.post("/agent/step/{step_id}/messages", summary="Agent sends message in step chat")
@@ -560,7 +545,7 @@ async def agent_send_step_message(
     db: AsyncSession = Depends(get_db),
     redis_client: aioredis.Redis = Depends(get_redis),
 ):
-    step = await repo.get_step_by_id(db, step_id)
+    step = await repo.get_step_by_id(step_id)
     if not step or str(step["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Step not found")
     if step["status"] not in ("ready", "active"):
@@ -568,10 +553,10 @@ async def agent_send_step_message(
 
     # Mark step as active on first agent message
     if step["status"] == "ready":
-        await repo.update_step_status(db, step_id, "active")
+        await repo.update_step_status(step_id, "active")
 
     msg = await repo.insert_message(
-        db, step_id, "agent", agent["id"], body.content, body.message_type,
+        step_id, "agent", agent["id"], body.content, body.message_type,
         body.file_url, body.file_name,
     )
     await db.commit()
@@ -596,12 +581,12 @@ async def agent_complete_step(
     db: AsyncSession = Depends(get_db),
     redis_client: aioredis.Redis = Depends(get_redis),
 ):
-    step = await repo.get_step_by_id(db, step_id)
+    step = await repo.get_step_by_id(step_id)
     if not step or str(step["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Step not found")
 
     try:
-        result = await service.agent_complete_step(db, step_id, body.output_text, body.output_files)
+        result = await service.agent_complete_step(step_id, body.output_text, body.output_files)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

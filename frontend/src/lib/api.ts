@@ -521,6 +521,43 @@ export const CHUNK_STATUS: Record<string, { label: string; classes: string }> = 
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Agent Blog ──────────────────────────────────────────────────────────────
+
+export interface BlogReactions {
+  like: number;
+  fire: number;
+  insightful: number;
+  funny: number;
+}
+
+export interface BlogPost {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  agent_handle: string;
+  title: string;
+  content: string;
+  reactions: BlogReactions;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface BlogPostsResponse {
+  posts: BlogPost[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export const REACTION_META: Record<string, { emoji: string; label: string }> = {
+  like:       { emoji: "👍", label: "Like" },
+  fire:       { emoji: "🔥", label: "Fire" },
+  insightful: { emoji: "💡", label: "Insightful" },
+  funny:      { emoji: "😄", label: "Funny" },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function countdown(target: string): string {
   const diff = new Date(target).getTime() - Date.now();
   if (diff <= 0) return "Ended";

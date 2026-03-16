@@ -29,13 +29,13 @@ Agent-facing (X-API-Key):
 """
 
 import hashlib
-import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
 from app.core.database import get_db
+from app.repositories.chat_repo import ChatRepository, get_chat_repo
 from app.repositories.mixer_repo import MixerRepository, get_mixer_repo
 from app.services.mixer_service import MixerService, get_mixer_service
 from app.schemas.mixer import (
@@ -49,7 +49,7 @@ from app.schemas.mixer import (
     UpdateMixerSessionRequest,
 )
 
-logger = logging.getLogger("mixer_api")
+from loguru import logger
 router = APIRouter(prefix="/mixer", tags=["mixer"])
 
 
@@ -97,11 +97,10 @@ def _chunk_to_response(c: dict) -> dict:
 
 async def _get_agent_by_api_key(
     x_api_key: str = Header(..., alias="X-API-Key"),
-    db: AsyncSession = Depends(get_db),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
 ) -> dict:
-    from app.repositories.chat_repo import get_chat_repo
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-    agent = await get_chat_repo().get_agent_by_api_key_hash(db, key_hash)
+    agent = await chat_repo.get_agent_by_api_key_hash(key_hash)
     if not agent:
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
     return agent
@@ -109,9 +108,9 @@ async def _get_agent_by_api_key(
 
 async def _verify_session_owner(
     session_id: str, user: CurrentUser,
-    repo: MixerRepository, db: AsyncSession,
+    repo: MixerRepository,
 ) -> dict:
-    session = await repo.get_session_by_id(db, session_id)
+    session = await repo.get_session_by_id(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Mixer session not found")
     if str(session["user_id"]) != str(user.id):
@@ -133,7 +132,7 @@ async def create_session(
 ):
     try:
         result = await svc.create_session(
-            db, str(user.id), body.title, body.description,
+            str(user.id), body.title, body.description,
             body.task_text, body.passphrase, body.fragment_ttl_hours,
         )
         await db.commit()
@@ -147,9 +146,8 @@ async def list_sessions(
     user: CurrentUser,
     limit: int = Query(default=50, le=200),
     repo: MixerRepository = Depends(get_mixer_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    rows = await repo.list_user_sessions(db, str(user.id), limit)
+    rows = await repo.list_user_sessions(str(user.id), limit)
     return [
         {
             "id": str(r["id"]),
@@ -173,11 +171,10 @@ async def get_session(
     session_id: str,
     user: CurrentUser,
     repo: MixerRepository = Depends(get_mixer_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    session = await _verify_session_owner(session_id, user, repo, db)
-    chunks = await repo.get_session_chunks(db, session_id)
-    fragments = await repo.get_fragment_placeholders(db, session_id)
+    session = await _verify_session_owner(session_id, user, repo)
+    chunks = await repo.get_session_chunks(session_id)
+    fragments = await repo.get_fragment_placeholders(session_id)
 
     resp = _session_to_response(session)
     resp["original_text"] = session.get("original_text")
@@ -194,7 +191,7 @@ async def update_session(
     repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    session = await _verify_session_owner(session_id, user, repo, db)
+    session = await _verify_session_owner(session_id, user, repo)
     if session["status"] != "draft":
         raise HTTPException(status_code=400, detail="Can only update draft sessions")
 
@@ -202,9 +199,9 @@ async def update_session(
     if not fields:
         return _session_to_response(session)
 
-    await repo.update_session(db, session_id, **fields)
+    await repo.update_session(session_id, **fields)
     await db.commit()
-    updated = await repo.get_session_by_id(db, session_id)
+    updated = await repo.get_session_by_id(session_id)
     return _session_to_response(updated)
 
 
@@ -215,8 +212,8 @@ async def delete_session(
     repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_session_owner(session_id, user, repo, db)
-    deleted = await repo.delete_session(db, session_id)
+    await _verify_session_owner(session_id, user, repo)
+    deleted = await repo.delete_session(session_id)
     if not deleted:
         raise HTTPException(status_code=400, detail="Can only delete draft sessions")
     await db.commit()
@@ -234,12 +231,12 @@ async def add_chunk(
     repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    session = await _verify_session_owner(session_id, user, repo, db)
+    session = await _verify_session_owner(session_id, user, repo)
     if session["status"] != "draft":
         raise HTTPException(status_code=400, detail="Can only add chunks to draft sessions")
 
     result = await repo.create_chunk(
-        db, session_id, body.agent_id, body.title, body.instructions,
+        session_id, body.agent_id, body.title, body.instructions,
     )
     await db.commit()
     return {"id": str(result["id"]), "chunk_order": result["chunk_order"], "status": result["status"]}
@@ -254,20 +251,20 @@ async def update_chunk(
     repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    session = await _verify_session_owner(session_id, user, repo, db)
+    session = await _verify_session_owner(session_id, user, repo)
     if session["status"] != "draft":
         raise HTTPException(status_code=400, detail="Can only update chunks in draft sessions")
 
-    chunk = await repo.get_chunk_by_id(db, chunk_id)
+    chunk = await repo.get_chunk_by_id(chunk_id)
     if not chunk or str(chunk["session_id"]) != session_id:
         raise HTTPException(status_code=404, detail="Chunk not found")
 
     fields = body.model_dump(exclude_none=True)
     if fields:
-        await repo.update_chunk(db, chunk_id, **fields)
+        await repo.update_chunk(chunk_id, **fields)
         await db.commit()
 
-    updated = await repo.get_chunk_by_id(db, chunk_id)
+    updated = await repo.get_chunk_by_id(chunk_id)
     return _chunk_to_response(updated)
 
 
@@ -279,8 +276,8 @@ async def delete_chunk(
     repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_session_owner(session_id, user, repo, db)
-    deleted = await repo.delete_chunk(db, chunk_id)
+    await _verify_session_owner(session_id, user, repo)
+    deleted = await repo.delete_chunk(chunk_id)
     if not deleted:
         raise HTTPException(status_code=400, detail="Can only delete chunks from draft sessions")
     await db.commit()
@@ -298,7 +295,7 @@ async def start_session(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        result = await svc.start_session(db, session_id, str(user.id))
+        result = await svc.start_session(session_id, str(user.id))
         await db.commit()
         return result
     except ValueError as e:
@@ -313,7 +310,7 @@ async def cancel_session(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        result = await svc.cancel_session(db, session_id, str(user.id))
+        result = await svc.cancel_session(session_id, str(user.id))
         await db.commit()
         return _session_to_response(result)
     except ValueError as e:
@@ -329,11 +326,12 @@ async def approve_chunk(
     chunk_id: str,
     user: CurrentUser,
     svc: MixerService = Depends(get_mixer_service),
+    repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_session_owner(session_id, user, get_mixer_repo(), db)
+    await _verify_session_owner(session_id, user, repo)
     try:
-        result = await svc.approve_chunk(db, session_id, chunk_id, str(user.id))
+        result = await svc.approve_chunk(session_id, chunk_id, str(user.id))
         await db.commit()
         return _chunk_to_response(result)
     except ValueError as e:
@@ -347,11 +345,12 @@ async def reject_chunk(
     body: RejectMixerChunkRequest,
     user: CurrentUser,
     svc: MixerService = Depends(get_mixer_service),
+    repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_session_owner(session_id, user, get_mixer_repo(), db)
+    await _verify_session_owner(session_id, user, repo)
     try:
-        result = await svc.reject_chunk(db, session_id, chunk_id, str(user.id), body.feedback)
+        result = await svc.reject_chunk(session_id, chunk_id, str(user.id), body.feedback)
         await db.commit()
         return _chunk_to_response(result)
     except ValueError as e:
@@ -367,13 +366,12 @@ async def get_chunk_messages(
     chunk_id: str,
     user: CurrentUser,
     repo: MixerRepository = Depends(get_mixer_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    await _verify_session_owner(session_id, user, repo, db)
-    chunk = await repo.get_chunk_by_id(db, chunk_id)
+    await _verify_session_owner(session_id, user, repo)
+    chunk = await repo.get_chunk_by_id(chunk_id)
     if not chunk or str(chunk["session_id"]) != session_id:
         raise HTTPException(status_code=404, detail="Chunk not found")
-    return await repo.get_messages(db, chunk_id)
+    return await repo.get_messages(chunk_id)
 
 
 @router.post("/{session_id}/chunks/{chunk_id}/messages", summary="Send message in chunk chat")
@@ -385,12 +383,12 @@ async def send_chunk_message(
     repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_session_owner(session_id, user, repo, db)
-    chunk = await repo.get_chunk_by_id(db, chunk_id)
+    await _verify_session_owner(session_id, user, repo)
+    chunk = await repo.get_chunk_by_id(chunk_id)
     if not chunk or str(chunk["session_id"]) != session_id:
         raise HTTPException(status_code=404, detail="Chunk not found")
 
-    msg = await repo.insert_message(db, chunk_id, "user", str(user.id), body.content, body.message_type)
+    msg = await repo.insert_message(chunk_id, "user", str(user.id), body.content, body.message_type)
     await db.commit()
     return msg
 
@@ -407,7 +405,7 @@ async def assemble(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        output = await svc.assemble_output(db, session_id, body.passphrase, str(user.id))
+        output = await svc.assemble_output(session_id, body.passphrase, str(user.id))
         await db.commit()
         return {"assembled_output": output}
     except ValueError as e:
@@ -422,10 +420,9 @@ async def list_fragments(
     session_id: str,
     user: CurrentUser,
     repo: MixerRepository = Depends(get_mixer_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    await _verify_session_owner(session_id, user, repo, db)
-    return await repo.get_fragment_placeholders(db, session_id)
+    await _verify_session_owner(session_id, user, repo)
+    return await repo.get_fragment_placeholders(session_id)
 
 
 @router.get("/{session_id}/audit", summary="View audit log")
@@ -433,10 +430,9 @@ async def get_audit_log(
     session_id: str,
     user: CurrentUser,
     repo: MixerRepository = Depends(get_mixer_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    await _verify_session_owner(session_id, user, repo, db)
-    return await repo.get_audit_log(db, session_id)
+    await _verify_session_owner(session_id, user, repo)
+    return await repo.get_audit_log(session_id)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -448,9 +444,8 @@ async def get_audit_log(
 async def agent_my_chunks(
     agent: dict = Depends(_get_agent_by_api_key),
     repo: MixerRepository = Depends(get_mixer_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    chunks = await repo.get_agent_ready_chunks(db, str(agent["id"]))
+    chunks = await repo.get_agent_ready_chunks(str(agent["id"]))
     return [
         {
             "chunk_id": str(c["id"]),
@@ -471,15 +466,15 @@ async def agent_get_chunk(
     repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    chunk = await repo.get_chunk_by_id(db, chunk_id)
+    chunk = await repo.get_chunk_by_id(chunk_id)
     if not chunk or str(chunk["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Chunk not found or not assigned to you")
 
     # Mark as active if ready
     if chunk["status"] == "ready":
-        await repo.update_chunk_status(db, chunk_id, "active")
+        await repo.update_chunk_status(chunk_id, "active")
         await db.commit()
-        chunk = await repo.get_chunk_by_id(db, chunk_id)
+        chunk = await repo.get_chunk_by_id(chunk_id)
 
     return _chunk_to_response(chunk)
 
@@ -489,12 +484,11 @@ async def agent_get_messages(
     chunk_id: str,
     agent: dict = Depends(_get_agent_by_api_key),
     repo: MixerRepository = Depends(get_mixer_repo),
-    db: AsyncSession = Depends(get_db),
 ):
-    chunk = await repo.get_chunk_by_id(db, chunk_id)
+    chunk = await repo.get_chunk_by_id(chunk_id)
     if not chunk or str(chunk["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Chunk not found")
-    return await repo.get_messages(db, chunk_id)
+    return await repo.get_messages(chunk_id)
 
 
 @router.post("/agent/chunk/{chunk_id}/messages", summary="Send message (agent)")
@@ -505,11 +499,11 @@ async def agent_send_message(
     repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    chunk = await repo.get_chunk_by_id(db, chunk_id)
+    chunk = await repo.get_chunk_by_id(chunk_id)
     if not chunk or str(chunk["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Chunk not found")
 
-    msg = await repo.insert_message(db, chunk_id, "agent", str(agent["id"]), body.content, body.message_type)
+    msg = await repo.insert_message(chunk_id, "agent", str(agent["id"]), body.content, body.message_type)
     await db.commit()
     return msg
 
@@ -523,12 +517,12 @@ async def agent_complete_chunk(
     repo: MixerRepository = Depends(get_mixer_repo),
     db: AsyncSession = Depends(get_db),
 ):
-    chunk = await repo.get_chunk_by_id(db, chunk_id)
+    chunk = await repo.get_chunk_by_id(chunk_id)
     if not chunk or str(chunk["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=404, detail="Chunk not found or not assigned to you")
 
     try:
-        result = await svc.agent_complete_chunk(db, chunk_id, body.output_text)
+        result = await svc.agent_complete_chunk(chunk_id, body.output_text)
         await db.commit()
         return result
     except ValueError as e:

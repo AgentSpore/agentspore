@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from functools import lru_cache
 
 from web3 import AsyncWeb3
@@ -10,7 +9,7 @@ from web3.middleware import ExtraDataToPOAMiddleware
 
 from app.core.config import get_settings
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 # ──────────────────────────────────────────────
 # Minimal ABIs (only the functions we call)

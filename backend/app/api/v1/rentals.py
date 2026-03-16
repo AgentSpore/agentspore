@@ -11,20 +11,23 @@ POST /api/v1/rentals/:id/cancel   — cancel rental (user)
 POST /api/v1/rentals/:id/upload   — upload file attachment (user)
 """
 
+import hashlib
 import json
-import logging
 import os
 import uuid
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.api.deps import CurrentUser
-from app.repositories import rental_repo
+from app.repositories.agent_repo import AgentRepository, get_agent_repo
+from app.repositories.chat_repo import ChatRepository, get_chat_repo
+from app.repositories.rental_repo import RentalRepository, get_rental_repo
 from app.services.payout_service import PayoutService, get_payout_service
 from app.schemas.rentals import (
     AgentRentalMessageRequest,
@@ -34,7 +37,7 @@ from app.schemas.rentals import (
     RentalMessageRequest,
 )
 
-logger = logging.getLogger("rentals_api")
+from loguru import logger
 router = APIRouter(prefix="/rentals", tags=["rentals"])
 
 RENTAL_CHANNEL = "agentspore:rental"
@@ -68,13 +71,14 @@ async def create_rental(
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
     payout_svc: PayoutService = Depends(get_payout_service),
+    agent_repo: AgentRepository = Depends(get_agent_repo),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """User creates a rental — hires an agent for a task."""
     settings = get_settings()
 
     # Verify agent exists and is active
-    from app.repositories import agent_repo
-    agent = await agent_repo.get_agent_by_id(db, body.agent_id)
+    agent = await agent_repo.get_agent_by_id(body.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if not agent.get("is_active"):
@@ -99,7 +103,7 @@ async def create_rental(
             price = 100  # platform tokens
             fee = int(price * settings.rental_platform_fee_pct)
 
-    rental = await rental_repo.create_rental(db, user.id, body.agent_id, body.title, price, fee)
+    rental = await rental_repo.create_rental(user.id, body.agent_id, body.title, price, fee)
     rental_id = str(rental["id"])
 
     # Deduct $ASPORE after rental created (same DB tx — rollback if fails)
@@ -107,13 +111,11 @@ async def create_rental(
         await payout_svc.spend_for_rental(str(user.id), rental_id, aspore_price)
 
     # Insert first message (the task description)
-    await rental_repo.insert_message(
-        db, rental_id, "user", user.id, body.title, "text",
-    )
+    await rental_repo.insert_message(rental_id, "user", user.id, body.title, "text")
 
     # Create a notification task so agent picks it up via heartbeat
     await db.execute(
-        __import__("sqlalchemy").text("""
+        text("""
             INSERT INTO tasks (project_id, type, title, description, status, priority,
                                assigned_to_agent_id, source_type, source_ref, source_key)
             VALUES (NULL, 'rental', :title, :desc, 'pending', 'high',
@@ -156,10 +158,10 @@ async def create_rental(
 async def list_rentals(
     user: CurrentUser,
     limit: int = Query(default=50, le=200),
-    db: AsyncSession = Depends(get_db),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """List all rentals for the current user."""
-    rows = await rental_repo.list_user_rentals(db, user.id, limit)
+    rows = await rental_repo.list_user_rentals(user.id, limit)
     return [
         {
             "id": str(r["id"]),
@@ -183,10 +185,10 @@ async def list_rentals(
 async def get_rental(
     rental_id: str,
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """Get rental details. Only the renting user can view."""
-    rental = await rental_repo.get_rental_by_id(db, rental_id)
+    rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["user_id"]) != str(user.id):
@@ -199,15 +201,15 @@ async def get_rental_messages(
     rental_id: str,
     user: CurrentUser,
     limit: int = Query(default=200, le=500),
-    db: AsyncSession = Depends(get_db),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """Get all chat messages for a rental."""
-    rental = await rental_repo.get_rental_by_id(db, rental_id)
+    rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["user_id"]) != str(user.id):
         raise HTTPException(status_code=403, detail="Access denied")
-    return await rental_repo.get_messages(db, rental_id, limit)
+    return await rental_repo.get_messages(rental_id, limit)
 
 
 @router.post("/{rental_id}/messages", summary="Send message in rental chat")
@@ -217,9 +219,10 @@ async def send_rental_message(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """User sends a message in rental chat."""
-    rental = await rental_repo.get_rental_by_id(db, rental_id)
+    rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["user_id"]) != str(user.id):
@@ -228,7 +231,7 @@ async def send_rental_message(
         raise HTTPException(status_code=400, detail="Rental is not active")
 
     msg = await rental_repo.insert_message(
-        db, rental_id, "user", user.id, body.content, body.message_type,
+        rental_id, "user", user.id, body.content, body.message_type,
         body.file_url, body.file_name,
     )
     await db.commit()
@@ -255,11 +258,11 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file
 async def upload_rental_file(
     rental_id: str,
     user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
     file: UploadFile = File(...),
 ):
     """Upload a file for a rental chat message."""
-    rental = await rental_repo.get_rental_by_id(db, rental_id)
+    rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["user_id"]) != str(user.id):
@@ -299,9 +302,11 @@ async def complete_rental(
     body: CompleteRentalRequest,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
+    agent_repo: AgentRepository = Depends(get_agent_repo),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """User approves the agent's work and rates it."""
-    rental = await rental_repo.get_rental_by_id(db, rental_id)
+    rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["user_id"]) != str(user.id):
@@ -310,17 +315,16 @@ async def complete_rental(
         raise HTTPException(status_code=400, detail="Rental is not active")
 
     await rental_repo.update_rental_status(
-        db, rental_id, "completed", rating=body.rating, review=body.review,
+        rental_id, "completed", rating=body.rating, review=body.review,
     )
 
     # Add karma to agent based on rating
-    from app.repositories import agent_repo
     karma = {1: 2, 2: 5, 3: 10, 4: 15, 5: 20}.get(body.rating, 10)
-    await agent_repo.add_karma(db, str(rental["agent_id"]), karma)
+    await agent_repo.add_karma(str(rental["agent_id"]), karma)
 
     # Insert system message
     await rental_repo.insert_message(
-        db, rental_id, "system", str(user.id),
+        rental_id, "system", str(user.id),
         f"Rental completed. Rating: {'★' * body.rating}{'☆' * (5 - body.rating)}" +
         (f" — {body.review}" if body.review else ""),
         "system",
@@ -328,7 +332,7 @@ async def complete_rental(
 
     await db.commit()
     logger.info("Rental %s completed: rating=%d", rental_id, body.rating)
-    updated = await rental_repo.get_rental_by_id(db, rental_id)
+    updated = await rental_repo.get_rental_by_id(rental_id)
     return _rental_to_response(updated)
 
 
@@ -339,9 +343,10 @@ async def cancel_rental(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     payout_svc: PayoutService = Depends(get_payout_service),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """User cancels the rental. Refunds $ASPORE if paid with it."""
-    rental = await rental_repo.get_rental_by_id(db, rental_id)
+    rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["user_id"]) != str(user.id):
@@ -349,21 +354,21 @@ async def cancel_rental(
     if rental["status"] != "active":
         raise HTTPException(status_code=400, detail="Rental is not active")
 
-    await rental_repo.update_rental_status(db, rental_id, "cancelled")
+    await rental_repo.update_rental_status(rental_id, "cancelled")
 
     # Refund $ASPORE if this rental was paid with it
     await payout_svc.try_refund_rental(str(user.id), rental_id)
 
     reason_text = f" Reason: {body.reason}" if body.reason else ""
     await rental_repo.insert_message(
-        db, rental_id, "system", str(user.id),
+        rental_id, "system", str(user.id),
         f"Rental cancelled by user.{reason_text}",
         "system",
     )
 
     await db.commit()
     logger.info("Rental %s cancelled", rental_id)
-    updated = await rental_repo.get_rental_by_id(db, rental_id)
+    updated = await rental_repo.get_rental_by_id(rental_id)
     return _rental_to_response(updated)
 
 
@@ -371,17 +376,13 @@ async def cancel_rental(
 # Agent-facing endpoints (via X-API-Key)
 # ==========================================
 
-import hashlib
-from fastapi import Header
-
 
 async def _get_agent_by_api_key(
     x_api_key: str = Header(..., alias="X-API-Key"),
-    db: AsyncSession = Depends(get_db),
+    chat_repo: ChatRepository = Depends(get_chat_repo),
 ) -> dict:
-    from app.repositories.chat_repo import get_chat_repo
     key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-    agent = await get_chat_repo().get_agent_by_api_key_hash(db, key_hash)
+    agent = await chat_repo.get_agent_by_api_key_hash(key_hash)
     if not agent:
         raise HTTPException(status_code=401, detail="Invalid or inactive API key")
     return agent
@@ -390,25 +391,25 @@ async def _get_agent_by_api_key(
 @router.get("/agent/my-rentals", summary="List agent's active rentals")
 async def agent_list_rentals(
     agent: dict = Depends(_get_agent_by_api_key),
-    db: AsyncSession = Depends(get_db),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """Agent gets list of their rentals."""
-    return await rental_repo.list_agent_rentals(db, str(agent["id"]))
+    return await rental_repo.list_agent_rentals(str(agent["id"]))
 
 
 @router.get("/agent/rental/{rental_id}/messages", summary="Agent gets rental messages")
 async def agent_get_messages(
     rental_id: str,
     agent: dict = Depends(_get_agent_by_api_key),
-    db: AsyncSession = Depends(get_db),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """Agent reads rental chat messages."""
-    rental = await rental_repo.get_rental_by_id(db, rental_id)
+    rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["agent_id"]) != str(agent["id"]):
         raise HTTPException(status_code=403, detail="Not your rental")
-    return await rental_repo.get_messages(db, rental_id)
+    return await rental_repo.get_messages(rental_id)
 
 
 @router.post("/agent/rental/{rental_id}/messages", summary="Agent sends message in rental chat")
@@ -418,9 +419,10 @@ async def agent_send_message(
     agent: dict = Depends(_get_agent_by_api_key),
     db: AsyncSession = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
 ):
     """Agent sends a message in rental chat."""
-    rental = await rental_repo.get_rental_by_id(db, rental_id)
+    rental = await rental_repo.get_rental_by_id(rental_id)
     if not rental:
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["agent_id"]) != str(agent["id"]):
@@ -429,7 +431,7 @@ async def agent_send_message(
         raise HTTPException(status_code=400, detail="Rental is not active")
 
     msg = await rental_repo.insert_message(
-        db, rental_id, "agent", agent["id"], body.content, body.message_type,
+        rental_id, "agent", agent["id"], body.content, body.message_type,
         body.file_url, body.file_name,
     )
     await db.commit()

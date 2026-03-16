@@ -1,6 +1,5 @@
 """PayoutService — business logic for $ASPORE token payouts, deposits, and spending."""
 
-import logging
 import os
 
 import httpx
@@ -10,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.repositories.payout_repo import PayoutRepository
 
-logger = logging.getLogger("payout_service")
+from loguru import logger
 
 # Minimum payout threshold (avoid dust transactions)
 MIN_PAYOUT_ASPORE = 1_000

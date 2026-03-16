@@ -1,14 +1,14 @@
 """
-Unit-тесты для GitService — регрессия багов, найденных при интеграционном тестировании.
+Unit tests for GitService — regression for bugs found during integration testing.
 
-Баги:
-  #1 — GitService не проксировал новые методы GitHubService:
+Bugs:
+  #1 — GitService did not proxy new GitHubService methods:
        list_issues, comment_issue, list_pull_requests,
        list_commits, get_file_content.
-       Все вызовы падали с AttributeError → HTTP 500.
+       All calls failed with AttributeError -> HTTP 500.
 
-  #2 — GitService.push_files не пробрасывал параметр branch в GitHubService.push_files.
-       Коммит на feature-ветку игнорировал branch и писал в main.
+  #2 — GitService.push_files did not forward the branch parameter to GitHubService.push_files.
+       Commit to a feature branch ignored branch and wrote to main.
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
@@ -19,7 +19,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def make_git_service_with_mock_github():
-    """Создать GitService с замоканным GitHubService внутри."""
+    """Create a GitService with a mocked GitHubService inside."""
     from app.services.git_service import GitService
 
     svc = GitService()
@@ -33,11 +33,11 @@ def make_git_service_with_mock_github():
 # ===========================================================================
 
 class TestPushFilesBranchParameter:
-    """Регрессия Bug #2: branch должен передаваться в GitHubService.push_files."""
+    """Regression Bug #2: branch must be forwarded to GitHubService.push_files."""
 
     @pytest.mark.asyncio
     async def test_push_files_forwards_branch(self):
-        """push_files(branch='feat/x') должен вызвать github.push_files с branch='feat/x'."""
+        """push_files(branch='feat/x') must call github.push_files with branch='feat/x'."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.push_files = AsyncMock(return_value=True)
 
@@ -51,12 +51,12 @@ class TestPushFilesBranchParameter:
         mock_gh.push_files.assert_called_once()
         _, kwargs = mock_gh.push_files.call_args
         assert kwargs.get("branch") == "feat/integration-test", (
-            "branch не был передан в GitHubService.push_files — Bug #2"
+            "branch was not forwarded to GitHubService.push_files — Bug #2"
         )
 
     @pytest.mark.asyncio
     async def test_push_files_default_branch_is_main(self):
-        """По умолчанию push_files использует branch='main'."""
+        """By default push_files uses branch='main'."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.push_files = AsyncMock(return_value=True)
 
@@ -71,7 +71,7 @@ class TestPushFilesBranchParameter:
 
     @pytest.mark.asyncio
     async def test_push_files_main_branch_not_affected_by_feature_push(self):
-        """Два последовательных push_files — каждый использует свой branch."""
+        """Two sequential push_files calls — each uses its own branch."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.push_files = AsyncMock(return_value=True)
 
@@ -91,13 +91,13 @@ class TestPushFilesBranchParameter:
 
 class TestGitServiceProxyMethods:
     """
-    Регрессия Bug #1: каждый новый метод GitHubService должен быть доступен
-    через GitService. До исправления все они бросали AttributeError.
+    Regression Bug #1: every new GitHubService method must be accessible
+    through GitService. Before the fix, all of them raised AttributeError.
     """
 
     @pytest.mark.asyncio
     async def test_list_issues_exists_and_delegates(self):
-        """GitService.list_issues делегирует в GitHubService.list_issues."""
+        """GitService.list_issues delegates to GitHubService.list_issues."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.list_issues = AsyncMock(return_value=[
             {"number": 1, "title": "Bug found", "state": "open"}
@@ -111,7 +111,7 @@ class TestGitServiceProxyMethods:
 
     @pytest.mark.asyncio
     async def test_list_issues_state_all(self):
-        """list_issues пробрасывает state='all'."""
+        """list_issues forwards state='all'."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.list_issues = AsyncMock(return_value=[])
 
@@ -121,7 +121,7 @@ class TestGitServiceProxyMethods:
 
     @pytest.mark.asyncio
     async def test_comment_issue_exists_and_delegates(self):
-        """GitService.comment_issue делегирует в GitHubService."""
+        """GitService.comment_issue delegates to GitHubService."""
         svc, mock_gh = make_git_service_with_mock_github()
         expected = {"id": 42, "url": "https://github.com/.../issues/1#comment-42"}
         mock_gh.comment_issue = AsyncMock(return_value=expected)
@@ -133,7 +133,7 @@ class TestGitServiceProxyMethods:
 
     @pytest.mark.asyncio
     async def test_list_pull_requests_exists_and_delegates(self):
-        """GitService.list_pull_requests делегирует в GitHubService."""
+        """GitService.list_pull_requests delegates to GitHubService."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.list_pull_requests = AsyncMock(return_value=[
             {"number": 2, "title": "feat: new feature", "state": "open"}
@@ -146,7 +146,7 @@ class TestGitServiceProxyMethods:
 
     @pytest.mark.asyncio
     async def test_list_commits_exists_and_delegates(self):
-        """GitService.list_commits пробрасывает branch и limit."""
+        """GitService.list_commits forwards branch and limit."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.list_commits = AsyncMock(return_value=[
             {"sha": "abc1234", "message": "Initial commit", "author": "bot"}
@@ -159,7 +159,7 @@ class TestGitServiceProxyMethods:
 
     @pytest.mark.asyncio
     async def test_list_commits_default_branch_and_limit(self):
-        """list_commits по умолчанию: branch='main', limit=20."""
+        """list_commits defaults: branch='main', limit=20."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.list_commits = AsyncMock(return_value=[])
 
@@ -169,7 +169,7 @@ class TestGitServiceProxyMethods:
 
     @pytest.mark.asyncio
     async def test_get_file_content_exists_and_delegates(self):
-        """GitService.get_file_content пробрасывает file_path и branch."""
+        """GitService.get_file_content forwards file_path and branch."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.get_file_content = AsyncMock(return_value="# Hello World")
 
@@ -180,7 +180,7 @@ class TestGitServiceProxyMethods:
 
     @pytest.mark.asyncio
     async def test_get_file_content_default_branch(self):
-        """get_file_content по умолчанию читает из 'main'."""
+        """get_file_content reads from 'main' by default."""
         svc, mock_gh = make_git_service_with_mock_github()
         mock_gh.get_file_content = AsyncMock(return_value="content")
 
@@ -190,8 +190,8 @@ class TestGitServiceProxyMethods:
 
     def test_all_new_methods_present_on_git_service(self):
         """
-        Smoke-тест: все новые методы существуют на GitService.
-        До исправления Bug #1 этот тест падал бы с AttributeError.
+        Smoke test: all new methods exist on GitService.
+        Before Bug #1 fix, this test would fail with AttributeError.
         """
         from app.services.git_service import GitService
 
@@ -203,10 +203,10 @@ class TestGitServiceProxyMethods:
         ]
         for method in new_methods:
             assert hasattr(svc, method), (
-                f"GitService.{method} отсутствует — Bug #1 не исправлен"
+                f"GitService.{method} is missing — Bug #1 not fixed"
             )
             assert callable(getattr(svc, method)), (
-                f"GitService.{method} не является callable"
+                f"GitService.{method} is not callable"
             )
 
 
@@ -216,8 +216,8 @@ class TestGitServiceProxyMethods:
 
 class TestIssuesEndpointRegression:
     """
-    Регрессия: до исправления Bug #1 GET /agents/projects/:id/issues
-    возвращал HTTP 500 (AttributeError: 'GitService' object has no attribute 'list_issues').
+    Regression: before Bug #1 fix, GET /agents/projects/:id/issues
+    returned HTTP 500 (AttributeError: 'GitService' object has no attribute 'list_issues').
     """
 
     @pytest.fixture
@@ -235,10 +235,10 @@ class TestIssuesEndpointRegression:
 
     @pytest.mark.asyncio
     async def test_list_issues_returns_200_not_500(self, mock_agent, mock_project):
-        """GET /projects/:id/issues → 200, не 500 (AttributeError регрессия)."""
+        """GET /projects/:id/issues -> 200, not 500 (AttributeError regression)."""
         from app.main import app
         from app.core.database import get_db
-        import app.api.v1.agents as agents_module
+        from app.core.redis_client import get_redis
 
         db = AsyncMock()
         project_result = MagicMock()
@@ -251,8 +251,9 @@ class TestIssuesEndpointRegression:
             yield db
 
         app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[get_redis] = lambda: AsyncMock()
         try:
-            with patch("app.api.v1.agents.get_git_service") as mock_git_factory:
+            with patch("app.services.git_service.get_git_service") as mock_git_factory:
                 mock_git = MagicMock()
                 mock_git.list_issues = AsyncMock(return_value=[
                     {"number": 1, "title": "Test issue", "state": "open",
@@ -271,7 +272,7 @@ class TestIssuesEndpointRegression:
                     )
 
             assert response.status_code == 200, (
-                f"Ожидали 200, получили {response.status_code}: {response.text[:200]}"
+                f"Expected 200, got {response.status_code}: {response.text[:200]}"
             )
             data = response.json()
             assert "issues" in data
@@ -283,11 +284,12 @@ class TestIssuesEndpointRegression:
     @pytest.mark.asyncio
     async def test_commits_endpoint_passes_branch_param(self, mock_agent, mock_project):
         """
-        GET /projects/:id/commits?branch=feat/x должен вызвать
-        git.list_commits с branch='feat/x', а не 'main' (регрессия Bug #2).
+        GET /projects/:id/commits?branch=feat/x must call
+        git.list_commits with branch='feat/x', not 'main' (Bug #2 regression).
         """
         from app.main import app
         from app.core.database import get_db
+        from app.core.redis_client import get_redis
 
         db = AsyncMock()
         project_result = MagicMock()
@@ -300,8 +302,9 @@ class TestIssuesEndpointRegression:
             yield db
 
         app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[get_redis] = lambda: AsyncMock()
         try:
-            with patch("app.api.v1.agents.get_git_service") as mock_git_factory:
+            with patch("app.services.git_service.get_git_service") as mock_git_factory:
                 mock_git = MagicMock()
                 mock_git.list_commits = AsyncMock(return_value=[
                     {"sha": "abc1234", "message": "test commit",
@@ -329,13 +332,13 @@ class TestIssuesEndpointRegression:
 
 class TestPublicProjectsEndpoints:
     """
-    Тесты публичных эндпоинтов проектов (добавлены в этой сессии):
-    GET /api/v1/projects и POST /api/v1/projects/:id/vote.
+    Tests for public project endpoints (added in this session):
+    GET /api/v1/projects and POST /api/v1/projects/:id/vote.
     """
 
     @pytest.mark.asyncio
     async def test_list_projects_no_auth_required(self):
-        """GET /api/v1/projects — публичный, не требует API-Key."""
+        """GET /api/v1/projects — public, no API-Key required."""
         from app.main import app
         from app.core.database import get_db
 
@@ -362,7 +365,7 @@ class TestPublicProjectsEndpoints:
 
     @pytest.mark.asyncio
     async def test_vote_upvote_valid(self):
-        """POST /api/v1/projects/:id/vote с vote=1 → обновляет votes_up."""
+        """POST /api/v1/projects/:id/vote with vote=1 -> updates votes_up."""
         from app.main import app
         from app.core.database import get_db
 
@@ -401,7 +404,7 @@ class TestPublicProjectsEndpoints:
 
     @pytest.mark.asyncio
     async def test_vote_invalid_value_returns_422(self):
-        """POST /api/v1/projects/:id/vote с vote=0 (невалидно) → 422."""
+        """POST /api/v1/projects/:id/vote with vote=0 (invalid) -> 422."""
         from app.main import app
         from app.core.database import get_db
 
@@ -426,7 +429,7 @@ class TestPublicProjectsEndpoints:
 
     @pytest.mark.asyncio
     async def test_vote_invalid_value_2_returns_422(self):
-        """POST /api/v1/projects/:id/vote с vote=2 (не ±1) → 422."""
+        """POST /api/v1/projects/:id/vote with vote=2 (not +/-1) -> 422."""
         from app.main import app
         from app.core.database import get_db
 
@@ -451,7 +454,7 @@ class TestPublicProjectsEndpoints:
 
     @pytest.mark.asyncio
     async def test_list_projects_status_filter(self):
-        """GET /api/v1/projects?status=deployed — параметр принимается (не 422)."""
+        """GET /api/v1/projects?status=deployed — parameter is accepted (not 422)."""
         from app.main import app
         from app.core.database import get_db
 
@@ -478,13 +481,13 @@ class TestPublicProjectsEndpoints:
 
 class TestActivityEndpointAgentId:
     """
-    Регрессия: activity REST API не возвращал agent_id в событиях.
-    Убеждаемся что поле присутствует в ответе.
+    Regression: activity REST API did not return agent_id in events.
+    Verify the field is present in the response.
     """
 
     @pytest.mark.asyncio
     async def test_activity_response_includes_agent_id(self):
-        """GET /api/v1/activity → каждое событие содержит поле agent_id."""
+        """GET /api/v1/activity -> each event contains agent_id field."""
         from app.main import app
         from app.core.database import get_db
         import uuid
@@ -522,7 +525,7 @@ class TestActivityEndpointAgentId:
             events = response.json()
             assert len(events) == 1
             assert "agent_id" in events[0], (
-                "agent_id отсутствует в ответе activity — ссылки /agents/undefined не будут работать"
+                "agent_id missing from activity response — /agents/undefined links will be broken"
             )
             assert events[0]["agent_id"] == str(agent_uuid)
         finally:

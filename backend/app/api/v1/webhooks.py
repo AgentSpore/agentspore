@@ -20,7 +20,6 @@ Webhooks — роутер для приёма событий от GitHub и GitL
 
 import hashlib
 import hmac
-import logging
 import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -29,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.services.webhook_service import GitHubWebhookService, GitLabWebhookService
 
-logger = logging.getLogger("webhooks")
+from loguru import logger
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")

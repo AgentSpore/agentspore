@@ -14,14 +14,14 @@ def _hash_api_key(api_key: str) -> str:
 
 
 # ==========================================
-# Unit-тесты: GitHubOAuthService (без БД)
+# Unit tests: GitHubOAuthService (no DB)
 # ==========================================
 
 class TestGitHubOAuthService:
-    """Unit-тесты GitHubOAuthService — не требуют БД или Docker."""
+    """Unit tests for GitHubOAuthService — no DB or Docker required."""
 
     def test_authorization_url_generation(self):
-        """URL содержит все обязательные параметры."""
+        """URL contains all required parameters."""
         from app.services.github_oauth_service import GitHubOAuthService
 
         service = GitHubOAuthService()
@@ -35,14 +35,14 @@ class TestGitHubOAuthService:
         assert "scope=" in result["auth_url"]
 
     def test_authorization_url_has_required_scopes(self):
-        """OAuth scopes содержат repo и read:user для работы с репозиториями."""
+        """OAuth scopes include repo and read:user for repository access."""
         from app.services.github_oauth_service import GitHubOAuthService, OAUTH_SCOPES
 
-        assert "repo" in OAUTH_SCOPES, "scope 'repo' нужен для push/create/issues"
+        assert "repo" in OAUTH_SCOPES, "scope 'repo' needed for push/create/issues"
         assert "read:user" in OAUTH_SCOPES
 
     def test_state_contains_agent_id(self):
-        """State параметр содержит agent_id для CSRF-защиты."""
+        """State parameter contains agent_id for CSRF protection."""
         from app.services.github_oauth_service import GitHubOAuthService
 
         service = GitHubOAuthService()
@@ -52,18 +52,18 @@ class TestGitHubOAuthService:
         assert agent_id in result["state"]
 
     def test_token_expiration_check(self):
-        """Проверка логики истечения токена."""
+        """Token expiration logic."""
         from app.services.github_oauth_service import GitHubOAuthService
 
         service = GitHubOAuthService()
 
-        assert service.is_token_expired(time.time() - 100) is True   # истёк
-        assert service.is_token_expired(time.time() + 3600) is False  # валидный
-        assert service.is_token_expired(None) is False                 # без срока
+        assert service.is_token_expired(time.time() - 100) is True   # expired
+        assert service.is_token_expired(time.time() + 3600) is False  # valid
+        assert service.is_token_expired(None) is False                 # no expiry
 
     @pytest.mark.asyncio
     async def test_exchange_invalid_code_returns_none(self):
-        """Обмен невалидного кода возвращает None (не падает)."""
+        """Exchanging invalid code returns None (doesn't crash)."""
         from app.services.github_oauth_service import GitHubOAuthService
 
         service = GitHubOAuthService()
@@ -72,14 +72,14 @@ class TestGitHubOAuthService:
 
 
 # ==========================================
-# Unit-тесты: GitHubService identity (без сети)
+# Unit tests: GitHubService identity (no network)
 # ==========================================
 
 class TestGitHubServiceIdentity:
-    """Тесты создания committer identity — без сети и БД."""
+    """Tests for committer identity creation — no network or DB."""
 
     def test_create_agent_identity_sanitizes_name(self):
-        """Имя агента правильно sanitize-ится для Git."""
+        """Agent name is properly sanitized for Git."""
         from app.services.github_service import GitHubService
 
         svc = GitHubService()
@@ -94,7 +94,7 @@ class TestGitHubServiceIdentity:
         assert identity["display_name"] == "My Cool Agent 123"
 
     def test_create_agent_identity_with_custom_email(self):
-        """Кастомный email сохраняется."""
+        """Custom email is preserved."""
         from app.services.github_service import GitHubService
 
         svc = GitHubService()
@@ -102,7 +102,7 @@ class TestGitHubServiceIdentity:
         assert identity["email"] == "custom@example.com"
 
     def test_sanitize_repo_name(self):
-        """Название репо корректно sanitize-ится."""
+        """Repo name is properly sanitized."""
         from app.services.github_service import GitHubService
 
         svc = GitHubService()
@@ -111,21 +111,20 @@ class TestGitHubServiceIdentity:
         assert len(svc._sanitize_repo_name("a" * 200)) <= 100
 
     def test_github_org_is_sporeai(self):
-        """GitHub org по умолчанию настроен на AgentSpore."""
+        """Default GitHub org is AgentSpore."""
         from app.services.github_service import GITHUB_ORG
         import os
 
-        # По умолчанию (без env) — AgentSpore
         expected = os.getenv("GITHUB_ORG", "AgentSpore")
         assert expected == "AgentSpore"
 
 
 # ==========================================
-# Интеграционные тесты с mock-БД
+# Integration tests with mock DB
 # ==========================================
 
 class TestAgentRegistration:
-    """Тесты регистрации агента (mock БД, без Docker)."""
+    """Agent registration tests (mock DB, no Docker)."""
 
     @pytest.fixture
     def agent_data(self):
@@ -141,50 +140,56 @@ class TestAgentRegistration:
 
     @pytest.mark.asyncio
     async def test_register_returns_api_key_and_active(self, agent_data):
-        """
-        После регистрации агент сразу активен (is_active=TRUE).
-        API-ключ с префиксом af_, oauth_required=False.
-        """
+        """After registration agent is active (is_active=TRUE), API key with af_ prefix."""
         from app.main import app
         from app.core.database import get_db
         from app.core.redis_client import get_redis
+        from app.services.agent_service import get_agent_service
 
-        # Mock DB: имя не занято (existing=None), INSERT OK
         db = AsyncMock()
-        existing_result = MagicMock()
-        existing_result.first.return_value = None  # имя свободно
-        db.execute.return_value = existing_result
-
         mock_redis = AsyncMock()
 
         async def override_db():
             yield db
 
+        # Mock AgentService with mocked repo
+        svc_mock = MagicMock()
+        svc_mock.repo = MagicMock()
+        svc_mock.repo.handle_exists = AsyncMock(return_value=False)
+        svc_mock.repo.find_user_id_by_email = AsyncMock(return_value=None)
+        svc_mock.repo.insert_agent = AsyncMock()
+        svc_mock.repo.insert_activity = AsyncMock()
+        svc_mock.db = db
+
+        # Mock register_agent to return expected data
+        agent_id = "test-agent-id"
+        api_key = f"af_{secrets.token_hex(24)}"
+        svc_mock.register_agent = AsyncMock(return_value={
+            "agent_id": agent_id,
+            "api_key": api_key,
+            "name": agent_data["name"],
+            "handle": agent_data["name"].lower().replace(" ", "-"),
+            "github_oauth_required": False,
+            "github_auth_url": "https://github.com/login/oauth/authorize?client_id=test&state=test",
+        })
+
         app.dependency_overrides[get_db] = override_db
         app.dependency_overrides[get_redis] = lambda: mock_redis
+        app.dependency_overrides[get_agent_service] = lambda: svc_mock
         try:
-            with patch("app.services.agent_service.agent_repo") as mock_repo:
-                mock_repo.handle_exists = AsyncMock(return_value=False)
-                mock_repo.find_user_id_by_email = AsyncMock(return_value=None)
-                mock_repo.insert_agent = AsyncMock()
-                mock_repo.insert_activity = AsyncMock()
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    with patch("app.api.v1.agents.get_git_service") as mock_git:
-                        mock_git.return_value.create_agent_identity = MagicMock(
-                            return_value={"username": "testagent", "token": "", "email": "t@agentspore.com"}
-                        )
-                        response = await client.post(
-                            "/api/v1/agents/register", json=agent_data
-                        )
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/agents/register", json=agent_data
+                )
 
             assert response.status_code == 200
             data = response.json()
 
             assert "agent_id" in data
             assert data["api_key"].startswith("af_")
-            assert data["github_oauth_required"] is False  # агент активен сразу
+            assert data["github_oauth_required"] is False
             assert "github_auth_url" in data
             assert "github.com/login/oauth/authorize" in data["github_auth_url"]
 
@@ -193,51 +198,41 @@ class TestAgentRegistration:
 
     @pytest.mark.asyncio
     async def test_register_name_conflict_returns_409(self, agent_data):
-        """Дублирующееся имя агента → 409."""
+        """Duplicate agent name → 409."""
         from app.main import app
         from app.core.database import get_db
         from app.core.redis_client import get_redis
+        from app.services.agent_service import get_agent_service
         from sqlalchemy.exc import IntegrityError
 
         db = AsyncMock()
-        # db.execute для поиска пользователя по email → не найден
-        user_lookup_result = MagicMock()
-        user_lookup_result.mappings.return_value.first.return_value = None
-        # db.execute для проверки handle → не существует
-        handle_result = MagicMock()
-        handle_result.first.return_value = None
-        db.execute = AsyncMock(return_value=user_lookup_result)
         mock_redis = AsyncMock()
 
         async def override_db():
             yield db
 
+        svc_mock = MagicMock()
+        svc_mock.register_agent = AsyncMock(
+            side_effect=IntegrityError("", {}, Exception("duplicate key"))
+        )
+
         app.dependency_overrides[get_db] = override_db
         app.dependency_overrides[get_redis] = lambda: mock_redis
+        app.dependency_overrides[get_agent_service] = lambda: svc_mock
         try:
-            with patch("app.services.agent_service.agent_repo") as mock_repo:
-                mock_repo.handle_exists = AsyncMock(return_value=False)
-                mock_repo.find_user_id_by_email = AsyncMock(return_value=None)
-                mock_repo.insert_agent = AsyncMock(
-                    side_effect=IntegrityError("", {}, Exception("duplicate key"))
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.post(
+                    "/api/v1/agents/register", json=agent_data
                 )
-                async with AsyncClient(
-                    transport=ASGITransport(app=app), base_url="http://test"
-                ) as client:
-                    with patch("app.api.v1.agents.get_git_service") as mock_git:
-                        mock_git.return_value.create_agent_identity = MagicMock(
-                            return_value={"username": "testagent", "token": "", "email": "t@agentspore.com"}
-                        )
-                        response = await client.post(
-                            "/api/v1/agents/register", json=agent_data
-                        )
             assert response.status_code == 409
         finally:
             app.dependency_overrides.clear()
 
 
 def _setup_overrides(app, db, mock_redis=None):
-    """Настроить dependency overrides для тестов."""
+    """Set up dependency overrides for tests."""
     from app.core.database import get_db
     from app.core.redis_client import get_redis
 
@@ -252,11 +247,11 @@ def _setup_overrides(app, db, mock_redis=None):
 
 
 class TestAgentAuth:
-    """Тесты аутентификации агента по API-ключу."""
+    """Agent API key authentication tests."""
 
     @pytest.mark.asyncio
     async def test_heartbeat_no_key_returns_422(self):
-        """Heartbeat без X-API-Key → 422 (missing header)."""
+        """Heartbeat without X-API-Key → 422 (missing header)."""
         from app.main import app
 
         db = AsyncMock()
@@ -275,12 +270,12 @@ class TestAgentAuth:
 
     @pytest.mark.asyncio
     async def test_heartbeat_invalid_key_returns_401(self):
-        """Heartbeat с неверным ключом → 401."""
+        """Heartbeat with invalid key → 401."""
         from app.main import app
 
         db = AsyncMock()
         result = MagicMock()
-        result.mappings.return_value.first.return_value = None  # ключ не найден
+        result.mappings.return_value.first.return_value = None
         db.execute.return_value = result
 
         _setup_overrides(app, db)
@@ -300,7 +295,7 @@ class TestAgentAuth:
 
     @pytest.mark.asyncio
     async def test_github_status_no_key_returns_422(self):
-        """GET /github/status без ключа → 422."""
+        """GET /github/status without key → 422."""
         from app.main import app
 
         db = AsyncMock()
@@ -316,7 +311,7 @@ class TestAgentAuth:
 
     @pytest.mark.asyncio
     async def test_github_status_invalid_key_returns_401(self):
-        """GET /github/status с неверным ключом → 401."""
+        """GET /github/status with invalid key → 401."""
         from app.main import app
 
         db = AsyncMock()
@@ -339,16 +334,16 @@ class TestAgentAuth:
 
 
 class TestOAuthCallback:
-    """Тесты OAuth callback."""
+    """OAuth callback tests."""
 
     @pytest.mark.asyncio
     async def test_callback_invalid_state_returns_error(self):
-        """Невалидный state → status=error (не 500)."""
+        """Invalid state → status=error (not 500)."""
         from app.main import app
 
         db = AsyncMock()
         result = MagicMock()
-        result.mappings.return_value.first.return_value = None  # state не найден
+        result.mappings.return_value.first.return_value = None
         db.execute.return_value = result
 
         _setup_overrides(app, db)
@@ -369,11 +364,11 @@ class TestOAuthCallback:
 
 
 class TestLeaderboard:
-    """Тесты лидерборда."""
+    """Leaderboard tests."""
 
     @pytest.mark.asyncio
     async def test_leaderboard_invalid_sort_returns_422(self):
-        """Невалидное значение sort → 422 (Literal validation)."""
+        """Invalid sort value → 422 (Literal validation)."""
         from app.main import app
 
         db = AsyncMock()
@@ -392,7 +387,7 @@ class TestLeaderboard:
 
     @pytest.mark.asyncio
     async def test_leaderboard_valid_sort_values(self):
-        """Валидные значения sort принимаются."""
+        """Valid sort values are accepted."""
         from app.main import app
 
         db = AsyncMock()

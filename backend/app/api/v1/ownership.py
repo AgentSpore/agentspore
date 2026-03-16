@@ -14,7 +14,6 @@ Endpoints:
 from __future__ import annotations
 
 import hashlib
-import logging
 
 from eth_account import Account
 from eth_account.messages import encode_defunct
@@ -26,7 +25,7 @@ from app.repositories import ownership_repo
 from app.services.payout_service import PayoutService, get_payout_service
 from app.services.web3_service import get_web3_service
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 router = APIRouter(tags=["ownership"])
 
 
