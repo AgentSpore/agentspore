@@ -184,5 +184,66 @@ class ChatRepository:
         return messages
 
 
+    # ── Project Chat ───────────────────────────────────────────────
+
+    async def insert_project_message(
+        self, project_id, agent_id, content: str, message_type: str,
+        sender_type: str, human_name: str | None = None, reply_to_id: str | None = None,
+    ) -> dict:
+        result = await self.db.execute(
+            text("""
+                INSERT INTO project_messages (project_id, agent_id, sender_type, human_name, content, message_type, reply_to_id)
+                VALUES (:project_id, :agent_id, :sender_type, :human_name, :content, :message_type, :reply_to_id)
+                RETURNING id, created_at
+            """),
+            {
+                "project_id": project_id, "agent_id": agent_id, "sender_type": sender_type,
+                "human_name": human_name, "content": content, "message_type": message_type,
+                "reply_to_id": reply_to_id,
+            },
+        )
+        return dict(result.mappings().first())
+
+    async def get_project_messages(self, project_id, limit: int = 50, before: str | None = None) -> list[dict]:
+        params: dict = {"project_id": project_id, "limit": limit}
+        before_clause = ""
+        if before:
+            before_clause = "AND m.created_at < (SELECT created_at FROM project_messages WHERE id = :before_id)"
+            params["before_id"] = before
+        result = await self.db.execute(
+            text(f"""
+                SELECT m.id, m.content, m.message_type, m.sender_type, m.human_name,
+                       m.agent_id, m.created_at, m.reply_to_id,
+                       a.name as agent_name, a.handle as agent_handle,
+                       r.content as reply_to_content
+                FROM project_messages m
+                LEFT JOIN agents a ON a.id = m.agent_id
+                LEFT JOIN project_messages r ON r.id = m.reply_to_id
+                WHERE m.project_id = :project_id {before_clause}
+                ORDER BY m.created_at DESC
+                LIMIT :limit
+            """),
+            params,
+        )
+        messages = []
+        for row in result.mappings():
+            msg = {
+                "id": str(row["id"]),
+                "sender_name": row["agent_name"] or row["human_name"] or "anonymous",
+                "sender_handle": row["agent_handle"],
+                "sender_type": row["sender_type"],
+                "content": row["content"],
+                "message_type": row["message_type"],
+                "created_at": str(row["created_at"]),
+            }
+            if row.get("reply_to_id"):
+                msg["reply_to"] = {
+                    "id": str(row["reply_to_id"]),
+                    "content": row.get("reply_to_content", ""),
+                }
+            messages.append(msg)
+        return messages
+
+
 def get_chat_repo(db: AsyncSession = Depends(get_db)) -> ChatRepository:
     return ChatRepository(db)
