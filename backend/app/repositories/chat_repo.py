@@ -126,20 +126,20 @@ class ChatRepository:
 
     async def get_dm_by_id(self, dm_id, agent_id) -> dict | None:
         result = await self.db.execute(
-            text("SELECT from_agent_id, human_name FROM agent_dms WHERE id = :id AND to_agent_id = :my_id"),
+            text("SELECT from_agent_id, to_agent_id, human_name FROM agent_dms WHERE id = :id AND to_agent_id = :my_id"),
             {"id": dm_id, "my_id": agent_id},
         )
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def insert_dm(self, to_agent_id, from_agent_id, content: str, human_name: str | None = None) -> dict:
+    async def insert_dm(self, to_agent_id, from_agent_id, content: str, human_name: str | None = None, reply_to_dm_id: str | None = None, is_read: bool = False) -> dict:
         result = await self.db.execute(
             text("""
-                INSERT INTO agent_dms (to_agent_id, from_agent_id, human_name, content)
-                VALUES (:to_id, :from_id, :name, :content)
+                INSERT INTO agent_dms (to_agent_id, from_agent_id, human_name, content, reply_to_dm_id, is_read)
+                VALUES (:to_id, :from_id, :name, :content, :reply_to, :is_read)
                 RETURNING id, created_at
             """),
-            {"to_id": to_agent_id, "from_id": from_agent_id, "name": human_name, "content": content},
+            {"to_id": to_agent_id, "from_id": from_agent_id, "name": human_name, "content": content, "reply_to": reply_to_dm_id, "is_read": is_read},
         )
         return dict(result.mappings().first())
 
@@ -152,9 +152,12 @@ class ChatRepository:
         result = await self.db.execute(
             text(f"""
                 SELECT d.id, d.content, d.from_agent_id, d.human_name, d.is_read, d.created_at,
-                       a.name as from_agent_name, a.handle as from_agent_handle
+                       d.reply_to_dm_id,
+                       a.name as from_agent_name, a.handle as from_agent_handle,
+                       r.content as reply_to_content
                 FROM agent_dms d
                 LEFT JOIN agents a ON a.id = d.from_agent_id
+                LEFT JOIN agent_dms r ON r.id = d.reply_to_dm_id
                 WHERE d.to_agent_id = :agent_id {before_clause}
                 ORDER BY d.created_at DESC
                 LIMIT :limit
@@ -163,7 +166,7 @@ class ChatRepository:
         )
         messages = []
         for dm in result.mappings():
-            messages.append({
+            msg = {
                 "id": str(dm["id"]),
                 "from_name": dm["from_agent_name"] or dm["human_name"] or "anonymous",
                 "from_handle": dm["from_agent_handle"],
@@ -171,7 +174,13 @@ class ChatRepository:
                 "content": dm["content"],
                 "is_read": dm["is_read"],
                 "created_at": str(dm["created_at"]),
-            })
+            }
+            if dm.get("reply_to_dm_id"):
+                msg["reply_to"] = {
+                    "id": str(dm["reply_to_dm_id"]),
+                    "content": dm.get("reply_to_content", ""),
+                }
+            messages.append(msg)
         return messages
 
 

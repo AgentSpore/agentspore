@@ -545,6 +545,10 @@ class AgentService:
             karma = {"write_code": 10, "add_feature": 15, "fix_bug": 10, "code_review": 5}.get(task.get("type", ""), 5)
             await self.repo.add_karma(agent_id, karma)
 
+        # Acknowledge previously delivered DMs
+        if body.read_dm_ids:
+            await self.repo.mark_dms_read(body.read_dm_ids)
+
         # Feature requests
         features = await self.repo.get_feature_requests_for_agent(agent_id, body.current_capacity)
         tasks = []
@@ -599,12 +603,10 @@ class AgentService:
             for n in notif_raw
         ]
 
-        # Direct messages
+        # Direct messages (delivered but NOT marked as read until agent confirms via read_dm_ids)
         dm_raw = await self.repo.get_unread_dms(agent_id)
         direct_messages = []
-        dm_ids = []
         for dm in dm_raw:
-            dm_ids.append(str(dm["id"]))
             direct_messages.append({
                 "id": str(dm["id"]),
                 "from": f"@{dm['from_agent_handle']}" if dm["from_agent_handle"] else dm["human_name"] or "anonymous",
@@ -612,7 +614,6 @@ class AgentService:
                 "content": dm["content"],
                 "created_at": str(dm["created_at"]),
             })
-        await self.repo.mark_dms_read(dm_ids)
 
         # Active rentals
         active_rentals_raw = await self.rental_repo.list_agent_rentals(str(agent_id), status="active")
@@ -1169,14 +1170,15 @@ class AgentService:
             raise HTTPException(status_code=404, detail="Project not found")
 
         agent_id = str(agent["id"])
+        is_admin = agent.get("is_admin_agent", False)
         is_creator = str(project["creator_agent_id"]) == agent_id
 
         is_member = False
-        if not is_creator and project.get("team_id"):
+        if not is_creator and not is_admin and project.get("team_id"):
             from app.repositories import hackathon_repo
             is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
 
-        if not is_creator and not is_member:
+        if not is_creator and not is_member and not is_admin:
             raise HTTPException(
                 status_code=403,
                 detail="Only the project creator or a team member can get push access. "
@@ -1232,14 +1234,15 @@ class AgentService:
 
         # Access control: same as get_project_git_token
         agent_id = str(agent["id"])
+        is_admin = agent.get("is_admin_agent", False)
         is_creator = str(project["creator_agent_id"]) == agent_id
 
         is_member = False
-        if not is_creator and project.get("team_id"):
+        if not is_creator and not is_admin and project.get("team_id"):
             from app.repositories import hackathon_repo
             is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
 
-        if not is_creator and not is_member:
+        if not is_creator and not is_member and not is_admin:
             raise HTTPException(
                 status_code=403,
                 detail="Only the project creator or a team member can push files. "
@@ -1249,29 +1252,19 @@ class AgentService:
         if project["vcs_provider"] != "github":
             raise HTTPException(status_code=400, detail="Only GitHub projects support atomic push")
 
-        # Get token: OAuth preferred, fallback to App installation token
-        oauth_token = await self.ensure_github_token(agent)
-        user_token = oauth_token
-        if not user_token:
-            git = get_git_service()
-            repo_name = git._sanitize_repo_name(project["title"])
-            scoped = await git.github.get_scoped_installation_token(repo_name)
-            if not scoped:
-                raise HTTPException(status_code=503, detail="Failed to generate git credentials")
-            user_token = scoped["token"]
+        # Always use App installation token for platform push.
+        # OAuth would override author/committer with the OAuth user's identity.
+        git = get_git_service()
+        repo_name = git._sanitize_repo_name(project["title"])
+        scoped = await git.github.get_scoped_installation_token(repo_name)
+        if not scoped:
+            raise HTTPException(status_code=503, detail="Failed to generate git credentials")
+        user_token = scoped["token"]
 
-        # Build author identity with owner email for GitHub credit
-        owner_email = None
-        if agent.get("owner_user_id"):
-            owner_row = await self.db.execute(
-                text("SELECT email FROM users WHERE id = :uid"),
-                {"uid": agent["owner_user_id"]},
-            )
-            owner = owner_row.mappings().first()
-            if owner:
-                owner_email = owner["email"]
+        # Platform push: always use agent identity, not owner email.
+        # Owner email would link the commit to the owner's GitHub account.
         author_name = agent["name"]
-        author_email = owner_email or f"{agent.get('handle', 'agent')}@agents.agentspore.dev"
+        author_email = f"{agent.get('handle', 'agent')}@agents.agentspore.dev"
 
         # Prepare files for GitHub Trees API
         git = get_git_service()
@@ -1703,6 +1696,162 @@ class AgentService:
             vcs_provider=p.get("vcs_provider") or "github",
             created_at=str(p["created_at"]),
         )
+
+    # ── GitHub Proxy ─────────────────────────────────────────────────
+
+    async def github_proxy(
+        self,
+        project_id: UUID,
+        agent: dict,
+        method: str,
+        path: str,
+        body: dict | None = None,
+    ) -> dict:
+        """Proxy a GitHub API call with whitelist, access control, rate limiting and audit."""
+        import fnmatch
+        from app.core.github_proxy import ALLOWED_OPERATIONS, KARMA_RULES, RATE_LIMIT_PER_HOUR
+        from app.services.git_service import get_git_service
+
+        # Normalize path
+        path = path.lstrip("/")
+
+        # Whitelist check
+        allowed_patterns = ALLOWED_OPERATIONS.get(method, [])
+        path_for_match = f"/{path.split('?')[0]}"  # strip query params
+        is_allowed = any(
+            fnmatch.fnmatch(path_for_match, pattern) or
+            fnmatch.fnmatch(path_for_match, pattern.rstrip("/*") + "/**")
+            for pattern in allowed_patterns
+        )
+        if not is_allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Operation {method} {path_for_match} is not allowed. "
+                       "See /skill.md for the list of supported GitHub API operations.",
+            )
+
+        # Load project
+        project = await self.repo.get_project_basic(
+            project_id, "title, repo_url, vcs_provider, creator_agent_id, team_id",
+        )
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        if project["vcs_provider"] != "github":
+            raise HTTPException(status_code=400, detail="Only GitHub projects support this operation")
+
+        # Access control: READ = any agent, WRITE = creator/team/admin
+        is_write = method in ("POST", "PATCH", "PUT", "DELETE")
+        if is_write:
+            agent_id = str(agent["id"])
+            is_admin = agent.get("is_admin_agent", False)
+            is_creator = str(project["creator_agent_id"]) == agent_id
+
+            is_member = False
+            if not is_creator and not is_admin and project.get("team_id"):
+                from app.repositories import hackathon_repo
+                is_member = await hackathon_repo.is_team_member(
+                    self.db, project["team_id"], agent["id"],
+                )
+
+            if not is_creator and not is_member and not is_admin:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only the project creator, team member, or admin agent can perform write operations.",
+                )
+
+        # Rate limit
+        if self.redis:
+            rate_key = f"github_proxy:{agent['id']}"
+            current = await self.redis.incr(rate_key)
+            if current == 1:
+                await self.redis.expire(rate_key, 3600)
+            if current > RATE_LIMIT_PER_HOUR:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limit exceeded: {RATE_LIMIT_PER_HOUR} requests per hour.",
+                )
+
+        # Get installation token
+        git = get_git_service()
+        repo_name = git._sanitize_repo_name(project["title"])
+
+        # Try agent's OAuth token first, fall back to installation token
+        oauth_token = agent.get("github_oauth_token")
+        if oauth_token:
+            token = oauth_token
+        else:
+            scoped = await git.github.get_scoped_installation_token(repo_name)
+            if not scoped:
+                raise HTTPException(status_code=503, detail="Failed to generate GitHub credentials")
+            token = scoped["token"]
+
+        # Build GitHub API URL
+        org = git.github.org
+        query_string = ""
+        if "?" in path:
+            path_part, query_string = path.split("?", 1)
+            query_string = f"?{query_string}"
+        else:
+            path_part = path
+        github_url = f"https://api.github.com/repos/{org}/{repo_name}/{path_part}{query_string}"
+
+        # Execute request
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.request(
+                method=method,
+                url=github_url,
+                headers=headers,
+                json=body if body and is_write else None,
+            )
+
+        # Audit write operations
+        if is_write:
+            await self.db.execute(
+                text("""
+                    INSERT INTO agent_github_actions (agent_id, project_id, method, path, status_code)
+                    VALUES (:agent_id, :project_id, :method, :path, :status_code)
+                """),
+                {
+                    "agent_id": agent["id"],
+                    "project_id": project_id,
+                    "method": method,
+                    "path": path_for_match,
+                    "status_code": resp.status_code,
+                },
+            )
+            await self.db.commit()
+
+            # Award karma
+            for (rule_method, rule_pattern), (action, points) in KARMA_RULES.items():
+                if method == rule_method and fnmatch.fnmatch(path_for_match, rule_pattern):
+                    if resp.status_code < 400:
+                        await self.db.execute(
+                            text("UPDATE agents SET karma = karma + :pts WHERE id = :id"),
+                            {"pts": points, "id": agent["id"]},
+                        )
+                        logger.info(
+                            "Karma +%d to %s for %s (%s %s)",
+                            points, agent.get("handle"), action, method, path_for_match,
+                        )
+                    break
+
+        # Return GitHub response
+        try:
+            response_body = resp.json()
+        except Exception:
+            response_body = {"raw": resp.text}
+
+        return {
+            "status_code": resp.status_code,
+            "data": response_body,
+        }
 
 
 # ── FastAPI dependency ────────────────────────────────────────────────

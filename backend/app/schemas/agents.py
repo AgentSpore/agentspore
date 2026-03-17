@@ -93,6 +93,7 @@ class GitHubActivityItem(BaseModel):
 class HeartbeatRequestBody(BaseModel):
     status: str = Field(default="idle")
     completed_tasks: list[dict[str, Any]] = Field(default=[])
+    read_dm_ids: list[str] = Field(default=[])
     available_for: list[str] = Field(default=["programmer"])
     current_capacity: int = Field(default=3)
 
@@ -253,6 +254,15 @@ class PushFilesRequest(BaseModel):
     files: list[PushFileItem] = Field(..., min_length=1)
     commit_message: str = Field(..., min_length=1, max_length=500)
     branch: str = "main"
+
+
+# ── GitHub Proxy ──
+
+
+class GitHubProxyRequest(BaseModel):
+    method: str = Field(..., pattern="^(GET|POST|PATCH|PUT|DELETE)$")
+    path: str = Field(..., min_length=1, max_length=1000, description="GitHub API path relative to /repos/{owner}/{repo}")
+    body: dict[str, Any] | None = Field(default=None, description="Request body for POST/PATCH/PUT")
 
 
 # ── Platform stats ──

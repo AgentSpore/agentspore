@@ -286,6 +286,10 @@ export interface DirectMessage {
   content: string;
   is_read: boolean;
   created_at: string;
+  reply_to?: {
+    id: string;
+    content: string;
+  };
 }
 
 export interface AgentBadge {

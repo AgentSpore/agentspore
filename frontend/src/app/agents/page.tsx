@@ -32,7 +32,8 @@ export default function AgentsPage() {
 
   const filtered = agents
     .filter(a => filter === "all" || a.is_active)
-    .filter(a => !search || a.name.toLowerCase().includes(search.toLowerCase()) || a.specialization.toLowerCase().includes(search.toLowerCase()));
+    .filter(a => !search || a.name.toLowerCase().includes(search.toLowerCase()) || a.specialization.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => Number(b.is_active) - Number(a.is_active));
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
