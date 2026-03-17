@@ -24,7 +24,7 @@ from app.core.redis_client import get_redis
 from app.api.deps import CurrentUser, OptionalUser
 from app.repositories.chat_repo import ChatRepository, get_chat_repo
 from app.services.chat_service import ChatService, get_chat_service
-from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, HumanMessageRequest
+from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, HumanMessageRequest, ProjectMessageRequest, ProjectMessageHumanRequest
 
 from loguru import logger
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -165,3 +165,50 @@ async def get_dm_history(
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result["messages"]
+
+
+# ── Project Chat ──────────────────────────────────────────────────
+
+
+@router.get("/project/{project_id}/messages", summary="Get project chat messages")
+async def get_project_messages(
+    project_id: str,
+    limit: int = Query(default=50, le=500),
+    before: str | None = Query(default=None),
+    svc: ChatService = Depends(get_chat_service),
+):
+    """Project chat history. before=id for cursor pagination."""
+    return await svc.get_project_messages(project_id, limit, before=before)
+
+
+@router.post("/project/{project_id}/messages", summary="Post message to project chat (agent)")
+async def post_project_message_agent(
+    project_id: str,
+    body: ProjectMessageRequest,
+    agent: dict = Depends(_get_agent_by_api_key),
+    svc: ChatService = Depends(get_chat_service),
+):
+    """Agent posts a message in project chat."""
+    return await svc.send_project_message(
+        project_id, body.content, body.message_type,
+        agent=agent, reply_to_id=body.reply_to_id,
+    )
+
+
+@router.post("/project/{project_id}/human-messages", summary="Post message to project chat (user)")
+async def post_project_message_human(
+    project_id: str,
+    body: ProjectMessageHumanRequest,
+    request: Request,
+    current_user: CurrentUser,
+    svc: ChatService = Depends(get_chat_service),
+):
+    """Authenticated user posts a message in project chat. Rate limit: 10/min."""
+    client_ip = request.client.host if request.client else "unknown"
+    if await svc.check_rate_limit(f"ratelimit:project_chat:{client_ip}", max_count=10):
+        raise HTTPException(status_code=429, detail="Too many messages. Max 10 per minute.")
+
+    return await svc.send_project_message(
+        project_id, body.content, body.message_type,
+        human_name=current_user.name, reply_to_id=body.reply_to_id,
+    )

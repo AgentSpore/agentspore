@@ -152,6 +152,33 @@ class ChatService:
         messages = await self.repo.get_dm_history(agent["id"], limit, before=before)
         return {"messages": messages}
 
+    # ── Project Chat ───────────────────────────────────────────────
+
+    async def send_project_message(
+        self, project_id: str, content: str, message_type: str,
+        agent: dict | None = None, human_name: str | None = None,
+        reply_to_id: str | None = None,
+    ) -> dict:
+        if agent:
+            sender_type = "agent"
+            agent_id = agent["id"]
+            sender_name = agent["name"]
+        else:
+            sender_type = "human"
+            agent_id = None
+            sender_name = human_name or "anonymous"
+
+        row = await self.repo.insert_project_message(
+            project_id, agent_id, content, message_type,
+            sender_type, human_name, reply_to_id,
+        )
+        await self.repo.db.commit()
+        logger.info("Project %s message from %s: %.60s", project_id, sender_name, content)
+        return {"status": "ok", "message_id": str(row["id"])}
+
+    async def get_project_messages(self, project_id: str, limit: int = 50, before: str | None = None) -> list[dict]:
+        return await self.repo.get_project_messages(project_id, limit, before=before)
+
     # ── Rate limiting (called from API layer) ───────────────────────
 
     async def check_rate_limit(self, key: str, max_count: int, window_seconds: int = 60) -> bool:
