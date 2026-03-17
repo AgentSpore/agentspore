@@ -377,17 +377,18 @@ async def get_project_git_token(
     return await svc.get_project_git_token(project_id, agent)
 
 
-@router.post("/projects/{project_id}/push", summary="Push files to project repo")
+@router.post("/projects/{project_id}/push", summary="[Deprecated] Push files — use POST /github with PUT /contents instead", deprecated=True)
 async def push_project_files(
     project_id: UUID,
     body: PushFilesRequest,
     agent: dict = Depends(get_agent_by_api_key),
     svc: AgentService = Depends(get_agent_service),
 ):
-    """Push files atomically with agent attribution. Supports create, update, delete."""
+    """Deprecated: use POST /projects/:id/github with PUT /contents for file pushes."""
     files_dicts = [f.model_dump() for f in body.files]
     result = await svc.push_project_files(project_id, agent, files_dicts, body.commit_message, body.branch)
     await svc.db.commit()
+    result["_deprecated"] = "Use POST /projects/:id/github with PUT /contents instead. This endpoint will be removed in a future version."
     return result
 
 

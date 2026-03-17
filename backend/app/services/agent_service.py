@@ -1776,6 +1776,18 @@ class AgentService:
         git = get_git_service()
         repo_name = git._sanitize_repo_name(project["title"])
 
+        # File write operations (PUT /contents, DELETE /contents) go through
+        # push_files_atomic for proper agent attribution and atomic commits.
+        is_file_write = (
+            (method == "PUT" and path_for_match.startswith("/contents"))
+            or (method == "DELETE" and path_for_match.startswith("/contents"))
+        )
+
+        if is_file_write:
+            return await self._proxy_file_write(
+                project_id, project, agent, method, path_for_match, body, repo_name, git,
+            )
+
         # Try agent's OAuth token first, fall back to installation token
         oauth_token = agent.get("github_oauth_token")
         if oauth_token:
@@ -1813,34 +1825,7 @@ class AgentService:
 
         # Audit write operations
         if is_write:
-            await self.db.execute(
-                text("""
-                    INSERT INTO agent_github_actions (agent_id, project_id, method, path, status_code)
-                    VALUES (:agent_id, :project_id, :method, :path, :status_code)
-                """),
-                {
-                    "agent_id": agent["id"],
-                    "project_id": project_id,
-                    "method": method,
-                    "path": path_for_match,
-                    "status_code": resp.status_code,
-                },
-            )
-            await self.db.commit()
-
-            # Award karma
-            for (rule_method, rule_pattern), (action, points) in KARMA_RULES.items():
-                if method == rule_method and fnmatch.fnmatch(path_for_match, rule_pattern):
-                    if resp.status_code < 400:
-                        await self.db.execute(
-                            text("UPDATE agents SET karma = karma + :pts WHERE id = :id"),
-                            {"pts": points, "id": agent["id"]},
-                        )
-                        logger.info(
-                            "Karma +%d to %s for %s (%s %s)",
-                            points, agent.get("handle"), action, method, path_for_match,
-                        )
-                    break
+            await self._audit_and_karma(agent, project_id, method, path_for_match, resp.status_code)
 
         # Return GitHub response
         try:
@@ -1852,6 +1837,151 @@ class AgentService:
             "status_code": resp.status_code,
             "data": response_body,
         }
+
+    async def _proxy_file_write(
+        self,
+        project_id: UUID,
+        project: dict,
+        agent: dict,
+        method: str,
+        path_for_match: str,
+        body: dict | None,
+        repo_name: str,
+        git,
+    ) -> dict:
+        """Handle PUT /contents and DELETE /contents via atomic Git Data API push."""
+        import fnmatch
+        from app.core.github_proxy import KARMA_RULES
+
+        body = body or {}
+        branch = body.get("branch", "main")
+        agent_handle = agent.get("handle", "agent")
+        author_name = agent["name"]
+        author_email = f"{agent_handle}@agents.agentspore.dev"
+
+        # Build file list for push_files_atomic
+        if method == "PUT" and path_for_match == "/contents":
+            # Batch push: {"files": [...], "message": "...", "branch": "main"}
+            raw_files = body.get("files")
+            if not raw_files or not isinstance(raw_files, list):
+                raise HTTPException(status_code=400, detail="PUT /contents requires 'files' array")
+            files = []
+            for f in raw_files:
+                if not f.get("path"):
+                    raise HTTPException(status_code=400, detail="Each file must have 'path'")
+                if f.get("action") == "delete" or f.get("delete"):
+                    files.append({"path": f["path"], "delete": True})
+                else:
+                    files.append({"path": f["path"], "content": f.get("content", "")})
+        elif method == "PUT":
+            # Single file: PUT /contents/src/main.py {"content": "...", "message": "..."}
+            file_path = path_for_match[len("/contents/"):]
+            if not file_path:
+                raise HTTPException(status_code=400, detail="File path is required")
+            files = [{"path": file_path, "content": body.get("content", "")}]
+        elif method == "DELETE":
+            # Delete file: DELETE /contents/old.py
+            file_path = path_for_match[len("/contents/"):]
+            if not file_path:
+                raise HTTPException(status_code=400, detail="File path is required")
+            files = [{"path": file_path, "delete": True}]
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file operation")
+
+        # Default commit message
+        commit_message = body.get("message") or body.get("commit_message")
+        if not commit_message:
+            paths = ", ".join(f["path"] for f in files[:3])
+            suffix = f" and {len(files) - 3} more" if len(files) > 3 else ""
+            action = "Delete" if method == "DELETE" else "Update"
+            commit_message = f"{action} {paths}{suffix} via AgentSpore [{agent_handle}]"
+
+        # Use installation token (not OAuth) to preserve agent attribution
+        scoped = await git.github.get_scoped_installation_token(repo_name)
+        if not scoped:
+            raise HTTPException(status_code=503, detail="Failed to generate git credentials")
+        token = scoped["token"]
+
+        # Atomic push via Git Data API
+        result = await git.github.push_files_atomic(
+            repo_name, files, commit_message,
+            author_name, author_email, branch, token,
+        )
+
+        if not result:
+            raise HTTPException(
+                status_code=409,
+                detail="Push failed — branch may have been updated by another commit. "
+                       "Retry the request. If the problem persists, check the branch name.",
+            )
+
+        # Award contributions
+        files_changed = result["files_changed"]
+        owner_user_id = await self.repo.get_agent_owner_user_id(agent["id"])
+        await self.repo.increment_commits_and_karma(agent["id"], 1)
+        await self.repo.upsert_contributor_points(project_id, agent["id"], owner_user_id, files_changed * 10)
+        await self.repo.recalculate_share_pct(project_id)
+
+        # Audit + karma
+        await self._audit_and_karma(agent, project_id, method, path_for_match, 200)
+
+        # Activity log
+        await self.repo.insert_activity(
+            agent["id"], "code_commit",
+            f"Pushed {files_changed} files to {project['title']}/{branch}",
+            project_id=project_id,
+            metadata={"sha": result["sha"], "branch": branch, "files_changed": files_changed},
+        )
+        await self.db.commit()
+
+        logger.info(
+            "Proxy push: %s pushed %d files to %s/%s (sha=%s)",
+            agent_handle, files_changed, project["title"], branch, result["sha"],
+        )
+
+        return {
+            "status_code": 200,
+            "data": {
+                "sha": result["sha"],
+                "files_changed": files_changed,
+                "branch": branch,
+                "commit_message": commit_message,
+            },
+        }
+
+    async def _audit_and_karma(
+        self, agent: dict, project_id: UUID, method: str, path_for_match: str, status_code: int,
+    ) -> None:
+        """Audit a proxy write operation and award karma."""
+        import fnmatch
+        from app.core.github_proxy import KARMA_RULES
+
+        await self.db.execute(
+            text("""
+                INSERT INTO agent_github_actions (agent_id, project_id, method, path, status_code)
+                VALUES (:agent_id, :project_id, :method, :path, :status_code)
+            """),
+            {
+                "agent_id": agent["id"],
+                "project_id": project_id,
+                "method": method,
+                "path": path_for_match,
+                "status_code": status_code,
+            },
+        )
+
+        if status_code < 400:
+            for (rule_method, rule_pattern), (action, points) in KARMA_RULES.items():
+                if method == rule_method and fnmatch.fnmatch(path_for_match, rule_pattern):
+                    await self.db.execute(
+                        text("UPDATE agents SET karma = karma + :pts WHERE id = :id"),
+                        {"pts": points, "id": agent["id"]},
+                    )
+                    logger.info(
+                        "Karma +%d to %s for %s (%s %s)",
+                        points, agent.get("handle"), action, method, path_for_match,
+                    )
+                    break
 
 
 # ── FastAPI dependency ────────────────────────────────────────────────
