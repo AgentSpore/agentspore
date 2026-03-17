@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL, ContributorShare, ProjectOwnership, timeAgo } from "@/lib/api";
 
@@ -152,7 +152,18 @@ function VoteButtons({ projectId, votesUp, votesDown }: {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-type Tab = "overview" | "contributors" | "ownership";
+interface ProjectMessage {
+  id: string;
+  sender_name: string;
+  sender_handle: string | null;
+  sender_type: "agent" | "human" | "user";
+  content: string;
+  message_type: string;
+  created_at: string;
+  reply_to?: { id: string; content: string };
+}
+
+type Tab = "overview" | "contributors" | "ownership" | "chat";
 
 export default function ProjectPage() {
   const params = useParams();
@@ -223,6 +234,67 @@ export default function ProjectPage() {
 
   const isContributor = contributors.some(c => c.user_id === auth?.userId);
 
+  // ── Chat state (must be before conditional returns) ──
+  const [chatMessages, setChatMessages] = useState<ProjectMessage[]>([]);
+  const [chatContent, setChatContent] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [chatHasMore, setChatHasMore] = useState(false);
+  const [chatLoadingMore, setChatLoadingMore] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  const loadChatMessages = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50`);
+      if (res.ok) {
+        const data: ProjectMessage[] = await res.json();
+        setChatMessages(data.reverse());
+        setChatHasMore(data.length === 50);
+        setTimeout(() => chatBottomRef.current?.scrollIntoView(), 100);
+      }
+    } catch { /* ignore */ }
+  }, [projectId]);
+
+  const loadOlderChat = useCallback(async () => {
+    if (!chatHasMore || chatLoadingMore || chatMessages.length === 0) return;
+    setChatLoadingMore(true);
+    const oldestId = chatMessages[0].id;
+    const container = chatContainerRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50&before=${oldestId}`);
+      if (res.ok) {
+        const data: ProjectMessage[] = await res.json();
+        setChatMessages(prev => [...data.reverse(), ...prev]);
+        setChatHasMore(data.length === 50);
+        requestAnimationFrame(() => {
+          if (container) container.scrollTop = container.scrollHeight - prevHeight;
+        });
+      }
+    } catch { /* ignore */ }
+    setChatLoadingMore(false);
+  }, [chatHasMore, chatLoadingMore, chatMessages, projectId]);
+
+  useEffect(() => { if (tab === "chat") loadChatMessages(); }, [tab, loadChatMessages]);
+
+  const handleChatSend = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!chatContent.trim() || chatSending) return;
+    if (!auth) { setShowLogin(true); return; }
+    setChatSending(true);
+    try {
+      const res = await apiFetch(`/chat/project/${projectId}/human-messages`, auth.token, {
+        method: "POST",
+        body: JSON.stringify({ name: auth.email.split("@")[0], content: chatContent.trim(), message_type: "text" }),
+      });
+      if (res.ok) {
+        setChatContent("");
+        await loadChatMessages();
+      }
+    } catch { /* ignore */ }
+    setChatSending(false);
+  };
+
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-600 text-sm">
       Loading…
@@ -236,6 +308,7 @@ export default function ProjectPage() {
 
   const TABS: { key: Tab; label: string }[] = [
     { key: "overview", label: "Overview" },
+    { key: "chat", label: "Discussion" },
     { key: "contributors", label: `Contributors ${contributors.length > 0 ? `(${contributors.length})` : ""}` },
     { key: "ownership", label: "Ownership" },
   ];
@@ -286,12 +359,24 @@ export default function ProjectPage() {
                 {" · "}<span className="capitalize">{project.status}</span>
               </p>
             </div>
-            {project.repo_url && (
-              <a href={project.repo_url} target="_blank" rel="noopener noreferrer"
-                className="shrink-0 text-xs text-neutral-400 hover:text-white border border-neutral-800 px-3 py-1.5 rounded-lg font-mono transition-colors">
-                GitHub ↗
-              </a>
-            )}
+            <div className="flex items-center gap-2 shrink-0">
+              {(() => {
+                const handle = project.title.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+                const deployUrl = `https://${handle}.agentspore.com`;
+                return (
+                  <a href={deployUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 hover:border-emerald-500/50 px-3 py-1.5 rounded-lg font-mono transition-colors">
+                    Demo ↗
+                  </a>
+                );
+              })()}
+              {project.repo_url && (
+                <a href={project.repo_url} target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-neutral-400 hover:text-white border border-neutral-800 px-3 py-1.5 rounded-lg font-mono transition-colors">
+                  GitHub ↗
+                </a>
+              )}
+            </div>
           </div>
 
           {/* Tabs */}
@@ -339,6 +424,87 @@ export default function ProjectPage() {
                 <div className="text-sm text-neutral-300 font-medium font-mono">{contributors.length}</div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ── Chat ── */}
+        {tab === "chat" && (
+          <div className="space-y-4">
+            <div
+              ref={chatContainerRef}
+              className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 h-[400px] overflow-y-auto p-4 space-y-3"
+              onScroll={(e) => {
+                if ((e.target as HTMLDivElement).scrollTop < 50) loadOlderChat();
+              }}
+            >
+              {chatLoadingMore && (
+                <div className="text-center text-neutral-600 text-xs py-2">Loading older messages...</div>
+              )}
+              {chatMessages.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-neutral-600 text-sm">
+                  No messages yet. Start a discussion!
+                </div>
+              ) : (
+                chatMessages.map(msg => (
+                  <div key={msg.id} className="group">
+                    {msg.reply_to && (
+                      <div className="ml-8 mb-1 text-xs text-neutral-600 border-l-2 border-neutral-800 pl-2 truncate">
+                        {msg.reply_to.content}
+                      </div>
+                    )}
+                    <div className="flex items-start gap-2.5">
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                        msg.sender_type === "agent"
+                          ? "bg-violet-500/20 text-violet-300"
+                          : "bg-cyan-500/20 text-cyan-300"
+                      }`}>
+                        {msg.sender_name[0].toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2">
+                          <span className={`text-sm font-medium ${
+                            msg.sender_type === "agent" ? "text-violet-300" : "text-cyan-300"
+                          }`}>
+                            {msg.sender_name}
+                          </span>
+                          <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(msg.created_at)}</span>
+                          {msg.message_type !== "text" && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                              msg.message_type === "bug" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
+                              msg.message_type === "idea" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
+                              "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                            }`}>
+                              {msg.message_type}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-neutral-300 mt-0.5 whitespace-pre-wrap break-words">{msg.content}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+              <div ref={chatBottomRef} />
+            </div>
+
+            <form onSubmit={handleChatSend} className="flex gap-2">
+              <input
+                type="text"
+                value={chatContent}
+                onChange={e => setChatContent(e.target.value)}
+                placeholder={auth ? "Write a message..." : "Sign in to write a message"}
+                disabled={!auth}
+                className="flex-1 bg-neutral-800/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 disabled:opacity-50"
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) handleChatSend(e); }}
+              />
+              <button
+                type="submit"
+                disabled={chatSending || !chatContent.trim() || !auth}
+                className="bg-white text-black text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90"
+              >
+                {chatSending ? "..." : "Send"}
+              </button>
+            </form>
           </div>
         )}
 
