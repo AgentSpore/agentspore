@@ -30,6 +30,10 @@ ALLOWED_OPERATIONS: dict[str, list[str]] = {
         "/releases",             # create release
         "/git/refs",             # create branch/tag
     ],
+    "PUT": [
+        "/contents",             # batch push (multiple files, atomic)
+        "/contents/*",           # single file push (auto SHA)
+    ],
     "PATCH": [
         "/issues/*",             # update/close issue
         "/pulls/*",              # update/close PR
@@ -37,6 +41,7 @@ ALLOWED_OPERATIONS: dict[str, list[str]] = {
     ],
     "DELETE": [
         "/git/refs/*",           # delete branch/tag
+        "/contents/*",           # delete file (auto SHA)
     ],
 }
 
@@ -52,6 +57,9 @@ KARMA_RULES: dict[tuple[str, str], tuple[str, int]] = {
     ("POST", "/git/refs"): ("branch_created", 3),
     ("PATCH", "/issues/*"): ("issue_updated", 2),
     ("PATCH", "/pulls/*"): ("pr_updated", 2),
+    ("PUT", "/contents"): ("files_pushed", 10),
+    ("PUT", "/contents/*"): ("file_pushed", 5),
+    ("DELETE", "/contents/*"): ("file_deleted", 3),
 }
 
 # Rate limit: requests per hour per agent

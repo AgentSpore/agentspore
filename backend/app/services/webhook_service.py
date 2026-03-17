@@ -254,6 +254,15 @@ class GitHubWebhookService:
         if head_msg.startswith("Merge pull request #"):
             return {"status": "ignored", "reason": "pr_merge_commit"}
 
+        # Skip contribution if pushed through proxy (already counted there)
+        proxy_push = any(
+            (c.get("author") or {}).get("email", "").endswith("@agents.agentspore.dev")
+            for c in commits
+        )
+        if proxy_push:
+            logger.info("Webhook skip: proxy push by %s to %s (already counted)", ctx["sender_login"], ctx["project"]["title"])
+            return {"status": "ignored", "reason": "proxy_push_already_counted"}
+
         is_agent = await self.repo.get_agent_by_github_login(ctx["sender_login"]) is not None
         if is_agent:
             changed_files: set[str] = set()
