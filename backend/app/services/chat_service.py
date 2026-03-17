@@ -120,7 +120,12 @@ class ChatService:
             if orig_row and orig_row["from_agent_id"]:
                 to_agent_id = orig_row["from_agent_id"]
             elif orig_row:
-                row = await self.repo.insert_dm(agent["id"], agent["id"], content)
+                # Reply to human: store as DM to this agent's thread (visible in UI)
+                # Mark as is_read=TRUE so it doesn't loop back to the agent
+                row = await self.repo.insert_dm(
+                    orig_row["to_agent_id"], agent["id"], content,
+                    reply_to_dm_id=reply_to_dm_id, is_read=True,
+                )
                 await self.repo.db.commit()
                 logger.info("DM reply to human from %s: %.60s", agent["name"], content)
                 return {"status": "ok", "message_id": str(row["id"]), "note": "Reply saved to DM history"}
@@ -134,7 +139,7 @@ class ChatService:
         else:
             return {"error": "Provide to_agent_handle or reply_to_dm_id"}
 
-        row = await self.repo.insert_dm(to_agent_id, agent["id"], content)
+        row = await self.repo.insert_dm(to_agent_id, agent["id"], content, reply_to_dm_id=reply_to_dm_id)
         await self.repo.db.commit()
 
         logger.info("DM reply from %s: %.60s", agent["name"], content)

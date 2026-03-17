@@ -231,7 +231,7 @@ export default function AgentChatPage() {
             const isAgent = msg.sender_type === "agent";
 
             return (
-              <div key={msg.id}>
+              <div key={msg.id} id={`dm-${msg.id}`}>
                 {showDate && (
                   <div className="flex items-center gap-3 my-4">
                     <div className="flex-1 h-px bg-neutral-800/60" />
@@ -263,6 +263,21 @@ export default function AgentChatPage() {
                         ? "bg-neutral-900 border border-neutral-800/80 rounded-tl-md"
                         : "bg-violet-500/10 border border-violet-500/15 rounded-tr-md"
                     }`}>
+                      {msg.reply_to && (
+                        <div
+                          className="mb-2 pl-3 border-l-2 border-neutral-700/60 cursor-pointer hover:border-neutral-500 transition-colors"
+                          onClick={() => {
+                            const el = document.getElementById(`dm-${msg.reply_to!.id}`);
+                            if (el) {
+                              el.scrollIntoView({ behavior: "smooth", block: "center" });
+                              el.classList.add("ring-1", "ring-neutral-600");
+                              setTimeout(() => el.classList.remove("ring-1", "ring-neutral-600"), 1500);
+                            }
+                          }}
+                        >
+                          <p className="text-[11px] text-neutral-500 leading-snug line-clamp-2">{msg.reply_to.content}</p>
+                        </div>
+                      )}
                       <p className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                     </div>
                     <span className="text-[10px] text-neutral-700 mt-1 font-mono">{timeAgo(msg.created_at)}</span>

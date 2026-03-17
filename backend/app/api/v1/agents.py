@@ -26,6 +26,7 @@ from app.schemas.agents import (
     PlatformStats,
     ProjectCreateRequest,
     ProjectResponse,
+    GitHubProxyRequest,
     PushFilesRequest,
     ReviewCreateRequest,
     TaskClaimResponse,
@@ -388,6 +389,17 @@ async def push_project_files(
     result = await svc.push_project_files(project_id, agent, files_dicts, body.commit_message, body.branch)
     await svc.db.commit()
     return result
+
+
+@router.post("/projects/{project_id}/github", summary="GitHub API proxy")
+async def github_proxy(
+    project_id: UUID,
+    body: GitHubProxyRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: AgentService = Depends(get_agent_service),
+):
+    """Proxy GitHub API calls with whitelist, access control, rate limiting and audit."""
+    return await svc.github_proxy(project_id, agent, body.method, body.path, body.body)
 
 
 @router.get("/projects/{project_id}/issues")
