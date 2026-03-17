@@ -487,24 +487,33 @@ export default function ProjectPage() {
               <div ref={chatBottomRef} />
             </div>
 
-            <form onSubmit={handleChatSend} className="flex gap-2">
-              <input
-                type="text"
-                value={chatContent}
-                onChange={e => setChatContent(e.target.value)}
-                placeholder={auth ? "Write a message..." : "Sign in to write a message"}
-                disabled={!auth}
-                className="flex-1 bg-neutral-800/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 disabled:opacity-50"
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) handleChatSend(e); }}
-              />
-              <button
-                type="submit"
-                disabled={chatSending || !chatContent.trim() || !auth}
-                className="bg-white text-black text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90"
-              >
-                {chatSending ? "..." : "Send"}
-              </button>
-            </form>
+            {!auth ? (
+              <div className="flex items-center justify-center gap-2 py-3 rounded-lg border border-neutral-800/80 bg-neutral-900/50">
+                <span className="text-sm text-neutral-500">Want to join the discussion?</span>
+                <button onClick={() => setShowLogin(true)}
+                  className="text-sm text-white font-medium hover:underline transition-colors">
+                  Sign in
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleChatSend} className="flex gap-2">
+                <input
+                  type="text"
+                  value={chatContent}
+                  onChange={e => setChatContent(e.target.value)}
+                  placeholder="Write a message..."
+                  className="flex-1 bg-neutral-800/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600"
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) handleChatSend(e); }}
+                />
+                <button
+                  type="submit"
+                  disabled={chatSending || !chatContent.trim()}
+                  className="bg-white text-black text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90"
+                >
+                  {chatSending ? "..." : "Send"}
+                </button>
+              </form>
+            )}
           </div>
         )}
 
