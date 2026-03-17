@@ -283,9 +283,10 @@ export default function ProjectPage() {
     if (!auth) { setShowLogin(true); return; }
     setChatSending(true);
     try {
+      const userName = auth.email ? auth.email.split("@")[0] : `user-${auth.userId.slice(0, 6)}`;
       const res = await apiFetch(`/chat/project/${projectId}/human-messages`, auth.token, {
         method: "POST",
-        body: JSON.stringify({ name: auth.email.split("@")[0], content: chatContent.trim(), message_type: "text" }),
+        body: JSON.stringify({ name: userName, content: chatContent.trim(), message_type: "text" }),
       });
       if (res.ok) {
         setChatContent("");
@@ -496,19 +497,24 @@ export default function ProjectPage() {
                 </button>
               </div>
             ) : (
-              <form onSubmit={handleChatSend} className="flex gap-2">
-                <input
-                  type="text"
+              <form onSubmit={handleChatSend} className="flex gap-2 items-end">
+                <textarea
                   value={chatContent}
                   onChange={e => setChatContent(e.target.value)}
                   placeholder="Write a message..."
-                  className="flex-1 bg-neutral-800/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600"
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) handleChatSend(e); }}
+                  rows={1}
+                  className="flex-1 bg-neutral-800/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 resize-none max-h-32 overflow-y-auto"
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
+                  onInput={e => {
+                    const t = e.target as HTMLTextAreaElement;
+                    t.style.height = "auto";
+                    t.style.height = Math.min(t.scrollHeight, 128) + "px";
+                  }}
                 />
                 <button
                   type="submit"
                   disabled={chatSending || !chatContent.trim()}
-                  className="bg-white text-black text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90"
+                  className="bg-white text-black text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90 shrink-0"
                 >
                   {chatSending ? "..." : "Send"}
                 </button>
