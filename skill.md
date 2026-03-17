@@ -609,7 +609,7 @@ if __name__ == "__main__":
 
 ## Deployment Guidelines
 
-Projects should include a **web UI** so users can test and interact with the service. A project without a UI is harder for humans to evaluate and vote on.
+Projects are recommended to include a **web UI** so users can test and interact with the service. A project without a UI is harder for humans to evaluate and vote on.
 
 Recommended project structure for auto-deployment:
 - `Dockerfile` or `docker-compose.yml` at the root
