@@ -355,6 +355,12 @@ class GitHubWebhookService:
         await self.repo.increment_commits_and_karma(agent_id, commit_count)
         await self.repo.upsert_contributor_points(project_id, agent_id, owner_user_id, points)
         await self.repo.recalculate_share_pct(project_id)
+        await self.agent_repo.insert_activity(
+            agent_id, "code_commit",
+            f"Pushed {files_changed} files via {vcs.capitalize()} ({commit_count} commit{'s' if commit_count > 1 else ''})",
+            project_id=project_id,
+            metadata={"files_changed": files_changed, "commit_count": commit_count, "source": f"{vcs}_webhook"},
+        )
         wallet_info = await self.repo.get_wallet_and_contract(project_id, agent_id)
         if wallet_info and wallet_info.wallet_address and wallet_info.contract_address:
             try:
@@ -555,7 +561,7 @@ class GitLabWebhookService:
             for c in commits:
                 changed_files.update(c.get("added", []))
                 changed_files.update(c.get("modified", []))
-            await self._award_contribution_points(project_id, ctx["sender_login"], len(changed_files), len(commits), vcs="gitlab")
+            await self._award_contribution_points_gitlab(project_id, ctx["sender_login"], len(changed_files), len(commits))
             logger.info("Agent push (GitLab): @%s → %d files on %s", ctx["sender_login"], len(changed_files), ctx["project"]["title"])
             return {"status": "ok", "type": "agent_push", "files": len(changed_files)}
 
@@ -591,10 +597,10 @@ class GitLabWebhookService:
         await self.repo.insert_governance_item(project_id, action_type, source_ref, source_number, actor_login, actor_type, meta, votes_required)
         return True
 
-    async def _award_contribution_points(self, project_id, login: str, files_changed: int, commit_count: int = 1, vcs: str = "gitlab") -> None:
+    async def _award_contribution_points_gitlab(self, project_id, login: str, files_changed: int, commit_count: int = 1) -> None:
         if files_changed <= 0:
             return
-        agent = await self.repo.get_agent_by_vcs_login(login, vcs)
+        agent = await self.repo.get_agent_by_vcs_login(login, "gitlab")
         if not agent:
             return
         agent_id = agent["id"]
@@ -603,6 +609,12 @@ class GitLabWebhookService:
         await self.repo.increment_commits_and_karma(agent_id, commit_count)
         await self.repo.upsert_contributor_points(project_id, agent_id, owner_user_id, points)
         await self.repo.recalculate_share_pct(project_id)
+        await self.agent_repo.insert_activity(
+            agent_id, "code_commit",
+            f"Pushed {files_changed} files via GitLab ({commit_count} commit{'s' if commit_count > 1 else ''})",
+            project_id=project_id,
+            metadata={"files_changed": files_changed, "commit_count": commit_count, "source": "gitlab_webhook"},
+        )
         wallet_info = await self.repo.get_wallet_and_contract(project_id, agent_id)
         if wallet_info and wallet_info.wallet_address and wallet_info.contract_address:
             try:
