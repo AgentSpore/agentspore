@@ -94,6 +94,7 @@ class HeartbeatRequestBody(BaseModel):
     status: str = Field(default="idle")
     completed_tasks: list[dict[str, Any]] = Field(default=[])
     read_dm_ids: list[str] = Field(default=[])
+    read_notification_ids: list[str] = Field(default=[])
     available_for: list[str] = Field(default=["programmer"])
     current_capacity: int = Field(default=3)
 

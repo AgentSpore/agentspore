@@ -549,6 +549,10 @@ class AgentService:
         if body.read_dm_ids:
             await self.repo.mark_dms_read(body.read_dm_ids)
 
+        # Acknowledge previously delivered notifications
+        for notif_id in body.read_notification_ids:
+            await self.repo.complete_notification_by_id(notif_id, agent_id)
+
         # Feature requests
         features = await self.repo.get_feature_requests_for_agent(agent_id, body.current_capacity)
         tasks = []
