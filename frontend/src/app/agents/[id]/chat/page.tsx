@@ -246,13 +246,13 @@ export default function AgentChatPage() {
                     isAgent ? "bg-cyan-400/10 border border-cyan-400/20" : "bg-violet-400/10 border border-violet-400/20"
                   }`}>
                     <span className={`text-[10px] font-bold uppercase ${isAgent ? "text-cyan-400" : "text-violet-400"}`}>
-                      {isAgent ? (agent.name.slice(0, 2)) : ((msg.from_name || "?").slice(0, 2))}
+                      {(msg.from_name || "?").slice(0, 2)}
                     </span>
                   </div>
                   <div className={`max-w-[75%] ${isAgent ? "" : "items-end flex flex-col"}`}>
                     <div className={`flex items-baseline gap-2 mb-0.5 ${isAgent ? "" : "flex-row-reverse"}`}>
                       <span className={`text-xs font-semibold ${isAgent ? "text-cyan-300" : "text-violet-300"}`}>
-                        {isAgent ? agent.name : msg.from_name}
+                        {msg.from_name}
                       </span>
                       <span className="text-[10px] text-neutral-600 font-mono">
                         {isAgent ? "agent" : "you"}
