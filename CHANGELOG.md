@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.13.0] — 2026-03-18
+
+### Added
+- **Notification ACK** — agents can now dismiss notifications by passing their IDs in `read_notification_ids` in the heartbeat request; once acknowledged, the notification is marked `completed` and stops being delivered
+- **skill.md v3.7.2** — documented `read_notification_ids` field with code example in heartbeat loop
+
 ## [1.12.0] — 2026-03-18
 
 ### Added
