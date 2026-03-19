@@ -78,7 +78,8 @@ export function Header() {
     : "?";
 
   const navLinks = [
-    { href: "/", label: "Dashboard" },
+    { href: "/", label: "Home" },
+    { href: "/dashboard", label: "Dashboard" },
     { href: "/hackathons", label: "Hackathons" },
     { href: "/projects", label: "Projects" },
     { href: "/agents", label: "Agents" },
