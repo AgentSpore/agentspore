@@ -7,13 +7,34 @@ import { API_URL, Rental, RentalMessage, timeAgo } from "@/lib/api";
 
 const STATUS_BADGE: Record<string, string> = {
   active:    "bg-emerald-400/10 text-emerald-400 border border-emerald-400/20",
-  completed: "bg-neutral-700/50 text-neutral-400 border border-neutral-600/30",
+  completed: "bg-neutral-800/50 text-neutral-400 border border-neutral-700/30",
   cancelled: "bg-red-400/10 text-red-400 border border-red-400/20",
+};
+
+const STATUS_DOT: Record<string, string> = {
+  active:    "bg-emerald-400",
+  completed: "bg-neutral-500",
+  cancelled: "bg-red-400",
 };
 
 function authHeaders(): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
   return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+}
+
+function DotGrid() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0" style={{
+        backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px)",
+        backgroundSize: "24px 24px",
+      }} />
+      <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
+        style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
+      <div className="absolute bottom-20 -right-32 w-[400px] h-[400px] rounded-full opacity-[0.05]"
+        style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
+    </div>
+  );
 }
 
 /* ─── Complete rental modal ──────────────────────────────────────────────── */
@@ -36,60 +57,67 @@ function CompleteModal({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md mx-4 bg-[#0a0a0a] border border-neutral-800 rounded-xl p-6 space-y-5">
-        <h3 className="text-lg font-medium text-white font-mono">Complete Rental</h3>
-
-        {/* Stars */}
-        <div>
-          <p className="text-sm text-neutral-400 mb-2">Rate the agent</p>
-          <div className="flex gap-1">
-            {[1, 2, 3, 4, 5].map((star) => (
-              <button
-                key={star}
-                type="button"
-                onClick={() => setRating(star)}
-                className={`text-2xl transition-colors ${
-                  star <= rating ? "text-amber-400" : "text-neutral-600 hover:text-neutral-400"
-                }`}
-              >
-                {star <= rating ? "\u2605" : "\u2606"}
-              </button>
-            ))}
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md mx-4 bg-[#0a0a0a] border border-neutral-800/50 rounded-xl overflow-hidden">
+        {/* Colored top accent */}
+        <div className="h-[2px] w-full bg-gradient-to-r from-violet-400 to-transparent" />
+        <div className="p-6 space-y-5">
+          <div>
+            <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Finalize</p>
+            <h3 className="text-lg font-medium text-white font-mono">Complete Rental</h3>
           </div>
-        </div>
 
-        {/* Review */}
-        <div>
-          <p className="text-sm text-neutral-400 mb-2">Review (optional)</p>
-          <textarea
-            value={review}
-            onChange={(e) => setReview(e.target.value)}
-            placeholder="How was your experience?"
-            rows={3}
-            maxLength={1000}
-            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-600 resize-none"
-          />
-        </div>
+          {/* Stars */}
+          <div>
+            <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600 mb-2">Rating</p>
+            <div className="flex gap-1">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => setRating(star)}
+                  className={`text-2xl transition-colors ${
+                    star <= rating ? "text-amber-400" : "text-neutral-700 hover:text-neutral-500"
+                  }`}
+                >
+                  {star <= rating ? "\u2605" : "\u2606"}
+                </button>
+              ))}
+            </div>
+          </div>
 
-        {/* Actions */}
-        <div className="flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="text-neutral-500 hover:text-white text-sm font-mono transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => { if (rating > 0) onSubmit(rating, review.trim()); }}
-            disabled={rating === 0 || submitting}
-            className="bg-white text-black font-medium font-mono text-sm px-5 py-2 rounded-lg hover:bg-neutral-200 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-          >
-            {submitting ? "Submitting..." : "Submit"}
-          </button>
+          {/* Review */}
+          <div>
+            <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600 mb-2">Review (optional)</p>
+            <textarea
+              value={review}
+              onChange={(e) => setReview(e.target.value)}
+              placeholder="How was your experience?"
+              rows={3}
+              maxLength={1000}
+              className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 resize-none"
+            />
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 hover:text-white text-sm font-mono px-4 py-2 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => { if (rating > 0) onSubmit(rating, review.trim()); }}
+              disabled={rating === 0 || submitting}
+              className="bg-white text-black font-medium font-mono text-sm px-5 py-2 rounded-lg hover:bg-neutral-200 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              {submitting ? "Submitting..." : "Submit"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -262,7 +290,6 @@ export default function RentalChatPage() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Reset input so the same file can be re-selected
     e.target.value = "";
 
     if (file.size > 10 * 1024 * 1024) {
@@ -292,7 +319,6 @@ export default function RentalChatPage() {
 
       const uploaded = await uploadRes.json();
 
-      // Send file message
       const msgRes = await fetch(`${API_URL}/api/v1/rentals/${id}/messages`, {
         method: "POST",
         headers: authHeaders(),
@@ -364,12 +390,13 @@ export default function RentalChatPage() {
   // ─── Loading state ────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
-        <div className="space-y-3 w-full max-w-md px-6">
-          <div className="h-4 bg-neutral-800/60 rounded animate-pulse w-3/4" />
-          <div className="h-3 bg-neutral-800/40 rounded animate-pulse w-1/2" />
-          <div className="h-32 bg-neutral-800/30 rounded-xl animate-pulse mt-6" />
-          <div className="h-32 bg-neutral-800/20 rounded-xl animate-pulse" />
+      <div className="min-h-screen bg-[#0a0a0a] relative flex items-center justify-center">
+        <DotGrid />
+        <div className="relative z-10 space-y-3 w-full max-w-md px-6">
+          <div className="h-4 bg-neutral-800/40 rounded animate-pulse w-3/4" />
+          <div className="h-3 bg-neutral-800/30 rounded animate-pulse w-1/2" />
+          <div className="h-32 bg-neutral-900/30 border border-neutral-800/50 rounded-xl animate-pulse mt-6" />
+          <div className="h-32 bg-neutral-900/30 border border-neutral-800/50 rounded-xl animate-pulse" />
         </div>
       </div>
     );
@@ -378,11 +405,16 @@ export default function RentalChatPage() {
   // ─── Error state ──────────────────────────────────────────────────────
   if (error || !rental) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
-        <div className="text-red-400 text-sm">{error || "Rental not found"}</div>
-        <Link href="/" className="text-neutral-400 text-sm hover:text-white transition-colors">
-          ← Back to dashboard
-        </Link>
+      <div className="min-h-screen bg-[#0a0a0a] relative flex flex-col items-center justify-center gap-4">
+        <DotGrid />
+        <div className="relative z-10 flex flex-col items-center gap-4">
+          <div className="bg-neutral-900/30 border border-red-400/20 rounded-xl px-6 py-4">
+            <p className="text-red-400 text-sm font-mono">{error || "Rental not found"}</p>
+          </div>
+          <Link href="/" className="text-neutral-500 text-[10px] font-mono uppercase tracking-[0.15em] hover:text-white transition-colors">
+            Back to dashboard
+          </Link>
+        </div>
       </div>
     );
   }
@@ -390,33 +422,47 @@ export default function RentalChatPage() {
   const isActive = rental.status === "active";
 
   return (
-    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col relative">
+      <DotGrid />
+
+      <style jsx global>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .fade-up { animation: fadeUp 0.4s ease-out both; }
+      `}</style>
+
       {/* ─── Header ────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 bg-neutral-900/50 border-b border-neutral-800/80 backdrop-blur-sm overflow-hidden">
+      <header className="sticky top-0 z-50 bg-[#0a0a0a]/95 border-b border-neutral-800/50 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4">
-          {/* Back link */}
-          <Link
-            href={`/agents/${rental.agent_id}`}
-            className="text-neutral-500 hover:text-neutral-200 transition-colors text-sm flex items-center gap-1.5 mb-3"
-          >
-            <span>←</span> Back to @{rental.agent_handle}
-          </Link>
+          {/* Breadcrumbs */}
+          <div className="flex items-center gap-2 text-[10px] font-mono mb-3">
+            <Link href="/" className="text-neutral-600 hover:text-neutral-400 transition-colors">home</Link>
+            <span className="text-neutral-800">/</span>
+            <Link href={`/agents/${rental.agent_id}`} className="text-neutral-600 hover:text-neutral-400 transition-colors">@{rental.agent_handle}</Link>
+            <span className="text-neutral-800">/</span>
+            <span className="text-neutral-400">rental</span>
+          </div>
 
           {/* Title row */}
           <div className="flex items-start justify-between gap-4 min-w-0">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-3 min-w-0">
                 <h1 className="text-lg font-medium text-white font-mono truncate min-w-0">{rental.title}</h1>
-                <span className={`inline-flex items-center px-2 py-0.5 text-[11px] font-mono rounded-md ${STATUS_BADGE[rental.status] || STATUS_BADGE.active}`}>
+                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-mono rounded-md ${STATUS_BADGE[rental.status] || STATUS_BADGE.active}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[rental.status] || STATUS_DOT.active}`} />
                   {rental.status}
                 </span>
               </div>
-              <div className="flex items-center gap-2 mt-1.5 min-w-0 overflow-hidden">
-                <span className="text-neutral-400 text-xs font-mono truncate">{rental.agent_name}</span>
-                <span className="text-neutral-700 text-xs shrink-0">·</span>
-                <span className="text-neutral-500 text-xs font-mono truncate">{rental.specialization}</span>
-                <span className="text-neutral-700 text-xs shrink-0">·</span>
-                <span className="text-neutral-600 text-xs font-mono shrink-0">{timeAgo(rental.created_at)}</span>
+
+              {/* Terminal-style status panel */}
+              <div className="flex items-center gap-2 mt-2 min-w-0 overflow-hidden">
+                <span className="text-neutral-500 text-[10px] font-mono tracking-wide truncate">{rental.agent_name}</span>
+                <span className="text-neutral-800 text-[10px] shrink-0">/</span>
+                <span className="text-neutral-600 text-[10px] font-mono truncate">{rental.specialization}</span>
+                <span className="text-neutral-800 text-[10px] shrink-0">/</span>
+                <span className="text-neutral-700 text-[10px] font-mono shrink-0">{timeAgo(rental.created_at)}</span>
               </div>
             </div>
 
@@ -426,7 +472,7 @@ export default function RentalChatPage() {
                 <button
                   onClick={handleCancel}
                   disabled={actionLoading}
-                  className="text-neutral-500 hover:text-red-400 font-mono text-sm transition-colors disabled:opacity-30"
+                  className="bg-neutral-800/30 border border-neutral-800/50 text-neutral-500 hover:text-red-400 hover:border-red-400/30 font-mono text-sm px-3 py-1.5 rounded-lg transition-all disabled:opacity-30"
                 >
                   Cancel
                 </button>
@@ -441,17 +487,17 @@ export default function RentalChatPage() {
             )}
           </div>
 
-          {/* Completed info */}
+          {/* Completed info — terminal-style panel */}
           {rental.status === "completed" && rental.rating !== null && (
-            <div className="mt-3 flex items-center gap-2 text-sm">
-              <span className="text-neutral-500 font-mono text-xs">Rating:</span>
-              <span className="text-amber-400 font-mono">
+            <div className="mt-3 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-4 py-2.5 flex items-center gap-3">
+              <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600">Rating</span>
+              <span className="text-amber-400 font-mono text-sm">
                 {[1, 2, 3, 4, 5].map((s) => (s <= (rental.rating ?? 0) ? "\u2605" : "\u2606")).join("")}
               </span>
               {rental.review && (
                 <>
-                  <span className="text-neutral-700 text-xs">·</span>
-                  <span className="text-neutral-400 text-xs truncate max-w-[200px]">{rental.review}</span>
+                  <span className="text-neutral-800 text-xs">/</span>
+                  <span className="text-neutral-500 text-xs font-mono truncate max-w-[200px]">{rental.review}</span>
                 </>
               )}
             </div>
@@ -460,20 +506,20 @@ export default function RentalChatPage() {
       </header>
 
       {/* ─── Messages ──────────────────────────────────────────────────── */}
-      <main ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+      <main ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative z-10">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-4">
           {loadingOlder && (
             <div className="flex justify-center py-2">
-              <span className="text-xs text-neutral-600 font-mono">Loading...</span>
+              <span className="text-[10px] text-neutral-600 font-mono uppercase tracking-[0.15em]">Loading...</span>
             </div>
           )}
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 gap-3">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-neutral-800/60 border border-neutral-700/50">
-                <span className="text-neutral-500 text-lg">...</span>
+            <div className="flex flex-col items-center justify-center py-20 gap-4 fade-up">
+              <div className="w-14 h-14 rounded-xl flex items-center justify-center bg-neutral-900/30 border border-neutral-800/50">
+                <span className="text-neutral-600 text-lg font-mono">_</span>
               </div>
-              <p className="text-neutral-500 text-sm">No messages yet</p>
-              <p className="text-neutral-600 text-xs font-mono">
+              <p className="text-neutral-500 text-sm font-mono">No messages yet</p>
+              <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-700">
                 Start the conversation by describing your task
               </p>
             </div>
@@ -490,7 +536,7 @@ export default function RentalChatPage() {
                   <div key={msg.id}>
                     {showDate && <DateSeparator ts={msg.created_at} />}
                     <div className="flex justify-center py-2">
-                      <span className="text-neutral-500 text-sm font-mono italic px-4">
+                      <span className="text-neutral-600 text-[11px] font-mono bg-neutral-900/30 border border-neutral-800/30 rounded-lg px-3 py-1">
                         {msg.content}
                       </span>
                     </div>
@@ -506,7 +552,7 @@ export default function RentalChatPage() {
                   <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
                     {/* Bubble */}
                     <div className={`max-w-[75%] ${isUser ? "items-end flex flex-col" : ""}`}>
-                      <span className="text-neutral-400 text-xs font-mono mb-1">
+                      <span className="text-[10px] font-mono uppercase tracking-[0.1em] text-neutral-600 mb-1">
                         {msg.sender_name}
                       </span>
 
@@ -516,11 +562,11 @@ export default function RentalChatPage() {
                           href={msg.file_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className={`flex items-center gap-2 ${
+                          className={`flex items-center gap-2.5 ${
                             isUser
-                              ? "bg-neutral-800 rounded-xl rounded-br-sm"
-                              : "bg-neutral-900/80 border border-neutral-800/60 rounded-xl rounded-bl-sm"
-                          } px-4 py-3 hover:bg-neutral-700/60 transition-colors group`}
+                              ? "bg-neutral-800/60 border border-neutral-700/40 rounded-xl rounded-br-sm"
+                              : "bg-neutral-900/30 border border-neutral-800/50 rounded-xl rounded-bl-sm"
+                          } px-4 py-3 hover:border-neutral-700/60 transition-all group`}
                         >
                           <svg
                             width="16"
@@ -529,12 +575,12 @@ export default function RentalChatPage() {
                             fill="none"
                             stroke="currentColor"
                             strokeWidth="2"
-                            className="text-neutral-400 group-hover:text-white shrink-0"
+                            className="text-violet-400 group-hover:text-violet-300 shrink-0"
                           >
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                             <polyline points="14 2 14 8 20 8" />
                           </svg>
-                          <span className="text-sm text-neutral-300 group-hover:text-white truncate">
+                          <span className="text-sm text-neutral-300 group-hover:text-white font-mono truncate">
                             {msg.file_name || "Download file"}
                           </span>
                         </a>
@@ -543,8 +589,8 @@ export default function RentalChatPage() {
                         <div
                           className={`${
                             isUser
-                              ? "bg-neutral-800 rounded-xl rounded-br-sm"
-                              : "bg-neutral-900/80 border border-neutral-800/60 rounded-xl rounded-bl-sm"
+                              ? "bg-neutral-800/60 border border-neutral-700/40 rounded-xl rounded-br-sm"
+                              : "bg-neutral-900/30 border border-neutral-800/50 rounded-xl rounded-bl-sm"
                           } px-4 py-3`}
                         >
                           <p className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap">
@@ -553,7 +599,7 @@ export default function RentalChatPage() {
                         </div>
                       )}
 
-                      <span className="text-neutral-600 text-xs font-mono mt-1">
+                      <span className="text-neutral-700 text-[10px] font-mono mt-1">
                         {timeAgo(msg.created_at)}
                       </span>
                     </div>
@@ -570,11 +616,11 @@ export default function RentalChatPage() {
       {isActive ? (
         <form
           onSubmit={handleSend}
-          className="bg-neutral-900/50 border-t border-neutral-800/80 px-4 sm:px-6 py-4"
+          className="relative z-10 bg-[#0a0a0a]/95 border-t border-neutral-800/50 backdrop-blur-sm px-4 sm:px-6 py-4"
         >
           <div className="max-w-3xl mx-auto">
             {sendError && (
-              <p className="text-[11px] text-red-400 mb-2">{sendError}</p>
+              <p className="text-[11px] text-red-400 font-mono mb-2">{sendError}</p>
             )}
             <div className="flex items-end gap-3">
               {/* Attach button */}
@@ -589,7 +635,7 @@ export default function RentalChatPage() {
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
                 title="Attach file (max 10 MB)"
-                className="text-neutral-500 hover:text-white transition-colors disabled:opacity-30 shrink-0 pb-3"
+                className="text-neutral-600 hover:text-violet-400 transition-colors disabled:opacity-30 shrink-0 pb-3"
               >
                 {uploading ? (
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="animate-spin">
@@ -611,7 +657,7 @@ export default function RentalChatPage() {
                 placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
                 maxLength={4000}
                 rows={2}
-                className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3 text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-600 resize-none text-sm"
+                className="flex-1 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-4 py-3 text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 resize-none text-sm"
               />
               <button
                 type="submit"
@@ -624,10 +670,10 @@ export default function RentalChatPage() {
           </div>
         </form>
       ) : (
-        <div className="bg-neutral-900/50 border-t border-neutral-800/80 px-4 sm:px-6 py-4">
+        <div className="relative z-10 bg-[#0a0a0a]/95 border-t border-neutral-800/50 backdrop-blur-sm px-4 sm:px-6 py-4">
           <div className="max-w-3xl mx-auto text-center">
-            <p className="text-neutral-500 text-sm font-mono">
-              This rental has been {rental.status}. Messaging is disabled.
+            <p className="text-neutral-600 text-[10px] font-mono uppercase tracking-[0.15em]">
+              This rental has been {rental.status} -- messaging is disabled
             </p>
           </div>
         </div>
@@ -649,15 +695,15 @@ export default function RentalChatPage() {
 function DateSeparator({ ts }: { ts: string }) {
   return (
     <div className="flex items-center gap-3 my-4">
-      <div className="flex-1 h-px bg-neutral-800/60" />
-      <span className="text-[10px] text-neutral-700 font-mono">
+      <div className="flex-1 h-px bg-neutral-800/30" />
+      <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-700">
         {new Date(ts).toLocaleDateString("en-US", {
           weekday: "short",
           month: "short",
           day: "numeric",
         })}
       </span>
-      <div className="flex-1 h-px bg-neutral-800/60" />
+      <div className="flex-1 h-px bg-neutral-800/30" />
     </div>
   );
 }

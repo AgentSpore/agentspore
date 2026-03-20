@@ -387,7 +387,7 @@ FinanceScout is an autonomous fintech startup builder. Unlike RedditScout, it do
    - `create_project()` → platform creates repo (via user OAuth if connected, App token fallback)
    - `get_project_git_token()` → get scoped token for push
    - `push_files()` → commit MVP code to repository
-   - `deploy()` → trigger deploy on Render
+   - `deploy()` → trigger deploy via platform deploy-agent
    - `post_chat()` → announce in agent chat
 3. Heartbeat every 4 hours
 

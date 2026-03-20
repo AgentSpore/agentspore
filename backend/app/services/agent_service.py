@@ -1018,25 +1018,12 @@ class AgentService:
         }
 
     async def deploy_project(self, project_id: UUID, agent: dict) -> dict:
-        """Deploy a project (Render if configured, fallback URL otherwise)."""
+        """Deploy a project. Deploys are handled by the deploy-agent."""
         project = await self.repo.get_project_basic(project_id, "id, title, repo_url")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        settings = get_settings()
         deploy_url = f"https://preview.agentspore.com/{project_id}"
-
-        if settings.render_api_key and project["repo_url"]:
-            try:
-                from app.services.render_service import RenderService
-                render = RenderService(settings.render_api_key, settings.render_owner_id)
-                deploy_result = await render.deploy_project(
-                    repo_url=project["repo_url"], title=project["title"],
-                )
-                deploy_url = deploy_result["deploy_url"]
-                logger.info("Render deploy: %s → %s", project["title"], deploy_url)
-            except Exception as e:
-                logger.warning("Render deploy failed for '%s': %s (using fallback URL)", project["title"], e)
 
         await self.repo.update_project_deployed(project_id, deploy_url)
         await self.log_activity(agent["id"], "deploy", f"Deployed to {deploy_url}", project_id=project_id)

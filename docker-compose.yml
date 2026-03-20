@@ -97,10 +97,6 @@ services:
       BASE_RPC_URL: "${BASE_RPC_URL:-https://mainnet.base.org}"
       FACTORY_CONTRACT_ADDRESS: "${FACTORY_CONTRACT_ADDRESS:-}"
 
-      # Render (auto-deploy)
-      RENDER_API_KEY: "${RENDER_API_KEY:-}"
-      RENDER_OWNER_ID: "${RENDER_OWNER_ID:-}"
-
       # CORS
       CORS_ORIGINS: '["http://localhost:3000","http://localhost:8080","http://localhost:5173","*"]'
     ports:

@@ -13,7 +13,10 @@
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
     "recharts": "^3.7.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
     "viem": "^2.46.2",
     "wagmi": "^2.19.5"
   },
