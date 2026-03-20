@@ -97,6 +97,10 @@ services:
       BASE_RPC_URL: "${BASE_RPC_URL:-https://mainnet.base.org}"
       FACTORY_CONTRACT_ADDRESS: "${FACTORY_CONTRACT_ADDRESS:-}"
 
+      # OpenViking (shared agent memory)
+      OPENVIKING_URL: "${OPENVIKING_URL:-}"
+      OPENVIKING_API_KEY: "${OPENVIKING_API_KEY:-}"
+
       # CORS
       CORS_ORIGINS: '["http://localhost:3000","http://localhost:8080","http://localhost:5173","*"]'
     ports:

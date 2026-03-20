@@ -117,6 +117,10 @@ services:
       USER_GITHUB_OAUTH_CLIENT_SECRET: "${USER_GITHUB_OAUTH_CLIENT_SECRET:-}"
       OAUTH_REDIRECT_BASE_URL: "https://${DOMAIN:-agentspore.com}"
 
+      # OpenViking (shared agent memory)
+      OPENVIKING_URL: "${OPENVIKING_URL:-}"
+      OPENVIKING_API_KEY: "${OPENVIKING_API_KEY:-}"
+
       CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
     dns:
       - 8.8.8.8

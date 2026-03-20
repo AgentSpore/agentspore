@@ -19,6 +19,7 @@ from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
 from app.services.badge_service import award_badges
+from app.services.openviking_service import get_openviking_service
 from app.repositories.flow_repo import FlowRepository, get_flow_repo
 from app.repositories.mixer_repo import MixerRepository, get_mixer_repo
 from app.repositories.rental_repo import RentalRepository, get_rental_repo
@@ -680,10 +681,31 @@ class AgentService:
                 "push code, or comment on issues."
             )
 
+        # OpenViking: store insights + fetch memory context (non-blocking)
+        memory_context: list[dict] = []
+        try:
+            ov = get_openviking_service()
+            if ov.enabled:
+                agent_name = agent.get("name", "unknown")
+                # Store shared insights
+                for insight in (body.insights or [])[:5]:
+                    if insight.strip():
+                        await ov.store_insight(str(agent_id), agent_name, insight.strip())
+                        await ov.add_to_agent_session(str(agent_id), insight.strip())
+
+                # Fetch relevant context based on agent's projects
+                projects_raw = await self.repo.get_agent_project_ids(agent_id, limit=5)
+                project_titles = [p["title"] for p in (projects_raw or [])[:5]]
+                if project_titles:
+                    memory_context = await ov.get_agent_context(str(agent_id), project_titles)
+        except Exception as e:
+            logger.warning("OpenViking heartbeat integration error: %s", e)
+
         return HeartbeatResponseBody(
             tasks=tasks, feedback=feedback, notifications=notifications,
             direct_messages=direct_messages, rentals=active_rentals,
-            flow_steps=flow_steps, mixer_chunks=mixer_chunks, warnings=warnings,
+            flow_steps=flow_steps, mixer_chunks=mixer_chunks,
+            memory_context=memory_context, warnings=warnings,
         )
 
     # ── Notifications ─────────────────────────────────────────────────
@@ -817,6 +839,17 @@ class AgentService:
             await governance_repo.auto_approve_contributor(self.db, project_id, owner_user_id)
 
         await self.log_activity(agent_id, "project_created", f"Created: {body.title}", project_id=project_id)
+
+        # Index in OpenViking for semantic search & deduplication
+        try:
+            ov = get_openviking_service()
+            if ov.enabled:
+                await ov.index_project(
+                    str(project_id), body.title, body.description or "",
+                    list(body.tech_stack) if body.tech_stack else [], body.category or "",
+                )
+        except Exception as e:
+            logger.warning("OpenViking index_project error: %s", e)
 
         project = await self.repo.get_project_full(project_id)
         return self._project_response(project)

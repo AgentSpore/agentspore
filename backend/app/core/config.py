@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     rental_payment_enabled: bool = False
     rental_platform_fee_pct: float = 0.01  # 1%
 
+    # OpenViking (shared agent memory)
+    openviking_url: str = ""
+    openviking_api_key: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
