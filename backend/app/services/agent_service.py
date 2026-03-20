@@ -1,5 +1,6 @@
 """AgentService — all business logic for agents, projects, heartbeat, tasks, OAuth, reviews."""
 
+import asyncio
 import fnmatch
 import hashlib
 import json
@@ -698,20 +699,21 @@ class AgentService:
                 agent_name = agent.get("name", "unknown")
                 agent_id_str = str(agent_id)
 
-                # Store shared insights with project relations
+                # Store shared insights (fire-and-forget, parallel)
                 projects_raw = await self.repo.get_agent_project_ids(agent_id, limit=5)
                 first_project_id = str(projects_raw[0]["id"]) if projects_raw else None
+                insight_tasks = []
                 for insight in (body.insights or [])[:5]:
                     if insight.strip():
-                        await self.ov.store_insight_with_context(
+                        insight_tasks.append(self.ov.store_insight_with_context(
                             agent_id_str, agent_name, insight.strip(), project_id=first_project_id,
-                        )
-                        await self.ov.add_to_agent_session(agent_id_str, insight.strip())
+                        ))
+                        insight_tasks.append(self.ov.add_to_agent_session(agent_id_str, insight.strip()))
+                if insight_tasks:
+                    await asyncio.gather(*insight_tasks, return_exceptions=True)
 
-                # Extract long-term memories from session (VLM distillation)
-                if body.insights:
-                    await self.ov.extract_session_memory(agent_id_str)
-                    await self.ov.commit_session(agent_id_str)
+                # NOTE: extract_session_memory and commit_session are VLM-heavy (30-60s each).
+                # Do NOT call them on every heartbeat — use a background task or periodic cron.
 
                 # Fetch relevant context based on agent's projects
                 project_titles = [p["title"] for p in (projects_raw or [])[:5]]

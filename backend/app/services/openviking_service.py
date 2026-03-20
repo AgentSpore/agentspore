@@ -1,5 +1,6 @@
 """OpenVikingService — shared agent memory via OpenViking context database."""
 
+import asyncio
 import time
 from uuid import UUID
 
@@ -55,15 +56,14 @@ class OpenVikingService:
                     return False
                 temp_path = r.json()["result"]["temp_path"]
 
-                # Step 2: add as resource
+                # Step 2: add as resource (fire-and-forget, don't block heartbeat)
                 r = await c.post(
                     f"{self.base_url}/api/v1/resources",
                     headers=self._headers,
                     json={
                         "temp_path": temp_path,
                         "to": f"viking://resources/insights/{filename}",
-                        "wait": True,
-                        "timeout": 30,
+                        "wait": False,
                     },
                 )
                 if r.status_code != 200:
@@ -122,35 +122,39 @@ class OpenVikingService:
                 items = []
                 for key in ("memories", "resources", "skills"):
                     for item in result.get(key, []):
+                        abstract = item.get("abstract", "")
                         items.append({
                             "uri": item.get("uri", ""),
                             "title": item.get("title", item.get("uri", "")),
                             "score": item.get("score", 0),
                             "source": key,
+                            "content": abstract[:500] if abstract else "",
                         })
                 # Sort by score descending, take top_k
                 items.sort(key=lambda x: x.get("score", 0), reverse=True)
                 items = items[:top_k]
 
-                # Fetch content for each result via /content/read
-                for item in items:
-                    uri = item.get("uri")
-                    if not uri:
-                        item["content"] = ""
-                        continue
-                    try:
-                        cr = await c.get(
-                            f"{self.base_url}/api/v1/content/read",
-                            headers=self._headers,
-                            params={"uri": uri},
-                        )
-                        if cr.status_code == 200:
-                            raw = cr.json().get("result", "")
-                            item["content"] = raw[:500] if isinstance(raw, str) else ""
-                        else:
-                            item["content"] = ""
-                    except Exception:
-                        item["content"] = ""
+                # Use abstract from search results (already available, no extra HTTP calls)
+                # Fall back to parallel content/read only for items without abstract
+                needs_fetch = [i for i in items if not i.get("content")]
+                if needs_fetch:
+                    async def _fetch(client: httpx.AsyncClient, item: dict) -> None:
+                        uri = item.get("uri")
+                        if not uri:
+                            return
+                        try:
+                            cr = await client.get(
+                                f"{self.base_url}/api/v1/content/read",
+                                headers=self._headers,
+                                params={"uri": uri},
+                            )
+                            if cr.status_code == 200:
+                                raw = cr.json().get("result", "")
+                                item["content"] = raw[:500] if isinstance(raw, str) else ""
+                        except Exception:
+                            pass
+
+                    await asyncio.gather(*[_fetch(c, item) for item in needs_fetch])
 
                 return items
         except Exception as e:
@@ -413,7 +417,7 @@ class OpenVikingService:
 
     # ── Pack (backup / export) ────────────────────────────────────────
 
-    async def export_backup(self, uri: str = "viking://resources", to: str = "viking://resources/backup.ovpack") -> str:
+    async def export_backup(self, uri: str = "viking://resources", to: str = "viking://pack/backup.ovpack") -> str:
         """Export resources as a backup pack file."""
         if not self.enabled:
             return ""
