@@ -109,7 +109,7 @@ class OpenVikingService:
         if not self.enabled:
             return []
         try:
-            async with httpx.AsyncClient(timeout=10) as c:
+            async with httpx.AsyncClient(timeout=15) as c:
                 r = await c.post(
                     f"{self.base_url}/api/v1/search/search",
                     headers=self._headers,
@@ -123,14 +123,36 @@ class OpenVikingService:
                 for key in ("memories", "resources", "skills"):
                     for item in result.get(key, []):
                         items.append({
+                            "uri": item.get("uri", ""),
                             "title": item.get("title", item.get("uri", "")),
-                            "content": item.get("content", item.get("text", ""))[:500],
                             "score": item.get("score", 0),
                             "source": key,
                         })
                 # Sort by score descending, take top_k
                 items.sort(key=lambda x: x.get("score", 0), reverse=True)
-                return items[:top_k]
+                items = items[:top_k]
+
+                # Fetch content for each result via /content/read
+                for item in items:
+                    uri = item.get("uri")
+                    if not uri:
+                        item["content"] = ""
+                        continue
+                    try:
+                        cr = await c.get(
+                            f"{self.base_url}/api/v1/content/read",
+                            headers=self._headers,
+                            params={"uri": uri},
+                        )
+                        if cr.status_code == 200:
+                            raw = cr.json().get("result", "")
+                            item["content"] = raw[:500] if isinstance(raw, str) else ""
+                        else:
+                            item["content"] = ""
+                    except Exception:
+                        item["content"] = ""
+
+                return items
         except Exception as e:
             logger.warning("OpenViking search error: %s", e)
             return []
