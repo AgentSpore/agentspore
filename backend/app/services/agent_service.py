@@ -1,5 +1,6 @@
 """AgentService — all business logic for agents, projects, heartbeat, tasks, OAuth, reviews."""
 
+import fnmatch
 import hashlib
 import json
 import re
@@ -14,21 +15,27 @@ from fastapi import Depends, Header, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.github_proxy import ALLOWED_OPERATIONS, KARMA_RULES, RATE_LIMIT_PER_HOUR
 from app.core.redis_client import get_redis
+from app.repositories import governance_repo, hackathon_repo
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
-from app.services.badge_service import award_badges
-from app.services.openviking_service import get_openviking_service
-from app.repositories.flow_repo import FlowRepository, get_flow_repo
-from app.repositories.mixer_repo import MixerRepository, get_mixer_repo
-from app.repositories.rental_repo import RentalRepository, get_rental_repo
+from app.repositories.flow_repo import get_flow_repo
+from app.repositories.mixer_repo import get_mixer_repo
+from app.repositories.rental_repo import get_rental_repo
 from app.schemas.agents import (
     AgentProfile,
+    GitHubActivityItem,
     HeartbeatResponseBody,
     PlatformStats,
     ProjectResponse,
 )
+from app.services.badge_service import award_badges
+from app.services.git_service import get_git_service
+from app.services.github_oauth_service import get_github_oauth_service
+from app.services.gitlab_oauth_service import get_gitlab_oauth_service
+from app.services.openviking_service import get_openviking_service
+from app.services.web3_service import get_web3_service
 
 from loguru import logger
 
@@ -43,6 +50,9 @@ class AgentService:
         self.flow_repo = get_flow_repo(db)
         self.rental_repo = get_rental_repo(db)
         self.mixer_repo = get_mixer_repo(db)
+        self.ov = get_openviking_service()
+        self.git = get_git_service()
+        self.web3 = get_web3_service()
 
     # ── Static / utility helpers ──────────────────────────────────────
 
@@ -171,7 +181,6 @@ class AgentService:
     ) -> dict:
         """Register a new agent. Returns dict with agent_id, api_key, handle, github_auth_url.
         Raises IntegrityError if name is taken."""
-        from app.services.github_oauth_service import get_github_oauth_service
 
         api_key = f"af_{secrets.token_urlsafe(32)}"
         api_key_hash = self.hash_api_key(api_key)
@@ -202,6 +211,18 @@ class AgentService:
             await self.repo.link_contributors_to_user(owner_user_id, agent_id)
 
         await self.log_activity(str(agent_id), "registered", f"Agent '{name}' joined AgentSpore")
+
+        # Register agent skills in OpenViking
+        try:
+            if self.ov.enabled and skills:
+                for skill_name in skills[:5]:
+                    await self.ov.register_skill(
+                        name=f"{name}: {skill_name}",
+                        description=f"Agent '{name}' ({specialization}) skill: {skill_name}",
+                        content=f"Agent {name} specializes in {specialization} with skill: {skill_name}",
+                    )
+        except Exception as e:
+            logger.warning("OpenViking register_skill error: %s", e)
 
         return {
             "agent_id": str(agent_id),
@@ -244,7 +265,6 @@ class AgentService:
 
     async def ensure_github_token(self, agent: dict) -> str | None:
         """Check and refresh GitHub OAuth token. Returns valid token or None."""
-        from app.services.github_oauth_service import get_github_oauth_service
 
         token = agent.get("github_oauth_token")
         if not token:
@@ -275,8 +295,6 @@ class AgentService:
 
     async def github_oauth_callback(self, code: str, state: str) -> dict:
         """Process GitHub OAuth callback. Returns response dict."""
-        from app.services.github_oauth_service import get_github_oauth_service
-        from app.services.git_service import get_git_service
 
         agent = await self.repo.get_agent_by_github_state(state)
         if not agent:
@@ -322,15 +340,14 @@ class AgentService:
 
         if github_login:
             try:
-                git = get_git_service()
-                await git.invite_to_org(github_login)
+                await self.git.invite_to_org(github_login)
             except Exception as e:
                 logger.warning("Failed to invite %s to org: %s", github_login, e)
 
             try:
                 async with httpx.AsyncClient() as _http:
                     accept_resp = await _http.patch(
-                        f"https://api.github.com/user/memberships/orgs/{git.github.org}",
+                        f"https://api.github.com/user/memberships/orgs/{self.git.github.org}",
                         headers={
                             "Authorization": f"Bearer {access_token}",
                             "Accept": "application/vnd.github+json",
@@ -371,7 +388,6 @@ class AgentService:
 
     async def github_connect_url(self, agent: dict) -> dict:
         """Generate new GitHub OAuth URL for an agent."""
-        from app.services.github_oauth_service import get_github_oauth_service
 
         oauth_svc = get_github_oauth_service()
         result = oauth_svc.get_authorization_url(str(agent["id"]))
@@ -381,7 +397,6 @@ class AgentService:
 
     async def github_revoke(self, agent: dict) -> dict:
         """Revoke GitHub OAuth access."""
-        from app.services.github_oauth_service import get_github_oauth_service
 
         token = agent.get("github_oauth_token")
         if token:
@@ -396,7 +411,6 @@ class AgentService:
 
     async def github_reconnect(self, agent: dict) -> dict:
         """Generate new OAuth URL for reconnection."""
-        from app.services.github_oauth_service import get_github_oauth_service
 
         oauth_service = get_github_oauth_service()
         oauth_data = oauth_service.get_authorization_url(str(agent["id"]))
@@ -410,7 +424,6 @@ class AgentService:
 
     async def gitlab_oauth_login(self, agent: dict) -> dict:
         """Generate GitLab OAuth login URL."""
-        from app.services.gitlab_oauth_service import get_gitlab_oauth_service
 
         oauth_service = get_gitlab_oauth_service()
         oauth_data = oauth_service.get_authorization_url(str(agent["id"]))
@@ -420,8 +433,6 @@ class AgentService:
 
     async def gitlab_oauth_callback(self, code: str, state: str) -> dict:
         """Process GitLab OAuth callback."""
-        from app.services.gitlab_oauth_service import get_gitlab_oauth_service
-        from app.services.git_service import get_git_service
 
         agent = await self.repo.get_agent_by_gitlab_state(state)
         if not agent:
@@ -465,8 +476,7 @@ class AgentService:
 
         if gitlab_login:
             try:
-                git = get_git_service()
-                await git.invite_to_org(gitlab_login, vcs_provider="gitlab")
+                await self.git.invite_to_org(gitlab_login, vcs_provider="gitlab")
             except Exception as e:
                 logger.warning("Failed to add %s to GitLab group: %s", gitlab_login, e)
 
@@ -684,20 +694,29 @@ class AgentService:
         # OpenViking: store insights + fetch memory context (non-blocking)
         memory_context: list[dict] = []
         try:
-            ov = get_openviking_service()
-            if ov.enabled:
+            if self.ov.enabled:
                 agent_name = agent.get("name", "unknown")
-                # Store shared insights
+                agent_id_str = str(agent_id)
+
+                # Store shared insights with project relations
+                projects_raw = await self.repo.get_agent_project_ids(agent_id, limit=5)
+                first_project_id = str(projects_raw[0]["id"]) if projects_raw else None
                 for insight in (body.insights or [])[:5]:
                     if insight.strip():
-                        await ov.store_insight(str(agent_id), agent_name, insight.strip())
-                        await ov.add_to_agent_session(str(agent_id), insight.strip())
+                        await self.ov.store_insight_with_context(
+                            agent_id_str, agent_name, insight.strip(), project_id=first_project_id,
+                        )
+                        await self.ov.add_to_agent_session(agent_id_str, insight.strip())
+
+                # Extract long-term memories from session (VLM distillation)
+                if body.insights:
+                    await self.ov.extract_session_memory(agent_id_str)
+                    await self.ov.commit_session(agent_id_str)
 
                 # Fetch relevant context based on agent's projects
-                projects_raw = await self.repo.get_agent_project_ids(agent_id, limit=5)
                 project_titles = [p["title"] for p in (projects_raw or [])[:5]]
                 if project_titles:
-                    memory_context = await ov.get_agent_context(str(agent_id), project_titles)
+                    memory_context = await self.ov.get_agent_context(agent_id_str, project_titles)
         except Exception as e:
             logger.warning("OpenViking heartbeat integration error: %s", e)
 
@@ -754,29 +773,37 @@ class AgentService:
 
     async def create_project(self, agent: dict, body) -> ProjectResponse:
         """Create a new project with git repo, README, token, and contributor setup."""
-        from app.services.git_service import get_git_service
-        from app.services.web3_service import get_web3_service
-        from app.repositories import governance_repo
 
         project_id = uuid4()
         agent_id = agent["id"]
 
-        git = get_git_service()
+        # Check for similar projects via OpenViking (deduplication warning)
+        similar_warning = None
+        try:
+            if self.ov.enabled:
+                similar = await self.ov.find_similar_projects(body.title, body.description or "")
+                if similar:
+                    titles = [s.get("content", "")[:80] for s in similar[:3]]
+                    similar_warning = f"Similar projects already exist: {'; '.join(titles)}"
+                    logger.info("OpenViking: similar projects found for '%s': %d matches", body.title, len(similar))
+        except Exception as e:
+            logger.warning("OpenViking dedup check error: %s", e)
+
         vcs = body.vcs_provider
         user_oauth_token = (await self.ensure_github_token(agent)) if vcs == "github" else None
-        git_repo_url = await git.create_repo(
+        git_repo_url = await self.git.create_repo(
             body.title, body.description, vcs_provider=vcs, user_token=user_oauth_token,
         )
         if git_repo_url:
             try:
-                await git.setup_repo_admin(body.title, vcs_provider=vcs)
+                await self.git.setup_repo_admin(body.title, vcs_provider=vcs)
             except Exception as e:
                 logger.warning("setup_repo_admin failed for %s: %s", body.title, e)
 
             github_login = agent.get("github_user_login")
             if github_login and vcs == "github":
                 try:
-                    await git.add_repo_collaborator(body.title, github_login, "push", vcs_provider=vcs)
+                    await self.git.add_repo_collaborator(body.title, github_login, "push", vcs_provider=vcs)
                 except Exception as e:
                     logger.warning("add_repo_collaborator failed for %s/%s: %s", body.title, github_login, e)
 
@@ -810,7 +837,7 @@ class AgentService:
                 category=body.category,
                 tech_stack=list(body.tech_stack) if body.tech_stack else None,
             )
-            readme_ok = await git.push_files(
+            readme_ok = await self.git.push_files(
                 repo_name=body.title,
                 files=[{"path": "README.md", "content": readme_content, "language": "markdown"}],
                 commit_message="chore: add project provenance metadata",
@@ -823,8 +850,7 @@ class AgentService:
         await self.repo.increment_projects_created(agent_id)
 
         try:
-            web3_svc = get_web3_service()
-            contract_address, deploy_tx = await web3_svc.deploy_project_token(
+            contract_address, deploy_tx = await self.web3.deploy_project_token(
                 str(project_id), body.title
             )
             if contract_address:
@@ -842,17 +868,24 @@ class AgentService:
 
         # Index in OpenViking for semantic search & deduplication
         try:
-            ov = get_openviking_service()
-            if ov.enabled:
-                await ov.index_project(
+            if self.ov.enabled:
+                await self.ov.index_project(
                     str(project_id), body.title, body.description or "",
                     list(body.tech_stack) if body.tech_stack else [], body.category or "",
+                )
+                await self.ov.link_resources(
+                    f"viking://resources/projects/{project_id}.md",
+                    [f"viking://session/agent_{agent_id}"],
+                    relation="created_by",
                 )
         except Exception as e:
             logger.warning("OpenViking index_project error: %s", e)
 
         project = await self.repo.get_project_full(project_id)
-        return self._project_response(project)
+        resp = self._project_response(project)
+        if similar_warning:
+            resp.warning = similar_warning
+        return resp
 
     async def list_projects(
         self,
@@ -912,7 +945,6 @@ class AgentService:
 
     async def get_project_files(self, project_id: UUID, agent: dict) -> list[dict]:
         """Get project files from DB or VCS fallback."""
-        from app.services.git_service import get_git_service
 
         db_files = await self.repo.get_project_code_files(project_id)
         if db_files:
@@ -922,10 +954,9 @@ class AgentService:
         if not project or not project["repo_url"]:
             return []
 
-        git = get_git_service()
         vcs = project.get("vcs_provider") or "github"
         try:
-            tree = await git.get_repo_files(project["title"], vcs_provider=vcs)
+            tree = await self.git.get_repo_files(project["title"], vcs_provider=vcs)
             if not tree:
                 return []
 
@@ -943,7 +974,7 @@ class AgentService:
                 if len(files) >= 50:
                     break
 
-                content = await git.get_file_content(project["title"], path, vcs_provider=vcs)
+                content = await self.git.get_file_content(project["title"], path, vcs_provider=vcs)
                 if content:
                     lang = ext.lstrip(".") if ext else None
                     files.append({"path": path, "content": content, "language": lang, "version": 1})
@@ -958,7 +989,6 @@ class AgentService:
 
     async def create_review(self, project_id: UUID, agent: dict, body) -> dict:
         """Create code review with GitHub issues for critical problems."""
-        from app.services.git_service import get_git_service
 
         review_id = uuid4()
         await self.repo.insert_code_review(review_id, project_id, agent["id"], body.status, body.summary, body.model_used)
@@ -977,7 +1007,6 @@ class AgentService:
             repo_url = project["repo_url"] if project else None
 
             if repo_url:
-                git = get_git_service()
                 reviewer_name = agent.get("name", "ReviewerBot")
                 reviewer_handle = agent.get("handle", "")
                 reviewer_id = str(agent.get("id", ""))
@@ -1011,7 +1040,7 @@ class AgentService:
                     )
 
                     label = "bug" if severity == "critical" else "enhancement"
-                    issue = await git.create_issue(
+                    issue = await self.git.create_issue(
                         project["title"],
                         issue_title,
                         issue_body,
@@ -1064,7 +1093,6 @@ class AgentService:
 
     async def delete_project(self, project_id: UUID, agent: dict) -> dict:
         """Delete a project and its GitHub repo."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(project_id, "title, creator_agent_id, repo_url, vcs_provider")
         if not project:
@@ -1079,9 +1107,8 @@ class AgentService:
         deleted_repo = False
         if project["vcs_provider"] == "github" and project.get("repo_url"):
             try:
-                git = get_git_service()
-                repo_name = git._sanitize_repo_name(project["title"])
-                ok = await git.github.delete_repository(repo_name)
+                repo_name = self.git._sanitize_repo_name(project["title"])
+                ok = await self.git.github.delete_repository(repo_name)
                 deleted_repo = ok
             except Exception:
                 pass
@@ -1098,7 +1125,6 @@ class AgentService:
 
     async def merge_project_pr(self, project_id: UUID, agent: dict, body: dict) -> dict:
         """Merge a PR in the project's repository."""
-        from app.services.git_service import get_git_service
 
         pr_number = body.get("pr_number")
         if not pr_number or not isinstance(pr_number, int):
@@ -1114,9 +1140,8 @@ class AgentService:
         if project["vcs_provider"] != "github":
             raise HTTPException(status_code=400, detail="Only GitHub projects support PR merge")
 
-        git = get_git_service()
         commit_message = body.get("commit_message", "")
-        ok = await git.merge_pull_request(project["title"], pr_number, commit_message)
+        ok = await self.git.merge_pull_request(project["title"], pr_number, commit_message)
         if not ok:
             raise HTTPException(status_code=502, detail="Failed to merge PR on GitHub")
 
@@ -1126,15 +1151,14 @@ class AgentService:
 
     async def list_my_issues(self, agent: dict, state: str, limit: int) -> dict:
         """All GitHub Issues across all agent's projects."""
-        from app.services.git_service import get_git_service
 
         projects = await self.repo.get_agent_project_ids(agent["id"], limit)
-        git = get_git_service()
+
         all_issues = []
         for project in projects:
-            issues = await git.list_issues(project["title"], state=state)
-            repo_slug = git._sanitize_repo_name(project["title"])
-            repo_url = f"https://github.com/{git.org}/{repo_slug}"
+            issues = await self.git.list_issues(project["title"], state=state)
+            repo_slug = self.git._sanitize_repo_name(project["title"])
+            repo_url = f"https://github.com/{self.git.org}/{repo_slug}"
             for issue in issues:
                 all_issues.append({
                     **issue,
@@ -1152,32 +1176,29 @@ class AgentService:
 
     async def list_issue_comments(self, project_id: UUID, issue_number: int) -> dict:
         """List comments for a specific issue."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(project_id, "title")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        git = get_git_service()
-        comments = await git.list_issue_comments(project["title"], issue_number)
+        comments = await self.git.list_issue_comments(project["title"], issue_number)
         return {
             "comments": comments,
             "count": len(comments),
             "issue_number": issue_number,
-            "issue_url": f"https://github.com/{git.org}/{git._sanitize_repo_name(project['title'])}/issues/{issue_number}",
+            "issue_url": f"https://github.com/{self.git.org}/{self.git._sanitize_repo_name(project['title'])}/issues/{issue_number}",
         }
 
     async def post_issue_comment(self, project_id: UUID, issue_number: int, body_text: str, agent: dict) -> dict:
         """Post a comment on a GitHub/GitLab issue."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(project_id, "title, repo_url")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
         oauth_token = await self.ensure_github_token(agent)
-        git = get_git_service()
-        result = await git.comment_issue(project["title"], issue_number, body_text, user_token=oauth_token)
+
+        result = await self.git.comment_issue(project["title"], issue_number, body_text, user_token=oauth_token)
         if not result:
             raise HTTPException(status_code=502, detail="Failed to post comment on VCS")
 
@@ -1185,7 +1206,6 @@ class AgentService:
 
     async def get_project_git_token(self, project_id: UUID, agent: dict) -> dict:
         """Get git token for a project repository."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(
             project_id, "title, repo_url, vcs_provider, creator_agent_id, team_id",
@@ -1199,7 +1219,6 @@ class AgentService:
 
         is_member = False
         if not is_creator and not is_admin and project.get("team_id"):
-            from app.repositories import hackathon_repo
             is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
 
         if not is_creator and not is_member and not is_admin:
@@ -1231,9 +1250,8 @@ class AgentService:
         if oauth_token:
             return {"token": oauth_token, "repo_url": project["repo_url"], "committer": committer, "expires_in": 3600}
 
-        git = get_git_service()
-        repo_name = git._sanitize_repo_name(project["title"])
-        scoped = await git.github.get_scoped_installation_token(repo_name)
+        repo_name = self.git._sanitize_repo_name(project["title"])
+        scoped = await self.git.github.get_scoped_installation_token(repo_name)
         if not scoped:
             raise HTTPException(status_code=503, detail="Failed to generate git credentials")
 
@@ -1248,7 +1266,6 @@ class AgentService:
         branch: str = "main",
     ) -> dict:
         """Push files to project repo with guaranteed agent attribution."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(
             project_id, "title, repo_url, vcs_provider, creator_agent_id, team_id",
@@ -1263,7 +1280,6 @@ class AgentService:
 
         is_member = False
         if not is_creator and not is_admin and project.get("team_id"):
-            from app.repositories import hackathon_repo
             is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
 
         if not is_creator and not is_member and not is_admin:
@@ -1278,9 +1294,9 @@ class AgentService:
 
         # Always use App installation token for platform push.
         # OAuth would override author/committer with the OAuth user's identity.
-        git = get_git_service()
-        repo_name = git._sanitize_repo_name(project["title"])
-        scoped = await git.github.get_scoped_installation_token(repo_name)
+
+        repo_name = self.git._sanitize_repo_name(project["title"])
+        scoped = await self.git.github.get_scoped_installation_token(repo_name)
         if not scoped:
             raise HTTPException(status_code=503, detail="Failed to generate git credentials")
         user_token = scoped["token"]
@@ -1291,14 +1307,14 @@ class AgentService:
         author_email = f"{agent.get('handle', 'agent')}@agents.agentspore.dev"
 
         # Prepare files for GitHub Trees API
-        git = get_git_service()
-        repo_name = git._sanitize_repo_name(project["title"])
+
+        repo_name = self.git._sanitize_repo_name(project["title"])
         github_files = [
             {"path": f["path"], "content": f.get("content"), "delete": f.get("delete", False)}
             for f in files
         ]
 
-        result = await git.github.push_files_atomic(
+        result = await self.git.github.push_files_atomic(
             repo_name, github_files, commit_message,
             author_name, author_email, branch, user_token,
         )
@@ -1334,16 +1350,14 @@ class AgentService:
 
     async def list_project_issues(self, project_id: UUID, state: str) -> dict:
         """List issues for a project."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(project_id, "title, repo_url, vcs_provider")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        git = get_git_service()
         vcs = project.get("vcs_provider") or "github"
         try:
-            issues = await git.list_issues(project["title"], state=state, vcs_provider=vcs)
+            issues = await self.git.list_issues(project["title"], state=state, vcs_provider=vcs)
         except Exception as exc:
             logger.warning("list_issues VCS error for project %s: %s", project_id, exc)
             issues = []
@@ -1353,16 +1367,14 @@ class AgentService:
 
     async def list_project_pull_requests(self, project_id: UUID, state: str) -> dict:
         """List PRs for a project."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(project_id, "title, vcs_provider")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        git = get_git_service()
         vcs = project.get("vcs_provider") or "github"
         try:
-            prs = await git.list_pull_requests(project["title"], state=state, vcs_provider=vcs)
+            prs = await self.git.list_pull_requests(project["title"], state=state, vcs_provider=vcs)
         except Exception as exc:
             logger.warning("list_pull_requests VCS error for project %s: %s", project_id, exc)
             prs = []
@@ -1370,15 +1382,14 @@ class AgentService:
 
     async def list_my_prs(self, agent: dict, state: str, limit: int) -> dict:
         """All PRs across all agent's projects."""
-        from app.services.git_service import get_git_service
 
         projects = await self.repo.get_agent_project_ids(agent["id"], limit)
-        git = get_git_service()
+
         all_prs = []
         for project in projects:
-            prs = await git.list_pull_requests(project["title"], state=state)
-            repo_slug = git._sanitize_repo_name(project["title"])
-            repo_url = f"https://github.com/{git.org}/{repo_slug}"
+            prs = await self.git.list_pull_requests(project["title"], state=state)
+            repo_slug = self.git._sanitize_repo_name(project["title"])
+            repo_url = f"https://github.com/{self.git.org}/{repo_slug}"
             for pr in prs:
                 all_prs.append({
                     **pr,
@@ -1396,62 +1407,54 @@ class AgentService:
 
     async def list_pr_comments(self, project_id: UUID, pr_number: int) -> dict:
         """List comments on a PR."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(project_id, "title")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        git = get_git_service()
-        comments = await git.list_pr_comments(project["title"], pr_number)
+        comments = await self.git.list_pr_comments(project["title"], pr_number)
         return {
             "comments": comments,
             "count": len(comments),
             "pr_number": pr_number,
-            "pr_url": f"https://github.com/{git.org}/{git._sanitize_repo_name(project['title'])}/pull/{pr_number}",
+            "pr_url": f"https://github.com/{self.git.org}/{self.git._sanitize_repo_name(project['title'])}/pull/{pr_number}",
         }
 
     async def list_pr_review_comments(self, project_id: UUID, pr_number: int) -> dict:
         """List inline review comments on a PR."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(project_id, "title")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        git = get_git_service()
-        comments = await git.list_pr_review_comments(project["title"], pr_number)
+        comments = await self.git.list_pr_review_comments(project["title"], pr_number)
         return {
             "review_comments": comments,
             "count": len(comments),
             "pr_number": pr_number,
-            "pr_url": f"https://github.com/{git.org}/{git._sanitize_repo_name(project['title'])}/pull/{pr_number}",
+            "pr_url": f"https://github.com/{self.git.org}/{self.git._sanitize_repo_name(project['title'])}/pull/{pr_number}",
         }
 
     # ── Commits & Files ───────────────────────────────────────────────
 
     async def list_project_commits(self, project_id: UUID, branch: str, limit: int) -> dict:
         """List commits for a project."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(project_id, "title")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        git = get_git_service()
-        commits = await git.list_commits(project["title"], branch=branch, limit=limit)
+        commits = await self.git.list_commits(project["title"], branch=branch, limit=limit)
         return {"commits": commits, "branch": branch, "count": len(commits)}
 
     async def get_project_file(self, project_id: UUID, file_path: str, branch: str) -> dict:
         """Get a single file from the project's repo."""
-        from app.services.git_service import get_git_service
 
         project = await self.repo.get_project_basic(project_id, "title")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        git = get_git_service()
-        content = await git.get_file_content(project["title"], file_path, branch=branch)
+        content = await self.git.get_file_content(project["title"], file_path, branch=branch)
         if content is None:
             raise HTTPException(status_code=404, detail=f"File '{file_path}' not found in branch '{branch}'")
         return {"path": file_path, "branch": branch, "content": content}
@@ -1632,7 +1635,6 @@ class AgentService:
 
     async def get_github_activity(self, agent_id: UUID, limit: int, action_type: str | None) -> dict:
         """Get structured GitHub activity for an agent."""
-        from app.schemas.agents import GitHubActivityItem
 
         where = ["aa.agent_id = :agent_id"]
         params: dict = {"agent_id": agent_id, "limit": limit}
@@ -1683,18 +1685,16 @@ class AgentService:
 
     async def reinvite_github_users(self) -> dict:
         """Re-invite all agents with GitHub connected to the org."""
-        from app.services.git_service import get_git_service
 
         agents_to_invite = await self.repo.get_agents_with_github()
         if not agents_to_invite:
             return {"invited": 0, "details": "No agents with GitHub connected"}
 
-        git = get_git_service()
         results = []
         for a in agents_to_invite:
             login = a["github_user_login"]
             try:
-                await git.invite_to_org(login)
+                await self.git.invite_to_org(login)
                 results.append({"login": login, "status": "invited"})
             except Exception as e:
                 results.append({"login": login, "status": f"error: {e}"})
@@ -1732,9 +1732,6 @@ class AgentService:
         body: dict | None = None,
     ) -> dict:
         """Proxy a GitHub API call with whitelist, access control, rate limiting and audit."""
-        import fnmatch
-        from app.core.github_proxy import ALLOWED_OPERATIONS, KARMA_RULES, RATE_LIMIT_PER_HOUR
-        from app.services.git_service import get_git_service
 
         # Normalize path
         path = path.lstrip("/")
@@ -1773,7 +1770,6 @@ class AgentService:
 
             is_member = False
             if not is_creator and not is_admin and project.get("team_id"):
-                from app.repositories import hackathon_repo
                 is_member = await hackathon_repo.is_team_member(
                     self.db, project["team_id"], agent["id"],
                 )
@@ -1797,8 +1793,8 @@ class AgentService:
                 )
 
         # Get installation token
-        git = get_git_service()
-        repo_name = git._sanitize_repo_name(project["title"])
+
+        repo_name = self.git._sanitize_repo_name(project["title"])
 
         # File write operations (PUT /contents, DELETE /contents) go through
         # push_files_atomic for proper agent attribution and atomic commits.
@@ -1809,7 +1805,7 @@ class AgentService:
 
         if is_file_write:
             return await self._proxy_file_write(
-                project_id, project, agent, method, path_for_match, body, repo_name, git,
+                project_id, project, agent, method, path_for_match, body, repo_name,
             )
 
         # Try agent's OAuth token first, fall back to installation token
@@ -1817,13 +1813,13 @@ class AgentService:
         if oauth_token:
             token = oauth_token
         else:
-            scoped = await git.github.get_scoped_installation_token(repo_name)
+            scoped = await self.git.github.get_scoped_installation_token(repo_name)
             if not scoped:
                 raise HTTPException(status_code=503, detail="Failed to generate GitHub credentials")
             token = scoped["token"]
 
         # Build GitHub API URL
-        org = git.github.org
+        org = self.git.github.org
         query_string = ""
         if "?" in path:
             path_part, query_string = path.split("?", 1)
@@ -1871,11 +1867,8 @@ class AgentService:
         path_for_match: str,
         body: dict | None,
         repo_name: str,
-        git,
     ) -> dict:
         """Handle PUT /contents and DELETE /contents via atomic Git Data API push."""
-        import fnmatch
-        from app.core.github_proxy import KARMA_RULES
 
         body = body or {}
         branch = body.get("branch", "main")
@@ -1921,13 +1914,13 @@ class AgentService:
             commit_message = f"{action} {paths}{suffix} via AgentSpore [{agent_handle}]"
 
         # Use installation token (not OAuth) to preserve agent attribution
-        scoped = await git.github.get_scoped_installation_token(repo_name)
+        scoped = await self.git.github.get_scoped_installation_token(repo_name)
         if not scoped:
             raise HTTPException(status_code=503, detail="Failed to generate git credentials")
         token = scoped["token"]
 
         # Atomic push via Git Data API
-        result = await git.github.push_files_atomic(
+        result = await self.git.github.push_files_atomic(
             repo_name, files, commit_message,
             author_name, author_email, branch, token,
         )
@@ -1977,8 +1970,6 @@ class AgentService:
         self, agent: dict, project_id: UUID, method: str, path_for_match: str, status_code: int,
     ) -> None:
         """Audit a proxy write operation and award karma."""
-        import fnmatch
-        from app.core.github_proxy import KARMA_RULES
 
         await self.db.execute(
             text("""

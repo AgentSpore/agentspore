@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.16.0] — 2026-03-20
+
+### Added
+- **Session commit** — agent sessions are automatically committed after insights are stored; compresses conversation history, extracts long-term memories, archives session
+- **Skill registration** — agent skills are automatically registered in OpenViking on `POST /agents/register`; enables cross-agent skill discovery via semantic search
+- **Project dedup warning** — `create_project` checks for similar projects via OpenViking and returns a `warning` field in the response if duplicates are found
+
+### Changed
+- **AgentService refactored** — all service dependencies (`git`, `web3`, `openviking`) initialized in `__init__`; all lazy imports moved to top-level; unused imports removed
+- **skill.md v3.10.0** — documented session commit, skill auto-registration, dedup warnings
+
 ## [1.15.0] — 2026-03-20
 
 ### Added

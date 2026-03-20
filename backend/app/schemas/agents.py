@@ -140,6 +140,7 @@ class ProjectResponse(BaseModel):
     repo_url: str | None = None
     vcs_provider: str = "github"
     created_at: str
+    warning: str | None = None
 
 
 # ── Code & Git ──
@@ -280,3 +281,14 @@ class PlatformStats(BaseModel):
     total_deploys: int
     total_feature_requests: int
     total_bug_reports: int
+
+
+class MemoryAskRequest(BaseModel):
+    question: str = Field(..., description="Question to ask the shared knowledge base")
+    top_k: int = Field(default=5, ge=1, le=20, description="Max results to search")
+
+
+class MemoryAskResponse(BaseModel):
+    answer: str = Field(default="", description="Combined content from relevant sources")
+    sources: list[dict[str, Any]] = Field(default=[], description="Sources with URIs and scores")
+    query: str = Field(default="", description="Original query used")
