@@ -227,6 +227,228 @@ class OpenVikingService:
         results = await self.search(query, top_k=3)
         return [r for r in results if r.get("score", 0) >= threshold and r.get("source") == "resources"]
 
+    # ── Session extract (auto-distill long-term memory) ─────────────
+
+    async def extract_session_memory(self, agent_id: str) -> list[dict]:
+        """Extract long-term memories from agent session via VLM analysis."""
+        if not self.enabled:
+            return []
+        try:
+            session_id = f"agent_{agent_id}"
+            async with httpx.AsyncClient(timeout=30) as c:
+                r = await c.post(
+                    f"{self.base_url}/api/v1/sessions/{session_id}/extract",
+                    headers=self._headers,
+                )
+                if r.status_code == 200:
+                    memories = r.json().get("result", [])
+                    if memories:
+                        logger.info("OpenViking: extracted %d memories for agent %s", len(memories), agent_id)
+                    return memories
+                return []
+        except Exception as e:
+            logger.warning("OpenViking extract error: %s", e)
+            return []
+
+    # ── Session commit (compress + archive) ───────────────────────────
+
+    async def commit_session(self, agent_id: str) -> dict:
+        """Commit agent session — compresses history, extracts memories, archives."""
+        if not self.enabled:
+            return {}
+        try:
+            session_id = f"agent_{agent_id}"
+            async with httpx.AsyncClient(timeout=30) as c:
+                r = await c.post(
+                    f"{self.base_url}/api/v1/sessions/{session_id}/commit",
+                    headers=self._headers,
+                )
+                if r.status_code == 200:
+                    result = r.json().get("result", {})
+                    extracted = result.get("memories_extracted", 0)
+                    if extracted:
+                        logger.info("OpenViking: committed session for agent %s, extracted %d memories", agent_id, extracted)
+                    return result
+                return {}
+        except Exception as e:
+            logger.warning("OpenViking commit_session error: %s", e)
+            return {}
+
+    # ── Relations (knowledge graph) ───────────────────────────────────
+
+    async def link_resources(self, from_uri: str, to_uris: list[str], relation: str = "related") -> bool:
+        """Create relations between resources (e.g. project↔insight, agent↔project)."""
+        if not self.enabled or not to_uris:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.post(
+                    f"{self.base_url}/api/v1/relations/link",
+                    headers=self._headers,
+                    json={"from_uri": from_uri, "to_uris": to_uris, "relation": relation},
+                )
+                return r.status_code == 200
+        except Exception as e:
+            logger.warning("OpenViking link error: %s", e)
+            return False
+
+    async def unlink_resources(self, from_uri: str, to_uris: list[str]) -> bool:
+        """Remove relations between resources."""
+        if not self.enabled or not to_uris:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.post(
+                    f"{self.base_url}/api/v1/relations/unlink",
+                    headers=self._headers,
+                    json={"from_uri": from_uri, "to_uris": to_uris},
+                )
+                return r.status_code == 200
+        except Exception as e:
+            logger.warning("OpenViking unlink error: %s", e)
+            return False
+
+    # ── Content abstract (VLM-generated summary) ──────────────────────
+
+    async def get_directory_abstract(self, uri: str) -> str:
+        """Get VLM-generated abstract of a resource directory."""
+        if not self.enabled:
+            return ""
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(
+                    f"{self.base_url}/api/v1/content/abstract",
+                    headers=self._headers,
+                    params={"uri": uri},
+                )
+                if r.status_code == 200:
+                    return r.json().get("result", "") or ""
+                return ""
+        except Exception as e:
+            logger.warning("OpenViking abstract error: %s", e)
+            return ""
+
+    # ── Content overview (directory summary) ──────────────────────────
+
+    async def get_directory_overview(self, uri: str) -> str:
+        """Get overview of a resource directory (L0/L1 tiered context)."""
+        if not self.enabled:
+            return ""
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(
+                    f"{self.base_url}/api/v1/content/overview",
+                    headers=self._headers,
+                    params={"uri": uri},
+                )
+                if r.status_code == 200:
+                    return r.json().get("result", "") or ""
+                return ""
+        except Exception as e:
+            logger.warning("OpenViking overview error: %s", e)
+            return ""
+
+    # ── Ask memory (RAG query via search + content) ───────────────────
+
+    async def ask(self, question: str, top_k: int = 5) -> dict:
+        """Answer a question using RAG — search + fetch content + build context."""
+        if not self.enabled:
+            return {"answer": "", "sources": []}
+        results = await self.search(question, top_k=top_k)
+        if not results:
+            return {"answer": "", "sources": []}
+        # Build context from search results
+        context_parts = []
+        sources = []
+        for r in results:
+            content = r.get("content", "")
+            if content:
+                context_parts.append(content)
+                sources.append({
+                    "uri": r.get("uri", ""),
+                    "score": r.get("score", 0),
+                    "source": r.get("source", ""),
+                })
+        return {
+            "answer": "\n\n---\n\n".join(context_parts),
+            "sources": sources,
+            "query": question,
+        }
+
+    # ── Store insight with relation to project ────────────────────────
+
+    async def store_insight_with_context(
+        self, agent_id: str, agent_name: str, insight: str, project_id: str | None = None
+    ) -> bool:
+        """Store insight and link it to project if provided."""
+        ok = await self.store_insight(agent_id, agent_name, insight)
+        if ok and project_id:
+            ts = int(time.time())
+            insight_uri = f"viking://resources/insights/{agent_id}_{ts}.md"
+            project_uri = f"viking://resources/projects/{project_id}.md"
+            await self.link_resources(project_uri, [insight_uri], relation="has_insight")
+        return ok
+
+    # ── Skills (agent shared skills) ────────────────────────────────
+
+    async def register_skill(self, name: str, description: str, content: str) -> bool:
+        """Register an agent skill in OpenViking for discovery and sharing."""
+        if not self.enabled:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=60) as c:
+                r = await c.post(
+                    f"{self.base_url}/api/v1/skills",
+                    headers=self._headers,
+                    json={"data": {"name": name, "description": description, "content": content}},
+                )
+                if r.status_code == 200:
+                    logger.info("OpenViking: registered skill '%s'", name)
+                    return True
+                logger.warning("OpenViking register_skill failed: %d %s", r.status_code, r.text[:200])
+                return False
+        except Exception as e:
+            logger.warning("OpenViking register_skill error: %s", e)
+            return False
+
+    # ── Pack (backup / export) ────────────────────────────────────────
+
+    async def export_backup(self, uri: str = "viking://resources", to: str = "viking://resources/backup.ovpack") -> str:
+        """Export resources as a backup pack file."""
+        if not self.enabled:
+            return ""
+        try:
+            async with httpx.AsyncClient(timeout=30) as c:
+                r = await c.post(
+                    f"{self.base_url}/api/v1/pack/export",
+                    headers=self._headers,
+                    json={"uri": uri, "to": to},
+                )
+                if r.status_code == 200:
+                    file_uri = r.json().get("result", {}).get("file", "")
+                    logger.info("OpenViking: exported backup to %s", file_uri)
+                    return file_uri
+                return ""
+        except Exception as e:
+            logger.warning("OpenViking export_backup error: %s", e)
+            return ""
+
+    async def import_backup(self, uri: str, parent: str = "viking://resources") -> bool:
+        """Import a previously exported backup pack."""
+        if not self.enabled:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=30) as c:
+                r = await c.post(
+                    f"{self.base_url}/api/v1/pack/import",
+                    headers=self._headers,
+                    json={"uri": uri, "parent": parent},
+                )
+                return r.status_code == 200
+        except Exception as e:
+            logger.warning("OpenViking import_backup error: %s", e)
+            return False
+
     # ── Init shared directories ───────────────────────────────────────
 
     async def init_directories(self) -> None:

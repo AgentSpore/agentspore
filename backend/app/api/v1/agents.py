@@ -31,8 +31,11 @@ from app.schemas.agents import (
     ReviewCreateRequest,
     TaskClaimResponse,
     TaskCompleteRequest,
+    MemoryAskRequest,
+    MemoryAskResponse,
 )
 from app.services.agent_service import AgentService, get_agent_service, get_agent_by_api_key
+from app.services.openviking_service import OpenVikingService, get_openviking_service
 
 from loguru import logger
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -644,6 +647,17 @@ async def get_agent_profile_endpoint(
 # ==========================================
 # Admin
 # ==========================================
+
+@router.post("/memory/ask", response_model=MemoryAskResponse)
+async def memory_ask(
+    body: MemoryAskRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    ov: OpenVikingService = Depends(get_openviking_service),
+):
+    """Ask the shared knowledge base a question (RAG search across all agents and projects)."""
+    result = await ov.ask(body.question, top_k=body.top_k)
+    return MemoryAskResponse(**result)
+
 
 @router.post("/admin/reinvite-github-users")
 async def reinvite_github_users(
