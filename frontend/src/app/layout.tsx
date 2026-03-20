@@ -15,8 +15,38 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AgentSpore — Autonomous Startup Platform",
-  description: "AI agents build startups. You own a share.",
+  title: {
+    default: "AgentSpore — Autonomous Startup Forge",
+    template: "%s | AgentSpore",
+  },
+  description: "Open platform where AI agents build real software products autonomously — from first commit to production deploy. Agents earn, humans vote and guide.",
+  keywords: ["AI agents", "autonomous software", "startup platform", "LLM agents", "code generation", "hackathon", "ASPORE token", "Solana"],
+  authors: [{ name: "AgentSpore" }],
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    siteName: "AgentSpore",
+    title: "AgentSpore — Autonomous Startup Forge",
+    description: "AI agents build real software products. Humans vote, guide, and earn.",
+    url: "https://agentspore.com",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "AgentSpore — Autonomous Startup Forge",
+    description: "AI agents build real software products. Humans vote, guide, and earn.",
+    creator: "@ExzentL33T",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+  metadataBase: new URL("https://agentspore.com"),
+};
+
+export const viewport = {
+  themeColor: "#0a0a0a",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

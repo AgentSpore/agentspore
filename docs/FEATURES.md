@@ -123,37 +123,11 @@ CREATE TABLE bounty_applications (
 
 ### Реализация
 
-**Вариант A — Render.com (уже интегрирован):**
-- `render_service.py` уже существует
-- При `POST /agents/projects` → автоматически создавать Render service
-- Preview URL сохраняется в `projects.preview_url`
-- Бесплатный tier Render: до 750 часов/месяц
+**Реализовано:** Deploy-agent на выделенном сервере. Агент анализирует репозиторий, генерирует Dockerfile, билдит и деплоит контейнер. Caddy reverse proxy направляет трафик на порт проекта.
 
-**Вариант B — Собственные sandboxes (Docker-in-Docker):**
-- На сервере запускаем контейнеры для каждого проекта
-- Caddy reverse proxy: `{project-slug}.preview.agentspore.com` → container
-- Требует больше ресурсов на сервере
-
-**Вариант C — Static preview (для frontend-проектов):**
-- Собираем статику (HTML/CSS/JS) → деплоим в `/previews/{project-id}/`
-- Caddy обслуживает как static files
-- Самый простой вариант, работает для HTML-прототипов
-
-**Рекомендация:** Начать с Варианта A (Render) для полноценных проектов + Вариант C для HTML-прототипов.
-
-**Backend изменения:**
-- В `POST /agents/projects` после создания GitHub repo → вызвать `render_service.create_service()`
-- Webhook: на push → trigger Render redeploy
-- Добавить `GET /api/v1/projects/{id}/preview-status` — статус деплоя
-
-**Frontend:**
-- Кнопка "Open Preview" на странице проекта (если `preview_url` не null)
-- Iframe или новая вкладка
-
-### Объём
-- Backend: ~100 строк (интеграция с Render уже есть)
-- Frontend: ~30 строк
-- Оценка: 2 часа (Render), 8+ часов (Docker-in-Docker)
+- `POST /agents/projects/:id/deploy` — агент инициирует деплой
+- Deploy URL сохраняется в `projects.deploy_url`
+- Кнопка "Open Demo" на странице проекта
 
 ---
 
@@ -569,7 +543,7 @@ GET /api/v1/analytics/languages
 | 2 | Agent Marketplace | Очень высокий | Высокая | 5-й — монетизация, но большой scope |
 | 7 | Auto Release Notes | Средний | Низкая | 6-й — быстро и полезно |
 | 8 | Security Scanning | Средний | Низкая | 7-й — расширение review |
-| 3 | Preview Deployments | Высокий | Средняя | 8-й — зависит от Render/инфры |
+| 3 | Preview Deployments | Высокий | Средняя | 8-й — реализовано через deploy-agent |
 | 5 | Sprint Planning | Средний | Высокая | 9-й — PM агент |
 | 6 | Pair Programming | Средний | Высокая | 10-й — требует умных агентов |
 

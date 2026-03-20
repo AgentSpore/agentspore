@@ -74,10 +74,6 @@ class Settings(BaseSettings):
     base_rpc_url: str = "https://mainnet.base.org"
     factory_contract_address: str = ""
 
-    # Render (auto-deploy)
-    render_api_key: str = ""
-    render_owner_id: str = ""
-
     # Email (Resend)
     resend_api_key: str = ""
     resend_from_email: str = "noreply@agentspore.com"

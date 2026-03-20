@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { API_URL, Project, timeAgo } from "@/lib/api";
+import { Header } from "@/components/Header";
 
 const STATUS_BADGE: Record<string, string> = {
   deployed:  "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
@@ -14,7 +15,22 @@ const STATUS_BADGE: Record<string, string> = {
 
 const CATEGORIES = ["all", "productivity", "saas", "ai", "fintech", "devtools", "social", "other"];
 
-function ProjectCard({ project: p }: { project: Project }) {
+function DotGrid() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0" style={{
+        backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px)",
+        backgroundSize: "24px 24px",
+      }} />
+      <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
+        style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
+      <div className="absolute bottom-20 -right-32 w-[400px] h-[400px] rounded-full opacity-[0.05]"
+        style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
+    </div>
+  );
+}
+
+function ProjectCard({ project: p, index }: { project: Project; index: number }) {
   const [votesUp, setVotesUp] = useState(p.votes_up);
   const [votesDown, setVotesDown] = useState(p.votes_down);
   const [voting, setVoting] = useState(false);
@@ -42,14 +58,15 @@ function ProjectCard({ project: p }: { project: Project }) {
 
   return (
     <Link href={`/projects/${p.id}`}
-      className="group bg-neutral-900/50 border border-neutral-800/80 rounded-xl p-4 hover:border-neutral-700 hover:bg-neutral-900 transition-all flex flex-col gap-2.5">
+      className="group project-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl p-5 backdrop-blur-sm hover:border-neutral-700/60 transition-all duration-300 flex flex-col gap-3"
+      style={{ animationDelay: `${index * 60}ms` }}>
 
       {/* Title row */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors truncate">{p.title}</h3>
           {repoPath && (
-            <span className="text-[11px] font-mono text-neutral-600 truncate block mt-0.5">{repoPath}</span>
+            <span className="text-[10px] font-mono text-neutral-600 tracking-wide truncate block mt-1">{repoPath}</span>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -70,9 +87,9 @@ function ProjectCard({ project: p }: { project: Project }) {
 
       {/* Tech stack */}
       {p.tech_stack.length > 0 && (
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1.5">
           {p.tech_stack.slice(0, 4).map(t => (
-            <span key={t} className="text-[10px] px-2 py-0.5 rounded-md bg-neutral-800/80 text-neutral-500 font-mono">{t}</span>
+            <span key={t} className="text-[10px] px-2 py-0.5 rounded-md bg-neutral-800/40 text-neutral-500 font-mono border border-neutral-800/30">{t}</span>
           ))}
           {p.tech_stack.length > 4 && (
             <span className="text-[10px] text-neutral-700 font-mono">+{p.tech_stack.length - 4}</span>
@@ -81,14 +98,14 @@ function ProjectCard({ project: p }: { project: Project }) {
       )}
 
       {/* Footer */}
-      <div className="flex items-center justify-between gap-2 pt-2 border-t border-neutral-800/60 overflow-hidden">
+      <div className="flex items-center justify-between gap-2 pt-3 border-t border-neutral-800/40 overflow-hidden">
         <div className="flex items-center gap-2 text-[11px] text-neutral-600 font-mono min-w-0">
           <span className="text-neutral-400 truncate">{p.agent_name}</span>
           <span className="text-neutral-700 shrink-0">{timeAgo(p.created_at)}</span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <button onClick={(e) => vote(1, e)} disabled={voting}
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-emerald-500 hover:bg-emerald-500/10 transition-all disabled:opacity-50">
+            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-emerald-400 hover:bg-emerald-500/10 transition-all disabled:opacity-50">
             ↑{votesUp}
           </button>
           <button onClick={(e) => vote(-1, e)} disabled={voting}
@@ -145,69 +162,94 @@ export default function ProjectsPage() {
   const deployed = filtered.filter(p => p.status === "deployed" || p.status === "active").length;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-neutral-100" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/" className="text-neutral-500 hover:text-neutral-200 transition-colors text-sm font-mono">
-              &larr; home
-            </Link>
-            <span className="text-neutral-700">/</span>
-            <span className="text-neutral-300 text-sm font-medium">Projects</span>
-            <span className="text-neutral-600 text-xs font-mono">{filtered.length} total &middot; {deployed} live</span>
-          </div>
+    <div className="min-h-screen bg-[#0a0a0a] text-white relative">
+      <DotGrid />
+      <Header />
+
+      <style jsx global>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(16px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-up {
+          animation: fadeUp 0.5s ease-out forwards;
+          opacity: 0;
+        }
+        .project-card {
+          animation: fadeUp 0.4s ease-out forwards;
+          opacity: 0;
+        }
+        .project-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 32px rgba(139, 92, 246, 0.06), 0 0 0 1px rgba(139, 92, 246, 0.08);
+        }
+      `}</style>
+
+      <main className="relative z-10 max-w-6xl mx-auto px-6 py-12">
+        {/* Breadcrumb */}
+        <div className="flex items-center gap-2 mb-8 text-[10px] font-mono fade-up">
+          <Link href="/" className="text-neutral-600 hover:text-neutral-400 transition-colors">home</Link>
+          <span className="text-neutral-700">/</span>
+          <span className="text-neutral-400">projects</span>
         </div>
-      </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-10">
-        {/* Title + filters */}
-        <div className="mb-8">
-          <h1 className="text-[22px] font-semibold text-white mb-1 tracking-tight">Projects</h1>
-          <p className="text-neutral-500 text-sm mb-6">Open-source startups built by AI agents on AgentSpore.</p>
-
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Search */}
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search..."
-              className="bg-neutral-900 border border-neutral-800 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-neutral-600 w-56 font-mono"
-            />
-
-            {/* Status filter */}
-            <div className="flex rounded-lg overflow-hidden border border-neutral-800 text-xs font-mono">
-              {["all", "deployed", "building", "proposed"].map(s => (
-                <button key={s} onClick={() => setStatusFilter(s)}
-                  className={`px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
-                  {s}
-                </button>
-              ))}
+        {/* Title + stats */}
+        <div className="mb-10 fade-up" style={{ animationDelay: "80ms" }}>
+          <div className="flex items-end justify-between gap-4 mb-2">
+            <div>
+              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Explore</p>
+              <h1 className="text-2xl font-semibold text-white tracking-tight">Projects</h1>
             </div>
-
-            {/* Sort */}
-            <div className="flex rounded-lg overflow-hidden border border-neutral-800 text-xs font-mono">
-              {(["newest", "stars", "votes"] as const).map(s => (
-                <button key={s} onClick={() => setSort(s)}
-                  className={`px-3 py-2 transition-colors ${sort === s ? "bg-neutral-800 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
-                  {s === "stars" ? "stars" : s === "votes" ? "votes" : "new"}
-                </button>
-              ))}
+            <div className="flex items-center gap-4 text-[11px] font-mono text-neutral-600">
+              <span>{filtered.length} total</span>
+              <span className="text-emerald-400/70">{deployed} live</span>
             </div>
+          </div>
+          <p className="text-neutral-500 text-sm mt-1">Open-source startups built by AI agents on AgentSpore.</p>
+        </div>
 
-            {/* Category filter */}
-            <div className="flex flex-wrap gap-1.5">
-              {CATEGORIES.map(c => (
-                <button key={c} onClick={() => setCategory(c)}
-                  className={`px-2.5 py-1.5 rounded-md text-xs transition-all font-mono ${
-                    category === c
-                      ? "bg-white text-black font-medium"
-                      : "text-neutral-600 hover:text-neutral-300 hover:bg-neutral-900"
-                  }`}>
-                  {c}
-                </button>
-              ))}
-            </div>
+        {/* Filters */}
+        <div className="fade-up flex flex-wrap items-center gap-3 mb-8" style={{ animationDelay: "160ms" }}>
+          {/* Search */}
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search..."
+            className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 w-56 font-mono backdrop-blur-sm"
+          />
+
+          {/* Status filter */}
+          <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
+            {["all", "deployed", "building", "proposed"].map(s => (
+              <button key={s} onClick={() => setStatusFilter(s)}
+                className={`px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
+                {s}
+              </button>
+            ))}
+          </div>
+
+          {/* Sort */}
+          <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
+            {(["newest", "stars", "votes"] as const).map(s => (
+              <button key={s} onClick={() => setSort(s)}
+                className={`px-3 py-2 transition-colors ${sort === s ? "bg-neutral-800/60 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
+                {s === "stars" ? "stars" : s === "votes" ? "votes" : "new"}
+              </button>
+            ))}
+          </div>
+
+          {/* Category filter */}
+          <div className="flex flex-wrap gap-1.5">
+            {CATEGORIES.map(c => (
+              <button key={c} onClick={() => setCategory(c)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs transition-all font-mono ${
+                  category === c
+                    ? "bg-white text-black font-medium"
+                    : "text-neutral-600 hover:text-neutral-300 hover:bg-neutral-800/30"
+                }`}>
+                {c}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -219,9 +261,9 @@ export default function ProjectsPage() {
             <p className="text-neutral-600 text-sm font-mono">no projects found</p>
           </div>
         ) : (
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {filtered.map(p => (
-              <ProjectCard key={p.id} project={p} />
+          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {filtered.map((p, i) => (
+              <ProjectCard key={p.id} project={p} index={i} />
             ))}
           </div>
         )}

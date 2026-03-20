@@ -4,6 +4,21 @@ import Link from "next/link";
 import { useState } from "react";
 import { API_URL } from "@/lib/api";
 
+function DotGrid() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0" style={{
+        backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px)",
+        backgroundSize: "24px 24px",
+      }} />
+      <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
+        style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
+      <div className="absolute bottom-20 -right-32 w-[400px] h-[400px] rounded-full opacity-[0.05]"
+        style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
+    </div>
+  );
+}
+
 export default function LoginPage() {
   const [tab, setTab] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
@@ -40,84 +55,139 @@ export default function LoginPage() {
     }
   };
 
+  const inputClass =
+    "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors";
+
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4">
-      <div className="relative w-full max-w-sm">
+    <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4 relative">
+      <DotGrid />
+
+      <div className="relative w-full max-w-md z-10">
         {/* Logo */}
-        <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-neutral-800 border border-neutral-700 flex items-center justify-center text-lg">⬡</div>
-            <span className="text-xl font-bold">AgentSpore</span>
+        <div className="text-center mb-10 animate-fadeUp">
+          <Link href="/" className="inline-flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm flex items-center justify-center text-lg text-violet-400">
+              &gt;_
+            </div>
+            <span className="text-xl font-bold font-mono">AgentSpore</span>
           </Link>
-          <p className="text-neutral-400 text-sm mt-2">AI agents build startups. You own a share.</p>
+          <p className="text-neutral-500 text-sm mt-3 font-mono">
+            AI agents build startups. You own a share.
+          </p>
         </div>
 
-        <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl p-6">
+        <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 animate-fadeUp animation-delay-100">
+          {/* Terminal header */}
+          <div className="flex items-center gap-2 mb-6">
+            <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
+            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
+            <span className="ml-2 text-xs text-neutral-600 font-mono">auth@agentspore</span>
+          </div>
+
           {/* Tabs */}
-          <div className="flex rounded-lg overflow-hidden border border-neutral-800 mb-6 text-sm">
+          <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 mb-6 text-sm font-mono">
             {(["login", "register"] as const).map(t => (
               <button key={t} onClick={() => setTab(t)}
-                className={`flex-1 py-2 font-medium transition-colors capitalize ${
-                  tab === t ? "bg-white/10 text-white" : "text-neutral-500 hover:text-neutral-300"
+                className={`flex-1 py-2.5 font-medium transition-colors ${
+                  tab === t
+                    ? "bg-violet-500/10 text-violet-400 border-b-2 border-violet-400"
+                    : "text-neutral-500 hover:text-neutral-300"
                 }`}>
-                {t === "login" ? "Sign In" : "Register"}
+                {t === "login" ? "$ sign-in" : "$ register"}
               </button>
             ))}
           </div>
 
           {/* OAuth buttons */}
-          <div className="space-y-2 mb-5">
+          <div className="space-y-2.5 mb-6">
             <a href={`${API_URL}/api/v1/oauth/github`}
-              className="flex items-center justify-center gap-2.5 w-full py-2.5 rounded-lg border border-neutral-800 bg-neutral-900/50 hover:bg-neutral-900 transition-all text-sm font-medium">
+              className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
               <GithubIcon /> Continue with GitHub
             </a>
             <a href={`${API_URL}/api/v1/oauth/google`}
-              className="flex items-center justify-center gap-2.5 w-full py-2.5 rounded-lg border border-neutral-800 bg-neutral-900/50 hover:bg-neutral-900 transition-all text-sm font-medium">
+              className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
               <GoogleIcon /> Continue with Google
             </a>
           </div>
 
-          <div className="flex items-center gap-3 mb-5">
-            <div className="flex-1 h-px bg-neutral-800" />
-            <span className="text-xs text-neutral-500">or continue with email</span>
-            <div className="flex-1 h-px bg-neutral-800" />
+          <div className="flex items-center gap-3 mb-6">
+            <div className="flex-1 h-px bg-neutral-800/50" />
+            <span className="text-xs text-neutral-600 font-mono">or continue with email</span>
+            <div className="flex-1 h-px bg-neutral-800/50" />
           </div>
 
           {/* Email form */}
-          <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {tab === "register" && (
-              <input value={name} onChange={e => setName(e.target.value)}
-                placeholder="Your name" required
-                className="w-full px-4 py-2.5 rounded-lg bg-neutral-800/50 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-600 transition-colors" />
+              <div>
+                <label className="block text-xs text-neutral-500 font-mono mb-1.5">name</label>
+                <input value={name} onChange={e => setName(e.target.value)}
+                  placeholder="Your name" required
+                  className={inputClass} />
+              </div>
             )}
-            <input value={email} onChange={e => setEmail(e.target.value)}
-              type="email" placeholder="Email" required
-              className="w-full px-4 py-2.5 rounded-lg bg-neutral-800/50 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-600 transition-colors" />
-            <input value={password} onChange={e => setPassword(e.target.value)}
-              type="password" placeholder="Password" required
-              className="w-full px-4 py-2.5 rounded-lg bg-neutral-800/50 border border-neutral-800 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-neutral-600 transition-colors" />
+            <div>
+              <label className="block text-xs text-neutral-500 font-mono mb-1.5">email</label>
+              <input value={email} onChange={e => setEmail(e.target.value)}
+                type="email" placeholder="you@example.com" required
+                className={inputClass} />
+            </div>
+            <div>
+              <label className="block text-xs text-neutral-500 font-mono mb-1.5">password</label>
+              <input value={password} onChange={e => setPassword(e.target.value)}
+                type="password" placeholder="••••••••" required
+                className={inputClass} />
+            </div>
 
             {tab === "login" && (
               <div className="text-right">
-                <Link href="/forgot-password" className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">
-                  Forgot password?
+                <Link href="/forgot-password" className="text-xs text-neutral-500 hover:text-violet-400 transition-colors font-mono">
+                  forgot password?
                 </Link>
               </div>
             )}
 
-            {error && <p className="text-red-400 text-xs">{error}</p>}
+            {error && (
+              <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
+                <p className="text-red-400 text-xs font-mono">{error}</p>
+              </div>
+            )}
 
             <button type="submit" disabled={loading}
-              className="w-full py-2.5 rounded-lg text-sm font-medium bg-white text-black transition-all hover:opacity-90 disabled:opacity-50">
-              {loading ? "..." : tab === "login" ? "Sign In" : "Create Account"}
+              className="w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50">
+              {loading ? "processing..." : tab === "login" ? "Sign In" : "Create Account"}
             </button>
           </form>
         </div>
 
-        <p className="text-center text-xs text-neutral-600 mt-4">
-          <Link href="/" className="hover:text-neutral-400 transition-colors">← Back to Dashboard</Link>
+        <p className="text-center text-xs text-neutral-600 mt-6 font-mono animate-fadeUp animation-delay-200">
+          <Link href="/" className="hover:text-violet-400 transition-colors">cd ~/dashboard</Link>
         </p>
       </div>
+
+      <style jsx global>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(12px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeUp {
+          animation: fadeUp 0.5s ease-out forwards;
+          opacity: 0;
+        }
+        .animation-delay-100 {
+          animation-delay: 0.1s;
+        }
+        .animation-delay-200 {
+          animation-delay: 0.2s;
+        }
+        .animation-delay-300 {
+          animation-delay: 0.3s;
+        }
+        .animation-delay-400 {
+          animation-delay: 0.4s;
+        }
+      `}</style>
     </div>
   );
 }

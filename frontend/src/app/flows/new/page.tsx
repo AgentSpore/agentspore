@@ -6,6 +6,21 @@ import Link from "next/link";
 import { API_URL, Agent } from "@/lib/api";
 import { Header } from "@/components/Header";
 
+function DotGrid() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0" style={{
+        backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px)",
+        backgroundSize: "24px 24px",
+      }} />
+      <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
+        style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
+      <div className="absolute bottom-20 -right-32 w-[400px] h-[400px] rounded-full opacity-[0.05]"
+        style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
+    </div>
+  );
+}
+
 interface StepDraft {
   key: string;
   agent_id: string;
@@ -120,24 +135,35 @@ export default function NewFlowPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white">
+    <div className="min-h-screen bg-[#0a0a0a] text-white relative">
+      <DotGrid />
       <Header />
 
-      <main className="max-w-2xl mx-auto px-6 py-10 space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">New Flow</h1>
-          <Link href="/flows" className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">
-            ← Back to Flows
-          </Link>
+      <main className="relative z-10 max-w-2xl mx-auto px-6 py-10 space-y-8">
+        {/* Page header */}
+        <div className="fade-up" style={{ animationDelay: "0ms" }}>
+          <div className="flex items-center gap-1.5 mb-3">
+            <Link href="/flows" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">
+              Flows
+            </Link>
+            <span className="text-[10px] text-neutral-700">/</span>
+            <span className="text-[10px] font-mono text-neutral-500">New</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold tracking-tight">New Flow</h1>
+          </div>
         </div>
 
         {/* Flow info */}
-        <div className="space-y-3">
+        <div className="space-y-3 fade-up" style={{ animationDelay: "60ms" }}>
+          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
+            Details
+          </span>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Flow title"
-            className="w-full bg-neutral-900/50 border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors"
+            className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
             maxLength={300}
           />
           <textarea
@@ -145,29 +171,39 @@ export default function NewFlowPage() {
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Description (optional)"
             rows={2}
-            className="w-full bg-neutral-900/50 border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors resize-none"
+            className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
             maxLength={5000}
           />
         </div>
 
         {/* Steps */}
-        <div className="space-y-3">
+        <div className="space-y-3 fade-up" style={{ animationDelay: "120ms" }}>
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Steps</h2>
-            <span className="text-xs text-neutral-600 font-mono">{steps.length} step{steps.length !== 1 ? "s" : ""}</span>
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
+              Steps
+            </span>
+            <span className="text-[10px] text-neutral-600 font-mono">{steps.length} step{steps.length !== 1 ? "s" : ""}</span>
           </div>
 
           {steps.map((s, idx) => (
             <div
               key={s.key}
-              className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-4 space-y-3"
+              className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 space-y-3 hover:border-neutral-700/60 transition-all fade-up"
+              style={{ animationDelay: `${150 + idx * 40}ms` }}
             >
               <div className="flex items-center justify-between">
-                <span className="text-xs font-mono text-neutral-600">Step {idx + 1}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-neutral-600 bg-neutral-800/50 px-2 py-0.5 rounded">
+                    {String(idx + 1).padStart(2, "0")}
+                  </span>
+                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
+                    Step {idx + 1}
+                  </span>
+                </div>
                 {steps.length > 1 && (
                   <button
                     onClick={() => removeStep(s.key)}
-                    className="text-xs text-neutral-600 hover:text-red-400 transition-colors"
+                    className="text-[10px] font-mono text-neutral-600 hover:text-red-400 transition-colors"
                   >
                     Remove
                   </button>
@@ -178,19 +214,19 @@ export default function NewFlowPage() {
                 value={s.title}
                 onChange={(e) => updateStep(s.key, "title", e.target.value)}
                 placeholder="Step title"
-                className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors"
+                className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-3 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
                 maxLength={300}
               />
 
               <select
                 value={s.agent_id}
                 onChange={(e) => updateStep(s.key, "agent_id", e.target.value)}
-                className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-neutral-600 transition-colors"
+                className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-violet-500/50 transition-colors"
               >
                 <option value="">Select agent...</option>
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>
-                    @{a.handle} — {a.name} ({a.specialization})
+                    @{a.handle} -- {a.name} ({a.specialization})
                   </option>
                 ))}
               </select>
@@ -200,14 +236,16 @@ export default function NewFlowPage() {
                 onChange={(e) => updateStep(s.key, "instructions", e.target.value)}
                 placeholder="Instructions for this step (optional)"
                 rows={2}
-                className="w-full bg-neutral-800/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors resize-none"
+                className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-3 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
                 maxLength={10000}
               />
 
               {/* Dependencies */}
               {idx > 0 && (
                 <div>
-                  <span className="text-xs text-neutral-500 block mb-1.5">Depends on:</span>
+                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-2">
+                    Depends on
+                  </span>
                   <div className="flex flex-wrap gap-1.5">
                     {steps.slice(0, idx).map((dep, di) => (
                       <button
@@ -216,7 +254,7 @@ export default function NewFlowPage() {
                         className={`text-xs px-2.5 py-1 rounded-lg border font-mono transition-all ${
                           s.depends_on.includes(dep.key)
                             ? "border-violet-500/40 text-violet-300 bg-violet-500/10"
-                            : "border-neutral-700/50 text-neutral-500 hover:text-neutral-300"
+                            : "border-neutral-800/50 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700/60"
                         }`}
                       >
                         Step {di + 1}: {dep.title || "Untitled"}
@@ -226,21 +264,23 @@ export default function NewFlowPage() {
                 </div>
               )}
 
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-2.5 cursor-pointer group">
                 <input
                   type="checkbox"
                   checked={s.auto_approve}
                   onChange={(e) => updateStep(s.key, "auto_approve", e.target.checked)}
-                  className="rounded border-neutral-600 bg-neutral-800 text-violet-500 focus:ring-0"
+                  className="rounded border-neutral-700 bg-neutral-900/50 text-violet-500 focus:ring-0 focus:ring-offset-0"
                 />
-                <span className="text-xs text-neutral-500">Auto-approve (skip manual review)</span>
+                <span className="text-[11px] font-mono text-neutral-500 group-hover:text-neutral-400 transition-colors">
+                  Auto-approve (skip manual review)
+                </span>
               </label>
             </div>
           ))}
 
           <button
             onClick={addStep}
-            className="w-full py-2.5 rounded-xl border border-dashed border-neutral-700 text-sm text-neutral-500 hover:text-neutral-300 hover:border-neutral-600 transition-all"
+            className="w-full py-3 rounded-xl border border-dashed border-neutral-800/50 text-sm font-mono text-neutral-500 hover:text-neutral-300 hover:border-neutral-700/60 transition-all bg-neutral-900/10"
           >
             + Add Step
           </button>
@@ -248,25 +288,31 @@ export default function NewFlowPage() {
 
         {/* DAG preview */}
         {steps.length > 1 && (
-          <div className="rounded-xl border border-neutral-800/60 bg-neutral-900/50 p-4">
-            <span className="text-xs text-neutral-500 font-mono block mb-2">DAG Preview</span>
-            <div className="space-y-1">
+          <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 fade-up" style={{ animationDelay: "200ms" }}>
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-3">
+              DAG Preview
+            </span>
+            <div className="space-y-1.5">
               {steps.map((s, idx) => {
                 const deps = s.depends_on
                   .map((dk) => steps.findIndex((st) => st.key === dk) + 1)
                   .filter((n) => n > 0);
                 return (
-                  <div key={s.key} className="text-xs font-mono text-neutral-400">
-                    <span className="text-neutral-600">{idx + 1}.</span>{" "}
-                    {s.title || "Untitled"}
+                  <div key={s.key} className="text-xs font-mono text-neutral-400 flex items-center gap-2">
+                    <span className="text-neutral-600 bg-neutral-800/50 px-1.5 py-0.5 rounded text-[10px]">
+                      {String(idx + 1).padStart(2, "0")}
+                    </span>
+                    <span className="truncate">{s.title || "Untitled"}</span>
                     {deps.length > 0 && (
-                      <span className="text-neutral-600 ml-2">← {deps.map((n) => `Step ${n}`).join(", ")}</span>
+                      <span className="text-neutral-600 ml-auto flex-shrink-0">
+                        depends: {deps.map((n) => `Step ${n}`).join(", ")}
+                      </span>
                     )}
                     {deps.length === 0 && idx > 0 && (
-                      <span className="text-emerald-500/60 ml-2">∥ parallel</span>
+                      <span className="text-emerald-400/50 ml-auto flex-shrink-0">parallel</span>
                     )}
                     {deps.length === 0 && idx === 0 && (
-                      <span className="text-blue-400/60 ml-2">▸ root</span>
+                      <span className="text-cyan-400/50 ml-auto flex-shrink-0">root</span>
                     )}
                   </div>
                 );
@@ -276,7 +322,7 @@ export default function NewFlowPage() {
         )}
 
         {error && (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/[0.05] p-3 text-sm text-red-400">
+          <div className="rounded-xl border border-red-500/20 bg-red-500/[0.05] p-4 text-sm text-red-400 font-mono fade-up">
             {error}
           </div>
         )}
@@ -284,11 +330,23 @@ export default function NewFlowPage() {
         <button
           onClick={handleSubmit}
           disabled={submitting}
-          className="w-full py-3 rounded-xl text-sm font-medium bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full py-3.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed fade-up"
+          style={{ animationDelay: "250ms" }}
         >
-          {submitting ? "Creating..." : "Create Flow →"}
+          {submitting ? "Creating..." : "Create Flow"}
         </button>
       </main>
+
+      <style jsx global>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(12px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .fade-up {
+          opacity: 0;
+          animation: fadeUp 0.5s ease-out forwards;
+        }
+      `}</style>
     </div>
   );
 }

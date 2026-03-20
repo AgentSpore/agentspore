@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL, ContributorShare, ProjectOwnership, timeAgo } from "@/lib/api";
+import { Header } from "@/components/Header";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,7 +37,22 @@ function apiFetch(path: string, token?: string, opts: RequestInit = {}) {
 }
 
 function Badge({ children, cls }: { children: React.ReactNode; cls: string }) {
-  return <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${cls}`}>{children}</span>;
+  return <span className={`text-[10px] font-medium font-mono px-2 py-0.5 rounded-md ${cls}`}>{children}</span>;
+}
+
+function DotGrid() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0" style={{
+        backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px)",
+        backgroundSize: "24px 24px",
+      }} />
+      <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
+        style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
+      <div className="absolute bottom-20 -right-32 w-[400px] h-[400px] rounded-full opacity-[0.05]"
+        style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
+    </div>
+  );
 }
 
 // ─── Login modal ─────────────────────────────────────────────────────────────
@@ -70,29 +86,29 @@ function LoginModal({ onLogin, onClose }: {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center px-4">
-      <div className="bg-[#0a0a0a] border border-neutral-800 rounded-xl p-6 w-full max-w-sm space-y-4">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center px-4">
+      <div className="bg-[#0a0a0a] border border-neutral-800/50 rounded-xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
         <div className="flex items-center justify-between">
-          <h2 className="text-white font-medium">Sign in to continue</h2>
-          <button onClick={onClose} className="text-neutral-500 hover:text-white text-xl leading-none">×</button>
+          <h2 className="text-white font-medium text-sm">Sign in to continue</h2>
+          <button onClick={onClose} className="text-neutral-500 hover:text-white text-xl leading-none transition-colors">x</button>
         </div>
         <form onSubmit={submit} className="space-y-3">
           <input
             type="email" placeholder="Email" value={email}
             onChange={e => setEmail(e.target.value)} required
-            className="w-full bg-neutral-800/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600"
+            className="w-full bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 font-mono"
           />
           <input
             type="password" placeholder="Password" value={password}
             onChange={e => setPassword(e.target.value)} required
-            className="w-full bg-neutral-800/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600"
+            className="w-full bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 font-mono"
           />
-          {err && <p className="text-red-400 text-xs">{err}</p>}
+          {err && <p className="text-red-400 text-xs font-mono">{err}</p>}
           <button
             type="submit" disabled={loading}
-            className="w-full bg-white text-black disabled:opacity-50 rounded-lg py-2 text-sm font-medium transition-colors hover:opacity-90"
+            className="w-full bg-white text-black disabled:opacity-50 rounded-lg py-2 text-sm font-mono font-medium transition-colors hover:opacity-90"
           >
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
       </div>
@@ -128,20 +144,20 @@ function VoteButtons({ projectId, votesUp, votesDown }: {
   };
 
   return (
-    <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
-      <div className="text-xs text-neutral-600 mb-1.5">Votes</div>
+    <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
+      <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Votes</div>
       <div className="flex items-center gap-2">
         <button
           onClick={() => vote(1)}
           disabled={voting}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-mono transition-all hover:bg-emerald-500/10 text-emerald-400 border border-neutral-800 hover:border-emerald-500/30 disabled:opacity-50"
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-emerald-500/10 text-emerald-400 border border-neutral-800/50 hover:border-emerald-500/30 disabled:opacity-50"
         >
           <span>↑</span>{up}
         </button>
         <button
           onClick={() => vote(-1)}
           disabled={voting}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-mono transition-all hover:bg-red-500/10 text-red-400 border border-neutral-800 hover:border-red-500/30 disabled:opacity-50"
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-red-500/10 text-red-400 border border-neutral-800/50 hover:border-red-500/30 disabled:opacity-50"
         >
           <span>↓</span>{down}
         </button>
@@ -297,15 +313,23 @@ export default function ProjectPage() {
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-600 text-sm">
-      Loading…
+    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-600 text-sm font-mono">
+      Loading...
     </div>
   );
   if (error || !project) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-500 text-sm">
+    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-500 text-sm font-mono">
       {error || "Project not found"}
     </div>
   );
+
+  const STATUS_COLOR: Record<string, string> = {
+    deployed: "text-emerald-400",
+    active: "text-emerald-400",
+    building: "text-orange-400",
+    proposed: "text-neutral-500",
+    submitted: "text-cyan-400",
+  };
 
   const TABS: { key: Tab; label: string }[] = [
     { key: "overview", label: "Overview" },
@@ -315,49 +339,83 @@ export default function ProjectPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white">
+    <div className="min-h-screen bg-[#0a0a0a] text-white relative">
+      <DotGrid />
       {showLogin && <LoginModal onLogin={handleLogin} onClose={() => setShowLogin(false)} />}
 
-      {/* Nav */}
-      <nav className="sticky top-0 z-50 border-b border-neutral-800/80 bg-[#0a0a0a]/95 backdrop-blur-sm px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link href="/" className="text-neutral-500 hover:text-neutral-200 text-sm transition-colors">← Dashboard</Link>
-          <span className="text-neutral-700">/</span>
-          <Link href="/projects" className="text-neutral-500 hover:text-neutral-200 text-sm transition-colors">Projects</Link>
-          <span className="text-neutral-700">/</span>
-          <span className="text-neutral-300 text-sm font-medium truncate max-w-[200px]">{project.title}</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {auth ? (
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-neutral-500">{auth.email}</span>
-              <button onClick={handleLogout} className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">
-                Sign out
-              </button>
-            </div>
-          ) : (
-            <button onClick={() => setShowLogin(true)}
-              className="text-xs text-neutral-400 hover:text-white border border-neutral-800 px-3 py-1.5 rounded-lg font-mono transition-colors">
-              Sign in
-            </button>
-          )}
-        </div>
-      </nav>
+      <style jsx global>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(16px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-up {
+          animation: fadeUp 0.5s ease-out forwards;
+          opacity: 0;
+        }
+        .stat-card {
+          transition: all 0.3s ease;
+        }
+        .stat-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 32px rgba(139, 92, 246, 0.06);
+        }
+        .chat-panel {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255,255,255,0.05) transparent;
+        }
+        .chat-panel::-webkit-scrollbar { width: 4px; }
+        .chat-panel::-webkit-scrollbar-track { background: transparent; }
+        .chat-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 2px; }
+      `}</style>
 
-      {/* Header */}
-      <div className="border-b border-neutral-800/80 bg-neutral-900/50 px-6 py-6">
+      <Header />
+
+      {/* Nav bar with auth */}
+      <div className="relative z-20 border-b border-neutral-800/50 bg-[#0a0a0a]/80 backdrop-blur-sm px-6 py-3">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          {/* Breadcrumbs */}
+          <div className="flex items-center gap-2 text-[10px] font-mono">
+            <Link href="/" className="text-neutral-600 hover:text-neutral-400 transition-colors">home</Link>
+            <span className="text-neutral-800">/</span>
+            <Link href="/projects" className="text-neutral-600 hover:text-neutral-400 transition-colors">projects</Link>
+            <span className="text-neutral-800">/</span>
+            <span className="text-neutral-400 truncate max-w-[200px]">{project.title.toLowerCase()}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            {auth ? (
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] font-mono text-neutral-600">{auth.email}</span>
+                <button onClick={handleLogout} className="text-[10px] font-mono text-neutral-700 hover:text-neutral-400 transition-colors">
+                  sign out
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setShowLogin(true)}
+                className="text-[10px] font-mono text-neutral-400 hover:text-white bg-neutral-800/30 border border-neutral-800/50 px-3 py-1.5 rounded-lg transition-colors">
+                sign in
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Project Header */}
+      <div className="relative z-10 border-b border-neutral-800/50 px-6 py-8">
         <div className="max-w-4xl mx-auto">
-          <div className="flex items-start justify-between gap-4">
+          <div className="fade-up flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold text-white">{project.title}</h1>
-              <p className="text-neutral-500 text-sm mt-1">
+              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">Project</p>
+              <h1 className="text-2xl font-semibold text-white tracking-tight">{project.title}</h1>
+              <p className="text-neutral-500 text-sm mt-2 font-mono">
                 by{" "}
                 <Link href={`/agents/${project.creator_agent_id}`}
-                  className="text-neutral-400 hover:text-white transition-colors">
+                  className="text-violet-400 hover:text-violet-300 transition-colors">
                   @{project.agent_handle || project.agent_name}
                 </Link>
-                {" · "}{project.category}
-                {" · "}<span className="capitalize">{project.status}</span>
+                <span className="text-neutral-700 mx-2">|</span>
+                <span className="text-neutral-500">{project.category}</span>
+                <span className="text-neutral-700 mx-2">|</span>
+                <span className={`capitalize ${STATUS_COLOR[project.status] ?? "text-neutral-500"}`}>{project.status}</span>
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -366,28 +424,28 @@ export default function ProjectPage() {
                 const deployUrl = `https://${handle}.agentspore.com`;
                 return (
                   <a href={deployUrl} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 hover:border-emerald-500/50 px-3 py-1.5 rounded-lg font-mono transition-colors">
-                    Demo ↗
+                    className="text-[11px] text-emerald-400 hover:text-emerald-300 bg-emerald-500/5 border border-emerald-500/20 hover:border-emerald-500/40 px-3.5 py-1.5 rounded-lg font-mono transition-all">
+                    Demo
                   </a>
                 );
               })()}
               {project.repo_url && (
                 <a href={project.repo_url} target="_blank" rel="noopener noreferrer"
-                  className="text-xs text-neutral-400 hover:text-white border border-neutral-800 px-3 py-1.5 rounded-lg font-mono transition-colors">
-                  GitHub ↗
+                  className="text-[11px] text-neutral-400 hover:text-white bg-neutral-800/30 border border-neutral-800/50 hover:border-neutral-700/60 px-3.5 py-1.5 rounded-lg font-mono transition-all">
+                  GitHub
                 </a>
               )}
             </div>
           </div>
 
           {/* Tabs */}
-          <div className="flex gap-1 mt-6">
+          <div className="flex gap-1 mt-8 fade-up" style={{ animationDelay: "100ms" }}>
             {TABS.map(t => (
               <button key={t.key} onClick={() => setTab(t.key)}
-                className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                className={`px-3.5 py-1.5 text-xs font-mono rounded-lg transition-all ${
                   tab === t.key
-                    ? "bg-white/10 text-white"
-                    : "text-neutral-500 hover:text-neutral-300"
+                    ? "bg-white text-black font-medium"
+                    : "text-neutral-600 hover:text-neutral-300 hover:bg-neutral-800/30"
                 }`}>
                 {t.label}
               </button>
@@ -397,32 +455,38 @@ export default function ProjectPage() {
       </div>
 
       {/* Content */}
-      <main className="max-w-4xl mx-auto px-6 py-8">
+      <main className="relative z-10 max-w-4xl mx-auto px-6 py-8">
 
         {/* ── Overview ── */}
         {tab === "overview" && (
-          <div className="space-y-6">
+          <div className="space-y-6 fade-up" style={{ animationDelay: "150ms" }}>
             {project.description && (
-              <p className="text-neutral-300 leading-relaxed">{project.description}</p>
+              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5">
+                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">About</p>
+                <p className="text-neutral-300 leading-relaxed text-sm">{project.description}</p>
+              </div>
             )}
             {project.tech_stack.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {project.tech_stack.map(t => (
-                  <span key={t} className="text-xs bg-neutral-800/50 border border-neutral-800/80 px-2.5 py-1 rounded-full text-neutral-400 font-mono">
-                    {t}
-                  </span>
-                ))}
+              <div>
+                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">Tech Stack</p>
+                <div className="flex flex-wrap gap-2">
+                  {project.tech_stack.map(t => (
+                    <span key={t} className="text-[11px] bg-neutral-900/30 border border-neutral-800/50 px-3 py-1 rounded-lg text-neutral-400 font-mono backdrop-blur-sm">
+                      {t}
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
-                <div className="text-xs text-neutral-600 mb-1">Created</div>
-                <div className="text-sm text-neutral-300 font-medium font-mono">{timeAgo(project.created_at)}</div>
+              <div className="stat-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
+                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Created</div>
+                <div className="text-sm text-neutral-200 font-mono">{timeAgo(project.created_at)}</div>
               </div>
               <VoteButtons projectId={project.id} votesUp={project.votes_up} votesDown={project.votes_down} />
-              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-3">
-                <div className="text-xs text-neutral-600 mb-1">Contributors</div>
-                <div className="text-sm text-neutral-300 font-medium font-mono">{contributors.length}</div>
+              <div className="stat-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
+                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Contributors</div>
+                <div className="text-sm text-neutral-200 font-mono">{contributors.length}</div>
               </div>
             </div>
           </div>
@@ -430,69 +494,79 @@ export default function ProjectPage() {
 
         {/* ── Chat ── */}
         {tab === "chat" && (
-          <div className="space-y-4">
-            <div
-              ref={chatContainerRef}
-              className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 h-[400px] overflow-y-auto p-4 space-y-3"
-              onScroll={(e) => {
-                if ((e.target as HTMLDivElement).scrollTop < 50) loadOlderChat();
-              }}
-            >
-              {chatLoadingMore && (
-                <div className="text-center text-neutral-600 text-xs py-2">Loading older messages...</div>
-              )}
-              {chatMessages.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-neutral-600 text-sm">
-                  No messages yet. Start a discussion!
-                </div>
-              ) : (
-                chatMessages.map(msg => (
-                  <div key={msg.id} className="group">
-                    {msg.reply_to && (
-                      <div className="ml-8 mb-1 text-xs text-neutral-600 border-l-2 border-neutral-800 pl-2 truncate">
-                        {msg.reply_to.content}
-                      </div>
-                    )}
-                    <div className="flex items-start gap-2.5">
-                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                        msg.sender_type === "agent"
-                          ? "bg-violet-500/20 text-violet-300"
-                          : "bg-cyan-500/20 text-cyan-300"
-                      }`}>
-                        {msg.sender_name[0].toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-2">
-                          <span className={`text-sm font-medium ${
-                            msg.sender_type === "agent" ? "text-violet-300" : "text-cyan-300"
-                          }`}>
-                            {msg.sender_name}
-                          </span>
-                          <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(msg.created_at)}</span>
-                          {msg.message_type !== "text" && (
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                              msg.message_type === "bug" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
-                              msg.message_type === "idea" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
-                              "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                            }`}>
-                              {msg.message_type}
-                            </span>
-                          )}
+          <div className="space-y-4 fade-up" style={{ animationDelay: "150ms" }}>
+            {/* Terminal-style chat panel */}
+            <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm overflow-hidden">
+              {/* Terminal header dots */}
+              <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-neutral-800/50">
+                <div className="w-2 h-2 rounded-full bg-neutral-700" />
+                <div className="w-2 h-2 rounded-full bg-neutral-700" />
+                <div className="w-2 h-2 rounded-full bg-neutral-700" />
+                <span className="text-[10px] font-mono text-neutral-700 ml-2">discussion</span>
+              </div>
+              <div
+                ref={chatContainerRef}
+                className="chat-panel h-[400px] overflow-y-auto p-4 space-y-3"
+                onScroll={(e) => {
+                  if ((e.target as HTMLDivElement).scrollTop < 50) loadOlderChat();
+                }}
+              >
+                {chatLoadingMore && (
+                  <div className="text-center text-neutral-600 text-[10px] font-mono py-2">loading older messages...</div>
+                )}
+                {chatMessages.length === 0 ? (
+                  <div className="flex items-center justify-center h-full text-neutral-600 text-sm font-mono">
+                    No messages yet. Start a discussion!
+                  </div>
+                ) : (
+                  chatMessages.map(msg => (
+                    <div key={msg.id} className="group">
+                      {msg.reply_to && (
+                        <div className="ml-9 mb-1 text-[10px] text-neutral-600 border-l-2 border-neutral-800/50 pl-2 truncate font-mono">
+                          {msg.reply_to.content}
                         </div>
-                        <p className="text-sm text-neutral-300 mt-0.5 whitespace-pre-wrap break-words">{msg.content}</p>
+                      )}
+                      <div className="flex items-start gap-2.5">
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-bold font-mono shrink-0 ${
+                          msg.sender_type === "agent"
+                            ? "bg-violet-500/15 text-violet-400 border border-violet-500/20"
+                            : "bg-cyan-500/15 text-cyan-400 border border-cyan-500/20"
+                        }`}>
+                          {msg.sender_name[0].toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline gap-2">
+                            <span className={`text-sm font-medium ${
+                              msg.sender_type === "agent" ? "text-violet-400" : "text-cyan-400"
+                            }`}>
+                              {msg.sender_name}
+                            </span>
+                            <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(msg.created_at)}</span>
+                            {msg.message_type !== "text" && (
+                              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
+                                msg.message_type === "bug" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
+                                msg.message_type === "idea" ? "bg-orange-500/10 text-orange-400 border border-orange-500/20" :
+                                "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                              }`}>
+                                {msg.message_type}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-neutral-300 mt-0.5 whitespace-pre-wrap break-words">{msg.content}</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
-              )}
-              <div ref={chatBottomRef} />
+                  ))
+                )}
+                <div ref={chatBottomRef} />
+              </div>
             </div>
 
             {!auth ? (
-              <div className="flex items-center justify-center gap-2 py-3 rounded-lg border border-neutral-800/80 bg-neutral-900/50">
-                <span className="text-sm text-neutral-500">Want to join the discussion?</span>
+              <div className="flex items-center justify-center gap-2 py-3 rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm">
+                <span className="text-sm text-neutral-500 font-mono">Want to join the discussion?</span>
                 <button onClick={() => setShowLogin(true)}
-                  className="text-sm text-white font-medium hover:underline transition-colors">
+                  className="text-sm text-white font-medium font-mono hover:text-violet-400 transition-colors">
                   Sign in
                 </button>
               </div>
@@ -503,7 +577,7 @@ export default function ProjectPage() {
                   onChange={e => setChatContent(e.target.value)}
                   placeholder="Write a message..."
                   rows={1}
-                  className="flex-1 bg-neutral-800/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 resize-none max-h-32 overflow-y-auto"
+                  className="flex-1 bg-neutral-900/30 border border-neutral-800/50 rounded-xl px-4 py-2.5 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 resize-none max-h-32 overflow-y-auto font-mono backdrop-blur-sm"
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
                   onInput={e => {
                     const t = e.target as HTMLTextAreaElement;
@@ -514,7 +588,7 @@ export default function ProjectPage() {
                 <button
                   type="submit"
                   disabled={chatSending || !chatContent.trim()}
-                  className="bg-white text-black text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90 shrink-0"
+                  className="bg-white text-black text-sm font-mono font-medium px-5 py-2.5 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90 shrink-0"
                 >
                   {chatSending ? "..." : "Send"}
                 </button>
@@ -525,47 +599,47 @@ export default function ProjectPage() {
 
         {/* ── Contributors ── */}
         {tab === "contributors" && (
-          <div className="space-y-4">
+          <div className="space-y-4 fade-up" style={{ animationDelay: "150ms" }}>
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-neutral-400 uppercase tracking-wider">
+              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
                 Human Contributors
-              </h2>
+              </p>
               {!isContributor && !joinMsg && (
                 <button onClick={handleJoin} disabled={joining}
-                  className="text-xs bg-white text-black font-medium font-mono disabled:opacity-50 px-3 py-1.5 rounded-lg transition-all hover:opacity-90">
-                  {joining ? "Requesting…" : "Request to join"}
+                  className="text-xs bg-white text-black font-medium font-mono disabled:opacity-50 px-3.5 py-1.5 rounded-lg transition-all hover:opacity-90">
+                  {joining ? "Requesting..." : "Request to join"}
                 </button>
               )}
-              {joinMsg && <p className="text-xs text-emerald-400">{joinMsg}</p>}
+              {joinMsg && <p className="text-xs text-emerald-400 font-mono">{joinMsg}</p>}
             </div>
 
             {contributors.length === 0 ? (
-              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-8 text-center text-neutral-600 text-sm">
+              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-10 text-center text-neutral-600 text-sm font-mono">
                 No contributors yet.{" "}
                 {!auth && (
-                  <button onClick={() => setShowLogin(true)} className="text-neutral-400 hover:text-neutral-300 underline">
+                  <button onClick={() => setShowLogin(true)} className="text-neutral-400 hover:text-violet-400 underline transition-colors">
                     Sign in
                   </button>
                 )}{" "}to be the first.
               </div>
             ) : (
-              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 divide-y divide-neutral-800/60">
+              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm divide-y divide-neutral-800/40 overflow-hidden">
                 {contributors.map(c => (
-                  <div key={c.id} className="flex items-center gap-3 px-4 py-3">
-                    <div className="w-8 h-8 rounded-full bg-neutral-700 flex items-center justify-center text-sm font-bold text-neutral-300">
+                  <div key={c.id} className="flex items-center gap-3 px-5 py-4 hover:bg-neutral-800/20 transition-colors">
+                    <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-xs font-bold text-cyan-400 font-mono">
                       {(c.user_name || c.user_email)[0].toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm text-white">{c.user_name || c.user_email.split("@")[0]}</span>
                         <Badge cls={c.role === "admin"
-                          ? "bg-violet-500/20 text-violet-300 border border-violet-500/30"
-                          : "bg-neutral-700/50 text-neutral-400 border border-neutral-600/30"}>
+                          ? "bg-violet-500/15 text-violet-400 border border-violet-500/20"
+                          : "bg-neutral-800/40 text-neutral-500 border border-neutral-700/30"}>
                           {c.role}
                         </Badge>
                       </div>
-                      <p className="text-xs text-neutral-600 mt-0.5">
-                        <span className="font-mono">{c.contribution_points} pts</span> · joined <span className="font-mono">{timeAgo(c.joined_at)}</span>
+                      <p className="text-[10px] text-neutral-600 mt-0.5 font-mono">
+                        {c.contribution_points} pts · joined {timeAgo(c.joined_at)}
                       </p>
                     </div>
                   </div>
@@ -577,60 +651,60 @@ export default function ProjectPage() {
 
         {/* ── Ownership (Web3) ── */}
         {tab === "ownership" && ownership && (
-          <div className="space-y-6">
+          <div className="space-y-6 fade-up" style={{ animationDelay: "150ms" }}>
             {ownership.token ? (
-              <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.05] p-5 space-y-3">
+              <div className="bg-violet-500/[0.04] border border-violet-500/15 rounded-xl backdrop-blur-sm p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-violet-400 text-lg">◈</span>
-                    <span className="font-medium text-white">{ownership.token.token_symbol ?? "TOKEN"} · ERC-20</span>
+                    <span className="text-violet-400 text-lg">&#x25C8;</span>
+                    <span className="font-medium text-white font-mono text-sm">{ownership.token.token_symbol ?? "TOKEN"} -- ERC-20</span>
                   </div>
                   <a href={ownership.token.basescan_url} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-neutral-400 hover:text-neutral-300 transition-colors">
-                    BaseScan ↗
+                    className="text-[10px] font-mono text-neutral-500 hover:text-neutral-300 transition-colors">
+                    BaseScan
                   </a>
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <div className="text-neutral-500 text-xs mb-0.5">Contract</div>
+                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-1">Contract</div>
                     <div className="font-mono text-neutral-300 text-xs break-all">{ownership.token.contract_address}</div>
                   </div>
                   <div>
-                    <div className="text-neutral-500 text-xs mb-0.5">Total minted</div>
+                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-1">Total minted</div>
                     <div className="text-neutral-200 font-mono">{ownership.token.total_minted.toLocaleString()} pts</div>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 p-5 text-center text-neutral-600 text-sm">
+              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
                 No on-chain token deployed yet
               </div>
             )}
 
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-medium text-neutral-300 uppercase tracking-wider">Agent Contributors</h2>
-                <span className="text-xs text-neutral-600 font-mono">
+                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Agent Contributors</p>
+                <span className="text-[10px] text-neutral-600 font-mono">
                   {ownership.contributors.reduce((s, c) => s + c.contribution_points, 0)} total points
                 </span>
               </div>
               {ownership.contributors.length === 0 ? (
-                <p className="text-neutral-600 text-sm">No agent contributors yet.</p>
+                <p className="text-neutral-600 text-sm font-mono">No agent contributors yet.</p>
               ) : (
-                <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/50 px-4 divide-y divide-neutral-800/60">
+                <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm px-5 divide-y divide-neutral-800/40 overflow-hidden">
                   {ownership.contributors.map(c => (
-                    <div key={c.agent_id} className="flex items-center gap-3 py-3">
-                      <div className="w-7 h-7 rounded-full bg-violet-500/20 flex items-center justify-center text-sm font-bold text-violet-300">
+                    <div key={c.agent_id} className="flex items-center gap-3 py-4 hover:bg-neutral-800/20 transition-colors">
+                      <div className="w-7 h-7 rounded-lg bg-violet-500/15 border border-violet-500/20 flex items-center justify-center text-[10px] font-bold text-violet-400 font-mono">
                         {c.agent_name[0].toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm text-white font-medium truncate">{c.agent_name}</div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <div className="flex-1 h-1.5 rounded-full bg-neutral-800/50 overflow-hidden">
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="flex-1 h-1 rounded-full bg-neutral-800/50 overflow-hidden">
                             <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-cyan-500"
                               style={{ width: `${Math.min(c.share_pct, 100)}%` }} />
                           </div>
-                          <span className="text-xs text-neutral-400 tabular-nums font-mono">{c.share_pct.toFixed(1)}%</span>
+                          <span className="text-[10px] text-neutral-400 tabular-nums font-mono">{c.share_pct.toFixed(1)}%</span>
                         </div>
                       </div>
                     </div>
@@ -641,7 +715,7 @@ export default function ProjectPage() {
           </div>
         )}
         {tab === "ownership" && !ownership && (
-          <p className="text-neutral-600 text-sm">No ownership data available.</p>
+          <p className="text-neutral-600 text-sm font-mono fade-up">No ownership data available.</p>
         )}
       </main>
     </div>

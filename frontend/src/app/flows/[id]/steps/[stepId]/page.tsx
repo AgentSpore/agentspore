@@ -6,6 +6,21 @@ import { useParams } from "next/navigation";
 import { API_URL, FlowStep, FlowStepMessage, STEP_STATUS, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 
+function DotGrid() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0" style={{
+        backgroundImage: "radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px)",
+        backgroundSize: "24px 24px",
+      }} />
+      <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
+        style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
+      <div className="absolute bottom-20 -right-32 w-[400px] h-[400px] rounded-full opacity-[0.05]"
+        style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
+    </div>
+  );
+}
+
 export default function StepChatPage() {
   const { id: flowId, stepId } = useParams<{ id: string; stepId: string }>();
   const [step, setStep] = useState<FlowStep | null>(null);
@@ -156,60 +171,72 @@ export default function StepChatPage() {
   });
 
   return (
-    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col relative">
+      <DotGrid />
       <Header />
 
       {/* Step header */}
-      <div className="border-b border-neutral-800/80 bg-[#0a0a0a]">
+      <div className="relative z-10 border-b border-neutral-800/50 bg-[#0a0a0a]/80 backdrop-blur-md">
         <div className="max-w-3xl mx-auto px-6 py-4">
-          <div className="flex items-center gap-2 text-xs text-neutral-600 mb-1">
-            <Link href={`/flows/${flowId}`} className="hover:text-neutral-400 transition-colors">
-              ← Back to Flow
+          <div className="flex items-center gap-1.5 mb-2">
+            <Link href="/flows" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">
+              Flows
             </Link>
+            <span className="text-[10px] text-neutral-700">/</span>
+            <Link href={`/flows/${flowId}`} className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">
+              Flow
+            </Link>
+            <span className="text-[10px] text-neutral-700">/</span>
+            <span className="text-[10px] font-mono text-neutral-500 truncate max-w-[150px]">
+              {step?.title || "Step"}
+            </span>
           </div>
           <div className="flex items-center justify-between">
             <div className="min-w-0">
-              <h1 className="text-lg font-bold truncate">{step?.title || "Loading..."}</h1>
-              <div className="flex items-center gap-2 text-xs text-neutral-500 font-mono mt-0.5">
-                <span>@{step?.agent_handle || "..."}</span>
+              <h1 className="text-lg font-bold truncate tracking-tight">{step?.title || "Loading..."}</h1>
+              <div className="flex items-center gap-2 text-[11px] text-neutral-500 font-mono mt-1">
+                <span className="text-violet-400/70">@{step?.agent_handle || "..."}</span>
                 {step?.started_at && (
                   <>
-                    <span className="text-neutral-700">·</span>
+                    <span className="text-neutral-800">|</span>
                     <span>started {timeAgo(step.started_at)}</span>
                   </>
                 )}
               </div>
             </div>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono ${sts.classes}`}>
+            <span className={`text-[10px] px-2.5 py-0.5 rounded-full border font-mono ${sts.classes}`}>
               {sts.label}
             </span>
           </div>
-
         </div>
       </div>
 
       {/* Messages */}
-      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative z-10">
         <div className="max-w-3xl mx-auto px-6 py-4 space-y-1">
           {loadingMore && (
-            <div className="flex justify-center py-2">
-              <span className="text-xs text-neutral-600 font-mono">Loading...</span>
+            <div className="flex justify-center py-3">
+              <span className="text-[10px] text-neutral-600 font-mono tracking-widest">LOADING</span>
             </div>
           )}
-          {loading && <p className="text-neutral-600 text-sm">Loading messages...</p>}
+          {loading && <p className="text-neutral-600 text-sm font-mono">Loading messages...</p>}
 
           {!loading && messages.length === 0 && (
-            <div className="text-center py-10 text-neutral-600 text-sm">
-              No messages yet. Start the conversation.
+            <div className="text-center py-16 space-y-2">
+              <div className="w-10 h-10 rounded-full bg-neutral-800/50 border border-neutral-700/50 flex items-center justify-center mx-auto">
+                <span className="text-neutral-600 text-sm font-mono">&gt;_</span>
+              </div>
+              <p className="text-neutral-600 text-sm font-mono">No messages yet</p>
+              <p className="text-neutral-700 text-xs">Start the conversation below</p>
             </div>
           )}
 
           {groupedMessages.map((group) => (
             <div key={group.date}>
-              <div className="flex items-center gap-3 py-3">
-                <div className="flex-1 h-px bg-neutral-800/80" />
-                <span className="text-[10px] text-neutral-600 font-mono">{group.date}</span>
-                <div className="flex-1 h-px bg-neutral-800/80" />
+              <div className="flex items-center gap-3 py-4">
+                <div className="flex-1 h-px bg-neutral-800/50" />
+                <span className="text-[10px] text-neutral-600 font-mono tracking-wider">{group.date}</span>
+                <div className="flex-1 h-px bg-neutral-800/50" />
               </div>
               {group.msgs.map((m) => {
                 const isUser = m.sender_type === "user";
@@ -220,26 +247,26 @@ export default function StepChatPage() {
                     className={`py-2 ${isUser ? "text-right" : ""}`}
                   >
                     {isSystem ? (
-                      <div className="text-xs text-neutral-600 italic text-center py-1">
+                      <div className="text-[11px] text-neutral-600 italic text-center py-1.5 font-mono">
                         {m.content}
                       </div>
                     ) : (
-                      <div className={`inline-block max-w-[80%] rounded-xl px-3.5 py-2.5 ${
+                      <div className={`inline-block max-w-[80%] rounded-xl px-4 py-3 ${
                         isUser
-                          ? "bg-white/10 text-white ml-auto"
-                          : "bg-neutral-800/50 text-neutral-200"
+                          ? "bg-violet-500/10 border border-violet-500/20 text-white ml-auto"
+                          : "bg-neutral-900/50 border border-neutral-800/50 text-neutral-200"
                       }`}>
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1.5">
                           <span className="text-[10px] font-mono text-neutral-500">
                             {m.sender_name}
                           </span>
-                          <span className="text-[10px] text-neutral-700">
+                          <span className="text-[10px] text-neutral-700 font-mono">
                             {new Date(m.created_at).toLocaleTimeString("en-US", {
                               hour: "2-digit", minute: "2-digit",
                             })}
                           </span>
                         </div>
-                        <div className="text-sm whitespace-pre-wrap break-words">
+                        <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">
                           {m.content}
                         </div>
                         {m.file_url && (
@@ -247,9 +274,9 @@ export default function StepChatPage() {
                             href={m.file_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-xs text-blue-400 hover:text-blue-300 mt-1 inline-block"
+                            className="text-xs text-cyan-400 hover:text-cyan-300 mt-1.5 inline-block font-mono"
                           >
-                            {m.file_name || "File"} ↗
+                            {m.file_name || "File"}
                           </a>
                         )}
                       </div>
@@ -265,7 +292,7 @@ export default function StepChatPage() {
 
       {/* Input */}
       {step && ["ready", "active", "review"].includes(step.status) && (
-        <div className="border-t border-neutral-800/80 bg-[#0a0a0a]">
+        <div className="relative z-10 border-t border-neutral-800/50 bg-[#0a0a0a]/80 backdrop-blur-md">
           <div className="max-w-3xl mx-auto px-6 py-3">
             <div className="flex items-end gap-3">
               <textarea
@@ -274,13 +301,13 @@ export default function StepChatPage() {
                 onKeyDown={handleKeyDown}
                 placeholder="Send a message..."
                 rows={1}
-                className="flex-1 bg-neutral-900/50 border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-600 transition-colors resize-none"
+                className="flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
                 maxLength={5000}
               />
               <button
                 onClick={sendMessage}
                 disabled={!input.trim() || sending}
-                className="px-4 py-3 rounded-xl text-sm font-medium bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
+                className="px-5 py-3 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
               >
                 {sending ? "..." : "Send"}
               </button>
@@ -288,6 +315,17 @@ export default function StepChatPage() {
           </div>
         </div>
       )}
+
+      <style jsx global>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(12px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .fade-up {
+          opacity: 0;
+          animation: fadeUp 0.5s ease-out forwards;
+        }
+      `}</style>
     </div>
   );
 }
