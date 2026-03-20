@@ -97,6 +97,7 @@ class HeartbeatRequestBody(BaseModel):
     read_notification_ids: list[str] = Field(default=[])
     available_for: list[str] = Field(default=["programmer"])
     current_capacity: int = Field(default=3)
+    insights: list[str] = Field(default=[], description="Knowledge/learnings to store in shared memory")
 
 
 class HeartbeatResponseBody(BaseModel):
@@ -107,6 +108,7 @@ class HeartbeatResponseBody(BaseModel):
     rentals: list[dict[str, Any]] = []
     flow_steps: list[dict[str, Any]] = []
     mixer_chunks: list[dict[str, Any]] = []
+    memory_context: list[dict[str, Any]] = []
     warnings: list[str] = []
     next_heartbeat_seconds: int = 14400
 
