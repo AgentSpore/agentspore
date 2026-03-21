@@ -179,6 +179,78 @@ class ChatService:
     async def get_project_messages(self, project_id: str, limit: int = 50, before: str | None = None) -> list[dict]:
         return await self.repo.get_project_messages(project_id, limit, before=before)
 
+    # ── Edit / Delete ────────────────────────────────────────────────
+
+    async def edit_message(
+        self, message_id: str, new_content: str,
+        agent_id: str | None = None, user_name: str | None = None,
+    ) -> dict:
+        msg = await self.repo.get_message_by_id(message_id)
+        if not msg:
+            return {"error": "Message not found"}
+        if msg["is_deleted"]:
+            return {"error": "Message is deleted"}
+        self._check_ownership(msg, agent_id, user_name)
+        await self.repo.update_message_content(message_id, new_content)
+        await self.repo.db.commit()
+        await self.redis.publish(REDIS_CHANNEL, json.dumps({"type": "edit", "id": message_id, "content": new_content}))
+        return {"status": "ok", "message_id": message_id}
+
+    async def delete_message(
+        self, message_id: str,
+        agent_id: str | None = None, user_name: str | None = None,
+    ) -> dict:
+        msg = await self.repo.get_message_by_id(message_id)
+        if not msg:
+            return {"error": "Message not found"}
+        if msg["is_deleted"]:
+            return {"error": "Message already deleted"}
+        self._check_ownership(msg, agent_id, user_name)
+        await self.repo.soft_delete_message(message_id)
+        await self.repo.db.commit()
+        await self.redis.publish(REDIS_CHANNEL, json.dumps({"type": "delete", "id": message_id}))
+        return {"status": "ok", "message_id": message_id}
+
+    async def edit_project_message(
+        self, message_id: str, new_content: str,
+        agent_id: str | None = None, user_name: str | None = None,
+    ) -> dict:
+        msg = await self.repo.get_project_message_by_id(message_id)
+        if not msg:
+            return {"error": "Message not found"}
+        if msg["is_deleted"]:
+            return {"error": "Message is deleted"}
+        self._check_ownership(msg, agent_id, user_name)
+        await self.repo.update_project_message_content(message_id, new_content)
+        await self.repo.db.commit()
+        return {"status": "ok", "message_id": message_id}
+
+    async def delete_project_message(
+        self, message_id: str,
+        agent_id: str | None = None, user_name: str | None = None,
+    ) -> dict:
+        msg = await self.repo.get_project_message_by_id(message_id)
+        if not msg:
+            return {"error": "Message not found"}
+        if msg["is_deleted"]:
+            return {"error": "Message already deleted"}
+        self._check_ownership(msg, agent_id, user_name)
+        await self.repo.soft_delete_project_message(message_id)
+        await self.repo.db.commit()
+        return {"status": "ok", "message_id": message_id}
+
+    @staticmethod
+    def _check_ownership(msg: dict, agent_id: str | None, user_name: str | None) -> None:
+        from fastapi import HTTPException
+        if agent_id:
+            if str(msg["agent_id"]) != str(agent_id):
+                raise HTTPException(status_code=403, detail="You can only modify your own messages")
+        elif user_name:
+            if msg["sender_type"] not in ("human", "user") or msg["human_name"] != user_name:
+                raise HTTPException(status_code=403, detail="You can only modify your own messages")
+        else:
+            raise HTTPException(status_code=403, detail="Unauthorized")
+
     # ── Rate limiting (called from API layer) ───────────────────────
 
     async def check_rate_limit(self, key: str, max_count: int, window_seconds: int = 60) -> bool:

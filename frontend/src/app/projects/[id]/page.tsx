@@ -177,6 +177,8 @@ interface ProjectMessage {
   message_type: string;
   created_at: string;
   reply_to?: { id: string; content: string };
+  is_deleted?: boolean;
+  edited_at?: string;
 }
 
 type Tab = "overview" | "contributors" | "ownership" | "chat";
@@ -256,8 +258,43 @@ export default function ProjectPage() {
   const [chatSending, setChatSending] = useState(false);
   const [chatHasMore, setChatHasMore] = useState(false);
   const [chatLoadingMore, setChatLoadingMore] = useState(false);
+  const [chatEditingId, setChatEditingId] = useState<string | null>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  const chatUserName = auth?.email ? auth.email.split("@")[0] : auth ? `user-${auth.userId.slice(0, 6)}` : null;
+
+  const handleChatEdit = (id: string, content: string) => {
+    setChatEditingId(id);
+    setChatContent(content);
+  };
+
+  const handleChatDelete = async (id: string) => {
+    if (!auth) return;
+    try {
+      const res = await apiFetch(`/chat/project/${projectId}/human-messages/${id}`, auth.token, { method: "DELETE" });
+      if (res.ok) {
+        setChatMessages(prev => prev.map(m => m.id === id ? { ...m, content: "[deleted]", is_deleted: true } : m));
+      }
+    } catch { /* ignore */ }
+  };
+
+  const handleChatSaveEdit = async () => {
+    if (!chatEditingId || !chatContent.trim() || !auth) return;
+    setChatSending(true);
+    try {
+      const res = await apiFetch(`/chat/project/${projectId}/human-messages/${chatEditingId}`, auth.token, {
+        method: "PATCH",
+        body: JSON.stringify({ content: chatContent.trim() }),
+      });
+      if (res.ok) {
+        setChatMessages(prev => prev.map(m => m.id === chatEditingId ? { ...m, content: chatContent.trim(), edited_at: new Date().toISOString() } : m));
+        setChatContent("");
+        setChatEditingId(null);
+      }
+    } catch { /* ignore */ }
+    setChatSending(false);
+  };
 
   const loadChatMessages = useCallback(async () => {
     try {
@@ -297,6 +334,7 @@ export default function ProjectPage() {
     e?.preventDefault();
     if (!chatContent.trim() || chatSending) return;
     if (!auth) { setShowLogin(true); return; }
+    if (chatEditingId) { await handleChatSaveEdit(); return; }
     setChatSending(true);
     try {
       const userName = auth.email ? auth.email.split("@")[0] : `user-${auth.userId.slice(0, 6)}`;
@@ -519,7 +557,9 @@ export default function ProjectPage() {
                     No messages yet. Start a discussion!
                   </div>
                 ) : (
-                  chatMessages.map(msg => (
+                  chatMessages.map(msg => {
+                    const isOwner = chatUserName && msg.sender_name === chatUserName && msg.sender_type !== "agent";
+                    return (
                     <div key={msg.id} className="group">
                       {msg.reply_to && (
                         <div className="ml-9 mb-1 text-[10px] text-neutral-600 border-l-2 border-neutral-800/50 pl-2 truncate font-mono">
@@ -542,7 +582,7 @@ export default function ProjectPage() {
                               {msg.sender_name}
                             </span>
                             <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(msg.created_at)}</span>
-                            {msg.message_type !== "text" && (
+                            {msg.message_type !== "text" && !msg.is_deleted && (
                               <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
                                 msg.message_type === "bug" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
                                 msg.message_type === "idea" ? "bg-orange-500/10 text-orange-400 border border-orange-500/20" :
@@ -551,12 +591,22 @@ export default function ProjectPage() {
                                 {msg.message_type}
                               </span>
                             )}
+                            {isOwner && !msg.is_deleted && (
+                              <span className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 ml-1">
+                                <button onClick={() => handleChatEdit(msg.id, msg.content)} className="text-[10px] text-neutral-600 hover:text-violet-400 font-mono transition-colors">edit</button>
+                                <button onClick={() => handleChatDelete(msg.id)} className="text-[10px] text-neutral-600 hover:text-red-400 font-mono transition-colors">del</button>
+                              </span>
+                            )}
                           </div>
-                          <p className="text-sm text-neutral-300 mt-0.5 whitespace-pre-wrap break-words">{msg.content}</p>
+                          <p className={`text-sm mt-0.5 whitespace-pre-wrap break-words ${msg.is_deleted ? "text-neutral-600 italic" : "text-neutral-300"}`}>
+                            {msg.content}
+                            {msg.edited_at && !msg.is_deleted && <span className="text-[8px] text-neutral-600 ml-1.5">(edited)</span>}
+                          </p>
                         </div>
                       </div>
                     </div>
-                  ))
+                    );
+                  })
                 )}
                 <div ref={chatBottomRef} />
               </div>
@@ -571,27 +621,42 @@ export default function ProjectPage() {
                 </button>
               </div>
             ) : (
-              <form onSubmit={handleChatSend} className="flex gap-2 items-end">
-                <textarea
-                  value={chatContent}
-                  onChange={e => setChatContent(e.target.value)}
-                  placeholder="Write a message..."
-                  rows={1}
-                  className="flex-1 bg-neutral-900/30 border border-neutral-800/50 rounded-xl px-4 py-2.5 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 resize-none max-h-32 overflow-y-auto font-mono backdrop-blur-sm"
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
-                  onInput={e => {
-                    const t = e.target as HTMLTextAreaElement;
-                    t.style.height = "auto";
-                    t.style.height = Math.min(t.scrollHeight, 128) + "px";
-                  }}
-                />
-                <button
-                  type="submit"
-                  disabled={chatSending || !chatContent.trim()}
-                  className="bg-white text-black text-sm font-mono font-medium px-5 py-2.5 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90 shrink-0"
-                >
-                  {chatSending ? "..." : "Send"}
-                </button>
+              <form onSubmit={handleChatSend} className="space-y-2">
+                {chatEditingId && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-950/20 border border-violet-800/20">
+                    <span className="text-[11px] text-violet-400 font-mono flex-1">Editing message</span>
+                    <button type="button" onClick={() => { setChatEditingId(null); setChatContent(""); }} className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono">Cancel</button>
+                  </div>
+                )}
+                <div className="flex gap-2 items-end">
+                  <textarea
+                    value={chatContent}
+                    onChange={e => setChatContent(e.target.value)}
+                    placeholder={chatEditingId ? "Edit your message..." : "Write a message..."}
+                    rows={1}
+                    className={`flex-1 bg-neutral-900/30 border rounded-xl px-4 py-2.5 text-sm text-white placeholder-neutral-600 focus:outline-none resize-none max-h-32 overflow-y-auto font-mono backdrop-blur-sm ${
+                      chatEditingId ? "border-violet-500/30 focus:border-violet-500/50" : "border-neutral-800/50 focus:border-neutral-700/60"
+                    }`}
+                    onKeyDown={e => {
+                      if (e.key === "Escape" && chatEditingId) { setChatEditingId(null); setChatContent(""); return; }
+                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); }
+                    }}
+                    onInput={e => {
+                      const t = e.target as HTMLTextAreaElement;
+                      t.style.height = "auto";
+                      t.style.height = Math.min(t.scrollHeight, 128) + "px";
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={chatSending || !chatContent.trim()}
+                    className={`text-sm font-mono font-medium px-5 py-2.5 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90 shrink-0 ${
+                      chatEditingId ? "bg-violet-500 text-white" : "bg-white text-black"
+                    }`}
+                  >
+                    {chatSending ? "..." : chatEditingId ? "Save" : "Send"}
+                  </button>
+                </div>
               </form>
             )}
           </div>

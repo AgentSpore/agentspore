@@ -39,10 +39,43 @@ function AgentAvatar({ name, specialization, size = "md" }: { name: string; spec
   );
 }
 
-function MessageGroup({ messages, isHuman }: { messages: ChatMessage[]; isHuman: boolean }) {
+function MessageActions({ msg, onEdit, onDelete }: { msg: ChatMessage; onEdit: (id: string, content: string) => void; onDelete: (id: string) => void }) {
+  return (
+    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 ml-1">
+      <button
+        onClick={() => onEdit(msg.id, msg.content)}
+        className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors"
+        title="Edit"
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+        </svg>
+      </button>
+      <button
+        onClick={() => onDelete(msg.id)}
+        className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+        title="Delete"
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+function MessageGroup({ messages, isHuman, userName, onEdit, onDelete }: {
+  messages: ChatMessage[];
+  isHuman: boolean;
+  userName: string | null;
+  onEdit: (id: string, content: string) => void;
+  onDelete: (id: string) => void;
+}) {
   const first = messages[0];
   const meta = CHAT_MSG_META[first.message_type] ?? CHAT_MSG_META.text;
   const isVerified = first.sender_type === "user" || first.specialization === "user";
+  const isOwner = isHuman && userName && first.agent_name === userName;
 
   return (
     <div className={`flex gap-3 msg-appear ${isHuman ? "flex-row-reverse" : ""}`}>
@@ -72,10 +105,13 @@ function MessageGroup({ messages, isHuman }: { messages: ChatMessage[]; isHuman:
             const msgMeta = CHAT_MSG_META[msg.message_type] ?? CHAT_MSG_META.text;
             const isFirst = i === 0;
             const isLast = i === messages.length - 1;
+            const deleted = msg.is_deleted;
 
             return (
-              <div key={msg.id} className="group flex items-end gap-2">
+              <div key={msg.id} className="group flex items-center gap-1">
+                {isOwner && !deleted && <MessageActions msg={msg} onEdit={onEdit} onDelete={onDelete} />}
                 <div className={`relative px-3.5 py-2 text-sm leading-relaxed break-words transition-colors ${
+                  deleted ? "opacity-40 italic" :
                   isHuman
                     ? `bg-violet-500/10 border border-violet-500/15 text-neutral-200 ${
                         isFirst && isLast ? "rounded-2xl rounded-tr-md" :
@@ -90,14 +126,17 @@ function MessageGroup({ messages, isHuman }: { messages: ChatMessage[]; isHuman:
                         "rounded-2xl rounded-l-md"
                       }`
                 }`}>
-                  {msg.message_type !== "text" && (
+                  {msg.message_type !== "text" && !deleted && (
                     <span className={`inline-flex items-center gap-1 text-[9px] font-bold font-mono px-1.5 py-0.5 rounded-md mr-1.5 align-middle ${msgMeta.bg} ${msgMeta.color}`}>
                       {msgMeta.icon} {msgMeta.label}
                     </span>
                   )}
                   {msg.content}
+                  {msg.edited_at && !deleted && (
+                    <span className="text-[8px] text-neutral-600 ml-1.5">(edited)</span>
+                  )}
                 </div>
-                <span className="text-[9px] text-neutral-800 font-mono opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap mb-0.5">
+                <span className="text-[9px] text-neutral-800 font-mono opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                   {new Date(msg.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </span>
               </div>
@@ -109,11 +148,24 @@ function MessageGroup({ messages, isHuman }: { messages: ChatMessage[]; isHuman:
   );
 }
 
-function ChatInput({ userName }: { userName: string }) {
+function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEdit }: {
+  userName: string;
+  editingId: string | null;
+  editingContent: string;
+  onCancelEdit: () => void;
+  onSaveEdit: (id: string, content: string) => void;
+}) {
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editingId) {
+      setContent(editingContent);
+      textareaRef.current?.focus();
+    }
+  }, [editingId, editingContent]);
 
   const canSend = content.trim().length > 0 && !sending;
 
@@ -125,6 +177,30 @@ function ChatInput({ userName }: { userName: string }) {
     setError(null);
 
     const token = localStorage.getItem("access_token");
+
+    if (editingId) {
+      try {
+        const res = await fetch(`${API_URL}/api/v1/chat/human-messages/${editingId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ content: content.trim() }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setError(data.detail ?? "Failed to edit");
+          return;
+        }
+        onSaveEdit(editingId, content.trim());
+        setContent("");
+        onCancelEdit();
+      } catch {
+        setError("Network error");
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
     try {
       const res = await fetch(`${API_URL}/api/v1/chat/human-message`, {
         method: "POST",
@@ -146,13 +222,17 @@ function ChatInput({ userName }: { userName: string }) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Escape" && editingId) {
+      onCancelEdit();
+      setContent("");
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
   };
 
-  // Auto-resize textarea
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -163,19 +243,29 @@ function ChatInput({ userName }: { userName: string }) {
   return (
     <form onSubmit={handleSubmit} className="border-t border-neutral-800/40 bg-[#0a0a0a]">
       <div className="max-w-3xl mx-auto px-4 py-3">
+        {editingId && (
+          <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-950/20 border border-violet-800/20">
+            <span className="text-[11px] text-violet-400 font-mono flex-1">Editing message</span>
+            <button type="button" onClick={() => { onCancelEdit(); setContent(""); }} className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono">
+              Cancel (Esc)
+            </button>
+          </div>
+        )}
         {error && (
           <div className="mb-2 px-3 py-1.5 rounded-lg bg-red-950/30 border border-red-800/20 text-[11px] text-red-400 font-mono">
             {error}
           </div>
         )}
-        <div className="flex items-end gap-2 bg-neutral-900/40 border border-neutral-800/50 rounded-2xl px-3 py-2 focus-within:border-neutral-700/60 transition-colors">
+        <div className={`flex items-end gap-2 bg-neutral-900/40 border rounded-2xl px-3 py-2 transition-colors ${
+          editingId ? "border-violet-500/30 focus-within:border-violet-500/50" : "border-neutral-800/50 focus-within:border-neutral-700/60"
+        }`}>
           <AgentAvatar name={userName} specialization="user" size="sm" />
           <textarea
             ref={textareaRef}
             value={content}
             onChange={e => setContent(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Message the agents..."
+            placeholder={editingId ? "Edit your message..." : "Message the agents..."}
             maxLength={2000}
             rows={1}
             className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 outline-none resize-none font-mono leading-relaxed max-h-[120px]"
@@ -185,12 +275,16 @@ function ChatInput({ userName }: { userName: string }) {
             disabled={!canSend}
             className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
               canSend
-                ? "bg-white text-black hover:bg-neutral-200 hover:scale-105"
+                ? editingId ? "bg-violet-500 text-white hover:bg-violet-400 hover:scale-105" : "bg-white text-black hover:bg-neutral-200 hover:scale-105"
                 : "bg-neutral-800/40 text-neutral-600 cursor-not-allowed"
             }`}
           >
             {sending ? (
               <span className="text-xs animate-pulse">...</span>
+            ) : editingId ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
             ) : (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M22 2L11 13" /><path d="M22 2L15 22L11 13L2 9L22 2Z" />
@@ -198,7 +292,9 @@ function ChatInput({ userName }: { userName: string }) {
             )}
           </button>
         </div>
-        <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">Enter to send, Shift+Enter for newline</p>
+        <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">
+          {editingId ? "Enter to save, Esc to cancel" : "Enter to send, Shift+Enter for newline"}
+        </p>
       </div>
     </form>
   );
@@ -214,6 +310,8 @@ export default function ChatPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [liveCount, setLiveCount] = useState(0);
   const [userName, setUserName] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState("");
   const esRef = useRef<EventSource | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -244,9 +342,17 @@ export default function ChatPage() {
     esRef.current = es;
     es.onmessage = (e) => {
       try {
-        const msg: ChatMessage = JSON.parse(e.data);
+        const msg = JSON.parse(e.data);
         if (msg.type === "ping") return;
-        setMessages(prev => [...prev, msg].slice(-500));
+        if (msg.type === "edit") {
+          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: msg.content, edited_at: new Date().toISOString() } : m));
+          return;
+        }
+        if (msg.type === "delete") {
+          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: "[deleted]", is_deleted: true } : m));
+          return;
+        }
+        setMessages(prev => [...prev, msg as ChatMessage].slice(-500));
         setLiveCount(c => c + 1);
         const container = containerRef.current;
         if (container) {
@@ -283,6 +389,28 @@ export default function ChatPage() {
   const handleScroll = () => {
     const container = containerRef.current;
     if (container && container.scrollTop < 50) loadOlder();
+  };
+
+  const handleEdit = (id: string, content: string) => {
+    setEditingId(id);
+    setEditingContent(content);
+  };
+
+  const handleSaveEdit = (id: string, newContent: string) => {
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, content: newContent, edited_at: new Date().toISOString() } : m));
+  };
+
+  const handleDelete = async (id: string) => {
+    const token = localStorage.getItem("access_token");
+    try {
+      const res = await fetch(`${API_URL}/api/v1/chat/human-messages/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setMessages(prev => prev.map(m => m.id === id ? { ...m, content: "[deleted]", is_deleted: true } : m));
+      }
+    } catch {}
   };
 
   const filtered = messages.filter(m =>
@@ -417,7 +545,7 @@ export default function ChatPage() {
                         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                       </div>
                     )}
-                    <MessageGroup messages={group} isHuman={isHuman} />
+                    <MessageGroup messages={group} isHuman={isHuman} userName={userName} onEdit={handleEdit} onDelete={handleDelete} />
                   </div>
                 );
               })}
@@ -429,7 +557,13 @@ export default function ChatPage() {
 
       {/* Input */}
       {userName ? (
-        <ChatInput userName={userName} />
+        <ChatInput
+          userName={userName}
+          editingId={editingId}
+          editingContent={editingContent}
+          onCancelEdit={() => { setEditingId(null); setEditingContent(""); }}
+          onSaveEdit={handleSaveEdit}
+        />
       ) : (
         <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-4 text-center">

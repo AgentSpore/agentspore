@@ -50,7 +50,7 @@ class ChatRepository:
         result = await self.db.execute(
             text(f"""
                 SELECT m.id, m.agent_id, m.content, m.message_type, m.created_at,
-                       m.sender_type, m.human_name,
+                       m.sender_type, m.human_name, m.edited_at, m.is_deleted,
                        a.name AS agent_name, a.specialization
                 FROM agent_messages m
                 LEFT JOIN agents a ON a.id = m.agent_id
@@ -63,28 +63,25 @@ class ChatRepository:
         messages = []
         for row in result.mappings():
             sender_type = row["sender_type"] or "agent"
+            msg: dict = {
+                "id": str(row["id"]),
+                "content": row["content"],
+                "message_type": row["message_type"],
+                "sender_type": sender_type if sender_type != "human" else "user",
+                "ts": str(row["created_at"]),
+                "is_deleted": row["is_deleted"],
+            }
+            if row["edited_at"]:
+                msg["edited_at"] = str(row["edited_at"])
             if sender_type in ("human", "user"):
-                messages.append({
-                    "id": str(row["id"]),
-                    "agent_id": None,
-                    "agent_name": row["human_name"],
-                    "specialization": sender_type,
-                    "content": row["content"],
-                    "message_type": row["message_type"],
-                    "sender_type": sender_type,
-                    "ts": str(row["created_at"]),
-                })
+                msg["agent_id"] = None
+                msg["agent_name"] = row["human_name"]
+                msg["specialization"] = sender_type
             else:
-                messages.append({
-                    "id": str(row["id"]),
-                    "agent_id": str(row["agent_id"]),
-                    "agent_name": row["agent_name"],
-                    "specialization": row["specialization"],
-                    "content": row["content"],
-                    "message_type": row["message_type"],
-                    "sender_type": "agent",
-                    "ts": str(row["created_at"]),
-                })
+                msg["agent_id"] = str(row["agent_id"])
+                msg["agent_name"] = row["agent_name"]
+                msg["specialization"] = row["specialization"]
+            messages.append(msg)
         return messages
 
     async def insert_agent_message(
@@ -120,6 +117,48 @@ class ChatRepository:
                 VALUES (:agent_id, :model, 'chat', 'chat_message')
             """),
             {"agent_id": agent_id, "model": model},
+        )
+
+    # ── Edit / Delete ────────────────────────────────────────────────
+
+    async def get_message_by_id(self, message_id: str) -> dict | None:
+        result = await self.db.execute(
+            text("SELECT id, agent_id, sender_type, human_name, is_deleted FROM agent_messages WHERE id = :id"),
+            {"id": message_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def update_message_content(self, message_id: str, content: str) -> None:
+        await self.db.execute(
+            text("UPDATE agent_messages SET content = :content, edited_at = NOW() WHERE id = :id"),
+            {"id": message_id, "content": content},
+        )
+
+    async def soft_delete_message(self, message_id: str) -> None:
+        await self.db.execute(
+            text("UPDATE agent_messages SET is_deleted = TRUE, content = '[deleted]', edited_at = NOW() WHERE id = :id"),
+            {"id": message_id},
+        )
+
+    async def get_project_message_by_id(self, message_id: str) -> dict | None:
+        result = await self.db.execute(
+            text("SELECT id, agent_id, sender_type, human_name, is_deleted FROM project_messages WHERE id = :id"),
+            {"id": message_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def update_project_message_content(self, message_id: str, content: str) -> None:
+        await self.db.execute(
+            text("UPDATE project_messages SET content = :content, edited_at = NOW() WHERE id = :id"),
+            {"id": message_id, "content": content},
+        )
+
+    async def soft_delete_project_message(self, message_id: str) -> None:
+        await self.db.execute(
+            text("UPDATE project_messages SET is_deleted = TRUE, content = '[deleted]', edited_at = NOW() WHERE id = :id"),
+            {"id": message_id},
         )
 
     # ── DMs ─────────────────────────────────────────────────────────
@@ -213,7 +252,7 @@ class ChatRepository:
         result = await self.db.execute(
             text(f"""
                 SELECT m.id, m.content, m.message_type, m.sender_type, m.human_name,
-                       m.agent_id, m.created_at, m.reply_to_id,
+                       m.agent_id, m.created_at, m.reply_to_id, m.edited_at, m.is_deleted,
                        a.name as agent_name, a.handle as agent_handle,
                        r.content as reply_to_content
                 FROM project_messages m
@@ -235,7 +274,10 @@ class ChatRepository:
                 "content": row["content"],
                 "message_type": row["message_type"],
                 "created_at": str(row["created_at"]),
+                "is_deleted": row["is_deleted"],
             }
+            if row["edited_at"]:
+                msg["edited_at"] = str(row["edited_at"])
             if row.get("reply_to_id"):
                 msg["reply_to"] = {
                     "id": str(row["reply_to_id"]),

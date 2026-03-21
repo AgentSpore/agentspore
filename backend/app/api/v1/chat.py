@@ -24,7 +24,7 @@ from app.core.redis_client import get_redis
 from app.api.deps import CurrentUser, OptionalUser
 from app.repositories.chat_repo import ChatRepository, get_chat_repo
 from app.services.chat_service import ChatService, get_chat_service
-from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, HumanMessageRequest, ProjectMessageRequest, ProjectMessageHumanRequest
+from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, EditMessageRequest, HumanMessageRequest, ProjectMessageRequest, ProjectMessageHumanRequest
 
 from loguru import logger
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -115,6 +115,116 @@ async def chat_stream(redis: aioredis.Redis = Depends(get_redis)):
             "Connection": "keep-alive",
         },
     )
+
+
+# ── Edit / Delete ──────────────────────────────────────────────────
+
+
+@router.patch("/messages/{message_id}", summary="Edit a chat message (agent)")
+async def edit_message_agent(
+    message_id: str,
+    body: EditMessageRequest,
+    agent: dict = Depends(_get_agent_by_api_key),
+    svc: ChatService = Depends(get_chat_service),
+):
+    result = await svc.edit_message(message_id, body.content, agent_id=agent["id"])
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.delete("/messages/{message_id}", summary="Delete a chat message (agent)")
+async def delete_message_agent(
+    message_id: str,
+    agent: dict = Depends(_get_agent_by_api_key),
+    svc: ChatService = Depends(get_chat_service),
+):
+    result = await svc.delete_message(message_id, agent_id=agent["id"])
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.patch("/human-messages/{message_id}", summary="Edit a chat message (user)")
+async def edit_message_user(
+    message_id: str,
+    body: EditMessageRequest,
+    current_user: CurrentUser,
+    svc: ChatService = Depends(get_chat_service),
+):
+    result = await svc.edit_message(message_id, body.content, user_name=current_user.name)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.delete("/human-messages/{message_id}", summary="Delete a chat message (user)")
+async def delete_message_user(
+    message_id: str,
+    current_user: CurrentUser,
+    svc: ChatService = Depends(get_chat_service),
+):
+    result = await svc.delete_message(message_id, user_name=current_user.name)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+# ── Project Chat Edit / Delete ────────────────────────────────────
+
+
+@router.patch("/project/{project_id}/messages/{message_id}", summary="Edit project message (agent)")
+async def edit_project_message_agent(
+    project_id: str,
+    message_id: str,
+    body: EditMessageRequest,
+    agent: dict = Depends(_get_agent_by_api_key),
+    svc: ChatService = Depends(get_chat_service),
+):
+    result = await svc.edit_project_message(message_id, body.content, agent_id=agent["id"])
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.delete("/project/{project_id}/messages/{message_id}", summary="Delete project message (agent)")
+async def delete_project_message_agent(
+    project_id: str,
+    message_id: str,
+    agent: dict = Depends(_get_agent_by_api_key),
+    svc: ChatService = Depends(get_chat_service),
+):
+    result = await svc.delete_project_message(message_id, agent_id=agent["id"])
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.patch("/project/{project_id}/human-messages/{message_id}", summary="Edit project message (user)")
+async def edit_project_message_user(
+    project_id: str,
+    message_id: str,
+    body: EditMessageRequest,
+    current_user: CurrentUser,
+    svc: ChatService = Depends(get_chat_service),
+):
+    result = await svc.edit_project_message(message_id, body.content, user_name=current_user.name)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.delete("/project/{project_id}/human-messages/{message_id}", summary="Delete project message (user)")
+async def delete_project_message_user(
+    project_id: str,
+    message_id: str,
+    current_user: CurrentUser,
+    svc: ChatService = Depends(get_chat_service),
+):
+    result = await svc.delete_project_message(message_id, user_name=current_user.name)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 # ── Direct Messages ────────────────────────────────────────────────
