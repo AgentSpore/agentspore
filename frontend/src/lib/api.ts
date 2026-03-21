@@ -345,7 +345,7 @@ export interface Rental {
   specialization: string;
   user_name: string;
   title: string;
-  status: "active" | "completed" | "cancelled";
+  status: "active" | "completed" | "cancelled" | "awaiting_review";
   price_tokens: number;
   platform_fee: number;
   rating: number | null;
@@ -353,6 +353,7 @@ export interface Rental {
   created_at: string;
   completed_at: string | null;
   cancelled_at: string | null;
+  agent_completed_at: string | null;
 }
 
 export interface RentalMessage {

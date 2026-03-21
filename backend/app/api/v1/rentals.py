@@ -30,11 +30,13 @@ from app.repositories.chat_repo import ChatRepository, get_chat_repo
 from app.repositories.rental_repo import RentalRepository, get_rental_repo
 from app.services.payout_service import PayoutService, get_payout_service
 from app.schemas.rentals import (
+    AgentCompleteRentalRequest,
     AgentRentalMessageRequest,
     CancelRentalRequest,
     CompleteRentalRequest,
     CreateRentalRequest,
     RentalMessageRequest,
+    ResumeRentalRequest,
 )
 
 from loguru import logger
@@ -61,6 +63,7 @@ def _rental_to_response(r: dict) -> dict:
         "created_at": str(r["created_at"]),
         "completed_at": str(r["completed_at"]) if r.get("completed_at") else None,
         "cancelled_at": str(r["cancelled_at"]) if r.get("cancelled_at") else None,
+        "agent_completed_at": str(r["agent_completed_at"]) if r.get("agent_completed_at") else None,
     }
 
 
@@ -312,8 +315,8 @@ async def complete_rental(
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["user_id"]) != str(user.id):
         raise HTTPException(status_code=403, detail="Access denied")
-    if rental["status"] != "active":
-        raise HTTPException(status_code=400, detail="Rental is not active")
+    if rental["status"] not in ("active", "awaiting_review"):
+        raise HTTPException(status_code=400, detail="Rental is not active or awaiting review")
 
     await rental_repo.update_rental_status(
         rental_id, "completed", rating=body.rating, review=body.review,
@@ -352,7 +355,7 @@ async def cancel_rental(
         raise HTTPException(status_code=404, detail="Rental not found")
     if str(rental["user_id"]) != str(user.id):
         raise HTTPException(status_code=403, detail="Access denied")
-    if rental["status"] != "active":
+    if rental["status"] not in ("active", "awaiting_review"):
         raise HTTPException(status_code=400, detail="Rental is not active")
 
     await rental_repo.update_rental_status(rental_id, "cancelled")
@@ -369,6 +372,38 @@ async def cancel_rental(
 
     await db.commit()
     logger.info("Rental %s cancelled", rental_id)
+    updated = await rental_repo.get_rental_by_id(rental_id)
+    return _rental_to_response(updated)
+
+
+@router.post("/{rental_id}/resume", summary="Resume rental (send back to agent)")
+async def resume_rental(
+    rental_id: str,
+    body: ResumeRentalRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
+):
+    """User sends rental back to active — agent will pick it up again via heartbeat."""
+    rental = await rental_repo.get_rental_by_id(rental_id)
+    if not rental:
+        raise HTTPException(status_code=404, detail="Rental not found")
+    if str(rental["user_id"]) != str(user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if rental["status"] != "awaiting_review":
+        raise HTTPException(status_code=400, detail="Rental is not awaiting review")
+
+    await rental_repo.update_rental_status(rental_id, "active")
+
+    reason_text = f": {body.reason}" if body.reason else ""
+    await rental_repo.insert_message(
+        rental_id, "system", str(user.id),
+        f"Rental resumed by user{reason_text}. Agent will continue working.",
+        "system",
+    )
+
+    await db.commit()
+    logger.info("Rental %s resumed by user", rental_id)
     updated = await rental_repo.get_rental_by_id(rental_id)
     return _rental_to_response(updated)
 
@@ -451,3 +486,44 @@ async def agent_send_message(
     await redis.publish(f"{RENTAL_CHANNEL}:{rental_id}", json.dumps(event))
 
     return {"status": "ok", "message_id": str(msg["id"])}
+
+
+@router.post("/agent/rental/{rental_id}/submit", summary="Agent marks rental as done")
+async def agent_submit_rental(
+    rental_id: str,
+    body: AgentCompleteRentalRequest,
+    agent: dict = Depends(_get_agent_by_api_key),
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+    rental_repo: RentalRepository = Depends(get_rental_repo),
+):
+    """Agent marks the task as completed. Rental goes to awaiting_review — user must approve or resume."""
+    rental = await rental_repo.get_rental_by_id(rental_id)
+    if not rental:
+        raise HTTPException(status_code=404, detail="Rental not found")
+    if str(rental["agent_id"]) != str(agent["id"]):
+        raise HTTPException(status_code=403, detail="Not your rental")
+    if rental["status"] != "active":
+        raise HTTPException(status_code=400, detail="Rental is not active")
+
+    await rental_repo.update_rental_status(rental_id, "awaiting_review")
+
+    summary_text = f"\n\nSummary: {body.summary}" if body.summary else ""
+    await rental_repo.insert_message(
+        rental_id, "system", str(agent["id"]),
+        f"Agent marked this task as completed. Awaiting user review.{summary_text}",
+        "system",
+    )
+
+    await db.commit()
+
+    event = {
+        "type": "rental_submitted",
+        "rental_id": rental_id,
+        "agent_id": str(agent["id"]),
+        "agent_name": agent["name"],
+    }
+    await redis.publish(f"{RENTAL_CHANNEL}:{rental_id}", json.dumps(event))
+
+    logger.info("Rental %s submitted by agent %s", rental_id, agent["name"])
+    return {"status": "ok", "rental_id": rental_id, "new_status": "awaiting_review"}

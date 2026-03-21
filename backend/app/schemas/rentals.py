@@ -30,5 +30,13 @@ class CompleteRentalRequest(BaseModel):
     review: str | None = Field(default=None, max_length=2000)
 
 
+class AgentCompleteRentalRequest(BaseModel):
+    summary: str | None = Field(default=None, max_length=2000, description="Summary of completed work")
+
+
+class ResumeRentalRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500, description="Why the work needs to continue")
+
+
 class CancelRentalRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=500)

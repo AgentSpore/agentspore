@@ -259,14 +259,25 @@ export default function ProjectPage() {
   const [chatHasMore, setChatHasMore] = useState(false);
   const [chatLoadingMore, setChatLoadingMore] = useState(false);
   const [chatEditingId, setChatEditingId] = useState<string | null>(null);
+  const [chatReplyTo, setChatReplyTo] = useState<ProjectMessage | null>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
   const chatUserName = auth?.email ? auth.email.split("@")[0] : auth ? `user-${auth.userId.slice(0, 6)}` : null;
 
   const handleChatEdit = (id: string, content: string) => {
     setChatEditingId(id);
+    setChatReplyTo(null);
     setChatContent(content);
+    chatInputRef.current?.focus();
+  };
+
+  const handleChatReply = (msg: ProjectMessage) => {
+    setChatReplyTo(msg);
+    setChatEditingId(null);
+    setChatContent("");
+    chatInputRef.current?.focus();
   };
 
   const handleChatDelete = async (id: string) => {
@@ -294,6 +305,12 @@ export default function ProjectPage() {
       }
     } catch { /* ignore */ }
     setChatSending(false);
+  };
+
+  const cancelChatInput = () => {
+    setChatEditingId(null);
+    setChatReplyTo(null);
+    setChatContent("");
   };
 
   const loadChatMessages = useCallback(async () => {
@@ -338,12 +355,15 @@ export default function ProjectPage() {
     setChatSending(true);
     try {
       const userName = auth.email ? auth.email.split("@")[0] : `user-${auth.userId.slice(0, 6)}`;
+      const body: Record<string, string> = { name: userName, content: chatContent.trim(), message_type: "text" };
+      if (chatReplyTo) body.reply_to_id = chatReplyTo.id;
       const res = await apiFetch(`/chat/project/${projectId}/human-messages`, auth.token, {
         method: "POST",
-        body: JSON.stringify({ name: userName, content: chatContent.trim(), message_type: "text" }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         setChatContent("");
+        setChatReplyTo(null);
         await loadChatMessages();
       }
     } catch { /* ignore */ }
@@ -532,133 +552,251 @@ export default function ProjectPage() {
 
         {/* ── Chat ── */}
         {tab === "chat" && (
-          <div className="space-y-4 fade-up" style={{ animationDelay: "150ms" }}>
-            {/* Terminal-style chat panel */}
-            <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm overflow-hidden">
-              {/* Terminal header dots */}
-              <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-neutral-800/50">
-                <div className="w-2 h-2 rounded-full bg-neutral-700" />
-                <div className="w-2 h-2 rounded-full bg-neutral-700" />
-                <div className="w-2 h-2 rounded-full bg-neutral-700" />
-                <span className="text-[10px] font-mono text-neutral-700 ml-2">discussion</span>
+          <div className="fade-up flex flex-col" style={{ animationDelay: "150ms" }}>
+            {/* Chat panel */}
+            <div className="bg-neutral-900/20 border border-neutral-800/50 rounded-2xl backdrop-blur-sm overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-3 border-b border-neutral-800/40">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center">
+                    <span className="text-[11px] text-neutral-500">#</span>
+                  </div>
+                  <div>
+                    <span className="text-[12px] font-semibold text-neutral-300 font-mono">Discussion</span>
+                    <span className="text-[10px] text-neutral-700 font-mono ml-2">{chatMessages.length} messages</span>
+                  </div>
+                </div>
               </div>
+
+              {/* Messages */}
               <div
                 ref={chatContainerRef}
-                className="chat-panel h-[400px] overflow-y-auto p-4 space-y-3"
+                className="chat-panel h-[450px] overflow-y-auto px-5 py-4 space-y-1"
                 onScroll={(e) => {
                   if ((e.target as HTMLDivElement).scrollTop < 50) loadOlderChat();
                 }}
               >
                 {chatLoadingMore && (
-                  <div className="text-center text-neutral-600 text-[10px] font-mono py-2">loading older messages...</div>
+                  <div className="flex justify-center py-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full border border-neutral-700 border-t-neutral-500 animate-spin" />
+                      <span className="text-[10px] text-neutral-600 font-mono">Loading older messages</span>
+                    </div>
+                  </div>
                 )}
                 {chatMessages.length === 0 ? (
-                  <div className="flex items-center justify-center h-full text-neutral-600 text-sm font-mono">
-                    No messages yet. Start a discussion!
+                  <div className="flex flex-col items-center justify-center h-full gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-neutral-800/30 border border-neutral-800/40 flex items-center justify-center">
+                      <span className="text-xl text-neutral-700">#</span>
+                    </div>
+                    <p className="text-neutral-600 text-sm font-mono">No messages yet</p>
+                    <p className="text-neutral-700 text-[10px] font-mono">Start a discussion about this project</p>
                   </div>
                 ) : (
-                  chatMessages.map(msg => {
+                  chatMessages.map((msg, idx) => {
                     const isOwner = chatUserName && msg.sender_name === chatUserName && msg.sender_type !== "agent";
+                    const isUser = msg.sender_type !== "agent";
+                    const prev = idx > 0 ? chatMessages[idx - 1] : null;
+                    const showDate = !prev || new Date(msg.created_at).toDateString() !== new Date(prev.created_at).toDateString();
+                    const sameAuthor = prev && prev.sender_name === msg.sender_name && prev.sender_type === msg.sender_type
+                      && Math.abs(new Date(msg.created_at).getTime() - new Date(prev.created_at).getTime()) < 300000
+                      && !msg.reply_to;
+
                     return (
-                    <div key={msg.id} className="group">
-                      {msg.reply_to && (
-                        <div className="ml-9 mb-1 text-[10px] text-neutral-600 border-l-2 border-neutral-800/50 pl-2 truncate font-mono">
-                          {msg.reply_to.content}
-                        </div>
-                      )}
-                      <div className="flex items-start gap-2.5">
-                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-bold font-mono shrink-0 ${
-                          msg.sender_type === "agent"
-                            ? "bg-violet-500/15 text-violet-400 border border-violet-500/20"
-                            : "bg-cyan-500/15 text-cyan-400 border border-cyan-500/20"
-                        }`}>
-                          {msg.sender_name[0].toUpperCase()}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline gap-2">
-                            <span className={`text-sm font-medium ${
-                              msg.sender_type === "agent" ? "text-violet-400" : "text-cyan-400"
-                            }`}>
-                              {msg.sender_name}
+                      <div key={msg.id}>
+                        {showDate && (
+                          <div className="flex items-center gap-3 my-4">
+                            <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
+                            <span className="text-[9px] text-neutral-600 font-mono uppercase tracking-[0.15em]">
+                              {new Date(msg.created_at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
                             </span>
-                            <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(msg.created_at)}</span>
-                            {msg.message_type !== "text" && !msg.is_deleted && (
-                              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
-                                msg.message_type === "bug" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
-                                msg.message_type === "idea" ? "bg-orange-500/10 text-orange-400 border border-orange-500/20" :
-                                "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
-                              }`}>
-                                {msg.message_type}
-                              </span>
-                            )}
-                            {isOwner && !msg.is_deleted && (
-                              <span className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 ml-1">
-                                <button onClick={() => handleChatEdit(msg.id, msg.content)} className="text-[10px] text-neutral-600 hover:text-violet-400 font-mono transition-colors">edit</button>
-                                <button onClick={() => handleChatDelete(msg.id)} className="text-[10px] text-neutral-600 hover:text-red-400 font-mono transition-colors">del</button>
-                              </span>
-                            )}
+                            <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                           </div>
-                          <p className={`text-sm mt-0.5 whitespace-pre-wrap break-words ${msg.is_deleted ? "text-neutral-600 italic" : "text-neutral-300"}`}>
-                            {msg.content}
-                            {msg.edited_at && !msg.is_deleted && <span className="text-[8px] text-neutral-600 ml-1.5">(edited)</span>}
-                          </p>
+                        )}
+                        <div className={`group rounded-xl px-3 py-1.5 -mx-1 transition-colors hover:bg-white/[0.02] ${sameAuthor ? "" : "mt-3"}`}>
+                          {/* Reply preview */}
+                          {msg.reply_to && (
+                            <div className="flex items-center gap-2 ml-10 mb-1">
+                              <div className="w-0.5 h-3 rounded-full bg-neutral-700/50" />
+                              <span className="text-[10px] text-neutral-600 font-mono truncate max-w-[300px]">{msg.reply_to.content}</span>
+                            </div>
+                          )}
+                          <div className="flex items-start gap-2.5">
+                            {/* Avatar */}
+                            {sameAuthor ? (
+                              <div className="w-7 shrink-0" />
+                            ) : (
+                              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold font-mono shrink-0 ${
+                                isUser
+                                  ? "bg-gradient-to-br from-cyan-500/20 to-cyan-700/20 border border-cyan-500/20 ring-1 ring-cyan-500/10"
+                                  : "bg-gradient-to-br from-violet-500/20 to-violet-700/20 border border-violet-500/20 ring-1 ring-violet-500/10"
+                              }`}>
+                                <span className={`uppercase ${isUser ? "text-cyan-400" : "text-violet-400"}`}>{msg.sender_name[0]}</span>
+                              </div>
+                            )}
+
+                            {/* Content */}
+                            <div className="flex-1 min-w-0">
+                              {!sameAuthor && (
+                                <div className="flex items-baseline gap-2 mb-0.5">
+                                  <span className={`text-[12px] font-semibold font-mono ${isUser ? "text-cyan-400" : "text-violet-400"}`}>
+                                    {msg.sender_name}
+                                  </span>
+                                  {isUser && (
+                                    <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/15 font-mono font-bold uppercase tracking-wider">usr</span>
+                                  )}
+                                  {!isUser && (
+                                    <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/15 font-mono font-bold uppercase tracking-wider">agent</span>
+                                  )}
+                                  <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(msg.created_at)}</span>
+                                  {msg.message_type !== "text" && !msg.is_deleted && (
+                                    <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-md ${
+                                      msg.message_type === "bug" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
+                                      msg.message_type === "idea" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
+                                      "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                                    }`}>
+                                      {msg.message_type}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              <div className="flex items-start gap-1">
+                                <p className={`text-sm leading-relaxed whitespace-pre-wrap break-words flex-1 ${
+                                  msg.is_deleted ? "text-neutral-600 italic" : "text-neutral-300"
+                                }`}>
+                                  {msg.content}
+                                  {msg.edited_at && !msg.is_deleted && <span className="text-[8px] text-neutral-600 ml-1.5">(edited)</span>}
+                                </p>
+                                {/* Actions */}
+                                {!msg.is_deleted && auth && (
+                                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 shrink-0 mt-0.5">
+                                    <button onClick={() => handleChatReply(msg)} title="Reply"
+                                      className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors">
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <polyline points="9 17 4 12 9 7" /><path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+                                      </svg>
+                                    </button>
+                                    {isOwner && (
+                                      <>
+                                        <button onClick={() => handleChatEdit(msg.id, msg.content)} title="Edit"
+                                          className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors">
+                                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                          </svg>
+                                        </button>
+                                        <button onClick={() => handleChatDelete(msg.id)} title="Delete"
+                                          className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                          </svg>
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
                     );
                   })
                 )}
                 <div ref={chatBottomRef} />
               </div>
-            </div>
 
-            {!auth ? (
-              <div className="flex items-center justify-center gap-2 py-3 rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm">
-                <span className="text-sm text-neutral-500 font-mono">Want to join the discussion?</span>
-                <button onClick={() => setShowLogin(true)}
-                  className="text-sm text-white font-medium font-mono hover:text-violet-400 transition-colors">
-                  Sign in
-                </button>
-              </div>
-            ) : (
-              <form onSubmit={handleChatSend} className="space-y-2">
-                {chatEditingId && (
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-950/20 border border-violet-800/20">
-                    <span className="text-[11px] text-violet-400 font-mono flex-1">Editing message</span>
-                    <button type="button" onClick={() => { setChatEditingId(null); setChatContent(""); }} className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono">Cancel</button>
+              {/* Input area */}
+              <div className="border-t border-neutral-800/40 px-5 py-3">
+                {!auth ? (
+                  <div className="flex items-center justify-center gap-2 py-2">
+                    <span className="text-[12px] text-neutral-600 font-mono">Want to join the discussion?</span>
+                    <button onClick={() => setShowLogin(true)}
+                      className="text-[12px] text-violet-400 hover:text-violet-300 font-medium font-mono transition-colors">
+                      Sign in
+                    </button>
                   </div>
+                ) : (
+                  <form onSubmit={handleChatSend} className="space-y-0">
+                    {/* Edit/Reply indicator */}
+                    {(chatEditingId || chatReplyTo) && (
+                      <div className={`flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg border ${
+                        chatEditingId
+                          ? "bg-violet-950/15 border-violet-800/20"
+                          : "bg-cyan-950/15 border-cyan-800/20"
+                      }`}>
+                        <div className={`w-0.5 h-4 rounded-full ${chatEditingId ? "bg-violet-500/50" : "bg-cyan-500/50"}`} />
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-[10px] font-mono font-semibold ${chatEditingId ? "text-violet-400" : "text-cyan-400"}`}>
+                            {chatEditingId ? "Editing message" : `Replying to ${chatReplyTo?.sender_name}`}
+                          </span>
+                          {chatReplyTo && (
+                            <p className="text-[10px] text-neutral-600 font-mono truncate">{chatReplyTo.content}</p>
+                          )}
+                        </div>
+                        <button type="button" onClick={cancelChatInput}
+                          className="text-neutral-600 hover:text-neutral-300 transition-colors p-0.5">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                    <div className={`flex items-end gap-2 rounded-xl px-3 py-2 border transition-colors ${
+                      chatEditingId ? "bg-violet-500/5 border-violet-500/20 focus-within:border-violet-500/40" :
+                      chatReplyTo ? "bg-cyan-500/5 border-cyan-500/20 focus-within:border-cyan-500/40" :
+                      "bg-neutral-900/30 border-neutral-800/40 focus-within:border-neutral-700/50"
+                    }`}>
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold font-mono shrink-0 bg-gradient-to-br from-cyan-500/20 to-cyan-700/20 border border-cyan-500/20`}>
+                        <span className="text-cyan-400 uppercase">{chatUserName?.[0] ?? "?"}</span>
+                      </div>
+                      <textarea
+                        ref={chatInputRef}
+                        value={chatContent}
+                        onChange={e => setChatContent(e.target.value)}
+                        placeholder={chatEditingId ? "Edit your message..." : chatReplyTo ? `Reply to ${chatReplyTo.sender_name}...` : "Write a message..."}
+                        rows={1}
+                        className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none resize-none max-h-28 overflow-y-auto font-mono leading-relaxed"
+                        onKeyDown={e => {
+                          if (e.key === "Escape") { cancelChatInput(); return; }
+                          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); }
+                        }}
+                        onInput={e => {
+                          const t = e.target as HTMLTextAreaElement;
+                          t.style.height = "auto";
+                          t.style.height = Math.min(t.scrollHeight, 112) + "px";
+                        }}
+                      />
+                      <button
+                        type="submit"
+                        disabled={chatSending || !chatContent.trim()}
+                        className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200 ${
+                          !chatContent.trim() || chatSending
+                            ? "bg-neutral-800/40 text-neutral-600 cursor-not-allowed"
+                            : chatEditingId ? "bg-violet-500 text-white hover:bg-violet-400 hover:scale-105"
+                            : "bg-white text-black hover:bg-neutral-200 hover:scale-105"
+                        }`}
+                      >
+                        {chatSending ? (
+                          <span className="text-[10px] animate-pulse">...</span>
+                        ) : chatEditingId ? (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        ) : (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22 2L11 13" /><path d="M22 2L15 22L11 13L2 9L22 2Z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">
+                      {chatEditingId ? "Enter to save, Esc to cancel" : chatReplyTo ? "Enter to reply, Esc to cancel" : "Enter to send, Shift+Enter for newline"}
+                    </p>
+                  </form>
                 )}
-                <div className="flex gap-2 items-end">
-                  <textarea
-                    value={chatContent}
-                    onChange={e => setChatContent(e.target.value)}
-                    placeholder={chatEditingId ? "Edit your message..." : "Write a message..."}
-                    rows={1}
-                    className={`flex-1 bg-neutral-900/30 border rounded-xl px-4 py-2.5 text-sm text-white placeholder-neutral-600 focus:outline-none resize-none max-h-32 overflow-y-auto font-mono backdrop-blur-sm ${
-                      chatEditingId ? "border-violet-500/30 focus:border-violet-500/50" : "border-neutral-800/50 focus:border-neutral-700/60"
-                    }`}
-                    onKeyDown={e => {
-                      if (e.key === "Escape" && chatEditingId) { setChatEditingId(null); setChatContent(""); return; }
-                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); }
-                    }}
-                    onInput={e => {
-                      const t = e.target as HTMLTextAreaElement;
-                      t.style.height = "auto";
-                      t.style.height = Math.min(t.scrollHeight, 128) + "px";
-                    }}
-                  />
-                  <button
-                    type="submit"
-                    disabled={chatSending || !chatContent.trim()}
-                    className={`text-sm font-mono font-medium px-5 py-2.5 rounded-lg disabled:opacity-50 transition-colors hover:opacity-90 shrink-0 ${
-                      chatEditingId ? "bg-violet-500 text-white" : "bg-white text-black"
-                    }`}
-                  >
-                    {chatSending ? "..." : chatEditingId ? "Save" : "Send"}
-                  </button>
-                </div>
-              </form>
-            )}
+              </div>
+            </div>
           </div>
         )}
 
