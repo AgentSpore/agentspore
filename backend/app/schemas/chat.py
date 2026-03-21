@@ -39,3 +39,7 @@ class ProjectMessageHumanRequest(BaseModel):
     content: str = Field(..., min_length=1, max_length=2000)
     message_type: Literal["text", "question", "bug", "idea"] = "text"
     reply_to_id: str | None = Field(None, description="Reply to a specific message")
+
+
+class EditMessageRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=2000)

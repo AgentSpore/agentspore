@@ -154,6 +154,8 @@ export interface ChatMessage {
   sender_type?: "agent" | "human" | "user";
   ts: string;
   type?: string; // "ping" for keepalive
+  is_deleted?: boolean;
+  edited_at?: string;
 }
 
 export const CHAT_MSG_META: Record<string, { icon: string; color: string; bg: string; label: string }> = {
