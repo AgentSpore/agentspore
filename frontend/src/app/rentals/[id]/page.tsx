@@ -6,15 +6,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { API_URL, Rental, RentalMessage, timeAgo } from "@/lib/api";
 
 const STATUS_BADGE: Record<string, string> = {
-  active:    "bg-emerald-400/10 text-emerald-400 border border-emerald-400/20",
-  completed: "bg-neutral-800/50 text-neutral-400 border border-neutral-700/30",
-  cancelled: "bg-red-400/10 text-red-400 border border-red-400/20",
+  active:          "bg-emerald-400/10 text-emerald-400 border border-emerald-400/20",
+  awaiting_review: "bg-amber-400/10 text-amber-400 border border-amber-400/20",
+  completed:       "bg-neutral-800/50 text-neutral-400 border border-neutral-700/30",
+  cancelled:       "bg-red-400/10 text-red-400 border border-red-400/20",
 };
 
 const STATUS_DOT: Record<string, string> = {
-  active:    "bg-emerald-400",
-  completed: "bg-neutral-500",
-  cancelled: "bg-red-400",
+  active:          "bg-emerald-400",
+  awaiting_review: "bg-amber-400",
+  completed:       "bg-neutral-500",
+  cancelled:       "bg-red-400",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  active:          "Active",
+  awaiting_review: "Awaiting Review",
+  completed:       "Completed",
+  cancelled:       "Cancelled",
 };
 
 function authHeaders(): Record<string, string> {
@@ -245,7 +254,7 @@ export default function RentalChatPage() {
   useEffect(() => {
     if (!rental) return;
     loadInitial();
-    if (rental.status === "active") {
+    if (rental.status === "active" || rental.status === "awaiting_review") {
       pollRef.current = setInterval(pollNewMessages, 5000);
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
@@ -366,6 +375,29 @@ export default function RentalChatPage() {
     }
   };
 
+  // ─── Resume rental ────────────────────────────────────────────────────
+  const handleResume = async () => {
+    const reason = prompt("Why does the agent need to continue? (optional)");
+    if (reason === null) return; // user pressed cancel
+    setActionLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/rentals/${id}/resume`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ reason: reason || null }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setRental((prev) => prev ? { ...prev, ...updated } : updated);
+        await pollNewMessages();
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   // ─── Cancel rental ────────────────────────────────────────────────────
   const handleCancel = async () => {
     if (!confirm("Are you sure you want to cancel this rental?")) return;
@@ -420,6 +452,8 @@ export default function RentalChatPage() {
   }
 
   const isActive = rental.status === "active";
+  const isAwaitingReview = rental.status === "awaiting_review";
+  const canAct = isActive || isAwaitingReview;
 
   return (
     <div className="h-screen bg-[#0a0a0a] text-white flex flex-col relative">
@@ -452,7 +486,7 @@ export default function RentalChatPage() {
                 <h1 className="text-lg font-medium text-white font-mono truncate min-w-0">{rental.title}</h1>
                 <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-mono rounded-md ${STATUS_BADGE[rental.status] || STATUS_BADGE.active}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[rental.status] || STATUS_DOT.active}`} />
-                  {rental.status}
+                  {STATUS_LABEL[rental.status] || rental.status}
                 </span>
               </div>
 
@@ -467,8 +501,8 @@ export default function RentalChatPage() {
             </div>
 
             {/* Action buttons */}
-            {isActive && (
-              <div className="flex items-center gap-3 shrink-0">
+            {canAct && (
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={handleCancel}
                   disabled={actionLoading}
@@ -476,16 +510,33 @@ export default function RentalChatPage() {
                 >
                   Cancel
                 </button>
+                {isAwaitingReview && (
+                  <button
+                    onClick={handleResume}
+                    disabled={actionLoading}
+                    className="bg-amber-500/10 border border-amber-500/25 text-amber-400 hover:bg-amber-500/20 font-mono text-sm px-3 py-1.5 rounded-lg transition-all disabled:opacity-30"
+                  >
+                    Resume
+                  </button>
+                )}
                 <button
                   onClick={() => setCompleteOpen(true)}
                   disabled={actionLoading}
                   className="bg-white text-black font-medium font-mono text-sm px-4 py-1.5 rounded-lg hover:bg-neutral-200 disabled:opacity-30 transition-all"
                 >
-                  Complete
+                  {isAwaitingReview ? "Approve" : "Complete"}
                 </button>
               </div>
             )}
           </div>
+
+          {/* Awaiting review info */}
+          {isAwaitingReview && rental.agent_completed_at && (
+            <div className="mt-3 bg-amber-500/5 border border-amber-500/20 rounded-lg px-4 py-2.5 flex items-center gap-3">
+              <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-amber-400/70">Submitted</span>
+              <span className="text-amber-400 font-mono text-[11px]">{timeAgo(rental.agent_completed_at)}</span>
+            </div>
+          )}
 
           {/* Completed info — terminal-style panel */}
           {rental.status === "completed" && rental.rating !== null && (
@@ -612,8 +663,20 @@ export default function RentalChatPage() {
         </div>
       </main>
 
+      {/* ─── Awaiting review banner ──────────────────────────────────── */}
+      {isAwaitingReview && (
+        <div className="relative z-10 bg-amber-500/5 border-t border-amber-500/20 px-4 sm:px-6 py-2.5">
+          <div className="max-w-3xl mx-auto flex items-center gap-3">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+            <p className="text-amber-400 text-[11px] font-mono flex-1">
+              Agent has marked this task as completed. Review the work and approve, resume, or cancel.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ─── Input area ────────────────────────────────────────────────── */}
-      {isActive ? (
+      {canAct ? (
         <form
           onSubmit={handleSend}
           className="relative z-10 bg-[#0a0a0a]/95 border-t border-neutral-800/50 backdrop-blur-sm px-4 sm:px-6 py-4"

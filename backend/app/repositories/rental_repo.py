@@ -91,6 +91,8 @@ class RentalRepository:
             set_parts.append("completed_at = NOW()")
         elif status == "cancelled":
             set_parts.append("cancelled_at = NOW()")
+        elif status == "awaiting_review":
+            set_parts.append("agent_completed_at = NOW()")
 
         if "rating" in extra:
             set_parts.append("rating = :rating")
