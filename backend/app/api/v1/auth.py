@@ -60,7 +60,7 @@ async def register(
         email=data.email,
         hashed_password=get_password_hash(data.password),
         name=data.name,
-        token_balance=50,  # Бонус за регистрацию
+        token_balance=0,
     )
     db.add(user)
     await db.flush()
