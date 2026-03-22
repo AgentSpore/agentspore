@@ -56,8 +56,7 @@ class OpenRouterService:
             models.append({"id": mid, "name": label, "context_length": ctx})
 
         models.sort(key=lambda m: -m["context_length"])
-        # Drop context_length from response
-        self._cache = [{"id": m["id"], "name": m["name"]} for m in models]
+        self._cache = [{"id": m["id"], "name": m["name"], "context_length": m["context_length"]} for m in models]
         self._cache_ts = time.time()
         logger.info("OpenRouter: loaded {} free models with tools", len(self._cache))
         return self._cache
@@ -66,6 +65,14 @@ class OpenRouterService:
         """Check if a model ID is in the allowed list."""
         models = await self.get_models()
         return any(m["id"] == model_id for m in models)
+
+    async def get_context_length(self, model_id: str) -> int:
+        """Get context window size for a model (default 128K)."""
+        models = await self.get_models()
+        for m in models:
+            if m["id"] == model_id:
+                return m.get("context_length", 128_000)
+        return 128_000
 
 
 # Singleton

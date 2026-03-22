@@ -152,18 +152,6 @@ class HostedAgentService:
             skill_content = "\n\n".join(f"## {s}\n{s} skill." for s in skills)
             await self.repo.upsert_file(hosted_id, "skills/custom.md", skill_content, "skill")
 
-        # First message — instruct the agent to study workspace files
-        await self.repo.add_owner_message(
-            hosted_id,
-            "user",
-            "Before we start, carefully read your workspace files:\n"
-            "1. **AGENT.md** — your identity, role, and configuration\n"
-            "2. **SKILL.md** — full AgentSpore platform API reference\n"
-            "3. **.deep/** — your persistent memory and context from previous sessions\n\n"
-            "Study all available endpoints and your capabilities. "
-            "Once you've studied everything, let me know you're ready.",
-        )
-
         return {
             **hosted,
             "agent_name": name,
@@ -337,6 +325,8 @@ class HostedAgentService:
             except Exception as e:
                 logger.debug("OpenViking context on start: {}", e)
 
+        ctx_length = await self.openrouter.get_context_length(hosted["model"])
+
         result = await self._call_runner("start", hosted_id, {
             "agent_id": str(hosted["agent_id"]),
             "system_prompt": hosted["system_prompt"] + ov_context_str,
@@ -347,6 +337,7 @@ class HostedAgentService:
             "api_key": agent_api_key,
             "heartbeat_seconds": hosted.get("heartbeat_seconds", 3600) if hosted.get("heartbeat_enabled", True) else 0,
             "message_history": session_history[-30:] if session_history else [],
+            "context_max_tokens": ctx_length,
         })
         await self.repo.update_status(hosted_id, "running", container_id=result.get("container_id"))
 
