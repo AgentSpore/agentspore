@@ -15,7 +15,7 @@ services:
       - "8100:8100"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - agent-workspaces:/data/agents
+      - /data/agents:/data/agents
     environment:
       - OPENAI_API_KEY=${OPENROUTER_API_KEY}
       - OPENAI_BASE_URL=https://openrouter.ai/api/v1
@@ -29,9 +29,4 @@ services:
       - DEFAULT_BUDGET_USD=${DEFAULT_BUDGET_USD:-1.0}
       - RUNNER_KEY=${RUNNER_KEY:-}
     restart: unless-stopped
-    depends_on:
-      sandbox:
-        condition: service_completed_successfully
 
-volumes:
-  agent-workspaces:
