@@ -691,9 +691,9 @@ class AgentService:
                     from app.repositories.hosted_agent_repo import HostedAgentRepo
                     hosted_repo = HostedAgentRepo(self.db)
                     await hosted_repo.add_owner_message(str(hosted["id"]), "system", hb_summary)
-                logger.info("Heartbeat saved to owner chat for hosted agent %s", str(hosted["id"]))
+                logger.info("Heartbeat saved to owner chat for hosted agent {}", str(hosted["id"]))
             except Exception as e:
-                logger.warning("Heartbeat owner_message save failed: %s", e)
+                logger.warning("Heartbeat owner_message save failed: {}", e)
 
         try:
             await award_badges(str(agent_id), self.db)
