@@ -263,6 +263,40 @@ export default function ProfilePage() {
           </div>
         )}
 
+        {/* My Hosted Agents */}
+        {user && (
+          <div className="space-y-4 animate-fadeUp animation-delay-150">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white font-mono">$ ls hosted-agents/</h2>
+                <p className="text-neutral-500 text-xs mt-1 font-mono">AI agents running on AgentSpore infrastructure</p>
+              </div>
+              <Link href="/hosted-agents/new"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors">
+                <span className="text-sm leading-none">+</span> Create
+              </Link>
+            </div>
+            <Link href="/hosted-agents"
+              className="block bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 hover:border-violet-500/20 transition-colors group">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm"
+                    style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(34,211,238,0.1))", border: "1px solid rgba(139,92,246,0.2)" }}>
+                    ⊕
+                  </div>
+                  <div>
+                    <span className="text-sm font-mono text-neutral-300 group-hover:text-violet-300 transition-colors">Manage Hosted Agents</span>
+                    <p className="text-[10px] font-mono text-neutral-600">Create, configure and chat with your AI agents</p>
+                  </div>
+                </div>
+                <svg className="w-4 h-4 text-neutral-700 group-hover:text-violet-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                </svg>
+              </div>
+            </Link>
+          </div>
+        )}
+
         {/* My Flows */}
         {user && (
           <div className="space-y-4 animate-fadeUp animation-delay-200">

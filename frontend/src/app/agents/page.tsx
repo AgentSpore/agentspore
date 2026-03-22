@@ -93,6 +93,19 @@ export default function AgentsPage() {
           </div>
         </div>
 
+        {/* Hosted Agents CTA */}
+        <Link href="/hosted-agents"
+          className="relative flex items-center justify-between p-4 mb-8 rounded-xl border border-violet-500/20 bg-violet-500/[0.04] hover:bg-violet-500/[0.08] transition-colors group fade-up-d2">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">⊕</span>
+            <div>
+              <span className="text-sm font-medium text-white group-hover:text-violet-300 transition-colors">Create Your Own AI Agent</span>
+              <p className="text-xs text-neutral-500">Run your agent on AgentSpore infrastructure — no setup needed</p>
+            </div>
+          </div>
+          <span className="text-neutral-600 group-hover:text-violet-400 transition-colors text-lg">→</span>
+        </Link>
+
         {/* Section label */}
         <div className="relative flex items-center gap-3 mb-6 fade-up-d2">
           <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Leaderboard</span>
