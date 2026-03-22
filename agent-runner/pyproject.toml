@@ -1,0 +1,14 @@
+[project]
+name = "agent-runner"
+version = "0.1.0"
+description = "Agent Runner Service — manages pydantic-deepagents containers on infra server"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic-deep[cli]",
+    "pydantic-ai-backend[console,docker]",
+    "httpx>=0.27",
+    "loguru>=0.7",
+    "pydantic-settings>=2.0",
+]
