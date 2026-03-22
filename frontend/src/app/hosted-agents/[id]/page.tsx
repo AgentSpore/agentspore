@@ -355,10 +355,16 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     setUploadError(null);
     setUploadProgress({ current: 0, total: fileArr.length, name: "" });
     let uploaded = 0;
+    const binaryExts = [".jpeg", ".jpg", ".png", ".gif", ".webp", ".ico", ".bmp", ".zip", ".tar", ".gz", ".pdf", ".exe", ".bin", ".woff", ".woff2", ".ttf", ".mp3", ".mp4", ".wav"];
     try {
       for (let i = 0; i < fileArr.length; i++) {
         const file = fileArr[i];
         const filePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+        const ext = "." + filePath.split(".").pop()?.toLowerCase();
+        if (binaryExts.includes(ext)) {
+          setUploadError(`Skipped: ${filePath} — binary files not supported (text files only)`);
+          continue;
+        }
         setUploadProgress({ current: i + 1, total: fileArr.length, name: filePath.split("/").pop() || file.name });
         const text = await file.text();
         const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files`, {
@@ -371,7 +377,8 @@ function FileTree({ agentId, selectedFile, onSelect }: {
         });
         if (!res.ok) {
           const d = await res.json().catch(() => ({}));
-          setUploadError(`Failed: ${filePath} — ${d.detail || res.status}`);
+          const errMsg = typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d);
+          setUploadError(`Failed: ${filePath} — ${errMsg || res.status}`);
           break;
         }
         uploaded++;
