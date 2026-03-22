@@ -90,20 +90,28 @@ export default function HostedAgentManagePage() {
   const doAction = async (action: string) => {
     setActionError(null);
     setActionLoading(action);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), action === "stop" ? 120_000 : 30_000);
     try {
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/${action}`, {
         method: "POST",
+        signal: controller.signal,
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setActionError(data.detail || `Error ${res.status}`);
         return;
       }
-      await loadAgent();
-    } catch {
-      setActionError("Network error");
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") {
+        setActionError(`${action} timed out — refresh to check status`);
+      } else {
+        setActionError("Network error");
+      }
     } finally {
+      clearTimeout(timeout);
       setActionLoading(null);
+      await loadAgent();
     }
   };
 
@@ -1162,14 +1170,19 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
           </div>
         )}
 
-        {filteredMessages.map(m => (
-          <div key={m.id} className={`flex ${m.sender_type === "user" ? "justify-end" : m.sender_type === "system" ? "justify-center" : "justify-start"}`}>
-            <div className={`rounded-xl text-sm font-mono ${
+        {filteredMessages.map(m => m.sender_type === "system" ? (
+          <div key={m.id} className="flex justify-center py-0.5">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-neutral-800/20 border border-neutral-800/30">
+              <span className="text-[10px] font-mono text-neutral-500">{m.content}</span>
+              <span className="text-[9px] font-mono text-neutral-700">{timeAgo(m.created_at)}</span>
+            </div>
+          </div>
+        ) : (
+          <div key={m.id} className={`flex ${m.sender_type === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-[85%] rounded-xl text-sm font-mono ${
               m.sender_type === "user"
-                ? "max-w-[85%] bg-cyan-500/[0.08] border border-cyan-500/15 text-cyan-100 px-3.5 py-2.5"
-                : m.sender_type === "system"
-                ? "max-w-[90%] bg-neutral-800/30 border border-neutral-800/40 text-neutral-500 px-3 py-1.5 text-[11px]"
-                : "max-w-[85%] bg-violet-500/[0.06] border border-violet-500/12 text-violet-100"
+                ? "bg-cyan-500/[0.08] border border-cyan-500/15 text-cyan-100 px-3.5 py-2.5"
+                : "bg-violet-500/[0.06] border border-violet-500/12 text-violet-100"
             }`}>
               {m.is_deleted ? (
                 <span className="italic text-neutral-600 text-xs px-3.5 py-2.5 block">[deleted]</span>
