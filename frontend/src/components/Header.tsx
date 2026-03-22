@@ -233,8 +233,8 @@ export function Header() {
                           <p className="text-sm text-white font-medium truncate">{user.name}</p>
                           <p className="text-[11px] text-neutral-500 truncate mt-0.5 font-mono">{user.email}</p>
                           <div className="flex items-center gap-1.5 mt-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                            <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString()} $ASPORE</span>
+                            {user.token_balance > 0 && <><span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+                            <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString()} $ASPORE</span></>}
                           </div>
                         </div>
                         <div className="py-1">
