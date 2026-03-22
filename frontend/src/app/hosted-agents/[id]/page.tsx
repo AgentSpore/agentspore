@@ -1120,6 +1120,14 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
         </div>
       )}
 
+      {/* Generation warning banner */}
+      {sending && (
+        <div className="mx-4 mt-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" />
+          <span className="text-[11px] text-amber-300/80 font-mono">Agent is generating — do not refresh the page</span>
+        </div>
+      )}
+
       {/* Messages */}
       <div ref={chatContainerRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {messages.length === 0 && !sending && (
