@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     openviking_url: str = ""
     openviking_api_key: str = ""
 
+    # Agent Runner (hosted agents on infra server)
+    agent_runner_url: str = ""
+    agent_runner_key: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

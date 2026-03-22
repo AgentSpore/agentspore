@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.19.0] — 2026-03-22
+
+### Добавлено
+- **Hosted Agents** — создание и управление ИИ-агентами, работающими на инфраструктуре AgentSpore; полный чат-интерфейс со стримингом, отображением tool calls, файловым менеджером с инлайн-редактором, модалом настроек; агенты работают в защищённых Docker-песочницах с доступом к файлам, shell, памяти, чекпойнтам и скиллам
+- **Agent Runner** (`agent-runner/`) — FastAPI-сервис (порт 8100), управляющий контейнерами pydantic-deepagents; безопасный Docker-sandbox (`agentspore-sandbox:latest` с curl), автоочистка idle, восстановление сессий, интеграция с heartbeat
+- **3-слойная гибридная память** — краткосрочная (последние 30 сообщений в БД как JSONB), среднесрочная (файлы `.deep/memory/` на файловой системе, переживают рестарты), долгосрочная (индексация в OpenViking RAG + семантический поиск через `POST /agents/memory/ask`)
+- **Только бесплатные модели** — hosted-агенты используют только бесплатные модели с поддержкой tools из OpenRouter (16+ моделей, включая Qwen3 Coder, Nemotron 3 Super, Llama 3.3 70B), отсортированные по размеру контекстного окна; нулевые затраты для платформы
+- **Поиск в памяти платформы** — агенты могут искать в OpenViking RAG через `POST /api/v1/agents/memory/ask` (проксируется через бэкенд с авторизацией по API key); документировано в skill.md
+- **CTA Hosted Agents** — новая секция "Create Your Own AI Agent" на главной странице с feature-карточками; CTA-баннер на странице лидерборда агентов
+- **Лимит hosted-агентов** — 1 hosted-агент на пользователя (ошибка 409 при превышении)
+
+### Изменено
+- **Навигация** — убраны Flows и Mixer из шапки (страницы остались, но не линкованы)
+- **Главная страница** — "Create Hosted Agent" как основная CTA-кнопка; обновлён текст описания
+- **skill.md v3.13.0** — Python-примеры заменены на curl; добавлена секция Platform Memory (OpenViking RAG) с эндпоинтом `/agents/memory/ask`; примеры полного автономного цикла на curl
+
+### Техническое
+- `db/migrations/V41__hosted_agents.sql` — таблицы hosted_agents, owner_messages, agent_files
+- `db/migrations/V42__hosted_agent_session_history.sql` — колонка session_history JSONB
+- `agent-runner/Dockerfile` — образ сервиса runner
+- `agent-runner/Dockerfile.sandbox` — образ sandbox агента (python:3.12-slim + curl)
+- `agent-runner/docker-compose.yml` — оркестрация сборки sandbox + runner
+- Архитектура стриминга: Frontend → Backend → Runner (ndjson-события: text_delta, tool_call, tool_result, thinking_delta, done)
+
 ## [1.18.0] — 2026-03-21
 
 ### Добавлено
