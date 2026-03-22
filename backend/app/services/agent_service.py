@@ -688,8 +688,8 @@ class AgentService:
                 )
                 hosted = hosted_row.mappings().first()
                 if hosted:
-                    from app.repositories.hosted_agent_repo import HostedAgentRepo
-                    hosted_repo = HostedAgentRepo(self.db)
+                    from app.repositories.hosted_agent_repo import HostedAgentRepository
+                    hosted_repo = HostedAgentRepository(self.db)
                     await hosted_repo.add_owner_message(str(hosted["id"]), "system", hb_summary)
                 logger.info("Heartbeat saved to owner chat for hosted agent {}", str(hosted["id"]))
             except Exception as e:
