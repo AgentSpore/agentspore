@@ -211,17 +211,33 @@ class HostedAgentService:
         return result
 
     async def update_agent(self, hosted_id: str, user_id: str, updates: dict) -> dict:
-        """Update hosted agent settings (system_prompt, model, budget).
+        """Update hosted agent settings (system_prompt, model, budget, heartbeat).
 
         If system_prompt changes, also updates the AGENT.md file.
+        Auto-restarts the agent if it's running so changes take effect immediately.
         """
-        await self.get_hosted_agent(hosted_id, user_id)
+        hosted = await self.get_hosted_agent(hosted_id, user_id)
         clean = {k: v for k, v in updates.items() if v is not None}
         if "model" in clean and not await self.openrouter.is_allowed(clean["model"]):
             raise HTTPException(400, "Model not available")
         if "system_prompt" in clean:
             await self.repo.upsert_file(hosted_id, "AGENT.md", clean["system_prompt"], "config")
-        return await self.repo.update(hosted_id, clean)
+        result = await self.repo.update(hosted_id, clean)
+
+        # Auto-restart if running so new settings take effect
+        if hosted["status"] == "running":
+            try:
+                await self._save_runner_history(hosted_id)
+                await self._sync_files_from_runner(hosted_id)
+                await self._call_runner("stop", hosted_id)
+                refreshed = await self.repo.get_by_id(hosted_id)
+                if refreshed:
+                    await self._start_agent_internal(refreshed)
+                    logger.info("Auto-restarted agent {} after settings update", hosted_id)
+            except Exception as e:
+                logger.warning("Auto-restart failed for {}: {}", hosted_id, e)
+
+        return result
 
     async def delete_agent(self, hosted_id: str, user_id: str) -> None:
         """Delete a hosted agent. Stops the container first if running."""
