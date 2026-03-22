@@ -289,6 +289,7 @@ class StartRequest(BaseModel):
     api_key: str = ""
     heartbeat_seconds: int = 3600
     message_history: list[dict] = []
+    context_max_tokens: int = 128_000
 
 
 class ChatRequest(BaseModel):
@@ -457,6 +458,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
         cost_tracking=True,
         cost_budget_usd=settings.default_budget_usd,
         context_discovery=True,
+        context_manager_max_tokens=body.context_max_tokens,
         skill_directories=[{"path": "/workspace/skills", "recursive": True}],
     )
 
