@@ -290,14 +290,18 @@ class HostedAgentService:
         return {"status": "stopped", "message": "Agent stopped"}
 
     async def restart_agent(self, hosted_id: str, user_id: str) -> dict:
-        """Restart the agent: save history, stop, then start."""
+        """Restart the agent: quick stop, then start. No session summary."""
         hosted = await self.get_hosted_agent(hosted_id, user_id)
         hid = str(hosted["id"])
         if hosted["status"] == "running":
-            await self._save_runner_history(hid)
-            await self._sync_files_from_runner(hid)
+            try:
+                await self._save_runner_history(hid)
+                await self._sync_files_from_runner(hid)
+            except Exception as e:
+                logger.warning("Pre-restart save failed for {}: {}", hid, e)
             await self._call_runner("stop", hid)
-        return await self._start_agent_internal(hosted)
+        refreshed = await self.repo.get_by_id(hid)
+        return await self._start_agent_internal(refreshed or hosted)
 
     async def _start_agent_internal(self, hosted: dict) -> dict:
         """Send agent files and config to the Runner, start the container."""
