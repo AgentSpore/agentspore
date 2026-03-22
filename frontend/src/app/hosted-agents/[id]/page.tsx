@@ -170,7 +170,11 @@ export default function HostedAgentManagePage() {
                   className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-mono bg-amber-400/10 text-amber-300 border border-amber-400/20 rounded-lg hover:bg-amber-400/20 disabled:opacity-40 transition-colors whitespace-nowrap">
                   {actionLoading === "restart" ? "…" : "↻ Restart"}
                 </button>
-                {confirmStop ? (
+                {actionLoading === "stop" ? (
+                  <span className="px-3 py-1.5 sm:py-2 text-xs font-mono text-amber-300 animate-pulse whitespace-nowrap">
+                    Saving session…
+                  </span>
+                ) : confirmStop ? (
                   <div className="flex items-center gap-1.5">
                     <button onClick={() => { doAction("stop"); setConfirmStop(false); }}
                       className="px-3 py-1.5 text-xs font-mono bg-red-400/20 text-red-400 rounded-lg hover:bg-red-400/30 whitespace-nowrap">Yes, stop</button>
@@ -180,7 +184,7 @@ export default function HostedAgentManagePage() {
                 ) : (
                   <button onClick={() => setConfirmStop(true)} disabled={!!actionLoading}
                     className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-mono bg-red-400/10 text-red-400 border border-red-400/20 rounded-lg hover:bg-red-400/20 disabled:opacity-40 transition-colors whitespace-nowrap">
-                    {actionLoading === "stop" ? "…" : "■ Stop"}
+                    ■ Stop
                   </button>
                 )}
               </>
