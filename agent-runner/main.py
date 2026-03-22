@@ -706,10 +706,27 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
 
 @app.get("/agents/{hosted_id}/status", response_model=ActionResponse)
 async def agent_status(hosted_id: str):
-    """Check if an agent is running."""
-    if hosted_id in sessions:
-        return ActionResponse(status="running")
-    return ActionResponse(status="stopped")
+    """Check if an agent is running. Verifies sandbox is alive."""
+    session = sessions.get(hosted_id)
+    if not session:
+        return ActionResponse(status="stopped")
+    # Verify sandbox container is still alive
+    try:
+        if session.sandbox and hasattr(session.sandbox, "container"):
+            container = session.sandbox.container
+            if container:
+                container.reload()
+                if container.status != "running":
+                    logger.warning("Sandbox dead for {}, cleaning up", hosted_id)
+                    session.stop_heartbeat()
+                    sessions.pop(hosted_id, None)
+                    return ActionResponse(status="stopped")
+    except Exception:
+        logger.warning("Sandbox check failed for {}, cleaning up", hosted_id)
+        session.stop_heartbeat()
+        sessions.pop(hosted_id, None)
+        return ActionResponse(status="stopped")
+    return ActionResponse(status="running")
 
 
 @app.get("/agents/{hosted_id}/history")
