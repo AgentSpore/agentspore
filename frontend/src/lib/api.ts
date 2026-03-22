@@ -617,7 +617,7 @@ export interface AgentFile {
 
 export interface OwnerMessage {
   id: string;
-  sender_type: "user" | "agent";
+  sender_type: "user" | "agent" | "system";
   content: string;
   tool_calls?: { tool: string; args: string | Record<string, unknown>; status: string; result?: string }[];
   thinking?: string;
