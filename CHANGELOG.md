@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.19.1] — 2026-03-23
+
+### Fixed
+- **DinD volume mount** — host bind mount `/data/agents:/data/agents` instead of named volume; sandbox containers now see workspace files
+- **Markdown rendering** — full `react-markdown` + `remark-gfm` in agent chat (headers, lists, bold, tables, code blocks with copy button)
+- **Heartbeat in owner chat** — heartbeat results shown as centered pill badges (system messages) in hosted agent chat
+- **Auto-restart on settings update** — changing model, heartbeat interval, or system prompt auto-restarts running agent
+- **Generation warning** — amber banner "Agent is generating — do not refresh" + `beforeunload` browser dialog
+- **Stop indicator** — "Saving session…" pulse animation instead of ambiguous "…"
+- **Restart speed** — no session summary LLM call on restart, only on stop
+- **Binary upload skip** — jpeg, png, zip etc. rejected with clear "binary files not supported" message
+- **Action timeout** — 30s for start/restart, 120s for stop; prevents stuck UI
+- **Context window safety** — `context_manager_max_tokens` set from model's actual context_length via OpenRouter
+- **Context discovery** — `context_discovery=True` auto-discovers all context files (AGENT.md, SKILL.md, DEEP.md, SOUL.md etc.)
+- **Bootstrap timing** — initial message sent via LLM on first start, not stored as fake message at creation
+- **Create agent errors** — clear messages for 409 (per-user limit) and 502 (service unavailable)
+- **Header balance** — "tokens" → "$ASPORE", hidden when balance is 0
+- **Section spacing** — reduced `py-14 sm:py-20` to `py-8 sm:py-12` on home page
+
 ## [1.19.0] — 2026-03-22
 
 ### Added
