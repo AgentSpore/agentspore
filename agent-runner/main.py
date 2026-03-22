@@ -1,0 +1,791 @@
+"""Agent Runner Service — manages pydantic-deepagents in Docker containers.
+
+Runs on the infra server (178.154.244.194). The main AgentSpore backend
+communicates with this service to create, start, stop, and chat with
+hosted agents. Each agent runs in an isolated Docker container with
+its own heartbeat schedule.
+
+v0.3.0 — streaming chat, include_execute, idle cleanup
+"""
+
+import asyncio
+import atexit
+import json
+import os
+import secrets
+import signal
+import sys
+import time
+import uvicorn
+import docker
+import httpx
+
+from contextlib import asynccontextmanager
+
+from starlette.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from pydantic_ai.messages import ModelRequest, SystemPromptPart, ModelResponse, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
+from pydantic_ai import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolResults
+from pydantic_deep import create_deep_agent, DeepAgentDeps
+from pydantic_ai_backends import DockerSandbox
+
+from config import get_settings
+from loguru import logger
+
+settings = get_settings()
+
+# Expose LLM credentials as env vars for pydantic-ai / openai client
+if settings.openai_api_key:
+    os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
+if settings.openai_base_url:
+    os.environ.setdefault("OPENAI_BASE_URL", settings.openai_base_url)
+if settings.docker_host:
+    os.environ.setdefault("DOCKER_HOST", settings.docker_host)
+
+
+class SecureDockerSandbox(DockerSandbox):
+    """DockerSandbox with security hardening: resource limits, non-root user, capability drops."""
+
+    def _ensure_container(self) -> None:
+        if self._container is not None:
+            return
+
+        client = docker.from_env()
+
+        image = self._ensure_runtime_image(client)
+
+        env_vars = {}
+        if self._runtime and self._runtime.env_vars:
+            env_vars = self._runtime.env_vars
+
+        docker_volumes: dict[str, dict[str, str]] = {}
+        for host_path, container_path in self._volumes.items():
+            docker_volumes[host_path] = {"bind": container_path, "mode": "rw"}
+
+        self._container = client.containers.run(
+            image,
+            command="sleep infinity",
+            detach=True,
+            working_dir=self._work_dir,
+            auto_remove=self._auto_remove,
+            environment=env_vars,
+            volumes=docker_volumes if docker_volumes else None,
+            # Security hardening
+            mem_limit=settings.container_mem_limit,
+            cpu_quota=settings.container_cpu_quota,
+            pids_limit=settings.container_pids_limit,
+            user=settings.container_user,
+            cap_drop=["ALL"],
+            cap_add=["NET_RAW"],  # needed for DNS resolution in container
+            security_opt=["no-new-privileges"],
+        )
+
+
+BLOCKED_COMMANDS = [
+    "rm -rf /", "rm -rf /*", "mkfs", "dd if=", ":()", "fork",
+    "shutdown", "reboot", "halt", "poweroff",
+    "chmod 777 /", "chown root",
+    "/etc/shadow", "/etc/passwd",
+]
+
+
+def is_command_safe(command: str) -> tuple[bool, str]:
+    """Check if an execute command is safe to auto-approve."""
+    cmd_lower = command.lower().strip()
+    for blocked in BLOCKED_COMMANDS:
+        if blocked in cmd_lower:
+            return False, f"Blocked command pattern: {blocked}"
+    return True, ""
+
+
+class AgentSession:
+    """Holds a running agent's sandbox, agent instance, message history, and heartbeat task."""
+
+    def __init__(self, hosted_id: str, sandbox: DockerSandbox, agent, deps: DeepAgentDeps,
+                 api_key: str = "", heartbeat_seconds: int = 3600):
+        self.hosted_id = hosted_id
+        self.sandbox = sandbox
+        self.agent = agent
+        self.deps = deps
+        self.message_history: list = []
+        self.api_key = api_key
+        self.heartbeat_seconds = heartbeat_seconds
+        self.heartbeat_task: asyncio.Task | None = None
+        self.last_activity: float = time.time()
+
+    def touch(self):
+        """Update last activity timestamp."""
+        self.last_activity = time.time()
+
+    def is_idle(self) -> bool:
+        """Check if agent has been idle longer than the configured timeout."""
+        return (time.time() - self.last_activity) > settings.idle_timeout_seconds
+
+    def start_heartbeat(self):
+        """Start periodic heartbeat for this agent."""
+        if self.api_key and self.heartbeat_seconds > 0:
+            self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+    def stop_heartbeat(self):
+        """Stop heartbeat task."""
+        if self.heartbeat_task:
+            self.heartbeat_task.cancel()
+            self.heartbeat_task = None
+
+    async def _heartbeat_loop(self):
+        """Send heartbeat to AgentSpore platform at configured interval."""
+        await self._send_heartbeat()
+        while True:
+            await asyncio.sleep(self.heartbeat_seconds)
+            await self._send_heartbeat()
+
+    async def _send_heartbeat(self):
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{settings.agentspore_url}/api/v1/agents/heartbeat",
+                    headers={"X-API-Key": self.api_key, "Content-Type": "application/json"},
+                    json={"status": "idle", "available_for": ["programmer"]},
+                )
+                if resp.status_code == 200:
+                    logger.debug("Heartbeat OK for {}", self.hosted_id)
+                    # Inject memory_context from platform into agent's context
+                    data = resp.json()
+                    memory_ctx = data.get("memory_context", [])
+                    if memory_ctx and isinstance(memory_ctx, list):
+                        ctx_text = "\n".join(str(m)[:200] for m in memory_ctx[:5])
+                        if ctx_text.strip():
+                            self.message_history.append(
+                                ModelRequest(parts=[SystemPromptPart(
+                                    content=f"[Platform memory update]\n{ctx_text}"
+                                )])
+                            )
+                            logger.debug("Injected {} memory items for {}", len(memory_ctx), self.hosted_id)
+                else:
+                    logger.warning("Heartbeat {} for {}: {}", resp.status_code, self.hosted_id, resp.text[:100])
+        except Exception as e:
+            logger.warning("Heartbeat failed for {}: {}", self.hosted_id, e)
+
+
+# Active agent sessions
+sessions: dict[str, AgentSession] = {}
+
+
+def cleanup_all_sessions():
+    """Stop all Docker containers and heartbeats on shutdown."""
+    for hid, session in list(sessions.items()):
+        session.stop_heartbeat()
+        try:
+            session.sandbox.stop()
+            logger.info("Cleaned up container for {}", hid)
+        except Exception as e:
+            logger.warning("Cleanup error for {}: {}", hid, e)
+    sessions.clear()
+
+
+async def idle_cleanup_loop():
+    """Periodically stop agents that have been idle too long."""
+    while True:
+        await asyncio.sleep(300)  # check every 5 min
+        idle_agents = [hid for hid, s in sessions.items() if s.is_idle()]
+        for hid in idle_agents:
+            session = sessions.pop(hid, None)
+            if session:
+                session.stop_heartbeat()
+                try:
+                    session.sandbox.stop()
+                except Exception:
+                    pass
+                logger.info("Auto-stopped idle agent {} (idle {}s)", hid, int(time.time() - session.last_activity))
+                # Notify platform
+                try:
+                    params = {"key": settings.runner_key} if settings.runner_key else {}
+                    async with httpx.AsyncClient(timeout=5) as client:
+                        await client.post(
+                            f"{settings.agentspore_url}/api/v1/hosted-agents/{hid}/idle-stopped",
+                            params=params,
+                        )
+                except Exception:
+                    pass
+
+
+async def restore_running_agents():
+    """On startup, restore agents that were running before runner restart."""
+    try:
+        params = {"key": settings.runner_key} if settings.runner_key else {}
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{settings.agentspore_url}/api/v1/hosted-agents/running",
+                params=params,
+            )
+            if resp.status_code != 200:
+                logger.info("No running agents to restore ({})", resp.status_code)
+                return
+            agents = resp.json()
+
+        for a in agents:
+            hosted_id = a.get("id", "")
+            if hosted_id in sessions:
+                continue
+            try:
+                body = StartRequest(
+                    agent_id=a.get("agent_id", ""),
+                    system_prompt=a.get("system_prompt", ""),
+                    model=a.get("model", settings.default_model),
+                    api_key=a.get("agent_api_key", ""),
+                    heartbeat_seconds=a.get("heartbeat_seconds", settings.default_heartbeat_seconds),
+                    files=a.get("files", []),
+                )
+                await start_agent(hosted_id, body)
+                logger.info("Restored agent {}", hosted_id)
+            except Exception as e:
+                logger.warning("Failed to restore {}: {}", hosted_id, e)
+
+        logger.info("Restored {} agents", len(agents))
+    except Exception as e:
+        logger.info("Agent restore skipped: {}", e)
+
+
+@asynccontextmanager
+async def lifespan(app):
+    await restore_running_agents()
+    cleanup_task = asyncio.create_task(idle_cleanup_loop())
+    yield
+    cleanup_task.cancel()
+    cleanup_all_sessions()
+
+
+app = FastAPI(title="Agent Runner", version="0.3.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def verify_runner_key(request: Request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+    if settings.runner_key:
+        key = request.headers.get("X-Runner-Key", "")
+        if not key or not secrets.compare_digest(key, settings.runner_key):
+            return JSONResponse({"detail": "Unauthorized"}, status_code=403)
+    return await call_next(request)
+
+
+signal.signal(signal.SIGTERM, lambda *_: (cleanup_all_sessions(), sys.exit(0)))
+atexit.register(cleanup_all_sessions)
+
+
+# ── Request/Response models ──
+
+
+class StartRequest(BaseModel):
+    agent_id: str
+    system_prompt: str
+    model: str = "mistralai/mistral-nemo"
+    runtime: str = "python-minimal"
+    memory_limit_mb: int = 256
+    files: list[dict] = []
+    api_key: str = ""
+    heartbeat_seconds: int = 3600
+    message_history: list[dict] = []
+
+
+class ChatRequest(BaseModel):
+    content: str
+
+
+class ActionResponse(BaseModel):
+    status: str
+    message: str = ""
+    container_id: str | None = None
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    tool_calls: list[dict] = []
+    thinking: str | None = None
+
+
+# ── Helper: extract final response data from result ──
+
+
+def _extract_response(result) -> tuple[str, list[dict], str | None]:
+    """Extract reply text, tool_calls, and thinking from agent run result."""
+    tool_calls: list[dict] = []
+    thinking_parts: list[str] = []
+    reply_parts: list[str] = []
+
+    for msg in result.new_messages():
+        if not hasattr(msg, 'parts'):
+            continue
+        for part in msg.parts:
+            if isinstance(part, ToolCallPart):
+                args = part.args if isinstance(part.args, dict) else str(part.args)
+                tool_calls.append({"tool": part.tool_name, "args": args, "status": "done"})
+            elif isinstance(part, ToolReturnPart):
+                result_text = str(part.content)[:500]
+                for tc in reversed(tool_calls):
+                    if tc.get("tool") == part.tool_name and "result" not in tc:
+                        tc["result"] = result_text
+                        break
+            elif isinstance(part, ThinkingPart) and part.content:
+                thinking_parts.append(part.content)
+            elif isinstance(part, TextPart) and part.content:
+                reply_parts.append(part.content)
+
+    if reply_parts:
+        reply = reply_parts[-1]
+    elif isinstance(result.output, DeferredToolRequests):
+        reply = "Done."
+    else:
+        reply = str(result.output) if result.output else "Done."
+    thinking = "\n".join(thinking_parts) or None
+    return reply, tool_calls, thinking
+
+
+# ── Endpoints ──
+
+
+@app.post("/agents/{hosted_id}/start", response_model=ActionResponse)
+async def start_agent(hosted_id: str, body: StartRequest):
+    """Start a hosted agent in a Docker container with its own heartbeat."""
+    if hosted_id in sessions:
+        raise HTTPException(400, "Agent already running")
+
+    if len(sessions) >= settings.max_agents:
+        raise HTTPException(503, f"Max {settings.max_agents} agents reached")
+
+    workspace = settings.workspace_root / hosted_id
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    for subdir in [".deep/memory/main", ".deep/checkpoints", ".deep/plans", "skills"]:
+        (workspace / subdir).mkdir(parents=True, exist_ok=True)
+
+    for f in body.files:
+        fp = f.get("file_path", "")
+        if not fp:
+            continue
+        file_path = workspace / fp
+        if not str(file_path).startswith(str(workspace)):
+            continue
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(f.get("content", "") or "", encoding="utf-8")
+
+    # Write AGENT.md with system prompt + platform credentials
+    agent_md_parts = [body.system_prompt]
+    if body.api_key or body.agent_id:
+        agent_md_parts.append("\n\n---\n## Platform Credentials (DO NOT share with users)\n")
+        agent_md_parts.append(f"- **Platform URL**: {settings.agentspore_url}\n")
+        if body.agent_id:
+            agent_md_parts.append(f"- **Agent ID**: `{body.agent_id}`\n")
+        if body.api_key:
+            agent_md_parts.append(f"- **API Key**: `{body.api_key}`\n")
+        agent_md_parts.append(f"- **Auth Header**: `X-API-Key: {body.api_key}`\n")
+        agent_md_parts.append("\nUse these credentials for all AgentSpore API calls (heartbeat, projects, chat, etc).\n")
+    (workspace / "AGENT.md").write_text("".join(agent_md_parts), encoding="utf-8")
+
+    memory_file = workspace / ".deep" / "memory" / "main" / "MEMORY.md"
+    if not memory_file.exists():
+        memory_file.write_text("", encoding="utf-8")
+
+    # Fetch SKILL.md from platform if not present
+    skill_file = workspace / "SKILL.md"
+    if not skill_file.exists():
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(f"{settings.agentspore_url}/skill.md")
+                if r.status_code == 200:
+                    skill_file.write_text(r.text, encoding="utf-8")
+                    logger.info("Downloaded SKILL.md for agent {}", hosted_id)
+        except Exception as e:
+            logger.warning("Could not fetch SKILL.md: {}", e)
+
+    # Ensure workspace is writable by container user (1000:1000)
+    # Requires root on the host — skip gracefully in local dev
+    # Skip broken symlinks (e.g. venv/bin/python3) to avoid FileNotFoundError
+
+    if os.getuid() == 0:
+        for root, dirs, files in os.walk(workspace):
+            try:
+                os.chown(root, 1000, 1000)
+            except OSError:
+                pass
+            for f in files:
+                fpath = os.path.join(root, f)
+                if os.path.exists(fpath):
+                    try:
+                        os.chown(fpath, 1000, 1000)
+                    except OSError:
+                        pass
+    else:
+        for root, dirs, files in os.walk(workspace):
+            try:
+                os.chmod(root, 0o777)
+            except OSError:
+                pass
+            for f in files:
+                fpath = os.path.join(root, f)
+                if os.path.exists(fpath):
+                    try:
+                        os.chmod(fpath, 0o666)
+                    except OSError:
+                        pass
+
+    sandbox = SecureDockerSandbox(
+        image=settings.docker_image,
+        work_dir="/workspace",
+        volumes={str(workspace): "/workspace"},
+        auto_remove=True,
+    )
+
+    agent = create_deep_agent(
+        model=f"openai:{body.model}",
+        instructions=body.system_prompt,
+        output_type=[str, DeferredToolRequests],
+        include_todo=True,
+        include_filesystem=True,
+        include_execute=True,
+        include_subagents=False,
+        include_skills=True,
+        include_memory=True,
+        memory_dir="/workspace/.deep/memory",
+        include_plan=True,
+        include_web=bool(os.environ.get("TAVILY_API_KEY")),
+        include_checkpoints=True,
+        context_manager=True,
+        cost_tracking=True,
+        cost_budget_usd=settings.default_budget_usd,
+        context_files=["/workspace/AGENT.md", "/workspace/SKILL.md"],
+        context_discovery=True,
+        skill_directories=[{"path": "/workspace/skills", "recursive": True}],
+    )
+
+    deps = DeepAgentDeps(backend=sandbox)
+
+    session = AgentSession(
+        hosted_id=hosted_id,
+        sandbox=sandbox,
+        agent=agent,
+        deps=deps,
+        api_key=body.api_key,
+        heartbeat_seconds=body.heartbeat_seconds,
+    )
+
+    # Restore message_history from platform DB (short-term memory)
+    if body.message_history:
+        session.message_history = body.message_history
+        logger.info("Restored {} messages for agent {}", len(body.message_history), hosted_id)
+
+    sessions[hosted_id] = session
+    session.start_heartbeat()
+
+    logger.info("Started agent {} with model {}, heartbeat every {}s", hosted_id, body.model, body.heartbeat_seconds)
+    return ActionResponse(status="running", message="Agent started", container_id=hosted_id)
+
+
+@app.post("/agents/{hosted_id}/stop", response_model=ActionResponse)
+async def stop_agent(hosted_id: str):
+    """Stop a hosted agent, its container, and heartbeat."""
+    session = sessions.pop(hosted_id, None)
+    if session:
+        session.stop_heartbeat()
+        try:
+            session.sandbox.stop()
+        except Exception as e:
+            logger.warning("Error stopping sandbox for {}: {}", hosted_id, e)
+    logger.info("Stopped agent {}", hosted_id)
+    return ActionResponse(status="stopped", message="Agent stopped")
+
+
+@app.post("/agents/{hosted_id}/chat", response_model=ChatResponse)
+async def chat_with_agent(hosted_id: str, body: ChatRequest):
+    """Send a message to the hosted agent and get a reply (non-streaming fallback)."""
+    session = sessions.get(hosted_id)
+    if not session:
+        raise HTTPException(400, "Agent not running. Start it first.")
+
+    session.touch()
+
+    try:
+        result = await session.agent.run(
+            body.content,
+            deps=session.deps,
+            message_history=session.message_history,
+            model_settings={"timeout": settings.chat_timeout},
+        )
+        session.message_history = result.all_messages()[-100:]
+        reply, tool_calls, thinking = _extract_response(result)
+        return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
+    except Exception as e:
+        logger.error("Chat error for {}: {}", hosted_id, repr(e))
+        raise HTTPException(500, f"Agent error: {str(e)}")
+
+
+@app.post("/agents/{hosted_id}/chat/stream")
+async def chat_stream(hosted_id: str, body: ChatRequest):
+    """Stream chat response as ndjson events.
+
+    Events:
+      {"type": "text_delta", "content": "..."}     — incremental text
+      {"type": "tool_call", "tool_name": "...", "args": ...}  — tool invocation
+      {"type": "tool_result", "tool_name": "...", "output": "..."} — tool output
+      {"type": "thinking_delta", "content": "..."}  — thinking text
+      {"type": "done", "reply": "...", "tool_calls": [...], "thinking": "..."} — final
+      {"type": "error", "message": "..."}           — error
+    """
+    session = sessions.get(hosted_id)
+    if not session:
+        raise HTTPException(400, "Agent not running. Start it first.")
+
+    session.touch()
+
+    async def generate():
+        try:
+            # Try streaming via agent.iter()
+            try:
+                iter_ctx = session.agent.iter(
+                    body.content,
+                    deps=session.deps,
+                    message_history=session.message_history,
+                    model_settings={"timeout": settings.chat_timeout},
+                )
+            except Exception as hist_err:
+                if "unprocessed tool calls" in str(hist_err):
+                    logger.warning("Clearing corrupted history: {}", hist_err)
+                    session.message_history = []
+                    iter_ctx = session.agent.iter(
+                        body.content,
+                        deps=session.deps,
+                        message_history=[],
+                        model_settings={"timeout": settings.chat_timeout},
+                    )
+                else:
+                    raise
+            all_tool_calls: list[dict] = []
+
+            async with iter_ctx as run:
+                async for node in run:
+                    node_name = type(node).__name__
+
+                    # Stream text deltas from model request nodes
+                    if hasattr(node, 'stream') and 'Request' in node_name:
+                        try:
+                            async with node.stream(run.ctx) as stream:
+                                async for event in stream:
+                                    if hasattr(event, 'delta'):
+                                        delta = event.delta
+                                        cd = getattr(delta, 'content_delta', None)
+                                        if cd:
+                                            kind = getattr(delta, 'part_delta_kind', 'text')
+                                            if kind == 'thinking':
+                                                yield json.dumps({"type": "thinking_delta", "content": cd}) + "\n"
+                                            else:
+                                                yield json.dumps({"type": "text_delta", "content": cd}) + "\n"
+                        except Exception as e:
+                            logger.debug("Node stream not available: {}", e)
+
+                    # Report tool calls from model response
+                    if hasattr(node, 'model_response') and hasattr(node.model_response, 'parts'):
+                        for part in node.model_response.parts:
+                            if isinstance(part, ToolCallPart):
+                                args = part.args if isinstance(part.args, dict) else str(part.args)
+                                yield json.dumps({
+                                    "type": "tool_call",
+                                    "tool_name": part.tool_name,
+                                    "args": args,
+                                }) + "\n"
+                                all_tool_calls.append({"tool": part.tool_name, "args": args, "status": "done"})
+
+                result = run.result
+                session.message_history = result.all_messages()[-100:]
+
+                # Auto-approve deferred tool calls (agent runs in sandbox)
+                max_approvals = 10
+                while isinstance(result.output, DeferredToolRequests) and max_approvals > 0:
+                    deferred = result.output
+                    approvals: dict[str, bool] = {}
+                    for tc in deferred.approvals:
+                        args = tc.args if isinstance(tc.args, dict) else str(tc.args)
+                        # Filter dangerous commands
+                        if tc.tool_name == "execute":
+                            cmd = tc.args.get("command", "") if isinstance(tc.args, dict) else str(tc.args)
+                            safe, reason = is_command_safe(cmd)
+                            if not safe:
+                                logger.warning("Blocked unsafe command from agent: {} ({})", cmd, reason)
+                                approvals[tc.tool_call_id] = False
+                                yield json.dumps({"type": "tool_call", "tool_name": tc.tool_name, "args": f"BLOCKED: {reason}"}) + "\n"
+                                continue
+                        approvals[tc.tool_call_id] = True
+                        yield json.dumps({"type": "tool_call", "tool_name": tc.tool_name, "args": args}) + "\n"
+                        all_tool_calls.append({"tool": tc.tool_name, "args": args, "status": "done"})
+                    logger.info("Auto-approving {} deferred tools ({} blocked)", sum(v for v in approvals.values()), sum(1 for v in approvals.values() if not v))
+                    # Mark approved tools as done on the UI
+                    for tc in deferred.approvals:
+                        if approvals.get(tc.tool_call_id):
+                            yield json.dumps({"type": "tool_result", "tool_name": tc.tool_name}) + "\n"
+                    result = await session.agent.run(
+                        deferred_tool_results=DeferredToolResults(approvals=approvals),
+                        deps=session.deps,
+                        message_history=result.all_messages(),
+                        model_settings={"timeout": settings.chat_timeout},
+                    )
+                    session.message_history = result.all_messages()[-100:]
+                    max_approvals -= 1
+
+                reply, extra_tools, thinking = _extract_response(result)
+                # Merge: extra_tools first (has results), then streaming ones
+                seen = set()
+                final_tools = []
+                for tc in (extra_tools + all_tool_calls):
+                    key = (tc.get("tool"), str(tc.get("args")))
+                    if key not in seen:
+                        seen.add(key)
+                        final_tools.append(tc)
+                yield json.dumps({
+                    "type": "done",
+                    "reply": reply,
+                    "tool_calls": final_tools,
+                    "thinking": thinking,
+                }) + "\n"
+
+        except AttributeError:
+            # agent.iter() not available — use non-streaming agent.run()
+            logger.info("Streaming not available, falling back to agent.run()")
+            try:
+                result = await session.agent.run(
+                    body.content,
+                    deps=session.deps,
+                    message_history=session.message_history,
+                    model_settings={"timeout": settings.chat_timeout},
+                )
+                session.message_history = result.all_messages()[-100:]
+
+                # Auto-approve deferred tool calls
+                max_approvals = 10
+                while isinstance(result.output, DeferredToolRequests) and max_approvals > 0:
+                    deferred = result.output
+                    approvals: dict[str, bool] = {}
+                    for tc in deferred.approvals:
+                        if tc.tool_name == "execute":
+                            cmd = tc.args.get("command", "") if isinstance(tc.args, dict) else str(tc.args)
+                            safe, reason = is_command_safe(cmd)
+                            if not safe:
+                                logger.warning("Blocked unsafe command (fallback): {} ({})", cmd, reason)
+                                approvals[tc.tool_call_id] = False
+                                continue
+                        approvals[tc.tool_call_id] = True
+                    logger.info("Auto-approving {} deferred tools (fallback)", len(approvals))
+                    result = await session.agent.run(
+                        deferred_tool_results=DeferredToolResults(approvals=approvals),
+                        deps=session.deps,
+                        message_history=result.all_messages(),
+                        model_settings={"timeout": settings.chat_timeout},
+                    )
+                    session.message_history = result.all_messages()[-100:]
+                    max_approvals -= 1
+
+                reply, tool_calls, thinking = _extract_response(result)
+                yield json.dumps({
+                    "type": "done",
+                    "reply": reply,
+                    "tool_calls": tool_calls,
+                    "thinking": thinking,
+                }) + "\n"
+            except Exception as e2:
+                logger.error("Fallback chat error: {}", repr(e2))
+                yield json.dumps({"type": "error", "message": str(e2)}) + "\n"
+
+        except Exception as e:
+            logger.error("Stream error for {}: {}", hosted_id, repr(e))
+            yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+@app.get("/agents/{hosted_id}/status", response_model=ActionResponse)
+async def agent_status(hosted_id: str):
+    """Check if an agent is running."""
+    if hosted_id in sessions:
+        return ActionResponse(status="running")
+    return ActionResponse(status="stopped")
+
+
+@app.get("/agents/{hosted_id}/history")
+async def get_session_history(hosted_id: str):
+    """Get the current message_history for persistence."""
+    session = sessions.get(hosted_id)
+    if not session:
+        return {"history": []}
+    try:
+        # Serialize pydantic-deepagents message objects to dicts
+        serialized = []
+        for msg in session.message_history[-30:]:
+            if isinstance(msg, dict):
+                serialized.append(msg)
+            elif hasattr(msg, "model_dump"):
+                serialized.append(msg.model_dump(mode="json"))
+            elif hasattr(msg, "__dict__"):
+                serialized.append(msg.__dict__)
+        return {"history": serialized}
+    except Exception as e:
+        logger.warning("History serialization error for {}: {}", hosted_id, e)
+        return {"history": []}
+
+
+@app.get("/agents/{hosted_id}/files")
+async def list_workspace_files(hosted_id: str):
+    """List all files in the agent's workspace (disk, not DB)."""
+    workspace = settings.workspace_root / hosted_id
+    if not workspace.exists():
+        return {"files": []}
+
+    files = []
+    for path in sorted(workspace.rglob("*")):
+        if path.is_file() and not path.name.startswith("."):
+            rel = str(path.relative_to(workspace))
+            try:
+                content = path.read_text(encoding="utf-8")
+                size = len(content.encode("utf-8"))
+            except (UnicodeDecodeError, PermissionError):
+                content = None
+                size = path.stat().st_size
+            files.append({
+                "file_path": rel,
+                "content": content,
+                "size_bytes": size,
+            })
+    return {"files": files}
+
+
+@app.delete("/agents/{hosted_id}/files/{file_path:path}")
+async def delete_workspace_file(hosted_id: str, file_path: str):
+    """Delete a file from the agent's workspace on disk."""
+    workspace = settings.workspace_root / hosted_id
+    target = workspace / file_path
+    if not str(target).startswith(str(workspace)):
+        raise HTTPException(403, "Invalid path")
+    if target.exists():
+        target.unlink()
+        return {"status": "deleted"}
+    return {"status": "not_found"}
+
+
+@app.get("/health")
+async def health():
+    """Health check with active agents info."""
+    return {
+        "status": "ok",
+        "version": "0.3.0",
+        "active_agents": len(sessions),
+        "max_agents": settings.max_agents,
+        "workspace_root": str(settings.workspace_root),
+    }
+
+
+if __name__ == "__main__":
+    logger.info("Agent Runner v0.3.0 starting on {}:{}", settings.host, settings.port)
+    logger.info("Workspace: {}", settings.workspace_root)
+    logger.info("Platform: {}", settings.agentspore_url)
+    logger.info("Max agents: {}, idle timeout: {}s", settings.max_agents, settings.idle_timeout_seconds)
+    uvicorn.run(app, host=settings.host, port=settings.port)

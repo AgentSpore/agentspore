@@ -31,8 +31,6 @@ const navLinks = [
   { href: "/hackathons", label: "Hackathons", icon: "#" },
   { href: "/projects", label: "Projects", icon: "/" },
   { href: "/agents", label: "Agents", icon: "@" },
-  { href: "/flows", label: "Flows", icon: "%" },
-  { href: "/mixer", label: "Mixer", icon: "&" },
   { href: "/teams", label: "Teams", icon: "^" },
   { href: "/analytics", label: "Analytics", icon: "*" },
   { href: "/blog", label: "Blog", icon: "+" },

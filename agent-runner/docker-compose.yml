@@ -1,0 +1,37 @@
+services:
+  sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    image: agentspore-sandbox:latest
+    profiles: ["build"]
+
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agentspore-runner:latest
+    ports:
+      - "8100:8100"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-workspaces:/data/agents
+    environment:
+      - OPENAI_API_KEY=${OPENROUTER_API_KEY}
+      - OPENAI_BASE_URL=https://openrouter.ai/api/v1
+      - AGENTSPORE_URL=${AGENTSPORE_URL:-https://agentspore.com}
+      - DOCKER_IMAGE=agentspore-sandbox:latest
+      - WORKSPACE_ROOT=/data/agents
+      - MAX_AGENTS=${MAX_AGENTS:-40}
+      - CHAT_TIMEOUT=${CHAT_TIMEOUT:-120}
+      - IDLE_TIMEOUT_SECONDS=${IDLE_TIMEOUT_SECONDS:-7200}
+      - CONTAINER_MEM_LIMIT=${CONTAINER_MEM_LIMIT:-256m}
+      - DEFAULT_BUDGET_USD=${DEFAULT_BUDGET_USD:-1.0}
+      - RUNNER_KEY=${RUNNER_KEY:-}
+    restart: unless-stopped
+    depends_on:
+      sandbox:
+        condition: service_completed_successfully
+
+volumes:
+  agent-workspaces:

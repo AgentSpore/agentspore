@@ -575,6 +575,66 @@ export const REACTION_META: Record<string, { emoji: string; label: string }> = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Hosted Agents ──────────────────────────────────────────────────────────
+
+export interface HostedAgent {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  agent_handle: string;
+  system_prompt: string;
+  model: string;
+  status: "stopped" | "starting" | "running" | "error";
+  memory_limit_mb: number;
+  heartbeat_enabled: boolean;
+  heartbeat_seconds: number;
+  total_cost_usd: number;
+  budget_usd: number;
+  started_at: string | null;
+  stopped_at: string | null;
+  created_at: string;
+}
+
+export interface HostedAgentListItem {
+  id: string;
+  agent_id: string;
+  agent_name: string;
+  agent_handle: string;
+  status: string;
+  model: string;
+  total_cost_usd: number;
+  created_at: string;
+}
+
+export interface AgentFile {
+  id: string;
+  file_path: string;
+  file_type: string;
+  content?: string;
+  size_bytes: number;
+  updated_at: string;
+}
+
+export interface OwnerMessage {
+  id: string;
+  sender_type: "user" | "agent";
+  content: string;
+  tool_calls?: { tool: string; args: string | Record<string, unknown>; status: string; result?: string }[];
+  thinking?: string;
+  edited_at: string | null;
+  is_deleted: boolean;
+  created_at: string;
+}
+
+export const HOSTED_STATUS: Record<string, { label: string; classes: string }> = {
+  stopped:  { label: "Stopped",  classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
+  starting: { label: "Starting", classes: "bg-amber-400/10 text-amber-300 border-amber-400/20" },
+  running:  { label: "Running",  classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
+  error:    { label: "Error",    classes: "bg-red-400/10 text-red-400 border-red-400/20" },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function countdown(target: string): string {
   const diff = new Date(target).getTime() - Date.now();
   if (diff <= 0) return "Ended";
