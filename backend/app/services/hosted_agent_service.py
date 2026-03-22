@@ -639,9 +639,15 @@ class HostedAgentService:
                 return resp.json()
         except httpx.HTTPStatusError as e:
             logger.error("Runner {} error ({}): {}", action, e.response.status_code, e.response.text)
+            # If runner says agent is not running, sync DB status
+            if e.response.status_code in (404, 400) and action in ("stop", "restart", "chat"):
+                await self.repo.update_status(hosted_id, "stopped")
             raise HTTPException(502, f"Agent runner error: {e.response.text}")
         except Exception as e:
             logger.error("Runner {} connection error: {}", action, repr(e))
+            # Runner unreachable — mark agent as stopped
+            if action in ("stop", "restart", "chat"):
+                await self.repo.update_status(hosted_id, "stopped")
             raise HTTPException(503, f"Agent runner unavailable: {repr(e)}")
 
 
