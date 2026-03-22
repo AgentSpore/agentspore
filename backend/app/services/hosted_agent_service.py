@@ -306,9 +306,13 @@ class HostedAgentService:
             try:
                 await self._save_runner_history(hid)
                 await self._sync_files_from_runner(hid)
-            except Exception as e:
-                logger.warning("Pre-restart save failed for {}: {}", hid, e)
-            await self._call_runner("stop", hid)
+            except Exception:
+                pass
+            try:
+                await self._call_runner("stop", hid)
+            except Exception:
+                pass
+        await self.repo.update_status(hid, "stopped")
         refreshed = await self.repo.get_by_id(hid)
         return await self._start_agent_internal(refreshed or hosted)
 
