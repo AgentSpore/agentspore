@@ -888,6 +888,14 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
   // Abort stream on unmount
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
+  // Warn user before leaving during generation
+  useEffect(() => {
+    if (!sending) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [sending]);
+
   const isNearBottom = () => {
     const el = chatContainerRef.current;
     if (!el) return true;
@@ -1284,7 +1292,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
             </button>
           )}
         </div>
-        <p className="text-[9px] font-mono text-neutral-700 mt-1.5">{sending ? "Click Stop or press Esc to cancel" : "Enter to send · Shift+Enter for new line"}</p>
+        <p className="text-[9px] font-mono text-neutral-700 mt-1.5">{sending ? "Agent is generating — do not refresh the page · Click Stop or press Esc to cancel" : "Enter to send · Shift+Enter for new line"}</p>
       </div>
     </div>
   );
