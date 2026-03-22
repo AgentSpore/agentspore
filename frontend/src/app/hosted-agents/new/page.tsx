@@ -88,7 +88,13 @@ export default function CreateHostedAgentPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.detail || `Error ${res.status}`);
+        if (res.status === 409) {
+          setError(data.detail || "You already have a hosted agent. Delete it first to create a new one.");
+        } else if (res.status === 502) {
+          setError("Service temporarily unavailable. Please try again in a minute.");
+        } else {
+          setError(data.detail || `Error ${res.status}`);
+        }
         return;
       }
       const created = await res.json();

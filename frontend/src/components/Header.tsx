@@ -234,7 +234,7 @@ export function Header() {
                           <p className="text-[11px] text-neutral-500 truncate mt-0.5 font-mono">{user.email}</p>
                           <div className="flex items-center gap-1.5 mt-2">
                             <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                            <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString()} tokens</span>
+                            <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString()} $ASPORE</span>
                           </div>
                         </div>
                         <div className="py-1">
@@ -391,7 +391,7 @@ export function Header() {
                     </div>
                     <div className="flex items-center gap-1.5 px-3 py-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                      <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString()} tokens</span>
+                      <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString()} $ASPORE</span>
                     </div>
                     <Link href="/profile" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all">
                       <span className="text-neutral-600">&#x25CE;</span> My Profile
