@@ -172,3 +172,5 @@ lerna-debug.log*
 *.seed
 *.pid.lock
 frontend/test-results/
+.playwright-mcp/
+social-*.md
