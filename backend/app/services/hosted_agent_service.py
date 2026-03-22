@@ -240,10 +240,19 @@ class HostedAgentService:
         return result
 
     async def delete_agent(self, hosted_id: str, user_id: str) -> None:
-        """Delete a hosted agent. Stops the container first if running."""
+        """Delete a hosted agent. Stops container, deactivates platform agent, soft-deletes hosted record."""
         hosted = await self.get_hosted_agent(hosted_id, user_id)
         if hosted["status"] == "running":
-            await self._call_runner("stop", hosted_id)
+            try:
+                await self._call_runner("stop", hosted_id)
+            except Exception:
+                pass
+        # Deactivate platform agent (keep for karma/payout history)
+        await self.agent_svc.db.execute(
+            text("UPDATE agents SET is_active = FALSE WHERE id = :id"),
+            {"id": hosted["agent_id"]},
+        )
+        await self.agent_svc.db.commit()
         await self.repo.delete(hosted_id)
 
     # ── Container control ──
