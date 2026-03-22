@@ -6,6 +6,8 @@ import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react"
 import { API_URL, HostedAgent, AgentFile, OwnerMessage, HOSTED_STATUS, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const CodeMirrorEditor = lazy(() => import("@/components/CodeMirrorEditor"));
 
@@ -1301,43 +1303,54 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
 /* ── Markdown renderer ── */
 
 function AgentMarkdown({ content, isUser }: { content: string; isUser: boolean }) {
-  if (isUser || !content.includes("`")) {
+  if (isUser) {
     return <p className="whitespace-pre-wrap break-words">{content}</p>;
   }
 
-  const parts = content.split(/(```[\s\S]*?```)/g);
   return (
-    <div className="space-y-2">
-      {parts.map((part, i) => {
-        if (part.startsWith("```")) {
-          const lines = part.slice(3, -3).split("\n");
-          const lang = lines[0].trim();
-          const code = (lang ? lines.slice(1) : lines).join("\n").trim();
-          return (
-            <div key={i} className="relative group">
-              {lang && <span className="absolute top-1 right-2 text-[9px] font-mono text-neutral-600">{lang}</span>}
-              <pre className="bg-black/30 rounded-lg px-3 py-2.5 text-[12px] overflow-x-auto border border-neutral-800/30">
-                <code>{code}</code>
-              </pre>
-              <button onClick={() => navigator.clipboard.writeText(code)}
-                className="absolute top-1 left-2 text-[9px] font-mono text-neutral-700 opacity-0 group-hover:opacity-100 hover:text-neutral-400 transition-all">
-                copy
-              </button>
-            </div>
-          );
-        }
-        const inlineParts = part.split(/(`[^`]+`)/g);
-        return (
-          <p key={i} className="whitespace-pre-wrap break-words">
-            {inlineParts.map((ip, j) =>
-              ip.startsWith("`") && ip.endsWith("`")
-                ? <code key={j} className="bg-white/[0.06] px-1.5 py-0.5 rounded text-[12px] text-cyan-300/80">{ip.slice(1, -1)}</code>
-                : <span key={j}>{ip}</span>
-            )}
-          </p>
-        );
-      })}
-    </div>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h1: ({ children }) => <h1 className="text-lg font-bold text-white mt-3 mb-1">{children}</h1>,
+        h2: ({ children }) => <h2 className="text-base font-bold text-white mt-3 mb-1">{children}</h2>,
+        h3: ({ children }) => <h3 className="text-sm font-semibold text-neutral-200 mt-2 mb-1">{children}</h3>,
+        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+        ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 mb-2 ml-1">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 mb-2 ml-1">{children}</ol>,
+        li: ({ children }) => <li className="text-neutral-300">{children}</li>,
+        strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+        em: ({ children }) => <em className="italic text-neutral-400">{children}</em>,
+        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">{children}</a>,
+        code: ({ className, children }) => {
+          const isBlock = className?.includes("language-");
+          if (isBlock) {
+            const lang = className?.replace("language-", "") || "";
+            const text = String(children).replace(/\n$/, "");
+            return (
+              <div className="relative group my-2">
+                {lang && <span className="absolute top-1 right-2 text-[9px] font-mono text-neutral-600">{lang}</span>}
+                <pre className="bg-black/30 rounded-lg px-3 py-2.5 text-[12px] overflow-x-auto border border-neutral-800/30">
+                  <code>{text}</code>
+                </pre>
+                <button onClick={() => navigator.clipboard.writeText(text)}
+                  className="absolute top-1 left-2 text-[9px] font-mono text-neutral-700 opacity-0 group-hover:opacity-100 hover:text-neutral-400 transition-all">
+                  copy
+                </button>
+              </div>
+            );
+          }
+          return <code className="bg-white/[0.06] px-1.5 py-0.5 rounded text-[12px] text-cyan-300/80">{children}</code>;
+        },
+        pre: ({ children }) => <>{children}</>,
+        blockquote: ({ children }) => <blockquote className="border-l-2 border-violet-500/30 pl-3 text-neutral-400 italic my-2">{children}</blockquote>,
+        hr: () => <hr className="border-neutral-800/50 my-3" />,
+        table: ({ children }) => <div className="overflow-x-auto my-2"><table className="text-xs border-collapse">{children}</table></div>,
+        th: ({ children }) => <th className="border border-neutral-800/50 px-2 py-1 text-left text-neutral-300 bg-neutral-900/50">{children}</th>,
+        td: ({ children }) => <td className="border border-neutral-800/50 px-2 py-1 text-neutral-400">{children}</td>,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
   );
 }
 
