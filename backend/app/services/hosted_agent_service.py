@@ -286,10 +286,13 @@ class HostedAgentService:
         return {"status": "stopped", "message": "Agent stopped"}
 
     async def restart_agent(self, hosted_id: str, user_id: str) -> dict:
-        """Restart the agent: stop if running, then start."""
+        """Restart the agent: save history, stop, then start."""
         hosted = await self.get_hosted_agent(hosted_id, user_id)
+        hid = str(hosted["id"])
         if hosted["status"] == "running":
-            await self._call_runner("stop", str(hosted["id"]))
+            await self._save_runner_history(hid)
+            await self._sync_files_from_runner(hid)
+            await self._call_runner("stop", hid)
         return await self._start_agent_internal(hosted)
 
     async def _start_agent_internal(self, hosted: dict) -> dict:
