@@ -456,7 +456,6 @@ async def start_agent(hosted_id: str, body: StartRequest):
         context_manager=True,
         cost_tracking=True,
         cost_budget_usd=settings.default_budget_usd,
-        context_files=["/workspace/AGENT.md", "/workspace/SKILL.md"],
         context_discovery=True,
         skill_directories=[{"path": "/workspace/skills", "recursive": True}],
     )
