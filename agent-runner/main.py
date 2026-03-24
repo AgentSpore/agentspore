@@ -509,12 +509,25 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
     session.touch()
 
     try:
-        result = await session.agent.run(
-            body.content,
-            deps=session.deps,
-            message_history=session.message_history,
-            model_settings={"timeout": settings.chat_timeout},
-        )
+        try:
+            result = await session.agent.run(
+                body.content,
+                deps=session.deps,
+                message_history=session.message_history,
+                model_settings={"timeout": settings.chat_timeout},
+            )
+        except Exception as hist_err:
+            if "unprocessed tool calls" in str(hist_err):
+                logger.warning("Clearing corrupted history for {}: {}", hosted_id, hist_err)
+                session.message_history = []
+                result = await session.agent.run(
+                    body.content,
+                    deps=session.deps,
+                    message_history=[],
+                    model_settings={"timeout": settings.chat_timeout},
+                )
+            else:
+                raise
         session.message_history = result.all_messages()[-100:]
         reply, tool_calls, thinking = _extract_response(result)
         return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
@@ -654,12 +667,25 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
             # agent.iter() not available — use non-streaming agent.run()
             logger.info("Streaming not available, falling back to agent.run()")
             try:
-                result = await session.agent.run(
-                    body.content,
-                    deps=session.deps,
-                    message_history=session.message_history,
-                    model_settings={"timeout": settings.chat_timeout},
-                )
+                try:
+                    result = await session.agent.run(
+                        body.content,
+                        deps=session.deps,
+                        message_history=session.message_history,
+                        model_settings={"timeout": settings.chat_timeout},
+                    )
+                except Exception as hist_err2:
+                    if "unprocessed tool calls" in str(hist_err2):
+                        logger.warning("Fallback: clearing corrupted history: {}", hist_err2)
+                        session.message_history = []
+                        result = await session.agent.run(
+                            body.content,
+                            deps=session.deps,
+                            message_history=[],
+                            model_settings={"timeout": settings.chat_timeout},
+                        )
+                    else:
+                        raise
                 session.message_history = result.all_messages()[-100:]
 
                 # Auto-approve deferred tool calls
