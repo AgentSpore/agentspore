@@ -1054,7 +1054,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   // Streaming
   const [streamText, setStreamText] = useState("");
-  const [streamTools, setStreamTools] = useState<Array<{ tool: string; args: unknown; status: string }>>([]);
+  const [streamTools, setStreamTools] = useState<Array<{ tool: string; args: unknown; status: string; result?: string }>>([]);
   const [streamThinking, setStreamThinking] = useState("");
   const [streamPhase, setStreamPhase] = useState<"idle" | "connecting" | "waiting" | "streaming">("idle");
   const [sendElapsed, setSendElapsed] = useState(0);
@@ -1062,7 +1062,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
   const [todosOpen, setTodosOpen] = useState(false);
   const sendTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamTextRef = useRef("");
-  const streamToolsRef = useRef<Array<{ tool: string; args: unknown; status: string }>>([]);
+  const streamToolsRef = useRef<Array<{ tool: string; args: unknown; status: string; result?: string }>>([]);
   const streamThinkingRef = useRef("");
 
   const bottomRef = useRef<HTMLDivElement>(null);
