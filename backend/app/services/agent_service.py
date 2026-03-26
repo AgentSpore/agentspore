@@ -703,9 +703,11 @@ class AgentService:
         warnings: list[str] = []
         if not agent.get("github_oauth_token"):
             warnings.append(
-                "GitHub OAuth not connected. Connect via GET /api/v1/agents/github/connect "
-                "to operate under your own identity. Without OAuth you cannot create projects, "
-                "push code, or comment on issues."
+                "GitHub OAuth not connected (optional). Connect via GET /api/v1/agents/github/connect "
+                "to operate under your own GitHub identity. Without OAuth you can still use: "
+                "POST /api/v1/agents/projects/:id/push (push code), "
+                "POST /api/v1/agents/projects/:id/github (GitHub API proxy for issues, PRs, comments), "
+                "and POST /api/v1/agents/projects (create projects)."
             )
 
         # OpenViking: store insights + fetch memory context (non-blocking)
@@ -1779,9 +1781,33 @@ class AgentService:
         if project["vcs_provider"] != "github":
             raise HTTPException(status_code=400, detail="Only GitHub projects support this operation")
 
-        # Access control: READ = any agent, WRITE = creator/team/admin
+        # Access control:
+        # - READ (GET) = any agent
+        # - Open-source actions (issues, comments, PRs, branches) = any agent
+        # - Destructive writes (push, delete, close/merge) = creator/team/admin only
+        OPEN_WRITE_PATTERNS = {
+            ("POST", "/issues"),
+            ("POST", "/issues/*/comments"),
+            ("POST", "/pulls/*/comments"),
+            ("POST", "/pulls"),
+            ("POST", "/git/refs"),
+        }
         is_write = method in ("POST", "PATCH", "PUT", "DELETE")
-        if is_write:
+        is_open_write = (method, path) in OPEN_WRITE_PATTERNS
+        if not is_open_write:
+            # Check wildcard patterns (e.g. /issues/42/comments → /issues/*/comments)
+            parts = path.strip("/").split("/")
+            for pattern_method, pattern_path in OPEN_WRITE_PATTERNS:
+                if method != pattern_method:
+                    continue
+                p_parts = pattern_path.strip("/").split("/")
+                if len(parts) == len(p_parts) and all(
+                    pp == "*" or pp == sp for pp, sp in zip(p_parts, parts)
+                ):
+                    is_open_write = True
+                    break
+
+        if is_write and not is_open_write:
             agent_id = str(agent["id"])
             is_admin = agent.get("is_admin_agent", False)
             is_creator = str(project["creator_agent_id"]) == agent_id
@@ -1795,7 +1821,8 @@ class AgentService:
             if not is_creator and not is_member and not is_admin:
                 raise HTTPException(
                     status_code=403,
-                    detail="Only the project creator, team member, or admin agent can perform write operations.",
+                    detail="Only the project creator, team member, or admin agent can perform write operations. "
+                    "You can still create issues, comment, and submit PRs.",
                 )
 
         # Rate limit
@@ -1845,6 +1872,13 @@ class AgentService:
         else:
             path_part = path
         github_url = f"https://api.github.com/repos/{org}/{repo_name}/{path_part}{query_string}"
+
+        # Add agent attribution to issue/comment/PR bodies
+        if body and is_write and "body" in body:
+            agent_name = agent.get("name") or agent.get("handle") or "Unknown Agent"
+            agent_handle = agent.get("handle") or ""
+            attribution = f"\n\n---\n*Posted by [{agent_name}](https://agentspore.com/agents/{agent_handle}) via [AgentSpore](https://agentspore.com)*"
+            body = {**body, "body": body["body"] + attribution}
 
         # Execute request
         headers = {

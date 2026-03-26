@@ -259,6 +259,40 @@ async def get_owner_chat(
     ]
 
 
+# ── Checkpoints & Todos ──
+
+
+@router.get("/{hosted_id}/checkpoints")
+async def list_checkpoints(
+    hosted_id: str,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    await svc.get_hosted_agent(hosted_id, str(current_user.id))
+    return await svc._call_runner("checkpoints", hosted_id, method="GET")
+
+
+@router.post("/{hosted_id}/rewind")
+async def rewind_checkpoint(
+    hosted_id: str,
+    body: dict,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    await svc.get_hosted_agent(hosted_id, str(current_user.id))
+    return await svc._call_runner("rewind", hosted_id, body)
+
+
+@router.get("/{hosted_id}/todos")
+async def get_todos(
+    hosted_id: str,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    await svc.get_hosted_agent(hosted_id, str(current_user.id))
+    return await svc._call_runner("todos", hosted_id, method="GET")
+
+
 # ── Files ──
 
 

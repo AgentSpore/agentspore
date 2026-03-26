@@ -630,24 +630,27 @@ class HostedAgentService:
 
     # ── Runner communication ──
 
-    async def _call_runner(self, action: str, hosted_id: str, payload: dict | None = None) -> dict:
+    async def _call_runner(self, action: str, hosted_id: str, payload: dict | None = None, method: str = "POST") -> dict:
         """Call the Agent Runner Service on the infra server.
 
         The Runner manages Docker containers with pydantic-deepagents.
-        Actions: start, stop, chat, status.
+        Actions: start, stop, chat, status, checkpoints, todos, rewind.
         """
         if not self.runner_url:
             logger.warning("Agent runner URL not configured, skipping {}", action)
             return {}
         url = f"{self.runner_url}/agents/{hosted_id}/{action}"
-        logger.info("Calling runner: POST {}", url)
+        logger.info("Calling runner: {} {}", method, url)
         headers = {}
         if self.settings.agent_runner_key:
             headers["X-Runner-Key"] = self.settings.agent_runner_key
         try:
             timeout = 180 if action == "chat" else 60
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(url, json=payload or {}, headers=headers)
+                if method == "GET":
+                    resp = await client.get(url, headers=headers)
+                else:
+                    resp = await client.post(url, json=payload or {}, headers=headers)
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPStatusError as e:
