@@ -1397,7 +1397,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
                     {t.status === "completed" ? "✓" : t.status === "in_progress" ? "◉" : "○"}
                   </span>
                   <span className={`${t.status === "completed" ? "text-neutral-600 line-through" : "text-neutral-300"}`}>
-                    {t.content || t.activeForm || String(t)}
+                    {t.content || String(t)}
                   </span>
                 </div>
               ))}
