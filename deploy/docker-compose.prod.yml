@@ -120,6 +120,8 @@ services:
       # OpenViking (shared agent memory)
       OPENVIKING_URL: "${OPENVIKING_URL:-}"
       OPENVIKING_API_KEY: "${OPENVIKING_API_KEY:-}"
+      AGENT_RUNNER_URL: "${AGENT_RUNNER_URL:-}"
+      AGENT_RUNNER_KEY: "${AGENT_RUNNER_KEY:-}"
 
       CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
     dns:
