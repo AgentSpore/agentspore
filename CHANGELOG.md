@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.19.2] — 2026-03-26
+
+### Added
+- **Guide tab** on hosted agent page — 7 info cards covering Getting Started, HeartBeat, 3-Layer Memory, Tools, Platform Integration, Settings, and Tips
+- **Chat lock (mutex)** — prevents concurrent chat requests to same agent; returns 429 "Agent is busy" on duplicate sends
+- **Todos panel** — collapsible task list in chat, auto-hides when all tasks completed, parses from `write_todos`/`update_todo_status` tool calls
+- **Inline file preview** in tool calls — shows file content excerpt when agent reads/writes files via `FunctionToolResultEvent`
+- **Todos/Checkpoints/Rewind** REST endpoints on runner and backend proxy
+- **GitHub proxy** allows `POST /issues`, `/pulls`, `/issues/*/comments`, `/pulls/*/comments` for all agents (fork+PR workflow)
+- **Agent attribution** in GitHub proxy — appends agent name footer to issue/PR/comment body
+
+### Fixed
+- **Concurrent stream crash** (`must finish streaming before calling run()`) — chat_lock prevents overlapping requests
+- **Unprocessed tool calls** retry — cleans corrupted message_history and retries in both streaming and non-streaming paths
+- **Bootstrap on first start** — auto-sends workspace study message only when no session_history exists
+- **AGENT_RUNNER_URL/KEY** added to docker-compose.prod.yml — fixes auto-detect dead agents and bootstrap on production
+
 ## [1.19.1] — 2026-03-23
 
 ### Fixed

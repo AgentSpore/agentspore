@@ -27,9 +27,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pydantic_ai.messages import ModelRequest, SystemPromptPart, ModelResponse, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
-from pydantic_ai import DeferredToolRequests
+from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
 from pydantic_ai.tools import DeferredToolResults
-from pydantic_deep import create_deep_agent, DeepAgentDeps
+from pydantic_deep import create_deep_agent, DeepAgentDeps, InMemoryCheckpointStore
 from pydantic_ai_backends import DockerSandbox
 
 from config import get_settings
@@ -115,6 +115,7 @@ class AgentSession:
         self.heartbeat_seconds = heartbeat_seconds
         self.heartbeat_task: asyncio.Task | None = None
         self.last_activity: float = time.time()
+        self.chat_lock = asyncio.Lock()
 
     def touch(self):
         """Update last activity timestamp."""
@@ -454,6 +455,8 @@ async def start_agent(hosted_id: str, body: StartRequest):
         include_plan=True,
         include_web=bool(os.environ.get("TAVILY_API_KEY")),
         include_checkpoints=True,
+        checkpoint_frequency="every_turn",
+        max_checkpoints=50,
         context_manager=True,
         cost_tracking=True,
         cost_budget_usd=settings.default_budget_usd,
@@ -506,9 +509,13 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
     if not session:
         raise HTTPException(400, "Agent not running. Start it first.")
 
+    if session.chat_lock.locked():
+        raise HTTPException(429, "Agent is busy generating a response. Please wait.")
+
     session.touch()
 
-    try:
+    async with session.chat_lock:
+      try:
         try:
             result = await session.agent.run(
                 body.content,
@@ -531,7 +538,7 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
         session.message_history = result.all_messages()[-100:]
         reply, tool_calls, thinking = _extract_response(result)
         return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
-    except Exception as e:
+      except Exception as e:
         logger.error("Chat error for {}: {}", hosted_id, repr(e))
         raise HTTPException(500, f"Agent error: {str(e)}")
 
@@ -552,9 +559,13 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
     if not session:
         raise HTTPException(400, "Agent not running. Start it first.")
 
+    if session.chat_lock.locked():
+        raise HTTPException(429, "Agent is busy generating a response. Please wait.")
+
     session.touch()
 
     async def generate():
+      async with session.chat_lock:
         try:
             # Try streaming via agent.iter()
             try:
@@ -584,6 +595,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
 
                     # Stream text deltas from model request nodes
                     if hasattr(node, 'stream') and 'Request' in node_name:
+                        tool_names_by_id: dict[str, str] = {}
                         try:
                             async with node.stream(run.ctx) as stream:
                                 async for event in stream:
@@ -596,6 +608,28 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                                 yield json.dumps({"type": "thinking_delta", "content": cd}) + "\n"
                                             else:
                                                 yield json.dumps({"type": "text_delta", "content": cd}) + "\n"
+                                    # Capture tool result events with output preview
+                                    elif isinstance(event, FunctionToolResultEvent):
+                                        tool_name = tool_names_by_id.get(event.tool_call_id, "unknown")
+                                        output = str(event.result.content)[:2000] if event.result else ""
+                                        yield json.dumps({
+                                            "type": "tool_result",
+                                            "tool_name": tool_name,
+                                            "output": output,
+                                        }) + "\n"
+                                        # Stream todos update when todo tools are called
+                                        if tool_name in ("write_todos", "add_todo", "update_todo_status", "remove_todo"):
+                                            todos_file = settings.workspace_root / hosted_id / ".deep" / "todos.json"
+                                            if todos_file.exists():
+                                                try:
+                                                    todos_data = json.loads(todos_file.read_text())
+                                                    yield json.dumps({"type": "todos_update", "todos": todos_data}) + "\n"
+                                                except Exception:
+                                                    pass
+                                    # Track tool call IDs for result mapping
+                                    elif hasattr(event, 'part') and isinstance(getattr(event, 'part', None), ToolCallPart):
+                                        tc_part = event.part
+                                        tool_names_by_id[tc_part.tool_call_id] = tc_part.tool_name
                         except Exception as e:
                             logger.debug("Node stream not available: {}", e)
 
@@ -656,6 +690,25 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                     if key not in seen:
                         seen.add(key)
                         final_tools.append(tc)
+                # Emit todos update from read_todos result if available
+                for tc in final_tools:
+                    if tc.get("tool") == "read_todos" and tc.get("result"):
+                        # Parse todo items from read_todos result text
+                        todos_items = []
+                        for line in str(tc["result"]).split("\n"):
+                            line = line.strip()
+                            if line.startswith("1.") or line.startswith("2.") or line.startswith("3.") or line.startswith("4.") or line.startswith("5."):
+                                is_done = "[x]" in line or "[X]" in line
+                                is_progress = "◉" in line or "[~]" in line
+                                content = line.split("]", 1)[-1].strip() if "]" in line else line[3:].strip()
+                                todos_items.append({
+                                    "content": content,
+                                    "status": "completed" if is_done else "in_progress" if is_progress else "pending",
+                                })
+                        if todos_items:
+                            yield json.dumps({"type": "todos_update", "todos": todos_items}) + "\n"
+                        break
+
                 yield json.dumps({
                     "type": "done",
                     "reply": reply,
@@ -724,8 +777,30 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                 yield json.dumps({"type": "error", "message": str(e2)}) + "\n"
 
         except Exception as e:
-            logger.error("Stream error for {}: {}", hosted_id, repr(e))
-            yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+            if "unprocessed tool calls" in str(e):
+                logger.warning("Stream: clearing corrupted history and retrying: {}", e)
+                session.message_history = []
+                try:
+                    result = await session.agent.run(
+                        body.content,
+                        deps=session.deps,
+                        message_history=[],
+                        model_settings={"timeout": settings.chat_timeout},
+                    )
+                    session.message_history = result.all_messages()[-100:]
+                    reply, tool_calls, thinking = _extract_response(result)
+                    yield json.dumps({
+                        "type": "done",
+                        "reply": reply,
+                        "tool_calls": tool_calls,
+                        "thinking": thinking,
+                    }) + "\n"
+                except Exception as e2:
+                    logger.error("Retry after history clear failed: {}", repr(e2))
+                    yield json.dumps({"type": "error", "message": str(e2)}) + "\n"
+            else:
+                logger.error("Stream error for {}: {}", hosted_id, repr(e))
+                yield json.dumps({"type": "error", "message": str(e)}) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
@@ -775,6 +850,82 @@ async def get_session_history(hosted_id: str):
     except Exception as e:
         logger.warning("History serialization error for {}: {}", hosted_id, e)
         return {"history": []}
+
+
+@app.get("/agents/{hosted_id}/checkpoints")
+async def list_checkpoints(hosted_id: str):
+    """List available checkpoints for rewind."""
+    session = sessions.get(hosted_id)
+    if not session:
+        raise HTTPException(404, "Agent not running")
+    try:
+        store = None
+        for ts in session.agent.toolsets:
+            if hasattr(ts, "checkpoint_store"):
+                store = ts.checkpoint_store
+                break
+        if not store:
+            return {"checkpoints": []}
+        cps = []
+        for cp in store.list():
+            cps.append({
+                "id": cp.id if hasattr(cp, "id") else str(cp),
+                "label": getattr(cp, "label", ""),
+                "turn": getattr(cp, "turn", 0),
+                "message_count": getattr(cp, "message_count", 0),
+                "created_at": getattr(cp, "created_at", ""),
+            })
+        return {"checkpoints": cps}
+    except Exception as e:
+        logger.warning("Checkpoint list error for {}: {}", hosted_id, e)
+        return {"checkpoints": []}
+
+
+class RewindRequest(BaseModel):
+    checkpoint_id: str
+
+
+@app.post("/agents/{hosted_id}/rewind")
+async def rewind_to_checkpoint(hosted_id: str, body: RewindRequest):
+    """Rewind agent to a previous checkpoint."""
+    session = sessions.get(hosted_id)
+    if not session:
+        raise HTTPException(404, "Agent not running")
+    try:
+        store = None
+        for ts in session.agent.toolsets:
+            if hasattr(ts, "checkpoint_store"):
+                store = ts.checkpoint_store
+                break
+        if not store:
+            raise HTTPException(400, "Checkpoints not available")
+        cp = store.get(body.checkpoint_id)
+        if not cp:
+            raise HTTPException(404, "Checkpoint not found")
+        session.message_history = cp.messages if hasattr(cp, "messages") else []
+        logger.info("Rewound agent {} to checkpoint {}", hosted_id, body.checkpoint_id)
+        return {"status": "ok", "checkpoint_id": body.checkpoint_id, "message_count": len(session.message_history)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Rewind error for {}: {}", hosted_id, e)
+        raise HTTPException(500, str(e))
+
+
+@app.get("/agents/{hosted_id}/todos")
+async def get_todos(hosted_id: str):
+    """Get agent's current todo list."""
+    session = sessions.get(hosted_id)
+    if not session:
+        return {"todos": []}
+    workspace = settings.workspace_root / hosted_id
+    todos_file = workspace / ".deep" / "todos.json"
+    if todos_file.exists():
+        try:
+            return {"todos": json.loads(todos_file.read_text())}
+        except Exception:
+            pass
+    return {"todos": []}
 
 
 @app.get("/agents/{hosted_id}/files")
