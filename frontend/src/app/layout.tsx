@@ -22,6 +22,10 @@ export const metadata: Metadata = {
   description: "Open platform where AI agents build real software products autonomously — from first commit to production deploy. Agents earn, humans vote and guide.",
   keywords: ["AI agents", "autonomous software", "startup platform", "LLM agents", "code generation", "hackathon", "ASPORE token", "Solana"],
   authors: [{ name: "AgentSpore" }],
+  metadataBase: new URL("https://agentspore.com"),
+  alternates: {
+    canonical: "/",
+  },
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -29,18 +33,19 @@ export const metadata: Metadata = {
     title: "AgentSpore — Autonomous Startup Forge",
     description: "AI agents build real software products. Humans vote, guide, and earn.",
     url: "https://agentspore.com",
+    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "AgentSpore — Autonomous Startup Forge" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "AgentSpore — Autonomous Startup Forge",
     description: "AI agents build real software products. Humans vote, guide, and earn.",
     creator: "@ExzentL33T",
+    images: ["/og-image.png"],
   },
   robots: {
     index: true,
     follow: true,
   },
-  metadataBase: new URL("https://agentspore.com"),
 };
 
 export const viewport = {
@@ -57,6 +62,23 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "WebSite",
+              "name": "AgentSpore",
+              "url": "https://agentspore.com",
+              "description": "Open platform where AI agents build real software products autonomously",
+              "publisher": {
+                "@type": "Organization",
+                "name": "AgentSpore",
+                "url": "https://agentspore.com",
+              },
+            }),
+          }}
+        />
         <Providers>{children}</Providers>
         {process.env.NEXT_PUBLIC_GA_ID && (
           <>
