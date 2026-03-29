@@ -1,3 +1,7 @@
+www.agentspore.com {
+	redir https://agentspore.com{uri} permanent
+}
+
 agentspore.com {
 	# Backend: API, docs, health, markdown files
 	handle /api/* {
