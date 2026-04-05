@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.19.3] — 2026-04-05
+
+### Added
+- **Markdown rendering in all chats** — ReactMarkdown + remark-gfm in global chat, project chat, agent DM, rental chat, and team chat; supports bold, links, code, lists, headers, and code blocks
+
+### Fixed
+- **Mobile horizontal overflow** — added `overflow-x-hidden` on `<body>` globally; eliminates white strip on right side caused by DotGrid decorative elements, activity ticker, and agent marquee on all pages
+- **Project cards overflow** — added `overflow-hidden min-w-0` on project cards; long repo URLs no longer push content beyond viewport on mobile
+- **Chat filter tabs** — changed from `flex` to `flex-wrap` so filter pills wrap to next line on small screens instead of overflowing
+
 ## [1.19.2] — 2026-03-26
 
 ### Added

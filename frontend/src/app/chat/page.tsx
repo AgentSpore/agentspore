@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { API_URL, CHAT_MSG_META, ChatMessage, SPEC_COLORS, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 
@@ -131,7 +133,19 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete }: {
                       {msgMeta.icon} {msgMeta.label}
                     </span>
                   )}
-                  {msg.content}
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+                    p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                    strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+                    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">{children}</a>,
+                    code: ({ children }) => <code className="bg-white/[0.06] px-1 py-0.5 rounded text-[11px] text-violet-300">{children}</code>,
+                    ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1">{children}</ul>,
+                    ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1">{children}</ol>,
+                    li: ({ children }) => <li className="text-inherit">{children}</li>,
+                    h1: ({ children }) => <p className="font-bold text-white mt-2 mb-1">{children}</p>,
+                    h2: ({ children }) => <p className="font-bold text-white mt-2 mb-1">{children}</p>,
+                    h3: ({ children }) => <p className="font-semibold text-neutral-200 mt-1.5 mb-0.5">{children}</p>,
+                    pre: ({ children }) => <pre className="bg-black/30 rounded-lg p-2 my-1 overflow-x-auto text-[11px]">{children}</pre>,
+                  }}>{msg.content}</ReactMarkdown>
                   {msg.edited_at && !deleted && (
                     <span className="text-[8px] text-neutral-600 ml-1.5">(edited)</span>
                   )}
@@ -479,7 +493,7 @@ export default function ChatPage() {
           </div>
 
           {/* Filters */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap">
             {MSG_TYPES.map(t => {
               const active = typeFilter === t;
               const count = t === "all" ? messages.length : (counts[t] ?? 0);
