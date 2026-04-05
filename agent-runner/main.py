@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from pydantic_ai.messages import ModelRequest, SystemPromptPart, ModelResponse, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
 from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
 from pydantic_ai.tools import DeferredToolResults
-from pydantic_deep import create_deep_agent, DeepAgentDeps, InMemoryCheckpointStore
+from pydantic_deep import create_deep_agent, DeepAgent, DeepAgentDeps, InMemoryCheckpointStore
 from pydantic_ai_backends import DockerSandbox
 
 from config import get_settings
@@ -441,31 +441,54 @@ async def start_agent(hosted_id: str, body: StartRequest):
         auto_remove=True,
     )
 
-    agent = create_deep_agent(
-        model=f"openai:{body.model}",
-        instructions=body.system_prompt,
-        output_type=[str, DeferredToolRequests],
-        include_todo=True,
-        include_filesystem=True,
-        include_execute=True,
-        include_subagents=False,
-        include_skills=True,
-        include_memory=True,
-        memory_dir="/workspace/.deep/memory",
-        include_plan=True,
-        include_web=bool(os.environ.get("TAVILY_API_KEY")),
-        include_checkpoints=True,
-        checkpoint_frequency="every_turn",
-        max_checkpoints=50,
-        context_manager=True,
-        cost_tracking=True,
-        cost_budget_usd=settings.default_budget_usd,
-        context_discovery=True,
-        context_manager_max_tokens=body.context_max_tokens,
-        skill_directories=[{"path": "/workspace/skills", "recursive": True}],
-    )
+    # Eviction limit = ~5% of model context window (min 5K)
+    # Large outputs beyond this limit are automatically truncated
+    ctx = body.context_max_tokens or 128000
+    eviction_limit = max(5000, ctx // 20)
 
-    deps = DeepAgentDeps(backend=sandbox)
+    # Load agent from workspace agent.yaml if exists, otherwise use defaults
+    agent_yaml = workspace / "agent.yaml"
+    if agent_yaml.exists():
+        logger.info("Loading agent spec from {}", agent_yaml)
+        agent, deps = DeepAgent.from_file(
+            str(agent_yaml),
+            model=f"openai:{body.model}",
+            instructions=body.system_prompt,
+            backend=sandbox,
+            output_type=[str, DeferredToolRequests],
+            cost_budget_usd=settings.default_budget_usd,
+            context_manager_max_tokens=body.context_max_tokens,
+            eviction_token_limit=eviction_limit,
+        )
+    else:
+        agent = create_deep_agent(
+            model=f"openai:{body.model}",
+            instructions=body.system_prompt,
+            output_type=[str, DeferredToolRequests],
+            include_todo=True,
+            include_filesystem=True,
+            include_execute=True,
+            include_subagents=False,
+            include_skills=True,
+            include_memory=True,
+            memory_dir="/workspace/.deep/memory",
+            include_plan=True,
+            web_search=bool(os.environ.get("TAVILY_API_KEY")),
+            web_fetch=bool(os.environ.get("TAVILY_API_KEY")),
+            include_checkpoints=True,
+            checkpoint_frequency="every_turn",
+            max_checkpoints=50,
+            context_manager=True,
+            cost_tracking=True,
+            cost_budget_usd=settings.default_budget_usd,
+            context_discovery=True,
+            context_manager_max_tokens=body.context_max_tokens,
+            skill_directories=["/workspace/skills"],
+            thinking="low",
+            eviction_token_limit=eviction_limit,
+            interrupt_on={"execute": True, "write_file": False},
+        )
+        deps = DeepAgentDeps(backend=sandbox)
 
     session = AgentSession(
         hosted_id=hosted_id,
