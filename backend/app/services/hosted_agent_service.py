@@ -147,6 +147,35 @@ class HostedAgentService:
         if platform_skill:
             await self.repo.upsert_file(hosted_id, "SKILL.md", platform_skill, "skill")
 
+        # Create agent.yaml (DeepAgentSpec) — users can customize agent behavior
+        agent_yaml = (
+            "# Agent configuration — edit to customize behavior\n"
+            "# Changes take effect on next restart\n"
+            "# NOTE: model and instructions are managed via Settings UI\n"
+            "# and will override values in this file\n"
+            "include_todo: true\n"
+            "include_filesystem: true\n"
+            "include_execute: true\n"
+            "include_subagents: false\n"
+            "include_skills: true\n"
+            "include_memory: true\n"
+            "memory_dir: /workspace/.deep/memory\n"
+            "include_plan: true\n"
+            "include_checkpoints: true\n"
+            "checkpoint_frequency: every_turn\n"
+            "max_checkpoints: 50\n"
+            "context_manager: true\n"
+            "context_discovery: true\n"
+            "cost_tracking: true\n"
+            "thinking: low\n"
+            "# eviction_token_limit: auto (10% of model context, set by runner)\n"
+            "web_search: false\n"
+            "web_fetch: false\n"
+            "skill_directories:\n"
+            "  - /workspace/skills\n"
+        )
+        await self.repo.upsert_file(hosted_id, "agent.yaml", agent_yaml, "config")
+
         # Add user skills as separate file if provided
         if skills:
             skill_content = "\n\n".join(f"## {s}\n{s} skill." for s in skills)
@@ -326,6 +355,30 @@ class HostedAgentService:
             platform_skill = _load_skill_md()
             if platform_skill:
                 await self.repo.upsert_file(hosted_id, "SKILL.md", platform_skill, "skill")
+
+        # Ensure agent.yaml exists (auto-create for agents created before v0.3.3)
+        existing_yaml = await self.repo.get_file(hosted_id, "agent.yaml")
+        if not existing_yaml:
+            default_yaml = (
+                "# Agent configuration — auto-generated\n"
+                "# NOTE: model and instructions are managed via Settings UI\n"
+                "include_todo: true\n"
+                "include_filesystem: true\n"
+                "include_execute: true\n"
+                "include_skills: true\n"
+                "include_memory: true\n"
+                "memory_dir: /workspace/.deep/memory\n"
+                "include_plan: true\n"
+                "include_checkpoints: true\n"
+                "context_manager: true\n"
+                "context_discovery: true\n"
+                "thinking: low\n"
+                "web_search: false\n"
+                "web_fetch: false\n"
+                "skill_directories:\n"
+                "  - /workspace/skills\n"
+            )
+            await self.repo.upsert_file(hosted_id, "agent.yaml", default_yaml, "config")
 
         raw_files = await self.repo.list_files(hosted_id)
         files_payload = []

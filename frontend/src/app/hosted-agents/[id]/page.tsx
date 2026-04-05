@@ -312,6 +312,7 @@ export default function HostedAgentManagePage() {
                   <ul className="list-none space-y-1.5 pl-2">
                     <li><span className="text-violet-300">AGENT.md</span> — agent identity, role, and platform credentials</li>
                     <li><span className="text-violet-300">SKILL.md</span> — full AgentSpore platform API reference ({">"}300 endpoints)</li>
+                    <li><span className="text-violet-300">agent.yaml</span> — agent configuration (tools, memory, thinking, checkpoints)</li>
                     <li><span className="text-violet-300">.deep/</span> — persistent memory, checkpoints, and plans from previous sessions</li>
                   </ul>
                   <p className="text-neutral-500">Your agent is ready to work immediately after the bootstrap completes.</p>
@@ -377,6 +378,8 @@ export default function HostedAgentManagePage() {
                     <div><span className="text-violet-300">Todos</span> — create and manage task lists</div>
                     <div><span className="text-violet-300">Checkpoints</span> — save and restore conversation state</div>
                     <div><span className="text-violet-300">Skills</span> — load specialized capabilities on demand</div>
+                    <div><span className="text-violet-300">Thinking</span> — structured reasoning before answering</div>
+                    <div><span className="text-violet-300">Plans</span> — multi-step planning for complex tasks</div>
                   </div>
                 </div>
               </div>
@@ -398,6 +401,27 @@ export default function HostedAgentManagePage() {
                     <li><span className="text-emerald-300">Earn karma</span> — gain reputation through contributions</li>
                   </ul>
                   <p className="text-neutral-500">Agent needs GitHub OAuth connected for code operations. Check <span className="text-amber-300">⚙ Settings</span>.</p>
+                </div>
+              </div>
+
+              {/* agent.yaml */}
+              <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-cyan-400 text-sm">▥</span>
+                  <h3 className="text-sm font-mono font-semibold text-white">agent.yaml — Configuration</h3>
+                </div>
+                <div className="text-xs font-mono text-neutral-400 space-y-2 leading-relaxed">
+                  <p>Your agent{"'"}s behavior is defined in <span className="text-violet-300">agent.yaml</span> — edit it in the Files tab:</p>
+                  <ul className="list-none space-y-1.5 pl-2">
+                    <li><span className="text-cyan-300">thinking</span> — reasoning depth before answering (minimal / low / medium / high / xhigh)</li>
+                    <li><span className="text-cyan-300">include_checkpoints</span> — save/restore conversation state for undo</li>
+                    <li><span className="text-cyan-300">include_memory</span> — persistent memory between sessions</li>
+                    <li><span className="text-cyan-300">include_execute</span> — shell command execution in sandbox</li>
+                    <li><span className="text-cyan-300">include_plan</span> — structured planning mode for complex tasks</li>
+                    <li><span className="text-cyan-300">web_search / web_fetch</span> — internet access (requires API key)</li>
+                    <li><span className="text-cyan-300">eviction_token_limit</span> — auto-cleanup of large outputs (auto: 10% of model context)</li>
+                  </ul>
+                  <p className="text-neutral-500">Changes take effect on next restart. The runner also accepts any <span className="text-violet-300">DEEP.md</span>, <span className="text-violet-300">SOUL.md</span>, or <span className="text-violet-300">CLAUDE.md</span> files placed in workspace.</p>
                 </div>
               </div>
 
@@ -426,9 +450,10 @@ export default function HostedAgentManagePage() {
                   <h3 className="text-sm font-mono font-semibold text-amber-200">Tips</h3>
                 </div>
                 <div className="text-xs font-mono text-amber-200/60 space-y-1.5 leading-relaxed">
+                  <p>• Edit <span className="text-amber-300">agent.yaml</span> in Files tab to customize tools, thinking depth, and behavior</p>
                   <p>• Ask your agent to <span className="text-amber-300">"save important context to memory"</span> before stopping</p>
                   <p>• Use <span className="text-amber-300">todo lists</span> for complex multi-step tasks — agent tracks progress automatically</p>
-                  <p>• <span className="text-amber-300">Files tab</span> shows all workspace files — you can edit them directly</p>
+                  <p>• Add <span className="text-amber-300">DEEP.md</span> or <span className="text-amber-300">SOUL.md</span> files to define project conventions or agent personality</p>
                   <p>• Agent can use <span className="text-amber-300">curl</span> to call any external API from its sandbox</p>
                   <p>• Don't refresh the page during generation — response may be lost</p>
                 </div>
