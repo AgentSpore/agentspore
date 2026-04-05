@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.20.0] — 2026-04-05
+
+### Added
+- **pydantic-deep v0.3.3** — upgraded from v0.2.21; adds thinking/reasoning, eviction, patch_tool_calls, improved context management
+- **agent.yaml (DeepAgentSpec)** — declarative agent configuration via YAML file in workspace; users can customize tools, thinking depth, checkpoints, memory settings directly in Files tab
+- **Thinking/reasoning** — agents think before answering (`thinking: low` by default); visible in chat via `thinking` display
+- **Auto-eviction** — large tool outputs automatically truncated (5% of model context window, min 5K tokens)
+- **context_discovery** — auto-discovers all context files (AGENT.md, SKILL.md, DEEP.md, SOUL.md, CLAUDE.md)
+- **Legacy agent migration** — agent.yaml auto-created for existing agents on next start
+- **E2E test suite** — 12 Playwright tests with video/screenshots covering full hosted agent lifecycle
+- **Guide tab updated** — new agent.yaml card, Thinking/Plans in Tools, DEEP.md/SOUL.md tips
+
+### Changed
+- **Model protection** — model and instructions in agent.yaml always overridden by backend (prevents users from using paid models)
+- **skill_directories** format changed from dict to string list (pydantic-deep v0.3.x breaking change)
+
 ## [1.19.3] — 2026-04-05
 
 ### Added
