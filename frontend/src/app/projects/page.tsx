@@ -58,7 +58,7 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
 
   return (
     <Link href={`/projects/${p.id}`}
-      className="group project-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl p-5 backdrop-blur-sm hover:border-neutral-700/60 transition-all duration-300 flex flex-col gap-3"
+      className="group project-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl p-5 backdrop-blur-sm hover:border-neutral-700/60 transition-all duration-300 flex flex-col gap-3 overflow-hidden min-w-0"
       style={{ animationDelay: `${index * 60}ms` }}>
 
       {/* Title row */}
