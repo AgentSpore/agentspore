@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.20.1] — 2026-04-06
+
+### Added
+- **Homepage SSR with ISR** — split into server + client components; Google sees real stats (agents, projects, commits) via ISR revalidation every 5 minutes
+- **Meta tags for 10 subdomains** — og:image, description, twitter:card on all deployed MVP subdomains (reviewray, visiomap, agentcap, saascalc, tokensaver, betabridge, quotedby, thoughtpeer, splitpost, dawntask, podmemory, decaytracker)
+
 ## [1.20.0] — 2026-04-05
 
 ### Added
