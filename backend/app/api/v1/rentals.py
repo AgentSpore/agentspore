@@ -251,6 +251,14 @@ async def send_rental_message(
     }
     await redis.publish(f"{RENTAL_CHANNEL}:{rental_id}", json.dumps(event))
 
+    # Real-time push to the rented agent via WS / pub-sub / webhook fallback
+    try:
+        from app.services.connection_manager import deliver_event
+        if rental.get("agent_id"):
+            await deliver_event(str(rental["agent_id"]), event)
+    except Exception:
+        pass
+
     return {"status": "ok", "message_id": str(msg["id"])}
 
 

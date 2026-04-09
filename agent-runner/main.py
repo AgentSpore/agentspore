@@ -10,6 +10,7 @@ v0.3.0 — streaming chat, include_execute, idle cleanup
 
 import asyncio
 import atexit
+import collections
 import json
 import os
 import secrets
@@ -105,7 +106,8 @@ class AgentSession:
     """Holds a running agent's sandbox, agent instance, message history, and heartbeat task."""
 
     def __init__(self, hosted_id: str, sandbox: DockerSandbox, agent, deps: DeepAgentDeps,
-                 api_key: str = "", heartbeat_seconds: int = 3600):
+                 api_key: str = "", heartbeat_seconds: int = 3600,
+                 auto_react: bool = True, max_reactions_per_minute: int = 10):
         self.hosted_id = hosted_id
         self.sandbox = sandbox
         self.agent = agent
@@ -116,6 +118,15 @@ class AgentSession:
         self.heartbeat_task: asyncio.Task | None = None
         self.last_activity: float = time.time()
         self.chat_lock = asyncio.Lock()
+
+        # Real-time WebSocket state
+        self.ws_task: asyncio.Task | None = None
+        self.ws_connected = False
+        self.auto_react = auto_react
+        self.max_reactions_per_minute = max_reactions_per_minute
+        self._reaction_timestamps: list[float] = []
+        # Idempotency: ring buffer of recent event ids to drop replays
+        self._seen_event_ids: collections.deque = collections.deque(maxlen=512)
 
     def touch(self):
         """Update last activity timestamp."""
@@ -170,15 +181,164 @@ class AgentSession:
         except Exception as e:
             logger.warning("Heartbeat failed for {}: {}", self.hosted_id, e)
 
+    # ── Real-time WebSocket ─────────────────────────────────────────────
+
+    def start_websocket(self):
+        """Connect to platform WebSocket for real-time events."""
+        if self.api_key and not self.ws_task:
+            self.ws_task = asyncio.create_task(self._websocket_loop())
+
+    def stop_websocket(self):
+        """Cancel WebSocket task."""
+        if self.ws_task:
+            self.ws_task.cancel()
+            self.ws_task = None
+            self.ws_connected = False
+
+    async def _websocket_loop(self):
+        """Maintain a persistent WebSocket connection with reconnect/backoff."""
+        try:
+            import websockets
+        except ImportError:
+            logger.warning("websockets package not installed; real-time disabled for {}", self.hosted_id)
+            return
+
+        # Convert http(s):// → ws(s)://
+        ws_base = settings.agentspore_url.replace("http://", "ws://").replace("https://", "wss://")
+        url = f"{ws_base}/api/v1/agents/ws?api_key={self.api_key}"
+
+        backoff = 1
+        max_backoff = 60
+        while True:
+            try:
+                async with websockets.connect(url, ping_interval=30, ping_timeout=20) as ws:
+                    self.ws_connected = True
+                    backoff = 1
+                    logger.info("WS connected for {}", self.hosted_id)
+                    async for raw in ws:
+                        try:
+                            event = json.loads(raw)
+                            await self._handle_platform_event(event, ws)
+                        except Exception as e:
+                            logger.warning("WS event handling error for {}: {}", self.hosted_id, e)
+            except asyncio.CancelledError:
+                self.ws_connected = False
+                return
+            except Exception as e:
+                self.ws_connected = False
+                logger.debug("WS disconnect for {}, retry in {}s: {}", self.hosted_id, backoff, e)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
+
+    async def _handle_platform_event(self, event: dict, ws):
+        """Handle an event received from the platform.
+
+        Injects the event into the agent's message history as a system message.
+        Optionally triggers an automatic reaction (agent.iter()) if auto_react is enabled.
+        """
+        event_type = event.get("type")
+
+        # Idempotency: drop replays of the same event id
+        eid = event.get("id") or event.get("event_id")
+        if eid:
+            if eid in self._seen_event_ids:
+                logger.debug("Dropping duplicate event {} for {}", eid, self.hosted_id)
+                return
+            self._seen_event_ids.append(eid)
+
+        # Server-initiated keepalive
+        if event_type == "ping":
+            try:
+                await ws.send(json.dumps({"type": "pong"}))
+            except Exception:
+                pass
+            return
+        if event_type == "pong":
+            return
+        if event_type == "hello":
+            logger.debug("WS hello for {}: {}", self.hosted_id, event.get("agent_name"))
+            return
+
+        # Format event as a system message and inject into context
+        formatted = self._format_event_for_context(event)
+        if not formatted:
+            return
+
+        self.message_history.append(
+            ModelRequest(parts=[SystemPromptPart(content=formatted)])
+        )
+        logger.info("Real-time event for {}: type={}", self.hosted_id, event_type)
+
+        # Auto-react if enabled and rate limit allows
+        if self.auto_react and self._can_react() and event_type in ("dm", "task", "mention", "rental_message"):
+            asyncio.create_task(self._auto_react(event))
+
+    def _format_event_for_context(self, event: dict) -> str | None:
+        """Convert a platform event to a system prompt fragment."""
+        et = event.get("type")
+        if et == "dm":
+            sender = event.get("from_name") or event.get("from") or "unknown"
+            return f"[Real-time DM from {sender}]\n{event.get('content', '')}"
+        if et == "task":
+            return f"[Real-time task assigned: {event.get('title', '')}]\nPriority: {event.get('priority', 'normal')}"
+        if et == "notification":
+            return f"[Real-time notification: {event.get('title', '')}]\nType: {event.get('task_type', '')}"
+        if et == "mention":
+            return f"[You were mentioned by {event.get('from', '')}]\nContext: {event.get('context', '')}"
+        if et == "rental_message":
+            return f"[Real-time rental message]\n{event.get('content', '')}"
+        if et == "memory_context":
+            items = event.get("items", [])
+            if not items:
+                return None
+            ctx = "\n".join(str(i)[:200] for i in items[:5])
+            return f"[Platform memory update]\n{ctx}"
+        return None
+
+    def _can_react(self) -> bool:
+        """Rate limit: max N auto-reactions per minute."""
+        now = time.time()
+        # Drop timestamps older than 60s
+        self._reaction_timestamps = [t for t in self._reaction_timestamps if now - t < 60]
+        if len(self._reaction_timestamps) >= self.max_reactions_per_minute:
+            logger.warning("Reaction rate limit hit for {}", self.hosted_id)
+            return False
+        return True
+
+    async def _auto_react(self, event: dict):
+        """Trigger agent.run() to react to a platform event automatically."""
+        if self.chat_lock.locked():
+            logger.debug("Auto-react skipped for {}: chat busy", self.hosted_id)
+            return
+
+        async with self.chat_lock:
+            self._reaction_timestamps.append(time.time())
+            self.touch()
+            try:
+                # Trigger a non-streaming run with empty user message —
+                # the system message we just appended provides the trigger.
+                # The model will see "[Real-time DM from X]" and respond.
+                result = await self.agent.run(
+                    "Respond to the latest real-time event in your context.",
+                    deps=self.deps,
+                    message_history=self.message_history,
+                    model_settings={"timeout": settings.chat_timeout},
+                )
+                self.message_history = result.all_messages()[-100:]
+                logger.info("Auto-reacted to {} for {}", event.get("type"), self.hosted_id)
+            except Exception as e:
+                logger.warning("Auto-react failed for {}: {}", self.hosted_id, e)
+
 
 # Active agent sessions
 sessions: dict[str, AgentSession] = {}
 
 
 def cleanup_all_sessions():
-    """Stop all Docker containers and heartbeats on shutdown."""
+    """Stop all Docker containers, heartbeats, and websockets on shutdown."""
     for hid, session in list(sessions.items()):
         session.stop_heartbeat()
+        session.stop_websocket()
         try:
             session.sandbox.stop()
             logger.info("Cleaned up container for {}", hid)
@@ -196,6 +356,7 @@ async def idle_cleanup_loop():
             session = sessions.pop(hid, None)
             if session:
                 session.stop_heartbeat()
+                session.stop_websocket()
                 try:
                     session.sandbox.stop()
                 except Exception:
@@ -506,17 +667,19 @@ async def start_agent(hosted_id: str, body: StartRequest):
 
     sessions[hosted_id] = session
     session.start_heartbeat()
+    session.start_websocket()  # real-time event channel
 
-    logger.info("Started agent {} with model {}, heartbeat every {}s", hosted_id, body.model, body.heartbeat_seconds)
+    logger.info("Started agent {} with model {}, heartbeat every {}s, ws=enabled", hosted_id, body.model, body.heartbeat_seconds)
     return ActionResponse(status="running", message="Agent started", container_id=hosted_id)
 
 
 @app.post("/agents/{hosted_id}/stop", response_model=ActionResponse)
 async def stop_agent(hosted_id: str):
-    """Stop a hosted agent, its container, and heartbeat."""
+    """Stop a hosted agent, its container, heartbeat, and WebSocket."""
     session = sessions.pop(hosted_id, None)
     if session:
         session.stop_heartbeat()
+        session.stop_websocket()
         try:
             session.sandbox.stop()
         except Exception as e:
@@ -843,11 +1006,13 @@ async def agent_status(hosted_id: str):
                 if container.status != "running":
                     logger.warning("Sandbox dead for {}, cleaning up", hosted_id)
                     session.stop_heartbeat()
+                    session.stop_websocket()
                     sessions.pop(hosted_id, None)
                     return ActionResponse(status="stopped")
     except Exception:
         logger.warning("Sandbox check failed for {}, cleaning up", hosted_id)
         session.stop_heartbeat()
+        session.stop_websocket()
         sessions.pop(hosted_id, None)
         return ActionResponse(status="stopped")
     return ActionResponse(status="running")

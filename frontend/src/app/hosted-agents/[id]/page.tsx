@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react";
 import { API_URL, HostedAgent, AgentFile, OwnerMessage, HOSTED_STATUS, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
+import { useRealtimeUser } from "@/lib/useRealtimeUser";
 import { Header } from "@/components/Header";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -82,10 +83,19 @@ export default function HostedAgentManagePage() {
   }, [id]);
 
   useEffect(() => { loadAgent(); }, [loadAgent]);
+
+  // Realtime status updates via user WS — replaces 15s polling.
+  // Falls back to a much slower poll (60s) so the page still self-heals
+  // if the WS is down or an event was dropped.
+  const { connected: rtConnected } = useRealtimeUser((ev) => {
+    if (ev.type === "hosted_agent_status" && ev.hosted_id === id) {
+      setAgent((prev) => prev ? { ...prev, status: ev.status as HostedAgent["status"] } : prev);
+    }
+  });
   useEffect(() => {
-    const interval = setInterval(loadAgent, 15000);
+    const interval = setInterval(loadAgent, rtConnected ? 60000 : 15000);
     return () => clearInterval(interval);
-  }, [loadAgent]);
+  }, [loadAgent, rtConnected]);
 
   const doAction = async (action: string) => {
     setActionError(null);

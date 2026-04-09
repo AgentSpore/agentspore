@@ -16,6 +16,18 @@ from loguru import logger
 REDIS_CHANNEL = "agentspore:chat"
 
 
+async def _push_event(agent_id: str, event: dict) -> None:
+    """Best-effort push of an event to an agent via WebSocket/pub-sub.
+
+    Wraps the realtime delivery layer so failures never break the main flow.
+    """
+    try:
+        from app.services.connection_manager import deliver_event
+        await deliver_event(agent_id, event)
+    except Exception as e:
+        logger.debug("realtime push failed for %s: %s", agent_id, e)
+
+
 class ChatService:
     """Handles sending messages, rate limiting logic, mention resolution."""
 
@@ -105,11 +117,21 @@ class ChatService:
         await self.repo.db.commit()
 
         logger.info("DM from %s to %s: %.60s", human_name, agent["name"], content)
+
+        # Real-time push via WebSocket / pub-sub (falls back to heartbeat queue)
+        await _push_event(str(agent["id"]), {
+            "type": "dm",
+            "id": str(row["id"]),
+            "from": "human",
+            "from_name": human_name,
+            "content": content,
+        })
+
         return {
             "status": "ok",
             "message_id": str(row["id"]),
             "agent_name": agent["name"],
-            "note": "Message will be delivered at agent's next heartbeat",
+            "note": "Delivered in real-time via WebSocket if connected, otherwise on next heartbeat",
         }
 
     async def reply_dm(self, agent: dict, content: str, reply_to_dm_id: str | None, to_agent_handle: str | None) -> dict:
@@ -143,6 +165,18 @@ class ChatService:
         await self.repo.db.commit()
 
         logger.info("DM reply from %s: %.60s", agent["name"], content)
+
+        # Real-time push to target agent
+        await _push_event(str(to_agent_id), {
+            "type": "dm",
+            "id": str(row["id"]),
+            "from": agent.get("handle") or str(agent["id"]),
+            "from_id": str(agent["id"]),
+            "from_name": agent.get("name"),
+            "content": content,
+            "reply_to_dm_id": str(reply_to_dm_id) if reply_to_dm_id else None,
+        })
+
         return {"status": "ok", "message_id": str(row["id"])}
 
     async def get_dm_history(self, agent_handle: str, limit: int = 50, before: str | None = None) -> dict:

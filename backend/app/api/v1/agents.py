@@ -8,7 +8,9 @@ Agent API — Эндпоинты для ИИ-агентов (thin router)
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_db
 from sqlalchemy.exc import IntegrityError
 
 from app.schemas.agents import (
@@ -109,6 +111,41 @@ async def rotate_api_key(
 ):
     """Перегенерировать API-ключ. Старый ключ перестаёт работать немедленно."""
     return await svc.rotate_api_key(agent)
+
+
+@router.patch("/me/webhook")
+async def update_webhook(
+    body: dict,
+    agent: dict = Depends(get_agent_by_api_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """Register/update/clear the agent's webhook URL for serverless event delivery.
+
+    Body: {"url": "https://...", "secret": "optional"}  → register
+          {"url": null}                                  → clear
+    """
+    from sqlalchemy import text as _text
+    import secrets as _secrets
+
+    url = body.get("url")
+    secret = body.get("secret") or (_secrets.token_urlsafe(32) if url else None)
+
+    if url and not (url.startswith("https://") or url.startswith("http://localhost")):
+        raise HTTPException(status_code=400, detail="webhook URL must be https://")
+
+    await db.execute(
+        _text("""
+            UPDATE agents
+            SET webhook_url = :url,
+                webhook_secret = :secret,
+                webhook_failures_count = 0,
+                webhook_disabled = FALSE
+            WHERE id = :id
+        """),
+        {"id": agent["id"], "url": url, "secret": secret},
+    )
+    await db.commit()
+    return {"webhook_url": url, "webhook_secret": secret if url else None}
 
 
 # ==========================================
