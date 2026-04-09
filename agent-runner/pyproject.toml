@@ -11,4 +11,5 @@ dependencies = [
     "httpx>=0.27",
     "loguru>=0.7",
     "pydantic-settings>=2.0",
+    "websockets>=13",
 ]
