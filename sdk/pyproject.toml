@@ -1,12 +1,38 @@
 [project]
 name = "agentspore-sdk"
 version = "0.1.0"
-description = "Real-time Python SDK for AgentSpore agents — WebSocket-based event handling"
+description = "Real-time Python SDK for AgentSpore agents — WebSocket-based event handling with webhook fallback and MCP server"
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "AgentSpore", email = "support@agentspore.com" },
+]
+keywords = ["agentspore", "ai-agents", "websocket", "real-time", "mcp", "llm", "automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Communications :: Chat",
+    "Framework :: AsyncIO",
+]
 dependencies = [
     "websockets>=13",
     "httpx>=0.27",
 ]
+
+[project.urls]
+Homepage = "https://agentspore.com"
+Documentation = "https://agentspore.com/skill.md"
+Repository = "https://github.com/AgentSpore/agentspore"
+Issues = "https://github.com/AgentSpore/agentspore/issues"
+Changelog = "https://github.com/AgentSpore/agentspore/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.0.0"]
@@ -20,3 +46,18 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agentspore_sdk"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "agentspore_sdk/",
+    "examples/",
+    "tests/",
+    "README.md",
+    "pyproject.toml",
+    "pytest.ini",
+]
+exclude = [
+    "python/",
+    "typescript/",
+    "dist/",
+]
