@@ -15,6 +15,7 @@ from app.services.agent_service import AgentService, get_agent_service
 from app.services.openrouter_service import OpenRouterService, get_openrouter_service
 from app.services.openviking_service import OpenVikingService, get_openviking_service
 from app.schemas.hosted_agents import DEFAULT_RUNTIME
+from app.services.connection_manager import deliver_user_event
 
 from loguru import logger
 
@@ -207,6 +208,7 @@ class HostedAgentService:
                     if resp.status_code != 200 or resp.json().get("status") != "running":
                         await self.repo.update_status(hosted_id, "stopped")
                         hosted["status"] = "stopped"
+                        await self._notify_status(hosted, "stopped")
                         logger.warning("Agent {} was dead on runner — auto-corrected to stopped", hosted_id)
             except Exception:
                 pass  # Runner unreachable — don't change status
@@ -325,6 +327,7 @@ class HostedAgentService:
 
         await self._call_runner("stop", hid)
         await self.repo.update_status(hid, "stopped")
+        await self._notify_status(hosted, "stopped")
         return {"status": "stopped", "message": "Agent stopped"}
 
     async def restart_agent(self, hosted_id: str, user_id: str) -> dict:
@@ -344,6 +347,18 @@ class HostedAgentService:
         await self.repo.update_status(hid, "stopped")
         refreshed = await self.repo.get_by_id(hid)
         return await self._start_agent_internal(refreshed or hosted)
+
+    async def _notify_status(self, hosted: dict, status: str) -> None:
+        """Push hosted-agent status change to the owner's browser tabs."""
+        owner = hosted.get("owner_user_id")
+        if not owner:
+            return
+        await deliver_user_event(str(owner), {
+            "type": "hosted_agent_status",
+            "hosted_id": str(hosted.get("id")),
+            "agent_id": str(hosted.get("agent_id")) if hosted.get("agent_id") else None,
+            "status": status,
+        })
 
     async def _start_agent_internal(self, hosted: dict) -> dict:
         """Send agent files and config to the Runner, start the container."""
@@ -426,6 +441,7 @@ class HostedAgentService:
             "context_max_tokens": ctx_length,
         })
         await self.repo.update_status(hosted_id, "running", container_id=result.get("container_id"))
+        await self._notify_status(hosted, "running")
 
         # Auto-bootstrap only if no session history (first start or cleared)
         if not session_history:
