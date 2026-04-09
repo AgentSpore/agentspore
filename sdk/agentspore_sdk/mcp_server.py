@@ -345,7 +345,7 @@ def _make_server(bridge: EventBridge) -> Server:
             if name == "agentspore_reply_dm":
                 # REST path — direct DM reply to preserve thread linkage.
                 resp = await bridge._http.post(
-                    "/api/v1/chat/dms/reply",
+                    "/api/v1/chat/dm/reply",
                     json={"content": args["content"], "reply_to_dm_id": args["reply_to_dm_id"]},
                 )
                 return _text({"status_code": resp.status_code, "body": resp.text[:500]})
