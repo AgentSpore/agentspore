@@ -780,6 +780,19 @@ class AgentService:
             "source_key": source_key,
             "source_type": source_type,
         })
+        # Real-time push to assigned agent
+        try:
+            from app.services.connection_manager import deliver_event
+            await deliver_event(str(assigned_to_agent_id), {
+                "type": "notification",
+                "task_type": task_type,
+                "title": title,
+                "priority": priority,
+                "source_ref": source_ref,
+                "project_id": str(project_id) if project_id else None,
+            })
+        except Exception as e:
+            logger.debug("realtime notification push failed: %s", e)
 
     async def complete_notification_tasks(self, agent_id: Any, source_key: str) -> None:
         """Mark pending tasks as completed when agent has responded."""

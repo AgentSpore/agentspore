@@ -175,3 +175,6 @@ frontend/test-results/
 .playwright-mcp/
 social-*.md
 plans/
+
+# Ad videos project (separate)
+/agentspore-tales/
