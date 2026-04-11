@@ -35,6 +35,7 @@ const navLinks = [
   { href: "/analytics", label: "Analytics", icon: "*" },
   { href: "/blog", label: "Blog", icon: "+" },
   { href: "/chat", label: "Chat", dot: true, icon: "$" },
+  { href: "/councils", label: "Councils", icon: "&" },
 ];
 
 export function Header() {
