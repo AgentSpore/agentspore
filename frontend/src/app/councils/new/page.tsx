@@ -14,6 +14,15 @@ type FreeModel = {
   context_length: number;
 };
 
+type PlatformAgent = {
+  id: string;
+  handle: string;
+  name: string;
+  model: string | null;
+  avatar_url: string | null;
+  online: boolean;
+};
+
 export default function NewCouncilPage() {
   const router = useRouter();
   const [topic, setTopic] = useState("");
@@ -21,8 +30,9 @@ export default function NewCouncilPage() {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Model picker
+  // Model + agent picker
   const [models, setModels] = useState<FreeModel[]>([]);
+  const [agents, setAgents] = useState<PlatformAgent[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pickMode, setPickMode] = useState<"auto" | "manual">("auto");
@@ -33,16 +43,14 @@ export default function NewCouncilPage() {
       router.replace("/login?next=/councils/new");
       return;
     }
-    // Load available models
-    fetchWithAuth(`${API_URL}/api/v1/councils/models`)
-      .then(r => r.ok ? r.json() : [])
-      .then((data: FreeModel[]) => {
-        setModels(data);
-        // Pre-select preferred models
-        setSelected(new Set(data.filter(m => m.preferred).map(m => m.id)));
-      })
-      .catch(() => {})
-      .finally(() => setModelsLoading(false));
+    Promise.all([
+      fetchWithAuth(`${API_URL}/api/v1/councils/models`).then(r => r.ok ? r.json() : []),
+      fetchWithAuth(`${API_URL}/api/v1/councils/agents`).then(r => r.ok ? r.json() : []),
+    ]).then(([modelsData, agentsData]) => {
+      setModels(modelsData);
+      setAgents(agentsData);
+      setSelected(new Set(modelsData.filter((m: FreeModel) => m.preferred).map((m: FreeModel) => m.id)));
+    }).catch(() => {}).finally(() => setModelsLoading(false));
   }, [router]);
 
   const toggleModel = (id: string) => {
@@ -82,12 +90,24 @@ export default function NewCouncilPage() {
       // If manual mode, pass selected models as panelists
       if (pickMode === "manual" && selected.size >= 3) {
         const selectedArr = Array.from(selected);
-        const panelists = selectedArr.map((id) => ({
-          adapter: "pure_llm",
-          model_id: id,
-          display_name: models.find(m => m.id === id)?.name || id,
-          role: roles[id] || "panelist",
-        }));
+        const panelists = selectedArr.map((id) => {
+          if (id.startsWith("agent:")) {
+            const agentId = id.slice(6);
+            const agent = agents.find(a => a.id === agentId);
+            return {
+              adapter: "platform_ws",
+              agent_id: agentId,
+              display_name: agent?.name || agent?.handle || agentId,
+              role: roles[id] || "panelist",
+            };
+          }
+          return {
+            adapter: "pure_llm",
+            model_id: id,
+            display_name: models.find(m => m.id === id)?.name || id,
+            role: roles[id] || "panelist",
+          };
+        });
         body.panelists = panelists;
         body.panel_size = panelists.length;
       }
@@ -210,7 +230,52 @@ export default function NewCouncilPage() {
                       <span className="text-violet-400 ml-1">{selected.size} selected</span>
                       {selected.size < 3 && <span className="text-amber-400 ml-1">(min 3)</span>}
                     </div>
-                    <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                    <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                      {/* Platform agents */}
+                      {agents.length > 0 && (
+                        <div>
+                          <div className="text-[10px] uppercase text-emerald-500 mb-1 tracking-wider">Platform Agents</div>
+                          <div className="space-y-1">
+                            {agents.map(a => {
+                              const key = `agent:${a.id}`;
+                              const checked = selected.has(key);
+                              const disabled = !checked && selected.size >= 7;
+                              return (
+                                <label key={key}
+                                  className={`flex items-center gap-2.5 px-2 py-1.5 rounded cursor-pointer transition text-sm ${
+                                    checked ? "bg-emerald-500/10 border border-emerald-500/30" : "hover:bg-white/[0.03] border border-transparent"
+                                  } ${disabled ? "opacity-30 cursor-not-allowed" : ""}`}>
+                                  <input type="checkbox" checked={checked} disabled={disabled}
+                                    onChange={() => !disabled && toggleModel(key)}
+                                    className="accent-emerald-500 w-3.5 h-3.5" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={checked ? "text-neutral-200" : "text-neutral-400"}>@{a.handle}</span>
+                                      <span className="text-[9px] px-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">agent</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] text-neutral-600">{a.model || "autonomous"}</span>
+                                      {checked && (
+                                        <select value={roles[key] || "panelist"}
+                                          onChange={e => { e.stopPropagation(); setRole(key, e.target.value); }}
+                                          onClick={e => e.stopPropagation()}
+                                          className="text-[10px] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-neutral-300">
+                                          <option value="panelist">panelist</option>
+                                          <option value="moderator">moderator</option>
+                                          <option value="critic">critic</option>
+                                          <option value="expert">expert</option>
+                                        </select>
+                                      )}
+                                    </div>
+                                  </div>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Free models by provider */}
                       {providers.map(provider => (
                         <div key={provider}>
                           <div className="text-[10px] uppercase text-neutral-600 mb-1 tracking-wider">{provider}</div>
@@ -268,7 +333,7 @@ export default function NewCouncilPage() {
             disabled={submitting || !topic || brief.length < 10 || (pickMode === "manual" && selected.size < 3)}
             className="w-full rounded-md bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 px-4 py-3 font-medium transition"
           >
-            {submitting ? "Convening..." : `Convene (${pickMode === "manual" ? selected.size : 5} models)`}
+            {submitting ? "Convening..." : `Convene${pickMode === "manual" ? ` (${selected.size} panelists)` : ""}`}
           </button>
         </form>
       </main>
