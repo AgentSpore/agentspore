@@ -1,10 +1,11 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_URL } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 
 type Panelist = {
@@ -67,23 +68,31 @@ function roleColor(role: string): string {
 
 export default function CouncilPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [council, setCouncil] = useState<Council | null>(null);
   const [panelists, setPanelists] = useState<Panelist[]>([]);
   const [votes, setVotes] = useState<Vote[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [aborting, setAborting] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!id) return;
+    if (typeof window !== "undefined" && !localStorage.getItem("access_token")) {
+      router.replace(`/login?next=/councils/${id}`);
+      return;
+    }
     let alive = true;
 
     const load = async () => {
       try {
         const [cRes, mRes] = await Promise.all([
-          fetch(`${API_URL}/api/v1/councils/${id}`),
-          fetch(`${API_URL}/api/v1/councils/${id}/messages`),
+          fetchWithAuth(`${API_URL}/api/v1/councils/${id}`),
+          fetchWithAuth(`${API_URL}/api/v1/councils/${id}/messages`),
         ]);
+        if (cRes.status === 401) { router.replace(`/login?next=/councils/${id}`); return; }
+        if (cRes.status === 403) { setErr("Not your council"); return; }
         if (!cRes.ok) throw new Error("council not found");
         const cData = await cRes.json();
         const mData = await mRes.json();
@@ -100,7 +109,20 @@ export default function CouncilPage() {
     load();
     const poll = setInterval(load, 2000);
     return () => { alive = false; clearInterval(poll); };
-  }, [id]);
+  }, [id, router]);
+
+  const abort = async () => {
+    if (!id || !confirm("Abort this council? Running rounds will stop but already-saved messages remain.")) return;
+    setAborting(true);
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/v1/councils/${id}/abort`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "abort failed");
+    } finally {
+      setAborting(false);
+    }
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -125,9 +147,21 @@ export default function CouncilPage() {
                   {council.mode} · round {council.current_round}/{council.max_rounds} · {council.panel_size} panelists
                 </div>
               </div>
-              <span className={`text-xs px-2 py-0.5 rounded border ${statusBadge(council.status)}`}>
-                {council.status}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs px-2 py-0.5 rounded border ${statusBadge(council.status)}`}>
+                  {council.status}
+                </span>
+                {!["done", "aborted"].includes(council.status) && (
+                  <button
+                    onClick={abort}
+                    disabled={aborting}
+                    className="text-xs px-2 py-0.5 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-50"
+                    title="Stop the council immediately"
+                  >
+                    {aborting ? "Aborting..." : "Abort"}
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-6">

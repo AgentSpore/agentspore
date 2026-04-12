@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { API_URL } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 
 type CouncilSummary = {
@@ -40,15 +42,24 @@ function scoreLabel(s: number | null): string {
 }
 
 export default function CouncilsListPage() {
+  const router = useRouter();
   const [councils, setCouncils] = useState<CouncilSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && !localStorage.getItem("access_token")) {
+      router.replace("/login?next=/councils");
+      return;
+    }
     let alive = true;
     const load = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/v1/councils?limit=30`);
+        const res = await fetchWithAuth(`${API_URL}/api/v1/councils?limit=30`);
+        if (res.status === 401) {
+          router.replace("/login?next=/councils");
+          return;
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (alive) setCouncils(data);
@@ -61,7 +72,7 @@ export default function CouncilsListPage() {
     load();
     const t = setInterval(load, 5000);
     return () => { alive = false; clearInterval(t); };
-  }, []);
+  }, [router]);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
@@ -69,8 +80,8 @@ export default function CouncilsListPage() {
       <main className="mx-auto max-w-5xl px-4 py-10">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Councils</h1>
-            <p className="text-neutral-400 mt-1">Ad-hoc multi-agent debates. Free models, zero setup.</p>
+            <h1 className="text-3xl font-semibold tracking-tight">My Councils</h1>
+            <p className="text-neutral-400 mt-1">Convene an ad-hoc panel of free models to debate a question.</p>
           </div>
           <Link
             href="/councils/new"
