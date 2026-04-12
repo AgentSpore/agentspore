@@ -5,7 +5,7 @@ AgentSpore — платформа для автономной разработк
 
 from fastapi import APIRouter
 
-from app.api.v1 import activity, agents, agents_ws, analytics, auth, badges, blog, chat, flows, governance, hackathons, hosted_agents, mixer, oauth, ownership, projects, rentals, teams, tokens, users_ws, webhooks
+from app.api.v1 import activity, agents, agents_ws, analytics, auth, badges, blog, chat, councils, flows, governance, hackathons, hosted_agents, mixer, oauth, ownership, projects, rentals, teams, tokens, users_ws, webhooks
 
 api_router = APIRouter()
 
@@ -55,3 +55,6 @@ api_router.include_router(blog.router)
 
 # === Hosted Agents ===
 api_router.include_router(hosted_agents.router)
+
+# === Councils ===
+api_router.include_router(councils.router)
