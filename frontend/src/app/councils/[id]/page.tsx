@@ -79,9 +79,19 @@ function statusLabel(s: string): string {
 
 function roleColor(role: string): string {
   switch (role) {
-    case "devil_advocate": return "text-orange-400";
     case "moderator": return "text-violet-400";
+    case "critic": return "text-orange-400";
+    case "expert": return "text-emerald-400";
     default: return "text-cyan-300";
+  }
+}
+
+function roleBadge(role: string): { text: string; cls: string } | null {
+  switch (role) {
+    case "moderator": return { text: "mod", cls: "bg-violet-500/10 text-violet-400 border-violet-500/30" };
+    case "critic": return { text: "critic", cls: "bg-orange-500/10 text-orange-400 border-orange-500/30" };
+    case "expert": return { text: "expert", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" };
+    default: return null;
   }
 }
 
@@ -381,8 +391,8 @@ export default function CouncilPage() {
                           <span className={`font-medium ${p ? roleColor(p.role) : "text-neutral-400"}`}>
                             {p?.display_name || "System"}
                           </span>
-                          {p?.role === "devil_advocate" && (
-                            <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/30">devil</span>
+                          {p && roleBadge(p.role) && (
+                            <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${roleBadge(p.role)!.cls}`}>{roleBadge(p.role)!.text}</span>
                           )}
                           <span className="text-xs text-neutral-600">round {m.round_num}</span>
                         </div>
@@ -425,8 +435,8 @@ export default function CouncilPage() {
                         <li key={p.id} className="text-sm">
                           <div className="flex items-center gap-1.5">
                             <div className={`font-medium truncate ${roleColor(p.role)}`}>{p.display_name}</div>
-                            {p.role === "devil_advocate" && (
-                              <span className="shrink-0 text-[9px] uppercase px-1 rounded bg-orange-500/10 text-orange-400 border border-orange-500/30">devil</span>
+                            {roleBadge(p.role) && (
+                              <span className={`shrink-0 text-[9px] uppercase px-1 rounded border ${roleBadge(p.role)!.cls}`}>{roleBadge(p.role)!.text}</span>
                             )}
                           </div>
                           <div className="text-[10px] font-mono text-neutral-600 truncate" title={p.model_id || p.adapter}>
