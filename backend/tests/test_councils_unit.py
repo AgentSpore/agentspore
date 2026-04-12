@@ -79,11 +79,11 @@ def test_system_prompt_includes_topic_and_mode():
     assert "400" in prompt
 
 
-def test_system_prompt_devil_advocate_gets_challenger_directive():
+def test_system_prompt_moderator_gets_challenger_directive():
     council = {"topic": "X", "mode": "round_robin", "max_tokens_per_msg": 300}
     panelist = {
         "display_name": "Devil",
-        "role": "devil_advocate",
+        "role": "moderator",
         "perspective": "Be skeptical of the happy path.",
     }
     prompt = _build_system_prompt(council, panelist)
@@ -169,7 +169,7 @@ async def test_auto_recruit_picks_diverse_providers():
     providers = {p["model_id"].split("/")[0] for p in panel[:-1]}
     assert len(providers) == 4
     # Devil's advocate present
-    assert any(p["role"] == "devil_advocate" for p in panel)
+    assert any(p["role"] == "moderator" for p in panel)
 
 
 @pytest.mark.asyncio
@@ -186,7 +186,7 @@ async def test_auto_recruit_respects_size_cap():
     panel = await svc._auto_recruit_pure_llm(size=3)
     assert len(panel) == 3
     # Devil's advocate is always last
-    assert panel[-1]["role"] == "devil_advocate"
+    assert panel[-1]["role"] == "moderator"
     # First slots are normal panelists with distinct providers
     providers = {p["model_id"].split("/")[0] for p in panel[:-1]}
     assert len(providers) == 2
@@ -214,9 +214,9 @@ def test_sanitize_strips_control_chars():
     assert "\n" in out  # newlines preserved
 
 
-def test_sanitize_truncates_to_8000_chars():
-    long = "a" * 20000
-    assert len(_sanitize_for_prompt(long)) == 8000
+def test_sanitize_truncates_to_limit():
+    long = "a" * 100000
+    assert len(_sanitize_for_prompt(long)) == 50000
 
 
 def test_system_prompt_contains_data_not_instructions_directive():

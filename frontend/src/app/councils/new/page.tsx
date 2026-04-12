@@ -26,6 +26,7 @@ export default function NewCouncilPage() {
   const [modelsLoading, setModelsLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pickMode, setPickMode] = useState<"auto" | "manual">("auto");
+  const [roles, setRoles] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (typeof window !== "undefined" && !localStorage.getItem("access_token")) {
@@ -47,10 +48,19 @@ export default function NewCouncilPage() {
   const toggleModel = (id: string) => {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        setRoles(r => { const n = { ...r }; delete n[id]; return n; });
+      } else {
+        next.add(id);
+        setRoles(r => ({ ...r, [id]: "panelist" }));
+      }
       return next;
     });
+  };
+
+  const setRole = (id: string, role: string) => {
+    setRoles(prev => ({ ...prev, [id]: role }));
   };
 
   const panelSize = pickMode === "manual" ? Math.max(3, selected.size) : 5;
@@ -72,11 +82,11 @@ export default function NewCouncilPage() {
       // If manual mode, pass selected models as panelists
       if (pickMode === "manual" && selected.size >= 3) {
         const selectedArr = Array.from(selected);
-        const panelists = selectedArr.map((id, i) => ({
+        const panelists = selectedArr.map((id) => ({
           adapter: "pure_llm",
           model_id: id,
           display_name: models.find(m => m.id === id)?.name || id,
-          role: i === selectedArr.length - 1 ? "devil_advocate" : "panelist",
+          role: roles[id] || "panelist",
         }));
         body.panelists = panelists;
         body.panel_size = panelists.length;
@@ -115,7 +125,7 @@ export default function NewCouncilPage() {
       <main className="mx-auto max-w-2xl px-4 py-10">
         <h1 className="text-3xl font-semibold tracking-tight mb-2">Convene a council</h1>
         <p className="text-neutral-400 mb-6">
-          Chat with a panel of free AI models. Each one challenged by a <span className="text-orange-400">devil&rsquo;s advocate</span>. You decide when to wrap up and vote.
+          Chat with a panel of free AI models, guided by a <span className="text-violet-400">moderator</span>. You decide when to wrap up and vote.
         </p>
 
         <div className="mb-6 rounded-lg border border-neutral-800 bg-neutral-900/40 p-4 text-sm text-neutral-400">
@@ -123,7 +133,7 @@ export default function NewCouncilPage() {
           <ol className="space-y-1.5 list-decimal list-inside marker:text-neutral-600">
             <li>Pick your panel or let us auto-select diverse free models.</li>
             <li>You send messages — the panel responds to each one.</li>
-            <li>One model is assigned <span className="text-orange-400">devil&rsquo;s advocate</span> to push back on consensus.</li>
+            <li>One model is assigned <span className="text-violet-400">moderator</span> — summarizes, asks clarifying questions, keeps focus.</li>
             <li>When you&rsquo;re ready, hit <span className="text-emerald-400">Finish & Vote</span> — every panelist votes with confidence.</li>
             <li>A synthesizer writes a final resolution with the consensus score.</li>
           </ol>
@@ -184,7 +194,7 @@ export default function NewCouncilPage() {
             {pickMode === "auto" && (
               <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
                 <div className="text-xs text-neutral-500">
-                  We&rsquo;ll pick 5 diverse models from different providers. Last one becomes devil&rsquo;s advocate.
+                  We&rsquo;ll pick 5 diverse models from different providers. Last one becomes moderator.
                 </div>
               </div>
             )}
@@ -196,7 +206,7 @@ export default function NewCouncilPage() {
                 ) : (
                   <>
                     <div className="text-xs text-neutral-500 mb-3">
-                      Select 3-7 models. Last selected becomes devil&rsquo;s advocate.
+                      Select 3-7 models. Assign roles below.
                       <span className="text-violet-400 ml-1">{selected.size} selected</span>
                       {selected.size < 3 && <span className="text-amber-400 ml-1">(min 3)</span>}
                     </div>
@@ -223,7 +233,20 @@ export default function NewCouncilPage() {
                                         <span className="text-[9px] px-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">verified</span>
                                       )}
                                     </div>
-                                    <div className="text-[10px] font-mono text-neutral-600 truncate">{m.id.replace(":free", "")}</div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-mono text-neutral-600 truncate">{m.id.replace(":free", "")}</span>
+                                      {checked && (
+                                        <select value={roles[m.id] || "panelist"}
+                                          onChange={e => { e.stopPropagation(); setRole(m.id, e.target.value); }}
+                                          onClick={e => e.stopPropagation()}
+                                          className="text-[10px] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-neutral-300">
+                                          <option value="panelist">panelist</option>
+                                          <option value="moderator">moderator</option>
+                                          <option value="critic">critic</option>
+                                          <option value="expert">expert</option>
+                                        </select>
+                                      )}
+                                    </div>
                                   </div>
                                 </label>
                               );
