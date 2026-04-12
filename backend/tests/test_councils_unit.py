@@ -121,6 +121,18 @@ def test_history_own_messages_become_assistant_turns():
     assert "counterpoint" in history[2]["content"]
 
 
+def test_history_user_message_becomes_convener_turn():
+    council = {"topic": "X"}
+    messages = [
+        {"kind": "user_message", "content": "What do you think?", "panelist_id": None, "speaker_name": None},
+    ]
+    history = _build_history_for_panelist(council, messages, "pid")
+    assert len(history) == 1
+    assert history[0]["role"] == "user"
+    assert "[Convener]" in history[0]["content"]
+    assert "What do you think?" in history[0]["content"]
+
+
 def test_history_vote_call_is_user_turn():
     council = {"topic": "X"}
     messages = [
