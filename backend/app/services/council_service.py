@@ -292,7 +292,7 @@ def _sanitize_for_prompt(text: str) -> str:
     """
     cleaned = text.replace("</BRIEF>", "</brief>").replace("<BRIEF>", "<brief>")
     cleaned = "".join(ch for ch in cleaned if ch.isprintable() or ch in "\n\t\r")
-    return cleaned[:8000]
+    return cleaned[:50_000]  # allow file attachments
 
 
 def _build_system_prompt(council: dict, panelist: dict) -> str:

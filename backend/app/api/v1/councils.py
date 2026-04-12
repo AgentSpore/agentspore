@@ -56,7 +56,7 @@ class ConveneRequest(BaseModel):
 
 
 class UserChatRequest(BaseModel):
-    content: str = Field(..., min_length=1, max_length=5000)
+    content: str = Field(..., min_length=1, max_length=100_000)  # large for file attachments
 
 
 class AgentMessageRequest(BaseModel):
