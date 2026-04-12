@@ -17,7 +17,8 @@ type RecState = "idle" | "listening" | "unsupported";
  */
 export function VoiceInput({ onTranscript, disabled }: Props) {
   const [state, setState] = useState<RecState>("idle");
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     const SR = typeof window !== "undefined"
@@ -33,7 +34,8 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
     rec.lang = ""; // auto-detect
     rec.maxAlternatives = 1;
 
-    rec.onresult = (e: SpeechRecognitionEvent) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
       const transcript = e.results[0]?.[0]?.transcript?.trim();
       if (transcript) onTranscript(transcript);
       setState("idle");
