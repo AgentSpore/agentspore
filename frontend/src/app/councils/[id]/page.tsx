@@ -8,6 +8,7 @@ import { API_URL } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import { VoiceInput } from "@/components/VoiceInput";
+import { FileAttach, type FileData } from "@/components/FileAttach";
 
 type Panelist = {
   id: string;
@@ -119,6 +120,7 @@ export default function CouncilPage() {
   const [chatInput, setChatInput] = useState("");
   const [sending, setSending] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [pendingFile, setPendingFile] = useState<FileData | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -197,17 +199,36 @@ export default function CouncilPage() {
   };
 
   const sendChat = async () => {
-    if (!id || !chatInput.trim() || sending) return;
+    if (!id || sending) return;
+    const text = chatInput.trim();
+    const file = pendingFile;
+    if (!text && !file) return;
+
+    // Build message content: text + optional file
+    let content = text;
+    if (file) {
+      if (file.type === "text") {
+        const ext = file.name.split(".").pop() || "txt";
+        const fileBlock = `**Attached: ${file.name}** (${(file.size / 1024).toFixed(1)}KB)\n\`\`\`${ext}\n${file.content}\n\`\`\``;
+        content = content ? `${content}\n\n${fileBlock}` : fileBlock;
+      } else {
+        // Image — LLM gets filename, UI shows inline via message metadata
+        const imgNote = `**Attached image: ${file.name}** (${(file.size / 1024).toFixed(0)}KB)`;
+        content = content ? `${content}\n\n${imgNote}` : imgNote;
+      }
+    }
+
     setSending(true);
     setErr(null);
     try {
       const res = await fetchWithAuth(`${API_URL}/api/v1/councils/${id}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: chatInput.trim() }),
+        body: JSON.stringify({ content }),
       });
       if (!res.ok) throw new Error(await res.text());
       setChatInput("");
+      setPendingFile(null);
       inputRef.current?.focus();
     } catch (e) { setErr(e instanceof Error ? e.message : "send failed"); }
     finally { setSending(false); }
@@ -461,7 +482,24 @@ export default function CouncilPage() {
       {/* ── Chat input bar (fixed bottom) ──────────────────────────────── */}
       {council && (isChatActive || isResponding) && (
         <div className="fixed bottom-0 left-0 right-0 bg-neutral-950/95 backdrop-blur-sm border-t border-neutral-800 z-20">
-          <div className="mx-auto max-w-4xl px-4 py-3 flex gap-2 items-end">
+          <div className="mx-auto max-w-4xl px-4 py-3">
+            {/* Pending file preview */}
+            {pendingFile && (
+              <div className="flex items-center gap-2 mb-2 px-1">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-xs text-neutral-300">
+                  {pendingFile.type === "image" ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={pendingFile.content} alt="" className="w-8 h-8 rounded object-cover" />
+                  ) : (
+                    <span className="text-violet-400 font-mono">{pendingFile.name.split(".").pop()}</span>
+                  )}
+                  <span className="truncate max-w-[200px]">{pendingFile.name}</span>
+                  <span className="text-neutral-600">{(pendingFile.size / 1024).toFixed(0)}KB</span>
+                  <button onClick={() => setPendingFile(null)} className="text-neutral-600 hover:text-red-400 ml-1">&times;</button>
+                </div>
+              </div>
+            )}
+            <div className="flex gap-2 items-end">
             <textarea
               ref={inputRef}
               value={chatInput}
@@ -473,14 +511,16 @@ export default function CouncilPage() {
               className="flex-1 rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm resize-none focus:border-violet-500 focus:outline-none disabled:opacity-40 max-h-32"
               style={{ minHeight: "40px" }}
             />
+            <FileAttach onFile={setPendingFile} disabled={!canChat} />
             <VoiceInput onTranscript={onVoiceTranscript} disabled={!canChat} />
             <button
               onClick={sendChat}
-              disabled={!canChat || !chatInput.trim()}
+              disabled={!canChat || (!chatInput.trim() && !pendingFile)}
               className="shrink-0 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-sm font-medium transition"
             >
               Send
             </button>
+            </div>
           </div>
         </div>
       )}
