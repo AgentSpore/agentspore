@@ -129,6 +129,7 @@ export default function CouncilPage() {
       return;
     }
     let alive = true;
+    let poll: ReturnType<typeof setInterval> | null = null;
 
     const load = async () => {
       try {
@@ -142,18 +143,48 @@ export default function CouncilPage() {
         const cData = await cRes.json();
         const mData = await mRes.json();
         if (!alive) return;
-        setCouncil(cData.council);
-        setPanelists(cData.panelists);
-        setVotes(cData.votes);
-        setMessages(mData);
+
+        // Update only on real change so React doesn't churn the DOM every 2s.
+        setCouncil(prev => {
+          if (prev && prev.status === cData.council.status
+              && prev.current_round === cData.council.current_round
+              && prev.consensus_score === cData.council.consensus_score) {
+            return prev;
+          }
+          return cData.council;
+        });
+        setPanelists(prev =>
+          prev.length === cData.panelists.length
+          && prev.every((p, i) => p.id === cData.panelists[i].id)
+            ? prev
+            : cData.panelists
+        );
+        setVotes(prev => {
+          if (prev.length === cData.votes.length
+              && prev.every((v, i) => v.panelist_id === cData.votes[i].panelist_id && v.vote === cData.votes[i].vote)) {
+            return prev;
+          }
+          return cData.votes;
+        });
+        setMessages(prev => {
+          if (prev.length === mData.length && (prev.length === 0 || prev[prev.length - 1].id === mData[mData.length - 1].id)) {
+            return prev;
+          }
+          return mData;
+        });
         setErr(null);
+
+        // Stop polling once the council is in a terminal state.
+        if (cData.council.status === "done" || cData.council.status === "aborted") {
+          if (poll) { clearInterval(poll); poll = null; }
+        }
       } catch (e) {
         if (alive) setErr(e instanceof Error ? e.message : "failed");
       }
     };
     load();
-    const poll = setInterval(load, 2000);
-    return () => { alive = false; clearInterval(poll); };
+    poll = setInterval(load, 2000);
+    return () => { alive = false; if (poll) clearInterval(poll); };
   }, [id, router]);
 
   const abort = async () => {
@@ -169,8 +200,18 @@ export default function CouncilPage() {
     }
   };
 
+  // Auto-scroll to newest message only when the user is already near the bottom.
+  // Avoids hijacking the page when they're reading older content higher up.
+  const prevMsgCount = useRef(0);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length > prevMsgCount.current) {
+      prevMsgCount.current = messages.length;
+      const nearBottom = typeof window !== "undefined"
+        && window.innerHeight + window.scrollY >= document.body.offsetHeight - 300;
+      if (nearBottom) {
+        bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      }
+    }
   }, [messages.length]);
 
   const panelistById = new Map(panelists.map(p => [p.id, p]));
@@ -178,10 +219,8 @@ export default function CouncilPage() {
   const brief = messages.find(m => m.kind === "brief");
   const resolution = messages.find(m => m.kind === "resolution");
 
-  const totalPanelists = panelists.filter(p => p.role !== "moderator").length || panelists.length;
   const errorVotes = votes.filter(v => v.vote === "error").length;
   const allErrored = votes.length > 0 && errorVotes === votes.length;
-  const showWorkingNotice = council?.status !== "done" && council?.status !== "aborted" && panelists.length > 0;
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
@@ -214,11 +253,6 @@ export default function CouncilPage() {
               </div>
             </div>
 
-            {showWorkingNotice && (
-              <div className="mb-4 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 text-xs text-violet-200/80">
-                The panel is running in the background. This page refreshes automatically every 2 seconds — feel free to leave and come back.
-              </div>
-            )}
             {allErrored && (
               <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-300">
                 <div className="font-medium mb-0.5">All panelists failed to vote.</div>
