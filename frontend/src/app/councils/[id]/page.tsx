@@ -58,11 +58,56 @@ function statusBadge(s: string): string {
   }
 }
 
+function statusLabel(s: string): string {
+  switch (s) {
+    case "convening": return "assembling panel";
+    case "briefing": return "briefing panel";
+    case "round": return "debating";
+    case "voting": return "voting";
+    case "synthesizing": return "writing resolution";
+    case "done": return "finished";
+    case "aborted": return "aborted";
+    default: return s;
+  }
+}
+
 function roleColor(role: string): string {
   switch (role) {
     case "devil_advocate": return "text-orange-400";
     case "moderator": return "text-violet-400";
     default: return "text-cyan-300";
+  }
+}
+
+// A message is an upstream failure placeholder when the adapter wrote
+// a bracketed error note. These look like "[Foo is rate-limited...]" or
+// "[VOTE] ERROR (conf=0.00) — [error: ...]".
+function messageError(content: string): { isError: boolean; isVote: boolean; headline: string; detail: string } {
+  const isVote = content.startsWith("[VOTE]");
+  const errorPatterns = [
+    /rate-limited/i,
+    /unreachable/i,
+    /upstream is flaky/i,
+    /refused the request/i,
+    /out of free credits/i,
+    /no response/i,
+    /\[error:/i,
+    /\] ERROR /,
+  ];
+  const isError = errorPatterns.some(r => r.test(content));
+  if (!isError) return { isError: false, isVote, headline: "", detail: "" };
+  // Strip surrounding brackets for display.
+  const trimmed = content.replace(/^\[/, "").replace(/\]$/, "");
+  return { isError: true, isVote, headline: isVote ? "Vote unavailable" : "Response unavailable", detail: trimmed };
+}
+
+function voteBadge(vote: string): string {
+  switch (vote) {
+    case "approve": return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
+    case "reject": return "bg-red-500/10 text-red-400 border-red-500/30";
+    case "abstain": return "bg-neutral-500/10 text-neutral-400 border-neutral-500/30";
+    case "error": return "bg-amber-500/10 text-amber-400 border-amber-500/30";
+    default: return "bg-neutral-500/10 text-neutral-400 border-neutral-500/30";
   }
 }
 
@@ -133,6 +178,11 @@ export default function CouncilPage() {
   const brief = messages.find(m => m.kind === "brief");
   const resolution = messages.find(m => m.kind === "resolution");
 
+  const totalPanelists = panelists.filter(p => p.role !== "moderator").length || panelists.length;
+  const errorVotes = votes.filter(v => v.vote === "error").length;
+  const allErrored = votes.length > 0 && errorVotes === votes.length;
+  const showWorkingNotice = council?.status !== "done" && council?.status !== "aborted" && panelists.length > 0;
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
@@ -149,7 +199,7 @@ export default function CouncilPage() {
               </div>
               <div className="flex items-center gap-2">
                 <span className={`text-xs px-2 py-0.5 rounded border ${statusBadge(council.status)}`}>
-                  {council.status}
+                  {statusLabel(council.status)}
                 </span>
                 {!["done", "aborted"].includes(council.status) && (
                   <button
@@ -164,6 +214,18 @@ export default function CouncilPage() {
               </div>
             </div>
 
+            {showWorkingNotice && (
+              <div className="mb-4 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 text-xs text-violet-200/80">
+                The panel is running in the background. This page refreshes automatically every 2 seconds — feel free to leave and come back.
+              </div>
+            )}
+            {allErrored && (
+              <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-300">
+                <div className="font-medium mb-0.5">All panelists failed to vote.</div>
+                The free OpenRouter tier is rate-limiting these models right now. Convene a new council in a few minutes — we retry automatically with exponential backoff, so most transient issues resolve themselves.
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-6">
               {/* Main column */}
               <div>
@@ -177,14 +239,41 @@ export default function CouncilPage() {
 
                 {/* Discussion */}
                 <div className="space-y-3">
+                  {discussion.length === 0 && council.status !== "done" && council.status !== "aborted" && (
+                    <div className="rounded-lg border border-neutral-800 bg-neutral-900/30 p-4 text-sm text-neutral-500">
+                      Waiting for the first panelist to respond...
+                    </div>
+                  )}
                   {discussion.map(m => {
                     const p = panelistById.get(m.panelist_id);
-                    const isVote = m.content.startsWith("[VOTE]");
+                    const info = messageError(m.content);
+                    if (info.isError) {
+                      return (
+                        <div
+                          key={m.id}
+                          className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-3"
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`font-medium ${p ? roleColor(p.role) : "text-neutral-400"}`}>
+                              {p?.display_name || "System"}
+                            </span>
+                            <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                              {info.isVote ? "vote failed" : "no response"}
+                            </span>
+                            <span className="text-xs text-neutral-600">round {m.round_num}</span>
+                          </div>
+                          <div className="text-xs font-medium text-amber-300 mb-1">{info.headline}</div>
+                          <div className="text-xs text-amber-200/70 whitespace-pre-wrap leading-relaxed">
+                            {info.detail}
+                          </div>
+                        </div>
+                      );
+                    }
                     return (
                       <div
                         key={m.id}
                         className={`rounded-lg border p-3 ${
-                          isVote
+                          info.isVote
                             ? "border-violet-500/30 bg-violet-500/5"
                             : "border-neutral-800 bg-neutral-900/30"
                         }`}
@@ -221,26 +310,38 @@ export default function CouncilPage() {
               {/* Sidebar */}
               <aside className="md:sticky md:top-20 h-fit">
                 <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4">
-                  <div className="text-xs uppercase text-neutral-500 mb-2">Panel</div>
-                  <ul className="space-y-2">
+                  <div className="text-xs uppercase text-neutral-500 mb-2">Panel · {panelists.length}</div>
+                  <ul className="space-y-2.5">
                     {panelists.map(p => {
                       const v = votes.find(vv => vv.panelist_id === p.id);
                       return (
                         <li key={p.id} className="text-sm">
-                          <div className={`font-medium ${roleColor(p.role)}`}>{p.display_name}</div>
-                          <div className="text-xs text-neutral-500 truncate">
-                            {p.model_id || p.adapter}
+                          <div className="flex items-center gap-1.5">
+                            <div className={`font-medium truncate ${roleColor(p.role)}`}>{p.display_name}</div>
+                            {p.role === "devil_advocate" && (
+                              <span className="shrink-0 text-[9px] uppercase px-1 rounded bg-orange-500/10 text-orange-400 border border-orange-500/30">
+                                devil
+                              </span>
+                            )}
                           </div>
-                          {v && (
-                            <div className="text-xs mt-1">
-                              <span className={
-                                v.vote === "approve" ? "text-emerald-400" :
-                                v.vote === "reject" ? "text-red-400" : "text-neutral-500"
-                              }>
+                          <div className="text-[10px] font-mono text-neutral-600 truncate" title={p.model_id || p.adapter}>
+                            {p.model_id?.replace(":free", "") || p.adapter}
+                          </div>
+                          {v ? (
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${voteBadge(v.vote)}`}>
                                 {v.vote}
                               </span>
-                              <span className="text-neutral-600"> · {v.confidence.toFixed(2)}</span>
+                              {v.vote !== "error" && (
+                                <span className="text-[10px] text-neutral-600 font-mono">
+                                  {v.confidence.toFixed(2)}
+                                </span>
+                              )}
                             </div>
+                          ) : (
+                            council.status !== "done" && council.status !== "aborted" && (
+                              <div className="text-[10px] text-neutral-600 mt-1">waiting...</div>
+                            )
                           )}
                         </li>
                       );
@@ -253,6 +354,13 @@ export default function CouncilPage() {
                       <div className="text-lg font-mono">
                         {council.consensus_score > 0 ? "+" : ""}
                         {council.consensus_score.toFixed(2)}
+                      </div>
+                      <div className="text-[10px] text-neutral-600 mt-0.5">
+                        {council.consensus_score > 0.5 ? "strong approve"
+                          : council.consensus_score > 0 ? "lean approve"
+                          : council.consensus_score === 0 ? "split"
+                          : council.consensus_score > -0.5 ? "lean reject"
+                          : "strong reject"}
                       </div>
                     </div>
                   )}
