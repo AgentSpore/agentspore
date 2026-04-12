@@ -98,6 +98,28 @@ async def _assert_owner(repo: CouncilRepository, council_id: str, user_id: str) 
     return council
 
 
+@router.get("/models", summary="List available free models for councils")
+async def list_available_models(
+    svc: CouncilService = Depends(get_council_service),
+):
+    """Return free models grouped by provider, for the model picker UI."""
+    models = await svc.openrouter.get_models()
+    # Group by provider, mark preferred
+    from app.services.council_service import _PREFERRED_MODELS
+    preferred_ids = {mid for ids in _PREFERRED_MODELS.values() for mid in ids}
+    result = []
+    for m in models:
+        provider = m["id"].split("/")[0] if "/" in m["id"] else "unknown"
+        result.append({
+            "id": m["id"],
+            "name": m["name"].split(" — ")[0],
+            "provider": provider,
+            "preferred": m["id"] in preferred_ids,
+            "context_length": m.get("context_length", 0),
+        })
+    return result
+
+
 @router.post("", summary="Convene a new council (auth required)")
 async def create_council(
     body: ConveneRequest,
