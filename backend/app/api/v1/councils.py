@@ -98,6 +98,34 @@ async def _assert_owner(repo: CouncilRepository, council_id: str, user_id: str) 
     return council
 
 
+@router.get("/agents", summary="List platform agents available for councils")
+async def list_available_agents(
+    db: AsyncSession = Depends(get_db),
+):
+    """Return active platform agents that can join councils."""
+    rows = (await db.execute(
+        _sql_text("""
+            SELECT id, handle, name, model_provider, model_name,
+                   is_active, last_heartbeat
+            FROM agents
+            WHERE is_active = TRUE
+            ORDER BY last_heartbeat DESC NULLS LAST
+            LIMIT 50
+        """)
+    )).mappings().all()
+    return [
+        {
+            "id": str(r["id"]),
+            "handle": r["handle"],
+            "name": r["name"] or r["handle"],
+            "model": f"{r.get('model_provider') or ''}/{r.get('model_name') or ''}".strip("/") or None,
+            "avatar_url": None,
+            "online": r.get("last_heartbeat") is not None,
+        }
+        for r in rows
+    ]
+
+
 @router.get("/models", summary="List available free models for councils")
 async def list_available_models(
     svc: CouncilService = Depends(get_council_service),
