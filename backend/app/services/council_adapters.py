@@ -83,7 +83,7 @@ class PureLLMAdapter(PanelistAdapter):
                 if resp.status_code == 200:
                     elapsed_ms = int((asyncio.get_event_loop().time() - started) * 1000)
                     data = resp.json()
-                    content = data["choices"][0]["message"]["content"].strip()
+                    content = (data["choices"][0]["message"].get("content") or "").strip()
                     usage = data.get("usage", {})
                     return {
                         "content": content,
