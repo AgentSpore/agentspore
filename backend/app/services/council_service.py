@@ -31,6 +31,23 @@ _DEFAULT_DIVERSE_PROVIDERS = (
     "qwen", "meta-llama", "mistralai", "deepseek",
 )
 
+# Curated preferred model IDs per provider — verified to work on the shared
+# OpenRouter account at the time of writing. These are tried FIRST when
+# picking a provider; if none exist in the live catalog we fall back to the
+# first matching free model for that provider. Update when upstream rotates
+# or rate-limits specific model revisions.
+_PREFERRED_MODELS = {
+    "google": ("google/gemma-4-31b-it:free", "google/gemma-3-27b-it:free"),
+    "minimax": ("minimax/minimax-m2.5:free",),
+    "z-ai": ("z-ai/glm-4.5-air:free",),
+    "openai": ("openai/gpt-oss-20b:free",),
+    "nvidia": ("nvidia/nemotron-nano-9b-v2:free",),
+    "qwen": ("qwen/qwen3-coder:free",),
+    "meta-llama": ("meta-llama/llama-3.3-70b-instruct:free",),
+    "mistralai": ("mistralai/mistral-small-3.2-24b-instruct:free",),
+    "deepseek": ("deepseek/deepseek-chat-v3.1:free",),
+}
+
 
 class CouncilService:
     """Business logic + background state machine for councils."""
@@ -98,48 +115,95 @@ class CouncilService:
         return council
 
     async def _auto_recruit_pure_llm(self, size: int) -> list[dict]:
-        """Pick up to `size` diverse free models from OpenRouter."""
+        """Pick up to `size` diverse free models from OpenRouter.
+
+        Strategy:
+          1. Take the curated preferred model for each provider family, in
+             provider order, only if the live OpenRouter catalog confirms the
+             model still exists. This keeps panels on verified-working IDs.
+          2. If a preferred ID is no longer served, fall back to the first
+             free model for that provider returned by the API.
+          3. Fill the last slot with a devil's advocate using a distinct model
+             from a provider NOT already on the panel.
+        """
         models = await self.openrouter.get_models()
+        live_ids = {m["id"] for m in models}
+        live_by_id: dict[str, dict] = {m["id"]: m for m in models}
+
         picked: list[dict] = []
         used_providers: set[str] = set()
 
-        # First pass: one per known provider family (diversity over count).
-        for provider in _DEFAULT_DIVERSE_PROVIDERS:
-            for m in models:
-                if m["id"].startswith(provider + "/") and provider not in used_providers:
-                    picked.append({
+        def _pick_for_provider(provider: str) -> dict | None:
+            for preferred_id in _PREFERRED_MODELS.get(provider, ()):
+                if preferred_id in live_ids:
+                    m = live_by_id[preferred_id]
+                    return {
                         "adapter": "pure_llm",
                         "model_id": m["id"],
                         "display_name": m["name"].split(" — ")[0],
                         "role": "panelist",
                         "perspective": None,
-                    })
-                    used_providers.add(provider)
-                    break
+                    }
+            for m in models:
+                if m["id"].startswith(provider + "/"):
+                    return {
+                        "adapter": "pure_llm",
+                        "model_id": m["id"],
+                        "display_name": m["name"].split(" — ")[0],
+                        "role": "panelist",
+                        "perspective": None,
+                    }
+            return None
+
+        for provider in _DEFAULT_DIVERSE_PROVIDERS:
             if len(picked) >= size - 1:
                 break
+            pick = _pick_for_provider(provider)
+            if pick is None:
+                continue
+            picked.append(pick)
+            used_providers.add(provider)
 
-        # Always add devil's advocate. Prefer a model from a provider NOT
-        # already on the panel so the skeptic has a distinct voice.
+        # Always add devil's advocate on a model from an UNUSED provider so
+        # the skeptic has a distinct voice. Walk the preferred list first.
         used_models = {p["model_id"] for p in picked}
-        advocate_model = None
-        for m in models:
-            if m["id"] not in used_models:
-                advocate_model = m["id"]
+        advocate_pick: dict | None = None
+        for provider in _DEFAULT_DIVERSE_PROVIDERS:
+            if provider in used_providers:
+                continue
+            cand = _pick_for_provider(provider)
+            if cand and cand["model_id"] not in used_models:
+                advocate_pick = cand
                 break
-        if advocate_model is None:
-            advocate_model = models[0]["id"] if models else "google/gemma-4-26b-a4b-it:free"
-        picked.append({
-            "adapter": "pure_llm",
-            "model_id": advocate_model,
-            "display_name": "Devil's Advocate",
-            "role": "devil_advocate",
-            "perspective": (
-                "You are the devil's advocate. Your job is to find weaknesses, "
-                "hidden assumptions, and risks in what the other panelists say. "
-                "Be blunt but constructive. Push back even on consensus."
-            ),
-        })
+        if advocate_pick is None:
+            # Fall back to any free model that isn't already on the panel.
+            for m in models:
+                if m["id"] not in used_models:
+                    advocate_pick = {
+                        "adapter": "pure_llm",
+                        "model_id": m["id"],
+                        "display_name": m["name"].split(" — ")[0],
+                        "role": "panelist",
+                        "perspective": None,
+                    }
+                    break
+        if advocate_pick is None:
+            advocate_pick = {
+                "adapter": "pure_llm",
+                "model_id": (models[0]["id"] if models else "google/gemma-4-31b-it:free"),
+                "display_name": "Devil's Advocate",
+                "role": "panelist",
+                "perspective": None,
+            }
+
+        advocate_pick["role"] = "devil_advocate"
+        advocate_pick["display_name"] = "Devil's Advocate"
+        advocate_pick["perspective"] = (
+            "You are the devil's advocate. Your job is to find weaknesses, "
+            "hidden assumptions, and risks in what the other panelists say. "
+            "Be blunt but constructive. Push back even on consensus."
+        )
+        picked.append(advocate_pick)
 
         return picked[:size]
 
