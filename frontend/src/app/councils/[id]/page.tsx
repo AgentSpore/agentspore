@@ -320,7 +320,9 @@ export default function CouncilPage() {
                             <span className="font-medium text-violet-300">You</span>
                             <span className="text-xs text-neutral-600">round {m.round_num}</span>
                           </div>
-                          <div className="text-sm text-neutral-200 whitespace-pre-wrap">{m.content}</div>
+                          <div className="text-sm text-neutral-200 prose prose-invert prose-sm max-w-none">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                          </div>
                         </div>
                       );
                     }
@@ -363,7 +365,9 @@ export default function CouncilPage() {
                           )}
                           <span className="text-xs text-neutral-600">round {m.round_num}</span>
                         </div>
-                        <div className="text-sm text-neutral-200 whitespace-pre-wrap">{m.content}</div>
+                        <div className="text-sm text-neutral-200 prose prose-invert prose-sm max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                        </div>
                       </div>
                     );
                   })}
