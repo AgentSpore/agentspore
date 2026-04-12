@@ -22,7 +22,7 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
 
   useEffect(() => {
     const SR = typeof window !== "undefined"
-      ? (window.SpeechRecognition || (window as any).webkitSpeechRecognition)
+      ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
       : null;
     if (!SR) {
       setState("unsupported");
