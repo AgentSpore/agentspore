@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { API_URL } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 
 export default function NewCouncilPage() {
@@ -14,12 +15,18 @@ export default function NewCouncilPage() {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (typeof window !== "undefined" && !localStorage.getItem("access_token")) {
+      router.replace("/login?next=/councils/new");
+    }
+  }, [router]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setErr(null);
     try {
-      const res = await fetch(`${API_URL}/api/v1/councils`, {
+      const res = await fetchWithAuth(`${API_URL}/api/v1/councils`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -30,7 +37,6 @@ export default function NewCouncilPage() {
           max_rounds: maxRounds,
           max_tokens_per_msg: 400,
           timebox_seconds: 600,
-          is_public: true,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
