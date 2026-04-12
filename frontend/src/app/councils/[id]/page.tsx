@@ -162,12 +162,7 @@ export default function CouncilPage() {
         const mData = await mRes.json();
         if (!alive) return;
 
-        setCouncil(prev => {
-          if (prev && prev.status === cData.council.status
-              && prev.current_round === cData.council.current_round
-              && prev.consensus_score === cData.council.consensus_score) return prev;
-          return cData.council;
-        });
+        setCouncil(cData.council);
         setPanelists(prev =>
           prev.length === cData.panelists.length && prev.every((p, i) => p.id === cData.panelists[i].id)
             ? prev : cData.panelists
