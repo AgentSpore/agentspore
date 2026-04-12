@@ -55,6 +55,10 @@ class ConveneRequest(BaseModel):
     is_public: bool = True
 
 
+class UserChatRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=5000)
+
+
 class AgentMessageRequest(BaseModel):
     """Used by platform agents (WS adapter) to post their reply for a round."""
     panelist_id: str
@@ -163,6 +167,37 @@ async def list_messages(
     return await repo.list_messages(council_id)
 
 
+@router.post("/{council_id}/chat", summary="Send a user message to the council")
+async def user_chat(
+    council_id: str,
+    body: UserChatRequest,
+    user: CurrentUser,
+    svc: CouncilService = Depends(get_council_service),
+    repo: CouncilRepository = Depends(get_council_repo),
+):
+    await _assert_owner(repo, council_id, str(user.id))
+    try:
+        round_num = await svc.handle_user_message(council_id, body.content)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "ok", "round": round_num}
+
+
+@router.post("/{council_id}/finish", summary="Trigger vote + resolution")
+async def finish_council(
+    council_id: str,
+    user: CurrentUser,
+    svc: CouncilService = Depends(get_council_service),
+    repo: CouncilRepository = Depends(get_council_repo),
+):
+    await _assert_owner(repo, council_id, str(user.id))
+    try:
+        await svc.finish_council(council_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "voting"}
+
+
 @router.post("/{council_id}/abort", summary="Abort a running council")
 async def abort_council(
     council_id: str,
@@ -245,7 +280,7 @@ async def post_agent_message(
     council = await repo.get_by_id(council_id)
     if not council:
         raise HTTPException(404, "council not found")
-    if council["status"] not in ("round", "voting"):
+    if council["status"] not in ("round", "voting", "responding"):
         raise HTTPException(400, f"council not accepting messages in status '{council['status']}'")
     panelists = await repo.list_panelists(council_id)
     panelist = next((p for p in panelists if str(p["id"]) == body.panelist_id), None)
