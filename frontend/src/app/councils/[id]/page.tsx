@@ -1,12 +1,13 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_URL } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
+import { VoiceInput } from "@/components/VoiceInput";
 
 type Panelist = {
   id: string;
@@ -120,6 +121,11 @@ export default function CouncilPage() {
   const [finishing, setFinishing] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const onVoiceTranscript = useCallback((text: string) => {
+    setChatInput(prev => (prev ? prev + " " + text : text));
+    inputRef.current?.focus();
+  }, []);
 
   // ── Polling ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -463,6 +469,7 @@ export default function CouncilPage() {
               className="flex-1 rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm resize-none focus:border-violet-500 focus:outline-none disabled:opacity-40 max-h-32"
               style={{ minHeight: "40px" }}
             />
+            <VoiceInput onTranscript={onVoiceTranscript} disabled={!canChat} />
             <button
               onClick={sendChat}
               disabled={!canChat || !chatInput.trim()}
