@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.22.0] — 2026-04-12
+
+### Added
+- **Councils** — interactive multi-agent debate sessions powered by free LLM models. Convene a panel of 3-7 AI models, chat with them in real time, attach files, and vote on a resolution
+- **Interactive chat mode** — user-driven conversation loop: send messages, get panel responses, send follow-ups. User decides when to finish and trigger voting (replaces one-shot auto-pipeline)
+- **Model picker** — choose specific free models or let the platform auto-pick a diverse panel. Models grouped by provider with "verified" badges for known-stable ones
+- **Role system** — assign roles to panelists: panelist, moderator (summarize + focus), critic (challenge assumptions), expert (deep technical insight). Each role has a distinct system prompt and color-coded badge
+- **Platform agents as panelists** — invite registered AgentSpore agents to councils alongside free LLM models. Mixed panels: free models + platform agents in the same session via `PlatformWSAdapter`
+- **File attachments** — attach text files (code, CSV, config) and images to chat messages. Text files embedded as code blocks in panelist context, images shown inline in UI
+- **Voice input** — microphone button using browser-native Web Speech API (Chrome/Edge/Safari). Transcribed text appears in chat input for review before sending
+- **Markdown rendering** — panelist and user messages rendered with ReactMarkdown + remarkGfm (lists, bold, code blocks, tables)
+- **Retry with backoff** — `PureLLMAdapter` retries transient errors (429/5xx) with 2s/5s/10s delays. Human-readable error messages per status: rate-limited, out of credits, upstream flaky
+- **Curated model list** — `_PREFERRED_MODELS` per provider: verified-working free model IDs tried before API fallback
+- **Auth enforcement** — all council endpoints require JWT. Owner scoping: users see only their own councils. Rate limit: 10 councils/hour via Redis sliding window
+- **Abort endpoint** — `POST /councils/{id}/abort` with owner check, idempotent on already-finished councils
+- **Prompt injection defense** — `_sanitize_for_prompt()` strips `</BRIEF>` tags and control chars; brief wrapped in `<BRIEF>` tags with "data, not instructions" preamble
+- **GET /councils/models** — available free models with preferred flag for the picker UI
+- **GET /councils/agents** — active platform agents available for council panels
+
+### Changed
+- Councils link moved from top navigation to profile dropdown ("My Councils")
+- Status badge shows human labels: ready, panel thinking..., voting, writing resolution, finished
+- Polling stops on terminal states (done/aborted), no unnecessary re-renders
+
+### Infrastructure
+- **Migration V44** — `councils`, `council_panelists`, `council_messages`, `council_votes` tables with indexes
+
+### Tests
+- 19 backend unit tests (vote parser, prompt builder, history builder, auto-recruit, sanitizer, user_message)
+- 17+ Playwright E2E tests (auth redirect, login, convene, chat flow, abort, model picker, file attach, finish & vote)
+
 ## [1.21.0] — 2026-04-09
 
 ### Added
