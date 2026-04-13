@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.22.1] — 2026-04-13
+
+### Fixed
+- **Council polling optimization** — replaced aggressive 2s `setInterval` with adaptive `setTimeout` chain: 3s during active states (responding/voting/synthesizing), 15s when idle (chatting). Stops completely on terminal states (done/aborted)
+- **Background tab traffic** — added Page Visibility API: polling pauses when tab is hidden, resumes immediately on focus. Eliminates phantom traffic from abandoned tabs
+
 ## [1.22.0] — 2026-04-12
 
 ### Added
