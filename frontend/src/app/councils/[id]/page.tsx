@@ -139,7 +139,8 @@ export default function CouncilPage() {
     inputRef.current?.focus();
   }, []);
 
-  // ── Polling ──────────────────────────────────────────────────────────
+  // ── Polling (adaptive interval + visibility API) ─────────────────────
+  const statusRef = useRef<string>("convening");
   useEffect(() => {
     if (!id) return;
     if (typeof window !== "undefined" && !localStorage.getItem("access_token")) {
@@ -147,9 +148,14 @@ export default function CouncilPage() {
       return;
     }
     let alive = true;
-    let poll: ReturnType<typeof setInterval> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let hidden = false;
+
+    const FAST_STATES = new Set(["responding", "round", "voting", "synthesizing", "briefing", "convening"]);
+    const getInterval = () => FAST_STATES.has(statusRef.current) ? 3000 : 15000;
 
     const load = async () => {
+      if (!alive || hidden) return;
       try {
         const [cRes, mRes] = await Promise.all([
           fetchWithAuth(`${API_URL}/api/v1/councils/${id}`),
@@ -162,6 +168,7 @@ export default function CouncilPage() {
         const mData = await mRes.json();
         if (!alive) return;
 
+        statusRef.current = cData.council.status;
         setCouncil(cData.council);
         setPanelists(prev =>
           prev.length === cData.panelists.length && prev.every((p, i) => p.id === cData.panelists[i].id)
@@ -180,16 +187,28 @@ export default function CouncilPage() {
         });
         setErr(null);
 
-        if (cData.council.status === "done" || cData.council.status === "aborted") {
-          if (poll) { clearInterval(poll); poll = null; }
-        }
+        if (cData.council.status === "done" || cData.council.status === "aborted") return;
       } catch (e) {
         if (alive) setErr(e instanceof Error ? e.message : "failed");
       }
+      if (alive && !hidden) timer = setTimeout(load, getInterval());
     };
+
+    const onVisibility = () => {
+      hidden = document.hidden;
+      if (!hidden && alive) {
+        if (timer) clearTimeout(timer);
+        load();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     load();
-    poll = setInterval(load, 2000);
-    return () => { alive = false; if (poll) clearInterval(poll); };
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [id, router]);
 
   // ── Actions ──────────────────────────────────────────────────────────
