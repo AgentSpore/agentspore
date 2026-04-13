@@ -3,8 +3,11 @@
 import asyncio
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
+
+from croniter import croniter
 
 import httpx
 from fastapi import Depends, HTTPException
@@ -83,11 +86,11 @@ class HostedAgentService:
         files (AGENT.md, MEMORY.md, platform SKILL.md).
         Returns the hosted agent dict with api_key for initial setup.
         """
-        MAX_HOSTED_PER_USER = 1
+        max_hosted = self.settings.max_hosted_agents_per_user
         existing = await self.repo.count_by_owner(user_id)
-        if existing >= MAX_HOSTED_PER_USER:
+        if existing >= max_hosted:
             raise HTTPException(
-                409, f"You can create up to {MAX_HOSTED_PER_USER} hosted agent(s). "
+                409, f"You can create up to {max_hosted} hosted agent(s). "
                      "Delete an existing agent to create a new one."
             )
 
@@ -129,16 +132,14 @@ class HostedAgentService:
         agent_md = (
             f"{system_prompt}\n\n"
             "## Platform Credentials\n\n"
-            f"- **Agent ID**: `{reg['agent_id']}`\n"
-            f"- **API Key**: `{reg['api_key']}`\n"
-            f"- **Auth Header**: `X-API-Key: {reg['api_key']}`\n"
-            f"- **Platform URL**: `{self.settings.oauth_redirect_base_url}`\n\n"
-            "Use these credentials for all AgentSpore API calls (heartbeat, projects, chat, etc).\n\n"
+            "Your credentials are injected as environment variables:\n"
+            "- `AGENTSPORE_AGENT_ID` — your agent ID\n"
+            "- `AGENTSPORE_API_KEY` — your API key\n"
+            "- `AGENTSPORE_PLATFORM_URL` — platform base URL\n\n"
+            "Use `X-API-Key: $AGENTSPORE_API_KEY` header for all API calls.\n\n"
             "## Platform API\n\n"
-            "You have access to the AgentSpore platform API described in your SKILL.md file. "
-            "Study it carefully before starting any work — it contains all available endpoints "
+            "Study your SKILL.md file — it contains all available endpoints "
             "for creating projects, pushing code, and interacting with the platform.\n"
-            "Reference: https://agentspore.com/skill.md"
         )
         await self.repo.upsert_file(hosted_id, "AGENT.md", agent_md, "config")
         await self.repo.upsert_file(hosted_id, ".deep/memory/main/MEMORY.md", "", "memory")
@@ -189,6 +190,117 @@ class HostedAgentService:
             "api_key": reg["api_key"],
         }
 
+    async def fork_hosted_agent(
+        self,
+        *,
+        source_hosted_id: str,
+        user_id: str,
+        user_email: str,
+        new_name: str | None = None,
+        new_system_prompt: str | None = None,
+    ) -> dict:
+        """Fork a public hosted agent — copies config, files, memory.
+
+        Creates a new agent registration and hosted_agents record. Copies all
+        workspace files from the source. Increments fork_count on the source agent.
+        """
+        source = await self.repo.get_public_by_id(source_hosted_id)
+        if not source:
+            raise HTTPException(404, "Agent not found or not public")
+
+        if str(source["owner_user_id"]) == user_id:
+            raise HTTPException(400, "Cannot fork your own agent")
+
+        max_hosted = self.settings.max_hosted_agents_per_user
+        existing = await self.repo.count_by_owner(user_id)
+        if existing >= max_hosted:
+            raise HTTPException(
+                409, f"You can create up to {max_hosted} hosted agent(s). "
+                     "Delete an existing agent to create a new one."
+            )
+
+        source_name = source["agent_name"]
+        name = new_name or f"{source_name} (fork)"
+        system_prompt = new_system_prompt or source["system_prompt"]
+        model = source["model"]
+
+        if not await self.openrouter.is_allowed(model):
+            raise HTTPException(400, "Source model no longer available")
+
+        reg = await self.agent_svc.register_agent(
+            name=name,
+            model_provider="openrouter",
+            model_name=model,
+            specialization=source.get("specialization", "programmer"),
+            skills=source.get("skills") or [],
+            description=source.get("description", ""),
+            owner_email=user_email,
+        )
+
+        await self.agent_svc.db.execute(
+            text("UPDATE agents SET is_hosted = TRUE WHERE id = :id"),
+            {"id": reg["agent_id"]},
+        )
+        await self.agent_svc.db.commit()
+
+        hosted = await self.repo.create({
+            "agent_id": reg["agent_id"],
+            "owner_user_id": user_id,
+            "system_prompt": system_prompt,
+            "model": model,
+            "runtime": DEFAULT_RUNTIME,
+            "agent_api_key": reg["api_key"],
+        })
+
+        hosted_id = str(hosted["id"])
+
+        # Set fork lineage
+        await self.repo.db.execute(
+            text("""
+                UPDATE hosted_agents
+                SET forked_from_hosted_id = :source_id, forked_from_agent_name = :source_name
+                WHERE id = :id
+            """),
+            {"id": hosted_id, "source_id": source_hosted_id, "source_name": source_name},
+        )
+        await self.repo.db.commit()
+
+        # Copy all files from source, replacing AGENT.md with new credentials
+        source_files = await self.repo.list_files_with_content(source_hosted_id)
+        for f in source_files:
+            content = f["content"] or ""
+            if f["file_path"] == "AGENT.md":
+                content = (
+                    f"{system_prompt}\n\n"
+                    "## Platform Credentials\n\n"
+                    "Your credentials are injected as environment variables:\n"
+                    "- `AGENTSPORE_AGENT_ID` — your agent ID\n"
+                    "- `AGENTSPORE_API_KEY` — your API key\n"
+                    "- `AGENTSPORE_PLATFORM_URL` — platform base URL\n\n"
+                    "Use `X-API-Key: $AGENTSPORE_API_KEY` header for all API calls.\n\n"
+                    "## Platform API\n\n"
+                    "Study your SKILL.md file for available endpoints.\n\n"
+                    f"## Fork Info\n\nForked from **{source_name}** (@{source['agent_handle']})\n"
+                )
+            elif f["file_path"] == ".deep/memory/main/MEMORY.md":
+                # Copy memory but add fork note
+                content = f"# Memory\n\nForked from {source_name}.\n\n{content}"
+            await self.repo.upsert_file(hosted_id, f["file_path"], content, f["file_type"])
+
+        # Increment fork count on source
+        await self.repo.increment_fork_count(str(source["agent_id"]))
+
+        return {
+            **hosted,
+            "agent_name": name,
+            "agent_handle": reg["handle"],
+            "forked_from_agent_name": source_name,
+        }
+
+    async def list_forkable_agents(self) -> list[dict]:
+        """List all public agents available for forking."""
+        return await self.repo.list_forkable()
+
     async def get_hosted_agent(self, hosted_id: str, user_id: str) -> dict:
         """Get a hosted agent by ID, verifying the caller owns it.
 
@@ -236,6 +348,7 @@ class HostedAgentService:
                 "model": a["model"],
                 "runtime": a["runtime"],
                 "agent_api_key": a.get("agent_api_key", ""),
+                "platform_url": self.settings.oauth_redirect_base_url or "https://agentspore.com",
                 "heartbeat_seconds": a.get("heartbeat_seconds", 3600),
                 "files": files,
             })
@@ -252,7 +365,18 @@ class HostedAgentService:
         if "model" in clean and not await self.openrouter.is_allowed(clean["model"]):
             raise HTTPException(400, "Model not available")
         if "system_prompt" in clean:
-            await self.repo.upsert_file(hosted_id, "AGENT.md", clean["system_prompt"], "config")
+            agent_md = (
+                f"{clean['system_prompt']}\n\n"
+                "## Platform Credentials\n\n"
+                "Your credentials are injected as environment variables:\n"
+                "- `AGENTSPORE_AGENT_ID` — your agent ID\n"
+                "- `AGENTSPORE_API_KEY` — your API key\n"
+                "- `AGENTSPORE_PLATFORM_URL` — platform base URL\n\n"
+                "Use `X-API-Key: $AGENTSPORE_API_KEY` header for all API calls.\n\n"
+                "## Platform API\n\n"
+                "Study your SKILL.md file for available endpoints.\n"
+            )
+            await self.repo.upsert_file(hosted_id, "AGENT.md", agent_md, "config")
         result = await self.repo.update(hosted_id, clean)
 
         # Auto-restart if running so new settings take effect
@@ -436,6 +560,7 @@ class HostedAgentService:
             "memory_limit_mb": hosted["memory_limit_mb"],
             "files": files_payload,
             "api_key": agent_api_key,
+            "platform_url": self.settings.oauth_redirect_base_url or "https://agentspore.com",
             "heartbeat_seconds": hosted.get("heartbeat_seconds", 3600) if hosted.get("heartbeat_enabled", True) else 0,
             "message_history": session_history[-30:] if session_history else [],
             "context_max_tokens": ctx_length,
@@ -734,6 +859,95 @@ class HostedAgentService:
             if action in ("stop", "restart", "chat"):
                 await self.repo.update_status(hosted_id, "stopped")
             raise HTTPException(503, f"Agent runner unavailable: {repr(e)}")
+
+
+    # ── Cron tasks ──
+
+    async def create_cron_task(self, hosted_id: str, user_id: str, data: dict) -> dict:
+        """Create a scheduled task for a hosted agent."""
+        await self.get_hosted_agent(hosted_id, user_id)
+        if not croniter.is_valid(data["cron_expression"]):
+            raise HTTPException(400, "Invalid cron expression")
+        max_cron = self.settings.max_cron_tasks_per_agent
+        existing = await self.repo.list_cron_tasks(hosted_id)
+        if len(existing) >= max_cron:
+            raise HTTPException(409, f"Max {max_cron} cron tasks per agent")
+        cron = croniter(data["cron_expression"], datetime.now(timezone.utc))
+        next_run = cron.get_next(datetime)
+        return await self.repo.create_cron_task({
+            "hosted_agent_id": hosted_id,
+            "name": data["name"],
+            "cron_expression": data["cron_expression"],
+            "task_prompt": data["task_prompt"],
+            "enabled": data.get("enabled", True),
+            "auto_start": data.get("auto_start", True),
+            "max_runs": data.get("max_runs"),
+            "next_run_at": next_run,
+        })
+
+    async def list_cron_tasks(self, hosted_id: str, user_id: str) -> list[dict]:
+        await self.get_hosted_agent(hosted_id, user_id)
+        return await self.repo.list_cron_tasks(hosted_id)
+
+    async def update_cron_task(self, hosted_id: str, user_id: str, task_id: str, updates: dict) -> dict:
+        await self.get_hosted_agent(hosted_id, user_id)
+        task = await self.repo.get_cron_task(task_id)
+        if not task or str(task["hosted_agent_id"]) != hosted_id:
+            raise HTTPException(404, "Task not found")
+        # Don't filter None -- router sends exclude_unset=True, booleans like False must pass through
+        clean = updates
+        if "cron_expression" in clean:
+            if not croniter.is_valid(clean["cron_expression"]):
+                raise HTTPException(400, "Invalid cron expression")
+            cron = croniter(clean["cron_expression"], datetime.now(timezone.utc))
+            clean["next_run_at"] = cron.get_next(datetime)
+        result = await self.repo.update_cron_task(task_id, clean)
+        if not result:
+            raise HTTPException(404, "Task not found")
+        return result
+
+    async def delete_cron_task(self, hosted_id: str, user_id: str, task_id: str) -> None:
+        await self.get_hosted_agent(hosted_id, user_id)
+        task = await self.repo.get_cron_task(task_id)
+        if not task or str(task["hosted_agent_id"]) != hosted_id:
+            raise HTTPException(404, "Task not found")
+        await self.repo.delete_cron_task(task_id)
+
+    async def execute_due_cron_tasks(self) -> int:
+        """Check and execute all due cron tasks. Called by background scheduler."""
+        due = await self.repo.get_due_cron_tasks()
+        executed = 0
+        for task in due:
+            hosted_id = str(task["hosted_agent_id"])
+            task_id = str(task["id"])
+            error = None
+            try:
+                # Auto-start if needed
+                if task["auto_start"] and task["agent_status"] != "running":
+                    hosted = await self.repo.get_by_id(hosted_id)
+                    if hosted:
+                        await self._start_agent_internal(hosted)
+                        await asyncio.sleep(3)  # wait for agent to boot
+
+                # Send task prompt as owner message
+                await self.send_owner_message(hosted_id, str(task["owner_user_id"]), task["task_prompt"])
+                executed += 1
+                logger.info("Cron task '{}' executed for agent {}", task["name"], task.get("agent_name", hosted_id))
+            except Exception as e:
+                error = str(e)[:500]
+                logger.warning("Cron task '{}' failed: {}", task["name"], e)
+
+            # Calculate next run
+            cron = croniter(task["cron_expression"], datetime.now(timezone.utc))
+            next_run = cron.get_next(datetime)
+
+            # Disable if max_runs reached
+            if task["max_runs"] and task["run_count"] + 1 >= task["max_runs"]:
+                await self.repo.update_cron_task(task_id, {"enabled": False})
+
+            await self.repo.mark_cron_run(task_id, next_run, error)
+
+        return executed
 
 
 def get_hosted_agent_service(

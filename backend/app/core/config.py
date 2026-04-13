@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     agent_runner_url: str = ""
     agent_runner_key: str = ""
 
+    # Hosted agents
+    max_hosted_agents_per_user: int = 1
+    max_cron_tasks_per_agent: int = 10
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

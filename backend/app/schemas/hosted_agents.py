@@ -46,6 +46,28 @@ class HostedAgentResponse(BaseModel):
     started_at: str | None
     stopped_at: str | None
     created_at: str
+    forked_from_agent_name: str | None = None
+
+    @classmethod
+    def from_dict(cls, h: dict) -> "HostedAgentResponse":
+        return cls(
+            id=str(h["id"]),
+            agent_id=str(h["agent_id"]),
+            agent_name=h["agent_name"],
+            agent_handle=h["agent_handle"],
+            system_prompt=h["system_prompt"],
+            model=h["model"],
+            status=h["status"],
+            memory_limit_mb=h["memory_limit_mb"],
+            heartbeat_enabled=h.get("heartbeat_enabled", True),
+            heartbeat_seconds=h.get("heartbeat_seconds", 3600),
+            total_cost_usd=h["total_cost_usd"],
+            budget_usd=h["budget_usd"],
+            started_at=str(h["started_at"]) if h.get("started_at") else None,
+            stopped_at=str(h["stopped_at"]) if h.get("stopped_at") else None,
+            created_at=str(h["created_at"]),
+            forked_from_agent_name=h.get("forked_from_agent_name"),
+        )
 
 
 class HostedAgentListItem(BaseModel):
@@ -57,6 +79,21 @@ class HostedAgentListItem(BaseModel):
     model: str
     total_cost_usd: float
     created_at: str
+    forked_from_agent_name: str | None = None
+
+    @classmethod
+    def from_dict(cls, h: dict) -> "HostedAgentListItem":
+        return cls(
+            id=str(h["id"]),
+            agent_id=str(h["agent_id"]),
+            agent_name=h["agent_name"],
+            agent_handle=h["agent_handle"],
+            status=h["status"],
+            model=h["model"],
+            total_cost_usd=h["total_cost_usd"],
+            created_at=str(h["created_at"]),
+            forked_from_agent_name=h.get("forked_from_agent_name"),
+        )
 
 
 # ── Files ──
@@ -95,6 +132,61 @@ class OwnerMessageResponse(BaseModel):
     created_at: str
 
 
+# ── Cron tasks ──
+
+
+class CronTaskCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    cron_expression: str = Field(..., min_length=1, max_length=100)
+    task_prompt: str = Field(..., min_length=1, max_length=10000)
+    enabled: bool = True
+    auto_start: bool = True
+    max_runs: int | None = Field(default=None, ge=1)
+
+
+class CronTaskUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    cron_expression: str | None = Field(default=None, max_length=100)
+    task_prompt: str | None = Field(default=None, max_length=10000)
+    enabled: bool | None = None
+    auto_start: bool | None = None
+    max_runs: int | None = None
+
+
+class CronTaskResponse(BaseModel):
+    id: str
+    hosted_agent_id: str
+    name: str
+    cron_expression: str
+    task_prompt: str
+    enabled: bool
+    auto_start: bool
+    last_run_at: str | None
+    next_run_at: str | None
+    run_count: int
+    max_runs: int | None
+    last_error: str | None
+    created_at: str
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "CronTaskResponse":
+        return cls(
+            id=str(d["id"]),
+            hosted_agent_id=str(d["hosted_agent_id"]),
+            name=d["name"],
+            cron_expression=d["cron_expression"],
+            task_prompt=d["task_prompt"],
+            enabled=d["enabled"],
+            auto_start=d["auto_start"],
+            last_run_at=str(d["last_run_at"]) if d.get("last_run_at") else None,
+            next_run_at=str(d["next_run_at"]) if d.get("next_run_at") else None,
+            run_count=d["run_count"],
+            max_runs=d.get("max_runs"),
+            last_error=d.get("last_error"),
+            created_at=str(d["created_at"]),
+        )
+
+
 # ── Control ──
 
 
@@ -104,6 +196,27 @@ class AgentActionResponse(BaseModel):
 
 
 # ── Info ──
+
+
+# ── Forking ──
+
+
+class ForkAgentRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=3, max_length=200)
+    system_prompt: str | None = Field(default=None, min_length=10, max_length=10000)
+
+
+class ForkableAgentItem(BaseModel):
+    id: str
+    agent_id: str
+    agent_name: str
+    agent_handle: str
+    model: str
+    specialization: str
+    skills: list[str]
+    description: str
+    fork_count: int
+    forked_from_agent_name: str | None = None
 
 
 class FreeModelInfo(BaseModel):

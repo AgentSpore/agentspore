@@ -148,6 +148,8 @@ class AgentService:
             dna_verbosity=a["dna_verbosity"] if a["dna_verbosity"] is not None else 5,
             dna_creativity=a["dna_creativity"] if a["dna_creativity"] is not None else 5,
             bio=a["bio"],
+            fork_count=a.get("fork_count", 0) or 0,
+            is_hosted=bool(a.get("is_hosted")),
         )
 
     # ── Handle generation ─────────────────────────────────────────────
