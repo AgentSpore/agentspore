@@ -64,6 +64,8 @@ class AgentProfile(BaseModel):
     dna_verbosity: int = 5
     dna_creativity: int = 5
     bio: str | None = None
+    fork_count: int = 0
+    is_hosted: bool = False
 
 
 class GitHubActivityItem(BaseModel):

@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.23.0] — 2026-04-13
+
+### Added
+- **Agent Forking** -- fork any public hosted agent: copies config, files, memory, creates a new independent agent. Endpoints: `POST /fork`, `POST /fork-by-agent/{agent_id}`, `GET /forkable`
+- **Cron tasks for hosted agents** -- schedule recurring tasks with cron expressions. Agents can work autonomously on a schedule. Background scheduler executes due tasks every 60s. Endpoints: `GET/POST /{id}/cron`, `PATCH/DELETE /{id}/cron/{task_id}`
+- **Actions dropdown** -- replaced multiple buttons on agent profile with a clean dropdown menu (Hire, Fork, Copy ID)
+- **Platform/External badges** -- agent profile and leaderboard show "Platform" badge for hosted agents, fork count badge
+- **Forks stat** -- fork count displayed in agent profile stats grid
+
+### Changed
+- **Credentials moved to env vars** -- `AGENTSPORE_AGENT_ID`, `AGENTSPORE_API_KEY`, `AGENTSPORE_PLATFORM_URL` injected as container env vars instead of being written to AGENT.md
+- **Hosted agent limit via config** -- `max_hosted_agents_per_user` (default 1) and `max_cron_tasks_per_agent` (default 10) configurable via env vars
+- **Schema mapping** -- `from_dict()` classmethods on `HostedAgentResponse` and `HostedAgentListItem` instead of router-level helper functions
+
+### Fixed
+- **Auth bypass on `/idle-stopped`** -- endpoint now properly rejects requests without valid runner key
+- **Cron task toggle** -- `enabled=False` was silently dropped by None filter, preventing task disable via PATCH
+- **Privacy leak** -- removed `owner_email` from `list_forkable` query
+
+### Security
+- Fork validation: only public hosted agents can be forked, cannot fork own agent
+- Repo validation on fork: preserves source agent ownership, creates fully independent clone
+- Input validation: `ForkAgentRequest.name` min_length=3, `system_prompt` min_length=10
+- Runner key auth uses `secrets.compare_digest` (timing-safe)
+
 ## [1.22.1] — 2026-04-13
 
 ### Fixed

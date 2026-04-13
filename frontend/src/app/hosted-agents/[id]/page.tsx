@@ -65,9 +65,62 @@ export default function HostedAgentManagePage() {
   const [confirmStop, setConfirmStop] = useState(false);
 
   // Layout state
-  const [activeTab, setActiveTab] = useState<"chat" | "files" | "guide">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "files" | "guide" | "cron">("chat");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [hasUnreadFiles, setHasUnreadFiles] = useState(false);
+
+  // Cron tasks
+  type CronTask = {
+    id: string; hosted_agent_id: string; name: string; cron_expression: string;
+    task_prompt: string; enabled: boolean; auto_start: boolean;
+    last_run_at: string | null; next_run_at: string | null;
+    run_count: number; max_runs: number | null; last_error: string | null; created_at: string;
+  };
+  const [cronTasks, setCronTasks] = useState<CronTask[]>([]);
+  const [cronLoading, setCronLoading] = useState(false);
+  const [cronName, setCronName] = useState("");
+  const [cronExpr, setCronExpr] = useState("0 9 * * *");
+  const [cronPrompt, setCronPrompt] = useState("");
+  const [cronAutoStart, setCronAutoStart] = useState(true);
+  const [cronSubmitting, setCronSubmitting] = useState(false);
+  const [cronError, setCronError] = useState<string | null>(null);
+
+  const loadCronTasks = useCallback(async () => {
+    if (!id) return;
+    setCronLoading(true);
+    try {
+      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/cron`);
+      if (res.ok) setCronTasks(await res.json());
+    } catch { /* ignore */ }
+    finally { setCronLoading(false); }
+  }, [id]);
+
+  const createCronTask = async () => {
+    if (!id || !cronName.trim() || !cronPrompt.trim()) return;
+    setCronSubmitting(true);
+    setCronError(null);
+    try {
+      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/cron`, {
+        method: "POST",
+        body: JSON.stringify({ name: cronName.trim(), cron_expression: cronExpr.trim(), task_prompt: cronPrompt.trim(), auto_start: cronAutoStart }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d?.detail || `Error ${res.status}`); }
+      setCronName(""); setCronPrompt(""); setCronExpr("0 9 * * *");
+      await loadCronTasks();
+    } catch (e: unknown) { setCronError(e instanceof Error ? e.message : "Failed"); }
+    finally { setCronSubmitting(false); }
+  };
+
+  const toggleCronTask = async (taskId: string, enabled: boolean) => {
+    await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/cron/${taskId}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+    await loadCronTasks();
+  };
+
+  const deleteCronTask = async (taskId: string) => {
+    if (!confirm("Delete this scheduled task?")) return;
+    await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/cron/${taskId}`, { method: "DELETE" });
+    await loadCronTasks();
+  };
 
   const loadAgent = useCallback(async () => {
     try {
@@ -265,6 +318,14 @@ export default function HostedAgentManagePage() {
                 : "text-neutral-600 border-transparent hover:text-neutral-400"
             }`}>
             Guide
+          </button>
+          <button onClick={() => { setActiveTab("cron"); loadCronTasks(); }}
+            className={`px-5 py-2 text-xs font-mono rounded-t-lg border border-b-0 transition-colors ${
+              activeTab === "cron"
+                ? "bg-white/[0.04] text-emerald-300 border-neutral-800/50"
+                : "text-neutral-600 border-transparent hover:text-neutral-400"
+            }`}>
+            Cron
           </button>
           {selectedFile && activeTab === "files" && (
             <span className="text-[10px] font-mono text-neutral-600 ml-2 truncate max-w-[200px]">{selectedFile}</span>
@@ -468,6 +529,72 @@ export default function HostedAgentManagePage() {
                   <p>• Don't refresh the page during generation — response may be lost</p>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Cron tab */}
+          <div className={`h-full overflow-y-auto ${activeTab !== "cron" ? "hidden" : ""}`}>
+            <div className="max-w-3xl mx-auto p-6 space-y-6">
+              <div className="space-y-2">
+                <h2 className="text-lg font-mono font-bold text-white">Scheduled Tasks</h2>
+                <p className="text-xs font-mono text-neutral-500">Automate your agent with cron-based task scheduling</p>
+              </div>
+              <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-4">
+                <h3 className="text-sm font-mono font-semibold text-white">New Task</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">Name</label>
+                    <input value={cronName} onChange={e => setCronName(e.target.value)} placeholder="Daily report" maxLength={200}
+                      className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">Schedule (cron)</label>
+                    <input value={cronExpr} onChange={e => setCronExpr(e.target.value)} placeholder="0 9 * * *"
+                      className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
+                    <div className="text-[9px] font-mono text-neutral-600 mt-1">min hour day month weekday</div>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">Task prompt</label>
+                  <textarea value={cronPrompt} onChange={e => setCronPrompt(e.target.value)} placeholder="Check for new tasks and process them." rows={3} maxLength={10000}
+                    className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30 resize-y" />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-xs font-mono text-neutral-400 cursor-pointer">
+                    <input type="checkbox" checked={cronAutoStart} onChange={e => setCronAutoStart(e.target.checked)} className="accent-emerald-500 w-3.5 h-3.5" />
+                    Auto-start agent if stopped
+                  </label>
+                  <button onClick={createCronTask} disabled={cronSubmitting || !cronName.trim() || !cronPrompt.trim()}
+                    className="px-4 py-2 text-xs font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 rounded-lg hover:bg-emerald-500/25 disabled:opacity-40 transition-colors">
+                    {cronSubmitting ? "Creating..." : "Create Task"}
+                  </button>
+                </div>
+                {cronError && <div className="text-xs font-mono text-red-400">{cronError}</div>}
+              </div>
+              {cronLoading && <div className="text-center text-neutral-500 text-xs font-mono py-8">Loading...</div>}
+              {!cronLoading && cronTasks.length === 0 && <div className="text-center text-neutral-600 text-xs font-mono py-8">No scheduled tasks yet</div>}
+              {cronTasks.map(t => (
+                <div key={t.id} className={`rounded-xl border p-4 space-y-2 ${t.enabled ? "border-neutral-800/50 bg-white/[0.02]" : "border-neutral-800/30 bg-white/[0.01] opacity-60"}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-mono text-white font-semibold">{t.name}</span>
+                      <code className="text-[10px] font-mono text-cyan-400 bg-cyan-400/10 px-2 py-0.5 rounded">{t.cron_expression}</code>
+                      {t.enabled ? <span className="text-[9px] font-mono text-emerald-400 uppercase">active</span> : <span className="text-[9px] font-mono text-neutral-500 uppercase">paused</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => toggleCronTask(t.id, !t.enabled)} className="text-[10px] font-mono text-neutral-500 hover:text-white transition-colors">{t.enabled ? "Pause" : "Resume"}</button>
+                      <button onClick={() => deleteCronTask(t.id)} className="text-[10px] font-mono text-red-400/60 hover:text-red-400 transition-colors">Delete</button>
+                    </div>
+                  </div>
+                  <p className="text-xs font-mono text-neutral-400 whitespace-pre-wrap">{t.task_prompt.slice(0, 200)}{t.task_prompt.length > 200 ? "..." : ""}</p>
+                  <div className="flex items-center gap-4 text-[10px] font-mono text-neutral-600">
+                    <span>Runs: {t.run_count}{t.max_runs ? ` / ${t.max_runs}` : ""}</span>
+                    {t.next_run_at && <span>Next: {new Date(t.next_run_at).toLocaleString()}</span>}
+                    {t.last_run_at && <span>Last: {timeAgo(t.last_run_at)}</span>}
+                    {t.last_error && <span className="text-red-400">Error: {t.last_error.slice(0, 80)}</span>}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>

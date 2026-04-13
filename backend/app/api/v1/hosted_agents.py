@@ -13,6 +13,11 @@ from app.schemas.hosted_agents import (
     AgentActionResponse,
     AgentFileResponse,
     AgentFileWriteRequest,
+    CronTaskCreateRequest,
+    CronTaskResponse,
+    CronTaskUpdateRequest,
+    ForkAgentRequest,
+    ForkableAgentItem,
     FreeModelInfo,
     FreeModelsResponse,
     HostedAgentCreateRequest,
@@ -53,8 +58,8 @@ async def idle_stopped_callback(
     runner_key: str = Query(default="", alias="key"),
 ):
     """Callback from runner when an agent is auto-stopped due to inactivity."""
-    if settings.agent_runner_key and runner_key:
-        if not secrets.compare_digest(runner_key, settings.agent_runner_key):
+    if settings.agent_runner_key:
+        if not runner_key or not secrets.compare_digest(runner_key, settings.agent_runner_key):
             raise HTTPException(403, "Unauthorized")
     await svc.repo.update_status(hosted_id, "stopped")
     return AgentActionResponse(status="stopped", message="Agent idle-stopped")
@@ -69,28 +74,72 @@ async def list_available_models(
     return FreeModelsResponse(models=[FreeModelInfo(**m) for m in models])
 
 
-# ── CRUD ──
+# ── Forking ──
 
 
-def _hosted_response(h: dict) -> HostedAgentResponse:
-    """Build HostedAgentResponse from a hosted agent dict."""
-    return HostedAgentResponse(
-        id=str(h["id"]),
-        agent_id=str(h["agent_id"]),
-        agent_name=h["agent_name"],
-        agent_handle=h["agent_handle"],
-        system_prompt=h["system_prompt"],
-        model=h["model"],
-        status=h["status"],
-        memory_limit_mb=h["memory_limit_mb"],
-        heartbeat_enabled=h.get("heartbeat_enabled", True),
-        heartbeat_seconds=h.get("heartbeat_seconds", 3600),
-        total_cost_usd=h["total_cost_usd"],
-        budget_usd=h["budget_usd"],
-        started_at=str(h["started_at"]) if h.get("started_at") else None,
-        stopped_at=str(h["stopped_at"]) if h.get("stopped_at") else None,
-        created_at=str(h["created_at"]),
+@router.get("/forkable", response_model=list[ForkableAgentItem])
+async def list_forkable_agents(
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """List public hosted agents available for forking."""
+    agents = await svc.list_forkable_agents()
+    return [
+        ForkableAgentItem(
+            id=str(a["id"]),
+            agent_id=str(a["agent_id"]),
+            agent_name=a["agent_name"],
+            agent_handle=a["agent_handle"],
+            model=a["model"],
+            specialization=a.get("specialization", "programmer"),
+            skills=a.get("skills") or [],
+            description=a.get("description", ""),
+            fork_count=a.get("fork_count", 0),
+            forked_from_agent_name=a.get("forked_from_agent_name"),
+        )
+        for a in agents
+    ]
+
+
+@router.post("/{hosted_id}/fork", response_model=HostedAgentResponse, status_code=201)
+async def fork_hosted_agent(
+    hosted_id: str,
+    body: ForkAgentRequest,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Fork a public hosted agent — copies config, files, and memory."""
+    result = await svc.fork_hosted_agent(
+        source_hosted_id=hosted_id,
+        user_id=str(current_user.id),
+        user_email=current_user.email,
+        new_name=body.name,
+        new_system_prompt=body.system_prompt,
     )
+    return HostedAgentResponse.from_dict(result)
+
+
+@router.post("/fork-by-agent/{agent_id}", response_model=HostedAgentResponse, status_code=201)
+async def fork_by_agent_id(
+    agent_id: str,
+    body: ForkAgentRequest,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Fork a hosted agent by its platform agent_id (for use from agent profile pages)."""
+    source = await svc.repo.get_public_by_agent_id(agent_id)
+    if not source:
+        raise HTTPException(404, "Agent not found, not hosted, or not public")
+    result = await svc.fork_hosted_agent(
+        source_hosted_id=str(source["id"]),
+        user_id=str(current_user.id),
+        user_email=current_user.email,
+        new_name=body.name,
+        new_system_prompt=body.system_prompt,
+    )
+    return HostedAgentResponse.from_dict(result)
+
+
+# ── CRUD ──
 
 
 @router.post("", response_model=HostedAgentResponse, status_code=201)
@@ -110,7 +159,7 @@ async def create_hosted_agent(
         model=body.model,
         skills=body.skills,
     )
-    return _hosted_response(result)
+    return HostedAgentResponse.from_dict(result)
 
 
 @router.get("", response_model=list[HostedAgentListItem])
@@ -120,19 +169,7 @@ async def list_my_hosted_agents(
 ):
     """List all hosted agents owned by the current user."""
     agents = await svc.list_my_agents(str(current_user.id))
-    return [
-        HostedAgentListItem(
-            id=str(a["id"]),
-            agent_id=str(a["agent_id"]),
-            agent_name=a["agent_name"],
-            agent_handle=a["agent_handle"],
-            status=a["status"],
-            model=a["model"],
-            total_cost_usd=a["total_cost_usd"],
-            created_at=str(a["created_at"]),
-        )
-        for a in agents
-    ]
+    return [HostedAgentListItem.from_dict(a) for a in agents]
 
 
 @router.get("/{hosted_id}", response_model=HostedAgentResponse)
@@ -142,7 +179,7 @@ async def get_hosted_agent(
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Get details of a specific hosted agent."""
-    return _hosted_response(await svc.get_hosted_agent(hosted_id, str(current_user.id)))
+    return HostedAgentResponse.from_dict(await svc.get_hosted_agent(hosted_id, str(current_user.id)))
 
 
 @router.patch("/{hosted_id}", response_model=AgentActionResponse)
@@ -390,3 +427,54 @@ async def delete_agent_file(
     """Delete a file from the agent's workspace."""
     await svc.delete_file(hosted_id, str(current_user.id), file_path)
     return AgentActionResponse(status="deleted", message=f"File {file_path} deleted")
+
+
+# ── Cron tasks ──
+
+
+@router.get("/{hosted_id}/cron", response_model=list[CronTaskResponse])
+async def list_cron_tasks(
+    hosted_id: str,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """List all cron tasks for a hosted agent."""
+    tasks = await svc.list_cron_tasks(hosted_id, str(current_user.id))
+    return [CronTaskResponse.from_dict(t) for t in tasks]
+
+
+@router.post("/{hosted_id}/cron", response_model=CronTaskResponse, status_code=201)
+async def create_cron_task(
+    hosted_id: str,
+    body: CronTaskCreateRequest,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Create a scheduled task for a hosted agent."""
+    result = await svc.create_cron_task(hosted_id, str(current_user.id), body.model_dump())
+    return CronTaskResponse.from_dict(result)
+
+
+@router.patch("/{hosted_id}/cron/{task_id}", response_model=CronTaskResponse)
+async def update_cron_task(
+    hosted_id: str,
+    task_id: str,
+    body: CronTaskUpdateRequest,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Update a cron task."""
+    result = await svc.update_cron_task(hosted_id, str(current_user.id), task_id, body.model_dump(exclude_unset=True))
+    return CronTaskResponse.from_dict(result)
+
+
+@router.delete("/{hosted_id}/cron/{task_id}", response_model=AgentActionResponse)
+async def delete_cron_task(
+    hosted_id: str,
+    task_id: str,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Delete a cron task."""
+    await svc.delete_cron_task(hosted_id, str(current_user.id), task_id)
+    return AgentActionResponse(status="deleted", message="Cron task deleted")
