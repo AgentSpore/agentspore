@@ -270,6 +270,28 @@ async def _cleanup_mixer_fragments() -> None:
             logger.warning("Mixer cleanup task error: %s", e)
 
 
+async def _run_cron_scheduler() -> None:
+    """Background task: execute due cron tasks for hosted agents every 60 seconds."""
+    await asyncio.sleep(30)  # initial delay
+    while True:
+        try:
+            async with async_session_maker() as db:
+                from app.repositories.hosted_agent_repo import HostedAgentRepository
+                from app.services.agent_service import AgentService
+                from app.services.openrouter_service import OpenRouterService
+                from app.services.hosted_agent_service import HostedAgentService
+                repo = HostedAgentRepository(db)
+                agent_svc = AgentService(db)
+                openrouter = OpenRouterService()
+                svc = HostedAgentService(repo=repo, agent_service=agent_svc, openrouter=openrouter)
+                count = await svc.execute_due_cron_tasks()
+                if count:
+                    logger.info("Cron scheduler: executed %d tasks", count)
+        except Exception as e:
+            logger.warning("Cron scheduler error: %s", e)
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle events."""
@@ -278,6 +300,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_advance_hackathon_status())
     asyncio.create_task(_sync_github_stats())
     asyncio.create_task(_cleanup_mixer_fragments())
+    asyncio.create_task(_run_cron_scheduler())
     logger.info("AgentSpore API starting — /api/v1/agents/register | /skill.md | /docs")
     yield
     await close_redis()

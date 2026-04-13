@@ -78,7 +78,7 @@ class HostedAgentRepository:
         result = await self.db.execute(
             text("""
                 SELECT h.id, h.agent_id, h.status, h.model, h.runtime,
-                       h.total_cost_usd, h.created_at,
+                       h.total_cost_usd, h.created_at, h.forked_from_agent_name,
                        a.name AS agent_name, a.handle AS agent_handle
                 FROM hosted_agents h
                 JOIN agents a ON a.id = h.agent_id
@@ -192,6 +192,75 @@ class HostedAgentRepository:
         )
         return [dict(r) for r in result.mappings()]
 
+    async def get_public_by_id(self, hosted_id: str) -> dict | None:
+        """Get a public hosted agent (no owner check)."""
+        result = await self.db.execute(
+            text("""
+                SELECT h.id, h.agent_id, h.owner_user_id, h.system_prompt, h.model,
+                       h.forked_from_hosted_id, h.forked_from_agent_name, h.is_public,
+                       a.name AS agent_name, a.handle AS agent_handle,
+                       a.specialization, a.skills, a.description, a.fork_count
+                FROM hosted_agents h
+                JOIN agents a ON a.id = h.agent_id
+                WHERE h.id = :id AND h.is_public = TRUE
+            """),
+            {"id": hosted_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def get_public_by_agent_id(self, agent_id: str) -> dict | None:
+        """Get a public hosted agent by platform agent_id."""
+        result = await self.db.execute(
+            text("""
+                SELECT h.id, h.agent_id, h.owner_user_id, h.system_prompt, h.model,
+                       h.forked_from_hosted_id, h.forked_from_agent_name, h.is_public,
+                       a.name AS agent_name, a.handle AS agent_handle,
+                       a.specialization, a.skills, a.description, a.fork_count
+                FROM hosted_agents h
+                JOIN agents a ON a.id = h.agent_id
+                WHERE h.agent_id = :agent_id AND h.is_public = TRUE
+            """),
+            {"agent_id": agent_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def list_forkable(self, limit: int = 50) -> list[dict]:
+        """List public hosted agents available for forking."""
+        result = await self.db.execute(
+            text("""
+                SELECT h.id, h.agent_id, h.model, h.forked_from_agent_name,
+                       a.name AS agent_name, a.handle AS agent_handle,
+                       a.specialization, a.skills, a.description, a.fork_count
+                FROM hosted_agents h
+                JOIN agents a ON a.id = h.agent_id
+                WHERE h.is_public = TRUE
+                ORDER BY a.fork_count DESC, h.created_at DESC
+                LIMIT :limit
+            """),
+            {"limit": limit},
+        )
+        return [dict(r) for r in result.mappings()]
+
+    async def increment_fork_count(self, agent_id: str) -> None:
+        await self.db.execute(
+            text("UPDATE agents SET fork_count = fork_count + 1 WHERE id = :id"),
+            {"id": agent_id},
+        )
+        await self.db.commit()
+
+    async def list_files_with_content(self, hosted_id: str) -> list[dict]:
+        """List all files with content for cloning."""
+        result = await self.db.execute(
+            text("""
+                SELECT file_path, file_type, content, size_bytes
+                FROM agent_files WHERE hosted_agent_id = :hid ORDER BY file_path
+            """),
+            {"hid": hosted_id},
+        )
+        return [dict(r) for r in result.mappings()]
+
     async def delete_file(self, hosted_id: str, file_path: str) -> bool:
         result = await self.db.execute(
             text("DELETE FROM agent_files WHERE hosted_agent_id = :hid AND file_path = :fp"),
@@ -250,6 +319,92 @@ class HostedAgentRepository:
         )
         await self.db.commit()
         return result.rowcount > 0
+
+
+    # ── Cron tasks ──
+
+    async def create_cron_task(self, params: dict) -> dict:
+        result = await self.db.execute(
+            text("""
+                INSERT INTO agent_cron_tasks
+                    (hosted_agent_id, name, cron_expression, task_prompt, enabled, auto_start, max_runs, next_run_at)
+                VALUES
+                    (:hosted_agent_id, :name, :cron_expression, :task_prompt, :enabled, :auto_start, :max_runs, :next_run_at)
+                RETURNING *
+            """),
+            params,
+        )
+        await self.db.commit()
+        return dict(result.mappings().first())
+
+    async def list_cron_tasks(self, hosted_agent_id: str) -> list[dict]:
+        result = await self.db.execute(
+            text("""
+                SELECT * FROM agent_cron_tasks
+                WHERE hosted_agent_id = :hid ORDER BY created_at
+            """),
+            {"hid": hosted_agent_id},
+        )
+        return [dict(r) for r in result.mappings()]
+
+    async def get_cron_task(self, task_id: str) -> dict | None:
+        result = await self.db.execute(
+            text("SELECT * FROM agent_cron_tasks WHERE id = :id"),
+            {"id": task_id},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def update_cron_task(self, task_id: str, updates: dict) -> dict | None:
+        allowed = {"name", "cron_expression", "task_prompt", "enabled", "auto_start", "max_runs", "next_run_at"}
+        safe = {k: v for k, v in updates.items() if k in allowed}
+        if not safe:
+            return await self.get_cron_task(task_id)
+        set_clauses = ", ".join(f"{k} = :{k}" for k in safe)
+        safe["id"] = task_id
+        result = await self.db.execute(
+            text(f"UPDATE agent_cron_tasks SET {set_clauses}, updated_at = now() WHERE id = :id RETURNING *"),
+            safe,
+        )
+        await self.db.commit()
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def delete_cron_task(self, task_id: str) -> bool:
+        result = await self.db.execute(
+            text("DELETE FROM agent_cron_tasks WHERE id = :id"), {"id": task_id},
+        )
+        await self.db.commit()
+        return result.rowcount > 0
+
+    async def get_due_cron_tasks(self) -> list[dict]:
+        """Get all enabled tasks where next_run_at <= now."""
+        result = await self.db.execute(
+            text("""
+                SELECT t.*, h.status AS agent_status, h.owner_user_id,
+                       a.name AS agent_name
+                FROM agent_cron_tasks t
+                JOIN hosted_agents h ON h.id = t.hosted_agent_id
+                JOIN agents a ON a.id = h.agent_id
+                WHERE t.enabled = TRUE
+                  AND t.next_run_at IS NOT NULL
+                  AND t.next_run_at <= now()
+                  AND (t.max_runs IS NULL OR t.run_count < t.max_runs)
+            """),
+        )
+        return [dict(r) for r in result.mappings()]
+
+    async def mark_cron_run(self, task_id: str, next_run_at, error: str | None = None) -> None:
+        await self.db.execute(
+            text("""
+                UPDATE agent_cron_tasks
+                SET run_count = run_count + 1, last_run_at = now(),
+                    next_run_at = :next_run, last_error = :error, updated_at = now()
+                WHERE id = :id
+            """),
+            {"id": task_id, "next_run": next_run_at, "error": error},
+        )
+        await self.db.commit()
 
 
 def get_hosted_agent_repo(db: AsyncSession = Depends(get_db)) -> HostedAgentRepository:
