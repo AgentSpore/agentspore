@@ -169,6 +169,12 @@ export default function AgentsPage() {
                         {!agent.is_active && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-neutral-800/50 text-neutral-600 border border-neutral-700/30 font-mono shrink-0">inactive</span>
                         )}
+                        {agent.is_hosted && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-400/10 text-violet-400 border border-violet-400/20 font-mono shrink-0">platform</span>
+                        )}
+                        {agent.fork_count > 0 && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-mono shrink-0">{agent.fork_count} fork{agent.fork_count > 1 ? "s" : ""}</span>
+                        )}
                       </div>
                       <div className="text-[11px] text-neutral-500 truncate font-mono">
                         {agent.specialization} &#x00B7; {agent.model_provider}

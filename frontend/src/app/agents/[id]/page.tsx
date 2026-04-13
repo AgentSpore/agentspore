@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, GitHubActivityItem, ModelUsageStats, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
@@ -95,6 +95,20 @@ export default function AgentPage() {
   const [hireLoading, setHireLoading] = useState(false);
   const [hireError, setHireError] = useState<string | null>(null);
 
+  // Fork + actions menu
+  const [forking, setForking] = useState(false);
+  const [forkError, setForkError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
   const handleHireClick = () => {
     const token = localStorage.getItem("access_token");
     if (!token) {
@@ -137,6 +151,30 @@ export default function AgentPage() {
       setHireError(err instanceof Error ? err.message : "Failed to create rental");
     } finally {
       setHireLoading(false);
+    }
+  };
+
+  const handleFork = async () => {
+    const token = localStorage.getItem("access_token");
+    if (!token) { router.push("/login"); return; }
+    setForking(true);
+    setForkError(null);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/hosted-agents/fork-by-agent/${id}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || `Error ${res.status}`);
+      }
+      const forked = await res.json();
+      router.push(`/hosted-agents/${forked.id}`);
+    } catch (err: unknown) {
+      setForkError(err instanceof Error ? err.message : "Fork failed");
+    } finally {
+      setForking(false);
     }
   };
 
@@ -222,7 +260,7 @@ export default function AgentPage() {
     { label: "Karma",    value: agent.karma },
     { label: "Projects", value: agent.projects_created },
     { label: "Commits",  value: agent.code_commits },
-    { label: "Reviews",  value: agent.reviews_done },
+    { label: "Forks",    value: agent.fork_count },
   ];
 
   return (
@@ -269,6 +307,11 @@ export default function AgentPage() {
               <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.15em] ${agent.is_active ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/30 text-neutral-400 border-neutral-600/30"}`}>
                 {agent.is_active ? "Online" : "Offline"}
               </span>
+              {agent.is_hosted && (
+                <span className="text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.1em] bg-violet-400/10 text-violet-400 border-violet-400/20">
+                  Platform
+                </span>
+              )}
               <span className="text-[10px] px-2.5 py-1 rounded-full bg-neutral-900/30 text-neutral-400 border border-neutral-800/50 font-mono uppercase tracking-[0.1em]">
                 {agent.specialization}
               </span>
@@ -276,20 +319,50 @@ export default function AgentPage() {
             <p className="text-neutral-500 text-sm mb-2 font-mono">{agent.model_provider} / {agent.model_name}</p>
             {agent.bio && <p className="text-neutral-300 text-sm leading-relaxed max-w-xl">{agent.bio}</p>}
             {!agent.bio && <p className="text-neutral-600 text-sm italic font-mono">No bio yet</p>}
-            <div className="flex gap-3 mt-4">
+            <div className="flex gap-3 mt-4 items-center">
               <Link
                 href={`/agents/${id}/chat`}
                 className="bg-white text-black font-medium font-mono text-sm px-6 py-2 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
               >
                 Message
               </Link>
-              <button
-                onClick={handleHireClick}
-                className="bg-neutral-800/30 border border-neutral-800/50 text-white font-medium font-mono text-sm px-6 py-2 rounded-lg hover:border-neutral-700/60 transition-all duration-300"
-              >
-                Hire Agent
-              </button>
+              <div className="relative" ref={menuRef}>
+                <button onClick={() => setMenuOpen(v => !v)}
+                  className="flex items-center gap-1.5 bg-neutral-800/30 border border-neutral-800/50 text-white font-medium font-mono text-sm px-4 py-2 rounded-lg hover:border-neutral-700/60 transition-all duration-300">
+                  Actions
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+                </button>
+                {menuOpen && (
+                  <div className="absolute left-0 top-full mt-2 w-64 bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl shadow-black/50 z-50 overflow-hidden">
+                    <button onClick={() => { setMenuOpen(false); handleHireClick(); }}
+                      className="w-full flex items-start gap-3 px-4 py-3 hover:bg-white/[0.04] transition-colors text-left">
+                      <svg className="w-4 h-4 mt-0.5 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 7h-9" /><path d="M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></svg>
+                      <div><div className="text-sm font-mono text-white">Hire Agent</div><div className="text-[10px] font-mono text-neutral-500 mt-0.5">Assign a paid task to this agent</div></div>
+                    </button>
+                    {agent.is_hosted && (
+                      <button onClick={() => { setMenuOpen(false); handleFork(); }} disabled={forking}
+                        className="w-full flex items-start gap-3 px-4 py-3 hover:bg-white/[0.04] transition-colors text-left disabled:opacity-40">
+                        <svg className="w-4 h-4 mt-0.5 text-cyan-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><circle cx="18" cy="6" r="3" /><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" /><path d="M12 12v3" /></svg>
+                        <div>
+                          <div className="text-sm font-mono text-white flex items-center gap-2">
+                            {forking ? "Forking..." : "Fork Agent"}
+                            {agent.fork_count > 0 && <span className="text-[10px] bg-cyan-500/15 text-cyan-400 px-1.5 py-0.5 rounded-full">{agent.fork_count}</span>}
+                          </div>
+                          <div className="text-[10px] font-mono text-neutral-500 mt-0.5">Create your own agent based on this one</div>
+                        </div>
+                      </button>
+                    )}
+                    <div className="border-t border-neutral-800/50" />
+                    <button onClick={() => { navigator.clipboard.writeText(id || ""); setMenuOpen(false); }}
+                      className="w-full flex items-start gap-3 px-4 py-3 hover:bg-white/[0.04] transition-colors text-left">
+                      <svg className="w-4 h-4 mt-0.5 text-neutral-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                      <div><div className="text-sm font-mono text-neutral-400">Copy Agent ID</div></div>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
+            {forkError && <div className="mt-2 text-xs font-mono text-red-400">{forkError}</div>}
           </div>
 
           {/* Stats */}

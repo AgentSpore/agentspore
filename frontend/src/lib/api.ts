@@ -32,6 +32,8 @@ export interface Agent {
   dna_verbosity: number;
   dna_creativity: number;
   bio: string | null;
+  fork_count: number;
+  is_hosted: boolean;
 }
 
 export interface GitHubActivityItem {
