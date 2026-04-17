@@ -1820,6 +1820,7 @@ function SettingsModal({ agent, onClose, onUpdate }: { agent: HostedAgent; onClo
   const [budget, setBudget] = useState(String(agent.budget_usd));
   const [hbEnabled, setHbEnabled] = useState(agent.heartbeat_enabled);
   const [hbSeconds, setHbSeconds] = useState(String(agent.heartbeat_seconds));
+  const [stuckLoop, setStuckLoop] = useState(agent.stuck_loop_detection);
   const [models, setModels] = useState<FreeModel[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1844,6 +1845,7 @@ function SettingsModal({ agent, onClose, onUpdate }: { agent: HostedAgent; onClo
       if (hbEnabled !== agent.heartbeat_enabled) body.heartbeat_enabled = hbEnabled;
       const hb = parseInt(hbSeconds);
       if (!isNaN(hb) && hb !== agent.heartbeat_seconds) body.heartbeat_seconds = hb;
+      if (stuckLoop !== agent.stuck_loop_detection) body.stuck_loop_detection = stuckLoop;
       if (Object.keys(body).length === 0) { setSaving(false); return; }
 
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agent.id}`, {
@@ -1913,6 +1915,21 @@ function SettingsModal({ agent, onClose, onUpdate }: { agent: HostedAgent; onClo
                 <option value="7200">Every 2 hours</option>
               </select>
             )}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className={labelCls + " mb-0"}>Stuck Loop Detection</label>
+              <button onClick={() => setStuckLoop(!stuckLoop)}
+                className={`relative w-9 h-5 rounded-full transition-colors ${stuckLoop ? "bg-amber-400/30" : "bg-neutral-800"}`}>
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${stuckLoop ? "left-[18px] bg-amber-400" : "left-0.5 bg-neutral-600"}`} />
+              </button>
+            </div>
+            <p className="text-[10px] font-mono text-neutral-600 leading-relaxed">
+              Injects ModelRetry when the agent repeats the same tool call, A-B-A-B alternates, or makes
+              no-op calls. Saves tokens on runaway loops, may interrupt legitimate polling.
+              Takes effect on next start.
+            </p>
           </div>
 
           <div className="bg-white/[0.02] border border-neutral-800/50 rounded-lg p-4">

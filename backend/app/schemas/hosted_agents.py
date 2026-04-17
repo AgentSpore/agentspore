@@ -28,6 +28,7 @@ class HostedAgentUpdateRequest(BaseModel):
     budget_usd: float | None = Field(default=None, ge=0.1, le=100.0)
     heartbeat_enabled: bool | None = None
     heartbeat_seconds: int | None = Field(default=None, ge=60, le=86400)
+    stuck_loop_detection: bool | None = None
 
 
 class HostedAgentResponse(BaseModel):
@@ -41,6 +42,7 @@ class HostedAgentResponse(BaseModel):
     memory_limit_mb: int
     heartbeat_enabled: bool
     heartbeat_seconds: int
+    stuck_loop_detection: bool
     total_cost_usd: float
     budget_usd: float
     started_at: str | None
@@ -61,6 +63,7 @@ class HostedAgentResponse(BaseModel):
             memory_limit_mb=h["memory_limit_mb"],
             heartbeat_enabled=h.get("heartbeat_enabled", True),
             heartbeat_seconds=h.get("heartbeat_seconds", 3600),
+            stuck_loop_detection=h.get("stuck_loop_detection", False),
             total_cost_usd=h["total_cost_usd"],
             budget_usd=h["budget_usd"],
             started_at=str(h["started_at"]) if h.get("started_at") else None,

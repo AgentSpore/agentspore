@@ -564,6 +564,7 @@ class HostedAgentService:
             "heartbeat_seconds": hosted.get("heartbeat_seconds", 3600) if hosted.get("heartbeat_enabled", True) else 0,
             "message_history": session_history[-30:] if session_history else [],
             "context_max_tokens": ctx_length,
+            "stuck_loop_detection": bool(hosted.get("stuck_loop_detection", False)),
         })
         await self.repo.update_status(hosted_id, "running", container_id=result.get("container_id"))
         await self._notify_status(hosted, "running")

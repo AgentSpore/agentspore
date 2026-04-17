@@ -452,6 +452,7 @@ class StartRequest(BaseModel):
     heartbeat_seconds: int = 3600
     message_history: list[dict] = []
     context_max_tokens: int = 128_000
+    stuck_loop_detection: bool = False
 
 
 class ChatRequest(BaseModel):
@@ -647,6 +648,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
             skill_directories=["/workspace/skills"],
             thinking="low",
             eviction_token_limit=eviction_limit,
+            stuck_loop_detection=body.stuck_loop_detection,
             interrupt_on={"execute": True, "write_file": False},
         )
         deps = DeepAgentDeps(backend=sandbox)

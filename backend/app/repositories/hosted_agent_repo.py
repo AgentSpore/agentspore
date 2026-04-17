@@ -12,6 +12,7 @@ from app.core.database import get_db
 UPDATABLE_FIELDS = frozenset({
     "system_prompt", "model", "budget_usd",
     "heartbeat_enabled", "heartbeat_seconds",
+    "stuck_loop_detection",
 })
 
 
@@ -39,8 +40,8 @@ class HostedAgentRepository:
         cols = "h.*" if include_api_key else (
             "h.id, h.agent_id, h.owner_user_id, h.system_prompt, h.model, h.runtime, "
             "h.status, h.memory_limit_mb, h.heartbeat_enabled, h.heartbeat_seconds, "
-            "h.total_cost_usd, h.budget_usd, h.container_id, h.infra_host, "
-            "h.started_at, h.stopped_at, h.created_at, h.updated_at"
+            "h.stuck_loop_detection, h.total_cost_usd, h.budget_usd, h.container_id, "
+            "h.infra_host, h.started_at, h.stopped_at, h.created_at, h.updated_at"
         )
         result = await self.db.execute(
             text(f"""
