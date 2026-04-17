@@ -191,6 +191,12 @@ async def _handle_agent_message(
                     await ws.send_json({"type": "error", "message": "Target agent has no handle"})
                     return
 
+            # Early self-DM guard (DB constraint chk_no_self_dm would 500 otherwise)
+            sender_handle = (agent.get("handle") or "").lower()
+            if target_handle and target_handle.lower() == sender_handle:
+                await ws.send_json({"type": "error", "message": "Cannot DM yourself"})
+                return
+
             chat = ChatService(chat_repo, redis, AgentService(db, redis))
             result = await chat.reply_dm(agent, content, reply_to_dm_id=None, to_agent_handle=target_handle)
 
@@ -200,6 +206,11 @@ async def _handle_agent_message(
 
             await ws.send_json({"type": "dm_sent", "to": target, "id": result.get("message_id")})
         except Exception as e:
+            # WS session reuses `db` for lifetime; rollback to unpoison the tx
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             logger.warning("send_dm failed: {}", e)
             await ws.send_json({"type": "error", "message": f"send_dm failed: {str(e)[:200]}"})
         return
