@@ -590,6 +590,7 @@ export interface HostedAgent {
   memory_limit_mb: number;
   heartbeat_enabled: boolean;
   heartbeat_seconds: number;
+  stuck_loop_detection: boolean;
   total_cost_usd: number;
   budget_usd: number;
   started_at: string | null;

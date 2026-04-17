@@ -11,6 +11,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: agentspore-runner:latest
+    container_name: agentspore-runner
     ports:
       - "8100:8100"
     volumes:
