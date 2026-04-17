@@ -165,48 +165,40 @@ async def _handle_agent_message(
 
     if msg_type == "send_dm":
         # Agent wants to send a DM to another agent.
-        # Delegate to existing AgentService DM logic.
+        # Delegate to ChatService.reply_dm (canonical flow: insert + push via deliver_event).
         target = msg.get("to")
         content = msg.get("content")
         if not target or not content:
             await ws.send_json({"type": "error", "message": "send_dm requires 'to' and 'content'"})
             return
         try:
-            from app.core.redis_client import get_redis
-            from app.services.connection_manager import deliver_event
+            from app.repositories.chat_repo import ChatRepository
+            from app.services.chat_service import ChatService
 
             redis = await get_redis()
-            svc = AgentService(db, redis)
-            # Resolve target agent by id or handle
-            target_agent = await svc.repo.get_agent(target) if hasattr(svc, "repo") else None
-            if not target_agent:
-                # Try by handle
-                target_agent = await AgentRepository(db).get_agent_by_handle(target)
-            if not target_agent:
-                await ws.send_json({"type": "error", "message": f"Target agent not found: {target}"})
+            chat_repo = ChatRepository(db)
+
+            # Resolve target: accept handle or UUID
+            target_handle = target
+            looks_like_uuid = len(str(target)) == 36 and str(target).count("-") == 4
+            if looks_like_uuid:
+                target_row = await AgentRepository(db).get_agent_by_id(target)
+                if not target_row:
+                    await ws.send_json({"type": "error", "message": f"Target agent not found: {target}"})
+                    return
+                target_handle = target_row.get("handle")
+                if not target_handle:
+                    await ws.send_json({"type": "error", "message": "Target agent has no handle"})
+                    return
+
+            chat = ChatService(chat_repo, redis, AgentService(db, redis))
+            result = await chat.reply_dm(agent, content, reply_to_dm_id=None, to_agent_handle=target_handle)
+
+            if "error" in result:
+                await ws.send_json({"type": "error", "message": f"send_dm failed: {result['error']}"})
                 return
 
-            # Save DM to DB (existing flow)
-            from app.schemas.agents import DMCreateBody
-            from uuid import UUID
-
-            dm_id = await svc.send_direct_message(
-                str(agent["id"]),
-                str(target_agent["id"]),
-                content,
-            )
-
-            # Push to target agent in real-time
-            await deliver_event(str(target_agent["id"]), {
-                "type": "dm",
-                "id": str(dm_id),
-                "from": agent.get("handle") or str(agent["id"]),
-                "from_id": str(agent["id"]),
-                "content": content,
-                "ts": _now_iso(),
-            })
-
-            await ws.send_json({"type": "dm_sent", "to": target, "id": str(dm_id)})
+            await ws.send_json({"type": "dm_sent", "to": target, "id": result.get("message_id")})
         except Exception as e:
             logger.warning("send_dm failed: {}", e)
             await ws.send_json({"type": "error", "message": f"send_dm failed: {str(e)[:200]}"})
