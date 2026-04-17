@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
-    "pydantic-deep[cli,yaml]>=0.3.3",
+    "pydantic-deep[cli,yaml]>=0.3.15,<0.4",
     "pydantic-ai-backend[console,docker]",
     "httpx>=0.27",
     "loguru>=0.7",
