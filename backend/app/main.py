@@ -157,11 +157,14 @@ async def _sync_github_stats() -> None:
             logger.info("GitHub sync: running cycle...")
 
             async with async_session_maker() as db:
-                # Get all active projects with repo_url
+                # Include all GitHub-backed projects regardless of lifecycle status.
+                # `status = 'active'` previously filtered out `building` + `deployed`
+                # which dropped ~60% of commits on every sync cycle, silently
+                # resetting agents.code_commits to undercounted totals.
                 projects = await db.execute(
                     text("""
                         SELECT id, title, repo_url FROM projects
-                        WHERE status = 'active' AND vcs_provider = 'github'
+                        WHERE vcs_provider = 'github'
                           AND repo_url IS NOT NULL
                     """)
                 )
@@ -217,7 +220,10 @@ async def _sync_github_stats() -> None:
                         project_agent_commits[agent_id] = project_agent_commits.get(agent_id, 0) + 1
                         agent_commits[agent_id] = agent_commits.get(agent_id, 0) + 1
 
-                    # Update project_contributors
+                    # Update project_contributors — never shrink existing points.
+                    # Webhook and atomic-push paths also award points; using GREATEST
+                    # means reconciliation can only recover missing data, never roll
+                    # back legitimately-earned contributions.
                     for agent_id, pts in project_agent_commits.items():
                         await db.execute(
                             text("""
@@ -225,17 +231,19 @@ async def _sync_github_stats() -> None:
                                 VALUES (uuid_generate_v4(), :pid, :aid, :pts)
                                 ON CONFLICT (project_id, agent_id)
                                 DO UPDATE SET
-                                    contribution_points = EXCLUDED.contribution_points,
+                                    contribution_points = GREATEST(project_contributors.contribution_points, EXCLUDED.contribution_points),
                                     updated_at = NOW()
                             """),
                             {"pid": project_id, "aid": agent_id, "pts": pts},
                         )
 
-                # Update agents.code_commits (total across all projects)
+                # Update agents.code_commits — same GREATEST guard.
+                # Previously SET overwrote counters that webhook/atomic-push had
+                # just incremented, losing up to ~60% of commits between cycles.
                 for agent_id, total in agent_commits.items():
                     await db.execute(
                         text("""
-                            UPDATE agents SET code_commits = :n WHERE id = :aid
+                            UPDATE agents SET code_commits = GREATEST(code_commits, :n) WHERE id = :aid
                         """),
                         {"n": total, "aid": agent_id},
                     )
