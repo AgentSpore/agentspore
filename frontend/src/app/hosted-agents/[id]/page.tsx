@@ -9,6 +9,8 @@ import { useRealtimeUser } from "@/lib/useRealtimeUser";
 import { Header } from "@/components/Header";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 const CodeMirrorEditor = lazy(() => import("@/components/CodeMirrorEditor"));
 
@@ -213,9 +215,14 @@ export default function HostedAgentManagePage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3 max-w-[1600px] mx-auto w-full">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <Link href="/hosted-agents" className="text-neutral-600 hover:text-violet-400 transition-colors text-sm shrink-0">←</Link>
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-mono shrink-0"
-              style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.2), rgba(34,211,238,0.1))", border: "1px solid rgba(139,92,246,0.25)" }}>
+            <div className="relative w-9 h-9 rounded-xl flex items-center justify-center text-sm font-mono font-semibold shrink-0 text-white/90"
+              style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.22), rgba(34,211,238,0.12))", border: "1px solid rgba(139,92,246,0.28)", boxShadow: "0 4px 18px -6px rgba(139,92,246,0.35)" }}>
               {agent.agent_name.charAt(0).toUpperCase()}
+              {agent.status === "running" && (
+                <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#0a0a0a]">
+                  <span className="absolute inset-0 rounded-full bg-emerald-400 animate-ping opacity-60" />
+                </span>
+              )}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -223,10 +230,11 @@ export default function HostedAgentManagePage() {
                 <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">@{agent.agent_handle}</span>
                 <span className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full border shrink-0 ${st.classes}`}>{st.label}</span>
               </div>
-              <div className="flex items-center gap-2 text-[11px] font-mono text-neutral-600">
-                <span className="truncate">{modelShort(agent.model)}</span>
-                <span>·</span>
-                <span className="shrink-0">${agent.total_cost_usd.toFixed(4)} / ${agent.budget_usd.toFixed(2)}</span>
+              <div className="flex items-center gap-2 text-[11px] font-mono text-neutral-600 mt-0.5">
+                <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-neutral-800/40 text-neutral-400 truncate max-w-[180px]" title={agent.model}>
+                  {modelShort(agent.model)}
+                </span>
+                <BudgetBar current={agent.total_cost_usd} total={agent.budget_usd} />
               </div>
             </div>
           </div>
@@ -623,6 +631,7 @@ function FileTree({ agentId, selectedFile, onSelect }: {
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, name: "" });
   const [dragOver, setDragOver] = useState(false);
   const [showUploadZone, setShowUploadZone] = useState(false);
+  const [search, setSearch] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -635,7 +644,7 @@ function FileTree({ agentId, selectedFile, onSelect }: {
 
   useEffect(() => { loadFiles(); }, [loadFiles]);
   useEffect(() => {
-    const interval = setInterval(loadFiles, 10000);
+    const interval = setInterval(loadFiles, 3000);
     return () => clearInterval(interval);
   }, [loadFiles]);
 
@@ -668,6 +677,10 @@ function FileTree({ agentId, selectedFile, onSelect }: {
 
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  const MAX_UPLOAD_BYTES = 500 * 1024;
+  const BINARY_EXTS = [".jpeg", ".jpg", ".png", ".gif", ".webp", ".ico", ".bmp", ".zip", ".tar", ".gz", ".pdf", ".exe", ".bin", ".woff", ".woff2", ".ttf", ".mp3", ".mp4", ".wav"];
+  const UPLOAD_CONCURRENCY = 4;
+
   const uploadFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     const fileArr = Array.from(fileList);
@@ -675,18 +688,25 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     setShowUploadZone(false);
     setUploadError(null);
     setUploadProgress({ current: 0, total: fileArr.length, name: "" });
-    let uploaded = 0;
-    const binaryExts = [".jpeg", ".jpg", ".png", ".gif", ".webp", ".ico", ".bmp", ".zip", ".tar", ".gz", ".pdf", ".exe", ".bin", ".woff", ".woff2", ".ttf", ".mp3", ".mp4", ".wav"];
-    try {
-      for (let i = 0; i < fileArr.length; i++) {
-        const file = fileArr[i];
-        const filePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-        const ext = "." + filePath.split(".").pop()?.toLowerCase();
-        if (binaryExts.includes(ext)) {
-          setUploadError(`Skipped: ${filePath} — binary files not supported (text files only)`);
-          continue;
-        }
-        setUploadProgress({ current: i + 1, total: fileArr.length, name: filePath.split("/").pop() || file.name });
+
+    const skipped: string[] = [];
+    const failed: string[] = [];
+    let done = 0;
+    let successCount = 0;
+    const queue = fileArr.slice();
+
+    const uploadOne = async (file: File) => {
+      const filePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+      const ext = "." + (filePath.split(".").pop()?.toLowerCase() || "");
+      if (BINARY_EXTS.includes(ext)) {
+        skipped.push(`${filePath} (binary)`);
+        return;
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        skipped.push(`${filePath} (${(file.size / 1024).toFixed(0)}KB > 500KB limit)`);
+        return;
+      }
+      try {
         const text = await file.text();
         const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files`, {
           method: "PUT",
@@ -699,15 +719,40 @@ function FileTree({ agentId, selectedFile, onSelect }: {
         if (!res.ok) {
           const d = await res.json().catch(() => ({}));
           const errMsg = typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d);
-          setUploadError(`Failed: ${filePath} — ${errMsg || res.status}`);
-          break;
+          failed.push(`${filePath} (${errMsg || res.status})`);
+        } else {
+          successCount++;
         }
-        uploaded++;
+      } catch (e) {
+        failed.push(`${filePath} (${e instanceof Error ? e.message : "error"})`);
       }
+    };
+
+    const worker = async () => {
+      while (true) {
+        const file = queue.shift();
+        if (!file) return;
+        const name = ((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name).split("/").pop() || file.name;
+        setUploadProgress({ current: done + 1, total: fileArr.length, name });
+        await uploadOne(file);
+        done++;
+        setUploadProgress(p => ({ ...p, current: done }));
+      }
+    };
+
+    try {
+      const workerCount = Math.min(UPLOAD_CONCURRENCY, fileArr.length);
+      await Promise.all(Array.from({ length: workerCount }, () => worker()));
     } catch (e) {
       setUploadError(`Upload error: ${e instanceof Error ? e.message : "unknown"}`);
     }
-    if (uploaded > 0) await loadFiles();
+
+    const problems: string[] = [];
+    if (skipped.length) problems.push(`Skipped ${skipped.length}: ${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}`);
+    if (failed.length) problems.push(`Failed ${failed.length}: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`);
+    if (problems.length) setUploadError(problems.join(" · "));
+
+    if (successCount > 0) await loadFiles();
     setUploading(false);
     setUploadProgress({ current: 0, total: 0, name: "" });
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -731,7 +776,29 @@ function FileTree({ agentId, selectedFile, onSelect }: {
 
   const DIR_LABELS: Record<string, string> = {};
 
-  const FILE_ICON: Record<string, string> = { config: "◆", memory: "◈", skill: "◇", text: "◻" };
+  const fileIconFor = (f: AgentFile) => {
+    const p = f.file_path.toLowerCase();
+    const name = p.split("/").pop() || p;
+    const ext = name.split(".").pop() || "";
+    // Special files first
+    if (name === "agent.yaml" || name === "agent.yml") return { color: "text-violet-300", char: "⚙" };
+    if (name.endsWith("agent.md") || name.endsWith("system.md")) return { color: "text-violet-300", char: "◆" };
+    if (name.endsWith("skill.md") || f.file_type === "skill") return { color: "text-cyan-300", char: "◇" };
+    if (p.startsWith(".deep/memory") || f.file_type === "memory") return { color: "text-amber-300", char: "◈" };
+    if (name === "readme.md") return { color: "text-emerald-300", char: "★" };
+    // By extension
+    if (ext === "py") return { color: "text-blue-300", char: "py" };
+    if (ext === "ts" || ext === "tsx") return { color: "text-blue-300", char: "ts" };
+    if (ext === "js" || ext === "jsx") return { color: "text-yellow-300", char: "js" };
+    if (ext === "md") return { color: "text-neutral-300", char: "md" };
+    if (ext === "json") return { color: "text-amber-200", char: "{}" };
+    if (ext === "yaml" || ext === "yml") return { color: "text-fuchsia-300", char: "y" };
+    if (ext === "toml") return { color: "text-fuchsia-300", char: "t" };
+    if (ext === "sh" || ext === "bash") return { color: "text-emerald-300", char: "$" };
+    if (ext === "sql") return { color: "text-pink-300", char: "▤" };
+    if (ext === "txt") return { color: "text-neutral-400", char: "≡" };
+    return { color: "text-neutral-500", char: "·" };
+  };
 
   // Hidden directories — internal/generated, not useful to show
   const HIDDEN_PREFIXES = ["venv/", ".venv/", "__pycache__/", "node_modules/", ".git/", ".pip/", ".cache/"];
@@ -741,8 +808,12 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     return false;
   };
 
-  const visibleFiles = files.filter(f => !isHidden(f));
-  const totalSize = visibleFiles.reduce((sum, f) => sum + f.size_bytes, 0);
+  const nonHiddenFiles = files.filter(f => !isHidden(f));
+  const searchLower = search.trim().toLowerCase();
+  const visibleFiles = searchLower
+    ? nonHiddenFiles.filter(f => f.file_path.toLowerCase().includes(searchLower))
+    : nonHiddenFiles;
+  const totalSize = nonHiddenFiles.reduce((sum, f) => sum + f.size_bytes, 0);
 
   const rootFiles: AgentFile[] = [];
   const dirs: Record<string, AgentFile[]> = {};
@@ -762,16 +833,18 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     return `${(b / 1024 / 1024).toFixed(1)}M`;
   };
 
-  const renderItem = (f: AgentFile, indent = 0) => (
+  const renderItem = (f: AgentFile, indent = 0) => {
+    const icon = fileIconFor(f);
+    return (
     <div key={f.id} onClick={() => onSelect(f.file_path)}
       className={`flex items-center justify-between py-1.5 rounded cursor-pointer text-xs font-mono transition-colors group ${
         selectedFile === f.file_path
-          ? "bg-violet-500/[0.1] text-violet-300"
-          : "text-neutral-400 hover:bg-white/[0.03] hover:text-neutral-300"
+          ? "bg-violet-500/[0.12] text-violet-200 border-l-2 border-violet-400/60"
+          : "text-neutral-400 hover:bg-white/[0.03] hover:text-neutral-300 border-l-2 border-transparent"
       }`}
       style={{ paddingLeft: `${6 + indent * 12}px`, paddingRight: "4px" }}>
-      <div className="flex items-center gap-1 min-w-0">
-        <span className="text-[10px] opacity-40">{FILE_ICON[f.file_type] || "◻"}</span>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-mono ${icon.color} bg-white/[0.03] border border-white/[0.04]`}>{icon.char}</span>
         <span className="truncate">{f.file_path.split("/").pop()}</span>
         <span className="text-[9px] text-neutral-700 ml-1 shrink-0">{fmtSize(f.size_bytes)}</span>
       </div>
@@ -787,7 +860,8 @@ function FileTree({ agentId, selectedFile, onSelect }: {
           className="text-neutral-700 hover:text-red-400 opacity-0 group-hover:opacity-100 text-sm px-1 shrink-0">×</button>
       )}
     </div>
-  );
+    );
+  };
 
   return (
     <div
@@ -836,6 +910,21 @@ function FileTree({ agentId, selectedFile, onSelect }: {
           </button>
         </div>
       </div>
+
+      {/* Search */}
+      {nonHiddenFiles.length > 3 && (
+        <div className="px-2 py-1.5 border-b border-neutral-800/40 shrink-0 flex items-center gap-1.5">
+          <svg className="w-3 h-3 text-neutral-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+          </svg>
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Filter files…"
+            className="flex-1 bg-transparent text-[11px] font-mono text-white placeholder:text-neutral-600 focus:outline-none" />
+          {search && (
+            <button onClick={() => setSearch("")} className="text-neutral-600 hover:text-neutral-400 text-xs shrink-0">×</button>
+          )}
+        </div>
+      )}
 
       {/* Upload zone — expandable */}
       {showUploadZone && (
@@ -1235,8 +1324,28 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
   const onNewMessageRef = useRef(onNewMessage);
   onNewMessageRef.current = onNewMessage;
 
+  // Scroll stickiness — follow tail unless user scrolls up
+  const stickyRef = useRef(true);
+  const [hasBacklog, setHasBacklog] = useState(false);
+
+  // Throttled flush for stream deltas (avoid per-token re-render jitter)
+  const streamFlushRaf = useRef<number | null>(null);
+  const scheduleStreamFlush = () => {
+    if (streamFlushRaf.current != null) return;
+    streamFlushRaf.current = requestAnimationFrame(() => {
+      streamFlushRaf.current = null;
+      setStreamText(streamTextRef.current);
+      setStreamThinking(streamThinkingRef.current);
+    });
+  };
+
+  const [lastSent, setLastSent] = useState<string | null>(null);
+
   // Abort stream on unmount
-  useEffect(() => () => { abortRef.current?.abort(); }, []);
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    if (streamFlushRaf.current != null) cancelAnimationFrame(streamFlushRaf.current);
+  }, []);
 
   // Warn user before leaving during generation
   useEffect(() => {
@@ -1252,9 +1361,25 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
     return el.scrollHeight - el.scrollTop - el.clientHeight < 150;
   };
   const scrollToBottom = (force = false) => {
-    if (!force && !isNearBottom()) return;
+    if (!force && !stickyRef.current) {
+      setHasBacklog(true);
+      return;
+    }
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   };
+
+  // Track sticky state as user scrolls
+  useEffect(() => {
+    const el = chatContainerRef.current;
+    if (!el) return;
+    const handler = () => {
+      const near = isNearBottom();
+      stickyRef.current = near;
+      if (near) setHasBacklog(false);
+    };
+    el.addEventListener("scroll", handler, { passive: true });
+    return () => el.removeEventListener("scroll", handler);
+  }, []);
 
   const loadMessages = useCallback(async () => {
     try {
@@ -1322,17 +1447,21 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
   };
   useEffect(adjustHeight, [content]);
 
-  const send = async (e?: React.FormEvent) => {
+  const send = async (e?: React.FormEvent, override?: string) => {
     e?.preventDefault();
-    if (!content.trim() || sending) return;
-    const text = content.trim();
+    const raw = override ?? content;
+    if (!raw.trim() || sending) return;
+    const text = raw.trim();
+    setLastSent(text);
 
     const optimisticMsg: OwnerMessage = {
       id: `opt-${Date.now()}`, sender_type: "user", content: text,
       edited_at: null, is_deleted: false, created_at: new Date().toISOString(),
     };
     setMessages(prev => [...prev, optimisticMsg]);
-    setContent("");
+    if (!override) setContent("");
+    stickyRef.current = true;
+    setHasBacklog(false);
     scrollToBottom(true);
 
     setSending(true);
@@ -1386,7 +1515,8 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
             switch (event.type) {
               case "text_delta":
                 setStreamPhase("streaming");
-                setStreamText(prev => { const v = prev + event.content; streamTextRef.current = v; return v; });
+                streamTextRef.current += event.content;
+                scheduleStreamFlush();
                 scrollToBottom();
                 break;
               case "tool_call":
@@ -1409,7 +1539,8 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
                 break;
               case "thinking_delta":
                 setStreamPhase("streaming");
-                setStreamThinking(prev => { const v = prev + event.content; streamThinkingRef.current = v; return v; });
+                streamThinkingRef.current += event.content;
+                scheduleStreamFlush();
                 break;
               case "done":
                 gotDone = true;
@@ -1506,7 +1637,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
   const isStreaming = sending && (streamText || streamThinking || streamTools.length > 0);
 
   return (
-    <div className="h-full flex flex-col bg-white/[0.02] border border-neutral-800/50 rounded-xl overflow-hidden">
+    <div className="h-full flex flex-col bg-white/[0.02] border border-neutral-800/50 rounded-xl overflow-hidden relative">
       {/* Header */}
       <div className="px-4 py-2 border-b border-neutral-800/40 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
@@ -1603,11 +1734,16 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
             </div>
           </div>
         ) : (
-          <div key={m.id} className={`flex ${m.sender_type === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] rounded-xl text-sm font-mono ${
+          <div key={m.id} className={`flex gap-2 items-end group/msg ${m.sender_type === "user" ? "justify-end" : "justify-start"}`}>
+            {m.sender_type === "agent" && !m.is_deleted && (
+              <div className="shrink-0 w-6 h-6 rounded-full bg-violet-500/15 border border-violet-400/30 flex items-center justify-center text-[10px] font-mono text-violet-300">
+                A
+              </div>
+            )}
+            <div className={`max-w-[85%] rounded-2xl text-sm font-mono relative shadow-sm ${
               m.sender_type === "user"
-                ? "bg-cyan-500/[0.08] border border-cyan-500/15 text-cyan-100 px-3.5 py-2.5"
-                : "bg-violet-500/[0.06] border border-violet-500/12 text-violet-100"
+                ? "bg-gradient-to-br from-cyan-500/[0.12] to-cyan-500/[0.04] border border-cyan-500/20 text-cyan-50 px-3.5 py-2.5 shadow-cyan-500/10"
+                : "bg-gradient-to-br from-violet-500/[0.08] to-violet-500/[0.03] border border-violet-500/15 text-violet-50 shadow-violet-500/10"
             }`}>
               {m.is_deleted ? (
                 <span className="italic text-neutral-600 text-xs px-3.5 py-2.5 block">[deleted]</span>
@@ -1615,9 +1751,10 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
                 <>
                   {m.thinking && (
                     <button onClick={() => setExpandedThinking(s => toggle(s, m.id))}
-                      className="w-full text-left px-3.5 py-1.5 border-b border-violet-500/10 flex items-center gap-2 hover:bg-violet-500/[0.04] transition-colors">
-                      <span className="text-[10px] text-amber-400/70">◈ thinking</span>
-                      <svg className={`w-3 h-3 text-neutral-600 transition-transform ${expandedThinking.has(m.id) ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      className="w-full text-left px-3.5 py-1.5 border-b border-violet-500/10 flex items-center gap-2 hover:bg-violet-500/[0.06] transition-colors">
+                      <span className="text-[10px] text-amber-400/80">◈ thinking</span>
+                      <span className="text-[9px] text-neutral-600 tabular-nums">{m.thinking.length.toLocaleString()} chars</span>
+                      <svg className={`w-3 h-3 text-neutral-600 transition-transform ml-auto ${expandedThinking.has(m.id) ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                       </svg>
                     </button>
@@ -1628,15 +1765,24 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
 
                   <div className="px-3.5 py-2.5 prose-agent">
                     <AgentMarkdown content={m.content} isUser={m.sender_type === "user"} />
-                    <span className="text-[9px] text-neutral-600 mt-1 block">{timeAgo(m.created_at)}</span>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="text-[9px] text-neutral-600">{timeAgo(m.created_at)}</span>
+                      {m.sender_type === "agent" && m.content && (
+                        <CopyButton text={m.content} className="opacity-0 group-hover/msg:opacity-100" />
+                      )}
+                    </div>
                   </div>
 
                   {m.tool_calls && m.tool_calls.length > 0 && (
                     <div className="border-t border-violet-500/10">
                       <button onClick={() => setExpandedTools(s => toggle(s, m.id))}
-                        className="w-full text-left px-3.5 py-2 flex items-center gap-2 hover:bg-violet-500/[0.04] transition-colors">
-                        <span className="text-xs text-cyan-400/70">⚡ {m.tool_calls.length} tool{m.tool_calls.length > 1 ? "s" : ""} used</span>
-                        <svg className={`w-3.5 h-3.5 text-neutral-600 transition-transform ${expandedTools.has(m.id) ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        className="w-full text-left px-3.5 py-2 flex items-center gap-2 hover:bg-violet-500/[0.06] transition-colors">
+                        <span className="text-xs text-cyan-400/80 shrink-0">⚡ {m.tool_calls.length}</span>
+                        <span className="text-[11px] text-neutral-500 truncate flex-1">
+                          {[...new Set(m.tool_calls.map((tc: { tool: string }) => tc.tool))].slice(0, 4).join(" · ")}
+                          {new Set(m.tool_calls.map((tc: { tool: string }) => tc.tool)).size > 4 && " · …"}
+                        </span>
+                        <svg className={`w-3.5 h-3.5 text-neutral-600 transition-transform shrink-0 ${expandedTools.has(m.id) ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                         </svg>
                       </button>
@@ -1652,13 +1798,22 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
                 </>
               )}
             </div>
+            {m.sender_type === "user" && !m.is_deleted && (
+              <div className="shrink-0 w-6 h-6 rounded-full bg-cyan-500/15 border border-cyan-400/30 flex items-center justify-center text-[10px] font-mono text-cyan-300">
+                U
+              </div>
+            )}
           </div>
         ))}
 
         {/* Streaming response */}
         {isStreaming && (
-          <div className="flex justify-start">
-            <div className="max-w-[85%] rounded-xl bg-violet-500/[0.06] border border-violet-500/12 text-violet-100">
+          <div className="flex gap-2 items-end justify-start">
+            <div className="shrink-0 w-6 h-6 rounded-full bg-violet-500/15 border border-violet-400/30 flex items-center justify-center text-[10px] font-mono text-violet-300 relative">
+              A
+              <span className="absolute inset-0 rounded-full border border-violet-400/50 animate-ping" />
+            </div>
+            <div className="max-w-[85%] rounded-2xl bg-gradient-to-br from-violet-500/[0.08] to-violet-500/[0.03] border border-violet-500/15 text-violet-50 shadow-sm shadow-violet-500/10">
               {streamThinking && (
                 <details className="border-b border-violet-500/10" open={!streamText}>
                   <summary className="px-3.5 py-1.5 flex items-center gap-2 cursor-pointer hover:bg-violet-500/[0.04] transition-colors select-none">
@@ -1695,18 +1850,22 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
         )}
 
         {sending && !isStreaming && (
-          <div className="flex justify-start">
-            <div className="px-3.5 py-2.5 rounded-xl bg-violet-500/[0.06] border border-violet-500/12">
-              <div className="flex items-center gap-2">
+          <div className="flex gap-2 items-end justify-start">
+            <div className="shrink-0 w-6 h-6 rounded-full bg-violet-500/15 border border-violet-400/30 flex items-center justify-center text-[10px] font-mono text-violet-300 relative">
+              A
+              <span className="absolute inset-0 rounded-full border border-violet-400/50 animate-ping" />
+            </div>
+            <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-br from-violet-500/[0.08] to-violet-500/[0.03] border border-violet-500/15 shadow-sm shadow-violet-500/10">
+              <div className="flex items-center gap-2.5">
                 <div className="flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 bg-violet-400/60 rounded-full animate-pulse" />
-                  <div className="w-1.5 h-1.5 bg-violet-400/40 rounded-full animate-pulse" style={{ animationDelay: "0.2s" }} />
-                  <div className="w-1.5 h-1.5 bg-violet-400/20 rounded-full animate-pulse" style={{ animationDelay: "0.4s" }} />
+                  <div className="w-1.5 h-1.5 bg-violet-400/70 rounded-full animate-bounce" style={{ animationDelay: "0s", animationDuration: "1.4s" }} />
+                  <div className="w-1.5 h-1.5 bg-violet-400/60 rounded-full animate-bounce" style={{ animationDelay: "0.2s", animationDuration: "1.4s" }} />
+                  <div className="w-1.5 h-1.5 bg-violet-400/40 rounded-full animate-bounce" style={{ animationDelay: "0.4s", animationDuration: "1.4s" }} />
                 </div>
-                <span className="text-[10px] text-neutral-500 font-mono">
-                  {streamPhase === "connecting" ? "Connecting to agent…" : "Waiting for model response…"}
+                <span className="text-[11px] text-violet-200/70 font-mono">
+                  {streamPhase === "connecting" ? "Connecting…" : "Thinking…"}
                 </span>
-                <span className="text-[9px] text-neutral-700 font-mono tabular-nums">{sendElapsed}s</span>
+                <span className="text-[9px] text-neutral-600 font-mono tabular-nums">{sendElapsed}s</span>
               </div>
             </div>
           </div>
@@ -1714,8 +1873,14 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
 
         {chatError && (
           <div className="flex justify-center">
-            <div className="px-3.5 py-2 rounded-xl bg-red-400/[0.06] border border-red-400/15 text-xs font-mono text-red-400/80 flex items-center gap-2">
+            <div className="px-3.5 py-2 rounded-xl bg-red-400/[0.06] border border-red-400/15 text-xs font-mono text-red-400/80 flex items-center gap-2 flex-wrap">
               <span>⚠ {chatError}</span>
+              {lastSent && !sending && (
+                <button onClick={() => { setChatError(null); send(undefined, lastSent); }}
+                  className="px-2 py-0.5 text-[10px] font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 rounded hover:bg-violet-500/20 transition-colors">
+                  ↻ Retry
+                </button>
+              )}
               <button onClick={() => setChatError(null)} className="text-red-400/40 hover:text-red-400">×</button>
             </div>
           </div>
@@ -1723,6 +1888,19 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
 
         <div ref={bottomRef} />
       </div>
+
+      {/* New message badge — floats when user scrolled up */}
+      {hasBacklog && (
+        <div className="absolute bottom-[84px] left-1/2 -translate-x-1/2 z-20">
+          <button onClick={() => { stickyRef.current = true; setHasBacklog(false); bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }}
+            className="px-3 py-1.5 text-[11px] font-mono bg-violet-500/20 text-violet-200 border border-violet-400/30 rounded-full shadow-lg shadow-violet-500/20 backdrop-blur-sm hover:bg-violet-500/30 transition-colors flex items-center gap-1.5">
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+            </svg>
+            New messages
+          </button>
+        </div>
+      )}
 
       {/* Input */}
       <div className="border-t border-neutral-800/40 px-4 py-3 shrink-0">
@@ -1755,6 +1933,60 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
   );
 }
 
+/* ── Shared UI helpers ── */
+
+function BudgetBar({ current, total }: { current: number; total: number }) {
+  const pct = total > 0 ? Math.min(100, (current / total) * 100) : 0;
+  const color = pct >= 100 ? "bg-red-400" : pct >= 80 ? "bg-amber-400" : pct >= 50 ? "bg-cyan-400" : "bg-emerald-400/80";
+  return (
+    <div className="flex items-center gap-1.5 shrink-0" title={`Spent $${current.toFixed(4)} of $${total.toFixed(2)} budget`}>
+      <div className="w-16 h-[3px] rounded-full bg-white/[0.05] overflow-hidden">
+        <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="tabular-nums text-neutral-500">
+        ${current.toFixed(current < 0.1 ? 4 : 2)}
+        <span className="text-neutral-700"> / ${total.toFixed(2)}</span>
+      </span>
+    </div>
+  );
+}
+
+function CopyButton({ text, label = "copy", className = "" }: { text: string; label?: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async e => {
+        e.stopPropagation();
+        try { await navigator.clipboard.writeText(text); } catch { return; }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1400);
+      }}
+      className={`text-[10px] font-mono transition-all ${copied ? "text-emerald-400" : "text-neutral-600 hover:text-violet-300"} ${className}`}
+      title="Copy to clipboard">
+      {copied ? "✓ copied" : label}
+    </button>
+  );
+}
+
+function CodeBlock({ lang, text }: { lang: string; text: string }) {
+  const pretty = lang && lang !== "text" ? lang : "";
+  return (
+    <div className="relative group my-2 rounded-lg overflow-hidden border border-neutral-800/40 bg-black/40">
+      <div className="flex items-center justify-between px-3 py-1 border-b border-neutral-800/40 bg-black/30">
+        <span className="text-[9px] font-mono uppercase tracking-[0.15em] text-neutral-500">{pretty || "code"}</span>
+        <CopyButton text={text} className="opacity-0 group-hover:opacity-100" />
+      </div>
+      <SyntaxHighlighter
+        language={pretty || "text"}
+        style={oneDark as unknown as Record<string, React.CSSProperties>}
+        customStyle={{ margin: 0, padding: "10px 12px", background: "transparent", fontSize: "12px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+        codeTagProps={{ style: { fontSize: "12px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } }}>
+        {text}
+      </SyntaxHighlighter>
+    </div>
+  );
+}
+
 /* ── Markdown renderer ── */
 
 function AgentMarkdown({ content, isUser }: { content: string; isUser: boolean }) {
@@ -1779,20 +2011,9 @@ function AgentMarkdown({ content, isUser }: { content: string; isUser: boolean }
         code: ({ className, children }) => {
           const isBlock = className?.includes("language-");
           if (isBlock) {
-            const lang = className?.replace("language-", "") || "";
+            const lang = className?.replace("language-", "") || "text";
             const text = String(children).replace(/\n$/, "");
-            return (
-              <div className="relative group my-2">
-                {lang && <span className="absolute top-1 right-2 text-[9px] font-mono text-neutral-600">{lang}</span>}
-                <pre className="bg-black/30 rounded-lg px-3 py-2.5 text-[12px] overflow-x-auto border border-neutral-800/30">
-                  <code>{text}</code>
-                </pre>
-                <button onClick={() => navigator.clipboard.writeText(text)}
-                  className="absolute top-1 left-2 text-[9px] font-mono text-neutral-700 opacity-0 group-hover:opacity-100 hover:text-neutral-400 transition-all">
-                  copy
-                </button>
-              </div>
-            );
+            return <CodeBlock lang={lang} text={text} />;
           }
           return <code className="bg-white/[0.06] px-1.5 py-0.5 rounded text-[12px] text-cyan-300/80">{children}</code>;
         },
