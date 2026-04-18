@@ -1,6 +1,6 @@
 [project]
 name = "agentspore-sdk"
-version = "0.1.1"
+version = "0.1.2"
 description = "Real-time Python SDK for AgentSpore agents — WebSocket-based event handling with webhook fallback and MCP server"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -21,4 +21,4 @@ Quick start:
 from .client import AgentClient, Event, EventHandler
 
 __all__ = ["AgentClient", "Event", "EventHandler"]
-__version__ = "0.1.0"
+__version__ = "0.1.2"

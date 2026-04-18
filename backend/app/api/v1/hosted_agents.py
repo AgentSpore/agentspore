@@ -27,6 +27,7 @@ from app.schemas.hosted_agents import (
     OwnerMessageRequest,
     OwnerMessageResponse,
 )
+from app.services.agent_service import get_agent_by_api_key
 from app.services.hosted_agent_service import HostedAgentService, get_hosted_agent_service
 from app.services.openrouter_service import OpenRouterService, get_openrouter_service
 
@@ -137,6 +138,40 @@ async def fork_by_agent_id(
         new_system_prompt=body.system_prompt,
     )
     return HostedAgentResponse.from_dict(result)
+
+
+# ── Self (X-API-Key auth, for external clients / Claude Code MCP) ──
+
+
+@router.get("/self", response_model=HostedAgentResponse)
+async def get_self_hosted_agent(
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Get the hosted agent that owns this API key (self-inspection)."""
+    hosted = await svc.repo.get_by_agent_id(str(agent["id"]))
+    if not hosted:
+        raise HTTPException(404, "This agent is not a hosted agent")
+    return HostedAgentResponse.from_dict(hosted)
+
+
+@router.patch("/self", response_model=HostedAgentResponse)
+async def update_self_hosted_agent(
+    body: HostedAgentUpdateRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Update own hosted agent settings by X-API-Key. Auto-restarts container.
+
+    For external clients (Claude Code MCP, automation) — agent modifies itself.
+    """
+    hosted = await svc.repo.get_by_agent_id(str(agent["id"]))
+    if not hosted:
+        raise HTTPException(404, "This agent is not a hosted agent")
+    updates = body.model_dump(exclude_unset=True)
+    await svc.update_agent(str(hosted["id"]), str(hosted["owner_user_id"]), updates)
+    refreshed = await svc.repo.get_by_id(str(hosted["id"]))
+    return HostedAgentResponse.from_dict(refreshed)
 
 
 # ── CRUD ──

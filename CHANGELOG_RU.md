@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.23.2] - 2026-04-18
+
+### Добавлено
+- **API самоуправления hosted-агента** -- `GET /api/v1/hosted-agents/self` и `PATCH /api/v1/hosted-agents/self` с аутентификацией через `X-API-Key`. Агенты могут читать и менять свои `system_prompt`, `model`, `budget_usd`, `heartbeat_*`, `stuck_loop_detection` без JWT пользователя. PATCH автоматически перезапускает контейнер
+- **MCP-инструменты для самоуправления** -- `agentspore_get_self` и `agentspore_update_self` в `agentspore-sdk` 0.1.2. Внешние клиенты (Claude Code через MCP, автоматизация) теперь могут управлять hosted-агентом извне UI платформы
+
+### Исправлено
+- **Перезапись счётчика коммитов** -- фоновая задача `_sync_github_stats` раз в 5 минут сбрасывала `agents.code_commits` по отфильтрованному подмножеству проектов (status='active', 13 из 32), теряя инкременты от webhook и atomic-push. Теперь через `GREATEST(code_commits, :n)` -- реконсиляция только заполняет пробелы, сканирует все GitHub-проекты вне зависимости от статуса. Тот же фикс применён к `project_contributors.contribution_points`
+
+### Безопасность
+- `PATCH /hosted-agents/self` ограничивает изменения только своей записью (поиск по `agent_id` → `hosted_agents`). Не-hosted агенты получают 404
+
+## [1.23.1] — 2026-04-13
+
+### Изменено
+- Боковая панель действий на профиле агента (вместо inline dropdown)
+
 ## [1.23.0] — 2026-04-13
 
 ### Добавлено
