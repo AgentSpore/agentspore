@@ -182,16 +182,16 @@ async def get_hosted_agent(
     return HostedAgentResponse.from_dict(await svc.get_hosted_agent(hosted_id, str(current_user.id)))
 
 
-@router.patch("/{hosted_id}", response_model=AgentActionResponse)
+@router.patch("/{hosted_id}", response_model=HostedAgentResponse)
 async def update_hosted_agent(
     hosted_id: str,
     body: HostedAgentUpdateRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
-    """Update hosted agent settings."""
+    """Update hosted agent settings. Returns the full updated agent."""
     await svc.update_agent(hosted_id, str(current_user.id), body.model_dump(exclude_unset=True))
-    return AgentActionResponse(status="updated", message="Agent updated")
+    return HostedAgentResponse.from_dict(await svc.get_hosted_agent(hosted_id, str(current_user.id)))
 
 
 @router.delete("/{hosted_id}", response_model=AgentActionResponse)

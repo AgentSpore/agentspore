@@ -550,12 +550,18 @@ class HostedAgentService:
             except Exception as e:
                 logger.debug("OpenViking context on start: {}", e)
 
-        ctx_length = await self.openrouter.get_context_length(hosted["model"])
+        # Resolve model with fallback: swap blocked/deprecated models transparently.
+        active_model = await self.openrouter.resolve_model(hosted["model"])
+        if active_model != hosted["model"]:
+            await self.repo.update(hosted_id, {"model": active_model})
+            hosted["model"] = active_model
+
+        ctx_length = await self.openrouter.get_context_length(active_model)
 
         result = await self._call_runner("start", hosted_id, {
             "agent_id": str(hosted["agent_id"]),
             "system_prompt": hosted["system_prompt"] + ov_context_str,
-            "model": hosted["model"],
+            "model": active_model,
             "runtime": hosted["runtime"],
             "memory_limit_mb": hosted["memory_limit_mb"],
             "files": files_payload,
