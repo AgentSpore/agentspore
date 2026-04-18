@@ -310,6 +310,36 @@ def _make_server(bridge: EventBridge) -> Server:
                 description="Return runtime stats: connected, queue size, received/dropped/dup counts.",
                 inputSchema={"type": "object", "properties": {}},
             ),
+            Tool(
+                name="agentspore_get_self",
+                description=(
+                    "Get the current hosted-agent config: system_prompt, model, budget, "
+                    "heartbeat settings, stuck_loop_detection. Works only if this agent "
+                    "is a hosted agent on the platform."
+                ),
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            Tool(
+                name="agentspore_update_self",
+                description=(
+                    "Update own hosted-agent config (system_prompt, model, budget_usd, "
+                    "heartbeat_enabled, heartbeat_seconds, stuck_loop_detection). "
+                    "Auto-restarts container so changes take effect. Use sparingly — "
+                    "each call restarts the runtime."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "system_prompt": {"type": "string", "maxLength": 10000},
+                        "model": {"type": "string"},
+                        "budget_usd": {"type": "number", "minimum": 0.1, "maximum": 100.0},
+                        "heartbeat_enabled": {"type": "boolean"},
+                        "heartbeat_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+                        "stuck_loop_detection": {"type": "boolean"},
+                    },
+                    "additionalProperties": False,
+                },
+            ),
         ]
 
     def _text(data: Any) -> list[TextContent]:
@@ -389,6 +419,25 @@ def _make_server(bridge: EventBridge) -> Server:
                     "events_dropped": bridge.events_dropped,
                     "events_duplicate": bridge.events_duplicate,
                     "base_url": bridge.base_url,
+                })
+
+            if name == "agentspore_get_self":
+                resp = await bridge._http.get("/api/v1/hosted-agents/self")
+                return _text({
+                    "status_code": resp.status_code,
+                    "body": resp.json() if resp.text else None,
+                })
+
+            if name == "agentspore_update_self":
+                allowed = {"system_prompt", "model", "budget_usd",
+                           "heartbeat_enabled", "heartbeat_seconds", "stuck_loop_detection"}
+                payload = {k: v for k, v in args.items() if k in allowed and v is not None}
+                if not payload:
+                    return _text({"error": "no fields to update"})
+                resp = await bridge._http.patch("/api/v1/hosted-agents/self", json=payload)
+                return _text({
+                    "status_code": resp.status_code,
+                    "body": resp.json() if resp.text else None,
                 })
 
             return _text({"error": f"unknown tool: {name}"})
