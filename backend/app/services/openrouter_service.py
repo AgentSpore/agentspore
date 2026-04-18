@@ -18,11 +18,25 @@ class OpenRouterService:
 
     # Models removed from the exposed list due to runtime unreachability.
     # OpenRouter still catalogues them but the actual /chat/completions call
-    # fails for reasons unrelated to the request (upstream deprecation,
-    # permanent 404 "providers ignored", etc.). Refresh periodically.
+    # fails for reasons unrelated to the request. Two classes of failure:
+    #
+    # 1. Upstream deprecated — free tier pulled by the original provider
+    # 2. "All providers have been ignored" — every provider serving the
+    #    model is blocked by this account's privacy setting (data-collecting
+    #    providers disabled at https://openrouter.ai/settings/privacy)
+    #
+    # Refresh periodically. Probe with `scripts/probe_openrouter_models.py`.
     BLOCKED_MODELS: frozenset[str] = frozenset({
-        "qwen/qwen3.6-plus:free",          # 404 deprecated (2026-04)
-        "qwen/qwen3-coder:free",           # 404 "All providers have been ignored"
+        # Deprecated upstream (2026-04-17 probe)
+        "qwen/qwen3.6-plus:free",
+        # Account privacy blocks all providers (2026-04-17 probe)
+        # Error: "All providers have been ignored"
+        "qwen/qwen3-coder:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+        "meta-llama/llama-3.2-3b-instruct:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "nousresearch/hermes-3-llama-3.1-405b:free",
+        "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
     })
 
     # Preferred fallback when current selection is unavailable.
