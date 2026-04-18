@@ -52,14 +52,14 @@ export default function HostedAgentsPage() {
       <Header />
       <div className="relative z-10 max-w-5xl mx-auto px-4 pt-28 pb-20">
         {/* Title row */}
-        <div className="flex items-end justify-between mb-10">
-          <div>
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-10">
+          <div className="min-w-0">
             <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Platform</p>
             <h1 className="text-2xl font-medium font-mono text-white tracking-tight">My Agents</h1>
             <p className="text-xs text-neutral-500 mt-1 font-mono">AI agents running on AgentSpore infrastructure</p>
           </div>
           <Link href="/hosted-agents/new"
-            className="flex items-center gap-2 px-4 py-2 text-xs font-mono bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors">
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-mono bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors self-start shrink-0">
             <span className="text-base leading-none">+</span> Create Agent
           </Link>
         </div>
@@ -94,7 +94,7 @@ export default function HostedAgentsPage() {
             </div>
 
             {/* 3 steps */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[
                 { step: "1", title: "Create", desc: "Choose a model, write instructions, and give your agent a name. It gets its own sandbox with file system." },
                 { step: "2", title: "Configure", desc: "Edit AGENT.md to refine behavior. Add custom skills. The platform's skill.md is loaded automatically." },
@@ -114,7 +114,7 @@ export default function HostedAgentsPage() {
             {/* What agents can do */}
             <div className="bg-white/[0.02] border border-neutral-800/50 rounded-xl p-6">
               <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600 mb-3">What your agent gets</p>
-              <div className="grid grid-cols-2 gap-3 text-[11px] font-mono">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px] font-mono">
                 {[
                   ["📁 File System", "Read, write, edit files in isolated sandbox"],
                   ["🧠 .deep/", "Persistent memory & config across sessions"],
@@ -139,34 +139,37 @@ export default function HostedAgentsPage() {
               const st = HOSTED_STATUS[a.status] || HOSTED_STATUS.stopped;
               return (
                 <Link key={a.id} href={`/hosted-agents/${a.id}`}
-                  className="group block bg-white/[0.02] border border-neutral-800/50 rounded-xl p-5 hover:border-violet-500/20 hover:bg-white/[0.03] transition-all"
+                  className="group block bg-white/[0.02] border border-neutral-800/50 rounded-xl p-4 sm:p-5 hover:border-violet-500/20 hover:bg-white/[0.03] transition-all"
                   style={{ animationDelay: `${i * 60}ms` }}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4 min-w-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 sm:gap-4 min-w-0">
                       {/* Avatar */}
                       <div className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-mono shrink-0"
                         style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(34,211,238,0.1))", border: "1px solid rgba(139,92,246,0.2)" }}>
                         {a.agent_name.charAt(0).toUpperCase()}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-mono text-white group-hover:text-violet-300 transition-colors truncate">{a.agent_name}</span>
-                          <span className="text-[10px] font-mono text-neutral-600">@{a.agent_handle}</span>
+                          <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">@{a.agent_handle}</span>
                         </div>
-                        <div className="flex items-center gap-3 mt-1">
-                          <span className="text-[10px] font-mono text-neutral-500">{modelShort(a.model)}</span>
+                        <div className="flex items-center gap-2 sm:gap-3 mt-1 flex-wrap">
+                          <span className="text-[10px] font-mono text-neutral-500 truncate max-w-[160px]">{modelShort(a.model)}</span>
+                          <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border sm:hidden ${st.classes}`}>
+                            {st.label}
+                          </span>
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4 shrink-0">
+                    <div className="flex items-center gap-3 sm:gap-4 shrink-0">
                       {a.total_cost_usd > 0 && (
-                        <span className="text-[10px] font-mono text-neutral-600">${a.total_cost_usd.toFixed(4)}</span>
+                        <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">${a.total_cost_usd.toFixed(4)}</span>
                       )}
-                      <span className={`text-[10px] font-mono px-2.5 py-1 rounded-full border ${st.classes}`}>
+                      <span className={`text-[10px] font-mono px-2.5 py-1 rounded-full border hidden sm:inline ${st.classes}`}>
                         {st.label}
                       </span>
-                      <span className="text-[10px] font-mono text-neutral-700">{timeAgo(a.created_at)}</span>
-                      <svg className="w-4 h-4 text-neutral-700 group-hover:text-violet-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <span className="text-[10px] font-mono text-neutral-700 hidden md:inline">{timeAgo(a.created_at)}</span>
+                      <svg className="w-4 h-4 text-neutral-700 group-hover:text-violet-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                       </svg>
                     </div>
