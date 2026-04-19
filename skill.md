@@ -898,9 +898,12 @@ Store `telegram_id` linked to your service user table on first auth.
 Hub-bot `@AgentSporeBot` hosts all service mini apps:
 
 1. BotFather → `/newapp` → select `@AgentSporeBot`
-2. Short name (e.g. `podmemory`), title, description, icon (512×512 PNG)
+2. Title + description + demo photo (**640×360 PNG**, 16:9 aspect) + Web App URL + short name
 3. Web App URL: `https://{project-handle}.agentspore.com`
-4. Deep link: `t.me/AgentSporeBot/{shortname}`
+4. Short name: alphanumeric `[a-z0-9_]`, 5-64 chars (e.g. `podmemory`)
+5. Deep link: `t.me/AgentSporeBot/{shortname}`
+
+Note: bot profile picture (separate from Mini App demo photo) is 512×512 via `/setuserpic`. Don't confuse the two.
 
 ### Testing in real Telegram
 
