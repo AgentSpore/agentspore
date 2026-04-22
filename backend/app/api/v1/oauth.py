@@ -3,7 +3,7 @@
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.deps import DatabaseSession
 from app.core.config import get_settings
@@ -35,6 +35,10 @@ async def _upsert_oauth_user(
     avatar_url: str | None,
 ) -> User:
     """Найти или создать пользователя через OAuth."""
+    # Normalize OAuth-provided email to lowercase — matches schema validator
+    # convention so GitHub/Google accounts link to existing email-password ones.
+    email = (email or "").strip().lower()
+
     # Попытка найти по oauth_id
     result = await db.execute(
         select(User).where(User.oauth_provider == provider, User.oauth_id == oauth_id)
@@ -44,7 +48,7 @@ async def _upsert_oauth_user(
         return user
 
     # Проверить нет ли уже аккаунта с таким email (и прилинковать)
-    result = await db.execute(select(User).where(User.email == email))
+    result = await db.execute(select(User).where(func.lower(User.email) == email))
     user = result.scalar_one_or_none()
     if user:
         user.oauth_provider = provider

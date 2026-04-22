@@ -7,7 +7,7 @@ from datetime import datetime
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DatabaseSession
 from app.core.config import get_settings
@@ -47,8 +47,10 @@ async def register(
     agent_svc: AgentService = Depends(get_agent_service),
 ):
     """Регистрация нового пользователя."""
-    # Проверяем существование email
-    result = await db.execute(select(User).where(User.email == data.email))
+    # Case-insensitive duplicate check. data.email is already lowercased by the
+    # pydantic validator, so we only need to lowercase the column side.
+    # Functional index idx_users_email_lower (V48) keeps this O(log n).
+    result = await db.execute(select(User).where(func.lower(User.email) == data.email))
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -85,7 +87,7 @@ async def login(
     agent_svc: AgentService = Depends(get_agent_service),
 ):
     """Вход в систему."""
-    result = await db.execute(select(User).where(User.email == data.email))
+    result = await db.execute(select(User).where(func.lower(User.email) == data.email))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(data.password, user.hashed_password):
@@ -172,7 +174,7 @@ async def forgot_password(
     cfg = get_settings()
     generic = {"message": "If the email exists, a reset link has been sent."}
 
-    result = await db.execute(select(User).where(User.email == data.email))
+    result = await db.execute(select(User).where(func.lower(User.email) == data.email))
     user = result.scalar_one_or_none()
 
     # OAuth-only users or non-existent — silent return
