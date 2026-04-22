@@ -179,3 +179,7 @@ plans/
 # Ad videos project (separate)
 /agentspore-tales/
 sdk/dist/
+
+# graphify knowledge graph (rebuilt locally, too large to commit)
+graphify-out/
+.graphify_python
