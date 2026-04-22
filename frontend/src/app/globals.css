@@ -40,3 +40,128 @@ body {
 main {
   animation: page-enter 0.4s ease-out;
 }
+
+/* === Header (moved from styled-jsx to avoid SSR/CSR className mismatch under Next 15 + React 19) === */
+@keyframes header-glow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+@keyframes logo-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes nav-underline {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes mobile-slide {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.header-logo-hex {
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.header-logo-hex:hover {
+  animation: logo-spin 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border-color: rgb(167 139 250) !important;
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.3);
+}
+.nav-link-active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 20%;
+  right: 20%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgb(139, 92, 246), transparent);
+  animation: nav-underline 0.3s ease-out;
+}
+.header-menu-enter {
+  animation: menu-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.mobile-menu-enter {
+  animation: mobile-slide 0.25s ease-out;
+}
+.connect-btn {
+  position: relative;
+  overflow: hidden;
+}
+.connect-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.15), transparent);
+  transition: left 0.5s ease;
+}
+.connect-btn:hover::before {
+  left: 100%;
+}
+
+/* === Dashboard / list-page animations (shared by / /dashboard /projects /agents) === */
+@keyframes fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+@keyframes pulse-ring { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(2.5); opacity: 0; } }
+@keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
+@keyframes card-enter { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.fade-up { animation: fade-up 0.5s ease-out both; }
+.fade-up-d1 { animation: fade-up 0.5s ease-out 0.08s both; }
+.fade-up-d2 { animation: fade-up 0.5s ease-out 0.16s both; }
+.fade-up-d3 { animation: fade-up 0.5s ease-out 0.24s both; }
+.fade-up-d4 { animation: fade-up 0.5s ease-out 0.32s both; }
+.card-enter { animation: card-enter 0.4s ease-out both; }
+.stat-card { position: relative; overflow: hidden; }
+.stat-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: var(--stat-color); opacity: 0.3; transition: opacity 0.3s;
+}
+.stat-card:hover::before { opacity: 0.7; }
+.stat-card::after {
+  content: ''; position: absolute; top: 0; right: 0; width: 60px; height: 60px;
+  background: radial-gradient(circle at top right, var(--stat-color), transparent 70%);
+  opacity: 0.06; transition: opacity 0.3s;
+}
+.stat-card:hover::after { opacity: 0.12; }
+.activity-row { transition: all 0.15s ease; }
+.activity-row:hover { background: rgba(255,255,255,0.02); padding-left: 24px; }
+.agent-card { position: relative; overflow: hidden; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+.agent-card::before {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(135deg, rgba(139,92,246,0.03), transparent 60%);
+  opacity: 0; transition: opacity 0.3s;
+}
+.agent-card:hover::before { opacity: 1; }
+.agent-card:hover { border-color: rgba(139,92,246,0.25); transform: translateX(2px); }
+.terminal-panel { position: relative; overflow: hidden; }
+.terminal-panel::before {
+  content: ''; position: absolute; left: 0; width: 100%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(139,92,246,0.2), transparent);
+  animation: scan 4s linear infinite;
+}
+
+/* === /projects + /agents list rows (camelCase keyframe alias for legacy usage) === */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.project-card {
+  animation: fadeUp 0.4s ease-out forwards;
+  opacity: 0;
+}
+.project-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(139, 92, 246, 0.06), 0 0 0 1px rgba(139, 92, 246, 0.08);
+}
+.agent-row {
+  animation: fadeUp 0.4s ease-out both;
+}
+.agent-row:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 24px rgba(139, 92, 246, 0.06);
+}

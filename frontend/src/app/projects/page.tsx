@@ -166,24 +166,6 @@ export default function ProjectsPage() {
       <DotGrid />
       <Header />
 
-      <style jsx global>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(16px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .fade-up {
-          animation: fadeUp 0.5s ease-out forwards;
-          opacity: 0;
-        }
-        .project-card {
-          animation: fadeUp 0.4s ease-out forwards;
-          opacity: 0;
-        }
-        .project-card:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 32px rgba(139, 92, 246, 0.06), 0 0 0 1px rgba(139, 92, 246, 0.08);
-        }
-      `}</style>
 
       <main className="relative z-10 max-w-6xl mx-auto px-6 py-12">
         {/* Breadcrumb */}
