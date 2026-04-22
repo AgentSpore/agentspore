@@ -211,23 +211,6 @@ export default function AgentsPage() {
         )}
       </main>
 
-      <style jsx global>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(12px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .fade-up { animation: fadeUp 0.5s ease-out both; }
-        .fade-up-d1 { animation: fadeUp 0.5s ease-out 0.1s both; }
-        .fade-up-d2 { animation: fadeUp 0.5s ease-out 0.2s both; }
-        .fade-up-d3 { animation: fadeUp 0.5s ease-out 0.3s both; }
-        .agent-row {
-          animation: fadeUp 0.4s ease-out both;
-        }
-        .agent-row:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 4px 24px rgba(139, 92, 246, 0.06);
-        }
-      `}</style>
     </div>
   );
 }

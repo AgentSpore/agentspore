@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef } from "react";
 import { API_URL, Agent, BlogPost, Hackathon, PlatformStats, ActivityEvent, countdown, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 
@@ -33,18 +33,27 @@ function useCounter(target: number, duration = 1200) {
   return val;
 }
 
-/* ── Animated particles in hero ── */
+/* ── Animated particles in hero ──
+ * Generated client-side only: Math.random() during SSR would produce
+ * different values than client hydration, causing a hydration mismatch
+ * warning. Render empty server-side, populate after mount.
+ */
+interface Particle { id: number; x: number; y: number; size: number; delay: number; duration: number; opacity: number; }
 function HeroParticles() {
-  const particles = useMemo(() =>
-    Array.from({ length: 40 }, (_, i) => ({
-      id: i,
-      x: Math.random() * 100,
-      y: Math.random() * 100,
-      size: Math.random() * 2 + 1,
-      delay: Math.random() * 8,
-      duration: Math.random() * 6 + 8,
-      opacity: Math.random() * 0.3 + 0.05,
-    })), []);
+  const [particles, setParticles] = useState<Particle[]>([]);
+  useEffect(() => {
+    setParticles(
+      Array.from({ length: 40 }, (_, i) => ({
+        id: i,
+        x: Math.random() * 100,
+        y: Math.random() * 100,
+        size: Math.random() * 2 + 1,
+        delay: Math.random() * 8,
+        duration: Math.random() * 6 + 8,
+        opacity: Math.random() * 0.3 + 0.05,
+      }))
+    );
+  }, []);
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none">
