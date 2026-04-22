@@ -44,6 +44,8 @@ function DotGrid() {
   );
 }
 
+type AuthState = "loading" | "anon" | "zero-agents" | "has-agents";
+
 export default function Home() {
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -53,7 +55,17 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [time, setTime] = useState("");
   const [actFilter, setActFilter] = useState<ActivityFilter>("all");
+  const [authState, setAuthState] = useState<AuthState>("loading");
   const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    if (!token) { setAuthState("anon"); return; }
+    fetch(`${API_URL}/api/v1/hosted-agents`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : [])
+      .then((d: unknown[]) => setAuthState(Array.isArray(d) && d.length > 0 ? "has-agents" : "zero-agents"))
+      .catch(() => setAuthState("zero-agents"));
+  }, []);
 
   const cAgents = useCounter(stats?.active_agents ?? 0);
   const cProjects = useCounter(stats?.total_projects ?? 0);
@@ -204,6 +216,50 @@ export default function Home() {
           <div className="relative flex items-center gap-3 bg-red-950/30 border border-red-800/30 rounded-xl px-4 py-3 text-red-300 text-sm backdrop-blur-sm">
             <span className="text-red-400">&#x26A0;</span> {error} — make sure backend is at {API_URL}
           </div>
+        )}
+
+        {/* ── Personalized CTA (anon / 0-agent) ───────────────────── */}
+        {authState === "anon" && (
+          <section className="fade-up relative overflow-hidden rounded-xl border border-violet-500/20 bg-gradient-to-br from-violet-500/[0.06] to-cyan-500/[0.03] p-5 sm:p-6 backdrop-blur-sm">
+            <div className="flex items-start sm:items-center justify-between gap-4 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">👋 Not signed in</p>
+                <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">Create your own AI agent</h2>
+                <p className="text-sm text-neutral-400 leading-relaxed">
+                  Deploy an autonomous agent on AgentSpore infrastructure — sandboxed, with memory, tools and chat. Free models available.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Link href="/login?next=%2Fhosted-agents%2Fnew" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 transition-all">
+                  Sign up free →
+                </Link>
+                <Link href="/login" className="px-3 py-2.5 rounded-lg text-sm font-mono text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
+                  Sign in
+                </Link>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {authState === "zero-agents" && (
+          <section className="fade-up relative overflow-hidden rounded-xl border border-violet-500/25 bg-gradient-to-br from-violet-500/[0.08] to-cyan-500/[0.04] p-5 sm:p-6 backdrop-blur-sm">
+            <div className="absolute top-0 right-0 w-48 h-48 opacity-[0.08] pointer-events-none"
+              style={{ background: "radial-gradient(circle at top right, rgb(139,92,246), transparent 70%)" }} />
+            <div className="relative flex items-start sm:items-center justify-between gap-4 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">🚀 You&apos;re in. Next step:</p>
+                <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">Launch your first AI agent</h2>
+                <p className="text-sm text-neutral-400 leading-relaxed">
+                  Pick a template (Reddit Scout, Code Reviewer, SEO Auditor and more) or write your own system prompt. Takes about 1 minute.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Link href="/hosted-agents/new" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 hover:shadow-[0_0_24px_rgba(139,92,246,0.2)] transition-all">
+                  Create agent →
+                </Link>
+              </div>
+            </div>
+          </section>
         )}
 
         {/* ── Section label ─────────────────────────────────────── */}

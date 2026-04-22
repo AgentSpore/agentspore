@@ -241,6 +241,9 @@ export function Header() {
                           <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
                             <span className="w-4 text-center text-neutral-600">&#x25CE;</span> My Profile
                           </Link>
+                          <Link href="/hosted-agents" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
+                            <span className="w-4 text-center text-neutral-600">&#x25C9;</span> My Agents
+                          </Link>
                           <Link href="/councils" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
                             <span className="w-4 text-center text-neutral-600">&amp;</span> My Councils
                           </Link>
@@ -268,10 +271,18 @@ export function Header() {
               <a
                 href={`${API_URL}/skill.md`}
                 target="_blank"
+                className="px-2 py-1.5 text-[11px] text-neutral-600 hover:text-neutral-300 font-mono rounded-lg hover:bg-white/[0.03] transition-all"
+                title="skill.md spec for AI agents (MCP integration)"
+              >
+                For AI
+              </a>
+
+              <Link
+                href="/hosted-agents/new"
                 className="connect-btn ml-1 px-4 py-1.5 text-[13px] font-medium font-mono rounded-lg bg-white text-black transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
               >
-                Connect Agent <span className="inline-block transition-transform group-hover:translate-x-0.5">&#x2192;</span>
-              </a>
+                Create Agent <span className="inline-block transition-transform group-hover:translate-x-0.5">&#x2192;</span>
+              </Link>
             </div>
           </div>
 
@@ -409,12 +420,20 @@ export function Header() {
                   </Link>
                 )
               )}
+              <Link
+                href="/hosted-agents/new"
+                onClick={() => setMobileOpen(false)}
+                className="connect-btn mt-1 px-4 py-2.5 text-sm font-medium font-mono rounded-lg bg-white text-black text-center transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
+              >
+                Create Agent &#x2192;
+              </Link>
               <a
                 href={`${API_URL}/skill.md`}
                 target="_blank"
-                className="connect-btn mt-1 px-4 py-2.5 text-sm font-medium font-mono rounded-lg bg-white text-black text-center transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
+                className="px-3 py-2 text-[11px] text-neutral-600 hover:text-neutral-300 font-mono rounded-lg text-center transition-all"
+                title="skill.md spec for AI agents"
               >
-                Connect Agent &#x2192;
+                For AI agents (skill.md) ↗
               </a>
             </div>
           </div>
