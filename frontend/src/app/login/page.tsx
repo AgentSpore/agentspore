@@ -1,8 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
+import { useToast } from "@/components/Toast";
+
+const AUTH_TIMEOUT_MS = 15000;
+
+const ALLOWED_NEXT_PREFIXES = ["/hosted-agents", "/dashboard", "/profile", "/agents", "/projects", "/chat"];
+function safeNext(raw: string | null): string {
+  if (!raw) return "/profile";
+  if (!raw.startsWith("/")) return "/profile";
+  if (raw.startsWith("//")) return "/profile";
+  if (!ALLOWED_NEXT_PREFIXES.some(p => raw === p || raw.startsWith(p + "/") || raw.startsWith(p + "?"))) return "/profile";
+  return raw;
+}
 
 function DotGrid() {
   return (
@@ -20,39 +33,122 @@ function DotGrid() {
 }
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageInner />
+    </Suspense>
+  );
+}
+
+function LoginPageInner() {
+  const searchParams = useSearchParams();
+  const nextUrl = safeNext(searchParams.get("next"));
+  const { error: toastError, info: toastInfo } = useToast();
   const [tab, setTab] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [slowHint, setSlowHint] = useState(false);
+
+  const showError = (msg: string) => {
+    setError(msg);
+    toastError(msg);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSlowHint(false);
     setLoading(true);
+
+    const action = tab === "login" ? "login" : "register";
+    const url = tab === "login" ? `${API_URL}/api/v1/auth/login` : `${API_URL}/api/v1/auth/register`;
+    const body = tab === "login" ? { email, password } : { email, password, name };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+    const slowHintId = setTimeout(() => setSlowHint(true), 3000);
+
+    console.log(`[auth:${action}] submit →`, url);
+
+    let res: Response;
     try {
-      const url = tab === "login" ? `${API_URL}/api/v1/auth/login` : `${API_URL}/api/v1/auth/register`;
-      const body = tab === "login" ? { email, password } : { email, password, name };
-      const res = await fetch(url, {
+      res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
-      if (!res.ok) {
-        const err = await res.json();
-        setError(err.detail ?? "Authentication failed");
-        return;
-      }
-      const data = await res.json();
-      localStorage.setItem("access_token", data.access_token);
-      localStorage.setItem("refresh_token", data.refresh_token);
-      window.location.href = "/profile";
-    } catch {
-      setError("Failed to connect to server");
-    } finally {
+    } catch (err) {
+      clearTimeout(timeoutId);
+      clearTimeout(slowHintId);
+      setSlowHint(false);
       setLoading(false);
+      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      const isNetwork = err instanceof TypeError;
+      console.error(`[auth:${action}] fetch failed`, { url, error: err });
+      if (isAbort) {
+        showError(`Server did not respond in ${AUTH_TIMEOUT_MS / 1000}s. Check connection and retry.`);
+      } else if (isNetwork) {
+        showError("Network error — cannot reach server. Check CORS, ad-blocker, or VPN.");
+      } else {
+        showError(err instanceof Error ? err.message : "Failed to connect to server");
+      }
+      return;
     }
+    clearTimeout(timeoutId);
+    clearTimeout(slowHintId);
+    setSlowHint(false);
+
+    console.log(`[auth:${action}] response`, { status: res.status, ok: res.ok });
+
+    if (!res.ok) {
+      let detail = `Authentication failed (HTTP ${res.status})`;
+      try {
+        const errBody = await res.json();
+        if (errBody?.detail) detail = typeof errBody.detail === "string" ? errBody.detail : JSON.stringify(errBody.detail);
+      } catch (parseErr) {
+        console.error(`[auth:${action}] error body parse failed`, parseErr);
+      }
+      console.error(`[auth:${action}] server rejected`, { status: res.status, detail });
+      setLoading(false);
+      showError(detail);
+      return;
+    }
+
+    let data: { access_token?: string; refresh_token?: string };
+    try {
+      data = await res.json();
+    } catch (parseErr) {
+      console.error(`[auth:${action}] success body parse failed`, parseErr);
+      setLoading(false);
+      showError("Server returned an invalid response. Please try again.");
+      return;
+    }
+
+    if (!data?.access_token) {
+      console.error(`[auth:${action}] missing access_token`, data);
+      setLoading(false);
+      showError("Server returned an incomplete response. Please try again.");
+      return;
+    }
+
+    try {
+      localStorage.setItem("access_token", data.access_token);
+      if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
+    } catch (storeErr) {
+      console.error(`[auth:${action}] localStorage failed`, storeErr);
+      setLoading(false);
+      showError("Could not save session — check browser storage settings (private mode?).");
+      return;
+    }
+
+    const dest = tab === "register" ? (nextUrl === "/profile" ? "/hosted-agents/new" : nextUrl) : nextUrl;
+    console.log(`[auth:${action}] success → ${dest}`);
+    toastInfo(tab === "register" ? "Account created. Redirecting…" : "Signed in. Redirecting…");
+    window.location.href = dest;
   };
 
   const inputClass =
@@ -154,9 +250,22 @@ export default function LoginPage() {
               </div>
             )}
 
+            {loading && slowHint && (
+              <div className="bg-amber-950/20 border border-amber-800/30 rounded-lg px-4 py-3">
+                <p className="text-amber-400/90 text-xs font-mono">
+                  Server is taking longer than usual. Hang tight — don&apos;t refresh.
+                </p>
+              </div>
+            )}
+
             <button type="submit" disabled={loading}
-              className="w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50">
-              {loading ? "processing..." : tab === "login" ? "Sign In" : "Create Account"}
+              className="w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50 flex items-center justify-center gap-2">
+              {loading && (
+                <span className="inline-block w-3.5 h-3.5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+              )}
+              {loading
+                ? (tab === "login" ? "Signing in…" : "Creating account…")
+                : (tab === "login" ? "Sign In" : "Create Account")}
             </button>
           </form>
         </div>
