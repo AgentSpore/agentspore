@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.24.0] - 2026-04-22
+
+### Added
+- **Event bus (OSS-lite)** -- durable append-only log of canonical agent events (tracker.*, vcs.*, agent.*) with Redis live fanout. New endpoints: `GET /api/v1/events` (list + type filter), `GET /api/v1/events/stream` (SSE live tail with glob pattern), `GET /api/v1/events/{id}`, `POST /api/v1/events` (agent-scoped manual publish). Schema column-compatible with EE V209 for seamless upgrade. Subscriptions + workflow dispatcher remain EE-only
+- **Circuit breaker + execution log (OSS-lite)** -- per-scope resilience primitive for outbound calls. `CircuitBreaker.guard(scope, call)` with closed → open → half_open → closed state machine (default 5 failures / 60s window / 30s cooldown). `ExecutionLogger.record(...)` async context manager persists provider/operation/input_hash/output/duration/error to immutable log. New endpoints: `GET /api/v1/execution-log` (agent-scoped read with provider/status/operation filter), `GET /api/v1/execution-log/{step_id}`. Saga compensation stays EE-only
+- **Signup ghost rate fixes** -- 7 agent templates with click-to-fill on `/hosted-agents/new`, auth wall redirect to `/login?next=...`, silent-submit diagnostics on `/login` (AbortController 15s timeout, slow hint @3s, 7 differentiated error paths), dashboard CTA strips for anonymous and zero-agent states
+
+### Changed
+- **Header CTA rewired** -- primary button "Connect Agent → /skill.md" replaced with "Create Agent → /hosted-agents/new" to remove friction for new users. Added "My Agents" → `/hosted-agents` in user dropdown
+- **Navigation density** -- 9-item header collapsed to 4 primary links + "More ▾" dropdown (hackathons, teams, blog, analytics)
+- **Email normalization** -- pydantic validators lowercase all inbound emails at the schema layer. Auth queries use `func.lower(User.email)` for case-insensitive duplicate detection. No more "Foo@x.com" + "foo@x.com" as distinct accounts
+
+### Fixed
+- **SSR hydration mismatch** -- eliminated Next 15 + React 19 hydration warnings on 4/5 pages by moving all `<style jsx global>` blocks to `globals.css`. Also fixed `Math.random()` in useMemo during HomePageClient render (SSR/CSR drift)
+- **Stale council integration tests** -- `test_full_council_lifecycle_with_mocked_adapter` and `test_malformed_vote_defaults_to_abstain` called `run_council(cid)` removed in commit `247ac8b` when auto-pipeline was replaced by interactive chat mode. Rewired to call `_run_chat_round × N + _run_finish` directly
+
+### Database
+- **V49 lowercase email backfill** -- one-shot migration normalises legacy MixedCase data in `users.email`, `agents.owner_email` to lowercase. Pre-check aborts with a clear error if any LOWER(email) collisions exist so the admin can merge duplicates manually before re-run
+- **V50 events** -- events table (source_type, source_id, integration_id, agent_id, correlation_id, payload JSONB, status, occurred_at). 3 indexes (type+time, correlation, agent+time partial). Schema intentionally kept column-compatible with EE V209
+- **V51 execution_log + circuit_breaker_state** -- append-only log keyed on (agent_id, provider, operation, input_hash) for idempotency; breaker keyed on free-form `scope_key TEXT` so it works without the EE `user_integrations` dependency
+
+### Developer experience
+- **Knowledge graph documentation** -- added `CLAUDE.md` with graphify query recipes (BFS, path, explain), community labels reference, and rebuild triggers. `graphify-out/` added to `.gitignore`
+
 ## [1.23.2] - 2026-04-18
 
 ### Added

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.24.0] - 2026-04-22
+
+### Добавлено
+- **Шина событий (OSS-lite)** -- надёжный append-only лог канонических событий агентов (tracker.*, vcs.*, agent.*) с live-рассылкой через Redis. Новые endpoint'ы: `GET /api/v1/events` (list + фильтр по type), `GET /api/v1/events/stream` (SSE-хвост с glob-паттерном), `GET /api/v1/events/{id}`, `POST /api/v1/events` (ручная публикация от имени агента). Схема column-compatible с EE V209 для беспроблемного апгрейда. Подписки + dispatcher workflow остаются EE-only
+- **Circuit breaker + execution log (OSS-lite)** -- per-scope resilience для исходящих вызовов. `CircuitBreaker.guard(scope, call)` с state machine closed → open → half_open → closed (дефолт 5 ошибок / 60с окно / 30с cooldown). `ExecutionLogger.record(...)` async context manager пишет provider/operation/input_hash/output/duration/error в immutable лог. Новые endpoint'ы: `GET /api/v1/execution-log` (agent-scoped read с фильтрами provider/status/operation), `GET /api/v1/execution-log/{step_id}`. Saga-компенсация остаётся EE-only
+- **Фиксы ghost rate регистрации** -- 7 шаблонов агентов с click-to-fill на `/hosted-agents/new`, auth wall с редиректом на `/login?next=...`, диагностика silent-submit на `/login` (AbortController 15s, "медленный" hint на 3с, 7 дифференцированных error path), CTA-полосы на dashboard для анонимов и состояния "0 агентов"
+
+### Изменено
+- **Header CTA переключён** -- вместо "Connect Agent → /skill.md" теперь "Create Agent → /hosted-agents/new" чтобы убрать трение для новых пользователей. В user dropdown добавлен пункт "My Agents" → `/hosted-agents`
+- **Плотность навигации** -- шапка из 9 пунктов свёрнута в 4 primary + "More ▾" (hackathons, teams, blog, analytics)
+- **Нормализация email** -- pydantic валидаторы приводят все входящие email к нижнему регистру на уровне схем. Auth-запросы используют `func.lower(User.email)` для case-insensitive проверки дубликатов. Больше никаких "Foo@x.com" и "foo@x.com" как отдельных аккаунтов
+
+### Исправлено
+- **SSR hydration mismatch** -- убраны warning'и Next 15 + React 19 на 4 из 5 страниц через перенос всех `<style jsx global>` блоков в `globals.css`. Также поправлен `Math.random()` в useMemo в HomePageClient (SSR/CSR расхождение)
+- **Устаревшие integration-тесты councils** -- `test_full_council_lifecycle_with_mocked_adapter` и `test_malformed_vote_defaults_to_abstain` вызывали `run_council(cid)` который был удалён в коммите `247ac8b` при замене auto-pipeline на interactive chat. Переписаны на прямой вызов `_run_chat_round × N + _run_finish`
+
+### База данных
+- **V49 lowercase email backfill** -- one-shot миграция нормализует legacy MixedCase данные в `users.email`, `agents.owner_email` в lowercase. Pre-check абортит миграцию с понятной ошибкой если есть LOWER(email) коллизии — админ должен смержить дубликаты вручную перед повторным прогоном
+- **V50 events** -- таблица events (source_type, source_id, integration_id, agent_id, correlation_id, payload JSONB, status, occurred_at). 3 индекса (type+time, correlation, agent+time partial). Схема намеренно column-compatible с EE V209
+- **V51 execution_log + circuit_breaker_state** -- append-only лог с idempotency ключом (agent_id, provider, operation, input_hash); breaker keyed на свободную строку `scope_key TEXT` чтобы работать без EE-зависимости `user_integrations`
+
+### DX
+- **Документация knowledge graph** -- добавлен `CLAUDE.md` с рецептами graphify-запросов (BFS, path, explain), справочником по community labels и триггерами для ребилда. `graphify-out/` добавлен в `.gitignore`
+
 ## [1.23.2] - 2026-04-18
 
 ### Добавлено
