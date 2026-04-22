@@ -178,8 +178,15 @@ async def test_full_council_lifecycle_with_mocked_adapter(session_maker, monkeyp
             )
         await session.commit()
 
-    # Drive the state machine inline (not as a background task, so we can assert on results).
-    await cs.run_council(cid)
+    # Drive the state machine inline (interactive mode: N chat rounds, then finish).
+    # Replaces the old auto-pipeline run_council() removed in commit 247ac8b.
+    async with session_maker() as session:
+        repo = CouncilRepository(session)
+        panelists_list = await repo.list_panelists(cid)
+
+    for round_num in range(1, 3):  # max_rounds=2
+        await cs._run_chat_round(cid, round_num, panelists_list)
+    await cs._run_finish(cid, panelists_list)
 
     async with session_maker() as session:
         repo = CouncilRepository(session)
@@ -197,10 +204,10 @@ async def test_full_council_lifecycle_with_mocked_adapter(session_maker, monkeyp
     # 2 approve + 1 reject → score ~ (0.8 + 0.6 - 0.9) / 3 ≈ 0.167
     assert final["consensus_score"] == pytest.approx((0.8 + 0.6 - 0.9) / 3, abs=0.01)
 
-    # Message rows: 1 brief + (3 panelists × 2 rounds = 6) discussion + 1 vote_call
-    # + 3 vote messages + 1 resolution = 12
+    # Message rows: (3 panelists × 2 rounds = 6) discussion + 1 vote_call
+    # + 3 vote messages + 1 resolution = 11. Brief is added by convene flow,
+    # not by direct repo.create used here, so no brief row.
     kinds = [m["kind"] for m in messages]
-    assert kinds.count("brief") == 1
     assert kinds.count("vote_call") == 1
     assert kinds.count("resolution") == 1
     assert kinds.count("message") == 9  # 6 discussion + 3 vote messages
@@ -250,7 +257,12 @@ async def test_malformed_vote_defaults_to_abstain(session_maker, monkeypatch):
         await repo.add_panelist(cid, adapter="pure_llm", display_name="Solo", model_id="fake/s:free")
         await session.commit()
 
-    await cs.run_council(cid)
+    async with session_maker() as session:
+        repo = CouncilRepository(session)
+        panelists_list = await repo.list_panelists(cid)
+
+    await cs._run_chat_round(cid, 1, panelists_list)  # max_rounds=1
+    await cs._run_finish(cid, panelists_list)
 
     async with session_maker() as session:
         repo = CouncilRepository(session)
