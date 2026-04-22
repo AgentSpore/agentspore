@@ -3,8 +3,8 @@
 ## [1.24.0] - 2026-04-22
 
 ### Добавлено
-- **Шина событий (OSS-lite)** -- надёжный append-only лог канонических событий агентов (tracker.*, vcs.*, agent.*) с live-рассылкой через Redis. Новые endpoint'ы: `GET /api/v1/events` (list + фильтр по type), `GET /api/v1/events/stream` (SSE-хвост с glob-паттерном), `GET /api/v1/events/{id}`, `POST /api/v1/events` (ручная публикация от имени агента). Схема column-compatible с EE V209 для беспроблемного апгрейда. Подписки + dispatcher workflow остаются EE-only
-- **Circuit breaker + execution log (OSS-lite)** -- per-scope resilience для исходящих вызовов. `CircuitBreaker.guard(scope, call)` с state machine closed → open → half_open → closed (дефолт 5 ошибок / 60с окно / 30с cooldown). `ExecutionLogger.record(...)` async context manager пишет provider/operation/input_hash/output/duration/error в immutable лог. Новые endpoint'ы: `GET /api/v1/execution-log` (agent-scoped read с фильтрами provider/status/operation), `GET /api/v1/execution-log/{step_id}`. Saga-компенсация остаётся EE-only
+- **Шина событий** -- надёжный append-only лог канонических событий агентов (tracker.*, vcs.*, agent.*) с live-рассылкой через Redis. Новые endpoint'ы: `GET /api/v1/events` (list + фильтр по type), `GET /api/v1/events/stream` (SSE-хвост с glob-паттерном), `GET /api/v1/events/{id}`, `POST /api/v1/events` (ручная публикация от имени агента)
+- **Circuit breaker + execution log** -- per-scope resilience для исходящих вызовов. `CircuitBreaker.guard(scope, call)` с state machine closed → open → half_open → closed (дефолт 5 ошибок / 60с окно / 30с cooldown). `ExecutionLogger.record(...)` async context manager пишет provider/operation/input_hash/output/duration/error в immutable лог. Новые endpoint'ы: `GET /api/v1/execution-log` (agent-scoped read с фильтрами provider/status/operation), `GET /api/v1/execution-log/{step_id}`
 - **Фиксы ghost rate регистрации** -- 7 шаблонов агентов с click-to-fill на `/hosted-agents/new`, auth wall с редиректом на `/login?next=...`, диагностика silent-submit на `/login` (AbortController 15s, "медленный" hint на 3с, 7 дифференцированных error path), CTA-полосы на dashboard для анонимов и состояния "0 агентов"
 
 ### Изменено
@@ -18,8 +18,8 @@
 
 ### База данных
 - **V49 lowercase email backfill** -- one-shot миграция нормализует legacy MixedCase данные в `users.email`, `agents.owner_email` в lowercase. Pre-check абортит миграцию с понятной ошибкой если есть LOWER(email) коллизии — админ должен смержить дубликаты вручную перед повторным прогоном
-- **V50 events** -- таблица events (source_type, source_id, integration_id, agent_id, correlation_id, payload JSONB, status, occurred_at). 3 индекса (type+time, correlation, agent+time partial). Схема намеренно column-compatible с EE V209
-- **V51 execution_log + circuit_breaker_state** -- append-only лог с idempotency ключом (agent_id, provider, operation, input_hash); breaker keyed на свободную строку `scope_key TEXT` чтобы работать без EE-зависимости `user_integrations`
+- **V50 events** -- таблица events (source_type, source_id, integration_id, agent_id, correlation_id, payload JSONB, status, occurred_at). 3 индекса (type+time, correlation, agent+time partial)
+- **V51 execution_log + circuit_breaker_state** -- append-only лог с idempotency ключом (agent_id, provider, operation, input_hash); breaker keyed на свободную строку `scope_key TEXT`
 
 ### DX
 - **Документация knowledge graph** -- добавлен `CLAUDE.md` с рецептами graphify-запросов (BFS, path, explain), справочником по community labels и триггерами для ребилда. `graphify-out/` добавлен в `.gitignore`
