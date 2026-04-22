@@ -25,25 +25,31 @@ function GithubIcon() {
   );
 }
 
-const navLinks = [
-  { href: "/", label: "Home", icon: "~" },
+interface NavLink { href: string; label: string; icon: string; dot?: boolean; }
+// Primary nav — core daily-driver pages. Keep ≤4 to avoid choice paralysis.
+const navLinks: NavLink[] = [
   { href: "/dashboard", label: "Dashboard", icon: ">" },
-  { href: "/hackathons", label: "Hackathons", icon: "#" },
   { href: "/projects", label: "Projects", icon: "/" },
   { href: "/agents", label: "Agents", icon: "@" },
-  { href: "/teams", label: "Teams", icon: "^" },
-  { href: "/analytics", label: "Analytics", icon: "*" },
-  { href: "/blog", label: "Blog", icon: "+" },
   { href: "/chat", label: "Chat", dot: true, icon: "$" },
+];
+// Secondary nav — folded under "More ▾" dropdown on desktop, flat list on mobile.
+const navMore: NavLink[] = [
+  { href: "/hackathons", label: "Hackathons", icon: "#" },
+  { href: "/teams", label: "Teams", icon: "^" },
+  { href: "/blog", label: "Blog", icon: "+" },
+  { href: "/analytics", label: "Analytics", icon: "*" },
 ];
 
 export function Header() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [ready, setReady] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
 
   useEffect(() => {
@@ -76,6 +82,9 @@ export function Header() {
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
+      }
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -312,6 +321,45 @@ export function Header() {
                   {label}
                 </Link>
               ))}
+
+              {/* More dropdown — hackathons, teams, blog, analytics */}
+              <div className="relative" ref={moreRef}>
+                <button
+                  onClick={() => setMoreOpen((o) => !o)}
+                  className={`relative px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 font-mono ${
+                    navMore.some((l) => isActive(l.href))
+                      ? "text-white bg-white/[0.06]"
+                      : "text-neutral-500 hover:text-neutral-300 hover:bg-white/[0.03]"
+                  }`}
+                  aria-haspopup="menu"
+                  aria-expanded={moreOpen}
+                >
+                  <span className="text-[10px] text-neutral-700">…</span>
+                  More
+                  <svg className={`w-2.5 h-2.5 text-neutral-700 transition-transform ${moreOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M3 5l3 3 3-3" />
+                  </svg>
+                </button>
+                {moreOpen && (
+                  <div className="header-menu-enter absolute left-1/2 -translate-x-1/2 top-full mt-2 w-48 rounded-xl border border-neutral-800/80 bg-[#0c0c0c] shadow-[0_8px_40px_rgba(0,0,0,0.6)] py-1 z-50">
+                    {navMore.map(({ href, label, icon }) => (
+                      <Link
+                        key={href}
+                        href={href}
+                        onClick={() => setMoreOpen(false)}
+                        className={`flex items-center gap-2.5 px-4 py-2 text-[13px] transition-all ${
+                          isActive(href)
+                            ? "text-white bg-white/[0.04]"
+                            : "text-neutral-400 hover:text-white hover:bg-white/[0.04]"
+                        }`}
+                      >
+                        <span className={`w-4 text-center ${isActive(href) ? "text-violet-400" : "text-neutral-700"}`}>{icon}</span>
+                        {label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
             </nav>
           </div>
         </div>
@@ -354,7 +402,7 @@ export function Header() {
         {/* Mobile dropdown */}
         {mobileOpen && (
           <div className="mobile-menu-enter lg:hidden border-t border-neutral-800/60 bg-[#0a0a0a]/98 backdrop-blur-md px-4 py-3 flex flex-col gap-0.5">
-            {navLinks.map(({ href, label, dot, icon }) => (
+            {[...navLinks, ...navMore].map(({ href, label, dot, icon }) => (
               <Link
                 key={href}
                 href={href}
