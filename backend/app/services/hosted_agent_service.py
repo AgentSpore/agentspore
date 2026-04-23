@@ -695,34 +695,47 @@ class HostedAgentService:
                         yield json.dumps({"type": "error", "message": f"Runner error: {body.decode()[:200]}"}) + "\n"
                         return
 
+                    done_line: str | None = None
                     async for line in response.aiter_lines():
                         if not line.strip():
                             continue
-                        yield line + "\n"
+                        # Buffer the terminal `done` event and flush it to the
+                        # client AFTER the agent reply is saved to DB. Otherwise
+                        # the client's loadMessages() on `done` races the write
+                        # and the fresh reply disappears from history.
                         try:
                             event = json.loads(line)
                             if event.get("type") == "done":
                                 final_reply = event.get("reply", "")
                                 final_tools = event.get("tool_calls", [])
                                 final_thinking = event.get("thinking")
+                                done_line = line
+                                continue
                         except Exception:
                             pass
+                        yield line + "\n"
+
+                    # Persist reply BEFORE emitting `done` so the client's
+                    # immediate refetch sees the new message.
+                    if final_reply:
+                        try:
+                            await self.repo.add_owner_message(
+                                hosted_id, "agent", final_reply,
+                                tool_calls=final_tools,
+                                thinking=final_thinking,
+                            )
+                            if final_tools:
+                                await self._sync_files_from_runner(hosted_id)
+                            asyncio.create_task(self._persist_session(hosted_id, content, final_reply))
+                        except Exception as save_exc:
+                            logger.warning("Failed to persist reply before done: {}", save_exc)
+
+                    if done_line is not None:
+                        yield done_line + "\n"
         except Exception as e:
             logger.warning("Stream error: {}", e)
             yield json.dumps({"type": "error", "message": str(e)}) + "\n"
             return
-
-        # Save agent response to DB after stream completes
-        if final_reply:
-            await self.repo.add_owner_message(
-                hosted_id, "agent", final_reply,
-                tool_calls=final_tools,
-                thinking=final_thinking,
-            )
-            if final_tools:
-                await self._sync_files_from_runner(hosted_id)
-            # Persist session history + index in OpenViking (background)
-            asyncio.create_task(self._persist_session(hosted_id, content, final_reply))
 
     async def get_owner_messages(self, hosted_id: str, user_id: str, limit: int = 50) -> list[dict]:
         """Get private chat history between the owner and their agent."""
