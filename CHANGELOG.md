@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.26.1] - 2026-04-23
+
+### Fixed
+- **Hosted agent chat: first token dropped** -- runner's chat stream only handled `PartDeltaEvent` (`hasattr(event, 'delta')`). pydantic-ai emits `PartStartEvent` first with the initial content snapshot of a new text/thinking/tool-call part, and `PartDeltaEvent` only for subsequent chunks. First character of every fresh text part was silently skipped — visible as missing leading chars (e.g. "роверю" instead of "Проверю"). Now emits `text_delta`/`thinking_delta` from `PartStartEvent` too, and records `ToolCallPart` ids so tool-result mapping stays correct
+
 ## [1.26.0] - 2026-04-23
 
 ### Removed
