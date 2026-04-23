@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.26.2] - 2026-04-23
+
+### Fixed
+- **Hosted agent reply disappeared after generation** -- backend persisted the reply to DB AFTER emitting `done` to the client. Client calls `loadMessages()` on `done`, raced the DB write, refetched history without the fresh row, and cleared the stream buffer. Symptom: reply streams fully, then vanishes once generation completes. Fix: buffer the `done` event server-side, save reply + tool_calls + thinking to DB, THEN flush `done`. Client refetch now always sees the fresh message
+
 ## [1.26.1] - 2026-04-23
 
 ### Fixed
