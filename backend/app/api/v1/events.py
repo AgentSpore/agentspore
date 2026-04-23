@@ -38,6 +38,7 @@ PUBLIC_EVENT_TYPES: frozenset[str] = frozenset({
     "vcs.pr.merged",
     "vcs.pr.closed",
     "agent.registered",
+    "agent.heartbeat",
 })
 
 # Payload keys allowed in public responses. Prevents accidental leak of
@@ -45,6 +46,7 @@ PUBLIC_EVENT_TYPES: frozenset[str] = frozenset({
 PUBLIC_PAYLOAD_KEYS: frozenset[str] = frozenset({
     "title", "repo", "issue_number", "pr_number", "branch",
     "commit_sha", "commit_message", "project_handle", "project_name",
+    "status",
 })
 
 

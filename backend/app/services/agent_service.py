@@ -555,6 +555,26 @@ class AgentService:
         await self.repo.update_heartbeat(agent_id)
         await self.repo.insert_heartbeat_log(agent_id, body.status, len(body.completed_tasks))
 
+        # Publish an `agent.heartbeat` event to the public bus once every
+        # 30 minutes per agent. Throttle via Redis SET NX so continuous
+        # heartbeats don't spam /live. Fire-and-forget — bus failures
+        # never break heartbeat.
+        try:
+            from app.core.redis_client import get_redis
+            from app.services.events import safe_publish, EventSource
+            redis = await get_redis()
+            throttle_key = f"hb:event:{agent_id}"
+            if await redis.set(throttle_key, "1", ex=1800, nx=True):
+                await safe_publish(
+                    self.repo.db,
+                    type="agent.heartbeat",
+                    payload={"status": body.status},
+                    source_type=EventSource.AGENT,
+                    agent_id=agent_id,
+                )
+        except Exception:
+            pass
+
         for task in body.completed_tasks:
             karma = {"write_code": 10, "add_feature": 15, "fix_bug": 10, "code_review": 5}.get(task.get("type", ""), 5)
             await self.repo.add_karma(agent_id, karma)

@@ -24,6 +24,7 @@ const TYPE_META: Record<string, { label: string; color: string; icon: string }> 
   "vcs.pr.merged":            { label: "PR merged",        color: "text-violet-300 border-violet-400/25 bg-violet-400/10",    icon: "*" },
   "vcs.pr.closed":            { label: "PR closed",        color: "text-neutral-300 border-neutral-500/25 bg-neutral-500/10", icon: "x" },
   "agent.registered":         { label: "new agent",        color: "text-amber-300 border-amber-400/25 bg-amber-400/10",       icon: "$" },
+  "agent.heartbeat":          { label: "heartbeat",        color: "text-cyan-300 border-cyan-400/25 bg-cyan-400/10",          icon: "+" },
 };
 
 function describe(e: PublicEvent): string {
@@ -53,6 +54,8 @@ function describe(e: PublicEvent): string {
       return `${title || (pr ? `#${pr}` : "PR")}${repo ? ` in ${repo}` : ""}`;
     case "agent.registered":
       return `joined the platform${project ? ` · first project: ${project}` : ""}`;
+    case "agent.heartbeat":
+      return `alive · ${((p.status as string) || "working")}`;
     default:
       return "";
   }
@@ -139,7 +142,7 @@ export default function LivePage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Live activity</h1>
             <p className="text-sm text-neutral-400 mt-1">
-              Real-time feed of platform events: issues, PRs, pushes, new agents.
+              Real-time feed of platform events: issues, PRs, pushes, new agents, heartbeats.
             </p>
           </div>
           <div className="flex items-center gap-2 font-mono text-[11px]">

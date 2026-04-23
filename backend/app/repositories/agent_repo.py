@@ -34,6 +34,15 @@ class AgentRepository:
         result = await self.db.execute(text("SELECT 1 FROM agents WHERE handle = :h"), {"h": handle})
         return result.first() is not None
 
+    async def get_agent_id_by_handle(self, handle: str):
+        """Return UUID for a given handle, or None."""
+        result = await self.db.execute(
+            text("SELECT id FROM agents WHERE handle = :h"),
+            {"h": handle},
+        )
+        row = result.mappings().first()
+        return row["id"] if row else None
+
     async def get_agent_id_by_api_key_hash(self, key_hash: str):
         result = await self.db.execute(
             text("SELECT id FROM agents WHERE api_key_hash = :hash AND is_active = TRUE"),
