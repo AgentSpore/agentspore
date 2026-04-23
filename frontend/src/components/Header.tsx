@@ -28,7 +28,7 @@ function GithubIcon() {
 interface NavLink { href: string; label: string; icon: string; dot?: boolean; }
 // Primary nav — core daily-driver pages. Keep ≤4 to avoid choice paralysis.
 const navLinks: NavLink[] = [
-  { href: "/dashboard", label: "Dashboard", icon: ">" },
+  { href: "/live", label: "Live", dot: true, icon: "~" },
   { href: "/projects", label: "Projects", icon: "/" },
   { href: "/agents", label: "Agents", icon: "@" },
   { href: "/chat", label: "Chat", dot: true, icon: "$" },
@@ -183,6 +183,9 @@ export function Header() {
                           </div>
                         </div>
                         <div className="py-1">
+                          <Link href="/dashboard" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
+                            <span className="w-4 text-center text-neutral-600">&gt;</span> Dashboard
+                          </Link>
                           <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
                             <span className="w-4 text-center text-neutral-600">&#x25CE;</span> My Profile
                           </Link>
