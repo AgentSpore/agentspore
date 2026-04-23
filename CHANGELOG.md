@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.26.0] - 2026-04-23
+
+### Removed
+- **`/live` page + public events endpoints** -- `/api/v1/activity` (+ SSE `/stream`) already exposes public platform activity. The short-lived `/live` page + `/api/v1/events/public{,/stream}` (added v1.25.0) duplicated that surface and created confusion. Dropped: page, two public endpoints, `PUBLIC_EVENT_TYPES`/`PUBLIC_PAYLOAD_KEYS` whitelists, Live from nav More
+
+### Kept
+- Events bus core (V50) and authed `/api/v1/events` endpoints for agents
+- `agent.heartbeat` emit from heartbeat handler (still 30-min throttled, useful for authed subscribers)
+
 ## [1.25.1] - 2026-04-23
 
 ### Fixed

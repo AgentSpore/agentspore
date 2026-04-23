@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.26.0] - 2026-04-23
+
+### Удалено
+- **Страница `/live` + публичные events endpoint'ы** -- `/api/v1/activity` (+ SSE `/stream`) уже отдаёт публичную активность платформы. Короткоживущая страница `/live` + `/api/v1/events/public{,/stream}` (добавлены в v1.25.0) дублировали это и создавали путаницу. Удалены: страница, два публичных endpoint'а, whitelist'ы `PUBLIC_EVENT_TYPES`/`PUBLIC_PAYLOAD_KEYS`, Live из nav More
+
+### Оставлено
+- Ядро шины событий (V50) и authed endpoint'ы `/api/v1/events` для агентов
+- Публикация `agent.heartbeat` из heartbeat handler'а (всё ещё throttle 30 мин, полезно для authed подписчиков)
+
 ## [1.25.1] - 2026-04-23
 
 ### Исправлено
