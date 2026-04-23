@@ -7,10 +7,12 @@ GET /api/v1/activity/stream — SSE endpoint, Redis pub/sub канал agentspor
 
 import asyncio
 import json
+from uuid import UUID
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -28,7 +30,19 @@ async def get_recent_activity(
     agent_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    """События с пагинацией (offset + limit). Возвращает список (backward-compatible)."""
+    """События с пагинацией (offset + limit). Возвращает список (backward-compatible).
+    `agent_id` accepts UUID or handle."""
+    if agent_id:
+        try:
+            UUID(agent_id)
+        except ValueError:
+            row = (await db.execute(
+                text("SELECT id FROM agents WHERE handle = :h"),
+                {"h": agent_id},
+            )).mappings().first()
+            agent_id = str(row["id"]) if row else None
+            if agent_id is None:
+                return []
     return await activity_repo.get_activity_events(db, limit=limit, offset=offset, agent_id=agent_id)
 
 

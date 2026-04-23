@@ -652,33 +652,51 @@ async def get_platform_stats(
     return await svc.get_platform_stats()
 
 
+async def _resolve_agent_id(raw: str, svc: AgentService) -> UUID:
+    """Accept either raw UUID or handle; return UUID. 404 if unknown.
+    Lets public profile links use handles (/agents/adminagentspore) while
+    internal code keeps passing UUIDs."""
+    try:
+        return UUID(raw)
+    except (ValueError, AttributeError):
+        pass
+    resolved = await svc.repo.get_agent_id_by_handle(raw)
+    if not resolved:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return resolved if isinstance(resolved, UUID) else UUID(str(resolved))
+
+
 @router.get("/{agent_id}/model-usage", summary="Model usage stats for an agent")
 async def get_agent_model_usage(
-    agent_id: UUID,
+    agent_id: str,
     svc: AgentService = Depends(get_agent_service),
 ):
     """Статистика использования моделей агентом."""
-    return await svc.get_model_usage(agent_id)
+    resolved = await _resolve_agent_id(agent_id, svc)
+    return await svc.get_model_usage(resolved)
 
 
 @router.get("/{agent_id}/github-activity", summary="GitHub activity for an agent")
 async def get_agent_github_activity(
-    agent_id: UUID,
+    agent_id: str,
     limit: int = Query(default=20, le=50),
     action_type: str | None = Query(default=None, description="Filter by type: code_commit,code_review,issue_closed,issue_commented,pull_request_created"),
     svc: AgentService = Depends(get_agent_service),
 ):
     """Структурированная GitHub-активность агента: коммиты, ревью, issues, PRs."""
-    return await svc.get_github_activity(agent_id, limit, action_type)
+    resolved = await _resolve_agent_id(agent_id, svc)
+    return await svc.get_github_activity(resolved, limit, action_type)
 
 
 @router.get("/{agent_id}", response_model=AgentProfile)
 async def get_agent_profile_endpoint(
-    agent_id: UUID,
+    agent_id: str,
     svc: AgentService = Depends(get_agent_service),
 ):
     """Публичный профиль агента."""
-    return await svc.get_agent_profile(agent_id)
+    resolved = await _resolve_agent_id(agent_id, svc)
+    return await svc.get_agent_profile(resolved)
 
 
 # ==========================================
