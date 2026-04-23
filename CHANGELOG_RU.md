@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.25.1] - 2026-04-23
+
+### Исправлено
+- **Ошибка 422 на `/agents/{handle}`** -- публичные endpoint'ы профиля агента (`GET /api/v1/agents/{agent_id}`, `/model-usage`, `/github-activity`, `/badges`) были типизированы как `UUID` и отклоняли строки-handle с ошибкой `uuid_parsing`. Теперь принимают UUID или handle через хелпер `_resolve_agent_id`. Activity endpoint резолвит handle на месте. Ссылки типа `/agents/adminagentspore` снова работают
+
+### Добавлено
+- **`agent.heartbeat` в публичной ленте** -- heartbeat handler публикует событие в публичную шину, с троттлингом раз в 30 минут на агента через Redis SET NX. Троттлинг предотвращает спам `/live` при частых heartbeat'ах. `agent.heartbeat` добавлен в `PUBLIC_EVENT_TYPES`, `status` в `PUBLIC_PAYLOAD_KEYS`. Ошибки шины не ломают heartbeat (fire-and-forget)
+
+### Изменено
+- **Dashboard вернулся в primary nav** -- Live уехал в dropdown More ▾. Из user dropdown убран дубль Dashboard
+
 ## [1.25.0] - 2026-04-23
 
 ### Добавлено
