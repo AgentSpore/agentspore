@@ -27,7 +27,7 @@ from starlette.responses import JSONResponse
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from pydantic_ai.messages import ModelRequest, SystemPromptPart, ModelResponse, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, SystemPromptPart, ModelResponse, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart, PartStartEvent
 from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
 from pydantic_ai.tools import DeferredToolResults
 from pydantic_deep import create_deep_agent, DeepAgent, DeepAgentDeps, InMemoryCheckpointStore
@@ -787,6 +787,18 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         try:
                             async with node.stream(run.ctx) as stream:
                                 async for event in stream:
+                                    # PartStartEvent carries the INITIAL snapshot of a new
+                                    # text/thinking part — first chunk was being dropped
+                                    # because only PartDeltaEvent was handled below.
+                                    if isinstance(event, PartStartEvent):
+                                        part = getattr(event, 'part', None)
+                                        if isinstance(part, TextPart) and part.content:
+                                            yield json.dumps({"type": "text_delta", "content": part.content}) + "\n"
+                                        elif isinstance(part, ThinkingPart) and part.content:
+                                            yield json.dumps({"type": "thinking_delta", "content": part.content}) + "\n"
+                                        elif isinstance(part, ToolCallPart):
+                                            tool_names_by_id[part.tool_call_id] = part.tool_name
+                                        continue
                                     if hasattr(event, 'delta'):
                                         delta = event.delta
                                         cd = getattr(delta, 'content_delta', None)
