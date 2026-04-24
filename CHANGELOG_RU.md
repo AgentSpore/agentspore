@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.26.5] - 2026-04-24
+
+### Исправлено
+- **`/health` endpoint вернул 503 после v1.26.4** -- рефакторинг background-task убрал импорты `async_session_maker`, `get_redis` и `sqlalchemy.text` из `main.py` вместе с inline task loops. `/health` всё ещё вызывает их напрямую, `NameError` вылез на request time (не на import time), и pytest пропустил это потому что `/health` не покрыт тестами. Вернул три импорта
+
 ## [1.26.4] - 2026-04-24
 
 ### Изменено
