@@ -417,6 +417,55 @@ async def test_due_disabled_not_returned(db_session, repo):
 
 
 @pytest.mark.asyncio
+async def test_get_due_cron_tasks_atomic_claim(pg_async_url, db_session):
+    """Two concurrent repos must not both receive the same due task.
+
+    Simulates 2 uvicorn workers hitting get_due_cron_tasks at the same time.
+    With FOR UPDATE SKIP LOCKED + UPDATE ... RETURNING, only one worker
+    should grab each row; the other gets an empty list.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.repositories.hosted_agent_repo import HostedAgentRepository
+
+    user_id = str(uuid.uuid4())
+    agent = await _create_agent(db_session, "ClaimBot", is_hosted=True)
+    hosted_id = await _create_hosted(db_session, agent["id"], user_id)
+
+    past = datetime.now(timezone.utc) - timedelta(minutes=5)
+    repo_seed = HostedAgentRepository(db_session)
+    await repo_seed.create_cron_task({
+        "hosted_agent_id": hosted_id, "name": "Contended",
+        "cron_expression": "* * * * *", "task_prompt": "run",
+        "enabled": True, "auto_start": True, "max_runs": None,
+        "next_run_at": past,
+    })
+    await db_session.commit()
+
+    engine_a = create_async_engine(pg_async_url, future=True)
+    engine_b = create_async_engine(pg_async_url, future=True)
+    maker_a = async_sessionmaker(engine_a, expire_on_commit=False)
+    maker_b = async_sessionmaker(engine_b, expire_on_commit=False)
+
+    async def worker(maker):
+        async with maker() as sess:
+            r = HostedAgentRepository(sess)
+            return await r.get_due_cron_tasks()
+
+    try:
+        results_a, results_b = await asyncio.gather(
+            worker(maker_a), worker(maker_b)
+        )
+    finally:
+        await engine_a.dispose()
+        await engine_b.dispose()
+
+    names_a = [t["name"] for t in results_a]
+    names_b = [t["name"] for t in results_b]
+    total = names_a.count("Contended") + names_b.count("Contended")
+    assert total == 1, f"Task claimed by {total} workers: A={names_a} B={names_b}"
+
+
+@pytest.mark.asyncio
 async def test_mark_cron_run(db_session, repo):
     """mark_cron_run increments count and updates next_run."""
     user_id = str(uuid.uuid4())
