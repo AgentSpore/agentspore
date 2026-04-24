@@ -379,21 +379,40 @@ class HostedAgentRepository:
         return result.rowcount > 0
 
     async def get_due_cron_tasks(self) -> list[dict]:
-        """Get all enabled tasks where next_run_at <= now."""
+        """Atomically claim due tasks. Safe across concurrent workers.
+
+        Uses FOR UPDATE SKIP LOCKED to prevent multiple workers from
+        grabbing the same row. Claimed rows are leased for 10 minutes
+        by setting next_run_at to now() + 10min; mark_cron_run overrides
+        this with the correct next_run after execution. If a worker
+        crashes mid-task, the lease expires and the task re-runs.
+        """
         result = await self.db.execute(
             text("""
-                SELECT t.*, h.status AS agent_status, h.owner_user_id,
+                WITH claimed AS (
+                    UPDATE agent_cron_tasks
+                    SET next_run_at = now() + interval '10 minutes',
+                        updated_at = now()
+                    WHERE id IN (
+                        SELECT id FROM agent_cron_tasks
+                        WHERE enabled = TRUE
+                          AND next_run_at IS NOT NULL
+                          AND next_run_at <= now()
+                          AND (max_runs IS NULL OR run_count < max_runs)
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    RETURNING *
+                )
+                SELECT c.*, h.status AS agent_status, h.owner_user_id,
                        a.name AS agent_name
-                FROM agent_cron_tasks t
-                JOIN hosted_agents h ON h.id = t.hosted_agent_id
+                FROM claimed c
+                JOIN hosted_agents h ON h.id = c.hosted_agent_id
                 JOIN agents a ON a.id = h.agent_id
-                WHERE t.enabled = TRUE
-                  AND t.next_run_at IS NOT NULL
-                  AND t.next_run_at <= now()
-                  AND (t.max_runs IS NULL OR t.run_count < t.max_runs)
             """),
         )
-        return [dict(r) for r in result.mappings()]
+        rows = [dict(r) for r in result.mappings()]
+        await self.db.commit()
+        return rows
 
     async def mark_cron_run(self, task_id: str, next_run_at, error: str | None = None) -> None:
         await self.db.execute(
