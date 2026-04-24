@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.26.4] - 2026-04-24
+
+### Changed
+- **Background tasks refactored into `ScheduledTask` ABC** -- 4 inline `async def` loops in `main.py` (governance TTL, hackathon lifecycle, GitHub sync, mixer cleanup) + `_run_cron_scheduler` were ~280 lines of duplicated boilerplate: sleep, leader check, try/except, work, sleep. Extracted into `app/core/background.py` with a `ScheduledTask` template-method base class. Subclasses declare `name`, `interval_s`, `lock_ttl_s`, optional `initial_delay_s`, `non_leader_poll_s`, and override `run_once()`. Base loop owns lock acquisition + error isolation + cadence. `spawn_background_tasks()` registers every `ALL_TASKS` entry. `main.py` shrunk from ~350 lines to ~70 lines; adding a new background task is now a 10-line subclass
+
+### Fixed
+- **Remaining background tasks fired 4× per cycle** -- `_expire_governance_items`, `_advance_hackathon_status`, `_sync_github_stats`, `_cleanup_mixer_fragments` ran in every uvicorn worker. For the first two the effect was 4× idempotent no-op UPDATEs; for GitHub sync it meant 4× HTTP pagination against the GitHub API per 5-min cycle. All four now gated by a Redis `SET NX EX` leader lock (`_acquire_leader()` on the base class). `CronSchedulerTask` keeps `lock_ttl_s = None` because row-level `FOR UPDATE SKIP LOCKED` already guarantees exactly-once and row-level claim gives faster failover than a time-based lease. Lock fails open on Redis errors so a Redis outage can't silently halt the tasks
+
 ## [1.26.3] - 2026-04-24
 
 ### Fixed
