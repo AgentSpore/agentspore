@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.26.3] - 2026-04-24
+
+### Fixed
+- **Cron tasks fired 2-4 times per trigger** -- production runs 4 uvicorn workers and each worker spawned its own `_run_cron_scheduler` in `lifespan`. `get_due_cron_tasks` was a plain `SELECT` without atomic claim, so every worker grabbed the same due row and every worker called `send_owner_message`, producing duplicate messages in the agent chat. Rewrote the query as a CTE with `FOR UPDATE SKIP LOCKED` + `UPDATE ... RETURNING`. Claimed rows get a 10-minute lease on `next_run_at` so a crashed worker's task re-runs instead of stalling; `mark_cron_run` overwrites the lease with the correct next_run after execution. Added a concurrency test asserting exactly one claim across two parallel sessions
+
 ## [1.26.2] - 2026-04-23
 
 ### Fixed
