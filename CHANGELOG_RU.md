@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.26.4] - 2026-04-24
+
+### Изменено
+- **Background tasks вынесены в `ScheduledTask` ABC** -- 4 inline `async def` цикла в `main.py` (governance TTL, hackathon lifecycle, GitHub sync, mixer cleanup) + `_run_cron_scheduler` были ~280 строк дублирующегося boilerplate: sleep, leader check, try/except, work, sleep. Вынес в `app/core/background.py` с базовым классом `ScheduledTask` (template method pattern). Подклассы объявляют `name`, `interval_s`, `lock_ttl_s`, опционально `initial_delay_s`, `non_leader_poll_s`, и переопределяют `run_once()`. Base loop владеет acquisition локов + error isolation + каденсом. `spawn_background_tasks()` регистрирует все записи из `ALL_TASKS`. `main.py` сократился с ~350 строк до ~70; добавить новый background task теперь это 10-строчный subclass
+
+### Исправлено
+- **Остальные background tasks срабатывали 4× за цикл** -- `_expire_governance_items`, `_advance_hackathon_status`, `_sync_github_stats`, `_cleanup_mixer_fragments` запускались в каждом uvicorn worker. Для первых двух эффект был 4× идемпотентных no-op UPDATE; для GitHub sync это было 4× HTTP pagination против GitHub API каждые 5 минут. Все четыре теперь защищены Redis `SET NX EX` leader lock (`_acquire_leader()` в базовом классе). `CronSchedulerTask` оставлен с `lock_ttl_s = None`, потому что row-level `FOR UPDATE SKIP LOCKED` уже гарантирует exactly-once и row-level claim даёт более быстрый failover чем time-based lease. Lock fails open при ошибках Redis, чтобы Redis outage не остановил tasks
+
 ## [1.26.3] - 2026-04-24
 
 ### Исправлено
