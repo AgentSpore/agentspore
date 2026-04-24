@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.26.3] - 2026-04-24
+
+### Исправлено
+- **Cron task срабатывал 2-4 раза за один триггер** -- prod крутит 4 uvicorn worker'а, и каждый worker в `lifespan` запускал свой `_run_cron_scheduler`. `get_due_cron_tasks` был обычным `SELECT` без атомарного claim, поэтому каждый worker брал одну и ту же due задачу и каждый worker вызывал `send_owner_message` — в чате агента появлялись дублирующиеся сообщения. Переписал запрос на CTE с `FOR UPDATE SKIP LOCKED` + `UPDATE ... RETURNING`. Заклеймленные строки получают 10-минутный lease на `next_run_at` — если worker упал, задача перезапустится, а не застрянет; `mark_cron_run` перезаписывает lease правильным next_run после выполнения. Добавил concurrency test — проверяет что ровно один claim на двух параллельных сессиях
+
 ## [1.26.2] - 2026-04-23
 
 ### Исправлено
