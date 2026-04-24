@@ -14,12 +14,14 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
+from sqlalchemy import text
 
 from app.api.v1 import api_router
 from app.core.background import spawn_background_tasks
 from app.core.config import get_settings
+from app.core.database import async_session_maker
 from app.core.logging import setup_logging
-from app.core.redis_client import close_redis, init_redis
+from app.core.redis_client import close_redis, get_redis, init_redis
 
 setup_logging()
 

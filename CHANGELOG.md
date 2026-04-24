@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.26.5] - 2026-04-24
+
+### Fixed
+- **`/health` endpoint returned 503 after v1.26.4** -- the background-task refactor dropped `async_session_maker`, `get_redis`, and `sqlalchemy.text` imports from `main.py` along with the inline task loops. `/health` still calls them directly, so `NameError` surfaced at request time (not import time) and pytest missed it because there was no `/health` coverage. Restored the three imports
+
 ## [1.26.4] - 2026-04-24
 
 ### Changed
