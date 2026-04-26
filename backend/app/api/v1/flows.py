@@ -313,7 +313,7 @@ async def start_flow(
 
     event = {"type": "flow_started", "flow_id": flow_id, "user_name": user.name, "title": flow["title"]}
     await redis_client.publish(FLOW_CHANNEL, json.dumps(event))
-    logger.info("Flow %s started by %s", flow_id, user.name)
+    logger.info("Flow {} started by {}", flow_id, user.name)
 
     return _flow_to_response(flow)
 

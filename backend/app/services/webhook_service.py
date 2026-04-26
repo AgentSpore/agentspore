@@ -209,7 +209,7 @@ class GitHubWebhookService:
                     f"External PR #{pr_number} '{pr_title[:100]}' by @{ctx['sender_login']} — awaiting governance vote",
                     project_id, pr_url, f"{project_id}:pr:{pr_number}", priority="high",
                 )
-            logger.info("Governance: external PR #%d on %s by @%s", pr_number, ctx["project"]["title"], ctx["sender_login"])
+            logger.info("Governance: external PR #{} on {} by @{}", pr_number, ctx["project"]["title"], ctx["sender_login"])
             return {"status": "ok", "governance": "queued" if created else "duplicate"}
 
         if action == "closed":
@@ -230,7 +230,7 @@ class GitHubWebhookService:
                     f"{project_id}:pr_merged:{pr_number}", priority="medium", source_type="pr_merged",
                 )
             status_str = "merged" if merged else "closed"
-            logger.info("PR #%d %s on %s", pr_number, status_str, ctx["project"]["title"])
+            logger.info("PR #{} {} on {}", pr_number, status_str, ctx["project"]["title"])
             return {"status": "ok", "pr_status": status_str}
 
         return {"status": "ignored", "reason": f"pull_request action={action}"}
@@ -260,7 +260,7 @@ class GitHubWebhookService:
             for c in commits
         )
         if proxy_push:
-            logger.info("Webhook skip: proxy push by %s to %s (already counted)", ctx["sender_login"], ctx["project"]["title"])
+            logger.info("Webhook skip: proxy push by {} to {} (already counted)", ctx["sender_login"], ctx["project"]["title"])
             return {"status": "ignored", "reason": "proxy_push_already_counted"}
 
         is_agent = await self.repo.get_agent_by_github_login(ctx["sender_login"]) is not None
@@ -270,7 +270,7 @@ class GitHubWebhookService:
                 changed_files.update(c.get("added", []))
                 changed_files.update(c.get("modified", []))
             await self._award_contribution_points(project_id, ctx["sender_login"], len(changed_files), len(commits), vcs="github")
-            logger.info("Agent push: @%s → %d files, %d commits on %s", ctx["sender_login"], len(changed_files), len(commits), ctx["project"]["title"])
+            logger.info("Agent push: @{} → {} files, {} commits on {}", ctx["sender_login"], len(changed_files), len(commits), ctx["project"]["title"])
             return {"status": "ok", "type": "agent_push", "files": len(changed_files), "commits": len(commits)}
 
         is_main = branch in ("main", "master")
@@ -295,7 +295,7 @@ class GitHubWebhookService:
                 project_id, compare_url,
                 f"{project_id}:push:{ctx['sender_login']}:{branch}", priority=severity,
             )
-        logger.warning("Governance: %s push to %s/%s by @%s", "FORCE" if forced else "direct", ctx["project"]["title"], branch, ctx["sender_login"])
+        logger.warning("Governance: {} push to {}/{} by @{}", "FORCE" if forced else "direct", ctx["project"]["title"], branch, ctx["sender_login"])
         return {"status": "ok", "governance": "queued" if created else "duplicate"}
 
     async def _on_repository(self, data: dict, ctx: dict) -> dict:
@@ -307,24 +307,24 @@ class GitHubWebhookService:
             await self.agent_repo.delete_project_and_related(project_id)
             if owner_id:
                 await self.agent_repo.recount_agent_projects(owner_id)
-            logger.info("Repository deleted on GitHub — project %s removed from DB", project_id)
+            logger.info("Repository deleted on GitHub — project {} removed from DB", project_id)
             return {"status": "ok", "project_deleted": True}
 
         if action == "archived":
             await self.repo.update_project_status(project_id, "archived")
-            logger.info("Repository archived — project %s → archived", project_id)
+            logger.info("Repository archived — project {} → archived", project_id)
             return {"status": "ok"}
 
         if action == "unarchived":
             await self.repo.update_project_status(project_id, "active")
-            logger.info("Repository unarchived — project %s → active", project_id)
+            logger.info("Repository unarchived — project {} → active", project_id)
             return {"status": "ok"}
 
         if action == "renamed":
             new_url = data.get("repository", {}).get("html_url", "")
             if new_url:
                 await self.repo.update_project_repo_url(project_id, new_url)
-                logger.info("Repository renamed — project %s repo_url → %s", project_id, new_url)
+                logger.info("Repository renamed — project {} repo_url → {}", project_id, new_url)
             return {"status": "ok"}
 
         return {"status": "ignored", "reason": f"repository action={action}"}
@@ -332,7 +332,7 @@ class GitHubWebhookService:
     async def _on_star(self, data: dict, ctx: dict) -> dict:
         stars = data.get("repository", {}).get("stargazers_count", 0)
         await self.repo.update_project_stars(ctx["project"]["id"], stars)
-        logger.info("Star %s on project %s — total: %d", ctx["action"], ctx["project"]["title"], stars)
+        logger.info("Star {} on project {} — total: {}", ctx["action"], ctx["project"]["title"], stars)
         return {"status": "ok", "stars": stars}
 
     # ── Private helpers ───────────────────────────────────────────────────────
@@ -374,8 +374,8 @@ class GitHubWebhookService:
                     await self.repo.increment_tokens_minted(project_id, agent_id, points)
                     await self.repo.increment_project_total_minted(project_id, points)
             except Exception as exc:
-                logger.warning("Token mint failed for project %s agent %s: %s", project_id, agent_id, exc)
-        logger.info("Contribution: @%s pushed %d files (%d commits) to project %s (+%d pts)", login, files_changed, commit_count, project_id, points)
+                logger.warning("Token mint failed for project {} agent {}: {}", project_id, agent_id, exc)
+        logger.info("Contribution: @{} pushed {} files ({} commits) to project {} (+{} pts)", login, files_changed, commit_count, project_id, points)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -509,7 +509,7 @@ class GitLabWebhookService:
                     f"{project_id}:pr_merged:{mr_iid}", priority="medium", source_type="pr_merged",
                 )
             status_str = "merged" if merged else "closed"
-            logger.info("MR !%s %s on %s", mr_iid, status_str, ctx["project"]["title"])
+            logger.info("MR !{} {} on {}", mr_iid, status_str, ctx["project"]["title"])
             return {"status": "ok", "mr_status": status_str}
 
         if action != "open":
@@ -534,7 +534,7 @@ class GitLabWebhookService:
                 f"External MR !{mr_iid} '{mr_title[:100]}' by @{ctx['sender_login']} — awaiting governance vote",
                 project_id, mr_url, f"{project_id}:pr:{mr_iid}", priority="high",
             )
-        logger.info("Governance: external MR !%s on %s by @%s", mr_iid, ctx["project"]["title"], ctx["sender_login"])
+        logger.info("Governance: external MR !{} on {} by @{}", mr_iid, ctx["project"]["title"], ctx["sender_login"])
         return {"status": "ok", "governance": "queued" if created else "duplicate"}
 
     async def _on_push(self, data: dict, ctx: dict) -> dict:
@@ -562,7 +562,7 @@ class GitLabWebhookService:
                 changed_files.update(c.get("added", []))
                 changed_files.update(c.get("modified", []))
             await self._award_contribution_points_gitlab(project_id, ctx["sender_login"], len(changed_files), len(commits))
-            logger.info("Agent push (GitLab): @%s → %d files on %s", ctx["sender_login"], len(changed_files), ctx["project"]["title"])
+            logger.info("Agent push (GitLab): @{} → {} files on {}", ctx["sender_login"], len(changed_files), ctx["project"]["title"])
             return {"status": "ok", "type": "agent_push", "files": len(changed_files)}
 
         is_main = branch in ("main", "master")
@@ -586,7 +586,7 @@ class GitLabWebhookService:
                 project_id, compare_url,
                 f"{project_id}:push:{ctx['sender_login']}:{branch}", priority=severity,
             )
-        logger.warning("Governance: direct push to %s/%s by @%s", ctx["project"]["title"], branch, ctx["sender_login"])
+        logger.warning("Governance: direct push to {}/{} by @{}", ctx["project"]["title"], branch, ctx["sender_login"])
         return {"status": "ok", "governance": "queued" if created else "duplicate"}
 
     # ── Private helpers ───────────────────────────────────────────────────────
@@ -628,5 +628,5 @@ class GitLabWebhookService:
                     await self.repo.increment_tokens_minted(project_id, agent_id, points)
                     await self.repo.increment_project_total_minted(project_id, points)
             except Exception as exc:
-                logger.warning("Token mint failed for project %s agent %s: %s", project_id, agent_id, exc)
-        logger.info("Contribution: @%s pushed %d files to project %s (+%d pts)", login, files_changed, project_id, points)
+                logger.warning("Token mint failed for project {} agent {}: {}", project_id, agent_id, exc)
+        logger.info("Contribution: @{} pushed {} files to project {} (+{} pts)", login, files_changed, project_id, points)

@@ -214,7 +214,7 @@ class PayoutService:
         users = await self.repo.get_user_contribution_summary(period_start, period_end)
 
         if not users:
-            logger.info("No eligible users for payout period %s — %s", period_start, period_end)
+            logger.info("No eligible users for payout period {} — {}", period_start, period_end)
             return []
 
         total_points = sum(u["total_points"] for u in users)

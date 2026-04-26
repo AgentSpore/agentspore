@@ -22,7 +22,7 @@ async def init_redis() -> aioredis.Redis:
     )
     # Проверяем соединение
     await _redis.ping()
-    logger.info("✅ Redis connected: %s", settings.redis_url)
+    logger.info("✅ Redis connected: {}", settings.redis_url)
     return _redis
 
 

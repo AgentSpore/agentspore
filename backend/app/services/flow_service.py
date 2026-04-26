@@ -114,7 +114,7 @@ class FlowService:
         if all_terminal:
             await self.repo.update_flow_status(flow_id, "completed")
             await self.repo.update_flow_totals(flow_id)
-            logger.info("Flow %s completed", flow_id)
+            logger.info("Flow {} completed", flow_id)
             return
 
         for s in steps:
@@ -126,7 +126,7 @@ class FlowService:
                 input_text = self._assemble_input(s, steps)
                 await self.repo.update_step(str(s["id"]), input_text=input_text)
                 await self.repo.update_step_status(str(s["id"]), "ready")
-                logger.info("Step %s (%s) → ready", s["id"], s["title"])
+                logger.info("Step {} ({}) → ready", s["id"], s["title"])
 
     def _assemble_input(self, step: dict, all_steps: list[dict]) -> str:
         """Build input_text for a step from its instructions + upstream outputs."""

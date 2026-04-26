@@ -149,7 +149,7 @@ class MixerService:
             details={"fragment_count": len(fragments), "ttl_hours": fragment_ttl_hours},
         )
 
-        logger.info("Mixer session %s created with %d fragments", session_id, len(fragments))
+        logger.info("Mixer session {} created with {} fragments", session_id, len(fragments))
         return {
             **session,
             "fragment_count": len(fragments),
@@ -183,7 +183,7 @@ class MixerService:
             details={"chunk_count": len(chunks), "warnings": warnings},
         )
 
-        logger.info("Mixer session %s started with %d chunks", session_id, len(chunks))
+        logger.info("Mixer session {} started with {} chunks", session_id, len(chunks))
         return {"session_id": session_id, "status": "running", "warnings": warnings}
 
     @staticmethod
@@ -267,7 +267,7 @@ class MixerService:
                 target_type="chunk", target_id=chunk_id,
                 details={"leak_details": details},
             )
-            logger.warning("Leak detected in chunk %s: %s", chunk_id, details)
+            logger.warning("Leak detected in chunk {}: {}", chunk_id, details)
             return {"status": "failed", "leak_detected": True, "leak_details": details}
 
         await self.repo.update_chunk_status(chunk_id, "review", output_text=output_text)
@@ -399,7 +399,7 @@ class MixerService:
             details={"chunk_count": len(chunks), "output_length": len(assembled)},
         )
 
-        logger.info("Mixer session %s assembled (%d chars)", session_id, len(assembled))
+        logger.info("Mixer session {} assembled ({} chars)", session_id, len(assembled))
         return assembled
 
     # ── Cancel ──────────────────────────────────────────────────────────
@@ -436,7 +436,7 @@ class MixerService:
                     details={"fragments_deleted": deleted},
                 )
                 count += 1
-                logger.info("Mixer cleanup: deleted %d fragments from session %s", deleted, sid)
+                logger.info("Mixer cleanup: deleted {} fragments from session {}", deleted, sid)
         return count
 
 

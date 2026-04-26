@@ -63,13 +63,13 @@ class GitLabService:
                 timeout=15.0,
             )
             if resp.status_code == 200:
-                logger.info("✅ GitLab initialized: gitlab.com/%s", self.group)
+                logger.info("✅ GitLab initialized: gitlab.com/{}", self.group)
                 self._initialized = True
                 return True
-            logger.warning("GitLab group %s not found or no access: %s", self.group, resp.status_code)
+            logger.warning("GitLab group {} not found or no access: {}", self.group, resp.status_code)
             return False
         except Exception as e:
-            logger.warning("GitLab initialization failed: %s", e)
+            logger.warning("GitLab initialization failed: {}", e)
             return False
 
     # ==========================================
@@ -98,7 +98,7 @@ class GitLabService:
             params={"username": username},
         )
         if resp.status_code != 200 or not resp.json():
-            logger.warning("GitLab user not found: %s", username)
+            logger.warning("GitLab user not found: {}", username)
             return
         user_id = resp.json()[0]["id"]
 
@@ -108,11 +108,11 @@ class GitLabService:
             json={"user_id": user_id, "access_level": 40},  # 40 = Maintainer
         )
         if resp.status_code in (200, 201):
-            logger.info("Added %s to GitLab group %s", username, self.group)
+            logger.info("Added {} to GitLab group {}", username, self.group)
         elif resp.status_code == 409:
-            logger.info("User %s already in group %s", username, self.group)
+            logger.info("User {} already in group {}", username, self.group)
         else:
-            logger.warning("Could not add %s to group: %s %s", username, resp.status_code, resp.text[:200])
+            logger.warning("Could not add {} to group: {} {}", username, resp.status_code, resp.text[:200])
 
     # ==========================================
     # Repository management
@@ -144,7 +144,7 @@ class GitLabService:
             headers=self._headers(),
         )
         if ns_resp.status_code != 200:
-            logger.warning("Cannot get GitLab group %s: %s", self.group, ns_resp.status_code)
+            logger.warning("Cannot get GitLab group {}: {}", self.group, ns_resp.status_code)
             return None
         namespace_id = ns_resp.json()["id"]
 
@@ -164,24 +164,24 @@ class GitLabService:
                 timeout=60.0,
             )
         except Exception as e:
-            logger.error("Network error creating GitLab project %s: %s", name, e)
+            logger.error("Network error creating GitLab project {}: {}", name, e)
             return None
 
         if resp.status_code == 201:
             repo_url = resp.json()["web_url"]
-            logger.info("✅ Created GitLab project: %s", repo_url)
+            logger.info("✅ Created GitLab project: {}", repo_url)
             return repo_url
         elif resp.status_code == 400:
             data = resp.json()
             # Already exists
             if "has already been taken" in str(data):
                 repo_url = f"https://gitlab.com/{self.group}/{name}"
-                logger.info("GitLab project %s already exists: %s", name, repo_url)
+                logger.info("GitLab project {} already exists: {}", name, repo_url)
                 return repo_url
-            logger.warning("400 creating GitLab project %s: %s", name, data)
+            logger.warning("400 creating GitLab project {}: {}", name, data)
             return None
         else:
-            logger.warning("Failed to create GitLab project %s: %s %s", name, resp.status_code, resp.text[:300])
+            logger.warning("Failed to create GitLab project {}: {} {}", name, resp.status_code, resp.text[:300])
             return None
 
     async def setup_repo_admin(self, repo_name: str) -> None:
@@ -199,11 +199,11 @@ class GitLabService:
             },
         )
         if resp.status_code in (200, 201):
-            logger.info("Branch protection enabled for %s/main (GitLab)", name)
+            logger.info("Branch protection enabled for {}/main (GitLab)", name)
         elif resp.status_code == 422:
-            logger.info("Branch protection already set for %s/main", name)
+            logger.info("Branch protection already set for {}/main", name)
         else:
-            logger.warning("Could not set branch protection for %s: %s %s", name, resp.status_code, resp.text[:200])
+            logger.warning("Could not set branch protection for {}: {} {}", name, resp.status_code, resp.text[:200])
 
     # ==========================================
     # File operations
@@ -274,13 +274,13 @@ class GitLabService:
                 timeout=60.0,
             )
         except Exception as e:
-            logger.error("Network error pushing to GitLab %s: %s", name, e)
+            logger.error("Network error pushing to GitLab {}: {}", name, e)
             return False
 
         if resp.status_code == 201:
-            logger.info("✅ Pushed %d files to GitLab %s", len(actions), name)
+            logger.info("✅ Pushed {} files to GitLab {}", len(actions), name)
             return True
-        logger.warning("GitLab push failed for %s: %s %s", name, resp.status_code, resp.text[:300])
+        logger.warning("GitLab push failed for {}: {} {}", name, resp.status_code, resp.text[:300])
         return False
 
     async def get_repo_url(self, repo_name: str) -> str:
@@ -414,7 +414,7 @@ class GitLabService:
         if resp.status_code == 201:
             data = resp.json()
             return {"id": data["id"], "url": data.get("web_url", "")}
-        logger.warning("comment_issue failed: %d %s", resp.status_code, resp.text[:200])
+        logger.warning("comment_issue failed: {} {}", resp.status_code, resp.text[:200])
         return None
 
     async def list_issue_comments(self, repo_name: str, issue_number: int) -> list[dict]:

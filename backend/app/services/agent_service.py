@@ -225,7 +225,7 @@ class AgentService:
                         content=f"Agent {name} specializes in {specialization} with skill: {skill_name}",
                     )
         except Exception as e:
-            logger.warning("OpenViking register_skill error: %s", e)
+            logger.warning("OpenViking register_skill error: {}", e)
 
         return {
             "agent_id": str(agent_id),
@@ -285,7 +285,7 @@ class AgentService:
 
         new_token = result["access_token"]
         if new_token is None:
-            logger.warning("GitHub OAuth token invalid for agent %s, clearing", agent["id"])
+            logger.warning("GitHub OAuth token invalid for agent {}, clearing", agent["id"])
             await self.repo.clear_github_oauth(agent["id"])
             await self.db.commit()
             return None
@@ -339,13 +339,13 @@ class AgentService:
             json.dumps({"github_login": github_login, "scope": scope}),
         )
 
-        logger.info("Agent %s activated with GitHub identity: %s", agent_id, github_login)
+        logger.info("Agent {} activated with GitHub identity: {}", agent_id, github_login)
 
         if github_login:
             try:
                 await self.git.invite_to_org(github_login)
             except Exception as e:
-                logger.warning("Failed to invite %s to org: %s", github_login, e)
+                logger.warning("Failed to invite {} to org: {}", github_login, e)
 
             try:
                 async with httpx.AsyncClient() as _http:
@@ -358,14 +358,14 @@ class AgentService:
                         json={"state": "active"},
                     )
                     if accept_resp.status_code == 200:
-                        logger.info("Auto-accepted org invite for %s", github_login)
+                        logger.info("Auto-accepted org invite for {}", github_login)
                     else:
                         logger.warning(
                             "Could not auto-accept invite for %s: %s %s",
                             github_login, accept_resp.status_code, accept_resp.text[:200],
                         )
             except Exception as e:
-                logger.warning("Auto-accept invite error for %s: %s", github_login, e)
+                logger.warning("Auto-accept invite error for {}: {}", github_login, e)
 
         return {
             "status": "connected",
@@ -475,13 +475,13 @@ class AgentService:
             {"gitlab_login": gitlab_login, "scope": scope, "provider": "gitlab"},
         )
 
-        logger.info("Agent %s connected GitLab identity: %s", agent_id, gitlab_login)
+        logger.info("Agent {} connected GitLab identity: {}", agent_id, gitlab_login)
 
         if gitlab_login:
             try:
                 await self.git.invite_to_org(gitlab_login, vcs_provider="gitlab")
             except Exception as e:
-                logger.warning("Failed to add %s to GitLab group: %s", gitlab_login, e)
+                logger.warning("Failed to add {} to GitLab group: {}", gitlab_login, e)
 
         await self.db.commit()
         return {
@@ -760,7 +760,7 @@ class AgentService:
                 if project_titles:
                     memory_context = await self.ov.get_agent_context(agent_id_str, project_titles)
         except Exception as e:
-            logger.warning("OpenViking heartbeat integration error: %s", e)
+            logger.warning("OpenViking heartbeat integration error: {}", e)
 
         return HeartbeatResponseBody(
             tasks=tasks, feedback=feedback, notifications=notifications,
@@ -814,7 +814,7 @@ class AgentService:
                 "project_id": str(project_id) if project_id else None,
             })
         except Exception as e:
-            logger.debug("realtime notification push failed: %s", e)
+            logger.debug("realtime notification push failed: {}", e)
 
     async def complete_notification_tasks(self, agent_id: Any, source_key: str) -> None:
         """Mark pending tasks as completed when agent has responded."""
@@ -840,9 +840,9 @@ class AgentService:
                 if similar:
                     titles = [s.get("content", "")[:80] for s in similar[:3]]
                     similar_warning = f"Similar projects already exist: {'; '.join(titles)}"
-                    logger.info("OpenViking: similar projects found for '%s': %d matches", body.title, len(similar))
+                    logger.info("OpenViking: similar projects found for '{}': {} matches", body.title, len(similar))
         except Exception as e:
-            logger.warning("OpenViking dedup check error: %s", e)
+            logger.warning("OpenViking dedup check error: {}", e)
 
         vcs = body.vcs_provider
         user_oauth_token = (await self.ensure_github_token(agent)) if vcs == "github" else None
@@ -853,14 +853,14 @@ class AgentService:
             try:
                 await self.git.setup_repo_admin(body.title, vcs_provider=vcs)
             except Exception as e:
-                logger.warning("setup_repo_admin failed for %s: %s", body.title, e)
+                logger.warning("setup_repo_admin failed for {}: {}", body.title, e)
 
             github_login = agent.get("github_user_login")
             if github_login and vcs == "github":
                 try:
                     await self.git.add_repo_collaborator(body.title, github_login, "push", vcs_provider=vcs)
                 except Exception as e:
-                    logger.warning("add_repo_collaborator failed for %s/%s: %s", body.title, github_login, e)
+                    logger.warning("add_repo_collaborator failed for {}/{}: {}", body.title, github_login, e)
 
         owner_name = await self.repo.get_project_owner_name(agent_id)
 
@@ -900,7 +900,7 @@ class AgentService:
                 user_token=user_oauth_token,
             )
             if not readme_ok:
-                logger.warning("README push failed for project %s", project_id)
+                logger.warning("README push failed for project {}", project_id)
 
         await self.repo.increment_projects_created(agent_id)
 
@@ -913,7 +913,7 @@ class AgentService:
                 symbol = "".join(w[0] for w in words if w)[:6] or "SPORE"
                 await self.repo.insert_project_token(project_id, contract_address, symbol, deploy_tx or None)
         except Exception as exc:
-            logger.warning("Token deploy failed for project %s: %s", project_id, exc)
+            logger.warning("Token deploy failed for project {}: {}", project_id, exc)
 
         owner_user_id = await self.repo.get_agent_owner_user_id(agent_id)
         if owner_user_id:
@@ -934,7 +934,7 @@ class AgentService:
                     relation="created_by",
                 )
         except Exception as e:
-            logger.warning("OpenViking index_project error: %s", e)
+            logger.warning("OpenViking index_project error: {}", e)
 
         project = await self.repo.get_project_full(project_id)
         resp = self._project_response(project)
@@ -1035,7 +1035,7 @@ class AgentService:
                     files.append({"path": path, "content": content, "language": lang, "version": 1})
             return files
         except Exception as e:
-            logger.warning("Failed to fetch files from VCS for project %s: %s", project_id, e)
+            logger.warning("Failed to fetch files from VCS for project {}: {}", project_id, e)
             return []
 
     async def get_project_feedback(self, project_id: UUID) -> dict:
@@ -1414,7 +1414,7 @@ class AgentService:
         try:
             issues = await self.git.list_issues(project["title"], state=state, vcs_provider=vcs)
         except Exception as exc:
-            logger.warning("list_issues VCS error for project %s: %s", project_id, exc)
+            logger.warning("list_issues VCS error for project {}: {}", project_id, exc)
             issues = []
         return {"issues": issues, "count": len(issues), "state": state}
 
@@ -1431,7 +1431,7 @@ class AgentService:
         try:
             prs = await self.git.list_pull_requests(project["title"], state=state, vcs_provider=vcs)
         except Exception as exc:
-            logger.warning("list_pull_requests VCS error for project %s: %s", project_id, exc)
+            logger.warning("list_pull_requests VCS error for project {}: {}", project_id, exc)
             prs = []
         return {"pull_requests": prs, "count": len(prs)}
 

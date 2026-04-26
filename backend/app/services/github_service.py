@@ -137,7 +137,7 @@ class GitHubService:
                 "base_url": self.base_url,
             }
         except Exception as e:
-            logger.error("generate_jwt_for_agent error: %s", e)
+            logger.error("generate_jwt_for_agent error: {}", e)
             return None
 
     async def get_scoped_installation_token(self, repo_name: str) -> dict[str, str] | None:
@@ -172,7 +172,7 @@ class GitHubService:
 
             if resp.status_code == 201:
                 data = resp.json()
-                logger.info("Issued scoped installation token for repo %s", repo_name)
+                logger.info("Issued scoped installation token for repo {}", repo_name)
                 return {
                     "token": data["token"],
                     "expires_at": data.get("expires_at", ""),
@@ -185,7 +185,7 @@ class GitHubService:
                 return None
 
         except Exception as e:
-            logger.error("get_scoped_installation_token error for %s: %s", repo_name, e)
+            logger.error("get_scoped_installation_token error for {}: {}", repo_name, e)
             return None
 
     async def initialize(self) -> bool:
@@ -288,9 +288,9 @@ class GitHubService:
             json={"role": "member"},
         )
         if resp.status_code in (200, 201):
-            logger.info("Invited %s to org %s", username, self.org)
+            logger.info("Invited {} to org {}", username, self.org)
         else:
-            logger.warning("Could not invite %s to org: %s %s", username, resp.status_code, resp.text[:200])
+            logger.warning("Could not invite {} to org: {} {}", username, resp.status_code, resp.text[:200])
 
     async def add_repo_collaborator(self, repo_name: str, username: str, permission: str = "push") -> bool:
         """Добавить пользователя как collaborator на репозиторий.
@@ -310,9 +310,9 @@ class GitHubService:
             json={"permission": permission},
         )
         if resp.status_code in (201, 204):
-            logger.info("Added %s as collaborator (%s) on %s/%s", username, permission, self.org, name)
+            logger.info("Added {} as collaborator ({}) on {}/{}", username, permission, self.org, name)
             return True
-        logger.warning("Failed to add collaborator %s on %s: %d %s", username, name, resp.status_code, resp.text[:200])
+        logger.warning("Failed to add collaborator {} on {}: {} {}", username, name, resp.status_code, resp.text[:200])
         return False
 
     async def setup_repo_admin(self, repo_name: str) -> None:
@@ -420,22 +420,22 @@ class GitHubService:
                 timeout=60.0,
             )
         except Exception as e:
-            logger.error("Network error creating user repo %s: %s", name, e)
+            logger.error("Network error creating user repo {}: {}", name, e)
             return None
 
         if resp.status_code == 201:
             repo_url = resp.json().get("html_url") or f"https://github.com/{user_login}/{name}"
-            logger.info("Created user repo: %s", repo_url)
+            logger.info("Created user repo: {}", repo_url)
             return repo_url
         elif resp.status_code == 422:
             data = resp.json()
             errors = data.get("errors", [])
             if any("already" in e.get("message", "").lower() for e in errors):
                 return f"https://github.com/{user_login}/{name}"
-            logger.warning("422 creating user repo %s: %s", name, data)
+            logger.warning("422 creating user repo {}: {}", name, data)
             return None
         else:
-            logger.warning("Failed to create user repo %s: %s %s", name, resp.status_code, resp.text[:300])
+            logger.warning("Failed to create user repo {}: {} {}", name, resp.status_code, resp.text[:300])
             return None
 
     async def _setup_branch_protection(self, repo_name: str) -> bool:
@@ -463,7 +463,7 @@ class GitHubService:
             },
         )
         if resp.status_code in (200, 201):
-            logger.info("Branch protection enabled for %s/main", repo_name)
+            logger.info("Branch protection enabled for {}/main", repo_name)
             return True
         else:
             # Не критично — логируем и продолжаем (App может не иметь admin прав)
@@ -488,9 +488,9 @@ class GitHubService:
             },
         )
         if resp.status_code == 200:
-            logger.info("Merged PR #%d in %s", pr_number, name)
+            logger.info("Merged PR #{} in {}", pr_number, name)
             return True
-        logger.warning("Failed to merge PR #%d in %s: %s", pr_number, name, resp.status_code)
+        logger.warning("Failed to merge PR #{} in {}: {}", pr_number, name, resp.status_code)
         return False
 
     async def delete_repository(self, repo_name: str) -> bool:
@@ -504,9 +504,9 @@ class GitHubService:
             headers=self._headers(),
         )
         if resp.status_code == 204:
-            logger.info("Deleted repository %s/%s", self.org, name)
+            logger.info("Deleted repository {}/{}", self.org, name)
             return True
-        logger.warning("Failed to delete repo %s: %s", name, resp.status_code)
+        logger.warning("Failed to delete repo {}: {}", name, resp.status_code)
         return False
 
     async def close_pull_request(self, repo_name: str, pr_number: int) -> bool:
@@ -646,7 +646,7 @@ class GitHubService:
                 headers=headers,
             )
             if ref_resp.status_code != 200:
-                logger.warning("Failed to get branch ref %s/%s: %d %s", name, branch, ref_resp.status_code, ref_resp.text[:200])
+                logger.warning("Failed to get branch ref {}/{}: {} {}", name, branch, ref_resp.status_code, ref_resp.text[:200])
                 return None
 
             ref_data = ref_resp.json()
@@ -658,7 +658,7 @@ class GitHubService:
                 headers=headers,
             )
             if commit_resp.status_code != 200:
-                logger.warning("Failed to get commit %s: %d", current_commit_sha, commit_resp.status_code)
+                logger.warning("Failed to get commit {}: {}", current_commit_sha, commit_resp.status_code)
                 return None
 
             current_tree_sha = commit_resp.json()["tree"]["sha"]
@@ -680,7 +680,7 @@ class GitHubService:
                         json={"content": f.get("content", ""), "encoding": "utf-8"},
                     )
                     if blob_resp.status_code != 201:
-                        logger.warning("Failed to create blob for %s: %d %s", f["path"], blob_resp.status_code, blob_resp.text[:200])
+                        logger.warning("Failed to create blob for {}: {} {}", f["path"], blob_resp.status_code, blob_resp.text[:200])
                         return None
 
                     tree_entries.append({
@@ -697,7 +697,7 @@ class GitHubService:
                 json={"base_tree": current_tree_sha, "tree": tree_entries},
             )
             if tree_resp.status_code != 201:
-                logger.warning("Failed to create tree: %d %s", tree_resp.status_code, tree_resp.text[:200])
+                logger.warning("Failed to create tree: {} {}", tree_resp.status_code, tree_resp.text[:200])
                 return None
 
             new_tree_sha = tree_resp.json()["sha"]
@@ -717,7 +717,7 @@ class GitHubService:
                 },
             )
             if commit_create_resp.status_code != 201:
-                logger.warning("Failed to create commit: %d %s", commit_create_resp.status_code, commit_create_resp.text[:200])
+                logger.warning("Failed to create commit: {} {}", commit_create_resp.status_code, commit_create_resp.text[:200])
                 return None
 
             new_commit_sha = commit_create_resp.json()["sha"]
@@ -729,14 +729,14 @@ class GitHubService:
                 json={"sha": new_commit_sha},
             )
             if update_ref_resp.status_code != 200:
-                logger.warning("Failed to update ref: %d %s", update_ref_resp.status_code, update_ref_resp.text[:200])
+                logger.warning("Failed to update ref: {} {}", update_ref_resp.status_code, update_ref_resp.text[:200])
                 return None
 
-            logger.info("Atomic push: %d files to %s/%s (%s)", len(files), name, branch, new_commit_sha[:7])
+            logger.info("Atomic push: {} files to {}/{} ({})", len(files), name, branch, new_commit_sha[:7])
             return {"sha": new_commit_sha[:7], "files_changed": len(files)}
 
         except Exception as e:
-            logger.error("push_files_atomic error for %s: %s", name, e)
+            logger.error("push_files_atomic error for {}: {}", name, e)
             return None
 
     async def get_repo_url(self, repo_name: str) -> str:
@@ -836,7 +836,7 @@ class GitHubService:
         if resp.status_code == 201:
             data = resp.json()
             return {"id": data["id"], "url": data["html_url"]}
-        logger.warning("comment_issue failed: %d %s", resp.status_code, resp.text[:200])
+        logger.warning("comment_issue failed: {} {}", resp.status_code, resp.text[:200])
         return None
 
     async def list_issues(self, repo_name: str, state: str = "open") -> list[dict]:
@@ -852,10 +852,10 @@ class GitHubService:
                 params={"state": state, "per_page": 100},
             )
         except Exception as e:
-            logger.error("list_issues network error for %s/%s: %s: %s", self.org, name, type(e).__name__, e)
+            logger.error("list_issues network error for {}/{}: {}: {}", self.org, name, type(e).__name__, e)
             raise
         if resp.status_code != 200:
-            logger.warning("list_issues HTTP %d for %s/%s: %s", resp.status_code, self.org, name, resp.text[:200])
+            logger.warning("list_issues HTTP {} for {}/{}: {}", resp.status_code, self.org, name, resp.text[:200])
             return []
 
         return [

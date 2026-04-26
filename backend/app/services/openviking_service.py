@@ -52,7 +52,7 @@ class OpenVikingService:
                     files={"file": (filename, content.encode())},
                 )
                 if r.status_code != 200:
-                    logger.warning("OpenViking temp_upload failed: %d %s", r.status_code, r.text)
+                    logger.warning("OpenViking temp_upload failed: {} {}", r.status_code, r.text)
                     return False
                 temp_path = r.json()["result"]["temp_path"]
 
@@ -67,13 +67,13 @@ class OpenVikingService:
                     },
                 )
                 if r.status_code != 200:
-                    logger.warning("OpenViking resource create failed: %d %s", r.status_code, r.text)
+                    logger.warning("OpenViking resource create failed: {} {}", r.status_code, r.text)
                     return False
 
-            logger.info("OpenViking: stored insight from %s", agent_name)
+            logger.info("OpenViking: stored insight from {}", agent_name)
             return True
         except Exception as e:
-            logger.warning("OpenViking store_insight error: %s", e)
+            logger.warning("OpenViking store_insight error: {}", e)
             return False
 
     # ── Store in agent session (private) ──────────────────────────────
@@ -99,7 +99,7 @@ class OpenVikingService:
                 )
                 return r.status_code == 200
         except Exception as e:
-            logger.warning("OpenViking add_to_session error: %s", e)
+            logger.warning("OpenViking add_to_session error: {}", e)
             return False
 
     # ── Semantic search (shared knowledge) ────────────────────────────
@@ -158,7 +158,7 @@ class OpenVikingService:
 
                 return items
         except Exception as e:
-            logger.warning("OpenViking search error: %s", e)
+            logger.warning("OpenViking search error: {}", e)
             return []
 
     # ── Get agent context for heartbeat ───────────────────────────────
@@ -212,13 +212,13 @@ class OpenVikingService:
                     },
                 )
                 if r.status_code != 200:
-                    logger.warning("OpenViking index_project failed for %s: %d", title, r.status_code)
+                    logger.warning("OpenViking index_project failed for {}: {}", title, r.status_code)
                     return False
 
-            logger.info("OpenViking: indexed project '%s'", title)
+            logger.info("OpenViking: indexed project '{}'", title)
             return True
         except Exception as e:
-            logger.warning("OpenViking index_project error: %s", e)
+            logger.warning("OpenViking index_project error: {}", e)
             return False
 
     # ── Check similar projects (deduplication) ────────────────────────
@@ -247,11 +247,11 @@ class OpenVikingService:
                 if r.status_code == 200:
                     memories = r.json().get("result", [])
                     if memories:
-                        logger.info("OpenViking: extracted %d memories for agent %s", len(memories), agent_id)
+                        logger.info("OpenViking: extracted {} memories for agent {}", len(memories), agent_id)
                     return memories
                 return []
         except Exception as e:
-            logger.warning("OpenViking extract error: %s", e)
+            logger.warning("OpenViking extract error: {}", e)
             return []
 
     # ── Session commit (compress + archive) ───────────────────────────
@@ -271,11 +271,11 @@ class OpenVikingService:
                     result = r.json().get("result", {})
                     extracted = result.get("memories_extracted", 0)
                     if extracted:
-                        logger.info("OpenViking: committed session for agent %s, extracted %d memories", agent_id, extracted)
+                        logger.info("OpenViking: committed session for agent {}, extracted {} memories", agent_id, extracted)
                     return result
                 return {}
         except Exception as e:
-            logger.warning("OpenViking commit_session error: %s", e)
+            logger.warning("OpenViking commit_session error: {}", e)
             return {}
 
     # ── Relations (knowledge graph) ───────────────────────────────────
@@ -293,7 +293,7 @@ class OpenVikingService:
                 )
                 return r.status_code == 200
         except Exception as e:
-            logger.warning("OpenViking link error: %s", e)
+            logger.warning("OpenViking link error: {}", e)
             return False
 
     async def unlink_resources(self, from_uri: str, to_uris: list[str]) -> bool:
@@ -309,7 +309,7 @@ class OpenVikingService:
                 )
                 return r.status_code == 200
         except Exception as e:
-            logger.warning("OpenViking unlink error: %s", e)
+            logger.warning("OpenViking unlink error: {}", e)
             return False
 
     # ── Content abstract (VLM-generated summary) ──────────────────────
@@ -329,7 +329,7 @@ class OpenVikingService:
                     return r.json().get("result", "") or ""
                 return ""
         except Exception as e:
-            logger.warning("OpenViking abstract error: %s", e)
+            logger.warning("OpenViking abstract error: {}", e)
             return ""
 
     # ── Content overview (directory summary) ──────────────────────────
@@ -349,7 +349,7 @@ class OpenVikingService:
                     return r.json().get("result", "") or ""
                 return ""
         except Exception as e:
-            logger.warning("OpenViking overview error: %s", e)
+            logger.warning("OpenViking overview error: {}", e)
             return ""
 
     # ── Ask memory (RAG query via search + content) ───────────────────
@@ -407,12 +407,12 @@ class OpenVikingService:
                     json={"data": {"name": name, "description": description, "content": content}},
                 )
                 if r.status_code == 200:
-                    logger.info("OpenViking: registered skill '%s'", name)
+                    logger.info("OpenViking: registered skill '{}'", name)
                     return True
-                logger.warning("OpenViking register_skill failed: %d %s", r.status_code, r.text[:200])
+                logger.warning("OpenViking register_skill failed: {} {}", r.status_code, r.text[:200])
                 return False
         except Exception as e:
-            logger.warning("OpenViking register_skill error: %s", e)
+            logger.warning("OpenViking register_skill error: {}", e)
             return False
 
     # ── Pack (backup / export) ────────────────────────────────────────
@@ -430,11 +430,11 @@ class OpenVikingService:
                 )
                 if r.status_code == 200:
                     file_uri = r.json().get("result", {}).get("file", "")
-                    logger.info("OpenViking: exported backup to %s", file_uri)
+                    logger.info("OpenViking: exported backup to {}", file_uri)
                     return file_uri
                 return ""
         except Exception as e:
-            logger.warning("OpenViking export_backup error: %s", e)
+            logger.warning("OpenViking export_backup error: {}", e)
             return ""
 
     async def import_backup(self, uri: str, parent: str = "viking://resources") -> bool:
@@ -450,7 +450,7 @@ class OpenVikingService:
                 )
                 return r.status_code == 200
         except Exception as e:
-            logger.warning("OpenViking import_backup error: %s", e)
+            logger.warning("OpenViking import_backup error: {}", e)
             return False
 
     # ── Init shared directories ───────────────────────────────────────
@@ -469,7 +469,7 @@ class OpenVikingService:
                     )
             logger.info("OpenViking: directories initialized")
         except Exception as e:
-            logger.warning("OpenViking init_directories error: %s", e)
+            logger.warning("OpenViking init_directories error: {}", e)
 
 
 def get_openviking_service() -> OpenVikingService:
