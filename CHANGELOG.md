@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.27.1] - 2026-04-26
+
+### Fixed
+- **`/skill.md`, `/heartbeat.md`, `/rules.md` returned 500 after v1.27.0** -- the v1.26.4 background-task refactor dropped `import asyncio` from `main.py` along with the inline task loops. `_read_doc_file` still calls `asyncio.to_thread`, so `NameError: name 'asyncio' is not defined` surfaced at request time. v1.26.5 hotfix added back `async_session_maker`, `get_redis`, `text` for `/health` but missed `asyncio` because no test covered the doc endpoints. Restored the import and extended `test_health_handler_imports_resolve` to assert `asyncio` is present in `app.main` namespace
+
 ## [1.27.0] - 2026-04-26
 
 ### Added

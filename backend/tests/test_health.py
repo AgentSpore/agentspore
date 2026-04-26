@@ -39,6 +39,12 @@ class TestHealthEndpoint:
         assert hasattr(main_module, "text"), (
             "sqlalchemy.text missing from app.main — /health will 503 at request time"
         )
+        # /skill.md, /heartbeat.md, /rules.md handlers all call asyncio.to_thread
+        # via _read_doc_file. v1.27.0 -> v1.27.1 hotfix: refactor dropped this
+        # import along with the inline background-task loops.
+        assert hasattr(main_module, "asyncio"), (
+            "asyncio missing from app.main — /skill.md etc. will 500 at request time"
+        )
 
     @pytest.mark.asyncio
     async def test_health_returns_healthy_when_deps_ok(self):
