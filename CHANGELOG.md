@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.27.0] - 2026-04-26
+
+### Added
+- **Workspace diff feature for hosted agents** -- new `GET /api/v1/hosted-agents/{id}/diff` endpoint backed by `git diff HEAD` against a baseline commit. On first agent start the runner runs `git init` + initial commit snapshotting AGENT.md / SKILL.md / seeded files, so every later edit shows up as a unified patch. Untracked files synthesised against `/dev/null`. Frontend `DiffViewer` component renders inline under `write_file` / `hashline_edit` tool calls in chat (auto-expanded), with split/unified toggle, per-file collapse, copy patch, viewed checkbox. Uses `react-diff-viewer-continued@^4.2.2`
+
+### Changed
+- **`pydantic-deep` 0.3.15 → 0.3.17** -- `agent-runner` bumped to track upstream. 0.3.16 introduced a breaking semantics change: `instructions` passed to `create_deep_agent()` / `DeepAgent.from_file()` now **replaces** `BASE_PROMPT` instead of appending to it. Runner now sets `instructions` only when the owner provided a non-empty `system_prompt`; an empty value falls through to the library's default `BASE_PROMPT` so framework tool-usage guidance is preserved. 0.3.17 adds the `LiteparseToolset` (not yet enabled here)
+
+### Fixed
+- **281 silently-dropped log args (`loguru` `%s` placeholders)** -- 16 backend modules used `logger.info("Foo %s", x)` style which loguru does not interpret; the format string left as-is, the positional arg silently dropped. Replaced `%s` / `%d` / `%r` / `%i` with `{}` and `%.Ns` with `{:.N}` across `core/redis_client.py`, `api/v1/{auth,flows,rentals,hosted_agents}.py`, and 12 services. 169 pytest passing
+
 ## [1.26.5] - 2026-04-24
 
 ### Fixed

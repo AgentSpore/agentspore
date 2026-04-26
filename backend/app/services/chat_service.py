@@ -25,7 +25,7 @@ async def _push_event(agent_id: str, event: dict) -> None:
         from app.services.connection_manager import deliver_event
         await deliver_event(agent_id, event)
     except Exception as e:
-        logger.debug("realtime push failed for %s: %s", agent_id, e)
+        logger.debug("realtime push failed for {}: {}", agent_id, e)
 
 
 class ChatService:
@@ -73,7 +73,7 @@ class ChatService:
         }
 
         await self.redis.publish(REDIS_CHANNEL, json.dumps(event))
-        logger.info("Chat message from %s [%s]: %.60s", agent["name"], model_used or "?", content)
+        logger.info("Chat message from {} [{}]: {:.60}", agent["name"], model_used or "?", content)
 
         await self._resolve_mentions(content, str(row["id"]), agent["name"], agent["id"])
 
@@ -100,7 +100,7 @@ class ChatService:
         }
 
         await self.redis.publish(REDIS_CHANNEL, json.dumps(event))
-        logger.info("Chat message from %s [user]: %.60s", user_name, content)
+        logger.info("Chat message from {} [user]: {:.60}", user_name, content)
 
         await self._resolve_mentions(content, str(row["id"]), user_name, None)
 
@@ -116,7 +116,7 @@ class ChatService:
         row = await self.repo.insert_dm(agent["id"], None, content, human_name=human_name)
         await self.repo.db.commit()
 
-        logger.info("DM from %s to %s: %.60s", human_name, agent["name"], content)
+        logger.info("DM from {} to {}: {:.60}", human_name, agent["name"], content)
 
         # Real-time push via WebSocket / pub-sub (falls back to heartbeat queue)
         await _push_event(str(agent["id"]), {
@@ -149,7 +149,7 @@ class ChatService:
                     reply_to_dm_id=reply_to_dm_id, is_read=True,
                 )
                 await self.repo.db.commit()
-                logger.info("DM reply to human from %s: %.60s", agent["name"], content)
+                logger.info("DM reply to human from {}: {:.60}", agent["name"], content)
                 return {"status": "ok", "message_id": str(row["id"]), "note": "Reply saved to DM history"}
             else:
                 return {"error": "Original DM not found"}
@@ -164,7 +164,7 @@ class ChatService:
         row = await self.repo.insert_dm(to_agent_id, agent["id"], content, reply_to_dm_id=reply_to_dm_id)
         await self.repo.db.commit()
 
-        logger.info("DM reply from %s: %.60s", agent["name"], content)
+        logger.info("DM reply from {}: {:.60}", agent["name"], content)
 
         # Real-time push to target agent
         await _push_event(str(to_agent_id), {
@@ -207,7 +207,7 @@ class ChatService:
             sender_type, human_name, reply_to_id,
         )
         await self.repo.db.commit()
-        logger.info("Project %s message from %s: %.60s", project_id, sender_name, content)
+        logger.info("Project {} message from {}: {:.60}", project_id, sender_name, content)
         return {"status": "ok", "message_id": str(row["id"])}
 
     async def get_project_messages(self, project_id: str, limit: int = 50, before: str | None = None) -> list[dict]:
@@ -325,7 +325,7 @@ class ChatService:
 
         if created:
             await self.repo.db.commit()
-            logger.info("Created %d mention notification(s) from message %s", created, message_id)
+            logger.info("Created {} mention notification(s) from message {}", created, message_id)
         return created
 
 

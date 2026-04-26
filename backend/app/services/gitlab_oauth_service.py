@@ -69,13 +69,13 @@ class GitLabOAuthService:
             if resp.status_code == 200:
                 data = resp.json()
                 if "error" in data:
-                    logger.error("GitLab OAuth error: %s", data.get("error_description", data["error"]))
+                    logger.error("GitLab OAuth error: {}", data.get("error_description", data["error"]))
                     return None
                 return data
-            logger.error("GitLab token exchange failed: %s %s", resp.status_code, resp.text[:200])
+            logger.error("GitLab token exchange failed: {} {}", resp.status_code, resp.text[:200])
             return None
         except Exception as e:
-            logger.error("Error exchanging GitLab code for token: %s", e)
+            logger.error("Error exchanging GitLab code for token: {}", e)
             return None
 
     async def get_user_info(self, token: str) -> dict[str, Any] | None:
@@ -87,10 +87,10 @@ class GitLabOAuthService:
             )
             if resp.status_code == 200:
                 return resp.json()
-            logger.error("Failed to get GitLab user info: %s", resp.status_code)
+            logger.error("Failed to get GitLab user info: {}", resp.status_code)
             return None
         except Exception as e:
-            logger.error("Error getting GitLab user info: %s", e)
+            logger.error("Error getting GitLab user info: {}", e)
             return None
 
     async def check_token_validity(self, token: str) -> bool:
@@ -122,7 +122,7 @@ class GitLabOAuthService:
                 return resp.json()
             return None
         except Exception as e:
-            logger.error("Error refreshing GitLab token: %s", e)
+            logger.error("Error refreshing GitLab token: {}", e)
             return None
 
     def is_token_expired(self, expires_at: float | None) -> bool:

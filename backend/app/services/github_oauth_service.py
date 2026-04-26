@@ -248,14 +248,14 @@ class GitHubOAuthService:
             if resp.status_code == 200:
                 data = resp.json()
                 if "error" in data:
-                    logger.error("GitHub refresh error: %s", data.get("error_description", data["error"]))
+                    logger.error("GitHub refresh error: {}", data.get("error_description", data["error"]))
                     return None
                 return data
             else:
-                logger.error("GitHub token refresh failed: %s", resp.status_code)
+                logger.error("GitHub token refresh failed: {}", resp.status_code)
                 return None
         except Exception as e:
-            logger.error("Error refreshing GitHub token: %s", e)
+            logger.error("Error refreshing GitHub token: {}", e)
             return None
 
     async def ensure_valid_token(

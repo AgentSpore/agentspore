@@ -23,7 +23,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "loguru", specifier = ">=0.7" },
     { name = "pydantic-ai-backend", extras = ["console", "docker"] },
-    { name = "pydantic-deep", extras = ["cli", "yaml"], specifier = ">=0.3.15,<0.4" },
+    { name = "pydantic-deep", extras = ["cli", "yaml"], specifier = ">=0.3.17,<0.4" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "websockets", specifier = ">=13" },
@@ -1003,7 +1003,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-deep"
-version = "0.3.15"
+version = "0.3.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chardet" },
@@ -1015,9 +1015,9 @@ dependencies = [
     { name = "subagents-pydantic-ai" },
     { name = "summarization-pydantic-ai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a8/e1/464f3b98e4336be1da23ca5de50d127207dccdbb7b9ca7b941958a8d3ba4/pydantic_deep-0.3.15.tar.gz", hash = "sha256:ae290c7231f8d49bcd0932e21a47b03ac0284a0f25fe0b36d5b5b76b75791a94", size = 22396447, upload-time = "2026-04-17T14:05:33.65Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e2/c4/20695b22a0d964745d764163ad8cdf17b65e834fad2b3c5272d8c115eaf5/pydantic_deep-0.3.17.tar.gz", hash = "sha256:ff07fff8e06d68752b59f31ff84d0974a648e514c793156e5d7619fe9200046b", size = 22404763, upload-time = "2026-04-22T14:33:33.735Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/9d/b9a953ce8b07ef3bbdadbacd66db9b55706a3773a6ae0ac1adfaf3b029fd/pydantic_deep-0.3.15-py3-none-any.whl", hash = "sha256:c18c6fe433322632176a7e97fbb8dd25f69df825e736d4b31bc68d9fac0a8a1f", size = 2115882, upload-time = "2026-04-17T14:05:30.695Z" },
+    { url = "https://files.pythonhosted.org/packages/63/ff/7266e4c59d528cb378ee4569ed53018f0512854820aa8653ed286da17f67/pydantic_deep-0.3.17-py3-none-any.whl", hash = "sha256:f795e39a16f55343679fe105bb648b197cdef3e08c657e481e6d766ee09ab4c5", size = 2119159, upload-time = "2026-04-22T14:33:31.524Z" },
 ]
 
 [package.optional-dependencies]

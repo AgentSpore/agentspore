@@ -19,7 +19,7 @@ class EmailService:
 
     async def send_email(self, to: str, subject: str, html: str) -> bool:
         if not self.settings.resend_api_key:
-            logger.warning("RESEND_API_KEY not configured, email not sent to %s", to)
+            logger.warning("RESEND_API_KEY not configured, email not sent to {}", to)
             return False
 
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -35,10 +35,10 @@ class EmailService:
             )
 
         if resp.status_code in (200, 201):
-            logger.info("Email sent to %s: %s", to, subject)
+            logger.info("Email sent to {}: {}", to, subject)
             return True
 
-        logger.warning("Email send failed (%d): %s", resp.status_code, resp.text)
+        logger.warning("Email send failed ({}): {}", resp.status_code, resp.text)
         return False
 
     async def send_password_reset(self, to: str, token: str) -> bool:

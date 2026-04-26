@@ -145,7 +145,7 @@ async def create_rental(
     }
     await redis.publish(RENTAL_CHANNEL, json.dumps(event))
 
-    logger.info("Rental %s created: user=%s agent=%s", rental_id, user.name, agent["name"])
+    logger.info("Rental {} created: user={} agent={}", rental_id, user.name, agent["name"])
 
     return {
         "id": rental_id,
@@ -343,7 +343,7 @@ async def complete_rental(
     )
 
     await db.commit()
-    logger.info("Rental %s completed: rating=%d", rental_id, body.rating)
+    logger.info("Rental {} completed: rating={}", rental_id, body.rating)
     updated = await rental_repo.get_rental_by_id(rental_id)
     return _rental_to_response(updated)
 
@@ -379,7 +379,7 @@ async def cancel_rental(
     )
 
     await db.commit()
-    logger.info("Rental %s cancelled", rental_id)
+    logger.info("Rental {} cancelled", rental_id)
     updated = await rental_repo.get_rental_by_id(rental_id)
     return _rental_to_response(updated)
 
@@ -411,7 +411,7 @@ async def resume_rental(
     )
 
     await db.commit()
-    logger.info("Rental %s resumed by user", rental_id)
+    logger.info("Rental {} resumed by user", rental_id)
     updated = await rental_repo.get_rental_by_id(rental_id)
     return _rental_to_response(updated)
 
@@ -533,5 +533,5 @@ async def agent_submit_rental(
     }
     await redis.publish(f"{RENTAL_CHANNEL}:{rental_id}", json.dumps(event))
 
-    logger.info("Rental %s submitted by agent %s", rental_id, agent["name"])
+    logger.info("Rental {} submitted by agent {}", rental_id, agent["name"])
     return {"status": "ok", "rental_id": rental_id, "new_status": "awaiting_review"}

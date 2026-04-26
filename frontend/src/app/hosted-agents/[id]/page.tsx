@@ -13,6 +13,9 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 const CodeMirrorEditor = lazy(() => import("@/components/CodeMirrorEditor"));
+const DiffViewer = lazy(() =>
+  import("@/components/DiffViewer").then((m) => ({ default: m.DiffViewer }))
+);
 
 function DotGrid() {
   return (
@@ -1240,13 +1243,17 @@ const DONE_LABELS: Record<string, string> = {
   "Updating task": "Updated task",
 };
 
-function ToolCallDisplay({ tool, args, status, result }: { tool: string; args: unknown; status: string; result?: string }) {
-  const [expanded, setExpanded] = useState(false);
+function ToolCallDisplay({ tool, args, status, result, agentId }: { tool: string; args: unknown; status: string; result?: string; agentId?: string }) {
   const info = TOOL_LABELS[tool] || { icon: "⚡", label: tool, color: "text-cyan-300/80" };
   const { preview, full } = formatToolArgs(tool, args);
   const hasMore = full.length > preview.length || (result && result.length > 100);
   const doneLabel = DONE_LABELS[info.label] || info.label;
   const isDone = status === "done";
+  const isFileEdit = tool === "write_file" || tool === "hashline_edit";
+  const editedPath = isFileEdit ? String((parseArgs(args)?.path ?? "")) : "";
+  const showDiff = isFileEdit && isDone && agentId && editedPath;
+  // Auto-expand file-edit tools so user sees the diff without an extra click.
+  const [expanded, setExpanded] = useState<boolean>(!!showDiff);
 
   return (
     <div className="text-xs font-mono rounded-lg border border-neutral-800/40 overflow-hidden">
@@ -1286,6 +1293,48 @@ function ToolCallDisplay({ tool, args, status, result }: { tool: string; args: u
           </button>
         </div>
       )}
+      {showDiff && <ChatDiffPreview agentId={agentId!} path={editedPath} />}
+    </div>
+  );
+}
+
+/* ── Chat inline diff preview ── */
+
+function ChatDiffPreview({ agentId, path }: { agentId: string; path: string }) {
+  const [file, setFile] = useState<{ path: string; status: string; patch: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const res = await fetchWithAuth(`${API_URL}/api/v1/hosted-agents/${agentId}/diff`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!alive) return;
+        const match = Array.isArray(data.files) ? data.files.find((f: { path: string }) => f.path === path) : null;
+        setFile(match ?? null);
+      } catch (e) {
+        if (alive) setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [agentId, path]);
+
+  if (loading) return <div className="text-[10px] text-neutral-600 px-3 pb-2 font-mono">Loading diff…</div>;
+  if (err) return <div className="text-[10px] text-red-400/70 px-3 pb-2 font-mono">{err}</div>;
+  if (!file) return <div className="text-[10px] text-neutral-600 px-3 pb-2 font-mono italic">No pending changes for {path} (already committed or identical).</div>;
+
+  return (
+    <div className="px-3 pb-3 pt-1">
+      <Suspense fallback={<div className="text-[10px] text-neutral-600 font-mono">Loading diff viewer…</div>}>
+        <DiffViewer files={[file]} />
+      </Suspense>
     </div>
   );
 }
@@ -1789,7 +1838,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
                       {expandedTools.has(m.id) && (
                         <div className="px-3.5 py-2 border-t border-violet-500/10 space-y-2 max-h-64 overflow-y-auto">
                           {m.tool_calls.map((tc: { tool: string; args: unknown; status: string; result?: string }, i: number) => (
-                            <ToolCallDisplay key={i} tool={tc.tool} args={tc.args} status={tc.status} result={tc.result} />
+                            <ToolCallDisplay key={i} tool={tc.tool} args={tc.args} status={tc.status} result={tc.result} agentId={agentId} />
                           ))}
                         </div>
                       )}
@@ -1841,7 +1890,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
               {streamTools.length > 0 && (
                 <div className="px-3.5 py-2.5 border-t border-violet-500/10 space-y-2">
                   {streamTools.map((tc, i) => (
-                    <ToolCallDisplay key={i} tool={tc.tool} args={tc.args} status={tc.status} />
+                    <ToolCallDisplay key={i} tool={tc.tool} args={tc.args} status={tc.status} agentId={agentId} />
                   ))}
                 </div>
               )}

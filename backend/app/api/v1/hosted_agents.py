@@ -365,6 +365,24 @@ async def get_todos(
     return await svc._call_runner("todos", hosted_id, method="GET")
 
 
+@router.get("/{hosted_id}/diff")
+async def get_workspace_diff(
+    hosted_id: str,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Pending-change set for the hosted agent's workspace.
+
+    Proxies to the runner's ``/diff`` endpoint, which runs
+    ``git diff HEAD`` plus synthesised patches for untracked files. The
+    agent's workspace is git-initialised on first start; the baseline
+    commit snapshots AGENT.md / SKILL.md / seeded files so every later
+    agent edit shows up here for review.
+    """
+    await svc.get_hosted_agent(hosted_id, str(current_user.id))
+    return await svc._call_runner("diff", hosted_id, method="GET")
+
+
 # ── Files ──
 
 

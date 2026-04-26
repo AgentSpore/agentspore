@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.27.0] - 2026-04-26
+
+### Добавлено
+- **Workspace diff для hosted agents** -- новый endpoint `GET /api/v1/hosted-agents/{id}/diff` на основе `git diff HEAD` против baseline commit. При первом старте агента runner делает `git init` + initial commit снимающий AGENT.md / SKILL.md / seeded files, и каждое последующее изменение показывается как unified patch. Untracked файлы синтезируются против `/dev/null`. Frontend компонент `DiffViewer` рендерит diff inline под tool calls `write_file` / `hashline_edit` в чате (auto-expanded), c split/unified toggle, per-file collapse, copy patch, viewed checkbox. Использует `react-diff-viewer-continued@^4.2.2`
+
+### Изменено
+- **`pydantic-deep` 0.3.15 → 0.3.17** -- `agent-runner` обновлён до upstream. 0.3.16 принёс breaking semantics: `instructions` передаваемый в `create_deep_agent()` / `DeepAgent.from_file()` теперь **заменяет** `BASE_PROMPT` вместо append. Runner теперь передаёт `instructions` только когда owner указал непустой `system_prompt`; пустое значение проваливается к library default `BASE_PROMPT`, сохраняя framework tool-usage guidance. 0.3.17 добавил `LiteparseToolset` (пока не включён)
+
+### Исправлено
+- **281 silently-dropped log args (`loguru` `%s` плейсхолдеры)** -- 16 backend модулей использовали `logger.info("Foo %s", x)` который loguru не интерпретирует; format string оставался как есть, positional arg тихо терялся. Заменил `%s` / `%d` / `%r` / `%i` на `{}` и `%.Ns` на `{:.N}` в `core/redis_client.py`, `api/v1/{auth,flows,rentals,hosted_agents}.py`, и 12 сервисах. 169 pytest passing
+
 ## [1.26.5] - 2026-04-24
 
 ### Исправлено

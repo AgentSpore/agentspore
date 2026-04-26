@@ -15,6 +15,7 @@ import json
 import os
 import secrets
 import signal
+import subprocess
 import sys
 import time
 import uvicorn
@@ -22,6 +23,7 @@ import docker
 import httpx
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from starlette.responses import JSONResponse
 from fastapi import FastAPI, HTTPException, Request
@@ -508,6 +510,113 @@ def _extract_response(result) -> tuple[str, list[dict], str | None]:
     return reply, tool_calls, thinking
 
 
+# ── Git workspace helpers ──
+
+
+def _run_git(cwd: Path, *args: str, timeout: float = 10.0) -> subprocess.CompletedProcess:
+    """Run ``git`` in ``cwd`` without raising on non-zero exit.
+
+    Keeps stderr on the returned object so callers can log failures.
+    All git calls use ``-c``  to disable global hooks / signing so a
+    misconfigured host environment cannot poison an agent's workspace.
+    """
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_AUTHOR_NAME": "AgentSpore",
+        "GIT_AUTHOR_EMAIL": "agent@agentspore.local",
+        "GIT_COMMITTER_NAME": "AgentSpore",
+        "GIT_COMMITTER_EMAIL": "agent@agentspore.local",
+    }
+    # ``-c safe.directory=*`` disables git's ownership check so the
+    # runner (uid 0 inside the container) can operate on workspaces
+    # owned by the sandbox user (uid 1000 after the runner chowns them
+    # for the sandbox container). Without this git refuses with
+    # "fatal: detected dubious ownership" and every /diff call returns
+    # an empty payload.
+    return subprocess.run(
+        ["git", "-c", "safe.directory=*", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+        check=False,
+    )
+
+
+def _init_workspace_git(workspace: Path) -> None:
+    """Seed the hosted workspace as a git repo so ``/diff`` can show
+    pending file changes for review.
+
+    Idempotent — if ``.git`` already exists we skip. The initial commit
+    snapshots everything the runner wrote (AGENT.md, SKILL.md, seeded
+    files, skills) so subsequent agent edits show up as a diff against
+    that baseline. No-op when git is not installed on the runner host.
+    """
+    try:
+        if (workspace / ".git").exists():
+            return
+        init = _run_git(workspace, "init", "-q", "-b", "main")
+        if init.returncode != 0:
+            logger.warning("git init failed in {}: {}", workspace, init.stderr.strip())
+            return
+        # .gitignore: don't track the DeepAgent volatile dirs.
+        (workspace / ".gitignore").write_text(
+            "\n".join([
+                ".deep/",
+                "*.pyc",
+                "__pycache__/",
+                "node_modules/",
+                ".venv/",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        add = _run_git(workspace, "add", "-A")
+        if add.returncode != 0:
+            logger.warning("git add failed in {}: {}", workspace, add.stderr.strip())
+            return
+        commit = _run_git(workspace, "commit", "-q", "-m", "baseline: workspace initialised")
+        if commit.returncode != 0:
+            logger.warning("git baseline commit failed in {}: {}", workspace, commit.stderr.strip())
+    except FileNotFoundError:
+        logger.warning("git binary not found on runner host — diff feature disabled")
+    except subprocess.TimeoutExpired:
+        logger.warning("git init timed out in {}", workspace)
+    except Exception as exc:  # defensive — git setup must never break start
+        logger.warning("git init unexpected error in {}: {}", workspace, exc)
+
+
+def _status_label(state: str) -> str:
+    if "D" in state:
+        return "deleted"
+    if "A" in state:
+        return "added"
+    if "R" in state:
+        return "renamed"
+    return "modified"
+
+
+def _synthetic_add_patch(path: str, content: str) -> str:
+    """Render an untracked file as a unified diff against /dev/null.
+
+    ``git diff HEAD`` doesn't include untracked paths; we synthesise an
+    equivalent patch so the UI's diff rendering can stay uniform.
+    """
+    lines = content.splitlines()
+    header = (
+        f"diff --git a/{path} b/{path}\n"
+        f"new file mode 100644\n"
+        f"--- /dev/null\n"
+        f"+++ b/{path}\n"
+        f"@@ -0,0 +1,{len(lines)} @@\n"
+    )
+    body = "\n".join(f"+{ln}" for ln in lines)
+    return header + body + ("\n" if body else "")
+
+
 # ── Endpoints ──
 
 
@@ -565,6 +674,8 @@ async def start_agent(hosted_id: str, body: StartRequest):
         except Exception as e:
             logger.warning("Could not fetch SKILL.md: {}", e)
 
+    _init_workspace_git(workspace)
+
     # Ensure workspace is writable by container user (1000:1000)
     # Requires root on the host — skip gracefully in local dev
     # Skip broken symlinks (e.g. venv/bin/python3) to avoid FileNotFoundError
@@ -608,24 +719,32 @@ async def start_agent(hosted_id: str, body: StartRequest):
     ctx = body.context_max_tokens or 128000
     eviction_limit = max(5000, ctx // 20)
 
+    # Pydantic-deep 0.3.16+: instructions REPLACES base prompt instead of
+    # appending. To preserve the framework's tool-usage guidance, only pass
+    # `instructions` when the owner actually provided a custom system prompt.
+    # An empty/blank value falls through to the library's default DeepAgent
+    # base prompt.
+    custom_instructions = (body.system_prompt or "").strip() or None
+
     # Load agent from workspace agent.yaml if exists, otherwise use defaults
     agent_yaml = workspace / "agent.yaml"
     if agent_yaml.exists():
         logger.info("Loading agent spec from {}", agent_yaml)
-        agent, deps = DeepAgent.from_file(
-            str(agent_yaml),
+        from_file_kwargs = dict(
             model=f"openai:{body.model}",
-            instructions=body.system_prompt,
             backend=sandbox,
             output_type=[str, DeferredToolRequests],
             cost_budget_usd=settings.default_budget_usd,
             context_manager_max_tokens=body.context_max_tokens,
             eviction_token_limit=eviction_limit,
         )
+        if custom_instructions:
+            from_file_kwargs["instructions"] = custom_instructions
+        agent, deps = DeepAgent.from_file(str(agent_yaml), **from_file_kwargs)
     else:
         agent = create_deep_agent(
             model=f"openai:{body.model}",
-            instructions=body.system_prompt,
+            instructions=custom_instructions,
             output_type=[str, DeferredToolRequests],
             include_todo=True,
             include_filesystem=True,
@@ -1166,6 +1285,56 @@ async def delete_workspace_file(hosted_id: str, file_path: str):
         target.unlink()
         return {"status": "deleted"}
     return {"status": "not_found"}
+
+
+@app.get("/agents/{hosted_id}/diff")
+async def get_workspace_diff(hosted_id: str):
+    """Return the list of files that changed since the workspace was
+    initialised, with their unified diff patches.
+
+    Uses ``git diff HEAD`` (the baseline commit + any later commits
+    the agent made) so the user-visible "pending changes" set is what
+    would be staged if the user hit a commit button.
+    """
+    workspace = settings.workspace_root / hosted_id
+    if not workspace.exists() or not (workspace / ".git").exists():
+        return {"files": [], "git_available": False}
+
+    status = _run_git(workspace, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    if status.returncode != 0:
+        logger.warning("git status failed for {}: {}", hosted_id, status.stderr.strip())
+        return {"files": [], "git_available": False}
+
+    files: list[dict] = []
+    # Parse porcelain -z: two-char status, space, filename, NUL.
+    parts = [p for p in status.stdout.split("\0") if p]
+    for raw in parts:
+        if len(raw) < 3:
+            continue
+        state = raw[:2]
+        path = raw[3:]
+        index_state = state[0]
+        worktree_state = state[1]
+        if index_state == "?" or worktree_state == "?":
+            # Untracked file — diff by reading contents against /dev/null.
+            full = workspace / path
+            try:
+                content = full.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, PermissionError, FileNotFoundError):
+                content = ""
+            files.append({
+                "path": path,
+                "status": "added",
+                "patch": _synthetic_add_patch(path, content),
+            })
+            continue
+        patch = _run_git(workspace, "diff", "HEAD", "--", path)
+        files.append({
+            "path": path,
+            "status": _status_label(state),
+            "patch": patch.stdout if patch.returncode == 0 else "",
+        })
+    return {"files": files, "git_available": True}
 
 
 @app.get("/health")

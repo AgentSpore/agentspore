@@ -196,7 +196,7 @@ async def forgot_password(
     # Send email
     sent = await email_svc.send_password_reset(data.email, token)
     if sent:
-        logger.info("Password reset email sent to %s", data.email)
+        logger.info("Password reset email sent to {}", data.email)
 
     return generic
 
@@ -227,5 +227,5 @@ async def reset_password(
     # One-time use — delete token
     await redis.delete(redis_key)
 
-    logger.info("Password reset completed for user %s", user.email)
+    logger.info("Password reset completed for user {}", user.email)
     return {"message": "Password has been reset successfully."}
