@@ -4,10 +4,18 @@
 
 ### Added
 - **Rewind a hosted-agent chat to an earlier turn** -- new owner-facing control in the chat header (`↶ Rewind`). Lists every checkpoint pydantic-deep recorded for the running agent (one per turn, up to 50) and lets the owner roll back to any of them. The agent's in-memory message history is restored to the chosen snapshot, and owner_messages produced after the snapshot are soft-deleted so the chat UI matches what the agent now remembers (clean undo, not preserved future). Backed by `GET /api/v1/hosted-agents/{id}/checkpoints` + `POST /api/v1/hosted-agents/{id}/rewind` (now wraps soft-delete + persisted `session_history` refresh)
-- **Start a new chat session without losing the agent** -- new `✱ New session` button in the chat header. Hides every owner_message for that agent (rows preserved in DB with `is_deleted = TRUE` for audit), clears the persisted `session_history`, and -- if the agent is running -- stops and restarts the runner so its in-memory `message_history` is empty. Workspace files, persistent memory (`.deep/memory`), and OpenViking long-term recall stay intact. Backed by `POST /api/v1/hosted-agents/{id}/chat/clear`
+- **Start a new chat session without losing the agent** -- new `✱ New session` button in the chat header. Hides every owner_message for that agent (rows preserved in DB with `is_deleted = TRUE` for audit), clears the persisted `session_history`, and -- if the agent is running -- stops and restarts the runner so its in-memory `message_history` is empty. Workspace files, persistent memory, and OpenViking long-term recall stay intact. Backed by `POST /api/v1/hosted-agents/{id}/chat/clear`
+
+### Fixed
+- **Rewind dropdown was always empty** -- the runner endpoint that lists checkpoints was looking for `ts.checkpoint_store` on the agent toolsets, but pydantic-deep keeps the store under `CheckpointToolset._fallback_store` and exposes the store API as async (`list_all`, `get`). Rewrote the resolver to prefer `deps.checkpoint_store` and fall back to `_fallback_store`, and switched to the async API. Same fix applied to the rewind endpoint
+- **Auto-generated `agent.yaml` produced no checkpoints during plain chats** -- the `_start_agent_internal` template wrote `include_checkpoints: true` but did not pin `checkpoint_frequency`. The pydantic-deep default is `every_tool`, so a conversation without tool calls left the checkpoint store empty and the Rewind dropdown showed `No checkpoints yet`. Both yaml templates (creation and auto-bootstrap) now declare `checkpoint_frequency: every_turn` and `max_checkpoints: 50`. The runner additionally pins these as overrides when calling `DeepAgent.from_file()` so older agents with an out-of-date yaml are also fixed at start time without yaml regeneration
+
+### Changed
+- **Persistent agent memory moved from `/workspace/.deep/memory` to `/workspace/memory`** -- new agents get a flat workspace layout (`/workspace/{skills,memory,...}`) instead of memory hidden inside the framework's `.deep/` tree. Existing agents keep their original `memory_dir` value because the auto-bootstrap only writes `agent.yaml` when one doesn't already exist; manual yaml edits remain the only way to migrate an existing agent. `.deep/checkpoints` and `.deep/plans` stay where pydantic-deep manages them — only the user-facing memory directory was relocated
 
 ### Tests
 - 6 backend tests (`tests/test_chat_session.py`) covering soft-delete repo helpers and the runner-coupled service flow with mocked `_call_runner`. Plus an in-process end-to-end script driving the real FastAPI app + testcontainers Postgres through the full sequence (list checkpoints → rewind → verify chat trimmed → clear → verify chat empty)
+- 9 runner tests (`agent-runner/tests/test_checkpoints.py`) covering both checkpoint-store wiring conventions, list/rewind happy paths, missing-store fallback, and the 404/400 error branches; runs without Docker
 
 ## [1.27.2] - 2026-04-28
 

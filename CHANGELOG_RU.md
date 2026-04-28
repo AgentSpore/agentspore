@@ -4,10 +4,18 @@
 
 ### Добавлено
 - **Откат чата hosted-агента к предыдущему turn'у** -- новая кнопка в header'е чата (`↶ Rewind`). Показывает список всех checkpoint'ов которые pydantic-deep записал для running-агента (один на turn, до 50) и даёт владельцу откатиться к любому из них. In-memory message history агента восстанавливается к выбранному снимку, а owner_messages созданные после snapshot'а скрываются (soft-delete) — так UI чата совпадает с тем что агент сейчас помнит (clean undo, без preserve future). Endpoint'ы: `GET /api/v1/hosted-agents/{id}/checkpoints` + `POST /api/v1/hosted-agents/{id}/rewind` (теперь обёртывает soft-delete + refresh persisted `session_history`)
-- **Новая сессия чата без потери агента** -- новая кнопка `✱ New session` в header'е. Скрывает все owner_message для этого агента (rows сохраняются в DB с `is_deleted = TRUE` для аудита), очищает persisted `session_history`, и — если агент running — останавливает и перезапускает runner так чтобы его in-memory `message_history` был пуст. Workspace files, persistent memory (`.deep/memory`) и OpenViking long-term recall остаются нетронутыми. Endpoint: `POST /api/v1/hosted-agents/{id}/chat/clear`
+- **Новая сессия чата без потери агента** -- новая кнопка `✱ New session` в header'е. Скрывает все owner_message для этого агента (rows сохраняются в DB с `is_deleted = TRUE` для аудита), очищает persisted `session_history`, и — если агент running — останавливает и перезапускает runner так чтобы его in-memory `message_history` был пуст. Workspace files, persistent memory и OpenViking long-term recall остаются нетронутыми. Endpoint: `POST /api/v1/hosted-agents/{id}/chat/clear`
+
+### Исправлено
+- **Rewind dropdown всегда был пустым** -- runner endpoint списка checkpoint'ов искал `ts.checkpoint_store` на toolset'ах агента, но pydantic-deep хранит store под `CheckpointToolset._fallback_store` и API store async (`list_all`, `get`). Переписал resolver чтобы он сначала пробовал `deps.checkpoint_store`, потом fallback на `_fallback_store`, и перешёл на async API. Тот же fix применён к rewind endpoint
+- **Авто-сгенерированный `agent.yaml` не создавал checkpoint'ы во время обычного чата** -- template `_start_agent_internal` писал `include_checkpoints: true` но не закреплял `checkpoint_frequency`. Дефолт pydantic-deep — `every_tool`, поэтому разговор без tool call'ов оставлял checkpoint store пустым и Rewind dropdown показывал `No checkpoints yet`. Оба yaml-template'а (создание и auto-bootstrap) теперь декларируют `checkpoint_frequency: every_turn` и `max_checkpoints: 50`. Runner дополнительно закрепляет их как overrides при вызове `DeepAgent.from_file()`, поэтому старые агенты с устаревшим yaml тоже фиксятся на старте без regen'а yaml
+
+### Изменено
+- **Persistent memory агента переехал с `/workspace/.deep/memory` на `/workspace/memory`** -- новые агенты получают плоский workspace layout (`/workspace/{skills,memory,...}`) вместо memory спрятанной в `.deep/` дереве фреймворка. Существующие агенты сохраняют свой `memory_dir` потому что auto-bootstrap пишет `agent.yaml` только если его ещё нет; ручной редит yaml — единственный способ мигрировать существующего агента. `.deep/checkpoints` и `.deep/plans` остаются там где их менеджит pydantic-deep — переехала только user-facing memory директория
 
 ### Тесты
 - 6 backend-тестов (`tests/test_chat_session.py`) покрывают soft-delete repo helpers и runner-coupled service flow с мокнутым `_call_runner`. Плюс in-process end-to-end скрипт прогоняющий реальный FastAPI app + testcontainers Postgres через полную последовательность (list checkpoints → rewind → verify chat trimmed → clear → verify chat empty)
+- 9 runner-тестов (`agent-runner/tests/test_checkpoints.py`) покрывают обе wiring-конвенции checkpoint store, happy paths list/rewind, missing-store fallback, 404/400 error branches; работает без Docker
 
 ## [1.27.2] - 2026-04-28
 
