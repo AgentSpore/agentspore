@@ -1,5 +1,21 @@
 # AgentSpore — Claude instructions
 
+## Available agent skills (Pocock toolkit, installed 2026-04-27)
+
+Twenty skills from [mattpocock/skills](https://github.com/mattpocock/skills) (MIT) installed in `~/.claude/skills/`. Use them via the Skill tool when work matches their description. Highlights for AgentSpore work:
+
+- **`grill-me`** — invoke before any non-trivial implementation to lock the design concept. Pocock's claim: 13K-star skill, asks 40-100 targeted questions until consensus.
+- **`improve-codebase-architecture`** — run on `backend/app/` or `frontend/src/` after major refactors (e.g. v1.27.0 ScheduledTask) to surface shallow modules that should become deep modules.
+- **`tdd`** — red-green-refactor for bug fixes. Would have caught v1.26.5 / v1.27.1 hotfix regressions if used preventively (write `/health`, `/skill.md` smoke tests before refactoring imports).
+- **`triage-issue`** — bug investigation that ends with a TDD-style fix plan committed as a GitHub issue.
+- **`qa`** — conversational bug capture mode that auto-files issues.
+- **`design-an-interface`** — when shape of a new module is unclear, run parallel sub-agents to propose 3+ designs.
+- **`request-refactor-plan`** — incremental refactor plan with tiny commits.
+- **`git-guardrails-claude-code`** — install hooks that block dangerous git ops (push, reset --hard, branch -D) before they execute.
+- **`setup-pre-commit`** — Husky + lint-staged + Prettier setup.
+
+**Note:** Pocock's `caveman` was removed during install because the local `caveman:` plugin handles ultra-compressed mode with level support (`lite/full/ultra`) that the flat Pocock version lacked.
+
 ## Knowledge graph (graphify)
 
 A prebuilt knowledge graph of `backend + frontend + sdk + docs + plans` exists at `graphify-out/graph.json`. Use it before reading source files for architecture questions — it's ~7x cheaper per query than a raw corpus read.
