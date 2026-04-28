@@ -742,6 +742,77 @@ class HostedAgentService:
         await self.get_hosted_agent(hosted_id, user_id)
         return await self.repo.get_owner_messages(hosted_id, limit)
 
+    async def list_checkpoints(self, hosted_id: str, user_id: str) -> list[dict]:
+        """List in-memory checkpoints for the hosted agent's current run."""
+        await self.get_hosted_agent(hosted_id, user_id)
+        result = await self._call_runner("checkpoints", hosted_id, method="GET")
+        return result.get("checkpoints", []) if isinstance(result, dict) else []
+
+    async def rewind_to_checkpoint(
+        self, hosted_id: str, user_id: str, checkpoint_id: str, before_timestamp: str | None
+    ) -> dict:
+        """Rewind the agent to a checkpoint and soft-delete owner_messages produced after it.
+
+        ``before_timestamp`` is the checkpoint's ``created_at`` as known
+        to the client. The runner restores its in-memory message history
+        first; only on success do we hide owner_messages newer than the
+        checkpoint, so a failed rewind never destroys visible chat.
+        """
+        await self.get_hosted_agent(hosted_id, user_id)
+        rewind_result = await self._call_runner(
+            "rewind", hosted_id, {"checkpoint_id": checkpoint_id}
+        )
+        hidden = 0
+        if before_timestamp:
+            hidden = await self.repo.soft_delete_owner_messages_after(
+                hosted_id, before_timestamp
+            )
+        # Also clear persisted session_history so a future restart does
+        # not pull rolled-back messages back into the runner.
+        try:
+            history_resp = await self._call_runner("history", hosted_id, method="GET")
+            new_history = (
+                history_resp.get("history", [])
+                if isinstance(history_resp, dict)
+                else []
+            )
+            await self.repo.save_session_history(hosted_id, new_history)
+        except Exception as e:
+            logger.warning("Could not refresh session_history after rewind for {}: {}", hosted_id, e)
+        return {
+            "status": "ok",
+            "checkpoint_id": checkpoint_id,
+            "messages_hidden": hidden,
+            "runner": rewind_result,
+        }
+
+    async def clear_chat(self, hosted_id: str, user_id: str) -> dict:
+        """Start a new session: hide all owner_messages, clear persisted history, restart runner state.
+
+        The chat appears empty in the UI; rows remain in DB with
+        ``is_deleted = TRUE`` for audit. The runner's in-memory
+        ``message_history`` is reset by stopping and restarting the
+        agent so the LLM has no recall of the prior conversation.
+        """
+        hosted = await self.get_hosted_agent(hosted_id, user_id)
+        hidden = await self.repo.soft_delete_all_owner_messages(hosted_id)
+        await self.repo.save_session_history(hosted_id, [])
+        was_running = hosted.get("status") == "running"
+        if was_running:
+            try:
+                await self._call_runner("stop", hosted_id)
+            except Exception as e:
+                logger.warning("Stop during clear_chat failed for {}: {}", hosted_id, e)
+            try:
+                await self.start_agent(hosted_id, user_id)
+            except Exception as e:
+                logger.warning("Restart during clear_chat failed for {}: {}", hosted_id, e)
+        return {
+            "status": "ok",
+            "messages_hidden": hidden,
+            "agent_restarted": was_running,
+        }
+
     # ── Files ──
 
     async def write_file(self, hosted_id: str, user_id: str, file_path: str, content: str, file_type: str = "text") -> dict:

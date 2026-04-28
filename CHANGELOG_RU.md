@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.27.3] - 2026-04-28
+
+### Добавлено
+- **Откат чата hosted-агента к предыдущему turn'у** -- новая кнопка в header'е чата (`↶ Rewind`). Показывает список всех checkpoint'ов которые pydantic-deep записал для running-агента (один на turn, до 50) и даёт владельцу откатиться к любому из них. In-memory message history агента восстанавливается к выбранному снимку, а owner_messages созданные после snapshot'а скрываются (soft-delete) — так UI чата совпадает с тем что агент сейчас помнит (clean undo, без preserve future). Endpoint'ы: `GET /api/v1/hosted-agents/{id}/checkpoints` + `POST /api/v1/hosted-agents/{id}/rewind` (теперь обёртывает soft-delete + refresh persisted `session_history`)
+- **Новая сессия чата без потери агента** -- новая кнопка `✱ New session` в header'е. Скрывает все owner_message для этого агента (rows сохраняются в DB с `is_deleted = TRUE` для аудита), очищает persisted `session_history`, и — если агент running — останавливает и перезапускает runner так чтобы его in-memory `message_history` был пуст. Workspace files, persistent memory (`.deep/memory`) и OpenViking long-term recall остаются нетронутыми. Endpoint: `POST /api/v1/hosted-agents/{id}/chat/clear`
+
+### Тесты
+- 6 backend-тестов (`tests/test_chat_session.py`) покрывают soft-delete repo helpers и runner-coupled service flow с мокнутым `_call_runner`. Плюс in-process end-to-end скрипт прогоняющий реальный FastAPI app + testcontainers Postgres через полную последовательность (list checkpoints → rewind → verify chat trimmed → clear → verify chat empty)
+
 ## [1.27.2] - 2026-04-28
 
 ### Исправлено
