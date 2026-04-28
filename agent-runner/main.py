@@ -33,6 +33,7 @@ from pydantic_ai.messages import ModelRequest, SystemPromptPart, ModelResponse, 
 from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
 from pydantic_ai.tools import DeferredToolResults
 from pydantic_deep import create_deep_agent, DeepAgent, DeepAgentDeps, InMemoryCheckpointStore
+from pydantic_deep.processors.patch import patch_tool_calls_processor
 from pydantic_ai_backends import DockerSandbox
 
 from config import get_settings
@@ -102,6 +103,50 @@ def is_command_safe(command: str) -> tuple[bool, str]:
         if blocked in cmd_lower:
             return False, f"Blocked command pattern: {blocked}"
     return True, ""
+
+
+def sanitize_history(messages: list) -> list:
+    """Sanitize message_history before persistence/restore.
+
+    Drops trailing ModelResponse with orphan ToolCallParts (no matching
+    ToolReturnParts in any subsequent ModelRequest), then runs
+    pydantic-deep's patch_tool_calls_processor to inject synthetic
+    ToolReturnParts for any remaining mid-history orphans.
+
+    Without this, an aborted/timed-out tool call leaves an orphan
+    ToolCallPart in saved history. On next start, pydantic-deep injects
+    a synthetic "Tool call was cancelled." which the agent reads as
+    real evidence that tools/network are blocked, leading to confused
+    responses to the user.
+    """
+    if not messages:
+        return messages
+
+    cleaned = list(messages)
+    # Trim trailing orphan ToolCallParts (handles both ModelMessage objects
+    # and serialized dict form for restored history).
+    while cleaned:
+        last = cleaned[-1]
+        if isinstance(last, ModelResponse):
+            has_orphan_tool = any(isinstance(p, ToolCallPart) for p in last.parts)
+        elif isinstance(last, dict) and last.get("kind") == "response":
+            has_orphan_tool = any(
+                isinstance(p, dict) and p.get("part_kind") == "tool-call"
+                for p in (last.get("parts") or [])
+            )
+        else:
+            break
+        if not has_orphan_tool:
+            break
+        cleaned = cleaned[:-1]
+
+    # patch_tool_calls_processor expects ModelMessage objects; skip for raw dicts.
+    if cleaned and not isinstance(cleaned[0], dict):
+        try:
+            return patch_tool_calls_processor(cleaned)
+        except Exception as e:
+            logger.warning("History sanitize fallback (patch failed): {}", e)
+    return cleaned
 
 
 class AgentSession:
@@ -781,10 +826,15 @@ async def start_agent(hosted_id: str, body: StartRequest):
         heartbeat_seconds=body.heartbeat_seconds,
     )
 
-    # Restore message_history from platform DB (short-term memory)
+    # Restore message_history from platform DB (short-term memory).
+    # Trim trailing dicts that look like ModelResponse with orphan
+    # ToolCallParts — legacy rows saved before sanitize_history was in
+    # place can otherwise trigger "Tool call was cancelled." injection.
     if body.message_history:
-        session.message_history = body.message_history
-        logger.info("Restored {} messages for agent {}", len(body.message_history), hosted_id)
+        history = sanitize_history(list(body.message_history))
+        session.message_history = history
+        trimmed = len(body.message_history) - len(history)
+        logger.info("Restored {} messages for agent {} (trimmed {} orphan trailing)", len(history), hosted_id, trimmed)
 
     sessions[hosted_id] = session
     session.start_heartbeat()
@@ -842,7 +892,7 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
                 )
             else:
                 raise
-        session.message_history = result.all_messages()[-100:]
+        session.message_history = sanitize_history(result.all_messages())[-100:]
         reply, tool_calls, thinking = _extract_response(result)
         return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
       except Exception as e:
@@ -965,7 +1015,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 all_tool_calls.append({"tool": part.tool_name, "args": args, "status": "done"})
 
                 result = run.result
-                session.message_history = result.all_messages()[-100:]
+                session.message_history = sanitize_history(result.all_messages())[-100:]
 
                 # Auto-approve deferred tool calls (agent runs in sandbox)
                 max_approvals = 10
@@ -997,7 +1047,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         message_history=result.all_messages(),
                         model_settings={"timeout": settings.chat_timeout},
                     )
-                    session.message_history = result.all_messages()[-100:]
+                    session.message_history = sanitize_history(result.all_messages())[-100:]
                     max_approvals -= 1
 
                 reply, extra_tools, thinking = _extract_response(result)
@@ -1058,7 +1108,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         )
                     else:
                         raise
-                session.message_history = result.all_messages()[-100:]
+                session.message_history = sanitize_history(result.all_messages())[-100:]
 
                 # Auto-approve deferred tool calls
                 max_approvals = 10
@@ -1081,7 +1131,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         message_history=result.all_messages(),
                         model_settings={"timeout": settings.chat_timeout},
                     )
-                    session.message_history = result.all_messages()[-100:]
+                    session.message_history = sanitize_history(result.all_messages())[-100:]
                     max_approvals -= 1
 
                 reply, tool_calls, thinking = _extract_response(result)
@@ -1106,7 +1156,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         message_history=[],
                         model_settings={"timeout": settings.chat_timeout},
                     )
-                    session.message_history = result.all_messages()[-100:]
+                    session.message_history = sanitize_history(result.all_messages())[-100:]
                     reply, tool_calls, thinking = _extract_response(result)
                     yield json.dumps({
                         "type": "done",
@@ -1158,9 +1208,12 @@ async def get_session_history(hosted_id: str):
     if not session:
         return {"history": []}
     try:
-        # Serialize pydantic-deepagents message objects to dicts
+        # Sanitize before persistence so orphan ToolCallParts (from
+        # aborted streams) don't trigger synthetic "Tool call was
+        # cancelled." injection on next restore.
+        clean = sanitize_history(session.message_history)[-30:]
         serialized = []
-        for msg in session.message_history[-30:]:
+        for msg in clean:
             if isinstance(msg, dict):
                 serialized.append(msg)
             elif hasattr(msg, "model_dump"):

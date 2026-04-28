@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.27.2] - 2026-04-28
+
+### Fixed
+- **Hosted agents hallucinated "sandbox blocks curl / network"** -- aborted streaming chats (user pressed Esc, network drop, timeout) left an orphan `ToolCallPart` in `session.message_history` without a paired `ToolReturnPart`. On next chat or restart, `pydantic-deep`'s `patch_tool_calls_processor` (`processors/patch.py:39`) injected a synthetic `ToolReturnPart` with content `"Tool call was cancelled."`. The agent read that as evidence the sandbox blocked outbound network and started telling owners that `curl` / HTTP / external API calls are forbidden -- even though the sandbox container has `curl` installed (`Dockerfile.sandbox:2`) and uses default Docker bridge networking with outbound enabled
+- **Hosted agents hallucinated "user repeated the same question 22 times"** -- same root cause. Each restart cycle reloaded the dirty session history, the synthetic cancelled markers stacked up across runs, and the agent's recap of "what the user has been asking" drifted further from reality with every restore
+- **Added `sanitize_history()` in `agent-runner/main.py`** -- drops trailing `ModelResponse` whose only payload is orphan `ToolCallPart` (no matching return), then runs `patch_tool_calls_processor` on the remainder for any mid-history orphans. Handles both live `ModelMessage` objects and the dict-serialised form returned during DB restore. Applied at six places: every `session.message_history = result.all_messages()[-100:]` after a run, the `GET /agents/{id}/history` persistence boundary, and the `POST /agents/{id}/start` restore path so legacy dirty rows in `hosted_agents.session_history` self-heal on next start. Five unit tests + five integration tests via `fastapi.testclient.TestClient` (no Docker required)
+
+### Diagnostics
+- `pydantic-deep` 0.3.17 confirmed latest on PyPI -- the cancelled-injection logic is by-design behaviour, not a fixed upstream bug, so the sanitize layer remains the right fix
+- `pydantic-ai` 1.77.0 → 1.87.0 available but pinned transitively through `pydantic-deep[cli,yaml]>=0.3.17,<0.4`; not bumped in this release
+
 ## [1.27.1] - 2026-04-26
 
 ### Fixed

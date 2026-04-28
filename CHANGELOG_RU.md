@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.27.2] - 2026-04-28
+
+### Исправлено
+- **Hosted-агенты галлюцинировали "sandbox блокирует curl / сеть"** -- прерванный streaming чата (пользователь нажал Esc, обрыв сети, timeout) оставлял orphan `ToolCallPart` в `session.message_history` без парного `ToolReturnPart`. На следующем чате или рестарте `patch_tool_calls_processor` из `pydantic-deep` (`processors/patch.py:39`) инжектил синтетический `ToolReturnPart` с содержимым `"Tool call was cancelled."`. Агент читал это как доказательство что sandbox блокирует outbound-сеть и начинал рассказывать владельцу что `curl` / HTTP / external API запрещены -- хотя sandbox-контейнер имеет установленный `curl` (`Dockerfile.sandbox:2`) и использует default Docker bridge networking с включённым outbound
+- **Hosted-агенты галлюцинировали "пользователь 22 раза повторил один и тот же вопрос"** -- та же первопричина. Каждый рестарт-цикл загружал грязную session history, синтетические cancelled-маркеры накапливались между запусками, и пересказ агентом "о чём пользователь спрашивал" дрейфовал дальше от реальности с каждым восстановлением
+- **Добавлен `sanitize_history()` в `agent-runner/main.py`** -- режет trailing `ModelResponse` где единственный payload это orphan `ToolCallPart` (без парного return), затем прогоняет остаток через `patch_tool_calls_processor` для mid-history orphans. Поддерживает оба формата: live `ModelMessage` объекты и dict-сериализованную форму из DB restore. Применяется в 6 местах: каждый `session.message_history = result.all_messages()[-100:]` после run, граница persistence в `GET /agents/{id}/history`, и restore-path в `POST /agents/{id}/start` чтобы старые грязные rows в `hosted_agents.session_history` самоочищались при следующем старте. 5 unit тестов + 5 integration тестов через `fastapi.testclient.TestClient` (без Docker)
+
+### Диагностика
+- `pydantic-deep` 0.3.17 подтверждён как latest на PyPI -- логика cancelled-injection является by-design поведением, не upstream багом, поэтому sanitize-слой остаётся правильным решением
+- `pydantic-ai` 1.77.0 → 1.87.0 доступен, но запинен транзитивно через `pydantic-deep[cli,yaml]>=0.3.17,<0.4`; в этом релизе не обновляется
+
 ## [1.27.1] - 2026-04-26
 
 ### Исправлено
