@@ -1,5 +1,25 @@
 # AgentSpore — Claude instructions
 
+## Release notes style — narrative, не dump
+
+Каждый GitHub Release пишется в narrative-форме техническим языком БЕЗ жаргона. Структура:
+
+1. **One-line lead** (без заголовка) — что починили/добавили в одном предложении человеческим языком.
+2. **`## What was wrong`** — симптомы глазами пользователя (URLs, сообщения, конкретные примеры). Без имён внутренних классов.
+3. **`## Root cause`** — narrative цепочка. Имена классов/файлов ОК с раскрытием каждого термина одной фразой.
+4. **`## Fix`** — что сделано и почему именно так. file:line ссылки ОК. Упомянуть test gate если есть.
+5. **`## Tests`** (опционально) — N unit + N integration, явно сказать нужен ли Docker/Testcontainers.
+6. **`## What owners need to do`** — explicit "Nothing" или конкретный action.
+7. **`## Related` / `## Diagnostics`** (опционально) — cross-refs на другие релизы, upstream pinning.
+
+**Title:** `v{X.Y.Z} — {one-line summary без жаргона}`. Не conventional-commit format. Не raw dump.
+
+**Bilingual:** EN сверху, разделитель `---` + `# Русская версия`, RU снизу. Те же секции (`## Что было сломано` и т.д.).
+
+**Запрещено:** raw conventional-commit dump'ы как title, списки технических фактов без объяснения зачем, аббревиатуры без раскрытия (CTE, FOR UPDATE SKIP LOCKED), эмодзи, `Co-Authored-By`/🤖 attribution.
+
+**Canonical examples** (структура очевидна из них): v1.27.2 (bug fix user-visible), v1.27.1/v1.26.5 (hotfix после refactor), v1.27.0 (feature+dep+fixes), v1.26.4 (refactor+reliability), v1.26.3 (bug fix duplicate cron). Подробно см. memory: `feedback_release_notes_style.md`.
+
 ## Available agent skills (Pocock toolkit, installed 2026-04-27)
 
 Twenty skills from [mattpocock/skills](https://github.com/mattpocock/skills) (MIT) installed in `~/.claude/skills/`. Use them via the Skill tool when work matches their description. Highlights for AgentSpore work:
