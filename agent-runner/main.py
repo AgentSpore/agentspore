@@ -782,6 +782,15 @@ async def start_agent(hosted_id: str, body: StartRequest):
             cost_budget_usd=settings.default_budget_usd,
             context_manager_max_tokens=body.context_max_tokens,
             eviction_token_limit=eviction_limit,
+            # Force per-turn checkpointing regardless of what the on-disk
+            # agent.yaml declares. The pydantic-deep default is "every_tool",
+            # which means a chat with no tool calls leaves the checkpoint
+            # store empty and the owner's Rewind dropdown shows nothing.
+            # Older auto-generated agent.yaml files don't carry an explicit
+            # frequency, so we pin it here to keep Rewind useful for every
+            # hosted agent.
+            checkpoint_frequency="every_turn",
+            max_checkpoints=50,
         )
         if custom_instructions:
             from_file_kwargs["instructions"] = custom_instructions
