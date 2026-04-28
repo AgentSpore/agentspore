@@ -1,24 +1,33 @@
 # AgentSpore — Claude instructions
 
-## Release notes style — narrative, не dump
+## GitHub release notes
 
-Каждый GitHub Release пишется в narrative-форме техническим языком БЕЗ жаргона. Структура:
+Release notes are narrative, not a commit-log dump. Use plain technical English without insider jargon. Section order:
 
-1. **One-line lead** (без заголовка) — что починили/добавили в одном предложении человеческим языком.
-2. **`## What was wrong`** — симптомы глазами пользователя (URLs, сообщения, конкретные примеры). Без имён внутренних классов.
-3. **`## Root cause`** — narrative цепочка. Имена классов/файлов ОК с раскрытием каждого термина одной фразой.
-4. **`## Fix`** — что сделано и почему именно так. file:line ссылки ОК. Упомянуть test gate если есть.
-5. **`## Tests`** (опционально) — N unit + N integration, явно сказать нужен ли Docker/Testcontainers.
-6. **`## What owners need to do`** — explicit "Nothing" или конкретный action.
-7. **`## Related` / `## Diagnostics`** (опционально) — cross-refs на другие релизы, upstream pinning.
+1. **Lead paragraph** (no heading) — one or two sentences stating what shipped and why it matters, in user-facing terms.
+2. **`## What was wrong`** — observable symptoms only: failing URLs, exact error messages, what the operator or owner saw. No internal class or function names yet.
+3. **`## Root cause`** — narrative explanation of the bug chain. Internal identifiers (modules, classes, function names) are allowed but each term gets a one-clause gloss on first use.
+4. **`## Fix`** — what changed, where (`path/to/file.py:line` is fine), and why this approach over alternatives. Mention any new test gate that prevents regression.
+5. **`## Tests`** (optional) — count of unit and integration tests, whether Docker / Testcontainers are required to run them.
+6. **`## What owners need to do`** — explicit `Nothing` if no action is required, otherwise the precise action.
+7. **`## Related` / `## Diagnostics`** (optional) — cross-references to earlier releases, upstream version pins, related issues.
 
-**Title:** `v{X.Y.Z} — {one-line summary без жаргона}`. Не conventional-commit format. Не raw dump.
+Title format: `v{MAJOR.MINOR.PATCH} — {one-line summary in plain English}`. Conventional-commit prefixes (`fix(scope):`, `feat(scope):`) are commit messages, not release titles.
 
-**Bilingual:** EN сверху, разделитель `---` + `# Русская версия`, RU снизу. Те же секции (`## Что было сломано` и т.д.).
+Releases are bilingual: English first, separator `---` followed by `# Русская версия`, Russian translation second. Section headings translate to `## Что было сломано`, `## Первопричина`, `## Исправление`, `## Тесты`, `## Что нужно сделать владельцам`, `## Связанное` / `## Диагностика`.
 
-**Запрещено:** raw conventional-commit dump'ы как title, списки технических фактов без объяснения зачем, аббревиатуры без раскрытия (CTE, FOR UPDATE SKIP LOCKED), эмодзи, `Co-Authored-By`/🤖 attribution.
+Forbidden: raw commit-message dumps as title, lists of technical facts without explaining the user impact, unexpanded acronyms (`CTE`, `FOR UPDATE SKIP LOCKED`, `ABC`), emoji, `Co-Authored-By` trailers, robot attribution.
 
-**Canonical examples** (структура очевидна из них): v1.27.2 (bug fix user-visible), v1.27.1/v1.26.5 (hotfix после refactor), v1.27.0 (feature+dep+fixes), v1.26.4 (refactor+reliability), v1.26.3 (bug fix duplicate cron). Подробно см. memory: `feedback_release_notes_style.md`.
+Canonical examples to copy when the right structure for a release is unclear:
+
+| Release type | Reference |
+|---|---|
+| Hotfix for regression introduced by a recent refactor | `v1.27.1`, `v1.26.5` |
+| Bug fix for user-visible misbehaviour | `v1.27.2`, `v1.26.3` |
+| Feature plus dependency bump plus side fixes | `v1.27.0` |
+| Refactor with reliability impact | `v1.26.4` |
+
+Full style guide and rationale: `~/.claude/.../memory/feedback_release_notes_style.md`.
 
 ## Available agent skills (Pocock toolkit, installed 2026-04-27)
 
