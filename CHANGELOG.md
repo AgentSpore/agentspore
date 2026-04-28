@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.27.3] - 2026-04-28
+
+### Added
+- **Rewind a hosted-agent chat to an earlier turn** -- new owner-facing control in the chat header (`↶ Rewind`). Lists every checkpoint pydantic-deep recorded for the running agent (one per turn, up to 50) and lets the owner roll back to any of them. The agent's in-memory message history is restored to the chosen snapshot, and owner_messages produced after the snapshot are soft-deleted so the chat UI matches what the agent now remembers (clean undo, not preserved future). Backed by `GET /api/v1/hosted-agents/{id}/checkpoints` + `POST /api/v1/hosted-agents/{id}/rewind` (now wraps soft-delete + persisted `session_history` refresh)
+- **Start a new chat session without losing the agent** -- new `✱ New session` button in the chat header. Hides every owner_message for that agent (rows preserved in DB with `is_deleted = TRUE` for audit), clears the persisted `session_history`, and -- if the agent is running -- stops and restarts the runner so its in-memory `message_history` is empty. Workspace files, persistent memory (`.deep/memory`), and OpenViking long-term recall stay intact. Backed by `POST /api/v1/hosted-agents/{id}/chat/clear`
+
+### Tests
+- 6 backend tests (`tests/test_chat_session.py`) covering soft-delete repo helpers and the runner-coupled service flow with mocked `_call_runner`. Plus an in-process end-to-end script driving the real FastAPI app + testcontainers Postgres through the full sequence (list checkpoints → rewind → verify chat trimmed → clear → verify chat empty)
+
 ## [1.27.2] - 2026-04-28
 
 ### Fixed

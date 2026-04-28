@@ -1390,6 +1390,15 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
 
   const [lastSent, setLastSent] = useState<string | null>(null);
 
+  // Checkpoint + new-session controls
+  type Checkpoint = { id: string; label: string; turn: number; message_count: number; created_at: string };
+  const [showCheckpoints, setShowCheckpoints] = useState(false);
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  const [checkpointsLoading, setCheckpointsLoading] = useState(false);
+  const [rewinding, setRewinding] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+
   // Abort stream on unmount
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -1443,6 +1452,80 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
       }
     } catch { /* ignore */ }
   }, [agentId]);
+
+  const loadCheckpoints = useCallback(async () => {
+    setCheckpointsLoading(true);
+    try {
+      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/checkpoints`);
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data?.checkpoints) ? (data.checkpoints as Checkpoint[]) : [];
+        list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+        setCheckpoints(list);
+      } else {
+        setCheckpoints([]);
+      }
+    } catch {
+      setCheckpoints([]);
+    } finally {
+      setCheckpointsLoading(false);
+    }
+  }, [agentId]);
+
+  const handleRewind = useCallback(async (cp: Checkpoint) => {
+    if (rewinding) return;
+    setRewinding(cp.id);
+    setChatError(null);
+    try {
+      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/rewind`, {
+        method: "POST",
+        body: JSON.stringify({ checkpoint_id: cp.id, before_timestamp: cp.created_at }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setChatError(data.detail || `Rewind failed (${res.status})`);
+        return;
+      }
+      setShowCheckpoints(false);
+      await loadMessages();
+    } catch {
+      setChatError("Network error during rewind");
+    } finally {
+      setRewinding(null);
+    }
+  }, [agentId, loadMessages, rewinding]);
+
+  const handleClearChat = useCallback(async () => {
+    if (clearing) return;
+    setClearing(true);
+    setChatError(null);
+    try {
+      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/chat/clear`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setChatError(data.detail || `Clear failed (${res.status})`);
+        return;
+      }
+      setConfirmClear(false);
+      setMessages([]);
+      prevCountRef.current = 0;
+      setTodos([]);
+      streamTextRef.current = "";
+      streamToolsRef.current = [];
+      streamThinkingRef.current = "";
+      setStreamText("");
+      setStreamTools([]);
+      setStreamThinking("");
+      // Wait briefly for runner restart to settle, then refetch
+      setTimeout(() => { loadMessages(); }, 1500);
+    } catch {
+      setChatError("Network error during clear");
+    } finally {
+      setClearing(false);
+    }
+  }, [agentId, clearing, loadMessages]);
 
   useEffect(() => { loadMessages(); }, [loadMessages]);
   // Extract todos from loaded messages — scan ALL messages for latest state
@@ -1695,12 +1778,80 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
             {status === "running" ? "🟢 Online" : "⭘ Offline"}
           </span>
         </div>
-        {messages.length > 0 && (
-          <button onClick={() => setShowSearch(!showSearch)}
-            className="text-sm font-mono text-neutral-600 hover:text-neutral-400 transition-colors px-1">
-            {showSearch ? "×" : "🔍"}
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {status === "running" && (
+            <div className="relative">
+              <button
+                onClick={() => { const next = !showCheckpoints; setShowCheckpoints(next); if (next) loadCheckpoints(); }}
+                className="text-xs font-mono text-neutral-600 hover:text-neutral-300 transition-colors px-2 py-1 border border-neutral-800/40 rounded"
+                title="Rewind to a previous checkpoint"
+                disabled={!!rewinding}>
+                ↶ Rewind
+              </button>
+              {showCheckpoints && (
+                <div className="absolute right-0 top-full mt-1 w-80 max-h-96 overflow-y-auto bg-[#0d0d0d] border border-neutral-800/60 rounded-lg shadow-2xl z-50">
+                  <div className="px-3 py-2 border-b border-neutral-800/40 flex items-center justify-between">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-500">Checkpoints</span>
+                    <button onClick={() => setShowCheckpoints(false)} className="text-neutral-600 hover:text-neutral-400 text-sm">×</button>
+                  </div>
+                  {checkpointsLoading ? (
+                    <div className="p-3 text-xs font-mono text-neutral-600">Loading…</div>
+                  ) : checkpoints.length === 0 ? (
+                    <div className="p-3 text-xs font-mono text-neutral-600">
+                      No checkpoints yet. They are recorded turn by turn while the agent is running.
+                    </div>
+                  ) : (
+                    <ul>
+                      {checkpoints.map(cp => (
+                        <li key={cp.id} className="border-b border-neutral-800/30 last:border-b-0">
+                          <button
+                            onClick={() => handleRewind(cp)}
+                            disabled={!!rewinding}
+                            className="w-full text-left px-3 py-2 hover:bg-white/[0.03] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-mono text-neutral-300">
+                                {cp.label || `Turn ${cp.turn}`}
+                              </span>
+                              <span className="text-[10px] font-mono text-neutral-600">
+                                {cp.message_count} msgs
+                              </span>
+                            </div>
+                            <div className="text-[10px] font-mono text-neutral-600 mt-0.5">
+                              {cp.created_at ? timeAgo(cp.created_at) : ""}
+                              {rewinding === cp.id && " — rewinding…"}
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {confirmClear ? (
+            <div className="flex items-center gap-1">
+              <button onClick={handleClearChat} disabled={clearing}
+                className="text-xs font-mono px-2 py-1 bg-red-400/15 text-red-400 border border-red-400/30 rounded hover:bg-red-400/25 disabled:opacity-40">
+                {clearing ? "Clearing…" : "Yes, start new"}
+              </button>
+              <button onClick={() => setConfirmClear(false)} disabled={clearing}
+                className="text-xs font-mono px-2 py-1 text-neutral-500 hover:text-neutral-300">Cancel</button>
+            </div>
+          ) : (
+            <button onClick={() => setConfirmClear(true)}
+              className="text-xs font-mono text-neutral-600 hover:text-neutral-300 transition-colors px-2 py-1 border border-neutral-800/40 rounded"
+              title="Hide all messages and start a fresh session">
+              ✱ New session
+            </button>
+          )}
+          {messages.length > 0 && (
+            <button onClick={() => setShowSearch(!showSearch)}
+              className="text-sm font-mono text-neutral-600 hover:text-neutral-400 transition-colors px-1">
+              {showSearch ? "×" : "🔍"}
+            </button>
+          )}
+        </div>
       </div>
 
       {showSearch && (

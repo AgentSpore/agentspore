@@ -1,6 +1,7 @@
 """Repository for hosted agents — CRUD, files, owner messages."""
 
 import json
+from datetime import datetime, timezone
 
 from fastapi import Depends
 from sqlalchemy import text
@@ -312,6 +313,60 @@ class HostedAgentRepository:
         await self.db.commit()
         row = result.mappings().first()
         return dict(row) if row else None
+
+    async def soft_delete_owner_messages_after(
+        self, hosted_id: str, after_timestamp: str | datetime
+    ) -> int:
+        """Soft-delete all owner_messages for a hosted agent created strictly after a timestamp.
+
+        Used when rewinding to a checkpoint: messages produced after the
+        checkpoint snapshot are hidden from the UI so the conversation
+        appears clean (Option A — clean rewind). ``after_timestamp`` may
+        be either an ISO-8601 string (as received from the runner /
+        client) or a ``datetime`` instance; strings are parsed before
+        binding because asyncpg rejects raw ISO strings for ``timestamptz``
+        columns.
+        """
+        if isinstance(after_timestamp, str):
+            ts = datetime.fromisoformat(after_timestamp)
+        else:
+            ts = after_timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE owner_messages
+                SET is_deleted = TRUE
+                WHERE hosted_agent_id = :hid
+                  AND is_deleted = FALSE
+                  AND created_at > :ts
+                """
+            ),
+            {"hid": hosted_id, "ts": ts},
+        )
+        await self.db.commit()
+        return result.rowcount or 0
+
+    async def soft_delete_all_owner_messages(self, hosted_id: str) -> int:
+        """Soft-delete all owner_messages for a hosted agent.
+
+        Used by the "Clear chat" / "Start new session" feature: hides
+        the entire chat history from the UI without losing the rows in
+        DB (audit trail, future restore if needed).
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE owner_messages
+                SET is_deleted = TRUE
+                WHERE hosted_agent_id = :hid AND is_deleted = FALSE
+                """
+            ),
+            {"hid": hosted_id},
+        )
+        await self.db.commit()
+        return result.rowcount or 0
 
     async def delete_owner_message(self, message_id: str) -> bool:
         result = await self.db.execute(

@@ -6,6 +6,7 @@ import zipfile
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
 from app.core.config import Settings, get_settings
@@ -340,19 +341,53 @@ async def list_checkpoints(
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
-    await svc.get_hosted_agent(hosted_id, str(current_user.id))
-    return await svc._call_runner("checkpoints", hosted_id, method="GET")
+    """List in-memory turn-by-turn checkpoints for the running agent.
+
+    Returns ``{"checkpoints": [{id, label, turn, message_count, created_at}, ...]}``.
+    The list is empty if the agent is not currently running, since the
+    runner stores checkpoints in memory only.
+    """
+    checkpoints = await svc.list_checkpoints(hosted_id, str(current_user.id))
+    return {"checkpoints": checkpoints}
+
+
+class RewindRequestBody(BaseModel):
+    checkpoint_id: str
+    before_timestamp: str | None = None
 
 
 @router.post("/{hosted_id}/rewind")
 async def rewind_checkpoint(
     hosted_id: str,
-    body: dict,
+    body: RewindRequestBody,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
-    await svc.get_hosted_agent(hosted_id, str(current_user.id))
-    return await svc._call_runner("rewind", hosted_id, body)
+    """Rewind the agent to a checkpoint and hide owner_messages produced after it.
+
+    ``before_timestamp`` (the checkpoint's ``created_at`` as returned
+    by ``GET /checkpoints``) drives the soft-delete of newer
+    owner_messages so the chat UI matches what the agent now remembers.
+    """
+    return await svc.rewind_to_checkpoint(
+        hosted_id, str(current_user.id), body.checkpoint_id, body.before_timestamp
+    )
+
+
+@router.post("/{hosted_id}/chat/clear")
+async def clear_chat(
+    hosted_id: str,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Start a new chat session: hide all messages, restart agent runner state.
+
+    Soft-deletes every owner_message for this agent (rows preserved in
+    DB for audit, ``is_deleted = TRUE``), clears the persisted
+    ``session_history``, and — if the agent is running — stops and
+    restarts the runner so its in-memory ``message_history`` is empty.
+    """
+    return await svc.clear_chat(hosted_id, str(current_user.id))
 
 
 @router.get("/{hosted_id}/todos")
