@@ -1226,6 +1226,29 @@ async def get_session_history(hosted_id: str):
         return {"history": []}
 
 
+def _resolve_checkpoint_store(session) -> object | None:
+    """Find the CheckpointStore that pydantic-deep is using for this agent.
+
+    pydantic-deep wires the store in two places:
+      * the ``CheckpointToolset`` keeps a fallback reference under
+        ``_fallback_store``;
+      * if the caller injected one, it lives at ``deps.checkpoint_store``.
+
+    Both are private contracts of the library, so try ``deps`` first
+    (fewer assumptions) and fall back to scanning ``agent.toolsets``
+    for an instance that exposes ``_fallback_store``.
+    """
+    deps_store = getattr(session.deps, "checkpoint_store", None)
+    if deps_store is not None:
+        return deps_store
+    toolsets = getattr(session.agent, "toolsets", None) or []
+    for ts in toolsets:
+        candidate = getattr(ts, "_fallback_store", None)
+        if candidate is not None:
+            return candidate
+    return None
+
+
 @app.get("/agents/{hosted_id}/checkpoints")
 async def list_checkpoints(hosted_id: str):
     """List available checkpoints for rewind."""
@@ -1233,21 +1256,19 @@ async def list_checkpoints(hosted_id: str):
     if not session:
         raise HTTPException(404, "Agent not running")
     try:
-        store = None
-        for ts in session.agent.toolsets:
-            if hasattr(ts, "checkpoint_store"):
-                store = ts.checkpoint_store
-                break
-        if not store:
+        store = _resolve_checkpoint_store(session)
+        if store is None:
             return {"checkpoints": []}
+        cp_list = await store.list_all()
         cps = []
-        for cp in store.list():
+        for cp in cp_list:
+            created_at = getattr(cp, "created_at", None)
             cps.append({
-                "id": cp.id if hasattr(cp, "id") else str(cp),
+                "id": getattr(cp, "id", ""),
                 "label": getattr(cp, "label", ""),
                 "turn": getattr(cp, "turn", 0),
                 "message_count": getattr(cp, "message_count", 0),
-                "created_at": getattr(cp, "created_at", ""),
+                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else (str(created_at) if created_at else ""),
             })
         return {"checkpoints": cps}
     except Exception as e:
@@ -1266,17 +1287,13 @@ async def rewind_to_checkpoint(hosted_id: str, body: RewindRequest):
     if not session:
         raise HTTPException(404, "Agent not running")
     try:
-        store = None
-        for ts in session.agent.toolsets:
-            if hasattr(ts, "checkpoint_store"):
-                store = ts.checkpoint_store
-                break
-        if not store:
+        store = _resolve_checkpoint_store(session)
+        if store is None:
             raise HTTPException(400, "Checkpoints not available")
-        cp = store.get(body.checkpoint_id)
-        if not cp:
+        cp = await store.get(body.checkpoint_id)
+        if cp is None:
             raise HTTPException(404, "Checkpoint not found")
-        session.message_history = cp.messages if hasattr(cp, "messages") else []
+        session.message_history = list(getattr(cp, "messages", []) or [])
         logger.info("Rewound agent {} to checkpoint {}", hosted_id, body.checkpoint_id)
         return {"status": "ok", "checkpoint_id": body.checkpoint_id, "message_count": len(session.message_history)}
     except HTTPException:
