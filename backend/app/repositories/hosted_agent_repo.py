@@ -17,6 +17,20 @@ UPDATABLE_FIELDS = frozenset({
 })
 
 
+class StaleVersionError(Exception):
+    """Raised by ``upsert_file`` when ``If-Match`` does not match current row.
+
+    Carries the current version and content so the API layer can turn
+    this into a 412 Precondition Failed response with enough information
+    for the UI's conflict modal.
+    """
+
+    def __init__(self, current_version: int, current_content: str | None):
+        super().__init__(f"version conflict (current={current_version})")
+        self.current_version = current_version
+        self.current_content = current_content
+
+
 class HostedAgentRepository:
     """Data access for hosted_agents, agent_files, owner_messages tables."""
 
@@ -156,13 +170,50 @@ class HostedAgentRepository:
 
     # ── Files ──
 
-    async def upsert_file(self, hosted_id: str, file_path: str, content: str, file_type: str = "text") -> dict:
+    async def upsert_file(
+        self,
+        hosted_id: str,
+        file_path: str,
+        content: str,
+        file_type: str = "text",
+        *,
+        truncated: bool = False,
+        is_binary: bool = False,
+        if_match_version: int | None = None,
+    ) -> dict:
+        """Upsert a file row, bumping ``version`` on every write.
+
+        ``if_match_version``: when set, raises ``StaleVersionError`` (caught
+        by the service layer and turned into HTTP 412) if the existing
+        row's version does not match — used by the editor's ETag flow so
+        a UI save can't silently overwrite an agent edit.
+        """
+        if if_match_version is not None:
+            existing = await self.get_file(hosted_id, file_path)
+            current_version = (existing or {}).get("version", 0)
+            if existing and current_version != if_match_version:
+                raise StaleVersionError(
+                    current_version=current_version,
+                    current_content=existing.get("content"),
+                )
         result = await self.db.execute(
             text("""
-                INSERT INTO agent_files (hosted_agent_id, file_path, content, file_type, size_bytes)
-                VALUES (:hosted_agent_id, :file_path, :content, :file_type, :size_bytes)
+                INSERT INTO agent_files (
+                    hosted_agent_id, file_path, content, file_type,
+                    size_bytes, truncated, is_binary, version
+                )
+                VALUES (
+                    :hosted_agent_id, :file_path, :content, :file_type,
+                    :size_bytes, :truncated, :is_binary, 1
+                )
                 ON CONFLICT (hosted_agent_id, file_path) DO UPDATE
-                SET content = :content, file_type = :file_type, size_bytes = :size_bytes, updated_at = now()
+                SET content = :content,
+                    file_type = :file_type,
+                    size_bytes = :size_bytes,
+                    truncated = :truncated,
+                    is_binary = :is_binary,
+                    version = agent_files.version + 1,
+                    updated_at = now()
                 RETURNING *
             """),
             {
@@ -171,10 +222,38 @@ class HostedAgentRepository:
                 "content": content,
                 "file_type": file_type,
                 "size_bytes": len(content.encode("utf-8")),
+                "truncated": truncated,
+                "is_binary": is_binary,
             },
         )
         await self.db.commit()
         return dict(result.mappings().first())
+
+    async def prune_missing_files(self, hosted_id: str, keep_paths: set[str]) -> list[str]:
+        """Delete agent_files rows whose path is not in ``keep_paths``.
+
+        Used after a sync from the runner: anything the agent removed on
+        disk should disappear from the UI. Returns the paths that were
+        pruned so callers can emit `file_deleted` WS events. ``keep_paths``
+        is allowed to be empty — no rows are deleted in that case (we
+        treat empty as "runner returned nothing", which usually means a
+        broken sync rather than a wholesale wipe).
+        """
+        if not keep_paths:
+            return []
+        # asyncpg/SQLAlchemy: use ANY(:array) for an in-list against a
+        # bind parameter without N-arity expansion.
+        result = await self.db.execute(
+            text("""
+                DELETE FROM agent_files
+                WHERE hosted_agent_id = :hid
+                  AND NOT (file_path = ANY(:keep))
+                RETURNING file_path
+            """),
+            {"hid": hosted_id, "keep": list(keep_paths)},
+        )
+        await self.db.commit()
+        return [r["file_path"] for r in result.mappings()]
 
     async def get_file(self, hosted_id: str, file_path: str) -> dict | None:
         result = await self.db.execute(
@@ -187,7 +266,8 @@ class HostedAgentRepository:
     async def list_files(self, hosted_id: str) -> list[dict]:
         result = await self.db.execute(
             text("""
-                SELECT id, file_path, file_type, size_bytes, updated_at, created_at
+                SELECT id, file_path, file_type, size_bytes, updated_at,
+                       created_at, version, truncated, is_binary
                 FROM agent_files WHERE hosted_agent_id = :hid ORDER BY file_path
             """),
             {"hid": hosted_id},

@@ -1,17 +1,21 @@
 """Hosted Agents API — create, manage, and chat with platform-hosted AI agents."""
 
 import io
+import re
 import secrets
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
 from app.core.config import Settings, get_settings
+from app.repositories.hosted_agent_repo import StaleVersionError
 from app.schemas.hosted_agents import (
     AgentActionResponse,
+    AgentFileBatchRequest,
+    AgentFileBatchResponse,
     AgentFileResponse,
     AgentFileWriteRequest,
     CronTaskCreateRequest,
@@ -31,6 +35,41 @@ from app.schemas.hosted_agents import (
 from app.services.agent_service import get_agent_by_api_key
 from app.services.hosted_agent_service import HostedAgentService, get_hosted_agent_service
 from app.services.openrouter_service import OpenRouterService, get_openrouter_service
+
+
+_ETAG_RE = re.compile(r'^(?:W/)?"?v(\d+)"?$')
+
+
+def _parse_if_match(if_match: str | None) -> int | None:
+    """Parse an ``If-Match`` header into an integer version.
+
+    Accepts ``"v3"``, ``v3``, ``W/"v3"`` (weak ETag). Rejects ``*`` and
+    anything else with a 400 because the UI must either send a valid
+    version or omit the header entirely (best-effort save).
+    """
+    if not if_match:
+        return None
+    if_match = if_match.strip()
+    if if_match == "*":
+        raise HTTPException(400, "If-Match: * is not supported")
+    match = _ETAG_RE.match(if_match)
+    if not match:
+        raise HTTPException(400, f"Malformed If-Match header: {if_match}")
+    return int(match.group(1))
+
+
+def _file_response(f: dict) -> AgentFileResponse:
+    return AgentFileResponse(
+        id=str(f["id"]),
+        file_path=f["file_path"],
+        file_type=f["file_type"],
+        content=f.get("content"),
+        size_bytes=f["size_bytes"],
+        updated_at=str(f["updated_at"]),
+        version=f.get("version", 1),
+        truncated=f.get("truncated", False),
+        is_binary=f.get("is_binary", False),
+    )
 
 router = APIRouter(prefix="/hosted-agents", tags=["hosted-agents"])
 
@@ -429,16 +468,7 @@ async def list_agent_files(
 ):
     """List all files in the agent's workspace."""
     files = await svc.list_files(hosted_id, str(current_user.id))
-    return [
-        AgentFileResponse(
-            id=str(f["id"]),
-            file_path=f["file_path"],
-            file_type=f["file_type"],
-            size_bytes=f["size_bytes"],
-            updated_at=str(f["updated_at"]),
-        )
-        for f in files
-    ]
+    return [_file_response(f) for f in files]
 
 
 @router.get("/{hosted_id}/files/download")
@@ -467,6 +497,30 @@ async def download_files_archive(
     )
 
 
+@router.post("/{hosted_id}/files/batch", response_model=AgentFileBatchResponse)
+async def batch_write_agent_files(
+    hosted_id: str,
+    body: AgentFileBatchRequest,
+    current_user: CurrentUser,
+    svc: HostedAgentService = Depends(get_hosted_agent_service),
+):
+    """Write many files at once.
+
+    DB upserts are best-effort atomic — any failure rolls back rows that
+    were created in this call. Runner pushes happen concurrently; their
+    failures are reported per-file in the ``failed`` list rather than
+    aborting the whole batch (the DB is the source of truth).
+    """
+    items = [it.model_dump() for it in body.files]
+    written, failed = await svc.write_files_batch(
+        hosted_id, str(current_user.id), items
+    )
+    return AgentFileBatchResponse(
+        written=[_file_response(r) for r in written],
+        failed=failed,
+    )
+
+
 @router.get("/{hosted_id}/files/{file_path:path}", response_model=AgentFileResponse)
 async def read_agent_file(
     hosted_id: str,
@@ -476,13 +530,10 @@ async def read_agent_file(
 ):
     """Read a specific file from the agent's workspace."""
     f = await svc.read_file(hosted_id, str(current_user.id), file_path)
-    return AgentFileResponse(
-        id=str(f["id"]),
-        file_path=f["file_path"],
-        file_type=f["file_type"],
-        content=f["content"],
-        size_bytes=f["size_bytes"],
-        updated_at=str(f["updated_at"]),
+    resp = _file_response(f)
+    return JSONResponse(
+        content=resp.model_dump(),
+        headers={"ETag": f'"v{resp.version}"'},
     )
 
 
@@ -492,16 +543,36 @@ async def write_agent_file(
     body: AgentFileWriteRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
+    if_match: str | None = Header(default=None, alias="If-Match"),
 ):
-    """Write or update a file in the agent's workspace."""
-    f = await svc.write_file(hosted_id, str(current_user.id), body.file_path, body.content, body.file_type)
-    return AgentFileResponse(
-        id=str(f["id"]),
-        file_path=f["file_path"],
-        file_type=f["file_type"],
-        content=f["content"],
-        size_bytes=f["size_bytes"],
-        updated_at=str(f["updated_at"]),
+    """Write or update a file in the agent's workspace.
+
+    ``If-Match: "v{N}"`` enables conflict detection: if the current
+    version on disk does not equal N the server returns 412 with the
+    current version and content so the UI can show a diff modal. Omit
+    the header for best-effort save (legacy behaviour).
+    """
+    expected_version = _parse_if_match(if_match)
+    try:
+        f = await svc.write_file(
+            hosted_id, str(current_user.id),
+            body.file_path, body.content, body.file_type,
+            if_match_version=expected_version,
+        )
+    except StaleVersionError as exc:
+        return JSONResponse(
+            status_code=412,
+            content={
+                "detail": "version conflict",
+                "current_version": exc.current_version,
+                "current_content": exc.current_content,
+            },
+            headers={"ETag": f'"v{exc.current_version}"'},
+        )
+    resp = _file_response(f)
+    return JSONResponse(
+        content=resp.model_dump(),
+        headers={"ETag": f'"v{resp.version}"'},
     )
 
 

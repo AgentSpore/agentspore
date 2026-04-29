@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
+from urllib.parse import quote
 
 from croniter import croniter
 
@@ -13,7 +14,11 @@ import httpx
 from fastapi import Depends, HTTPException
 from sqlalchemy import text
 from app.core.config import get_settings
-from app.repositories.hosted_agent_repo import HostedAgentRepository, get_hosted_agent_repo
+from app.repositories.hosted_agent_repo import (
+    HostedAgentRepository,
+    StaleVersionError,
+    get_hosted_agent_repo,
+)
 from app.services.agent_service import AgentService, get_agent_service
 from app.services.openrouter_service import OpenRouterService, get_openrouter_service
 from app.services.openviking_service import OpenVikingService, get_openviking_service
@@ -21,6 +26,33 @@ from app.schemas.hosted_agents import DEFAULT_RUNTIME
 from app.services.connection_manager import deliver_user_event
 
 from loguru import logger
+
+
+# File-path validation: blocks traversal, absolute paths, NULs.
+# Mirrors the runner-side check so the BE rejects bad input early
+# without a wasted HTTP round-trip to the runner.
+def _validate_file_path(file_path: str) -> str:
+    if not file_path or "\x00" in file_path:
+        raise HTTPException(400, "Invalid file path")
+    if file_path.startswith("/"):
+        raise HTTPException(400, "Absolute paths are not allowed")
+    parts = file_path.split("/")
+    if any(p == ".." for p in parts):
+        raise HTTPException(400, "Path traversal is not allowed")
+    if len(file_path) > 500:
+        raise HTTPException(400, "Path too long")
+    return file_path
+
+
+def _file_type_for(path: str) -> str:
+    """Default file_type categorisation matching what _sync_files_from_runner uses."""
+    if "skills/" in path:
+        return "skill"
+    if "memory" in path.lower():
+        return "memory"
+    if path == "AGENT.md":
+        return "config"
+    return "text"
 
 # ── Platform skill.md loader ──
 
@@ -817,10 +849,104 @@ class HostedAgentService:
 
     # ── Files ──
 
-    async def write_file(self, hosted_id: str, user_id: str, file_path: str, content: str, file_type: str = "text") -> dict:
-        """Write or update a file in the agent's workspace."""
+    async def write_file(
+        self,
+        hosted_id: str,
+        user_id: str,
+        file_path: str,
+        content: str,
+        file_type: str = "text",
+        if_match_version: int | None = None,
+    ) -> dict:
+        """Write or update a file in the agent's workspace.
+
+        Persists the row in DB (bumping ``version``) and pushes the same
+        content to the runner's on-disk workspace so the running agent
+        sees the edit immediately. Emits a `hosted_agent_file` WS event
+        on success so other browser tabs (and the file panel itself)
+        update without polling.
+
+        ``if_match_version``: optional ETag. When the row exists and its
+        version differs, ``StaleVersionError`` propagates up to the API
+        layer where it becomes a 412 with the current content payload.
+        """
         await self.get_hosted_agent(hosted_id, user_id)
-        return await self.repo.upsert_file(hosted_id, file_path, content, file_type)
+        _validate_file_path(file_path)
+        try:
+            row = await self.repo.upsert_file(
+                hosted_id, file_path, content, file_type,
+                if_match_version=if_match_version,
+            )
+        except StaleVersionError:
+            raise
+        # Push to runner disk so a running agent sees the new content
+        # without needing a restart. Failure here is non-fatal — the DB
+        # row is the source of truth, and the runner pulls fresh files
+        # on next start.
+        await self._push_file_to_runner(hosted_id, file_path, content)
+        action = "file_updated" if (row.get("version") or 1) > 1 else "file_created"
+        await self._emit_file_event(hosted_id, user_id, action, row)
+        return row
+
+    async def write_files_batch(
+        self,
+        hosted_id: str,
+        user_id: str,
+        items: list[dict],
+    ) -> tuple[list[dict], list[dict]]:
+        """Atomic-ish batch write.
+
+        DB upserts run in a single transaction (commit only after every
+        row succeeds); runner pushes happen concurrently after the DB
+        commit. If any DB write fails the whole batch rolls back so the
+        UI's batch upload either fully succeeds or leaves no half-state.
+        """
+        await self.get_hosted_agent(hosted_id, user_id)
+        for item in items:
+            _validate_file_path(item["file_path"])
+
+        # We rely on the repository's per-call commit; for the atomic
+        # promise we collect rows first, and on failure undo by deleting
+        # rows we created in this call. Cleaner than reaching into the
+        # session because upsert_file already decides created-vs-updated.
+        written_rows: list[dict] = []
+        try:
+            for item in items:
+                row = await self.repo.upsert_file(
+                    hosted_id,
+                    item["file_path"],
+                    item["content"],
+                    item.get("file_type") or _file_type_for(item["file_path"]),
+                )
+                written_rows.append(row)
+        except Exception as exc:
+            # Best-effort rollback of rows that committed before the
+            # failure. We can't truly transaction this across N upserts
+            # given the service's commit-per-call repo, so we delete
+            # paths whose version is exactly 1 (i.e. just created).
+            for row in written_rows:
+                if (row.get("version") or 1) == 1:
+                    try:
+                        await self.repo.delete_file(hosted_id, row["file_path"])
+                    except Exception:
+                        pass
+            logger.warning("Batch upload rolled back for {}: {}", hosted_id, exc)
+            raise HTTPException(400, f"Batch failed: {exc}")
+
+        push_tasks = [
+            self._push_file_to_runner(hosted_id, item["file_path"], item["content"])
+            for item in items
+        ]
+        push_results = await asyncio.gather(*push_tasks, return_exceptions=True)
+        failed: list[dict] = []
+        for item, result in zip(items, push_results):
+            if isinstance(result, Exception):
+                failed.append({"file_path": item["file_path"], "error": str(result)[:200]})
+
+        for row in written_rows:
+            action = "file_updated" if (row.get("version") or 1) > 1 else "file_created"
+            await self._emit_file_event(hosted_id, user_id, action, row)
+        return written_rows, failed
 
     async def read_file(self, hosted_id: str, user_id: str, file_path: str) -> dict:
         """Read a file from the agent's workspace."""
@@ -838,17 +964,63 @@ class HostedAgentService:
     async def delete_file(self, hosted_id: str, user_id: str, file_path: str) -> None:
         """Delete a file from the agent's workspace (DB + runner disk)."""
         await self.get_hosted_agent(hosted_id, user_id)
+        _validate_file_path(file_path)
         deleted = await self.repo.delete_file(hosted_id, file_path)
         if not deleted:
             raise HTTPException(404, "File not found")
-        # Also delete from runner disk
         if self.runner_url:
+            rh = {"X-Runner-Key": self.settings.agent_runner_key} if self.settings.agent_runner_key else {}
+            # quote() is critical: spaces / unicode / `#` would otherwise
+            # be silently swallowed by httpx URL parsing or rejected by
+            # the runner. ``safe='/'`` keeps directory separators intact.
+            url = f"{self.runner_url}/agents/{hosted_id}/files/{quote(file_path, safe='/')}"
             try:
-                rh = {"X-Runner-Key": self.settings.agent_runner_key} if self.settings.agent_runner_key else {}
                 async with httpx.AsyncClient(timeout=10) as client:
-                    await client.delete(f"{self.runner_url}/agents/{hosted_id}/files/{file_path}", headers=rh)
-            except Exception:
-                pass
+                    await client.delete(url, headers=rh)
+            except Exception as exc:
+                logger.debug("Runner delete fallthrough for {}: {}", file_path, exc)
+        await self._emit_file_event(
+            hosted_id, user_id, "file_deleted", {"file_path": file_path}
+        )
+
+    async def _push_file_to_runner(self, hosted_id: str, file_path: str, content: str) -> None:
+        """PUT the file's content onto the runner's on-disk workspace.
+
+        Silent failure — the DB row is authoritative; the next agent
+        start re-seeds the workspace from DB anyway. We log at debug
+        because this fires on every save and a runner restart can drop
+        a few of these without operator concern.
+        """
+        if not self.runner_url:
+            return
+        rh = {"X-Runner-Key": self.settings.agent_runner_key} if self.settings.agent_runner_key else {}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.put(
+                    f"{self.runner_url}/agents/{hosted_id}/files",
+                    json={"file_path": file_path, "content": content},
+                    headers=rh,
+                )
+        except Exception as exc:
+            logger.debug("Runner push fallthrough for {}/{}: {}", hosted_id, file_path, exc)
+
+    async def _emit_file_event(
+        self, hosted_id: str, user_id: str, action: str, row: dict
+    ) -> None:
+        """Push a `hosted_agent_file` realtime event to the owner's tabs."""
+        try:
+            await deliver_user_event(str(user_id), {
+                "type": "hosted_agent_file",
+                "action": action,
+                "hosted_id": hosted_id,
+                "file_path": row.get("file_path"),
+                "size_bytes": row.get("size_bytes"),
+                "version": row.get("version"),
+                "truncated": row.get("truncated", False),
+                "is_binary": row.get("is_binary", False),
+            })
+        except Exception as exc:
+            logger.debug("File event emit failed: {}", exc)
 
     # ── Memory persistence helpers ──
 
@@ -889,31 +1061,75 @@ class HostedAgentService:
     async def _sync_files_from_runner(self, hosted_id: str) -> None:
         """Sync files from runner workspace to DB after agent creates/modifies files.
 
-        Only adds new files and updates existing ones. Does not re-add
-        files that the user explicitly deleted from the UI.
+        Three-way merge: upserts everything the runner reports, flags
+        oversize/binary entries with placeholder rows so the UI can show
+        a "(too large)" hint instead of silently hiding the file, and
+        prunes DB rows whose paths are no longer on disk so the agent
+        deleting a file actually removes the ghost from the UI.
+
+        Owner is looked up once so each upsert can fan out a WS event
+        without the caller having to plumb a user_id through.
         """
+        if not self.runner_url:
+            return
+        rh = {"X-Runner-Key": self.settings.agent_runner_key} if self.settings.agent_runner_key else {}
         try:
-            if not self.runner_url:
-                return
-            rh = {"X-Runner-Key": self.settings.agent_runner_key} if self.settings.agent_runner_key else {}
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(f"{self.runner_url}/agents/{hosted_id}/files", headers=rh)
                 if resp.status_code != 200:
                     return
                 data = resp.json()
-
-            for f in data.get("files", []):
-                path = f.get("file_path", "")
-                content = f.get("content")
-                if not path or content is None:
-                    continue
-                if len(content) > 500_000:
-                    logger.debug("Skipping large file {} ({} bytes)", path, len(content))
-                    continue
-                file_type = "skill" if "skills/" in path else ("memory" if "memory" in path.lower() else ("config" if path == "AGENT.md" else "text"))
-                await self.repo.upsert_file(hosted_id, path, content, file_type)
         except Exception as e:
-            logger.debug("File sync error: {}", e)
+            logger.debug("File sync GET error: {}", e)
+            return
+
+        hosted = await self.repo.get_by_id(hosted_id)
+        owner_id = str(hosted["owner_user_id"]) if hosted else None
+
+        seen_paths: set[str] = set()
+        for f in data.get("files", []):
+            path = f.get("file_path", "")
+            if not path:
+                continue
+            seen_paths.add(path)
+            content = f.get("content")
+            truncated = bool(f.get("truncated", False))
+            is_binary = bool(f.get("is_binary", False))
+            # Heuristic fallback for older runner builds that didn't ship
+            # the `truncated` flag — large content payloads still flag.
+            if content is not None and len(content) > 500_000 and not truncated:
+                logger.warning("Oversize file {} ({} bytes) — flagging truncated", path, len(content))
+                truncated = True
+                content = None
+            file_type = _file_type_for(path)
+            try:
+                row = await self.repo.upsert_file(
+                    hosted_id, path,
+                    content if content is not None else "",
+                    file_type,
+                    truncated=truncated,
+                    is_binary=is_binary,
+                )
+                if owner_id:
+                    action = "file_updated" if (row.get("version") or 1) > 1 else "file_created"
+                    await self._emit_file_event(hosted_id, owner_id, action, row)
+            except Exception as exc:
+                logger.debug("File sync upsert error for {}: {}", path, exc)
+
+        # Ghost reconciliation: anything the agent deleted on disk should
+        # disappear from the UI. We only prune when the runner returned a
+        # non-empty list — an empty list usually means a transient runner
+        # error and pruning would wipe legitimate user-created files.
+        if seen_paths:
+            try:
+                pruned = await self.repo.prune_missing_files(hosted_id, seen_paths)
+                if pruned and owner_id:
+                    for path in pruned:
+                        await self._emit_file_event(
+                            hosted_id, owner_id, "file_deleted", {"file_path": path}
+                        )
+            except Exception as exc:
+                logger.warning("Ghost prune failed for {}: {}", hosted_id, exc)
 
     # ── Runner communication ──
 

@@ -647,19 +647,43 @@ function FileTree({ agentId, selectedFile, onSelect }: {
   }, [agentId]);
 
   useEffect(() => { loadFiles(); }, [loadFiles]);
+
+  // Realtime file updates via the same user WS as agent status. We still
+  // keep a slow safety-net poll (every 30s) so a missed event doesn't
+  // permanently desync the panel — but the 3s churn on idle agents is gone.
+  const { connected: filesRtConnected } = useRealtimeUser((ev) => {
+    if (
+      (ev.type === "hosted_agent_file" || ev.type === "file_created" ||
+       ev.type === "file_updated" || ev.type === "file_deleted") &&
+      ev.hosted_id === agentId
+    ) {
+      // Cheapest correct refresh: re-fetch the list. Avoids a fragile
+      // optimistic merge that would diverge from server state on race.
+      loadFiles();
+    }
+  });
   useEffect(() => {
-    const interval = setInterval(loadFiles, 3000);
+    const interval = setInterval(loadFiles, filesRtConnected ? 30000 : 5000);
     return () => clearInterval(interval);
-  }, [loadFiles]);
+  }, [loadFiles, filesRtConnected]);
 
   const deleteFile = async (path: string) => {
+    // Optimistic: drop from local list first; restore on failure.
+    const prev = files;
+    setFiles(files.filter(f => f.file_path !== path));
+    if (selectedFile === path) onSelect(null);
     try {
-      await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/${encodeURIComponent(path)}`, {
+      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/${encodeURIComponent(path)}`, {
         method: "DELETE",
       });
-      if (selectedFile === path) onSelect(null);
-      await loadFiles();
-    } catch { /* ignore */ }
+      if (!res.ok) {
+        setFiles(prev);  // rollback
+        setUploadError(`Delete failed: ${path}`);
+      }
+    } catch {
+      setFiles(prev);
+      setUploadError(`Delete failed: network`);
+    }
   };
 
   const createFile = async () => {
@@ -694,61 +718,58 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     setUploadProgress({ current: 0, total: fileArr.length, name: "" });
 
     const skipped: string[] = [];
-    const failed: string[] = [];
-    let done = 0;
-    let successCount = 0;
-    const queue = fileArr.slice();
+    const items: { file_path: string; content: string; file_type: string }[] = [];
 
-    const uploadOne = async (file: File) => {
+    // First pass: filter binary/oversize and read text content. Reading
+    // is sequential so the progress counter stays meaningful for users
+    // with a slow disk on a folder upload.
+    for (let i = 0; i < fileArr.length; i++) {
+      const file = fileArr[i];
       const filePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+      const name = filePath.split("/").pop() || file.name;
+      setUploadProgress({ current: i + 1, total: fileArr.length, name });
+
       const ext = "." + (filePath.split(".").pop()?.toLowerCase() || "");
-      if (BINARY_EXTS.includes(ext)) {
-        skipped.push(`${filePath} (binary)`);
-        return;
-      }
-      if (file.size > MAX_UPLOAD_BYTES) {
-        skipped.push(`${filePath} (${(file.size / 1024).toFixed(0)}KB > 500KB limit)`);
-        return;
-      }
+      if (BINARY_EXTS.includes(ext)) { skipped.push(`${filePath} (binary)`); continue; }
+      if (file.size > MAX_UPLOAD_BYTES) { skipped.push(`${filePath} (${(file.size / 1024).toFixed(0)}KB > 500KB limit)`); continue; }
       try {
         const text = await file.text();
-        const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files`, {
-          method: "PUT",
-          body: JSON.stringify({
-            file_path: filePath,
-            content: text,
-            file_type: file.name.endsWith(".md") && file.name.toLowerCase().includes("skill") ? "skill" : "text",
-          }),
+        items.push({
+          file_path: filePath,
+          content: text,
+          file_type: filePath.endsWith(".md") && filePath.toLowerCase().includes("skill") ? "skill" : "text",
         });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          const errMsg = typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail || d);
-          failed.push(`${filePath} (${errMsg || res.status})`);
+      } catch (e) {
+        skipped.push(`${filePath} (${e instanceof Error ? e.message : "read error"})`);
+      }
+    }
+
+    let successCount = 0;
+    const failed: string[] = [];
+
+    // Second pass: send in batches of UPLOAD_BATCH_SIZE so a 200-file
+    // folder upload doesn't block the BE on a single huge transaction.
+    const UPLOAD_BATCH_SIZE = 25;
+    for (let i = 0; i < items.length; i += UPLOAD_BATCH_SIZE) {
+      const chunk = items.slice(i, i + UPLOAD_BATCH_SIZE);
+      try {
+        const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/batch`, {
+          method: "POST",
+          body: JSON.stringify({ files: chunk }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          successCount += (data.written ?? []).length;
+          for (const f of data.failed ?? []) failed.push(`${f.file_path} (${f.error})`);
         } else {
-          successCount++;
+          // Whole chunk failed atomically — flag every path in this batch.
+          const d = await res.json().catch(() => ({}));
+          const msg = typeof d.detail === "string" ? d.detail : `Error ${res.status}`;
+          for (const it of chunk) failed.push(`${it.file_path} (${msg})`);
         }
       } catch (e) {
-        failed.push(`${filePath} (${e instanceof Error ? e.message : "error"})`);
+        for (const it of chunk) failed.push(`${it.file_path} (${e instanceof Error ? e.message : "network"})`);
       }
-    };
-
-    const worker = async () => {
-      while (true) {
-        const file = queue.shift();
-        if (!file) return;
-        const name = ((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name).split("/").pop() || file.name;
-        setUploadProgress({ current: done + 1, total: fileArr.length, name });
-        await uploadOne(file);
-        done++;
-        setUploadProgress(p => ({ ...p, current: done }));
-      }
-    };
-
-    try {
-      const workerCount = Math.min(UPLOAD_CONCURRENCY, fileArr.length);
-      await Promise.all(Array.from({ length: workerCount }, () => worker()));
-    } catch (e) {
-      setUploadError(`Upload error: ${e instanceof Error ? e.message : "unknown"}`);
     }
 
     const problems: string[] = [];
@@ -1178,18 +1199,28 @@ function EditorPanel({ agentId, filePath, onClose }: {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [error, setError] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [loadedVersion, setLoadedVersion] = useState<number>(0);
+  const [conflict, setConflict] = useState<{ currentVersion: number; currentContent: string } | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [isBinary, setIsBinary] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setDirty(false);
+    setError("");
+    setConflict(null);
     (async () => {
       try {
         const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/${encodeURIComponent(filePath)}`);
         if (res.ok && !cancelled) {
-          const f: AgentFile = await res.json();
+          const f: AgentFile & { version?: number; truncated?: boolean; is_binary?: boolean } = await res.json();
           setContent(f.content || "");
+          setLoadedVersion(f.version ?? 1);
+          setTruncated(!!f.truncated);
+          setIsBinary(!!f.is_binary);
         }
       } catch { /* ignore */ }
       if (!cancelled) setLoading(false);
@@ -1197,20 +1228,62 @@ function EditorPanel({ agentId, filePath, onClose }: {
     return () => { cancelled = true; };
   }, [agentId, filePath]);
 
-  const save = async () => {
+  const save = useCallback(async (overrideContent?: string, force = false) => {
     setSaving(true);
+    setError("");
+    // Optimistic: clear dirty immediately so the user can keep typing.
+    // Rolled back on 4xx below.
+    const prevDirty = dirty;
+    setDirty(false);
+    const headers: Record<string, string> = {};
+    if (loadedVersion && !force) headers["If-Match"] = `"v${loadedVersion}"`;
     try {
+      const body = overrideContent !== undefined ? overrideContent : content;
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files`, {
         method: "PUT",
-        body: JSON.stringify({ file_path: filePath, content }),
+        headers,
+        body: JSON.stringify({ file_path: filePath, content: body }),
       });
-      if (res.ok) {
+      if (res.status === 412) {
+        const data = await res.json().catch(() => ({}));
+        setConflict({
+          currentVersion: data.current_version ?? 0,
+          currentContent: data.current_content ?? "",
+        });
+        setDirty(prevDirty);
+      } else if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(typeof data.detail === "string" ? data.detail : `Save failed (${res.status})`);
+        setDirty(prevDirty);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        if (data.version) setLoadedVersion(data.version);
         setToast("Saved");
-        setDirty(false);
         setTimeout(() => setToast(""), 2000);
       }
-    } catch { /* ignore */ }
+    } catch {
+      setError("Network error");
+      setDirty(prevDirty);
+    }
     setSaving(false);
+  }, [agentId, filePath, content, loadedVersion, dirty]);
+
+  const acceptTheirs = () => {
+    if (!conflict) return;
+    setContent(conflict.currentContent);
+    setLoadedVersion(conflict.currentVersion);
+    setDirty(false);
+    setConflict(null);
+  };
+
+  const overwrite = async () => {
+    if (!conflict) return;
+    // Bump our known version to the server's current so the next save
+    // doesn't 412 again.
+    const currentVersion = conflict.currentVersion;
+    setLoadedVersion(currentVersion);
+    setConflict(null);
+    await save(undefined, true);
   };
 
   const fileName = filePath.split("/").pop() || filePath;
@@ -1221,7 +1294,7 @@ function EditorPanel({ agentId, filePath, onClose }: {
   };
 
   return (
-    <div className="h-full flex flex-col bg-white/[0.02] border border-neutral-800/50 rounded-xl overflow-hidden">
+    <div className="h-full flex flex-col bg-white/[0.02] border border-neutral-800/50 rounded-xl overflow-hidden relative">
       {/* Header */}
       <div className="px-3 py-2 border-b border-neutral-800/40 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2 min-w-0">
@@ -1233,7 +1306,8 @@ function EditorPanel({ agentId, filePath, onClose }: {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {toast && <span className="text-[9px] font-mono text-emerald-400 animate-fade-in">{toast}</span>}
-          <button onClick={save} disabled={saving || !dirty}
+          {error && <span className="text-[9px] font-mono text-red-400 truncate max-w-[200px]" title={error}>{error}</span>}
+          <button onClick={() => save()} disabled={saving || !dirty || truncated || isBinary}
             className="px-2.5 py-1 text-[10px] font-mono bg-emerald-400/10 text-emerald-400 border border-emerald-400/20 rounded hover:bg-emerald-400/20 disabled:opacity-30 transition-colors">
             {saving ? "…" : "Save"}
           </button>
@@ -1248,6 +1322,17 @@ function EditorPanel({ agentId, filePath, onClose }: {
         </div>
       )}
 
+      {/* Truncated / binary banner — read-only mode */}
+      {(truncated || isBinary) && (
+        <div className="px-3 py-2 border-b border-amber-400/20 bg-amber-400/[0.04] shrink-0">
+          <span className="text-[10px] font-mono text-amber-300/90">
+            {isBinary
+              ? "Binary file — content not displayed. Download via the .zip export."
+              : "File too large to edit (>500KB). Download via the .zip export."}
+          </span>
+        </div>
+      )}
+
       {/* Editor */}
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
@@ -1258,10 +1343,44 @@ function EditorPanel({ agentId, filePath, onClose }: {
           <CodeMirrorEditor
             value={content}
             onChange={(v) => { setContent(v); setDirty(true); }}
-            onSave={save}
+            onSave={() => save()}
             filePath={filePath}
           />
         </Suspense>
+      )}
+
+      {/* Conflict modal — agent edited the file while user was typing */}
+      {conflict && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="w-[480px] max-w-[90vw] bg-neutral-950 border border-amber-400/30 rounded-xl p-5 shadow-2xl">
+            <h3 className="text-sm font-mono text-amber-300 mb-2">File changed by agent</h3>
+            <p className="text-[11px] font-mono text-neutral-400 leading-relaxed mb-4">
+              The agent edited <span className="text-neutral-200">{filePath}</span> while you were typing.
+              Your version is based on v{loadedVersion}; current is v{conflict.currentVersion}.
+              Choose how to resolve the conflict.
+            </p>
+            <div className="bg-white/[0.02] border border-neutral-800/50 rounded p-2 mb-4 max-h-[180px] overflow-auto">
+              <pre className="text-[10px] font-mono text-neutral-400 whitespace-pre-wrap">
+                {(conflict.currentContent || "").slice(0, 800)}
+                {(conflict.currentContent || "").length > 800 ? "…" : ""}
+              </pre>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button onClick={() => setConflict(null)}
+                className="px-3 py-1.5 text-[10px] font-mono text-neutral-500 hover:text-neutral-300">
+                Cancel
+              </button>
+              <button onClick={acceptTheirs}
+                className="px-3 py-1.5 text-[10px] font-mono bg-cyan-400/10 text-cyan-300 border border-cyan-400/20 rounded hover:bg-cyan-400/20">
+                Use agent&apos;s version
+              </button>
+              <button onClick={overwrite}
+                className="px-3 py-1.5 text-[10px] font-mono bg-red-400/10 text-red-300 border border-red-400/20 rounded hover:bg-red-400/20">
+                Overwrite with mine
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Footer */}
