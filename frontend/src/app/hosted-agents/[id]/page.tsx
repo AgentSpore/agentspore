@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo, lazy, Suspense } from "react";
 import { API_URL, HostedAgent, AgentFile, OwnerMessage, HOSTED_STATUS, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { useRealtimeUser } from "@/lib/useRealtimeUser";
@@ -11,6 +11,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { useTree } from "@headless-tree/react";
+import { syncDataLoaderFeature, selectionFeature, hotkeysCoreFeature } from "@headless-tree/core";
 
 const CodeMirrorEditor = lazy(() => import("@/components/CodeMirrorEditor"));
 const DiffViewer = lazy(() =>
@@ -629,7 +631,6 @@ function FileTree({ agentId, selectedFile, onSelect }: {
   const [newFileName, setNewFileName] = useState("");
   const [showNewFile, setShowNewFile] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set([".deep/memory/main"]));
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, name: "" });
   const [dragOver, setDragOver] = useState(false);
@@ -773,23 +774,17 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     } catch { /* ignore */ }
   };
 
-  const toggleDir = (dir: string) => setCollapsed(prev => {
-    const n = new Set(prev); n.has(dir) ? n.delete(dir) : n.add(dir); return n;
-  });
-
-  const DIR_LABELS: Record<string, string> = {};
+  // ── Helpers (stable, no deps) ──────────────────────────────────────────────
 
   const fileIconFor = (f: AgentFile) => {
     const p = f.file_path.toLowerCase();
     const name = p.split("/").pop() || p;
     const ext = name.split(".").pop() || "";
-    // Special files first
     if (name === "agent.yaml" || name === "agent.yml") return { color: "text-violet-300", char: "⚙" };
     if (name.endsWith("agent.md") || name.endsWith("system.md")) return { color: "text-violet-300", char: "◆" };
     if (name.endsWith("skill.md") || f.file_type === "skill") return { color: "text-cyan-300", char: "◇" };
     if (p.startsWith(".deep/memory") || f.file_type === "memory") return { color: "text-amber-300", char: "◈" };
     if (name === "readme.md") return { color: "text-emerald-300", char: "★" };
-    // By extension
     if (ext === "py") return { color: "text-blue-300", char: "py" };
     if (ext === "ts" || ext === "tsx") return { color: "text-blue-300", char: "ts" };
     if (ext === "js" || ext === "jsx") return { color: "text-yellow-300", char: "js" };
@@ -803,32 +798,11 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     return { color: "text-neutral-500", char: "·" };
   };
 
-  // Hidden directories — internal/generated, not useful to show
   const HIDDEN_PREFIXES = ["venv/", ".venv/", "__pycache__/", "node_modules/", ".git/", ".pip/", ".cache/"];
   const isHidden = (f: AgentFile) => {
     const p = f.file_path;
-    if (HIDDEN_PREFIXES.some(h => p.startsWith(h) || p.includes("/" + h))) return true;
-    return false;
+    return HIDDEN_PREFIXES.some(h => p.startsWith(h) || p.includes("/" + h));
   };
-
-  const nonHiddenFiles = files.filter(f => !isHidden(f));
-  const searchLower = search.trim().toLowerCase();
-  const visibleFiles = searchLower
-    ? nonHiddenFiles.filter(f => f.file_path.toLowerCase().includes(searchLower))
-    : nonHiddenFiles;
-  const totalSize = nonHiddenFiles.reduce((sum, f) => sum + f.size_bytes, 0);
-
-  const rootFiles: AgentFile[] = [];
-  const dirs: Record<string, AgentFile[]> = {};
-  for (const f of visibleFiles) {
-    const parts = f.file_path.split("/");
-    if (parts.length === 1) rootFiles.push(f);
-    else {
-      const dir = parts.slice(0, -1).join("/");
-      if (!dirs[dir]) dirs[dir] = [];
-      dirs[dir].push(f);
-    }
-  }
 
   const fmtSize = (b: number) => {
     if (b < 1024) return `${b}B`;
@@ -836,35 +810,133 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     return `${(b / 1024 / 1024).toFixed(1)}M`;
   };
 
-  const renderItem = (f: AgentFile, indent = 0) => {
-    const icon = fileIconFor(f);
-    return (
-    <div key={f.id} onClick={() => onSelect(f.file_path)}
-      className={`flex items-center justify-between py-1.5 rounded cursor-pointer text-xs font-mono transition-colors group ${
-        selectedFile === f.file_path
-          ? "bg-violet-500/[0.12] text-violet-200 border-l-2 border-violet-400/60"
-          : "text-neutral-400 hover:bg-white/[0.03] hover:text-neutral-300 border-l-2 border-transparent"
-      }`}
-      style={{ paddingLeft: `${6 + indent * 12}px`, paddingRight: "4px" }}>
-      <div className="flex items-center gap-1.5 min-w-0">
-        <span className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-mono ${icon.color} bg-white/[0.03] border border-white/[0.04]`}>{icon.char}</span>
-        <span className="truncate">{f.file_path.split("/").pop()}</span>
-        <span className="text-[9px] text-neutral-700 ml-1 shrink-0">{fmtSize(f.size_bytes)}</span>
-      </div>
-      {confirmDelete === f.file_path ? (
-        <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-          <button onClick={() => { deleteFile(f.file_path); setConfirmDelete(null); }}
-            className="text-[11px] text-red-400 hover:text-red-300 bg-red-400/10 px-1.5 py-0.5 rounded">del</button>
-          <button onClick={() => setConfirmDelete(null)}
-            className="text-[11px] text-neutral-600 px-1">×</button>
-        </div>
-      ) : (
-        <button onClick={e => { e.stopPropagation(); setConfirmDelete(f.file_path); }}
-          className="text-neutral-700 hover:text-red-400 opacity-0 group-hover:opacity-100 text-sm px-1 shrink-0">×</button>
-      )}
-    </div>
-    );
-  };
+  // ── Tree data ─────────────────────────────────────────────────────────────
+  // Each node is either a "file" (leaf) or "folder" (internal).
+  // Node IDs: folders use their full dir path ("src/foo"), files use "file:src/foo/bar.py".
+  // Root virtual node id = "__root__".
+
+  type TreeNodeData =
+    | { kind: "folder"; name: string; fullPath: string; childCount: number }
+    | { kind: "file"; name: string; file: AgentFile };
+
+  const nonHiddenFiles = files.filter(f => !isHidden(f));
+  const totalSize = nonHiddenFiles.reduce((sum, f) => sum + f.size_bytes, 0);
+  const searchLower = search.trim().toLowerCase();
+  const visibleFiles = searchLower
+    ? nonHiddenFiles.filter(f => f.file_path.toLowerCase().includes(searchLower))
+    : nonHiddenFiles;
+
+  // Build trie: maps nodeId -> { data, children ids }
+  const { nodeMap, rootChildren } = useMemo(() => {
+    // Use full visibleFiles so the memo is correct, but also capture them outside
+    const nodeData = new Map<string, TreeNodeData>();
+    const nodeChildren = new Map<string, string[]>();
+
+    // Ensure root
+    nodeChildren.set("__root__", []);
+
+    for (const f of visibleFiles) {
+      const parts = f.file_path.split("/");
+      // Register all ancestor folders
+      for (let depth = 1; depth < parts.length; depth++) {
+        const folderPath = parts.slice(0, depth).join("/");
+        const folderName = parts[depth - 1];
+        const parentPath = depth === 1 ? "__root__" : parts.slice(0, depth - 1).join("/");
+        if (!nodeData.has(folderPath)) {
+          nodeData.set(folderPath, { kind: "folder", name: folderName, fullPath: folderPath, childCount: 0 });
+          nodeChildren.set(folderPath, []);
+          const parentChildren = nodeChildren.get(parentPath) ?? [];
+          if (!parentChildren.includes(folderPath)) parentChildren.push(folderPath);
+          nodeChildren.set(parentPath, parentChildren);
+        }
+      }
+      // Register the file itself
+      const fileId = "file:" + f.file_path;
+      nodeData.set(fileId, { kind: "file", name: parts[parts.length - 1], file: f });
+      nodeChildren.set(fileId, []); // files are leaves
+      const parentPath = parts.length === 1 ? "__root__" : parts.slice(0, -1).join("/");
+      const parentChildren = nodeChildren.get(parentPath) ?? [];
+      if (!parentChildren.includes(fileId)) parentChildren.push(fileId);
+      nodeChildren.set(parentPath, parentChildren);
+    }
+
+    // Patch folder childCounts
+    for (const [id, data] of nodeData.entries()) {
+      if (data.kind === "folder") {
+        (data as { kind: "folder"; name: string; fullPath: string; childCount: number }).childCount =
+          (nodeChildren.get(id) ?? []).length;
+      }
+    }
+
+    return {
+      nodeMap: { data: nodeData, children: nodeChildren },
+      rootChildren: nodeChildren.get("__root__") ?? [],
+    };
+  }, [visibleFiles]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Default expanded: all top-level dirs (depth-1 folders that are direct children of root)
+  const defaultExpanded = useMemo<string[]>(() => {
+    return rootChildren.filter(id => !id.startsWith("file:"));
+  }, [rootChildren]);
+
+  const [expandedItems, setExpandedItems] = useState<string[]>(defaultExpanded);
+
+  // Sync expandedItems when files first load (defaultExpanded starts empty before loadFiles resolves)
+  const prevDefaultExpandedRef = useRef<string[]>(defaultExpanded);
+  useEffect(() => {
+    // Only auto-apply when transitioning from empty to populated (first load)
+    // and when no search is active (so manual collapses by user are preserved).
+    if (!searchLower && prevDefaultExpandedRef.current.length === 0 && defaultExpanded.length > 0) {
+      setExpandedItems(defaultExpanded);
+    }
+    prevDefaultExpandedRef.current = defaultExpanded;
+  }, [defaultExpanded, searchLower]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When search changes, auto-expand all ancestor folders of matching files
+  useEffect(() => {
+    if (!searchLower) {
+      setExpandedItems(defaultExpanded);
+      return;
+    }
+    const toExpand = new Set<string>();
+    for (const f of visibleFiles) {
+      const parts = f.file_path.split("/");
+      for (let d = 1; d < parts.length; d++) {
+        toExpand.add(parts.slice(0, d).join("/"));
+      }
+    }
+    setExpandedItems(Array.from(toExpand));
+  }, [searchLower]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tree = useTree<TreeNodeData>({
+    rootItemId: "__root__",
+    state: { expandedItems, focusedItem: null },
+    setState: patch => {
+      if (typeof patch === "function") {
+        setExpandedItems(prev => {
+          const next = patch({ expandedItems: prev, focusedItem: null });
+          return next.expandedItems ?? prev;
+        });
+      } else {
+        if (patch.expandedItems !== undefined) setExpandedItems(patch.expandedItems);
+      }
+    },
+    features: [syncDataLoaderFeature, selectionFeature, hotkeysCoreFeature],
+    dataLoader: {
+      getItem: (id: string) => {
+        if (id === "__root__") return { kind: "folder" as const, name: "root", fullPath: "", childCount: 0 };
+        // Return a safe fallback when the id is not in the current nodeMap.
+        // This can happen transiently when nodeMap rebuilds after a search change
+        // while headless-tree still holds references to old item ids.
+        return (nodeMap.data.get(id) ?? { kind: "folder" as const, name: "", fullPath: id, childCount: 0 }) as TreeNodeData;
+      },
+      getChildren: (id: string) => nodeMap.children.get(id) ?? [],
+    },
+    isItemFolder: item => item.getItemData()?.kind === "folder",
+    getItemName: item => item.getItemData()?.kind === "file"
+      ? item.getItemData().name
+      : (item.getItemData() as { kind: "folder"; name: string })?.name ?? "",
+  });
 
   return (
     <div
@@ -988,7 +1060,7 @@ function FileTree({ agentId, selectedFile, onSelect }: {
       )}
 
       {/* Tree */}
-      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+      <div className="flex-1 overflow-y-auto p-1.5" {...tree.getContainerProps("Agent files")}>
         {visibleFiles.length === 0 && !uploading ? (
           <div className="flex flex-col items-center justify-center py-10 px-4 gap-3">
             <svg className="w-10 h-10 text-neutral-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={0.8}>
@@ -1010,25 +1082,72 @@ function FileTree({ agentId, selectedFile, onSelect }: {
             </div>
           </div>
         ) : (
-          <>
-            {rootFiles.map(f => renderItem(f, 0))}
-            {Object.keys(dirs).sort().map(dir => {
-              const isCollapsed = collapsed.has(dir);
+          tree.getItems().map(item => {
+            const data = item.getItemData();
+            const level = item.getItemMeta().level;
+            const paddingLeft = 4 + level * 14;
+
+            if (data?.kind === "folder") {
+              const isExpanded = item.isExpanded();
+              const childCount = (data as { kind: "folder"; name: string; fullPath: string; childCount: number }).childCount;
               return (
-                <div key={dir}>
-                  <button onClick={() => toggleDir(dir)}
-                    className="w-full flex items-center gap-1.5 px-1.5 py-1.5 text-xs font-mono text-neutral-500 hover:text-neutral-300 rounded hover:bg-white/[0.02]">
-                    <svg className={`w-3 h-3 text-neutral-700 transition-transform ${isCollapsed ? "" : "rotate-90"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                    </svg>
-                    <span>{DIR_LABELS[dir] || dir}</span>
-                    <span className="text-[10px] text-neutral-700 ml-auto">{dirs[dir].length}</span>
-                  </button>
-                  {!isCollapsed && dirs[dir].map(f => renderItem(f, 1))}
+                <div key={item.getId()} {...item.getProps()}
+                  onClick={() => { item.isExpanded() ? item.collapse() : item.expand(); }}
+                  className="flex items-center gap-1.5 py-1 text-xs font-mono text-neutral-500 hover:text-neutral-300 rounded hover:bg-white/[0.02] cursor-pointer select-none"
+                  style={{ paddingLeft, paddingRight: "4px" }}>
+                  <svg
+                    className={`w-3 h-3 text-neutral-600 shrink-0 transition-transform duration-100 ${isExpanded ? "rotate-90" : ""}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                  <svg className="w-3 h-3 text-neutral-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    {isExpanded
+                      ? <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                      : <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                    }
+                  </svg>
+                  <span className="truncate text-[11px]">{data.name}</span>
+                  <span className="text-[9px] text-neutral-700 ml-auto shrink-0">{childCount}</span>
                 </div>
               );
-            })}
-          </>
+            }
+
+            if (data?.kind === "file") {
+              const icon = fileIconFor(data.file);
+              const filePath = data.file.file_path;
+              return (
+                <div key={item.getId()} {...item.getProps()}
+                  onClick={() => onSelect(filePath)}
+                  className={`flex items-center justify-between py-1.5 rounded cursor-pointer text-xs font-mono transition-colors group ${
+                    selectedFile === filePath
+                      ? "bg-violet-500/[0.12] text-violet-200 border-l-2 border-violet-400/60"
+                      : "text-neutral-400 hover:bg-white/[0.03] hover:text-neutral-300 border-l-2 border-transparent"
+                  }`}
+                  style={{ paddingLeft, paddingRight: "4px" }}>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-mono ${icon.color} bg-white/[0.03] border border-white/[0.04]`}>
+                      {icon.char}
+                    </span>
+                    <span className="truncate">{data.name}</span>
+                    <span className="text-[9px] text-neutral-700 ml-1 shrink-0">{fmtSize(data.file.size_bytes)}</span>
+                  </div>
+                  {confirmDelete === filePath ? (
+                    <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => { deleteFile(filePath); setConfirmDelete(null); }}
+                        className="text-[11px] text-red-400 hover:text-red-300 bg-red-400/10 px-1.5 py-0.5 rounded">del</button>
+                      <button onClick={() => setConfirmDelete(null)}
+                        className="text-[11px] text-neutral-600 px-1">×</button>
+                    </div>
+                  ) : (
+                    <button onClick={e => { e.stopPropagation(); setConfirmDelete(filePath); }}
+                      className="text-neutral-700 hover:text-red-400 opacity-0 group-hover:opacity-100 text-sm px-1 shrink-0">×</button>
+                  )}
+                </div>
+              );
+            }
+
+            return null;
+          })
         )}
       </div>
 

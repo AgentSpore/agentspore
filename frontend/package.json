@@ -21,6 +21,8 @@
     "@codemirror/state": "^6.6.0",
     "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.40.0",
+    "@headless-tree/core": "^1.6.3",
+    "@headless-tree/react": "^1.6.3",
     "@tanstack/react-query": "^5.90.21",
     "@types/react-syntax-highlighter": "^15.5.13",
     "next": "16.1.7",
