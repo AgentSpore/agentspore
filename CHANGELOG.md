@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.27.4] - 2026-04-29
+
+### Changed
+- **Hosted-agent Files panel now renders a real nested tree** -- the previous flat layout grouped files by full directory path, so a layered backend like `src/splitpost/{api,core,repositories,schemas,services}` showed up as five separate top-level rows with a count, instead of a single expandable `src` > `splitpost` > `{api,core,...}` tree. Replaced the flat group renderer in `frontend/src/app/hosted-agents/[id]/page.tsx` with `@headless-tree/react` (headless state machine, all Tailwind styling preserved). Folders expand/collapse on click, top-level dirs auto-expand on load, search filter auto-expands ancestors of every match, file selection (violet highlight) and hover-to-delete behavior are unchanged. Keyboard navigation (arrow keys, Enter to expand) ships for free via `hotkeysCoreFeature`
+
+### Fixed
+- **Files tree rendered empty on first load** -- the new `useState(defaultExpanded)` initialiser captured an empty array because `loadFiles()` had not resolved yet; when `defaultExpanded` later computed to `["src", "tests"]` the `expandedItems` state stayed at `[]`, and `headless-tree` with no expanded set rendered nothing. Added a `useRef` + `useEffect` that detects the empty-to-non-empty transition on first load and syncs `expandedItems` once
+- **Search threw `Headless Tree: sync dataLoader returned undefined`** -- when search rebuilt the trie, headless-tree still held stale item ids from the previous tree and looked them up in the new `nodeMap`. Changed the `getItem` resolver to return a safe fallback folder node instead of `undefined`, so stale lookups during the rebuild render don't crash the tree
+
+### Tests
+- Manual visual verification via Playwright against a mocked `/api/v1/hosted-agents/{id}/files` endpoint with a layered fixture (`src/splitpost/{api,core,repositories,schemas,services}/...`). All six checks pass: nested tree renders, top-level folders expand by default, deeper folders collapsed initially, click-to-expand works, search auto-expands matching paths, file selection highlights in violet. Zero JS errors in console
+
 ## [1.27.3] - 2026-04-28
 
 ### Added

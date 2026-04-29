@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.27.4] - 2026-04-29
+
+### Изменено
+- **Files panel hosted-агента теперь рендерит настоящее nested-дерево** -- предыдущая плоская раскладка группировала файлы по полному directory path, поэтому layered backend типа `src/splitpost/{api,core,repositories,schemas,services}` отображался как пять отдельных top-level строк со счётчиком вместо одного раскрываемого дерева `src` > `splitpost` > `{api,core,...}`. Заменил flat-group renderer в `frontend/src/app/hosted-agents/[id]/page.tsx` на `@headless-tree/react` (headless state machine, вся Tailwind-стилизация сохранена). Folders разворачиваются/сворачиваются по клику, top-level dirs auto-expand при загрузке, search-фильтр auto-expand ancestors каждого совпадения, выделение файла (фиолетовая подсветка) и hover-to-delete не изменились. Keyboard navigation (стрелки, Enter для expand) идёт из коробки через `hotkeysCoreFeature`
+
+### Исправлено
+- **Files tree рендерился пустым на первой загрузке** -- новый `useState(defaultExpanded)` инициализатор захватывал пустой массив потому что `loadFiles()` ещё не resolved; когда `defaultExpanded` позже вычислялся в `["src", "tests"]`, state `expandedItems` оставался `[]`, и `headless-tree` без expanded-set ничего не рендерил. Добавил `useRef` + `useEffect` который детектит переход empty→non-empty при первой загрузке и синкает `expandedItems` один раз
+- **Поиск кидал `Headless Tree: sync dataLoader returned undefined`** -- когда search перестраивал trie, headless-tree всё ещё держал stale item ids от предыдущего дерева и искал их в новом `nodeMap`. Поменял `getItem` resolver чтобы он возвращал безопасный fallback folder node вместо `undefined`, так что stale lookups во время rebuild render'а не крашат дерево
+
+### Тесты
+- Ручная визуальная проверка через Playwright на замоканном endpoint'е `/api/v1/hosted-agents/{id}/files` с layered-фикстурой (`src/splitpost/{api,core,repositories,schemas,services}/...`). Все шесть проверок прошли: nested дерево рендерится, top-level folders expand по умолчанию, deeper folders collapsed изначально, click-to-expand работает, search auto-expand matching paths, выделение файла подсвечивается violet'ом. Ноль JS-ошибок в консоли
+
 ## [1.27.3] - 2026-04-28
 
 ### Добавлено
