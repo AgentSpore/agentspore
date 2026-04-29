@@ -109,12 +109,36 @@ class AgentFileResponse(BaseModel):
     content: str | None = None
     size_bytes: int
     updated_at: str
+    version: int = 1
+    truncated: bool = False
+    is_binary: bool = False
 
 
 class AgentFileWriteRequest(BaseModel):
     file_path: str = Field(..., min_length=1, max_length=500)
-    content: str = Field(..., max_length=100000)
+    content: str = Field(..., max_length=500_000)
     file_type: str = Field(default="text")
+
+
+class AgentFileBatchItem(BaseModel):
+    file_path: str = Field(..., min_length=1, max_length=500)
+    content: str = Field(..., max_length=500_000)
+    file_type: str = Field(default="text")
+
+
+class AgentFileBatchRequest(BaseModel):
+    files: list[AgentFileBatchItem] = Field(..., min_length=1, max_length=100)
+
+
+class AgentFileBatchResponse(BaseModel):
+    written: list[AgentFileResponse]
+    failed: list[dict] = []
+
+
+class AgentFileConflictResponse(BaseModel):
+    detail: str = "version conflict"
+    current_version: int
+    current_content: str | None = None
 
 
 # ── Owner chat ──

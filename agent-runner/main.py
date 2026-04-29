@@ -1328,39 +1328,152 @@ async def get_todos(hosted_id: str):
     return {"todos": []}
 
 
+# Files larger than this are reported but content is omitted from sync.
+# Cap on the runner side mirrors the BE/FE truncation flag so a 50MB log
+# produced inside the sandbox doesn't OOM the platform DB.
+MAX_SYNC_BYTES = 500_000
+
+# Top-level dotfiles the UI is allowed to see. Everything else under a
+# leading-dot path (e.g. .deep/, .venv/, __pycache__/) stays hidden — agents
+# generate volatile state there and we don't want it polluting the file tree.
+VISIBLE_DOTFILES = {
+    ".env",
+    ".env.example",
+    ".env.local",
+    ".gitignore",
+    ".dockerignore",
+    ".editorconfig",
+    ".prettierrc",
+    ".eslintrc",
+    ".eslintrc.js",
+    ".eslintrc.json",
+}
+
+
+def _is_visible(path: Path, workspace: Path) -> bool:
+    """Should this file appear in the UI tree.
+
+    Hidden by default for any path component starting with ``.`` unless
+    it is a top-level allowlisted dotfile (``.env``, ``.gitignore`` etc).
+    """
+    rel = path.relative_to(workspace)
+    parts = rel.parts
+    if not parts:
+        return False
+    # Exclude anything inside a hidden directory regardless of allowlist.
+    for part in parts[:-1]:
+        if part.startswith("."):
+            return False
+    name = parts[-1]
+    if name.startswith("."):
+        return name in VISIBLE_DOTFILES
+    return True
+
+
+def _safe_workspace_path(workspace: Path, file_path: str) -> Path:
+    """Resolve ``file_path`` relative to ``workspace``, blocking traversal.
+
+    Symlink-aware via ``resolve()``: even a clever symlink that points
+    outside the workspace will fail the ``is_relative_to`` check.
+    """
+    if not file_path or file_path.startswith("/") or ".." in Path(file_path).parts:
+        raise HTTPException(400, "Invalid file path")
+    target = (workspace / file_path).resolve()
+    workspace_resolved = workspace.resolve()
+    try:
+        target.relative_to(workspace_resolved)
+    except ValueError:
+        raise HTTPException(403, "Path escapes workspace")
+    return target
+
+
 @app.get("/agents/{hosted_id}/files")
 async def list_workspace_files(hosted_id: str):
-    """List all files in the agent's workspace (disk, not DB)."""
+    """List all files in the agent's workspace (disk, not DB).
+
+    Files are streamed back with content when small and decodable; for
+    binary or oversize files we send ``content=None`` and a flag so the
+    platform side can flag the row in DB instead of silently dropping it.
+    """
     workspace = settings.workspace_root / hosted_id
     if not workspace.exists():
         return {"files": []}
 
     files = []
     for path in sorted(workspace.rglob("*")):
-        if path.is_file() and not path.name.startswith("."):
-            rel = str(path.relative_to(workspace))
+        if not path.is_file():
+            continue
+        if not _is_visible(path, workspace):
+            continue
+        rel = str(path.relative_to(workspace))
+        try:
+            stat_size = path.stat().st_size
+        except OSError:
+            continue
+        truncated = stat_size > MAX_SYNC_BYTES
+        is_binary = False
+        content: str | None = None
+        if not truncated:
             try:
                 content = path.read_text(encoding="utf-8")
-                size = len(content.encode("utf-8"))
-            except (UnicodeDecodeError, PermissionError):
+            except UnicodeDecodeError:
+                is_binary = True
+            except PermissionError:
                 content = None
-                size = path.stat().st_size
-            files.append({
-                "file_path": rel,
-                "content": content,
-                "size_bytes": size,
-            })
+        files.append({
+            "file_path": rel,
+            "content": content,
+            "size_bytes": stat_size,
+            "truncated": truncated,
+            "is_binary": is_binary,
+        })
     return {"files": files}
+
+
+class WriteFileRequest(BaseModel):
+    file_path: str
+    content: str
+
+
+@app.put("/agents/{hosted_id}/files")
+async def write_workspace_file(hosted_id: str, body: WriteFileRequest):
+    """Write or update a file on the agent's workspace disk.
+
+    Mirrors what ``write_file`` in pydantic-deep does internally so a UI
+    edit becomes visible to the running agent without restart. The file
+    is also re-added to the git workspace so ``/diff`` reflects it.
+    """
+    workspace = settings.workspace_root / hosted_id
+    if not workspace.exists():
+        raise HTTPException(404, "Agent workspace not found")
+
+    target = _safe_workspace_path(workspace, body.file_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body.content, encoding="utf-8")
+
+    # Mirror ownership semantics from start_agent so the sandboxed
+    # container user can keep editing (or at least read) the file.
+    try:
+        if os.getuid() == 0:
+            os.chown(target, 1000, 1000)
+        else:
+            os.chmod(target, 0o666)
+    except OSError:
+        pass
+
+    return {
+        "status": "written",
+        "file_path": body.file_path,
+        "size_bytes": len(body.content.encode("utf-8")),
+    }
 
 
 @app.delete("/agents/{hosted_id}/files/{file_path:path}")
 async def delete_workspace_file(hosted_id: str, file_path: str):
     """Delete a file from the agent's workspace on disk."""
     workspace = settings.workspace_root / hosted_id
-    target = workspace / file_path
-    if not str(target).startswith(str(workspace)):
-        raise HTTPException(403, "Invalid path")
-    if target.exists():
+    target = _safe_workspace_path(workspace, file_path)
+    if target.exists() and target.is_file():
         target.unlink()
         return {"status": "deleted"}
     return {"status": "not_found"}

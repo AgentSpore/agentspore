@@ -1,5 +1,60 @@
 # Changelog
 
+## [1.28.0] - 2026-04-29
+
+Files panel hosted-агентов получил end-to-end переработку: правки сделанные в UI теперь реально доезжают до workspace running-агента, панель обновляется по WebSocket вместо 3-секундного поллинга, batch-загрузки идут одним запросом, а конкурентные правки между агентом и владельцем разрешаются явным conflict-модалом вместо тихого overwrite.
+
+### Что было сломано
+
+- Правки сохранённые в Files panel никогда не доезжали до агента. DB-row обновлялся мгновенно, но running-контейнер всё ещё видел старую версию на диске; агенты продолжали выполнять устаревший код до рестарта.
+- Файлы которые агент удалил на диске продолжали показываться как ghosts в UI-дереве. Sync с runner на platform DB только добавлял или обновлял rows; ничего не подчищало то что агент удалил.
+- Файлы вроде `.env`, `.gitignore`, `.dockerignore` были невидимы владельцам потому что directory listing runner'а удалял каждый dotfile по имени, без allowlist.
+- Файлы больше 500 КБ молча отбрасывались из панели с `debug`-логом, оставляя владельца гадать куда делся файл.
+- Пробелы и unicode в file paths ломали DELETE-вызов к runner'у. URL строился через сырую f-string интерполяцию, без `urllib.parse.quote`.
+- Две browser-tabs (или агент и владелец) редактирующие один файл молча работали по last-writer-wins, без предупреждения.
+
+### Первопричина
+
+Пять отдельных пробелов, все в file-ops codepath:
+
+1. `HostedAgentService.write_file` (`backend/app/services/hosted_agent_service.py`) звал только `repo.upsert_file`. Не было HTTP-push на on-disk workspace runner'а, и у runner'а не было PUT-endpoint'а чтобы это принять.
+2. `_sync_files_from_runner` делал per-file upserts, но никогда не реконсилил missing entries. Ghost row оставался в `agent_files` пока пользователь не удалит его вручную через UI.
+3. `list_workspace_files` runner'а фильтровал `not path.name.startswith(".")`. Безусловное правило по dotfile корректно прятало `.deep/`, `__pycache__/` и подобное, но также прятало каждый стандартный config-файл который владельцам реально нужен.
+4. 500 КБ cap в `_sync_files_from_runner` логировал на `debug` и молча скипал row, так что файл просто не появлялся; не было `truncated` флага который UI мог бы показать.
+5. `delete_file` строил URL runner'а через сырую f-string. Пробелы становились литеральными пробелами, кириллица становилась invalid bytes, и path-router runner'а отказывался матчить.
+
+Также не было колонки `version` в `agent_files`, так что API не имел способа понять, являются ли байты которые editor собирается overwrite, всё ещё теми байтами которые editor загрузил.
+
+### Исправление
+
+`db/migrations/V60__agent_files_versioning.sql` добавляет три колонки в `agent_files`: `version` (инкрементится на каждом upsert, используется как ETag), `truncated` (выставляется когда runner репортит файл слишком большой для зеркалирования), `is_binary` (выставляется когда runner не смог декодировать байты как utf-8). Колонка version — фундамент для conflict detection.
+
+`HostedAgentRepository.upsert_file` теперь бампит `version = version + 1` на conflict и принимает опциональный `if_match_version`. Когда вызыватель передаёт version который не совпадает с row, repo кидает новую `StaleVersionError` несущую current version и content. Новый `prune_missing_files` удаляет rows чей path не в данном keep-set, используется runner sync'ом для удаления ghosts.
+
+Agent runner получает настоящий `PUT /agents/{id}/files` endpoint плюс path-traversal-safe резолвер использующий `Path.resolve()` для защиты от symlink-escape. `list_workspace_files` переключился с "никогда не dotfiles" на маленький явный allowlist (`.env`, `.env.example`, `.gitignore`, `.dockerignore`, `.editorconfig` и т.д.); файлы внутри hidden directories (`.deep/`, `.venv/`) остаются скрытыми независимо. List response теперь несёт флаги `truncated` и `is_binary` так что platform side может пометить rows в DB вместо того чтобы их выкинуть.
+
+`HostedAgentService.write_file` теперь делает три вещи по порядку: валидирует path, upsert'ит DB row с опциональным `If-Match` ETag, и HTTP-PUT'ит тот же content на runner так что running-агент видит правку сразу. `delete_file` зовёт `urllib.parse.quote(file_path, safe='/')` перед построением URL runner'а. `_sync_files_from_runner` собирает каждый path который runner репортит, зовёт `prune_missing_files` для удаления ghosts, и эмитит `hosted_agent_file` realtime-события для каждого created, updated или deleted файла. Новый `write_files_batch` принимает до 100 файлов за раз и откатывает любые rows которые он создал в этом вызове если mid-batch DB write упал.
+
+API получает `POST /api/v1/hosted-agents/{id}/files/batch` для batch upload и теперь читает опциональный `If-Match` header на PUT. Header-parser принимает quoted (`"v3"`), bare (`v3`) и weak (`W/"v3"`) ETags; malformed values получают 400, wildcard `*` отвергается. На stale ETag сервер отвечает 412 с current version и content payload, плюс `ETag: "v{N}"` response header на каждом успешном PUT и GET так что editor может держать свой `loadedVersion` в sync'е.
+
+Frontend Files panel заменил свой 3-секундный `setInterval` на `useRealtimeUser` подписку которая слушает события `hosted_agent_file`; намного более медленный 30-секундный safety-net поллинг работает только когда WebSocket поднят. Folder uploads шлют один POST на новый batch endpoint на каждые 25 файлов вместо N параллельных PUT'ов, так что 200-файловый folder теперь восемь запросов вместо двухсот. Delete оптимистичен — row уходит из local list до возврата сетевого вызова, и rollback на 4xx. Editor шлёт `If-Match` на каждом сохранении и показывает conflict-модал на 412 с тремя опциями: discard local changes и использовать версию агента, overwrite версию агента, или cancel.
+
+Truncated или binary файл теперь открывается в read-only режиме с баннером объясняющим почему; кнопка Save задизейблена в этом состоянии.
+
+### Тесты
+
+Двенадцать новых backend-тестов в `backend/tests/test_file_ops.py` покрывающих: write_file пушит на runner, version бампится через перезаписи, ETag conflict кидает StaleVersionError, ETag match успешен, sync прунит ghost rows, sync с empty runner response не wipe'ит DB, path traversal отвергается (шесть плохих paths), delete URL-encode пробелы и кириллицу, batch atomic rollback на partial DB failure, batch репортит per-file runner-push failures не abort'я, If-Match парсер принимает quoted/bare/weak ETags, If-Match парсер отвергает wildcard и garbage. Тесты используют testcontainers Postgres так что они exercise настоящий upsert SQL и настоящую колонку `version`. Общий backend test count: 205 passing (с 193), с теми же двумя pre-existing `test_git_service` failures не связанными с этим релизом.
+
+### Что нужно сделать владельцам
+
+Ничего. Миграция аддитивна (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`), новый `PUT /files` runner'а защищён существующим `X-Runner-Key` header, и существующие PUT-вызовы без `If-Match` продолжают работать как best-effort saves.
+
+### Out of scope (отложено в v1.29.0)
+
+Rename и move, folder cascade delete, per-file git history намеренно не в этом релизе. Фиксы здесь покрывают correctness и realtime; power-фичи требуют отдельный design pass и поедут в следующем minor.
+
+---
+
 ## [1.27.4] - 2026-04-29
 
 ### Изменено
