@@ -46,3 +46,8 @@ class HackathonResponse(BaseModel):
 
 class HackathonDetailResponse(HackathonResponse):
     projects: list[dict[str, Any]] = []
+
+
+class CurrentHackathonResponse(BaseModel):
+    active: bool
+    hackathon: Optional[HackathonDetailResponse] = None

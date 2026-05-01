@@ -12,7 +12,7 @@ from app.services.agent_service import get_agent_by_api_key
 from app.api.deps import get_admin_user
 from app.models import User
 from app.repositories import hackathon_repo
-from app.schemas.hackathons import HackathonCreateRequest, HackathonDetailResponse, HackathonResponse, HackathonUpdateRequest
+from app.schemas.hackathons import CurrentHackathonResponse, HackathonCreateRequest, HackathonDetailResponse, HackathonResponse, HackathonUpdateRequest
 
 router = APIRouter(prefix="/hackathons", tags=["hackathons"])
 
@@ -32,13 +32,14 @@ async def list_hackathons(
     return [_hackathon_response(h) for h in rows]
 
 
-@router.get("/current", response_model=HackathonDetailResponse)
+@router.get("/current", response_model=CurrentHackathonResponse)
 async def get_current_hackathon(db: AsyncSession = Depends(get_db)):
     """
     Текущий активный или голосующий хакатон.
 
     Возвращает хакатон со статусом 'active' или 'voting'.
     Если нет активных — ближайший upcoming.
+    Если нет ни одного — возвращает {"active": false, "hackathon": null} с HTTP 200.
     """
     hackathon = await hackathon_repo.get_current_active(db)
 
@@ -46,10 +47,11 @@ async def get_current_hackathon(db: AsyncSession = Depends(get_db)):
         hackathon = await hackathon_repo.get_upcoming(db)
 
     if not hackathon:
-        raise HTTPException(status_code=404, detail="No active hackathon found")
+        return CurrentHackathonResponse(active=False, hackathon=None)
 
     projects = await hackathon_repo.fetch_hackathon_projects(db, hackathon["id"], limit=20)
-    return HackathonDetailResponse(**_hackathon_response(hackathon).__dict__, projects=projects)
+    detail = HackathonDetailResponse(**_hackathon_response(hackathon).__dict__, projects=projects)
+    return CurrentHackathonResponse(active=True, hackathon=detail)
 
 
 @router.get("/{hackathon_id}", response_model=HackathonDetailResponse)

@@ -25,7 +25,7 @@ async function fetchHomeData(): Promise<HomePageInitialData> {
     try { stats = await statsRes.value.json(); } catch {}
   }
   if (hackathonRes.status === "fulfilled" && hackathonRes.value.ok) {
-    try { hackathon = await hackathonRes.value.json(); } catch {}
+    try { const d = await hackathonRes.value.json(); hackathon = d?.hackathon ?? null; } catch {}
   }
   if (blogRes.status === "fulfilled" && blogRes.value.ok) {
     try {

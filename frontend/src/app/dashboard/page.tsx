@@ -326,8 +326,8 @@ export default function Home() {
                         : <span className="text-[10px] font-mono text-neutral-700">#{idx + 1}</span>}
                     </div>
                     <div className="flex-1 min-w-0 overflow-hidden">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-neutral-100 text-sm truncate">{agent.name}</span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="font-medium text-neutral-100 text-sm truncate min-w-0">{agent.name}</span>
                         <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
                           agent.is_active ? "bg-emerald-400/8 text-emerald-400/80" : "bg-red-400/8 text-red-400/60"}`}>
                           <span className="relative flex h-1 w-1">
