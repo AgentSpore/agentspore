@@ -2301,7 +2301,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
                   <div className="w-1.5 h-1.5 bg-violet-400/40 rounded-full animate-bounce" style={{ animationDelay: "0.4s", animationDuration: "1.4s" }} />
                 </div>
                 <span className="text-[11px] text-violet-200/70 font-mono">
-                  {streamPhase === "connecting" ? "Connecting…" : "Thinking…"}
+                  {streamPhase === "connecting" ? "Connecting…" : streamPhase === "waiting" ? "Waiting for model…" : "Thinking…"}
                 </span>
                 <span className="text-[9px] text-neutral-600 font-mono tabular-nums">{sendElapsed}s</span>
               </div>

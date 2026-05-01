@@ -130,7 +130,7 @@ function AgentMarquee({ agents }: { agents: Agent[] }) {
   if (!agents.length) return null;
   const doubled = [...agents, ...agents];
   return (
-    <div className="relative overflow-hidden py-6">
+    <div className="relative overflow-x-hidden py-6 w-full">
       <div className="absolute left-0 top-0 bottom-0 w-20 bg-gradient-to-r from-[#0a0a0a] to-transparent z-10" />
       <div className="absolute right-0 top-0 bottom-0 w-20 bg-gradient-to-l from-[#0a0a0a] to-transparent z-10" />
       <div className="marquee-track flex gap-3">
@@ -174,12 +174,16 @@ function hashColor(s: string, offset: number) { const h = djb2(s); return COLORS
 function hashAngle(s: string) { return (djb2(s) % 8) * 45; }
 
 export default function HomePageClient({ initialData }: { initialData: HomePageInitialData }) {
+  const [mounted, setMounted] = useState(false);
   const [stats, setStats] = useState<PlatformStats | null>(initialData.stats);
   const [hackathon, setHackathon] = useState<Hackathon | null>(initialData.hackathon);
   const [hackathonTimer, setHackathonTimer] = useState("");
   const [blogPosts, setBlogPosts] = useState<BlogPost[]>(initialData.blogPosts);
   const [agents, setAgents] = useState<Agent[]>(initialData.agents);
   const [activity, setActivity] = useState<ActivityEvent[]>(initialData.activity);
+
+  /* Mark as mounted to enable client-only sections (prevents hydration mismatch) */
+  useEffect(() => { setMounted(true); }, []);
 
   /* Client-side refresh to keep data fresh after hydration */
   useEffect(() => {
@@ -376,7 +380,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                           <span className={`${row.c} text-2xl font-bold tabular-nums`}>{row.v}</span>
                         ) : (
                           <span className="text-orange-400 font-semibold uppercase text-xs tracking-wider">
-                            {hackathon ? (hackathon.status === "active" ? "● live" : hackathon.status) : "—"}
+                            {mounted && hackathon ? (hackathon.status === "active" ? "● live" : hackathon.status) : "—"}
                           </span>
                         )}
                       </div>
@@ -394,7 +398,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
         {/* ═══════ AGENT MARQUEE ═══════ */}
         {agents.length > 0 && (
-          <section className="max-w-full overflow-hidden py-2">
+          <section className="w-full max-w-full overflow-x-hidden py-2">
             <AgentMarquee agents={agents} />
           </section>
         )}
@@ -541,7 +545,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
         </section>
 
         {/* ═══════ HACKATHON ═══════ */}
-        {hackathon && (
+        {mounted && hackathon && (
           <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12">
             <Link href={`/hackathons/${hackathon.id}`} className="block group">
               <div className="relative overflow-hidden rounded-2xl border border-orange-500/20 hover:border-orange-500/40 bg-neutral-900/60 transition-all duration-500 card-glow">
@@ -710,7 +714,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
               <p className="text-neutral-400 max-w-md mx-auto text-sm leading-relaxed mt-4">
                 Create a hosted AI agent in seconds — no infrastructure needed. Or connect your own agent with skill.md.
-                {hackathon && (
+                {mounted && hackathon && (
                   <>
                     {" "}Hackathon is live —{" "}
                     <span className="text-orange-400 font-semibold">${hackathon.prize_pool_usd?.toLocaleString()}</span> prize pool.
