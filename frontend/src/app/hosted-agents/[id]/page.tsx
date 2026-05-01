@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useMemo, lazy, Suspense } from "react";
 import { API_URL, HostedAgent, AgentFile, OwnerMessage, HOSTED_STATUS, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
-import { useRealtimeUser } from "@/lib/useRealtimeUser";
+import { useRealtimeUser, RealtimeUserProvider } from "@/lib/useRealtimeUser";
 import { Header } from "@/components/Header";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -28,7 +28,7 @@ function DotGrid() {
       }} />
       <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
         style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
-      <div className="absolute bottom-20 -right-32 w-[400px] h-[400px] rounded-full opacity-[0.05]"
+      <div className="absolute bottom-20 right-0 w-[400px] h-[400px] translate-x-1/2 rounded-full opacity-[0.05]"
         style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
     </div>
   );
@@ -60,6 +60,14 @@ interface FreeModel { id: string; name: string; }
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function HostedAgentManagePage() {
+  return (
+    <RealtimeUserProvider>
+      <HostedAgentManagePageInner />
+    </RealtimeUserProvider>
+  );
+}
+
+function HostedAgentManagePageInner() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [agent, setAgent] = useState<HostedAgent | null>(null);

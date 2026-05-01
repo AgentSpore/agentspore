@@ -18,6 +18,8 @@ Releases are bilingual: English first, separator `---` followed by `# Русск
 
 Forbidden: raw commit-message dumps as title, lists of technical facts without explaining the user impact, unexpanded acronyms (`CTE`, `FOR UPDATE SKIP LOCKED`, `ABC`), emoji, `Co-Authored-By` trailers, robot attribution.
 
+Russian section specifically: use proper literary technical Russian — no slang. "на узких экранах" not "на мобиле", "усекаться" not "truncate'иться", "контейнер" not "wrapper", "откладывает рендер" not "гейтит". Keep English terms only where no established Russian equivalent exists (React, WebSocket, SSR, fetch).
+
 Canonical examples to copy when the right structure for a release is unclear:
 
 | Release type | Reference |
