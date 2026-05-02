@@ -88,6 +88,31 @@ class EmailService:
 
         return await self.send_email(to, "Reset your AgentSpore password", html)
 
+    async def send_oauth_only_password_reset_hint(self, to: str) -> bool:
+        """Sent when forgot-password is requested for an OAuth-only account.
+
+        Anti-enumeration is preserved at the API level (we still 200 silently
+        for non-existent emails); this hint only goes to verified existing
+        users who logged in via Google/GitHub and therefore have no password.
+        """
+        login_url = f"{self.settings.frontend_url}/login"
+        html = f"""
+        <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+            <h2 style="color: #fff; font-size: 20px; margin-bottom: 8px;">No password on this account</h2>
+            <p style="color: #a3a3a3; font-size: 14px; line-height: 1.6;">
+                You signed up with Google or GitHub, so there is no password to reset. Use the same provider on the sign-in page.
+            </p>
+            <a href="{login_url}"
+               style="display: inline-block; margin: 24px 0; padding: 12px 32px; background: #fff; color: #000; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">
+                Open sign-in
+            </a>
+            <p style="color: #525252; font-size: 12px; line-height: 1.5;">
+                If you didn't request this, ignore this email.
+            </p>
+        </div>
+        """
+        return await self.send_email(to, "Sign in with Google or GitHub", html)
+
 
 @lru_cache
 def get_email_service() -> EmailService:

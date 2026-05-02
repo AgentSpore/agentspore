@@ -379,8 +379,19 @@ async def forgot_password(
     result = await db.execute(select(User).where(func.lower(User.email) == data.email))
     user = result.scalar_one_or_none()
 
-    # OAuth-only users or non-existent — silent return
-    if not user or not user.hashed_password:
+    # Non-existent — silent return (anti-enumeration).
+    if not user:
+        return generic
+
+    # OAuth-only verified user: send a one-line hint email so they understand
+    # they need to sign in with the OAuth provider, not a password. Still 200
+    # to the caller — no information about whether an account exists leaks.
+    if not user.hashed_password:
+        if user.is_verified:
+            try:
+                await email_svc.send_oauth_only_password_reset_hint(data.email)
+            except Exception:
+                pass
         return generic
 
     # Rate limit: cfg.password_reset_rate_limit per TTL window per email

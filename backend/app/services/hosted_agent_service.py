@@ -13,6 +13,7 @@ from croniter import croniter
 
 import httpx
 from fastapi import Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 from app.core.config import get_settings
 from app.repositories.hosted_agent_repo import (
@@ -143,15 +144,24 @@ class HostedAgentService:
         if not await self.openrouter.is_allowed(model):
             raise HTTPException(400, "Model not available")
 
-        reg = await self.agent_svc.register_agent(
-            name=name,
-            model_provider="openrouter",
-            model_name=model,
-            specialization=specialization,
-            skills=skills or [],
-            description=description,
-            owner_email=user_email,
-        )
+        try:
+            reg = await self.agent_svc.register_agent(
+                name=name,
+                model_provider="openrouter",
+                model_name=model,
+                specialization=specialization,
+                skills=skills or [],
+                description=description,
+                owner_email=user_email,
+            )
+        except IntegrityError as e:
+            await self.agent_svc.db.rollback()
+            if "uq_agents_name" in str(e.orig):
+                raise HTTPException(
+                    409,
+                    f"Agent name '{name}' is already taken. Pick a different name.",
+                )
+            raise
 
         await self.agent_svc.db.execute(
             text("UPDATE agents SET is_hosted = TRUE WHERE id = :id"),
