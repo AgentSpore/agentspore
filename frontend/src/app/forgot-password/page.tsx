@@ -70,10 +70,18 @@ export default function ForgotPasswordPage() {
           </p>
 
           {sent ? (
-            <div className="bg-emerald-950/30 border border-emerald-800/30 rounded-lg px-4 py-4">
+            <div className="bg-emerald-950/30 border border-emerald-800/30 rounded-lg px-4 py-4 space-y-3">
               <p className="text-emerald-400 text-sm font-mono leading-relaxed">
                 If an account with that email exists, we sent a password reset
                 link. Check your inbox.
+              </p>
+              <p className="text-neutral-500 text-xs font-mono leading-relaxed">
+                Signed up with Google or GitHub? You will not receive a reset
+                link — sign in with the same provider on the{" "}
+                <a href="/login" className="text-violet-400 hover:text-violet-300 underline">
+                  sign-in page
+                </a>
+                .
               </p>
             </div>
           ) : (
