@@ -93,14 +93,70 @@ function HostedAgentManagePageInner() {
     last_run_at: string | null; next_run_at: string | null;
     run_count: number; max_runs: number | null; last_error: string | null; created_at: string;
   };
+
+  // Cron presets
+  type CronPreset = { label: string; value: string; expr: string };
+  const CRON_PRESETS: CronPreset[] = [
+    { label: "Every 15 min", value: "every15", expr: "*/15 * * * *" },
+    { label: "Every hour",   value: "hourly",  expr: "0 * * * *" },
+    { label: "Daily 9am",    value: "daily9",  expr: "0 9 * * *" },
+    { label: "Weekdays 9am", value: "weekday", expr: "0 9 * * 1-5" },
+    { label: "Weekly Mon",   value: "weekly",  expr: "0 9 * * 1" },
+    { label: "Custom",       value: "custom",  expr: "" },
+  ];
+
+  /** Minimal inline cron-to-human renderer — covers the common patterns. */
+  function describeCron(expr: string): string {
+    const parts = expr.trim().split(/\s+/);
+    if (parts.length !== 5) return expr;
+    const [min, hour, dom, , dow] = parts;
+    const pad = (n: string) => n.padStart(2, "0");
+    const ordinal = (n: number) => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][n] ?? `day ${n}`;
+    try {
+      if (min === "*" && hour === "*" && dom === "*" && dow === "*") return "Every minute";
+      if (min.startsWith("*/") && hour === "*" && dom === "*" && dow === "*") {
+        const n = parseInt(min.slice(2));
+        return `Every ${n} minute${n !== 1 ? "s" : ""}`;
+      }
+      if (min === "0" && hour.startsWith("*/") && dom === "*" && dow === "*") {
+        const n = parseInt(hour.slice(2));
+        return `Every ${n} hour${n !== 1 ? "s" : ""}`;
+      }
+      const isHour = /^\d+$/.test(hour) && /^\d+$/.test(min);
+      const time = isHour ? `${pad(hour)}:${pad(min)} UTC` : null;
+      if (dom === "*" && dow === "*" && time) return `Every day at ${time}`;
+      if (dom === "*" && dow === "1-5" && time) return `Weekdays at ${time}`;
+      if (dom === "*" && /^\d+$/.test(dow) && time) return `Every ${ordinal(parseInt(dow))} at ${time}`;
+      if (dom === "*" && /^\d+-\d+$/.test(dow) && time) {
+        const [a, b] = dow.split("-").map(Number);
+        return `${ordinal(a)}–${ordinal(b)} at ${time}`;
+      }
+    } catch { /* fall through */ }
+    return expr;
+  }
+
   const [cronTasks, setCronTasks] = useState<CronTask[]>([]);
   const [cronLoading, setCronLoading] = useState(false);
-  const [cronName, setCronName] = useState("");
+  const [cronPreset, setCronPreset] = useState("daily9");
   const [cronExpr, setCronExpr] = useState("0 9 * * *");
+  const [cronName, setCronName] = useState("");
   const [cronPrompt, setCronPrompt] = useState("");
   const [cronAutoStart, setCronAutoStart] = useState(true);
   const [cronSubmitting, setCronSubmitting] = useState(false);
   const [cronError, setCronError] = useState<string | null>(null);
+  // Edit state: taskId being edited + ephemeral form fields
+  const [editTaskId, setEditTaskId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editExpr, setEditExpr] = useState("");
+  const [editPreset, setEditPreset] = useState("custom");
+  const [editPrompt, setEditPrompt] = useState("");
+  const [editAutoStart, setEditAutoStart] = useState(true);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  const resolvePreset = (preset: string, custom: string) =>
+    preset === "custom" ? custom : (CRON_PRESETS.find(p => p.value === preset)?.expr ?? custom);
 
   const loadCronTasks = useCallback(async () => {
     if (!id) return;
@@ -113,19 +169,49 @@ function HostedAgentManagePageInner() {
   }, [id]);
 
   const createCronTask = async () => {
-    if (!id || !cronName.trim() || !cronPrompt.trim()) return;
+    const expr = resolvePreset(cronPreset, cronExpr).trim();
+    if (!id || !cronName.trim() || !cronPrompt.trim() || !expr) return;
     setCronSubmitting(true);
     setCronError(null);
     try {
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/cron`, {
         method: "POST",
-        body: JSON.stringify({ name: cronName.trim(), cron_expression: cronExpr.trim(), task_prompt: cronPrompt.trim(), auto_start: cronAutoStart }),
+        body: JSON.stringify({ name: cronName.trim(), cron_expression: expr, task_prompt: cronPrompt.trim(), auto_start: cronAutoStart }),
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d?.detail || `Error ${res.status}`); }
-      setCronName(""); setCronPrompt(""); setCronExpr("0 9 * * *");
+      setCronName(""); setCronPrompt(""); setCronExpr("0 9 * * *"); setCronPreset("daily9");
       await loadCronTasks();
     } catch (e: unknown) { setCronError(e instanceof Error ? e.message : "Failed"); }
     finally { setCronSubmitting(false); }
+  };
+
+  const openEditTask = (t: CronTask) => {
+    const matched = CRON_PRESETS.find(p => p.value !== "custom" && p.expr === t.cron_expression);
+    setEditTaskId(t.id);
+    setEditName(t.name);
+    setEditExpr(t.cron_expression);
+    setEditPreset(matched ? matched.value : "custom");
+    setEditPrompt(t.task_prompt);
+    setEditAutoStart(t.auto_start);
+    setEditError(null);
+  };
+
+  const saveEditTask = async () => {
+    if (!editTaskId || !editName.trim() || !editPrompt.trim()) return;
+    const expr = resolvePreset(editPreset, editExpr).trim();
+    if (!expr) return;
+    setEditSubmitting(true);
+    setEditError(null);
+    try {
+      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/cron/${editTaskId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: editName.trim(), cron_expression: expr, task_prompt: editPrompt.trim(), auto_start: editAutoStart }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d?.detail || `Error ${res.status}`); }
+      setEditTaskId(null);
+      await loadCronTasks();
+    } catch (e: unknown) { setEditError(e instanceof Error ? e.message : "Failed"); }
+    finally { setEditSubmitting(false); }
   };
 
   const toggleCronTask = async (taskId: string, enabled: boolean) => {
@@ -134,7 +220,7 @@ function HostedAgentManagePageInner() {
   };
 
   const deleteCronTask = async (taskId: string) => {
-    if (!confirm("Delete this scheduled task?")) return;
+    setDeleteConfirmId(null);
     await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/cron/${taskId}`, { method: "DELETE" });
     await loadCronTasks();
   };
@@ -573,67 +659,213 @@ function HostedAgentManagePageInner() {
 
           {/* Cron tab */}
           <div className={`h-full overflow-y-auto ${activeTab !== "cron" ? "hidden" : ""}`}>
-            <div className="max-w-3xl mx-auto p-6 space-y-6">
-              <div className="space-y-2">
+            <div className="max-w-3xl mx-auto p-4 sm:p-6 space-y-5">
+              <div>
                 <h2 className="text-lg font-mono font-bold text-white">Scheduled Tasks</h2>
-                <p className="text-xs font-mono text-neutral-500">Automate your agent with cron-based task scheduling</p>
+                <p className="text-xs font-mono text-neutral-500 mt-0.5">Automate your agent with cron-based scheduling</p>
               </div>
-              <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-4">
+
+              {/* ── Create form ── */}
+              <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-4 sm:p-5 space-y-4">
                 <h3 className="text-sm font-mono font-semibold text-white">New Task</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">Name</label>
-                    <input value={cronName} onChange={e => setCronName(e.target.value)} placeholder="Daily report" maxLength={200}
-                      className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
+
+                {/* Name */}
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">Name</label>
+                  <input value={cronName} onChange={e => setCronName(e.target.value)} placeholder="Daily report" maxLength={200}
+                    className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
+                </div>
+
+                {/* Schedule presets — horizontal scroll on mobile */}
+                <div>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-2">Schedule</label>
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                    {CRON_PRESETS.map(p => (
+                      <button
+                        key={p.value}
+                        onClick={() => { setCronPreset(p.value); if (p.value !== "custom") setCronExpr(p.expr); }}
+                        className={`shrink-0 px-3 py-1 text-[11px] font-mono rounded-full border transition-colors ${cronPreset === p.value ? "bg-violet-500/20 border-violet-500/40 text-violet-300" : "border-neutral-800/50 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700"}`}>
+                        {p.label}
+                      </button>
+                    ))}
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">Schedule (cron)</label>
-                    <input value={cronExpr} onChange={e => setCronExpr(e.target.value)} placeholder="0 9 * * *"
-                      className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
-                    <div className="text-[9px] font-mono text-neutral-600 mt-1">min hour day month weekday</div>
+                  {cronPreset === "custom" && (
+                    <div className="mt-2">
+                      <input value={cronExpr} onChange={e => setCronExpr(e.target.value)} placeholder="0 9 * * *"
+                        className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
+                      <div className="text-[9px] font-mono text-neutral-600 mt-1">min hour day month weekday</div>
+                    </div>
+                  )}
+                  {/* Human preview */}
+                  <div className="mt-1.5 text-[11px] font-mono text-cyan-400/70">
+                    {describeCron(resolvePreset(cronPreset, cronExpr))}
                   </div>
                 </div>
+
+                {/* Task prompt */}
                 <div>
                   <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">Task prompt</label>
-                  <textarea value={cronPrompt} onChange={e => setCronPrompt(e.target.value)} placeholder="Check for new tasks and process them." rows={3} maxLength={10000}
+                  <textarea value={cronPrompt} onChange={e => setCronPrompt(e.target.value)}
+                    placeholder="Summarize today's activity and post to the team channel." rows={3} maxLength={10000}
                     className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30 resize-y" />
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 text-xs font-mono text-neutral-400 cursor-pointer">
+
+                {/* Auto-start + submit */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <label className="flex items-center gap-2 cursor-pointer group" title="If checked, a sleeping agent will be woken up before this task fires">
                     <input type="checkbox" checked={cronAutoStart} onChange={e => setCronAutoStart(e.target.checked)} className="accent-emerald-500 w-3.5 h-3.5" />
-                    Auto-start agent if stopped
+                    <span className="text-xs font-mono text-neutral-400 group-hover:text-neutral-300 transition-colors">
+                      Auto-start agent if stopped
+                    </span>
+                    <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline" title="If checked, sleeping agents wake before this task fires">(?)</span>
                   </label>
-                  <button onClick={createCronTask} disabled={cronSubmitting || !cronName.trim() || !cronPrompt.trim()}
+                  <button onClick={createCronTask}
+                    disabled={cronSubmitting || !cronName.trim() || !cronPrompt.trim() || !resolvePreset(cronPreset, cronExpr).trim()}
                     className="px-4 py-2 text-xs font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 rounded-lg hover:bg-emerald-500/25 disabled:opacity-40 transition-colors">
                     {cronSubmitting ? "Creating..." : "Create Task"}
                   </button>
                 </div>
                 {cronError && <div className="text-xs font-mono text-red-400">{cronError}</div>}
               </div>
-              {cronLoading && <div className="text-center text-neutral-500 text-xs font-mono py-8">Loading...</div>}
-              {!cronLoading && cronTasks.length === 0 && <div className="text-center text-neutral-600 text-xs font-mono py-8">No scheduled tasks yet</div>}
+
+              {/* ── Task list ── */}
+              {cronLoading && (
+                <div className="text-center text-neutral-500 text-xs font-mono py-8">Loading...</div>
+              )}
+
+              {!cronLoading && cronTasks.length === 0 && (
+                <div className="rounded-xl border border-neutral-800/30 bg-white/[0.01] p-8 text-center space-y-3">
+                  <p className="text-sm font-mono text-neutral-500">No scheduled tasks yet</p>
+                  <p className="text-xs font-mono text-neutral-600">Try "Daily 9am" above to create a daily summary task.</p>
+                  <button
+                    onClick={() => { setCronPreset("daily9"); setCronExpr("0 9 * * *"); setCronName("Daily summary"); setCronPrompt("Summarize today's activity and any pending items."); }}
+                    className="text-[11px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors underline underline-offset-2">
+                    Fill in a daily summary template
+                  </button>
+                </div>
+              )}
+
               {cronTasks.map(t => (
-                <div key={t.id} className={`rounded-xl border p-4 space-y-2 ${t.enabled ? "border-neutral-800/50 bg-white/[0.02]" : "border-neutral-800/30 bg-white/[0.01] opacity-60"}`}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-mono text-white font-semibold">{t.name}</span>
-                      <code className="text-[10px] font-mono text-cyan-400 bg-cyan-400/10 px-2 py-0.5 rounded">{t.cron_expression}</code>
-                      {t.enabled ? <span className="text-[9px] font-mono text-emerald-400 uppercase">active</span> : <span className="text-[9px] font-mono text-neutral-500 uppercase">paused</span>}
+                <div key={t.id} className={`rounded-xl border transition-opacity ${t.enabled ? "border-neutral-800/50 bg-white/[0.02]" : "border-neutral-800/30 bg-white/[0.01] opacity-60"}`}>
+                  {/* ── Inline edit form ── */}
+                  {editTaskId === t.id ? (
+                    <div className="p-4 sm:p-5 space-y-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-mono text-neutral-400">Edit task</span>
+                        <button onClick={() => setEditTaskId(null)} className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">Cancel</button>
+                      </div>
+                      <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="Task name" maxLength={200}
+                        className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
+                      <div>
+                        <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                          {CRON_PRESETS.map(p => (
+                            <button key={p.value}
+                              onClick={() => { setEditPreset(p.value); if (p.value !== "custom") setEditExpr(p.expr); }}
+                              className={`shrink-0 px-2.5 py-1 text-[10px] font-mono rounded-full border transition-colors ${editPreset === p.value ? "bg-violet-500/20 border-violet-500/40 text-violet-300" : "border-neutral-800/50 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700"}`}>
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                        {editPreset === "custom" && (
+                          <input value={editExpr} onChange={e => setEditExpr(e.target.value)} placeholder="0 9 * * *"
+                            className="mt-2 w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
+                        )}
+                        <div className="mt-1 text-[11px] font-mono text-cyan-400/70">
+                          {describeCron(resolvePreset(editPreset, editExpr))}
+                        </div>
+                      </div>
+                      <textarea value={editPrompt} onChange={e => setEditPrompt(e.target.value)} rows={3} maxLength={10000}
+                        className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30 resize-y" />
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <label className="flex items-center gap-2 cursor-pointer" title="If checked, sleeping agents wake before this task fires">
+                          <input type="checkbox" checked={editAutoStart} onChange={e => setEditAutoStart(e.target.checked)} className="accent-emerald-500 w-3.5 h-3.5" />
+                          <span className="text-xs font-mono text-neutral-400">Auto-start agent if stopped</span>
+                        </label>
+                        <button onClick={saveEditTask}
+                          disabled={editSubmitting || !editName.trim() || !editPrompt.trim() || !resolvePreset(editPreset, editExpr).trim()}
+                          className="px-4 py-1.5 text-xs font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-lg hover:bg-violet-500/25 disabled:opacity-40 transition-colors">
+                          {editSubmitting ? "Saving..." : "Save changes"}
+                        </button>
+                      </div>
+                      {editError && <div className="text-xs font-mono text-red-400">{editError}</div>}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => toggleCronTask(t.id, !t.enabled)} className="text-[10px] font-mono text-neutral-500 hover:text-white transition-colors">{t.enabled ? "Pause" : "Resume"}</button>
-                      <button onClick={() => deleteCronTask(t.id)} className="text-[10px] font-mono text-red-400/60 hover:text-red-400 transition-colors">Delete</button>
+                  ) : (
+                    /* ── Normal task card ── */
+                    <div className="p-4 space-y-2.5">
+                      {/* Header row */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <span className="text-sm font-mono text-white font-semibold truncate">{t.name}</span>
+                          {t.enabled
+                            ? <span className="text-[9px] font-mono text-emerald-400 uppercase tracking-wider">active</span>
+                            : <span className="text-[9px] font-mono text-neutral-500 uppercase tracking-wider">paused</span>}
+                        </div>
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button onClick={() => toggleCronTask(t.id, !t.enabled)}
+                            className="text-[10px] font-mono text-neutral-500 hover:text-white transition-colors">
+                            {t.enabled ? "Pause" : "Resume"}
+                          </button>
+                          <button onClick={() => openEditTask(t)}
+                            className="text-[10px] font-mono text-neutral-500 hover:text-violet-400 transition-colors">
+                            Edit
+                          </button>
+                          {deleteConfirmId === t.id ? (
+                            <span className="flex items-center gap-1">
+                              <button onClick={() => deleteCronTask(t.id)} className="text-[10px] font-mono text-red-400 hover:text-red-300 transition-colors">Confirm</button>
+                              <button onClick={() => setDeleteConfirmId(null)} className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">Cancel</button>
+                            </span>
+                          ) : (
+                            <button onClick={() => setDeleteConfirmId(t.id)} className="text-[10px] font-mono text-red-400/60 hover:text-red-400 transition-colors">Delete</button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Schedule badge + human label */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <code className="text-[10px] font-mono text-cyan-400 bg-cyan-400/10 px-2 py-0.5 rounded">{t.cron_expression}</code>
+                        <span className="text-[11px] font-mono text-neutral-500">{describeCron(t.cron_expression)}</span>
+                      </div>
+
+                      {/* Prompt preview */}
+                      <p className="text-xs font-mono text-neutral-400 whitespace-pre-wrap leading-relaxed">
+                        {t.task_prompt.slice(0, 220)}{t.task_prompt.length > 220 ? "…" : ""}
+                      </p>
+
+                      {/* Meta row */}
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] font-mono text-neutral-600">
+                        <span>Runs: <span className="text-neutral-500">{t.run_count}{t.max_runs ? ` / ${t.max_runs}` : ""}</span></span>
+                        <span>Next: <span className="text-neutral-500">{t.next_run_at ? new Date(t.next_run_at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—"}</span></span>
+                        <span>Last: <span className="text-neutral-500">{t.last_run_at ? timeAgo(t.last_run_at) : "—"}</span></span>
+                        {t.auto_start && <span className="text-emerald-600/70">auto-wake</span>}
+                        {t.last_error && (
+                          <span className="text-red-400/80 truncate max-w-[240px]" title={t.last_error}>
+                            Error: {t.last_error.slice(0, 80)}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <p className="text-xs font-mono text-neutral-400 whitespace-pre-wrap">{t.task_prompt.slice(0, 200)}{t.task_prompt.length > 200 ? "..." : ""}</p>
-                  <div className="flex items-center gap-4 text-[10px] font-mono text-neutral-600">
-                    <span>Runs: {t.run_count}{t.max_runs ? ` / ${t.max_runs}` : ""}</span>
-                    {t.next_run_at && <span>Next: {new Date(t.next_run_at).toLocaleString()}</span>}
-                    {t.last_run_at && <span>Last: {timeAgo(t.last_run_at)}</span>}
-                    {t.last_error && <span className="text-red-400">Error: {t.last_error.slice(0, 80)}</span>}
-                  </div>
+                  )}
                 </div>
               ))}
+
+              {/* Delete confirm dialog */}
+              {deleteConfirmId && (
+                <div className="fixed inset-0 z-[120] flex items-center justify-center" role="dialog" aria-modal="true">
+                  <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setDeleteConfirmId(null)} />
+                  <div className="relative z-10 w-full max-w-xs mx-4 bg-[#0a0a0a] border border-neutral-800/50 rounded-xl overflow-hidden shadow-xl">
+                    <div className="h-[2px] w-full bg-gradient-to-r from-red-500 to-transparent" />
+                    <div className="px-5 py-4 space-y-3">
+                      <p className="text-sm font-mono text-white">Delete this scheduled task?</p>
+                      <p className="text-xs font-mono text-neutral-500">This cannot be undone.</p>
+                      <div className="flex justify-end gap-2.5 pt-1">
+                        <button onClick={() => setDeleteConfirmId(null)} className="px-3 py-1.5 text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors">Cancel</button>
+                        <button onClick={() => deleteCronTask(deleteConfirmId)} className="px-4 py-1.5 text-xs font-mono bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors">Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
