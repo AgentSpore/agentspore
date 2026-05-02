@@ -38,8 +38,18 @@ from pydantic_ai_backends import DockerSandbox
 
 from config import get_settings
 from loguru import logger
+from quota import DiskQuotaManager
 
 settings = get_settings()
+
+disk_quota = DiskQuotaManager(
+    workspace_root=settings.workspace_root,
+    soft_mb=settings.agent_disk_soft_mb,
+    hard_mb=settings.agent_disk_hard_mb,
+    enabled=settings.agent_disk_quota_enabled,
+    agentspore_url=settings.agentspore_url,
+    runner_key=settings.runner_key,
+)
 
 # Expose LLM credentials as env vars for pydantic-ai / openai client
 if settings.openai_api_key:
@@ -166,6 +176,9 @@ class AgentSession:
         self.last_activity: float = time.time()
         self.chat_lock = asyncio.Lock()
 
+        # Disk quota background watcher
+        self.quota_watcher_task: asyncio.Task | None = None
+
         # Real-time WebSocket state
         self.ws_task: asyncio.Task | None = None
         self.ws_connected = False
@@ -277,6 +290,19 @@ class AgentSession:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)
 
+    def start_quota_watcher(self):
+        """Start periodic disk quota monitoring for this agent."""
+        if disk_quota.is_enabled() and not self.quota_watcher_task:
+            self.quota_watcher_task = asyncio.create_task(
+                disk_quota.watcher_loop(self.hosted_id)
+            )
+
+    def stop_quota_watcher(self):
+        """Cancel disk quota watcher task."""
+        if self.quota_watcher_task:
+            self.quota_watcher_task.cancel()
+            self.quota_watcher_task = None
+
     async def _handle_platform_event(self, event: dict, ws):
         """Handle an event received from the platform.
 
@@ -386,6 +412,7 @@ def cleanup_all_sessions():
     for hid, session in list(sessions.items()):
         session.stop_heartbeat()
         session.stop_websocket()
+        session.stop_quota_watcher()
         try:
             session.sandbox.stop()
             logger.info("Cleaned up container for {}", hid)
@@ -404,6 +431,7 @@ async def idle_cleanup_loop():
             if session:
                 session.stop_heartbeat()
                 session.stop_websocket()
+                session.stop_quota_watcher()
                 try:
                     session.sandbox.stop()
                 except Exception:
@@ -848,6 +876,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
     sessions[hosted_id] = session
     session.start_heartbeat()
     session.start_websocket()  # real-time event channel
+    session.start_quota_watcher()  # disk quota enforcement
 
     logger.info("Started agent {} with model {}, heartbeat every {}s, ws=enabled", hosted_id, body.model, body.heartbeat_seconds)
     return ActionResponse(status="running", message="Agent started", container_id=hosted_id)
@@ -860,6 +889,7 @@ async def stop_agent(hosted_id: str):
     if session:
         session.stop_heartbeat()
         session.stop_websocket()
+        session.stop_quota_watcher()
         try:
             session.sandbox.stop()
         except Exception as e:
@@ -1448,6 +1478,23 @@ async def write_workspace_file(hosted_id: str, body: WriteFileRequest):
         raise HTTPException(404, "Agent workspace not found")
 
     target = _safe_workspace_path(workspace, body.file_path)
+
+    # Quota enforcement: infrastructure paths (.deep/checkpoints/) bypass the
+    # hard-limit block; all other agent-controlled writes are checked.
+    if not disk_quota.is_checkpoint_path(body.file_path):
+        usage_mb, allowed = await disk_quota.check_quota_async(hosted_id)
+        if not allowed:
+            raise HTTPException(
+                507,
+                f"Disk quota exceeded ({disk_quota.get_limits()[1]} MB). "
+                "Delete files via the file ops tab to free space.",
+            )
+        soft_mb, _ = disk_quota.get_limits()
+        if usage_mb >= soft_mb:
+            asyncio.create_task(disk_quota.handle_soft_breach(hosted_id, usage_mb))
+    # Invalidate cache after write so next check reflects real state.
+    disk_quota.invalidate(hosted_id)
+
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(body.content, encoding="utf-8")
 
@@ -1559,6 +1606,38 @@ async def admin_disk_usage():
             usage[hosted_id] = f"error: {exc!r}"
 
     return {"usage": usage, "workspace_root": str(workspace_root)}
+
+
+@app.get("/admin/quota/{hosted_id}")
+async def admin_quota(hosted_id: str):
+    """Per-agent disk quota status.
+
+    Returns current usage alongside configured soft/hard limits.
+    Runs du live (not cached) so the backend always gets fresh numbers.
+    Protected by the global X-Runner-Key middleware.
+
+    Response schema:
+      {
+        "hosted_id": str,
+        "usage_mb": float,
+        "soft_mb": int,
+        "hard_mb": int,
+        "soft_exceeded": bool,
+        "hard_exceeded": bool,
+        "quota_enabled": bool,
+      }
+    """
+    soft_mb, hard_mb = disk_quota.get_limits()
+    usage_mb = await disk_quota.measure_usage_mb_async(hosted_id)
+    return {
+        "hosted_id": hosted_id,
+        "usage_mb": round(usage_mb, 2),
+        "soft_mb": soft_mb,
+        "hard_mb": hard_mb,
+        "soft_exceeded": usage_mb >= soft_mb,
+        "hard_exceeded": usage_mb >= hard_mb,
+        "quota_enabled": disk_quota.is_enabled(),
+    }
 
 
 @app.get("/health")

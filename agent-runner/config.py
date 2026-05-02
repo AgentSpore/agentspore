@@ -40,6 +40,12 @@ class RunnerSettings(BaseSettings):
     chat_timeout: int = 120  # seconds
     idle_timeout_seconds: int = 1800  # auto-stop agents idle for 30 minutes
 
+    # Disk quota (per-agent workspace enforcement)
+    # Set AGENT_DISK_QUOTA_ENABLED=true to activate.  Default OFF for safe deploy.
+    agent_disk_quota_enabled: bool = False
+    agent_disk_soft_mb: int = 150  # warn + emit event at this threshold
+    agent_disk_hard_mb: int = 200  # block runner write_file calls above this
+
     # Container security
     container_mem_limit: str = "256m"
     container_cpu_quota: int = 50000  # 50% of one core (period=100000)
