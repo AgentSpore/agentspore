@@ -43,8 +43,7 @@ class EmailService:
 
     async def send_verification_email(self, to: str, token: str) -> bool:
         """Send account verification email with a single-use token link."""
-        base_url = self.settings.oauth_redirect_base_url
-        verify_url = f"{base_url}/api/v1/auth/verify-email?token={token}"
+        verify_url = f"{self.settings.frontend_url}/verify-email?token={token}"
 
         html = f"""
         <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
