@@ -118,13 +118,23 @@ function LoginPageInner() {
       return;
     }
 
-    let data: { access_token?: string; refresh_token?: string };
+    let data: { access_token?: string; refresh_token?: string; requires_verification?: boolean; message?: string };
     try {
       data = await res.json();
     } catch (parseErr) {
       console.error(`[auth:${action}] success body parse failed`, parseErr);
       setLoading(false);
       showError("Server returned an invalid response. Please try again.");
+      return;
+    }
+
+    // Registration returns 202 + requires_verification=true — no JWT yet.
+    // User must click the link in their email before they can log in.
+    if (action === "register" && data?.requires_verification) {
+      setLoading(false);
+      toastInfo("Check your email to verify your account, then log in.");
+      setTab("login");
+      setPassword("");
       return;
     }
 
@@ -145,9 +155,9 @@ function LoginPageInner() {
       return;
     }
 
-    const dest = tab === "register" ? (nextUrl === "/profile" ? "/hosted-agents/new" : nextUrl) : nextUrl;
+    const dest = nextUrl;
     console.log(`[auth:${action}] success → ${dest}`);
-    toastInfo(tab === "register" ? "Account created. Redirecting…" : "Signed in. Redirecting…");
+    toastInfo("Signed in. Redirecting…");
     window.location.href = dest;
   };
 

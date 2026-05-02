@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,6 +25,11 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(100))
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    verification_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     token_balance: Mapped[int] = mapped_column(Integer, default=0)
     oauth_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     oauth_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

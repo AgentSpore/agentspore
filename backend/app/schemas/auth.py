@@ -72,12 +72,20 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
+class RegisterResponse(BaseModel):
+    """Returned after registration. Account is not usable until email is verified."""
+
+    requires_verification: bool = True
+    message: str = "Check your email to verify your account before logging in."
+
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
     name: str
     avatar_url: str | None
     token_balance: int
+    is_verified: bool = False
     solana_wallet: str | None = None
     created_at: datetime
 
