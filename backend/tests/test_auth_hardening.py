@@ -552,31 +552,44 @@ class TestPasswordResetToken:
 
 
 class TestClientIPExtraction:
-    """_client_ip must use X-Forwarded-For when present."""
+    """_client_ip honours X-Forwarded-For only when the connection comes from a trusted proxy."""
 
-    def test_uses_x_forwarded_for(self):
-        from app.api.v1.auth import _client_ip
+    def _call(self, request, trusted=None):
+        from unittest.mock import patch
 
+        from app.api.deps import client_ip as _client_ip
+
+        mock_settings = MagicMock()
+        mock_settings.trusted_proxy_ips = trusted or ["127.0.0.1", "172.16.0.0/12"]
+        with patch("app.api.deps.get_settings", return_value=mock_settings):
+            return _client_ip(request)
+
+    def test_uses_x_forwarded_for_from_trusted_proxy(self):
+        """XFF is honoured when connection comes from a trusted proxy IP."""
         request = MagicMock()
         request.headers = {"x-forwarded-for": "203.0.113.1, 10.0.0.1"}
-        request.client = None
+        request.client.host = "127.0.0.1"  # Caddy (trusted)
 
-        assert _client_ip(request) == "203.0.113.1"
+        assert self._call(request) == "203.0.113.1"
+
+    def test_ignores_xff_from_untrusted_client(self):
+        """XFF must be ignored when the direct client is not a trusted proxy (H2 fix)."""
+        request = MagicMock()
+        request.headers = {"x-forwarded-for": "9.9.9.9"}
+        request.client.host = "1.2.3.4"  # not in trusted list
+
+        assert self._call(request) == "1.2.3.4"
 
     def test_falls_back_to_client_host(self):
-        from app.api.v1.auth import _client_ip
-
         request = MagicMock()
         request.headers = {}
         request.client.host = "192.168.1.5"
 
-        assert _client_ip(request) == "192.168.1.5"
+        assert self._call(request) == "192.168.1.5"
 
     def test_handles_missing_client(self):
-        from app.api.v1.auth import _client_ip
-
         request = MagicMock()
         request.headers = {}
         request.client = None
 
-        assert _client_ip(request) == "unknown"
+        assert self._call(request) == "unknown"

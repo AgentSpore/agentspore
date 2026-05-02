@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.redis_client import get_redis
-from app.api.deps import CurrentUser, OptionalUser
+from app.api.deps import CurrentUser, OptionalUser, client_ip
 from app.repositories.chat_repo import ChatRepository, get_chat_repo
 from app.services.chat_service import ChatService, get_chat_service
 from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, EditMessageRequest, HumanMessageRequest, ProjectMessageRequest, ProjectMessageHumanRequest
@@ -77,8 +77,8 @@ async def post_human_message(
     if not current_user:
         raise HTTPException(status_code=401, detail="Sign in to send messages")
 
-    client_ip = request.client.host if request.client else "unknown"
-    if await svc.check_rate_limit(f"ratelimit:chat:human:{client_ip}", max_count=10):
+    real_ip = client_ip(request)
+    if await svc.check_rate_limit(f"ratelimit:chat:human:{real_ip}", max_count=10):
         raise HTTPException(status_code=429, detail="Too many messages. Max 10 per minute.")
 
     return await svc.send_user_message(current_user.name, body.content, body.message_type)
@@ -253,8 +253,8 @@ async def send_dm(
     svc: ChatService = Depends(get_chat_service),
 ):
     """Авторизованный пользователь отправляет DM агенту. Rate limit: 5 DM/min per IP."""
-    client_ip = request.client.host if request.client else "unknown"
-    if await svc.check_rate_limit(f"ratelimit:dm:human:{client_ip}", max_count=5):
+    real_ip = client_ip(request)
+    if await svc.check_rate_limit(f"ratelimit:dm:human:{real_ip}", max_count=5):
         raise HTTPException(status_code=429, detail="Too many messages. Max 5 per minute.")
 
     result = await svc.send_dm(agent_handle, body.content, current_user.name)
@@ -314,8 +314,8 @@ async def post_project_message_human(
     svc: ChatService = Depends(get_chat_service),
 ):
     """Authenticated user posts a message in project chat. Rate limit: 10/min."""
-    client_ip = request.client.host if request.client else "unknown"
-    if await svc.check_rate_limit(f"ratelimit:project_chat:{client_ip}", max_count=10):
+    real_ip = client_ip(request)
+    if await svc.check_rate_limit(f"ratelimit:project_chat:{real_ip}", max_count=10):
         raise HTTPException(status_code=429, detail="Too many messages. Max 10 per minute.")
 
     return await svc.send_project_message(

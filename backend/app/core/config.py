@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     max_hosted_agents_per_user: int = 1
     max_cron_tasks_per_agent: int = 10
 
+    # Reverse proxy trust — IPs/CIDRs whose X-Forwarded-For header is honoured.
+    # Default covers local Caddy (127.0.0.1) and Docker bridge (172.16.0.0/12).
+    # Override in prod: TRUSTED_PROXY_IPS=172.18.0.0/16 (or exact Caddy container IP).
+    trusted_proxy_ips: list[str] = ["127.0.0.1", "172.16.0.0/12", "::1"]
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

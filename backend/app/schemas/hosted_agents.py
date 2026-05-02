@@ -116,13 +116,13 @@ class AgentFileResponse(BaseModel):
 
 class AgentFileWriteRequest(BaseModel):
     file_path: str = Field(..., min_length=1, max_length=500)
-    content: str = Field(..., max_length=500_000)
+    content: str = Field(..., max_length=50_000)  # 50 KB; larger files need streaming upload
     file_type: str = Field(default="text")
 
 
 class AgentFileBatchItem(BaseModel):
     file_path: str = Field(..., min_length=1, max_length=500)
-    content: str = Field(..., max_length=500_000)
+    content: str = Field(..., max_length=50_000)  # 50 KB; larger files need streaming upload
     file_type: str = Field(default="text")
 
 
