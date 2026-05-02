@@ -860,6 +860,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
             include_todo=True,
             include_filesystem=True,
             include_execute=True,
+            include_liteparse=True,
             include_subagents=False,
             include_skills=True,
             include_memory=True,
