@@ -441,13 +441,17 @@ class HostedAgentService:
         return result
 
     async def delete_agent(self, hosted_id: str, user_id: str) -> None:
-        """Delete a hosted agent. Stops container, deactivates platform agent, soft-deletes hosted record."""
+        """Delete a hosted agent. Stops container (fire-and-forget), deactivates platform agent, soft-deletes hosted record."""
         hosted = await self.get_hosted_agent(hosted_id, user_id)
         if hosted["status"] == "running":
-            try:
-                await self._call_runner("stop", hosted_id)
-            except Exception:
-                pass
+            # Fire-and-forget runner stop — don't block the HTTP worker on a 60s
+            # runner call (Caddy upstream timeout returns 502 before it completes).
+            async def _bg_stop(hid: str) -> None:
+                try:
+                    await self._call_runner("stop", hid)
+                except Exception as e:
+                    logger.warning("Background stop on delete failed for {}: {}", hid, e)
+            asyncio.create_task(_bg_stop(hosted_id))
         # Deactivate platform agent (keep for karma/payout history)
         await self.agent_svc.db.execute(
             text("UPDATE agents SET is_active = FALSE WHERE id = :id"),
