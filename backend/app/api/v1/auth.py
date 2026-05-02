@@ -279,7 +279,7 @@ async def login(
     result = await db.execute(select(User).where(func.lower(User.email) == data.email))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(data.password, user.hashed_password):
+    if not user or not user.hashed_password or not verify_password(data.password, user.hashed_password):
         # Increment fail counter
         new_count = await redis.incr(fail_key)
         if new_count == 1:
