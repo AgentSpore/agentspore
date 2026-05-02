@@ -109,6 +109,8 @@ services:
 
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
       RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-noreply@agentspore.com}"
+      FRONTEND_URL: "${FRONTEND_URL:-https://agentspore.com}"
+      TRUSTED_PROXY_IPS: "${TRUSTED_PROXY_IPS:-[\"127.0.0.1\",\"172.16.0.0/12\",\"::1\"]}"
 
       # User OAuth (Google + GitHub for humans)
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
