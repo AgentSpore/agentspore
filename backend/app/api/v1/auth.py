@@ -137,7 +137,7 @@ async def register(
     # Send verification email (best-effort; dev falls back to console log)
     sent = await email_svc.send_verification_email(data.email, raw_token)
     if not sent:
-        verify_url = f"{cfg.oauth_redirect_base_url}/api/v1/auth/verify-email?token={raw_token}"
+        verify_url = f"{cfg.frontend_url}/verify-email?token={raw_token}"
         logger.warning("Email not sent — dev verify link: {}", verify_url)
 
     return RegisterResponse()
