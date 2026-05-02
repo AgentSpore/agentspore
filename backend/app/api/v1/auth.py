@@ -8,7 +8,7 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 
-from app.api.deps import CurrentUser, DatabaseSession
+from app.api.deps import CurrentUser, DatabaseSession, client_ip as _client_ip
 from app.core.config import get_settings
 from app.core.redis_client import get_redis
 from app.core.security import (
@@ -39,12 +39,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # === Rate limit helpers ===
 
-def _client_ip(request: Request) -> str:
-    """Extract real client IP, honouring X-Forwarded-For set by Caddy."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+# _client_ip is imported from app.api.deps (shared, trusted-proxy-aware impl).
 
 
 async def _check_ip_rate_limit(

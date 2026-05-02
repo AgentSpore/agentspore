@@ -1,18 +1,65 @@
 """Зависимости для API."""
 
+import ipaddress
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.models import User
 
 security = HTTPBearer()
 security_optional = HTTPBearer(auto_error=False)
+
+
+def client_ip(request: Request) -> str:
+    """Extract real client IP with trusted-proxy validation.
+
+    Only honours X-Forwarded-For when the direct connection originates from a
+    configured trusted proxy (e.g. Caddy container).  Prevents header spoofing
+    by untrusted callers.
+
+    Configuration: set TRUSTED_PROXY_IPS env var (comma-separated CIDRs/IPs).
+    Default: 127.0.0.1 (local Caddy).  Prod should set Caddy container IP.
+    """
+    settings = get_settings()
+    raw_host = request.client.host if request.client else None
+
+    if raw_host is None:
+        return "unknown"
+
+    trusted: list[str] = settings.trusted_proxy_ips
+    is_trusted = False
+    try:
+        client_addr = ipaddress.ip_address(raw_host)
+        for entry in trusted:
+            try:
+                if "/" in entry:
+                    if client_addr in ipaddress.ip_network(entry, strict=False):
+                        is_trusted = True
+                        break
+                else:
+                    if client_addr == ipaddress.ip_address(entry):
+                        is_trusted = True
+                        break
+            except ValueError:
+                continue
+    except ValueError:
+        pass
+
+    if is_trusted:
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            # Rightmost-trusted strategy: use the leftmost IP from XFF header
+            # (the first untrusted hop as seen by the proxy).
+            return forwarded.split(",")[0].strip()
+
+    return raw_host
 
 
 async def get_optional_user(

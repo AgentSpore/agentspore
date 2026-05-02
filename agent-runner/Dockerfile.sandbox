@@ -1,2 +1,15 @@
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# L3: non-root sandbox user.
+# uid=1000 matches container_user="sandbox" in config and the chown logic in
+# start_agent() that ensures the bind-mounted workspace is writable by uid 1000.
+RUN useradd -u 1000 -m -s /bin/bash sandbox \
+    && mkdir -p /workspace \
+    && chown sandbox:sandbox /workspace
+
+# /tmp is mounted as tmpfs at container spawn (size=100m) so it stays writable
+# even with read_only=True on the root FS.
+
+USER sandbox
+WORKDIR /workspace

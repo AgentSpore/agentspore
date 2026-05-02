@@ -32,8 +32,10 @@ class RunnerSettings(BaseSettings):
     default_budget_usd: float = 1.0
     default_heartbeat_seconds: int = 3600  # 1 hour
 
-    # Auth
-    runner_key: str = ""  # shared secret with backend (X-Runner-Key header)
+    # Auth — REQUIRED: set RUNNER_KEY env var to a strong random secret.
+    # Generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    # Startup fails if missing. The runner enforces this on every non-health request.
+    runner_key: str
 
     # Limits
     max_agents: int = 40
@@ -47,10 +49,17 @@ class RunnerSettings(BaseSettings):
     agent_disk_hard_mb: int = 200  # block runner write_file calls above this
 
     # Container security
-    container_mem_limit: str = "256m"
+    container_mem_limit: str = "512m"
     container_cpu_quota: int = 50000  # 50% of one core (period=100000)
-    container_pids_limit: int = 100
-    container_user: str = "1000:1000"
+    container_cpu_period: int = 100000
+    container_pids_limit: int = 200
+    container_user: str = "sandbox"
+
+    # Sandbox network isolation (C3)
+    # Create with: docker network create --driver bridge --subnet=10.99.0.0/16 sandbox_net
+    # Then add iptables rules to drop RFC1918 traffic from that subnet.
+    # See docs/runbook-sandbox-network.md for full deploy steps.
+    sandbox_network_name: str = "sandbox_net"
 
     class Config:
         env_file = ".env"
