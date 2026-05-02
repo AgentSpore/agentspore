@@ -13,7 +13,12 @@ services:
     image: agentspore-runner:latest
     container_name: agentspore-runner
     ports:
-      - "8100:8100"
+      # 0.0.0.0 binding is intentional — behind Yandex Cloud NAT the host has
+      # no local interface for the public IP (89.169.165.39), so binding to it
+      # fails. Network isolation is enforced via iptables INPUT rules (see
+      # docs/runbook-sandbox-network.md): DROP 172.16/12, 192.168/16, 10.99/16
+      # -> dport 8100, so docker bridge containers cannot reach this port.
+      - "0.0.0.0:8100:8100"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /data/agents:/data/agents
