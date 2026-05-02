@@ -38,7 +38,7 @@ class RunnerSettings(BaseSettings):
     # Limits
     max_agents: int = 40
     chat_timeout: int = 120  # seconds
-    idle_timeout_seconds: int = 7200  # auto-stop agents idle for 2 hours
+    idle_timeout_seconds: int = 1800  # auto-stop agents idle for 30 minutes
 
     # Container security
     container_mem_limit: str = "256m"

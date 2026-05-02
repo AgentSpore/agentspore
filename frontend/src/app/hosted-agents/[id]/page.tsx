@@ -28,7 +28,7 @@ function DotGrid() {
       }} />
       <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
         style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
-      <div className="absolute bottom-20 right-0 w-[400px] h-[400px] translate-x-1/2 rounded-full opacity-[0.05]"
+      <div className="absolute bottom-20 right-0 w-[400px] h-[400px] rounded-full opacity-[0.05]"
         style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
     </div>
   );
@@ -74,10 +74,12 @@ function HostedAgentManagePageInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
-  const [confirmStop, setConfirmStop] = useState(false);
+  const [confirmForceRestart, setConfirmForceRestart] = useState(false);
+  const [forceRestarting, setForceRestarting] = useState(false);
+  const [pillOpen, setPillOpen] = useState(false);
+  const pillRef = useRef<HTMLDivElement>(null);
 
   // Layout state
   const [activeTab, setActiveTab] = useState<"chat" | "files" | "guide" | "cron">("chat");
@@ -165,33 +167,36 @@ function HostedAgentManagePageInner() {
     return () => clearInterval(interval);
   }, [loadAgent, rtConnected]);
 
-  const doAction = async (action: string) => {
+
+  const doForceRestart = async () => {
+    setConfirmForceRestart(false);
+    setForceRestarting(true);
     setActionError(null);
-    setActionLoading(action);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), action === "stop" ? 120_000 : 30_000);
     try {
-      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/${action}`, {
-        method: "POST",
-        signal: controller.signal,
-      });
+      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/force-restart`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setActionError(data.detail || `Error ${res.status}`);
-        return;
+        setActionError(data.detail || `Force restart failed (${res.status})`);
       }
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") {
-        setActionError(`${action} timed out — refresh to check status`);
-      } else {
-        setActionError("Network error");
-      }
+    } catch {
+      setActionError("Network error during force restart");
     } finally {
-      clearTimeout(timeout);
-      setActionLoading(null);
+      setForceRestarting(false);
       await loadAgent();
     }
   };
+
+  // Close pill popover when clicking outside
+  useEffect(() => {
+    if (!pillOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (pillRef.current && !pillRef.current.contains(e.target as Node)) {
+        setPillOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [pillOpen]);
 
   // When a file is selected, stay on files tab
   useEffect(() => {
@@ -252,37 +257,50 @@ function HostedAgentManagePageInner() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto shrink-0">
-            {agent.status !== "running" && (
-              <button onClick={() => doAction("start")} disabled={!!actionLoading}
-                className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-mono bg-emerald-400/10 text-emerald-400 border border-emerald-400/20 rounded-lg hover:bg-emerald-400/20 disabled:opacity-40 transition-colors whitespace-nowrap">
-                {actionLoading === "start" ? "Starting…" : "▶ Start"}
-              </button>
-            )}
-            {agent.status === "running" && (
-              <>
-                <button onClick={() => doAction("restart")} disabled={!!actionLoading}
-                  className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-mono bg-amber-400/10 text-amber-300 border border-amber-400/20 rounded-lg hover:bg-amber-400/20 disabled:opacity-40 transition-colors whitespace-nowrap">
-                  {actionLoading === "restart" ? "…" : "↻ Restart"}
-                </button>
-                {actionLoading === "stop" ? (
-                  <span className="px-3 py-1.5 sm:py-2 text-xs font-mono text-amber-300 animate-pulse whitespace-nowrap">
-                    Saving session…
-                  </span>
-                ) : confirmStop ? (
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={() => { doAction("stop"); setConfirmStop(false); }}
-                      className="px-3 py-1.5 text-xs font-mono bg-red-400/20 text-red-400 rounded-lg hover:bg-red-400/30 whitespace-nowrap">Yes, stop</button>
-                    <button onClick={() => setConfirmStop(false)}
-                      className="px-2 py-1.5 text-xs font-mono text-neutral-500 hover:text-neutral-300">Cancel</button>
-                  </div>
+            {/* StatusPill — replaces Start/Restart/Stop buttons */}
+            <div className="relative" ref={pillRef}>
+              <button
+                onClick={() => setPillOpen(o => !o)}
+                aria-label={`Agent status: ${st.label}. Click for details.`}
+                aria-expanded={pillOpen}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono border rounded-lg transition-colors whitespace-nowrap focus:outline-none focus-visible:ring-1 focus-visible:ring-violet-400 ${st.classes} hover:opacity-80`}>
+                {agent.status === "starting" ? (
+                  <span className="w-2.5 h-2.5 border border-amber-300 border-t-transparent rounded-full animate-spin" />
                 ) : (
-                  <button onClick={() => setConfirmStop(true)} disabled={!!actionLoading}
-                    className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-mono bg-red-400/10 text-red-400 border border-red-400/20 rounded-lg hover:bg-red-400/20 disabled:opacity-40 transition-colors whitespace-nowrap">
-                    ■ Stop
-                  </button>
+                  <span aria-hidden="true">{st.icon}</span>
                 )}
-              </>
-            )}
+                <span>{st.label}</span>
+              </button>
+              {pillOpen && (
+                <div className="absolute right-0 top-full mt-1.5 z-50 w-64 bg-[#111] border border-neutral-800/60 rounded-xl shadow-xl shadow-black/50 p-3 text-xs font-mono">
+                  {agent.status === "stopped" && (
+                    <>
+                      <p className="text-neutral-300 leading-relaxed">Auto-stops after 30 min idle.</p>
+                      <p className="text-neutral-500 mt-1 leading-relaxed">Wakes automatically when you send a message or a scheduled task fires.</p>
+                    </>
+                  )}
+                  {agent.status === "starting" && (
+                    <p className="text-amber-300 leading-relaxed">Agent is booting up — your message will be processed as soon as it is ready.</p>
+                  )}
+                  {agent.status === "running" && (
+                    <p className="text-emerald-400 leading-relaxed">Agent is online and ready to respond.</p>
+                  )}
+                  {agent.status === "error" && (
+                    <>
+                      <p className="text-red-400 font-semibold mb-1.5">Agent encountered an error</p>
+                      <p className="text-neutral-400 leading-relaxed break-words">
+                        {agent.last_error || "Unknown error — try Force restart from Settings."}
+                      </p>
+                      <button
+                        onClick={() => { setPillOpen(false); setConfirmForceRestart(true); }}
+                        className="mt-2.5 w-full px-3 py-1.5 text-xs font-mono bg-amber-400/10 text-amber-300 border border-amber-400/20 rounded-lg hover:bg-amber-400/20 transition-colors">
+                        Force restart
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
             <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/agents/${agent.agent_id}/chat`); }}
               className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-mono text-neutral-500 border border-neutral-800/50 rounded-lg hover:text-neutral-400 hover:border-neutral-700/50 transition-colors whitespace-nowrap" title="Copy public chat link">
               🔗 <span className="hidden sm:inline">Link</span>
@@ -358,7 +376,7 @@ function HostedAgentManagePageInner() {
           {/* Chat tab */}
           <div className={`h-full ${activeTab !== "chat" ? "hidden" : ""}`}
             onClick={() => setHasUnread(false)}>
-            <ChatPanel agentId={id} status={agent.status} onNewMessage={() => { setHasUnread(true); }} />
+            <ChatPanel agentId={id} status={agent.status} onNewMessage={() => { setHasUnread(true); }} onRequestForceRestart={() => setConfirmForceRestart(true)} />
           </div>
 
           {/* Files tab */}
@@ -621,7 +639,44 @@ function HostedAgentManagePageInner() {
         </div>
       </div>
 
-      {showSettings && <SettingsModal agent={agent} onClose={() => setShowSettings(false)} onUpdate={loadAgent} />}
+      {showSettings && (
+        <SettingsModal
+          agent={agent}
+          onClose={() => setShowSettings(false)}
+          onUpdate={loadAgent}
+          onForceRestart={() => { setShowSettings(false); setConfirmForceRestart(true); }}
+        />
+      )}
+
+      {/* Force restart confirm dialog */}
+      {confirmForceRestart && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="fr-dialog-title">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setConfirmForceRestart(false)} />
+          <div className="relative z-10 w-full max-w-sm mx-4 bg-[#0a0a0a] border border-neutral-800/50 rounded-xl overflow-hidden shadow-xl shadow-black/60">
+            <div className="h-[2px] w-full bg-gradient-to-r from-amber-400 to-transparent" />
+            <div className="px-6 py-5">
+              <h3 id="fr-dialog-title" className="text-sm font-mono text-white mb-2">Force restart</h3>
+              <p className="text-xs font-mono text-neutral-400 leading-relaxed">
+                Wipe in-memory session and reload AGENT.md? Use this when the agent is stuck or after editing AGENT.md.
+              </p>
+            </div>
+            <div className="px-6 pb-5 flex items-center justify-end gap-2.5">
+              <button
+                onClick={() => setConfirmForceRestart(false)}
+                className="px-3 py-1.5 text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors">
+                Cancel
+              </button>
+              <button
+                onClick={doForceRestart}
+                disabled={forceRestarting}
+                autoFocus
+                className="px-4 py-1.5 text-xs font-mono bg-amber-400/10 text-amber-300 border border-amber-400/20 rounded-lg hover:bg-amber-400/20 disabled:opacity-40 transition-colors">
+                {forceRestarting ? "Restarting…" : "Force restart"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -681,7 +736,8 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     setFiles(files.filter(f => f.file_path !== path));
     if (selectedFile === path) onSelect(null);
     try {
-      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/${encodeURIComponent(path)}`, {
+      const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+      const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/${encodedPath}`, {
         method: "DELETE",
       });
       if (!res.ok) {
@@ -1222,7 +1278,8 @@ function EditorPanel({ agentId, filePath, onClose }: {
     setConflict(null);
     (async () => {
       try {
-        const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/${encodeURIComponent(filePath)}`);
+        const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
+        const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/${encodedFilePath}`);
         if (res.ok && !cancelled) {
           const f: AgentFile & { version?: number; truncated?: boolean; is_binary?: boolean } = await res.json();
           setContent(f.content || "");
@@ -1589,7 +1646,7 @@ function ChatDiffPreview({ agentId, path }: { agentId: string; path: string }) {
 /* Chat Panel                                                                 */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
-function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status: string; onNewMessage?: () => void }) {
+function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { agentId: string; status: string; onNewMessage?: () => void; onRequestForceRestart?: () => void }) {
   const [messages, setMessages] = useState<OwnerMessage[]>([]);
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
@@ -1602,7 +1659,12 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
   const [streamText, setStreamText] = useState("");
   const [streamTools, setStreamTools] = useState<Array<{ tool: string; args: unknown; status: string; result?: string }>>([]);
   const [streamThinking, setStreamThinking] = useState("");
-  const [streamPhase, setStreamPhase] = useState<"idle" | "connecting" | "waiting" | "streaming">("idle");
+  const [streamPhase, setStreamPhase] = useState<"idle" | "starting_agent" | "connecting" | "waiting" | "streaming">("idle");
+  const [startingEtaS, setStartingEtaS] = useState(15);
+  const [startingElapsedS, setStartingElapsedS] = useState(0);
+  const [coldStartError, setColdStartError] = useState<{ message: string; retryable: boolean } | null>(null);
+  const startingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastSentRef = useRef<string | null>(null);
   const [sendElapsed, setSendElapsed] = useState(0);
   const [todos, setTodos] = useState<Array<{ content: string; status: string; id?: string }>>([]);
   const [todosOpen, setTodosOpen] = useState(false);
@@ -1649,6 +1711,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
   useEffect(() => () => {
     abortRef.current?.abort();
     if (streamFlushRaf.current != null) cancelAnimationFrame(streamFlushRaf.current);
+    if (startingTimerRef.current != null) clearInterval(startingTimerRef.current);
   }, []);
 
   // Warn user before leaving during generation
@@ -1831,6 +1894,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
     if (!raw.trim() || sending) return;
     const text = raw.trim();
     setLastSent(text);
+    lastSentRef.current = text;
 
     const optimisticMsg: OwnerMessage = {
       id: `opt-${Date.now()}`, sender_type: "user", content: text,
@@ -1844,11 +1908,13 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
 
     setSending(true);
     setChatError(null);
+    setColdStartError(null);
     setStreamText("");
     setStreamTools([]);
     setStreamThinking("");
     setStreamPhase("connecting");
     setSendElapsed(0);
+    setStartingElapsedS(0);
     streamTextRef.current = "";
     streamToolsRef.current = [];
     streamThinkingRef.current = "";
@@ -1943,8 +2009,31 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
                 }
                 await loadMessages();
                 break;
+              case "phase":
+                switch (event.phase) {
+                  case "starting_agent":
+                    setStreamPhase("starting_agent");
+                    setStartingEtaS(event.eta_s ?? 15);
+                    setStartingElapsedS(0);
+                    if (startingTimerRef.current) clearInterval(startingTimerRef.current);
+                    startingTimerRef.current = setInterval(() => setStartingElapsedS(p => p + 1), 1000);
+                    break;
+                  case "agent_started":
+                    if (startingTimerRef.current) { clearInterval(startingTimerRef.current); startingTimerRef.current = null; }
+                    setStreamPhase("connecting");
+                    break;
+                  default:
+                    break;
+                }
+                break;
               case "error":
-                setChatError(event.message);
+                if (event.phase === "starting_agent") {
+                  setColdStartError({ message: event.message ?? "Unknown error", retryable: event.retryable ?? false });
+                  if (startingTimerRef.current) { clearInterval(startingTimerRef.current); startingTimerRef.current = null; }
+                  setStreamPhase("idle");
+                } else {
+                  setChatError(event.message);
+                }
                 break;
               case "todos_update":
                 if (Array.isArray(event.todos)) {
@@ -1994,6 +2083,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
     setSending(false);
     setStreamPhase("idle");
     if (sendTimerRef.current) { clearInterval(sendTimerRef.current); sendTimerRef.current = null; }
+    if (startingTimerRef.current) { clearInterval(startingTimerRef.current); startingTimerRef.current = null; }
     setStreamText("");
     setStreamTools([]);
     setStreamThinking("");
@@ -2142,6 +2232,48 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Cold-start banner */}
+      {streamPhase === "starting_agent" && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mx-4 mb-1 shrink-0 flex items-center gap-3 px-3.5 py-2 rounded-lg bg-yellow-500/[0.08] border border-yellow-500/20 text-yellow-400 text-xs font-mono">
+          <span className="w-3.5 h-3.5 border border-yellow-400 border-t-transparent rounded-full animate-spin shrink-0" aria-hidden="true" />
+          <span className="whitespace-nowrap">Waking up your agent · {startingElapsedS}s / ~{startingEtaS}s</span>
+          <div className="flex-1 min-w-0 h-1 bg-yellow-500/10 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-yellow-400/50 rounded-full transition-all duration-1000"
+              style={{ width: `${Math.min(100, (startingElapsedS / startingEtaS) * 100)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Cold-start error banner */}
+      {coldStartError && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mx-4 mb-1 shrink-0 px-3.5 py-2 rounded-lg bg-red-500/[0.08] border border-red-500/20 text-xs font-mono flex items-center gap-2 flex-wrap">
+          <span className="text-red-400 flex-1">⚠ {coldStartError.message}</span>
+          {coldStartError.retryable && lastSentRef.current && (
+            <button
+              onClick={() => { setColdStartError(null); send(undefined, lastSentRef.current!); }}
+              className="px-2.5 py-1 text-[10px] font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 rounded hover:bg-violet-500/20 transition-colors shrink-0">
+              Retry
+            </button>
+          )}
+          {!coldStartError.retryable && (
+            <button
+              onClick={() => { setColdStartError(null); onRequestForceRestart?.(); }}
+              className="px-2.5 py-1 text-[10px] font-mono text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded hover:bg-amber-500/20 transition-colors shrink-0">
+              Force restart
+            </button>
+          )}
+          <button onClick={() => setColdStartError(null)} className="text-red-400/40 hover:text-red-400 shrink-0">×</button>
         </div>
       )}
 
@@ -2309,7 +2441,7 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
                   <div className="w-1.5 h-1.5 bg-violet-400/40 rounded-full animate-bounce" style={{ animationDelay: "0.4s", animationDuration: "1.4s" }} />
                 </div>
                 <span className="text-[11px] text-violet-200/70 font-mono">
-                  {streamPhase === "connecting" ? "Connecting…" : streamPhase === "waiting" ? "Waiting for model…" : "Thinking…"}
+                  {streamPhase === "starting_agent" ? "Waking up agent…" : streamPhase === "connecting" ? "Connecting…" : streamPhase === "waiting" ? "Waiting for model…" : "Thinking…"}
                 </span>
                 <span className="text-[9px] text-neutral-600 font-mono tabular-nums">{sendElapsed}s</span>
               </div>
@@ -2357,17 +2489,22 @@ function ChatPanel({ agentId, status, onNewMessage }: { agentId: string; status:
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
               if (e.key === "Escape" && sending) { abortRef.current?.abort(); }
             }}
-            placeholder={status === "running" ? (sending ? "Generating…" : "Message your agent…") : "Agent is stopped"}
-            disabled={status !== "running"}
+            placeholder={
+              sending
+                ? "Generating…"
+                : status === "running"
+                  ? "Type a message…"
+                  : "Send a message — your agent will wake up"
+            }
             rows={1}
-            className="flex-1 bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30 disabled:opacity-40 transition-colors resize-none overflow-hidden" />
+            className="flex-1 bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30 transition-colors resize-none overflow-hidden" />
           {sending ? (
             <button onClick={() => { abortRef.current?.abort(); }}
               className="px-4 py-2.5 text-xs font-mono bg-red-400/15 text-red-400 border border-red-400/25 rounded-lg hover:bg-red-400/25 transition-colors shrink-0">
               ■ Stop
             </button>
           ) : (
-            <button onClick={() => send()} disabled={!content.trim() || status !== "running"}
+            <button onClick={() => send()} disabled={!content.trim()}
               className="px-4 py-2.5 text-xs font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-lg hover:bg-violet-500/25 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0">
               Send
             </button>
@@ -2480,7 +2617,7 @@ function AgentMarkdown({ content, isUser }: { content: string; isUser: boolean }
 /* Settings Modal                                                             */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
-function SettingsModal({ agent, onClose, onUpdate }: { agent: HostedAgent; onClose: () => void; onUpdate: () => void }) {
+function SettingsModal({ agent, onClose, onUpdate, onForceRestart }: { agent: HostedAgent; onClose: () => void; onUpdate: () => void; onForceRestart: () => void }) {
   const router = useRouter();
   const [prompt, setPrompt] = useState(agent.system_prompt);
   const [model, setModel] = useState(agent.model);
@@ -2611,6 +2748,13 @@ function SettingsModal({ agent, onClose, onUpdate }: { agent: HostedAgent; onClo
           {error && (
             <div className="px-3 py-2 text-xs font-mono text-red-400/90 bg-red-400/[0.06] border border-red-400/15 rounded-lg">{error}</div>
           )}
+        </div>
+        <div className="px-6 py-3 border-t border-neutral-800/40 shrink-0">
+          <button
+            onClick={onForceRestart}
+            className="w-full px-3 py-2 text-xs font-mono text-amber-300 bg-amber-400/[0.06] border border-amber-400/15 rounded-lg hover:bg-amber-400/10 transition-colors flex items-center gap-1.5">
+            <span aria-hidden="true">⚡</span> Force restart
+          </button>
         </div>
         <div className="px-6 py-4 border-t border-neutral-800/40 flex items-center justify-between shrink-0">
           <button onClick={handleDelete} disabled={deleting}

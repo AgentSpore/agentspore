@@ -1,9 +1,10 @@
 """Auth schemas."""
 
+import re
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 def _norm_email(v: str) -> str:
@@ -13,15 +14,28 @@ def _norm_email(v: str) -> str:
     return v.strip().lower()
 
 
+_PASSWORD_LETTER = re.compile(r"[a-zA-Z]")
+_PASSWORD_DIGIT = re.compile(r"\d")
+
+
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
-    name: str
+    password: str = Field(min_length=8, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
 
     @field_validator("email", mode="before")
     @classmethod
     def _lower_email(cls, v: str) -> str:
         return _norm_email(v)
+
+    @field_validator("password", mode="after")
+    @classmethod
+    def _password_complexity(cls, v: str) -> str:
+        if not _PASSWORD_LETTER.search(v):
+            raise ValueError("Password must contain at least one letter")
+        if not _PASSWORD_DIGIT.search(v):
+            raise ValueError("Password must contain at least one digit")
+        return v
 
 
 class UserLogin(BaseModel):

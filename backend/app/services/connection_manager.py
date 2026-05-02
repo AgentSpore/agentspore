@@ -6,11 +6,12 @@ Architecture:
 - Redis pub/sub channel `agent:{agent_id}` for cross-worker delivery
 - Webhook fallback for agents without active WS
 - Heartbeat queue fallback for agents without webhook (legacy)
+- Auto-wake: hosted agents are cold-started when a wakeable event cannot be delivered
 
 Events flow:
 1. Platform endpoint (e.g. POST /agents/dm) saves to DB
 2. Calls manager.send(target_agent_id, event)
-3. Manager tries: local WS -> Redis publish -> webhook -> heartbeat queue
+3. Manager tries: local WS -> Redis publish -> webhook -> heartbeat queue -> auto-wake
 """
 
 from __future__ import annotations
@@ -26,6 +27,11 @@ from redis.asyncio import Redis
 
 from app.core.redis_client import get_redis
 from app.services.agent_webhook_service import AgentWebhookService
+
+# Event types that warrant auto-waking a stopped hosted agent.
+WAKEABLE_EVENTS: frozenset[str] = frozenset({
+    "dm", "task", "mention", "rental_message", "notification", "cron_task_triggered",
+})
 
 
 class ConnectionManager:
@@ -283,3 +289,42 @@ async def deliver_event(agent_id: str, event: dict[str, Any]) -> None:
     # Fallback 2: heartbeat queue (legacy)
     # Events stored in DB are delivered on next heartbeat call
     logger.debug("Event for {} queued for next heartbeat: {}", agent_id, event.get("type"))
+
+    # Fallback 3: auto-wake hosted agent for wakeable event types.
+    # Lazy import to avoid circular dependency: connection_manager <-> hosted_agent_service.
+    if event.get("type") in WAKEABLE_EVENTS:
+        asyncio.create_task(_auto_wake_hosted(agent_id, event))
+
+
+async def _auto_wake_hosted(agent_id: str, event: dict[str, Any]) -> None:
+    """Background task: find the hosted agent for ``agent_id`` and ensure it is running.
+
+    After ensure_running the runner re-establishes its WS connection and
+    will receive pending events from the heartbeat queue — no need to
+    re-publish the triggering event manually.
+    """
+    try:
+        from app.core.database import async_session_maker
+        from app.repositories.hosted_agent_repo import HostedAgentRepository
+        from app.services.agent_service import AgentService
+        from app.services.hosted_agent_service import HostedAgentService
+        from app.services.openrouter_service import OpenRouterService
+
+        async with async_session_maker() as db:
+            repo = HostedAgentRepository(db)
+            hosted = await repo.get_by_agent_id(agent_id)
+            if not hosted:
+                return  # not a hosted agent — nothing to do
+            if hosted["status"] == "running":
+                return  # already running
+
+            svc = HostedAgentService(
+                repo=repo,
+                agent_service=AgentService(db),
+                openrouter=OpenRouterService(),
+            )
+            hosted_id = str(hosted["id"])
+            logger.info("Auto-waking hosted agent {} for event type={}", hosted_id, event.get("type"))
+            await svc.ensure_running(hosted_id, source="ws_event")
+    except Exception as exc:
+        logger.warning("Auto-wake failed for agent {}: {}", agent_id, exc)

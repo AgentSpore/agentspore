@@ -390,6 +390,54 @@ async def test_delete_file_url_encodes_special_chars(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_delete_subpath_file_succeeds(db_session, monkeypatch):
+    """M2: delete_file must resolve correctly for paths with directory separators.
+
+    Reproduces the bug where DELETE /files/notes/test.md returned 404
+    while the file was visible via GET /files.  The service + repo layer must
+    match on the exact file_path string including the slash.
+    """
+    from app.repositories.hosted_agent_repo import HostedAgentRepository
+
+    hosted_id, owner_id = await _create_hosted(db_session)
+    repo = HostedAgentRepository(db_session)
+    svc = _make_service(repo)
+
+    # Insert a file that lives in a subdirectory
+    await repo.upsert_file(hosted_id, "notes/test.md", "hello", "text")
+
+    # Confirm it is visible via list_files
+    files_before = await repo.list_files(hosted_id)
+    assert any(f["file_path"] == "notes/test.md" for f in files_before)
+
+    # Patch out runner HTTP call — we're testing DB round-trip only
+    monkeypatch.setattr(
+        "httpx.AsyncClient.delete",
+        AsyncMock(return_value=httpx.Response(200, json={"status": "deleted"})),
+    )
+
+    await svc.delete_file(hosted_id, owner_id, "notes/test.md")
+
+    files_after = await repo.list_files(hosted_id)
+    assert not any(f["file_path"] == "notes/test.md" for f in files_after)
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent_subpath_raises_404(db_session):
+    """Deleting a subpath file that doesn't exist must return 404, not 500."""
+    from app.repositories.hosted_agent_repo import HostedAgentRepository
+    from fastapi import HTTPException
+
+    hosted_id, owner_id = await _create_hosted(db_session)
+    repo = HostedAgentRepository(db_session)
+    svc = _make_service(repo)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.delete_file(hosted_id, owner_id, "deep/nested/missing.md")
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_batch_write_atomic_on_failure(db_session, monkeypatch):
     """A failure mid-batch must roll back rows that were just created."""
     from app.repositories.hosted_agent_repo import HostedAgentRepository
