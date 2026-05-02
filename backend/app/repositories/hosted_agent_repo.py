@@ -229,19 +229,6 @@ class HostedAgentRepository:
         await self.db.commit()
         return dict(result.mappings().first())
 
-    # Paths the runner deliberately hides from /files responses. The BE
-    # must never prune them on sync — the runner won't enumerate them, so
-    # they would always appear "missing" and get wiped (regression: bootstrap
-    # files like `.deep/memory/main/MEMORY.md` vanishing after first chat).
-    PRUNE_PROTECTED_PREFIXES = (
-        ".deep/checkpoints/",
-        ".deep/plans/",
-        ".deep/todos.json",
-        ".venv/",
-        "__pycache__/",
-        "node_modules/",
-    )
-
     async def prune_missing_files(self, hosted_id: str, keep_paths: set[str]) -> list[str]:
         """Delete agent_files rows whose path is not in ``keep_paths``.
 
@@ -256,19 +243,16 @@ class HostedAgentRepository:
             return []
         # asyncpg/SQLAlchemy: use ANY(:array) for an in-list against a
         # bind parameter without N-arity expansion.
-        protected_like = [f"{p}%" for p in self.PRUNE_PROTECTED_PREFIXES]
         result = await self.db.execute(
             text("""
                 DELETE FROM agent_files
                 WHERE hosted_agent_id = :hid
                   AND NOT (file_path = ANY(:keep))
-                  AND NOT (file_path LIKE ANY(:protected))
                 RETURNING file_path
             """),
             {
                 "hid": hosted_id,
                 "keep": list(keep_paths),
-                "protected": protected_like,
             },
         )
         await self.db.commit()

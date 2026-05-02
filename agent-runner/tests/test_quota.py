@@ -192,8 +192,8 @@ class TestFeatureFlag:
 
 class TestCheckpointBypass:
     @pytest.mark.parametrize("path", list(CHECKPOINT_BYPASS_PREFIXES) + [
-        ".deep/checkpoints/turn_42.json",
-        ".deep/checkpoints/subdir/file",
+        "checkpoints/turn_42.json",
+        "checkpoints/subdir/file",
     ])
     def test_checkpoint_paths_are_bypassed(self, path: str):
         mgr = make_manager()
@@ -202,7 +202,7 @@ class TestCheckpointBypass:
     @pytest.mark.parametrize("path", [
         "main.py",
         "README.md",
-        ".deep/memory/main/MEMORY.md",
+        "memory/MEMORY.md",
         "src/app.py",
         ".gitignore",
     ])
