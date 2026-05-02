@@ -1529,6 +1529,38 @@ async def get_workspace_diff(hosted_id: str):
     return {"files": files, "git_available": True}
 
 
+@app.get("/admin/disk-usage")
+async def admin_disk_usage():
+    """Per-agent disk usage for all workspace directories under workspace_root.
+
+    Returns a map of {hosted_id: human_readable_size} for monitoring.
+    Runs ``du -sh`` for each immediate subdirectory. Protected by the global
+    X-Runner-Key middleware — only the backend can call this.
+    """
+    workspace_root = settings.workspace_root
+    usage: dict[str, str] = {}
+
+    if not workspace_root.exists():
+        return {"usage": usage, "workspace_root": str(workspace_root), "error": "workspace_root missing"}
+
+    for agent_dir in workspace_root.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        hosted_id = agent_dir.name
+        try:
+            result = subprocess.run(
+                ["du", "-sh", str(agent_dir)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                size = result.stdout.split("\t")[0].strip()
+                usage[hosted_id] = size
+        except Exception as exc:
+            usage[hosted_id] = f"error: {exc!r}"
+
+    return {"usage": usage, "workspace_root": str(workspace_root)}
+
+
 @app.get("/health")
 async def health():
     """Health check with active agents info."""

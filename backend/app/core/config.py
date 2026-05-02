@@ -82,6 +82,16 @@ class Settings(BaseSettings):
     password_reset_ttl_seconds: int = 3600  # 1 hour
     password_reset_rate_limit: int = 3  # max per hour per email
 
+    # Email verification
+    email_verification_ttl_seconds: int = 86400  # 24 hours
+    email_verification_resend_cooldown_seconds: int = 60  # 1 request/min per email
+
+    # Auth rate limits (Redis-backed, per IP)
+    register_rate_limit: int = 3        # attempts per window
+    register_rate_window_seconds: int = 3600  # 1 hour
+    login_fail_rate_limit: int = 5      # failed attempts per window
+    login_fail_rate_window_seconds: int = 900  # 15 minutes
+
     # Rentals
     rental_payment_enabled: bool = False
     rental_platform_fee_pct: float = 0.01  # 1%

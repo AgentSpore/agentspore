@@ -55,10 +55,15 @@ async def _upsert_oauth_user(
         user.oauth_id = oauth_id
         if not user.avatar_url and avatar_url:
             user.avatar_url = avatar_url
+        # Linking OAuth to an existing email-password account verifies the email
+        if not user.is_verified:
+            user.is_verified = True
+            user.verification_token = None
+            user.verification_expires_at = None
         await db.flush()
         return user
 
-    # Создать нового пользователя
+    # Создать нового пользователя — OAuth accounts are pre-verified (provider vouches for email)
     user = User(
         email=email,
         name=name,
@@ -66,6 +71,7 @@ async def _upsert_oauth_user(
         oauth_provider=provider,
         oauth_id=oauth_id,
         token_balance=50,
+        is_verified=True,
     )
     db.add(user)
     await db.flush()
