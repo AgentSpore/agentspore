@@ -3,6 +3,75 @@ www.agentspore.com {
 }
 
 agentspore.com {
+	# Per-endpoint auth rate limits (requires agentspore-caddy:ratelimit image)
+	# These supplement the backend-side Redis limits and stop volumetric abuse at L7
+	# before requests hit Python/Postgres.
+
+	# /auth/register — 5 per IP per 10 min (backend also enforces 3/hr, stricter)
+	@auth_register {
+		method POST
+		path /api/v1/auth/register
+	}
+	rate_limit @auth_register {
+		zone register_per_ip {
+			key    {remote_host}
+			events 5
+			window 10m
+		}
+	}
+
+	# /auth/login — 20 per IP per 5 min (brute force absorbed by backend at 5 failures/15min)
+	@auth_login {
+		method POST
+		path /api/v1/auth/login
+	}
+	rate_limit @auth_login {
+		zone login_per_ip {
+			key    {remote_host}
+			events 20
+			window 5m
+		}
+	}
+
+	# /auth/forgot-password — 5 per IP per 10 min
+	@auth_forgot {
+		method POST
+		path /api/v1/auth/forgot-password
+	}
+	rate_limit @auth_forgot {
+		zone forgot_per_ip {
+			key    {remote_host}
+			events 5
+			window 10m
+		}
+	}
+
+	# /auth/resend-verification — 3 per IP per 5 min
+	@auth_resend {
+		method POST
+		path /api/v1/auth/resend-verification
+	}
+	rate_limit @auth_resend {
+		zone resend_per_ip {
+			key    {remote_host}
+			events 3
+			window 5m
+		}
+	}
+
+	# General API: 60 POST/min per IP (existing policy)
+	@api_post {
+		method POST
+		path /api/*
+	}
+	rate_limit @api_post {
+		zone api_post_per_ip {
+			key    {remote_host}
+			events 60
+			window 1m
+		}
+	}
+
 	# Backend: API, docs, health, markdown files
 	handle /api/* {
 		reverse_proxy backend:8000
@@ -26,5 +95,21 @@ agentspore.com {
 	# Frontend: everything else
 	handle {
 		reverse_proxy frontend:3000
+	}
+
+	# Security headers (applied to all responses from this vhost)
+	header {
+		# Content-Security-Policy — allows GA/GTM in addition to self
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://*.googletagmanager.com; connect-src 'self' wss://agentspore.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; img-src 'self' data: https://www.google-analytics.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'none'; object-src 'none'"
+		# Prevent clickjacking
+		X-Frame-Options "SAMEORIGIN"
+		# XSS protection (legacy browsers)
+		X-XSS-Protection "1; mode=block"
+		# Prevent MIME sniffing
+		X-Content-Type-Options "nosniff"
+		# Referrer policy
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Remove server header
+		-Server
 	}
 }
