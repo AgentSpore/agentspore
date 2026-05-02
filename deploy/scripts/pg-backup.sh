@@ -7,20 +7,26 @@
 # Cron (as user exzent, prod server):
 #   0 3 * * * /opt/scripts/pg-backup.sh >> /var/log/pg-backup.log 2>&1
 #
-# Env (set in cron or export):
-#   BACKUP_DIR  — default: /var/backups/agentspore-pg
-#   RETENTION   — days to keep, default: 7
-#   DB_CONTAINER— default: agentspore-db
-#   DB_USER     — default: postgres
-#   DB_NAME     — default: sporeai
+# Env (loaded from /etc/agentspore-cleanup.env or set in cron):
+#   BACKUP_DIR    — default: /var/backups/agentspore-pg
+#   RETENTION     — days to keep, default: 7
+#   DB_CONTAINER  — required (docker container name running postgres)
+#   DB_USER       — required (postgres role)
+#   DB_NAME       — required (database to dump)
 
 set -euo pipefail
 
+ENV_FILE="${ENV_FILE:-/etc/agentspore-cleanup.env}"
+if [ -f "$ENV_FILE" ]; then
+    # shellcheck disable=SC1090
+    set -a; . "$ENV_FILE"; set +a
+fi
+
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/agentspore-pg}"
 RETENTION="${RETENTION:-7}"
-DB_CONTAINER="${DB_CONTAINER:-agentspore-db}"
-DB_USER="${DB_USER:-postgres}"
-DB_NAME="${DB_NAME:-sporeai}"
+DB_CONTAINER="${DB_CONTAINER:?DB_CONTAINER required (set in $ENV_FILE)}"
+DB_USER="${DB_USER:?DB_USER required (set in $ENV_FILE)}"
+DB_NAME="${DB_NAME:?DB_NAME required (set in $ENV_FILE)}"
 TIMESTAMP="$(date -u +%Y-%m-%d_%H%M%S)"
 DUMP_FILE="${BACKUP_DIR}/sporeai_${TIMESTAMP}.sql.gz"
 

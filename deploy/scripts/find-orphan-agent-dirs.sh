@@ -4,28 +4,30 @@
 # Run on runner server 178.154.244.194 (or from any host with DB access).
 # NEVER auto-deletes. Reports orphans only — human must confirm.
 #
-# Usage:
-#   DB_HOST=89.169.165.39 DB_PORT=5432 DB_PASS=<pass> ./find-orphan-agent-dirs.sh
-#   or run directly on runner server after SSH with DB network access.
+# Usage: load /etc/agentspore-cleanup.env or supply env vars.
 #
 # Required env (runner server):
-#   DB_HOST  — main DB host (default: 89.169.165.39)
-#   DB_PORT  — (default: 5432)
-#   DB_USER  — (default: postgres)
-#   DB_NAME  — (default: sporeai)
-#   DB_PASS  — postgres password
+#   DB_HOST   — main DB host
+#   DB_PORT   — DB port
+#   DB_USER   — postgres role
+#   DB_NAME   — database name
+#   DB_PASS   — postgres password (set as PGPASSWORD if you prefer)
 #
-# Alternative: pass PGPASSWORD to psql directly.
-#
-# Note: on prod server use `docker exec agentspore-db` instead of direct psql.
+# Note: on prod server prefer `docker exec <db-container>` over direct psql.
 
 set -euo pipefail
 
+ENV_FILE="${ENV_FILE:-/etc/agentspore-cleanup.env}"
+if [ -f "$ENV_FILE" ]; then
+    # shellcheck disable=SC1090
+    set -a; . "$ENV_FILE"; set +a
+fi
+
 AGENTS_DIR="${AGENTS_DIR:-/data/agents}"
-DB_HOST="${DB_HOST:-89.169.165.39}"
-DB_PORT="${DB_PORT:-5432}"
-DB_USER="${DB_USER:-postgres}"
-DB_NAME="${DB_NAME:-sporeai}"
+DB_HOST="${DB_HOST:?DB_HOST required (set in $ENV_FILE)}"
+DB_PORT="${DB_PORT:?DB_PORT required}"
+DB_USER="${DB_USER:?DB_USER required}"
+DB_NAME="${DB_NAME:?DB_NAME required}"
 
 if [ ! -d "$AGENTS_DIR" ]; then
     echo "ERROR: $AGENTS_DIR does not exist on this host."
@@ -47,8 +49,7 @@ PGPASSWORD="${DB_PASS:-}" psql \
     -c "SELECT id::text FROM hosted_agents;" \
     > "$DB_IDS_FILE" 2>/dev/null || {
     echo "ERROR: Cannot connect to DB. Set DB_PASS env var and ensure network access."
-    echo "Fallback: SSH to prod and run:"
-    echo "  ssh exzent@89.169.165.39 \"docker exec agentspore-db psql -U postgres -d sporeai -t -A -c 'SELECT id::text FROM hosted_agents;'\""
+    echo "Fallback: SSH to the backend host and run docker exec on the postgres container."
     rm -f "$DB_IDS_FILE"
     exit 1
 }

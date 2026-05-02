@@ -27,28 +27,36 @@
 
 set -euo pipefail
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Load config from /etc/agentspore-cleanup.env if present ───────────────────
+# All values below MUST be supplied via this env file or the calling shell.
+# No hard-coded defaults for hosts, users, passwords, or DB names — the script
+# fails fast with a helpful message if anything required is missing.
+ENV_FILE="${ENV_FILE:-/etc/agentspore-cleanup.env}"
+if [ -f "$ENV_FILE" ]; then
+    # shellcheck disable=SC1090
+    set -a; . "$ENV_FILE"; set +a
+fi
+
+# ── Config (no secret-shaped literals — all from env) ─────────────────────────
 AGENTS_DIR="${AGENTS_DIR:-/data/agents}"
 LOG_FILE="${LOG_FILE:-/var/log/orphan-cleanup.log}"
 DRY_RUN="${DRY_RUN:-true}"
 MTIME_GATE_HOURS="${MTIME_GATE_HOURS:-24}"
 
 # Backend SSH (preferred — no direct DB port exposure needed)
-BACKEND_HOST="${BACKEND_HOST:-89.169.165.39}"
-BACKEND_USER="${BACKEND_USER:-exzent}"
-# Dedicated restricted key (command= locked to the one psql query)
-BACKEND_SSH_KEY="${BACKEND_SSH_KEY:-/home/exzent/.ssh/id_runner}"
+BACKEND_HOST="${BACKEND_HOST:?BACKEND_HOST required (set in $ENV_FILE)}"
+BACKEND_USER="${BACKEND_USER:?BACKEND_USER required}"
+BACKEND_SSH_KEY="${BACKEND_SSH_KEY:?BACKEND_SSH_KEY required (path to dedicated restricted key)}"
 
-# Direct psql fallback (only if SSH unavailable)
-DB_HOST="${DB_HOST:-89.169.165.39}"
-DB_PORT="${DB_PORT:-5432}"
-DB_USER="${DB_USER:-postgres}"
-DB_NAME="${DB_NAME:-sporeai}"
+# Direct psql fallback (only if SSH unavailable). All four required if used.
+DB_HOST="${DB_HOST:-}"
+DB_PORT="${DB_PORT:-}"
+DB_USER="${DB_USER:-}"
+DB_NAME="${DB_NAME:-}"
 
 # AgentSpore API — notification DM
 API_BASE="${API_BASE:-https://agentspore.com}"
-ADMIN_AGENT_ID="${ADMIN_AGENT_ID:-05e7f393-2b1e-44ee-b629-966698b13518}"
-# AgentSporeDevOps API key — set in cron env or export before running
+ADMIN_AGENT_ID="${ADMIN_AGENT_ID:?ADMIN_AGENT_ID required}"
 DEVOPS_API_KEY="${DEVOPS_API_KEY:-}"
 
 # ── Logging helper ────────────────────────────────────────────────────────────
@@ -79,8 +87,9 @@ fetch_live_ids() {
 
     log "WARN: SSH method failed, trying direct psql fallback"
 
-    # Method 2: Direct psql (requires DB port open from runner)
-    if command -v psql &>/dev/null; then
+    # Method 2: Direct psql (requires DB port open from runner + all DB_* vars set)
+    if command -v psql &>/dev/null && [ -n "$DB_HOST" ] && [ -n "$DB_USER" ] \
+       && [ -n "$DB_NAME" ] && [ -n "$DB_PORT" ]; then
         PGPASSWORD="${DB_PASS:-}" psql \
             -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
             -t -A -c "$query" 2>/dev/null
