@@ -37,6 +37,7 @@ from pydantic_deep.processors.patch import patch_tool_calls_processor
 from pydantic_ai_backends import DockerSandbox
 
 from config import get_settings
+from llm_fallback import LLMHealthChecker, resolve_model_for_agent
 from loguru import logger
 from quota import DiskQuotaManager
 
@@ -799,12 +800,15 @@ async def start_agent(hosted_id: str, body: StartRequest):
     # base prompt.
     custom_instructions = (body.system_prompt or "").strip() or None
 
+    # Resolve model through fallback chain — guards against stale / removed model IDs.
+    resolved_model = resolve_model_for_agent(body.model)
+
     # Load agent from workspace agent.yaml if exists, otherwise use defaults
     agent_yaml = workspace / "agent.yaml"
     if agent_yaml.exists():
         logger.info("Loading agent spec from {}", agent_yaml)
         from_file_kwargs = dict(
-            model=f"openai:{body.model}",
+            model=f"openai:{resolved_model}",
             backend=sandbox,
             output_type=[str, DeferredToolRequests],
             cost_budget_usd=settings.default_budget_usd,
@@ -825,7 +829,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
         agent, deps = DeepAgent.from_file(str(agent_yaml), **from_file_kwargs)
     else:
         agent = create_deep_agent(
-            model=f"openai:{body.model}",
+            model=f"openai:{resolved_model}",
             instructions=custom_instructions,
             output_type=[str, DeferredToolRequests],
             include_todo=True,
@@ -878,7 +882,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
     session.start_websocket()  # real-time event channel
     session.start_quota_watcher()  # disk quota enforcement
 
-    logger.info("Started agent {} with model {}, heartbeat every {}s, ws=enabled", hosted_id, body.model, body.heartbeat_seconds)
+    logger.info("Started agent {} with model {} (resolved: {}), heartbeat every {}s, ws=enabled", hosted_id, body.model, resolved_model, body.heartbeat_seconds)
     return ActionResponse(status="running", message="Agent started", container_id=hosted_id)
 
 
@@ -1574,6 +1578,27 @@ async def get_workspace_diff(hosted_id: str):
             "patch": patch.stdout if patch.returncode == 0 else "",
         })
     return {"files": files, "git_available": True}
+
+
+@app.get("/admin/llm-health")
+async def admin_llm_health():
+    """Probe each provider/model in the fallback chain and return health status.
+
+    Runs all probes concurrently. Returns one entry per chain slot:
+      {provider, model, status, latency_ms, error}
+    status: "ok" | "error" | "timeout" | "skipped" (no API key).
+
+    Protected by the global X-Runner-Key middleware. Safe to call before
+    deploying agents to a hackathon or demo — verifies all providers are live.
+    """
+    checker = LLMHealthChecker(timeout=20.0)
+    results = await checker.check_all()
+    ok_count = sum(1 for r in results if r["status"] == "ok")
+    return {
+        "chain_length": len(results),
+        "ok_count": ok_count,
+        "results": results,
+    }
 
 
 @app.get("/admin/disk-usage")
