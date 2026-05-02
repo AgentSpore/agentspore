@@ -1393,9 +1393,7 @@ async def get_todos(hosted_id: str):
 # produced inside the sandbox doesn't OOM the platform DB.
 MAX_SYNC_BYTES = 500_000
 
-# Top-level dotfiles the UI is allowed to see. Everything else under a
-# leading-dot path (e.g. .deep/, .venv/, __pycache__/) stays hidden — agents
-# generate volatile state there and we don't want it polluting the file tree.
+# Top-level dotfiles the UI is allowed to see.
 VISIBLE_DOTFILES = {
     ".env",
     ".env.example",
@@ -1409,23 +1407,37 @@ VISIBLE_DOTFILES = {
     ".eslintrc.json",
 }
 
+# Truly volatile dirs that must never reach the UI (large, churn-heavy,
+# or runtime-managed). `.deep/checkpoints` and `.deep/plans` are managed
+# by pydantic-deepagents and rotate every turn. `.venv` / `__pycache__`
+# are package noise. Everything else (incl. `.deep/memory/` and
+# user-created `.deep/<custom>/` dirs) stays visible so agents can build
+# their own structured workspace without files vanishing from the UI.
+HIDDEN_PATH_PREFIXES = (
+    ".deep/checkpoints/",
+    ".deep/plans/",
+    ".deep/todos.json",
+    ".venv/",
+    "__pycache__/",
+    "node_modules/",
+)
+
 
 def _is_visible(path: Path, workspace: Path) -> bool:
-    """Should this file appear in the UI tree.
-
-    Hidden by default for any path component starting with ``.`` unless
-    it is a top-level allowlisted dotfile (``.env``, ``.gitignore`` etc).
-    """
+    """Should this file appear in the UI tree."""
     rel = path.relative_to(workspace)
     parts = rel.parts
     if not parts:
         return False
-    # Exclude anything inside a hidden directory regardless of allowlist.
+    rel_str = str(rel)
+    if any(rel_str == p.rstrip("/") or rel_str.startswith(p) for p in HIDDEN_PATH_PREFIXES):
+        return False
+    # Hide other __pycache__ / .venv anywhere in the tree.
     for part in parts[:-1]:
-        if part.startswith("."):
+        if part in {"__pycache__", ".venv", "node_modules"}:
             return False
     name = parts[-1]
-    if name.startswith("."):
+    if name.startswith(".") and len(parts) == 1:
         return name in VISIBLE_DOTFILES
     return True
 
