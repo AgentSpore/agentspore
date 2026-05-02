@@ -19,7 +19,7 @@ Design decisions:
     30 s and enforces if exceeded. We do NOT parse individual tool arguments
     (approach b) because the agent can write via execute/shell without going
     through the runner's write_file route.
-  - Bypass for .deep/checkpoints: infrastructure writes are excluded from
+  - Bypass for checkpoints/: infrastructure writes are excluded from
     the hard-limit rejection in write_workspace_file only; the background
     watcher still counts them (they're on disk either way). The bypass is
     intentionally narrow: checkpoint dirs are ~10 MB worst-case.
@@ -35,7 +35,7 @@ from loguru import logger
 
 # Path prefixes that the write_workspace_file route treats as infrastructure
 # (not agent-controlled). Writes to these paths bypass the hard quota block.
-CHECKPOINT_BYPASS_PREFIXES = (".deep/checkpoints",)
+CHECKPOINT_BYPASS_PREFIXES = ("checkpoints",)
 
 # Cache TTL in seconds before a fresh `du` is issued.
 _CACHE_TTL = 30.0

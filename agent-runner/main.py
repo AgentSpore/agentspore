@@ -662,10 +662,9 @@ def _init_workspace_git(workspace: Path) -> None:
         if init.returncode != 0:
             logger.warning("git init failed in {}: {}", workspace, init.stderr.strip())
             return
-        # .gitignore: don't track the DeepAgent volatile dirs.
+        # .gitignore: don't track package noise dirs.
         (workspace / ".gitignore").write_text(
             "\n".join([
-                ".deep/",
                 "*.pyc",
                 "__pycache__/",
                 "node_modules/",
@@ -732,7 +731,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
     workspace = settings.workspace_root / hosted_id
     workspace.mkdir(parents=True, exist_ok=True)
 
-    for subdir in [".deep/memory/main", ".deep/checkpoints", ".deep/plans", "skills"]:
+    for subdir in ["memory", "checkpoints", "plans", "skills"]:
         (workspace / subdir).mkdir(parents=True, exist_ok=True)
 
     for f in body.files:
@@ -758,7 +757,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
         agent_md_parts.append("\nUse these credentials for all AgentSpore API calls (heartbeat, projects, chat, etc).\n")
     (workspace / "AGENT.md").write_text("".join(agent_md_parts), encoding="utf-8")
 
-    memory_file = workspace / ".deep" / "memory" / "main" / "MEMORY.md"
+    memory_file = workspace / "memory" / "MEMORY.md"
     if not memory_file.exists():
         memory_file.write_text("", encoding="utf-8")
 
@@ -864,7 +863,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
             include_subagents=False,
             include_skills=True,
             include_memory=True,
-            memory_dir="/workspace/.deep/memory",
+            memory_dir="/workspace/memory",
             include_plan=True,
             web_search=bool(os.environ.get("TAVILY_API_KEY")),
             web_fetch=bool(os.environ.get("TAVILY_API_KEY")),
@@ -1057,7 +1056,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                         }) + "\n"
                                         # Stream todos update when todo tools are called
                                         if tool_name in ("write_todos", "add_todo", "update_todo_status", "remove_todo"):
-                                            todos_file = settings.workspace_root / hosted_id / ".deep" / "todos.json"
+                                            todos_file = settings.workspace_root / hosted_id / "todos.json"
                                             if todos_file.exists():
                                                 try:
                                                     todos_data = json.loads(todos_file.read_text())
@@ -1379,7 +1378,7 @@ async def get_todos(hosted_id: str):
     if not session:
         return {"todos": []}
     workspace = settings.workspace_root / hosted_id
-    todos_file = workspace / ".deep" / "todos.json"
+    todos_file = workspace / "todos.json"
     if todos_file.exists():
         try:
             return {"todos": json.loads(todos_file.read_text())}
@@ -1393,53 +1392,11 @@ async def get_todos(hosted_id: str):
 # produced inside the sandbox doesn't OOM the platform DB.
 MAX_SYNC_BYTES = 500_000
 
-# Top-level dotfiles the UI is allowed to see.
-VISIBLE_DOTFILES = {
-    ".env",
-    ".env.example",
-    ".env.local",
-    ".gitignore",
-    ".dockerignore",
-    ".editorconfig",
-    ".prettierrc",
-    ".eslintrc",
-    ".eslintrc.js",
-    ".eslintrc.json",
-}
-
-# Truly volatile dirs that must never reach the UI (large, churn-heavy,
-# or runtime-managed). `.deep/checkpoints` and `.deep/plans` are managed
-# by pydantic-deepagents and rotate every turn. `.venv` / `__pycache__`
-# are package noise. Everything else (incl. `.deep/memory/` and
-# user-created `.deep/<custom>/` dirs) stays visible so agents can build
-# their own structured workspace without files vanishing from the UI.
-HIDDEN_PATH_PREFIXES = (
-    ".deep/checkpoints/",
-    ".deep/plans/",
-    ".deep/todos.json",
-    ".venv/",
-    "__pycache__/",
-    "node_modules/",
-)
-
-
-def _is_visible(path: Path, workspace: Path) -> bool:
-    """Should this file appear in the UI tree."""
-    rel = path.relative_to(workspace)
-    parts = rel.parts
-    if not parts:
-        return False
-    rel_str = str(rel)
-    if any(rel_str == p.rstrip("/") or rel_str.startswith(p) for p in HIDDEN_PATH_PREFIXES):
-        return False
-    # Hide other __pycache__ / .venv anywhere in the tree.
-    for part in parts[:-1]:
-        if part in {"__pycache__", ".venv", "node_modules"}:
-            return False
-    name = parts[-1]
-    if name.startswith(".") and len(parts) == 1:
-        return name in VISIBLE_DOTFILES
-    return True
+# Package-noise directory names that are never meaningful to the user and
+# are excluded from file enumeration.  Everything else — including all
+# agent-managed dirs (memory/, checkpoints/, plans/, todos.json, .env, …) —
+# is enumerated so nothing is hidden from the UI.
+_NOISE_DIRS = {"__pycache__", ".venv", "node_modules", ".git"}
 
 
 def _safe_workspace_path(workspace: Path, file_path: str) -> Path:
@@ -1475,7 +1432,8 @@ async def list_workspace_files(hosted_id: str):
     for path in sorted(workspace.rglob("*")):
         if not path.is_file():
             continue
-        if not _is_visible(path, workspace):
+        # Skip package noise dirs anywhere in the tree.
+        if _NOISE_DIRS.intersection(path.relative_to(workspace).parts):
             continue
         rel = str(path.relative_to(workspace))
         try:
@@ -1521,7 +1479,7 @@ async def write_workspace_file(hosted_id: str, body: WriteFileRequest):
 
     target = _safe_workspace_path(workspace, body.file_path)
 
-    # Quota enforcement: infrastructure paths (.deep/checkpoints/) bypass the
+    # Quota enforcement: infrastructure paths (checkpoints/) bypass the
     # hard-limit block; all other agent-controlled writes are checked.
     if not disk_quota.is_checkpoint_path(body.file_path):
         usage_mb, allowed = await disk_quota.check_quota_async(hosted_id)

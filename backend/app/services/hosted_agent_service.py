@@ -181,10 +181,10 @@ class HostedAgentService:
         hosted_id = str(hosted["id"])
 
         # Create pydantic-deepagents workspace structure:
-        # /AGENT.md              — system prompt (context file, auto-injected)
-        # /SKILL.md              — platform skill.md (SkillsToolset)
-        # /.deep/memory/main/MEMORY.md — persistent memory (MemoryToolset, branch "main")
-        # /skills/               — custom skills directory (SkillsToolset)
+        # /AGENT.md           — system prompt (context file, auto-injected)
+        # /SKILL.md           — platform skill.md (SkillsToolset)
+        # /memory/MEMORY.md   — persistent memory (MemoryToolset, branch "main")
+        # /skills/            — custom skills directory (SkillsToolset)
         agent_md = (
             f"{system_prompt}\n\n"
             "## Platform Credentials\n\n"
@@ -198,7 +198,7 @@ class HostedAgentService:
             "for creating projects, pushing code, and interacting with the platform.\n"
         )
         await self.repo.upsert_file(hosted_id, "AGENT.md", agent_md, "config")
-        await self.repo.upsert_file(hosted_id, ".deep/memory/main/MEMORY.md", "", "memory")
+        await self.repo.upsert_file(hosted_id, "memory/MEMORY.md", "", "memory")
 
         # Auto-load platform skill.md
         platform_skill = _load_skill_md()
@@ -217,7 +217,7 @@ class HostedAgentService:
             "include_subagents: false\n"
             "include_skills: true\n"
             "include_memory: true\n"
-            "memory_dir: /workspace/.deep/memory\n"
+            "memory_dir: /workspace/memory\n"
             "include_plan: true\n"
             "include_checkpoints: true\n"
             "checkpoint_frequency: every_turn\n"
@@ -338,7 +338,7 @@ class HostedAgentService:
                     "Study your SKILL.md file for available endpoints.\n\n"
                     f"## Fork Info\n\nForked from **{source_name}** (@{source['agent_handle']})\n"
                 )
-            elif f["file_path"] == ".deep/memory/main/MEMORY.md":
+            elif f["file_path"] == "memory/MEMORY.md":
                 # Copy memory but add fork note
                 content = f"# Memory\n\nForked from {source_name}.\n\n{content}"
             await self.repo.upsert_file(hosted_id, f["file_path"], content, f["file_type"])
@@ -483,7 +483,7 @@ class HostedAgentService:
         """Stop the agent container on the infra server.
 
         Before stopping: persist session history and ask agent to summarize
-        the session into .deep/memory for mid-term persistence.
+        the session into memory/ for mid-term persistence.
         """
         hosted = await self.get_hosted_agent(hosted_id, user_id)
         if hosted["status"] != "running":
@@ -494,11 +494,11 @@ class HostedAgentService:
         # Save session history before stop (short-term memory)
         await self._save_runner_history(hid)
 
-        # Ask agent to summarize session → .deep/memory (mid-term memory)
+        # Ask agent to summarize session → memory/ (mid-term memory)
         try:
             summary_msg = (
                 "You are about to be stopped. Before shutdown, update your memory file "
-                ".deep/memory/main/MEMORY.md with key learnings, decisions, and context "
+                "memory/MEMORY.md with key learnings, decisions, and context "
                 "from this session that you'll need in the next session. Be concise."
             )
             await self._call_runner("chat", hid, {"content": summary_msg})
@@ -699,7 +699,7 @@ class HostedAgentService:
                 "include_execute: true\n"
                 "include_skills: true\n"
                 "include_memory: true\n"
-                "memory_dir: /workspace/.deep/memory\n"
+                "memory_dir: /workspace/memory\n"
                 "include_plan: true\n"
                 "include_checkpoints: true\n"
                 "checkpoint_frequency: every_turn\n"
@@ -783,7 +783,7 @@ class HostedAgentService:
             "Read your workspace files to restore context:\n"
             "1. **AGENT.md** — your identity and configuration\n"
             "2. **SKILL.md** — AgentSpore platform API reference\n"
-            "3. **.deep/** directory — your persistent memory from previous sessions\n\n"
+            "3. **memory/** directory — your persistent memory from previous sessions\n\n"
             "Study everything and let me know you're ready."
         )
 
