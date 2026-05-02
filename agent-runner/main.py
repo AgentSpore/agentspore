@@ -88,17 +88,39 @@ class SecureDockerSandbox(DockerSandbox):
             auto_remove=self._auto_remove,
             environment=env_vars,
             volumes=docker_volumes if docker_volumes else None,
-            # Security hardening
+            # Network isolation (C3): spawn in dedicated sandbox network.
+            # That network has iptables rules on the host dropping traffic to
+            # RFC1918 ranges (10/8, 172.16/12, 192.168/16) so the container
+            # cannot reach the host gateway, backend, or DB, but can still
+            # call public LLM APIs (OpenRouter, NVIDIA, Groq, Cerebras).
+            # Deploy: see docs/runbook-sandbox-network.md.
+            network=settings.sandbox_network_name,
+            # Resource limits
             mem_limit=settings.container_mem_limit,
+            cpu_period=settings.container_cpu_period,
             cpu_quota=settings.container_cpu_quota,
             pids_limit=settings.container_pids_limit,
+            # Non-root user (L3): sandbox user uid=1000 created in Dockerfile.sandbox.
             user=settings.container_user,
+            # Read-only root FS; /tmp writable via tmpfs, /workspace via bind mount.
+            read_only=True,
+            tmpfs={"/tmp": "size=100m,mode=1777"},
+            # Capability hardening: drop ALL, add nothing.
+            # NET_RAW removed — DNS still works via container resolver without it.
             cap_drop=["ALL"],
-            cap_add=["NET_RAW"],  # needed for DNS resolution in container
-            security_opt=["no-new-privileges"],
+            # Prevent privilege escalation via setuid binaries.
+            security_opt=["no-new-privileges:true"],
         )
 
 
+# NOTE (C4): This substring check is NOT a security control.
+# Trivially bypassed via: tabs, base64, $(), bash -c "..." etc.
+# Real isolation is enforced by the container boundary:
+#   read_only FS, cap_drop=ALL, no-new-privileges, non-root user,
+#   sandbox_net with iptables RFC1918 drop rules.
+# This list exists only as a UX hint — it blocks obviously dangerous
+# commands submitted by confused or copy-pasting users so they get a
+# clear error message instead of a confusing sandbox refusal later.
 BLOCKED_COMMANDS = [
     "rm -rf /", "rm -rf /*", "mkfs", "dd if=", ":()", "fork",
     "shutdown", "reboot", "halt", "poweroff",
@@ -108,7 +130,11 @@ BLOCKED_COMMANDS = [
 
 
 def is_command_safe(command: str) -> tuple[bool, str]:
-    """Check if an execute command is safe to auto-approve."""
+    """UX hint check — surface obviously dangerous commands with a clear message.
+
+    NOT a security boundary. Container isolation (read_only, cap_drop=ALL,
+    no-new-privileges, non-root user, isolated network) is the actual defence.
+    """
     cmd_lower = command.lower().strip()
     for blocked in BLOCKED_COMMANDS:
         if blocked in cmd_lower:
@@ -440,7 +466,7 @@ async def idle_cleanup_loop():
                 logger.info("Auto-stopped idle agent {} (idle {}s)", hid, int(time.time() - session.last_activity))
                 # Notify platform
                 try:
-                    params = {"key": settings.runner_key} if settings.runner_key else {}
+                    params = {"key": settings.runner_key}
                     async with httpx.AsyncClient(timeout=5) as client:
                         await client.post(
                             f"{settings.agentspore_url}/api/v1/hosted-agents/{hid}/idle-stopped",
@@ -503,10 +529,10 @@ app = FastAPI(title="Agent Runner", version="0.3.0", lifespan=lifespan)
 async def verify_runner_key(request: Request, call_next):
     if request.url.path == "/health":
         return await call_next(request)
-    if settings.runner_key:
-        key = request.headers.get("X-Runner-Key", "")
-        if not key or not secrets.compare_digest(key, settings.runner_key):
-            return JSONResponse({"detail": "Unauthorized"}, status_code=403)
+    # runner_key is required (no default) — startup would have failed if unset.
+    key = request.headers.get("X-Runner-Key", "")
+    if not key or not secrets.compare_digest(key, settings.runner_key):
+        return JSONResponse({"detail": "Unauthorized"}, status_code=403)
     return await call_next(request)
 
 

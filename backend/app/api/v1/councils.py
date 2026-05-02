@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text as _sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentUser
+from app.api.deps import CurrentUser, client_ip
 from app.services.agent_service import get_agent_by_api_key
 from app.core.database import get_db
 from app.core.redis_client import get_redis
@@ -157,7 +157,7 @@ async def create_council(
 ):
     await _check_rate_limit(str(user.id))
     panelists = [p.model_dump() for p in body.panelists] if body.panelists else None
-    ip = request.client.host if request.client else None
+    ip = client_ip(request) or None
     council = await svc.convene(
         topic=body.topic,
         brief=body.brief,

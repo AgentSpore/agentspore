@@ -1,12 +1,16 @@
 """OAuth авторизация для пользователей (Google, GitHub)."""
 
+import secrets
+
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 
 from app.api.deps import DatabaseSession
 from app.core.config import get_settings
+from app.core.redis_client import get_redis
 from app.core.security import create_access_token, create_refresh_token
 from app.models import User
 
@@ -14,6 +18,20 @@ router = APIRouter(prefix="/oauth", tags=["oauth"])
 settings = get_settings()
 
 FRONTEND_URL = settings.oauth_redirect_base_url.replace(":8000", ":3000")
+
+_OAUTH_STATE_TTL = 300  # 5 minutes
+
+
+async def _store_oauth_state(redis: aioredis.Redis, state: str) -> None:
+    """Store CSRF state token in Redis with 5-minute TTL."""
+    await redis.setex(f"oauth_state:{state}", _OAUTH_STATE_TTL, "1")
+
+
+async def _consume_oauth_state(redis: aioredis.Redis, state: str) -> bool:
+    """Validate and delete (single-use) CSRF state token. Returns False if invalid."""
+    key = f"oauth_state:{state}"
+    deleted = await redis.delete(key)
+    return deleted == 1
 
 
 def _make_token_response_redirect(user_id: str) -> RedirectResponse:
@@ -81,23 +99,33 @@ async def _upsert_oauth_user(
 # ── Google ──────────────────────────────────────────────────────────────────
 
 @router.get("/google")
-async def google_login():
-    """Redirect → Google OAuth consent screen."""
+async def google_login(redis: aioredis.Redis = Depends(get_redis)):
+    """Redirect → Google OAuth consent screen (CSRF-protected via state param)."""
     if not settings.google_oauth_client_id:
         raise HTTPException(status_code=501, detail="Google OAuth not configured")
+    state = secrets.token_urlsafe(32)
+    await _store_oauth_state(redis, state)
     params = (
         "response_type=code"
         f"&client_id={settings.google_oauth_client_id}"
         f"&redirect_uri={settings.oauth_redirect_base_url}/api/v1/oauth/google/callback"
         "&scope=openid+email+profile"
         "&access_type=offline"
+        f"&state={state}"
     )
     return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}", status_code=302)
 
 
 @router.get("/google/callback")
-async def google_callback(code: str, db: DatabaseSession):
+async def google_callback(
+    code: str,
+    db: DatabaseSession,
+    state: str = Query(...),
+    redis: aioredis.Redis = Depends(get_redis),
+):
     """Обработать callback от Google и выдать JWT."""
+    if not await _consume_oauth_state(redis, state):
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
     if not settings.google_oauth_client_id:
         raise HTTPException(status_code=501, detail="Google OAuth not configured")
 
@@ -141,21 +169,31 @@ async def google_callback(code: str, db: DatabaseSession):
 # ── GitHub ───────────────────────────────────────────────────────────────────
 
 @router.get("/github")
-async def github_login():
-    """Redirect → GitHub OAuth consent screen."""
+async def github_login(redis: aioredis.Redis = Depends(get_redis)):
+    """Redirect → GitHub OAuth consent screen (CSRF-protected via state param)."""
     if not settings.user_github_oauth_client_id:
         raise HTTPException(status_code=501, detail="GitHub user OAuth not configured")
+    state = secrets.token_urlsafe(32)
+    await _store_oauth_state(redis, state)
     params = (
         f"client_id={settings.user_github_oauth_client_id}"
         f"&redirect_uri={settings.oauth_redirect_base_url}/api/v1/oauth/github/callback"
         "&scope=user:email"
+        f"&state={state}"
     )
     return RedirectResponse(f"https://github.com/login/oauth/authorize?{params}", status_code=302)
 
 
 @router.get("/github/callback")
-async def github_callback(code: str, db: DatabaseSession):
+async def github_callback(
+    code: str,
+    db: DatabaseSession,
+    state: str = Query(...),
+    redis: aioredis.Redis = Depends(get_redis),
+):
     """Обработать callback от GitHub и выдать JWT."""
+    if not await _consume_oauth_state(redis, state):
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
     if not settings.user_github_oauth_client_id:
         raise HTTPException(status_code=501, detail="GitHub user OAuth not configured")
 

@@ -11,6 +11,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import client_ip
 from app.core.database import get_db
 from app.repositories import project_repo
 from app.schemas.projects import VoteRequest
@@ -58,9 +59,7 @@ async def vote_project(
     if not await project_repo.project_exists(db, project_id):
         raise HTTPException(status_code=404, detail="Project not found")
 
-    voter_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    if not voter_ip:
-        voter_ip = request.client.host if request.client else "unknown"
+    voter_ip = client_ip(request)
 
     # Rate limit
     if await project_repo.count_votes_in_period(db, voter_ip) >= 10:
