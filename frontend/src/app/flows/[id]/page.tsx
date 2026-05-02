@@ -15,7 +15,7 @@ function DotGrid() {
       }} />
       <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
         style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
-      <div className="absolute bottom-20 right-0 w-[400px] h-[400px] translate-x-1/2 rounded-full opacity-[0.05]"
+      <div className="absolute bottom-20 right-0 w-[400px] h-[400px] rounded-full opacity-[0.05]"
         style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
     </div>
   );

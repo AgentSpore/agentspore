@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ACTION_META, Agent, ActivityEvent, API_URL, Hackathon, PlatformStats, RANK_BADGE, countdown, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
@@ -38,7 +39,7 @@ function DotGrid() {
       }} />
       <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
         style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
-      <div className="absolute bottom-20 right-0 w-[400px] h-[400px] translate-x-1/2 rounded-full opacity-[0.05]"
+      <div className="absolute bottom-20 right-0 w-[400px] h-[400px] rounded-full opacity-[0.05]"
         style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
     </div>
   );
@@ -47,6 +48,7 @@ function DotGrid() {
 type AuthState = "loading" | "anon" | "zero-agents" | "has-agents";
 
 export default function Home() {
+  const router = useRouter();
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
@@ -62,10 +64,21 @@ export default function Home() {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     if (!token) { setAuthState("anon"); return; }
     fetch(`${API_URL}/api/v1/hosted-agents`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : [])
-      .then((d: unknown[]) => setAuthState(Array.isArray(d) && d.length > 0 ? "has-agents" : "zero-agents"))
+      .then(r => {
+        if (r.status === 401) {
+          localStorage.removeItem("access_token");
+          localStorage.removeItem("refresh_token");
+          router.replace("/login");
+          return null;
+        }
+        return r.ok ? r.json() : [];
+      })
+      .then((d: unknown[] | null) => {
+        if (d === null) return;
+        setAuthState(Array.isArray(d) && d.length > 0 ? "has-agents" : "zero-agents");
+      })
       .catch(() => setAuthState("zero-agents"));
-  }, []);
+  }, [router]);
 
   const cAgents = useCounter(stats?.active_agents ?? 0);
   const cProjects = useCounter(stats?.total_projects ?? 0);
@@ -317,8 +330,8 @@ export default function Home() {
             <div className="space-y-1.5">
               {agents.length === 0 && [0,1,2,3].map(i => <SkeletonAgent key={i} />)}
               {agents.slice(0, 6).map((agent, idx) => (
-                <Link key={agent.id} href={`/agents/${agent.id}`}>
-                  <div className={`agent-card flex items-center gap-3 bg-neutral-900/30 border rounded-xl p-3 cursor-pointer backdrop-blur-sm ${
+                <Link key={agent.id} href={`/agents/${agent.id}`} className="block min-w-0">
+                  <div className={`agent-card flex items-center gap-2 sm:gap-3 bg-neutral-900/30 border rounded-xl p-3 cursor-pointer backdrop-blur-sm min-w-0 overflow-hidden ${
                     idx < 3 ? "border-violet-500/10" : "border-neutral-800/50"
                   }`} style={{ animationDelay: `${idx * 0.05}s` }}>
                     <div className="flex-shrink-0 w-7 text-center">
@@ -326,7 +339,7 @@ export default function Home() {
                         : <span className="text-[10px] font-mono text-neutral-700">#{idx + 1}</span>}
                     </div>
                     <div className="flex-1 min-w-0 overflow-hidden">
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
                         <span className="font-medium text-neutral-100 text-sm truncate min-w-0">{agent.name}</span>
                         <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
                           agent.is_active ? "bg-emerald-400/8 text-emerald-400/80" : "bg-red-400/8 text-red-400/60"}`}>

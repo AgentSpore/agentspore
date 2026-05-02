@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
@@ -26,6 +27,14 @@ from app.schemas.hosted_agents import DEFAULT_RUNTIME
 from app.services.connection_manager import deliver_user_event
 
 from loguru import logger
+
+
+class HostedAgentRunnerUnavailable(Exception):
+    """Raised when the agent runner is unreachable or returns 503."""
+
+
+class HostedAgentTooManyFailures(Exception):
+    """Raised when an agent has failed to auto-start 3+ times in 5 minutes."""
 
 
 # File-path validation: blocks traversal, absolute paths, NULs.
@@ -83,6 +92,10 @@ class HostedAgentService:
     and communication with the Agent Runner Service.
     """
 
+    # Per-instance in-memory lock map: hosted_id → asyncio.Event (set when start completes).
+    # Bounded to 1024 entries (LRU eviction) so long-lived workers don't leak unboundedly.
+    _starting_locks: OrderedDict[str, asyncio.Event]
+
     def __init__(
         self,
         repo: HostedAgentRepository,
@@ -96,6 +109,7 @@ class HostedAgentService:
         self.openrouter = openrouter
         self.openviking = openviking or OpenVikingService()
         self.runner_url = self.settings.agent_runner_url
+        self._starting_locks = OrderedDict()
 
     # ── CRUD ──
 
@@ -516,7 +530,140 @@ class HostedAgentService:
             "status": status,
         })
 
-    async def _start_agent_internal(self, hosted: dict) -> dict:
+    async def ensure_running(self, hosted_id: str, *, source: str) -> bool:
+        """Guarantee the hosted agent is running. Returns True if already running.
+
+        Performs a two-level concurrency guard:
+        1. In-process asyncio.Event: collapses parallel callers in the same
+           uvicorn worker so _start_agent_internal fires exactly once.
+        2. PG advisory lock via pg_try_advisory_xact_lock: prevents two
+           separate worker processes from racing the same start.
+
+        If the advisory lock is held by another worker the method polls DB
+        status every 1 s for up to 60 s.
+
+        source: "chat" | "ws_event" | "cron" | "force_restart" — for logs.
+
+        Raises:
+            HostedAgentRunnerUnavailable: runner is down or returned 503/timeout.
+            HostedAgentTooManyFailures: agent failed to auto-start 3+ times in 5 min.
+        """
+        _MAX_START_WAIT_S = 60
+        _MAX_AUTOSTART_FAILURES = 3
+        _AUTOSTART_FAILURE_TTL_S = 300  # 5 minutes
+
+        # ── Fast path: already running ───────────────────────────────────────
+        hosted = await self.repo.get_by_id(hosted_id)
+        if not hosted:
+            raise HTTPException(404, "Hosted agent not found")
+        if hosted["status"] == "running":
+            return True
+
+        # Treat "error" the same as "stopped" for auto-start purposes.
+        # The failure counter below will gate escalation after 3 attempts.
+
+        # ── Auto-start failure guard (Redis TTL counter) ─────────────────────
+        redis_key = f"hosted:autostart_failures:{hosted_id}"
+        try:
+            from app.core.redis_client import get_redis  # top-level in redis module, ok to import here
+            redis = await get_redis()
+            raw = await redis.get(redis_key)
+            failure_count = int(raw) if raw else 0
+        except Exception as _redis_err:
+            logger.warning("Redis failure counter unavailable for {}: {}", hosted_id, _redis_err)
+            failure_count = 0
+
+        if failure_count >= _MAX_AUTOSTART_FAILURES:
+            raise HostedAgentTooManyFailures(
+                f"Agent {hosted_id} failed to start {failure_count} times in the last 5 minutes"
+            )
+
+        # ── In-process dedup: wait if another coroutine is already starting ──
+        _MAX_LOCK_ENTRIES = 1024
+        if hosted_id in self._starting_locks:
+            event = self._starting_locks[hosted_id]
+            logger.debug("ensure_running: waiting for in-flight start of {} (source={})", hosted_id, source)
+            try:
+                await asyncio.wait_for(event.wait(), timeout=_MAX_START_WAIT_S)
+            except asyncio.TimeoutError:
+                logger.warning("ensure_running: in-flight start timeout for {}", hosted_id)
+            # After the event fires, re-check status from DB
+            refreshed = await self.repo.get_by_id(hosted_id)
+            return bool(refreshed and refreshed["status"] == "running")
+
+        # Register our start slot
+        done_event = asyncio.Event()
+        if len(self._starting_locks) >= _MAX_LOCK_ENTRIES:
+            # LRU eviction: drop oldest entry
+            self._starting_locks.popitem(last=False)
+        self._starting_locks[hosted_id] = done_event
+
+        try:
+            # ── PG advisory lock: cross-worker dedup ─────────────────────────
+            # Uses a transaction-scoped advisory lock. If another worker is
+            # already starting this agent (holds the lock) we fall into the
+            # polling loop rather than stacking a second runner call.
+            lock_acquired = False
+            try:
+                result = await self.repo.db.execute(
+                    text(
+                        "SELECT pg_try_advisory_xact_lock(hashtext('hosted_start_' || :hid))"
+                    ),
+                    {"hid": hosted_id},
+                )
+                lock_acquired = bool(result.scalar())
+            except Exception as _pg_err:
+                logger.warning("PG advisory lock unavailable for {}: {} — proceeding without cross-worker dedup", hosted_id, _pg_err)
+                lock_acquired = True  # Best-effort: proceed anyway
+
+            if not lock_acquired:
+                # Another worker holds the start lock — poll DB status.
+                logger.debug("ensure_running: advisory lock taken by another worker for {} (source={})", hosted_id, source)
+                for _ in range(_MAX_START_WAIT_S):
+                    await asyncio.sleep(1)
+                    check = await self.repo.get_by_id(hosted_id)
+                    if check and check["status"] == "running":
+                        return False  # was started by another worker (cold-start)
+                logger.warning("ensure_running: timed out waiting for another worker to start {}", hosted_id)
+                return False
+
+            # ── We hold the lock: perform the start ──────────────────────────
+            logger.info("ensure_running: cold-starting {} (source={})", hosted_id, source)
+            try:
+                skip_bootstrap = (source == "chat")
+                await self._start_agent_internal(hosted, skip_bootstrap=skip_bootstrap)
+            except HTTPException as exc:
+                if exc.status_code in (502, 503):
+                    # Record failure
+                    try:
+                        await redis.incr(redis_key)
+                        await redis.expire(redis_key, _AUTOSTART_FAILURE_TTL_S)
+                    except Exception:
+                        pass
+                    raise HostedAgentRunnerUnavailable(exc.detail) from exc
+                raise
+            except Exception as exc:
+                try:
+                    await redis.incr(redis_key)
+                    await redis.expire(redis_key, _AUTOSTART_FAILURE_TTL_S)
+                except Exception:
+                    pass
+                raise HostedAgentRunnerUnavailable(str(exc)) from exc
+
+            # Clear failure counter on success
+            try:
+                await redis.delete(redis_key)
+            except Exception:
+                pass
+
+            return False  # cold-start completed
+
+        finally:
+            # Always signal waiters and remove our slot
+            done_event.set()
+            self._starting_locks.pop(hosted_id, None)
+
+    async def _start_agent_internal(self, hosted: dict, skip_bootstrap: bool = False) -> dict:
         """Send agent files and config to the Runner, start the container."""
         hosted_id = str(hosted["id"])
 
@@ -609,8 +756,9 @@ class HostedAgentService:
         await self.repo.update_status(hosted_id, "running", container_id=result.get("container_id"))
         await self._notify_status(hosted, "running")
 
-        # Auto-bootstrap only if no session history (first start or cleared)
-        if not session_history:
+        # Auto-bootstrap only if no session history (first start or cleared) AND not skipped.
+        # skip_bootstrap=True is set for source=="chat": the agent will read its files on first response.
+        if not session_history and not skip_bootstrap:
             asyncio.create_task(self._bootstrap_agent(hosted_id))
 
         return {"status": "running", "message": "Agent started"}
@@ -668,13 +816,18 @@ class HostedAgentService:
 
         Saves the message in owner_messages, forwards it to the
         Agent Runner for processing, and saves the agent's reply.
+        Auto-starts the agent if it is stopped.
         """
         hosted = await self.get_hosted_agent(hosted_id, user_id)
         msg = await self.repo.add_owner_message(hosted_id, "user", content)
 
         if hosted["status"] != "running":
-            await self.repo.add_owner_message(hosted_id, "agent", "⚠ Agent is stopped. Press Start to restart.")
-            return msg
+            try:
+                await self.ensure_running(hosted_id, source="chat")
+            except HostedAgentRunnerUnavailable as exc:
+                raise HTTPException(503, str(exc)) from exc
+            except HostedAgentTooManyFailures as exc:
+                raise HTTPException(503, "Agent failed to start 3 times in the last 5 minutes. Use Force Restart in Settings.") from exc
 
         try:
             response = await self._call_runner("chat", hosted_id, {"content": content})
@@ -699,11 +852,38 @@ class HostedAgentService:
 
         Saves user message before streaming, saves agent reply after
         the stream completes (from the 'done' event).
+        If the agent is stopped, auto-starts it and emits phase events so
+        the client can show a progress indicator.
         """
         hosted = await self.get_hosted_agent(hosted_id, user_id)
         await self.repo.add_owner_message(hosted_id, "user", content)
 
-        if hosted["status"] != "running" or not self.runner_url:
+        if hosted["status"] != "running":
+            if not self.runner_url:
+                yield json.dumps({"type": "error", "message": "Agent runner not configured"}) + "\n"
+                return
+            try:
+                yield json.dumps({"type": "phase", "phase": "starting_agent", "eta_s": 15}) + "\n"
+                await self.ensure_running(hosted_id, source="chat")
+                yield json.dumps({"type": "phase", "phase": "agent_started"}) + "\n"
+            except HostedAgentRunnerUnavailable as exc:
+                yield json.dumps({
+                    "type": "error",
+                    "phase": "starting_agent",
+                    "message": str(exc),
+                    "retryable": True,
+                }) + "\n"
+                return
+            except HostedAgentTooManyFailures:
+                yield json.dumps({
+                    "type": "error",
+                    "phase": "starting_agent",
+                    "message": "Agent failed to start 3 times in the last 5 minutes. Use Force Restart in Settings.",
+                    "retryable": False,
+                }) + "\n"
+                return
+
+        if not self.runner_url:
             yield json.dumps({"type": "error", "message": "Agent is not running"}) + "\n"
             return
 
@@ -1231,12 +1411,9 @@ class HostedAgentService:
             task_id = str(task["id"])
             error = None
             try:
-                # Auto-start if needed
+                # Auto-start if needed (ensure_running already waits until ready)
                 if task["auto_start"] and task["agent_status"] != "running":
-                    hosted = await self.repo.get_by_id(hosted_id)
-                    if hosted:
-                        await self._start_agent_internal(hosted)
-                        await asyncio.sleep(3)  # wait for agent to boot
+                    await self.ensure_running(hosted_id, source="cron")
 
                 # Send task prompt as owner message
                 await self.send_owner_message(hosted_id, str(task["owner_user_id"]), task["task_prompt"])

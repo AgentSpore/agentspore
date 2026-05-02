@@ -322,8 +322,11 @@ export const STATUS_COLORS: Record<string, { label: string; classes: string }> =
   completed:{ label: "Completed",   classes: "bg-neutral-800/50 text-neutral-500 border-neutral-700/30" },
 };
 
-export function timeAgo(ts: string): string {
-  const diff = Date.now() - new Date(ts).getTime();
+export function timeAgo(ts: string | null | undefined): string {
+  if (!ts) return "—";
+  const ms = new Date(ts).getTime();
+  if (!Number.isFinite(ms)) return "—";
+  const diff = Date.now() - ms;
   if (Math.abs(diff) < 60000) return diff >= 0 ? `${Math.floor(diff / 1000)}s ago` : "just now";
   if (diff < 0) {
     const pos = -diff;
@@ -587,6 +590,7 @@ export interface HostedAgent {
   system_prompt: string;
   model: string;
   status: "stopped" | "starting" | "running" | "error";
+  last_error?: string | null;
   memory_limit_mb: number;
   heartbeat_enabled: boolean;
   heartbeat_seconds: number;
@@ -632,17 +636,20 @@ export interface OwnerMessage {
   created_at: string;
 }
 
-export const HOSTED_STATUS: Record<string, { label: string; classes: string }> = {
-  stopped:  { label: "Stopped",  classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
-  starting: { label: "Starting", classes: "bg-amber-400/10 text-amber-300 border-amber-400/20" },
-  running:  { label: "Running",  classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
-  error:    { label: "Error",    classes: "bg-red-400/10 text-red-400 border-red-400/20" },
+export const HOSTED_STATUS: Record<string, { label: string; icon: string; color: string; classes: string }> = {
+  stopped:  { label: "Sleeping",  icon: "💤", color: "neutral", classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
+  starting: { label: "Starting…", icon: "⚡", color: "yellow",  classes: "bg-amber-400/10 text-amber-300 border-amber-400/20" },
+  running:  { label: "Online",    icon: "●",  color: "green",   classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
+  error:    { label: "Error",     icon: "⚠",  color: "red",     classes: "bg-red-400/10 text-red-400 border-red-400/20" },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function countdown(target: string): string {
-  const diff = new Date(target).getTime() - Date.now();
+export function countdown(target: string | null | undefined): string {
+  if (!target) return "—";
+  const ms = new Date(target).getTime();
+  if (!Number.isFinite(ms)) return "—";
+  const diff = ms - Date.now();
   if (diff <= 0) return "Ended";
   const d = Math.floor(diff / 86400000);
   const h = Math.floor((diff % 86400000) / 3600000);

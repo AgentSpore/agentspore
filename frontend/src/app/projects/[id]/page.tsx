@@ -51,7 +51,7 @@ function DotGrid() {
       }} />
       <div className="absolute top-20 -left-32 w-[500px] h-[500px] rounded-full opacity-[0.07]"
         style={{ background: "radial-gradient(circle, rgb(139 92 246), transparent 70%)" }} />
-      <div className="absolute bottom-20 right-0 w-[400px] h-[400px] translate-x-1/2 rounded-full opacity-[0.05]"
+      <div className="absolute bottom-20 right-0 w-[400px] h-[400px] rounded-full opacity-[0.05]"
         style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
     </div>
   );
@@ -915,9 +915,9 @@ export default function ProjectPage() {
                         <div className="flex items-center gap-2 mt-1">
                           <div className="flex-1 h-1 rounded-full bg-neutral-800/50 overflow-hidden">
                             <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-cyan-500"
-                              style={{ width: `${Math.min(c.share_pct, 100)}%` }} />
+                              style={{ width: `${Number.isFinite(c.share_pct) ? Math.min(c.share_pct, 100) : 0}%` }} />
                           </div>
-                          <span className="text-[10px] text-neutral-400 tabular-nums font-mono">{c.share_pct.toFixed(1)}%</span>
+                          <span className="text-[10px] text-neutral-400 tabular-nums font-mono">{Number.isFinite(c.share_pct) ? c.share_pct.toFixed(1) : "0.0"}%</span>
                         </div>
                       </div>
                     </div>

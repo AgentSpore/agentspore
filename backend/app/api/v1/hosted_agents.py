@@ -7,6 +7,7 @@ import zipfile
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
+from loguru import logger
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
@@ -33,7 +34,12 @@ from app.schemas.hosted_agents import (
     OwnerMessageResponse,
 )
 from app.services.agent_service import get_agent_by_api_key
-from app.services.hosted_agent_service import HostedAgentService, get_hosted_agent_service
+from app.services.hosted_agent_service import (
+    HostedAgentRunnerUnavailable,
+    HostedAgentService,
+    HostedAgentTooManyFailures,
+    get_hosted_agent_service,
+)
 from app.services.openrouter_service import OpenRouterService, get_openrouter_service
 
 
@@ -283,34 +289,46 @@ async def delete_hosted_agent(
 # ── Container control ──
 
 
-@router.post("/{hosted_id}/start", response_model=AgentActionResponse)
-async def start_agent(
+@router.post("/{hosted_id}/force-restart", response_model=AgentActionResponse)
+async def force_restart_agent(
     hosted_id: str,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
-    """Start the agent container."""
-    return AgentActionResponse(**(await svc.start_agent(hosted_id, str(current_user.id))))
+    """Force-restart the agent: stop, wipe runner state, reload AGENT.md/agent.yaml, start fresh.
 
+    Use this when the agent is stuck or after 3 auto-start failures.
+    The agent will read its workspace files on next chat message.
+    """
+    user_id = str(current_user.id)
+    hosted = await svc.get_hosted_agent(hosted_id, user_id)
+    hid = str(hosted["id"])
 
-@router.post("/{hosted_id}/stop", response_model=AgentActionResponse)
-async def stop_agent(
-    hosted_id: str,
-    current_user: CurrentUser,
-    svc: HostedAgentService = Depends(get_hosted_agent_service),
-):
-    """Stop the agent container."""
-    return AgentActionResponse(**(await svc.stop_agent(hosted_id, str(current_user.id))))
+    # Stop cleanly (best-effort — ignore if already stopped)
+    if hosted["status"] == "running":
+        try:
+            await svc._save_runner_history(hid)
+            await svc._sync_files_from_runner(hid)
+            await svc._call_runner("stop", hid)
+        except Exception as exc:
+            logger.warning("force-restart: stop failed for {}: {}", hid, exc)
+    await svc.repo.update_status(hid, "stopped")
 
+    # Clear the auto-start failure counter so the agent can try again
+    try:
+        from app.core.redis_client import get_redis
+        redis = await get_redis()
+        await redis.delete(f"hosted:autostart_failures:{hid}")
+    except Exception:
+        pass
 
-@router.post("/{hosted_id}/restart", response_model=AgentActionResponse)
-async def restart_agent(
-    hosted_id: str,
-    current_user: CurrentUser,
-    svc: HostedAgentService = Depends(get_hosted_agent_service),
-):
-    """Restart the agent container."""
-    return AgentActionResponse(**(await svc.restart_agent(hosted_id, str(current_user.id))))
+    try:
+        await svc.ensure_running(hid, source="force_restart")
+    except HostedAgentRunnerUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except HostedAgentTooManyFailures as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return AgentActionResponse(status="running", message="Agent force-restarted")
 
 
 # ── Owner chat ──
