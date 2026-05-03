@@ -2,6 +2,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Node.js 20 + liteparse CLI for pydantic-deep liteparse toolset
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @llamaindex/liteparse \
+ && apt-get purge -y --auto-remove curl gnupg \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 COPY pyproject.toml uv.lock ./
