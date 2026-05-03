@@ -1110,10 +1110,6 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         yield json.dumps({"type": "tool_call", "tool_name": tc.tool_name, "args": args}) + "\n"
                         all_tool_calls.append({"tool": tc.tool_name, "args": args, "status": "done"})
                     logger.info("Auto-approving {} deferred tools ({} blocked)", sum(v for v in approvals.values()), sum(1 for v in approvals.values() if not v))
-                    # Mark approved tools as done on the UI
-                    for tc in deferred.approvals:
-                        if approvals.get(tc.tool_call_id):
-                            yield json.dumps({"type": "tool_result", "tool_name": tc.tool_name}) + "\n"
                     result = await session.agent.run(
                         deferred_tool_results=DeferredToolResults(approvals=approvals),
                         deps=session.deps,
@@ -1121,6 +1117,30 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         model_settings={"timeout": settings.chat_timeout},
                     )
                     session.message_history = sanitize_history(result.all_messages())[-100:]
+                    # Backfill tool results from all_messages into all_tool_calls.
+                    # new_messages() on a deferred run only contains ToolReturnPart + final
+                    # text — no ToolCallPart — so _extract_response would yield extra_tools=[].
+                    # Scan all_messages() for ToolReturnPart and attach result to the
+                    # matching all_tool_calls entry by tool_name.
+                    for msg in result.all_messages():
+                        if not hasattr(msg, "parts"):
+                            continue
+                        for part in msg.parts:
+                            if isinstance(part, ToolReturnPart):
+                                result_text = str(part.content)[:500]
+                                for tc in reversed(all_tool_calls):
+                                    if tc.get("tool") == part.tool_name and "result" not in tc:
+                                        tc["result"] = result_text
+                                        break
+                    # Emit tool_result events with actual output now that results are available.
+                    for tc in deferred.approvals:
+                        if approvals.get(tc.tool_call_id):
+                            # Find matched result for this tool
+                            output = next(
+                                (t.get("result", "") for t in reversed(all_tool_calls) if t.get("tool") == tc.tool_name and "result" in t),
+                                "",
+                            )
+                            yield json.dumps({"type": "tool_result", "tool_name": tc.tool_name, "output": output}) + "\n"
                     max_approvals -= 1
 
                 reply, extra_tools, thinking = _extract_response(result)
