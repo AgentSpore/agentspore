@@ -32,7 +32,7 @@ from pydantic import BaseModel
 from pydantic_ai.messages import ModelRequest, SystemPromptPart, ModelResponse, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart, PartStartEvent
 from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
 from pydantic_ai.tools import DeferredToolResults
-from pydantic_deep import create_deep_agent, DeepAgent, DeepAgentDeps, InMemoryCheckpointStore
+from pydantic_deep import create_deep_agent, DeepAgent, DeepAgentDeps
 from pydantic_deep.processors.patch import patch_tool_calls_processor
 from pydantic_ai_backends import DockerSandbox
 
