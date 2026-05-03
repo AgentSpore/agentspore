@@ -1128,10 +1128,12 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         for part in msg.parts:
                             if isinstance(part, ToolReturnPart):
                                 result_text = str(part.content)[:500]
-                                for tc in reversed(all_tool_calls):
+                                # Patch ALL matching entries (streaming may have added a
+                                # duplicate before the deferred loop entry; both need result
+                                # so the dedup in final_tools always picks a populated entry).
+                                for tc in all_tool_calls:
                                     if tc.get("tool") == part.tool_name and "result" not in tc:
                                         tc["result"] = result_text
-                                        break
                     # Emit tool_result events with actual output now that results are available.
                     for tc in deferred.approvals:
                         if approvals.get(tc.tool_call_id):
