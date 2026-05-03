@@ -11,7 +11,7 @@ dependencies = [
     { name = "httpx" },
     { name = "loguru" },
     { name = "pydantic-ai-backend", extra = ["console", "docker"] },
-    { name = "pydantic-deep", extra = ["cli", "yaml"] },
+    { name = "pydantic-deep", extra = ["cli", "liteparse", "yaml"] },
     { name = "pydantic-settings" },
     { name = "uvicorn" },
     { name = "websockets" },
@@ -34,7 +34,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "loguru", specifier = ">=0.7" },
     { name = "pydantic-ai-backend", extras = ["console", "docker"] },
-    { name = "pydantic-deep", extras = ["cli", "yaml"], specifier = ">=0.3.17,<0.4" },
+    { name = "pydantic-deep", extras = ["cli", "yaml", "liteparse"], specifier = ">=0.3.17,<0.4" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
@@ -563,6 +563,15 @@ wheels = [
 ]
 
 [[package]]
+name = "liteparse"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/24/08bf22b40fffb231074ad413d136e25f34515ba3f552bb148ad125bd1f2c/liteparse-1.2.1.tar.gz", hash = "sha256:6528cd6ceb2a9bdac342c52dde0df19204b82e185ff4919bb3225f2ffe132e3b", size = 29819, upload-time = "2026-03-28T14:50:44.867Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/fb/91f20a67c3c2784a543a6a6627173363f622fb4a5158fa412dc20080c94d/liteparse-1.2.1-py3-none-any.whl", hash = "sha256:4036277ffef70e5dfbbcf95f46fafb11114f4a6aaebf1c6b5b17b5afba5b1247", size = 9084, upload-time = "2026-03-28T14:50:44.069Z" },
+]
+
+[[package]]
 name = "logfire-api"
 version = "4.29.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1072,6 +1081,9 @@ cli = [
     { name = "rich" },
     { name = "textual" },
     { name = "typer" },
+]
+liteparse = [
+    { name = "liteparse" },
 ]
 yaml = [
     { name = "pyyaml" },
