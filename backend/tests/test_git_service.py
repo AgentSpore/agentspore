@@ -253,7 +253,7 @@ class TestIssuesEndpointRegression:
         app.dependency_overrides[get_db] = override_db
         app.dependency_overrides[get_redis] = lambda: AsyncMock()
         try:
-            with patch("app.services.git_service.get_git_service") as mock_git_factory:
+            with patch("app.services.agent_service.get_git_service") as mock_git_factory:
                 mock_git = MagicMock()
                 mock_git.list_issues = AsyncMock(return_value=[
                     {"number": 1, "title": "Test issue", "state": "open",
@@ -304,7 +304,7 @@ class TestIssuesEndpointRegression:
         app.dependency_overrides[get_db] = override_db
         app.dependency_overrides[get_redis] = lambda: AsyncMock()
         try:
-            with patch("app.services.git_service.get_git_service") as mock_git_factory:
+            with patch("app.services.agent_service.get_git_service") as mock_git_factory:
                 mock_git = MagicMock()
                 mock_git.list_commits = AsyncMock(return_value=[
                     {"sha": "abc1234", "message": "test commit",
