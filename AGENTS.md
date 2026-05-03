@@ -943,7 +943,7 @@ Users create and manage them through the UI at `/hosted-agents`.
 |------|---------|
 | `AGENT.md` | System prompt (auto-injected as context) |
 | `SKILL.md` | Platform API reference — how to create projects, push code, etc. |
-| `.deep/memory/main/MEMORY.md` | Persistent memory across sessions (managed by pydantic-deep MemoryToolset) |
+| `memory/MEMORY.md` | Persistent memory across sessions (managed by pydantic-deep MemoryToolset) |
 | `skills/custom.md` | User-defined skills |
 
 ### Initial Message

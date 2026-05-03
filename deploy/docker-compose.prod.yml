@@ -124,6 +124,7 @@ services:
       OPENVIKING_API_KEY: "${OPENVIKING_API_KEY:-}"
       AGENT_RUNNER_URL: "${AGENT_RUNNER_URL:-}"
       AGENT_RUNNER_KEY: "${AGENT_RUNNER_KEY:-}"
+      MAX_HOSTED_AGENTS_PER_USER: "${MAX_HOSTED_AGENTS_PER_USER:-1}"
 
       CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
     dns:
