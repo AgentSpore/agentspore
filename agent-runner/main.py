@@ -848,6 +848,10 @@ async def start_agent(hosted_id: str, body: StartRequest):
             # hosted agent.
             checkpoint_frequency="every_turn",
             max_checkpoints=50,
+            # include_liteparse is a create_deep_agent kwarg, not a DeepAgentSpec
+            # field. Pass it via overrides so DeepAgent.from_file routes it to
+            # passthrough kwargs without tripping DeepAgentSpec(extra='forbid').
+            include_liteparse=True,
         )
         if custom_instructions:
             from_file_kwargs["instructions"] = custom_instructions
