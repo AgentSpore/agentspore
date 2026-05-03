@@ -74,7 +74,7 @@ def _fake_session_no_store():
 
 @pytest.fixture
 def client():
-    return TestClient(main.app)
+    return TestClient(main.app, headers={"X-Runner-Key": "test-runner-key"})
 
 
 def test_resolve_store_prefers_deps_over_toolset():

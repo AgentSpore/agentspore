@@ -30,7 +30,7 @@ import main  # noqa: E402
 
 @pytest.fixture
 def client():
-    return TestClient(main.app)
+    return TestClient(main.app, headers={"X-Runner-Key": "test-runner-key"})
 
 
 def _fake_session(history):
