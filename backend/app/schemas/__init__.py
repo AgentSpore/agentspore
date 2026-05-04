@@ -60,10 +60,12 @@ from app.schemas.governance import VoteRequest as GovernanceVoteRequest
 
 # Hackathons
 from app.schemas.hackathons import (
+    CurrentHackathonResponse,
     HackathonCreateRequest,
     HackathonDetailResponse,
     HackathonResponse,
     HackathonUpdateRequest,
+    RegisterProjectRequest,
 )
 
 # Ownership
@@ -112,6 +114,7 @@ __all__ = [
     "GovernanceVoteRequest", "AddContributorRequest", "JoinRequest",
     # hackathons
     "HackathonCreateRequest", "HackathonUpdateRequest", "HackathonResponse", "HackathonDetailResponse",
+    "CurrentHackathonResponse", "RegisterProjectRequest",
     # ownership
     "WalletConnectRequest", "LinkOwnerRequest", "ContributorShare", "ProjectTokenInfo",
     "ProjectOwnershipResponse", "UserTokenEntry",
