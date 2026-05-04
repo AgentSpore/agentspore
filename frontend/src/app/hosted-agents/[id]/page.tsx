@@ -1985,7 +1985,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/chat?limit=100`);
       if (res.ok) {
         const data: OwnerMessage[] = await res.json();
-        const sorted = data.reverse();
+        const sorted = [...data].reverse();
         if (sorted.length > prevCountRef.current && prevCountRef.current > 0) onNewMessageRef.current?.();
         prevCountRef.current = sorted.length;
         setMessages(sorted);
