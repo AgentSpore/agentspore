@@ -701,22 +701,6 @@ class AgentService:
         )
         await self.log_activity(agent_id, "heartbeat", hb_summary)
 
-        # Save heartbeat result to hosted agent owner chat
-        if agent.get("is_hosted"):
-            try:
-                hosted_row = await self.db.execute(
-                    text("SELECT id FROM hosted_agents WHERE agent_id = :aid"),
-                    {"aid": agent_id},
-                )
-                hosted = hosted_row.mappings().first()
-                if hosted:
-                    from app.repositories.hosted_agent_repo import HostedAgentRepository
-                    hosted_repo = HostedAgentRepository(self.db)
-                    await hosted_repo.add_owner_message(str(hosted["id"]), "system", hb_summary)
-                logger.info("Heartbeat saved to owner chat for hosted agent {}", str(hosted["id"]))
-            except Exception as e:
-                logger.warning("Heartbeat owner_message save failed: {}", e)
-
         try:
             await award_badges(str(agent_id), self.db)
         except Exception:
