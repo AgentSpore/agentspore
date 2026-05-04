@@ -32,6 +32,7 @@ from app.schemas.agents import (
     ProjectResponse,
 )
 from app.services.badge_service import award_badges
+from app.services.events import EventSource, safe_publish
 from app.services.git_service import get_git_service
 from app.services.github_oauth_service import get_github_oauth_service
 from app.services.gitlab_oauth_service import get_gitlab_oauth_service
@@ -549,47 +550,76 @@ class AgentService:
 
     async def heartbeat(self, agent: dict, body) -> HeartbeatResponseBody:
         """Process agent heartbeat. Returns tasks, feedback, notifications, DMs."""
-
         agent_id = agent["id"]
 
         await self.repo.update_heartbeat(agent_id)
         await self.repo.insert_heartbeat_log(agent_id, body.status, len(body.completed_tasks))
+        await self._heartbeat_publish_event(agent_id, body.status)
+        await self._heartbeat_process_completed(agent_id, body)
 
-        # Publish an `agent.heartbeat` event to the public bus once every
-        # 30 minutes per agent. Throttle via Redis SET NX so continuous
-        # heartbeats don't spam /live. Fire-and-forget — bus failures
-        # never break heartbeat.
+        tasks = await self._heartbeat_collect_tasks(agent_id, body.current_capacity)
+        feedback = await self._heartbeat_collect_feedback(agent_id)
+        notifications = await self._heartbeat_collect_notifications(agent_id)
+        direct_messages = await self._heartbeat_collect_dms(agent_id)
+        active_rentals = await self._heartbeat_collect_rentals(agent_id)
+        flow_steps = await self._heartbeat_collect_flow_steps(agent_id)
+        mixer_chunks = await self._heartbeat_collect_mixer_chunks(agent_id)
+
+        hb_summary = (
+            f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, "
+            f"{len(direct_messages)} DMs, {len(active_rentals)} rentals, "
+            f"{len(flow_steps)} flow steps, {len(mixer_chunks)} mixer chunks"
+        )
+        await self.log_activity(agent_id, "heartbeat", hb_summary)
+
         try:
-            from app.core.redis_client import get_redis
-            from app.services.events import safe_publish, EventSource
-            redis = await get_redis()
+            await award_badges(str(agent_id), self.db)
+        except Exception:
+            pass
+
+        warnings = self._heartbeat_build_warnings(agent)
+        memory_context = await self._heartbeat_openviking_context(agent, agent_id, body)
+
+        return HeartbeatResponseBody(
+            tasks=tasks, feedback=feedback, notifications=notifications,
+            direct_messages=direct_messages, rentals=active_rentals,
+            flow_steps=flow_steps, mixer_chunks=mixer_chunks,
+            memory_context=memory_context, warnings=warnings,
+        )
+
+    async def _heartbeat_publish_event(self, agent_id: Any, status: str) -> None:
+        """Throttled event bus publish — once per 30 min per agent. Fire-and-forget."""
+        try:
             throttle_key = f"hb:event:{agent_id}"
-            if await redis.set(throttle_key, "1", ex=1800, nx=True):
+            if self.redis and await self.redis.set(throttle_key, "1", ex=1800, nx=True):
                 await safe_publish(
                     self.repo.db,
                     type="agent.heartbeat",
-                    payload={"status": body.status},
+                    payload={"status": status},
                     source_type=EventSource.AGENT,
                     agent_id=agent_id,
                 )
         except Exception:
             pass
 
+    async def _heartbeat_process_completed(self, agent_id: Any, body) -> None:
+        """Award karma for completed tasks; acknowledge read DMs and notifications."""
+        KARMA_BY_TASK_TYPE = {"write_code": 10, "add_feature": 15, "fix_bug": 10, "code_review": 5}
         for task in body.completed_tasks:
-            karma = {"write_code": 10, "add_feature": 15, "fix_bug": 10, "code_review": 5}.get(task.get("type", ""), 5)
+            karma = KARMA_BY_TASK_TYPE.get(task.get("type", ""), 5)
             await self.repo.add_karma(agent_id, karma)
 
-        # Acknowledge previously delivered DMs
         if body.read_dm_ids:
             await self.repo.mark_dms_read(body.read_dm_ids)
 
-        # Acknowledge previously delivered notifications
         for notif_id in body.read_notification_ids:
             await self.repo.complete_notification_by_id(notif_id, agent_id)
 
-        # Feature requests
-        features = await self.repo.get_feature_requests_for_agent(agent_id, body.current_capacity)
-        tasks = []
+    async def _heartbeat_collect_tasks(self, agent_id: Any, capacity: int) -> list[dict]:
+        """Collect pending feature requests and bug reports up to capacity."""
+        tasks: list[dict] = []
+
+        features = await self.repo.get_feature_requests_for_agent(agent_id, capacity)
         for fr in features:
             tasks.append({
                 "type": "add_feature",
@@ -602,9 +632,8 @@ class AgentService:
             })
             await self.repo.accept_feature_request(fr["id"], agent_id)
 
-        # Bug reports
-        if len(tasks) < body.current_capacity:
-            bugs = await self.repo.get_bug_reports_for_agent(agent_id, body.current_capacity - len(tasks))
+        if len(tasks) < capacity:
+            bugs = await self.repo.get_bug_reports_for_agent(agent_id, capacity - len(tasks))
             for bug in bugs:
                 tasks.append({
                     "type": "fix_bug",
@@ -616,17 +645,26 @@ class AgentService:
                 })
                 await self.repo.assign_bug_report(bug["id"], agent_id)
 
-        # Feedback
+        return tasks
+
+    async def _heartbeat_collect_feedback(self, agent_id: Any) -> list[dict]:
+        """Collect project comments as feedback items."""
         comments_raw = await self.repo.get_project_comments_for_agent(agent_id)
-        feedback = [
-            {"type": "comment", "content": c["content"], "user": c["user_name"],
-             "project": c["project_title"], "timestamp": str(c["created_at"])}
+        return [
+            {
+                "type": "comment",
+                "content": c["content"],
+                "user": c["user_name"],
+                "project": c["project_title"],
+                "timestamp": str(c["created_at"]),
+            }
             for c in comments_raw
         ]
 
-        # Notifications
+    async def _heartbeat_collect_notifications(self, agent_id: Any) -> list[dict]:
+        """Collect pending platform notifications."""
         notif_raw = await self.repo.get_pending_notifications(agent_id)
-        notifications = [
+        return [
             {
                 "id": str(n["id"]),
                 "type": n["type"],
@@ -641,33 +679,40 @@ class AgentService:
             for n in notif_raw
         ]
 
-        # Direct messages (delivered but NOT marked as read until agent confirms via read_dm_ids)
+    async def _heartbeat_collect_dms(self, agent_id: Any) -> list[dict]:
+        """Collect unread direct messages. Marked read only when agent confirms via read_dm_ids."""
         dm_raw = await self.repo.get_unread_dms(agent_id)
-        direct_messages = []
-        for dm in dm_raw:
-            direct_messages.append({
+        return [
+            {
                 "id": str(dm["id"]),
-                "from": f"@{dm['from_agent_handle']}" if dm["from_agent_handle"] else dm["human_name"] or "anonymous",
+                "from": (
+                    f"@{dm['from_agent_handle']}" if dm["from_agent_handle"]
+                    else dm["human_name"] or "anonymous"
+                ),
                 "from_name": dm["from_agent_name"] or dm["human_name"] or "anonymous",
                 "content": dm["content"],
                 "created_at": str(dm["created_at"]),
-            })
+            }
+            for dm in dm_raw
+        ]
 
-        # Active rentals
-        active_rentals_raw = await self.rental_repo.list_agent_rentals(str(agent_id), status="active")
-        active_rentals = [
+    async def _heartbeat_collect_rentals(self, agent_id: Any) -> list[dict]:
+        """Collect active rental assignments."""
+        raw = await self.rental_repo.list_agent_rentals(str(agent_id), status="active")
+        return [
             {
                 "rental_id": str(r["id"]),
                 "user_name": r["user_name"],
                 "title": r["title"],
                 "created_at": str(r["created_at"]),
             }
-            for r in active_rentals_raw
+            for r in raw
         ]
 
-        # Flow steps
-        flow_steps_raw = await self.flow_repo.get_agent_ready_steps(str(agent_id))
-        flow_steps = [
+    async def _heartbeat_collect_flow_steps(self, agent_id: Any) -> list[dict]:
+        """Collect DAG flow steps ready for the agent."""
+        raw = await self.flow_repo.get_agent_ready_steps(str(agent_id))
+        return [
             {
                 "step_id": str(s["id"]),
                 "flow_id": str(s["flow_id"]),
@@ -677,12 +722,13 @@ class AgentService:
                 "input_text": s.get("input_text"),
                 "status": s["status"],
             }
-            for s in flow_steps_raw
+            for s in raw
         ]
 
-        # Mixer chunks
-        mixer_chunks_raw = await self.mixer_repo.get_agent_ready_chunks(str(agent_id))
-        mixer_chunks = [
+    async def _heartbeat_collect_mixer_chunks(self, agent_id: Any) -> list[dict]:
+        """Collect privacy mixer chunks ready for the agent."""
+        raw = await self.mixer_repo.get_agent_ready_chunks(str(agent_id))
+        return [
             {
                 "chunk_id": str(c["id"]),
                 "session_id": str(c["session_id"]),
@@ -691,21 +737,11 @@ class AgentService:
                 "instructions": c.get("instructions"),
                 "status": c["status"],
             }
-            for c in mixer_chunks_raw
+            for c in raw
         ]
 
-        hb_summary = (
-            f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, "
-            f"{len(direct_messages)} DMs, {len(active_rentals)} rentals, "
-            f"{len(flow_steps)} flow steps, {len(mixer_chunks)} mixer chunks"
-        )
-        await self.log_activity(agent_id, "heartbeat", hb_summary)
-
-        try:
-            await award_badges(str(agent_id), self.db)
-        except Exception:
-            pass
-
+    def _heartbeat_build_warnings(self, agent: dict) -> list[str]:
+        """Build advisory warning list for the agent."""
         warnings: list[str] = []
         if not agent.get("github_oauth_token"):
             warnings.append(
@@ -715,43 +751,40 @@ class AgentService:
                 "POST /api/v1/agents/projects/:id/github (GitHub API proxy for issues, PRs, comments), "
                 "and POST /api/v1/agents/projects (create projects)."
             )
+        return warnings
 
-        # OpenViking: store insights + fetch memory context (non-blocking)
+    async def _heartbeat_openviking_context(self, agent: dict, agent_id: Any, body) -> list[dict]:
+        """Store insights in OpenViking and fetch relevant memory context. Non-blocking."""
         memory_context: list[dict] = []
         try:
-            if self.ov.enabled:
-                agent_name = agent.get("name", "unknown")
-                agent_id_str = str(agent_id)
+            if not self.ov.enabled:
+                return memory_context
 
-                # Store shared insights (fire-and-forget, parallel)
-                projects_raw = await self.repo.get_agent_project_ids(agent_id, limit=5)
-                first_project_id = str(projects_raw[0]["id"]) if projects_raw else None
-                insight_tasks = []
-                for insight in (body.insights or [])[:5]:
-                    if insight.strip():
-                        insight_tasks.append(self.ov.store_insight_with_context(
-                            agent_id_str, agent_name, insight.strip(), project_id=first_project_id,
-                        ))
-                        insight_tasks.append(self.ov.add_to_agent_session(agent_id_str, insight.strip()))
-                if insight_tasks:
-                    await asyncio.gather(*insight_tasks, return_exceptions=True)
+            agent_name = agent.get("name", "unknown")
+            agent_id_str = str(agent_id)
 
-                # NOTE: extract_session_memory and commit_session are VLM-heavy (30-60s each).
-                # Do NOT call them on every heartbeat — use a background task or periodic cron.
+            projects_raw = await self.repo.get_agent_project_ids(agent_id, limit=5)
+            first_project_id = str(projects_raw[0]["id"]) if projects_raw else None
 
-                # Fetch relevant context based on agent's projects
-                project_titles = [p["title"] for p in (projects_raw or [])[:5]]
-                if project_titles:
-                    memory_context = await self.ov.get_agent_context(agent_id_str, project_titles)
+            insight_tasks = []
+            for insight in (body.insights or [])[:5]:
+                if insight.strip():
+                    insight_tasks.append(self.ov.store_insight_with_context(
+                        agent_id_str, agent_name, insight.strip(), project_id=first_project_id,
+                    ))
+                    insight_tasks.append(self.ov.add_to_agent_session(agent_id_str, insight.strip()))
+            if insight_tasks:
+                await asyncio.gather(*insight_tasks, return_exceptions=True)
+
+            # NOTE: extract_session_memory and commit_session are VLM-heavy (30-60s each).
+            # Do NOT call them on every heartbeat — use a background task or periodic cron.
+
+            project_titles = [p["title"] for p in (projects_raw or [])[:5]]
+            if project_titles:
+                memory_context = await self.ov.get_agent_context(agent_id_str, project_titles)
         except Exception as e:
             logger.warning("OpenViking heartbeat integration error: {}", e)
-
-        return HeartbeatResponseBody(
-            tasks=tasks, feedback=feedback, notifications=notifications,
-            direct_messages=direct_messages, rentals=active_rentals,
-            flow_steps=flow_steps, mixer_chunks=mixer_chunks,
-            memory_context=memory_context, warnings=warnings,
-        )
+        return memory_context
 
     # ── Notifications ─────────────────────────────────────────────────
 
@@ -786,9 +819,10 @@ class AgentService:
             "source_key": source_key,
             "source_type": source_type,
         })
-        # Real-time push to assigned agent
+        # Real-time push to assigned agent.
+        # Local import: circular dep — connection_manager imports AgentService at runtime.
         try:
-            from app.services.connection_manager import deliver_event
+            from app.services.connection_manager import deliver_event  # noqa: PLC0415
             await deliver_event(str(assigned_to_agent_id), {
                 "type": "notification",
                 "task_type": task_type,
