@@ -4,6 +4,7 @@ import io
 import re
 import secrets
 import zipfile
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -40,6 +41,7 @@ from app.services.hosted_agent_service import (
     HostedAgentTooManyFailures,
     get_hosted_agent_service,
 )
+from app.core.redis_client import get_redis
 from app.services.openrouter_service import OpenRouterService, get_openrouter_service
 
 
@@ -99,7 +101,7 @@ async def list_running_agents(
 
 @router.post("/{hosted_id}/idle-stopped", response_model=AgentActionResponse)
 async def idle_stopped_callback(
-    hosted_id: str,
+    hosted_id: UUID,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
     settings: Settings = Depends(get_settings),
     runner_key: str = Query(default="", alias="key"),
@@ -108,7 +110,7 @@ async def idle_stopped_callback(
     if settings.agent_runner_key:
         if not runner_key or not secrets.compare_digest(runner_key, settings.agent_runner_key):
             raise HTTPException(403, "Unauthorized")
-    await svc.repo.update_status(hosted_id, "stopped")
+    await svc.repo.update_status(str(hosted_id), "stopped")
     return AgentActionResponse(status="stopped", message="Agent idle-stopped")
 
 
@@ -149,14 +151,14 @@ async def list_forkable_agents(
 
 @router.post("/{hosted_id}/fork", response_model=HostedAgentResponse, status_code=201)
 async def fork_hosted_agent(
-    hosted_id: str,
+    hosted_id: UUID,
     body: ForkAgentRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Fork a public hosted agent — copies config, files, and memory."""
     result = await svc.fork_hosted_agent(
-        source_hosted_id=hosted_id,
+        source_hosted_id=str(hosted_id),
         user_id=str(current_user.id),
         user_email=current_user.email,
         new_name=body.name,
@@ -255,34 +257,35 @@ async def list_my_hosted_agents(
 
 @router.get("/{hosted_id}", response_model=HostedAgentResponse)
 async def get_hosted_agent(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Get details of a specific hosted agent."""
-    return HostedAgentResponse.from_dict(await svc.get_hosted_agent(hosted_id, str(current_user.id)))
+    return HostedAgentResponse.from_dict(await svc.get_hosted_agent(str(hosted_id), str(current_user.id)))
 
 
 @router.patch("/{hosted_id}", response_model=HostedAgentResponse)
 async def update_hosted_agent(
-    hosted_id: str,
+    hosted_id: UUID,
     body: HostedAgentUpdateRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Update hosted agent settings. Returns the full updated agent."""
-    await svc.update_agent(hosted_id, str(current_user.id), body.model_dump(exclude_unset=True))
-    return HostedAgentResponse.from_dict(await svc.get_hosted_agent(hosted_id, str(current_user.id)))
+    hid = str(hosted_id)
+    await svc.update_agent(hid, str(current_user.id), body.model_dump(exclude_unset=True))
+    return HostedAgentResponse.from_dict(await svc.get_hosted_agent(hid, str(current_user.id)))
 
 
 @router.delete("/{hosted_id}", response_model=AgentActionResponse)
 async def delete_hosted_agent(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Delete a hosted agent and its container."""
-    await svc.delete_agent(hosted_id, str(current_user.id))
+    await svc.delete_agent(str(hosted_id), str(current_user.id))
     return AgentActionResponse(status="deleted", message="Agent deleted")
 
 
@@ -291,7 +294,7 @@ async def delete_hosted_agent(
 
 @router.post("/{hosted_id}/force-restart", response_model=AgentActionResponse)
 async def force_restart_agent(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
@@ -301,7 +304,7 @@ async def force_restart_agent(
     The agent will read its workspace files on next chat message.
     """
     user_id = str(current_user.id)
-    hosted = await svc.get_hosted_agent(hosted_id, user_id)
+    hosted = await svc.get_hosted_agent(str(hosted_id), user_id)
     hid = str(hosted["id"])
 
     # Stop cleanly (best-effort — ignore if already stopped)
@@ -316,7 +319,6 @@ async def force_restart_agent(
 
     # Clear the auto-start failure counter so the agent can try again
     try:
-        from app.core.redis_client import get_redis
         redis = await get_redis()
         await redis.delete(f"hosted:autostart_failures:{hid}")
     except Exception:
@@ -336,13 +338,13 @@ async def force_restart_agent(
 
 @router.post("/{hosted_id}/chat", response_model=OwnerMessageResponse)
 async def send_owner_message(
-    hosted_id: str,
+    hosted_id: UUID,
     body: OwnerMessageRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Send a private message to your hosted agent."""
-    msg = await svc.send_owner_message(hosted_id, str(current_user.id), body.content)
+    msg = await svc.send_owner_message(str(hosted_id), str(current_user.id), body.content)
     return OwnerMessageResponse(
         id=str(msg["id"]),
         sender_type=msg["sender_type"],
@@ -353,27 +355,27 @@ async def send_owner_message(
 
 @router.post("/{hosted_id}/chat/stream")
 async def stream_owner_message(
-    hosted_id: str,
+    hosted_id: UUID,
     body: OwnerMessageRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Stream chat response from the agent as ndjson events."""
     return StreamingResponse(
-        svc.stream_owner_message(hosted_id, str(current_user.id), body.content),
+        svc.stream_owner_message(str(hosted_id), str(current_user.id), body.content),
         media_type="application/x-ndjson",
     )
 
 
 @router.get("/{hosted_id}/chat", response_model=list[OwnerMessageResponse])
 async def get_owner_chat(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
     limit: int = Query(default=50, ge=1, le=200),
 ):
     """Get private chat history with your hosted agent."""
-    messages = await svc.get_owner_messages(hosted_id, str(current_user.id), limit)
+    messages = await svc.get_owner_messages(str(hosted_id), str(current_user.id), limit)
     return [
         OwnerMessageResponse(
             id=str(m["id"]),
@@ -394,7 +396,7 @@ async def get_owner_chat(
 
 @router.get("/{hosted_id}/checkpoints")
 async def list_checkpoints(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
@@ -404,7 +406,7 @@ async def list_checkpoints(
     The list is empty if the agent is not currently running, since the
     runner stores checkpoints in memory only.
     """
-    checkpoints = await svc.list_checkpoints(hosted_id, str(current_user.id))
+    checkpoints = await svc.list_checkpoints(str(hosted_id), str(current_user.id))
     return {"checkpoints": checkpoints}
 
 
@@ -415,7 +417,7 @@ class RewindRequestBody(BaseModel):
 
 @router.post("/{hosted_id}/rewind")
 async def rewind_checkpoint(
-    hosted_id: str,
+    hosted_id: UUID,
     body: RewindRequestBody,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
@@ -427,13 +429,13 @@ async def rewind_checkpoint(
     owner_messages so the chat UI matches what the agent now remembers.
     """
     return await svc.rewind_to_checkpoint(
-        hosted_id, str(current_user.id), body.checkpoint_id, body.before_timestamp
+        str(hosted_id), str(current_user.id), body.checkpoint_id, body.before_timestamp
     )
 
 
 @router.post("/{hosted_id}/chat/clear")
 async def clear_chat(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
@@ -444,22 +446,23 @@ async def clear_chat(
     ``session_history``, and — if the agent is running — stops and
     restarts the runner so its in-memory ``message_history`` is empty.
     """
-    return await svc.clear_chat(hosted_id, str(current_user.id))
+    return await svc.clear_chat(str(hosted_id), str(current_user.id))
 
 
 @router.get("/{hosted_id}/todos")
 async def get_todos(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
-    await svc.get_hosted_agent(hosted_id, str(current_user.id))
-    return await svc._call_runner("todos", hosted_id, method="GET")
+    hid = str(hosted_id)
+    await svc.get_hosted_agent(hid, str(current_user.id))
+    return await svc._call_runner("todos", hid, method="GET")
 
 
 @router.get("/{hosted_id}/diff")
 async def get_workspace_diff(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
@@ -471,8 +474,9 @@ async def get_workspace_diff(
     commit snapshots AGENT.md / SKILL.md / seeded files so every later
     agent edit shows up here for review.
     """
-    await svc.get_hosted_agent(hosted_id, str(current_user.id))
-    return await svc._call_runner("diff", hosted_id, method="GET")
+    hid = str(hosted_id)
+    await svc.get_hosted_agent(hid, str(current_user.id))
+    return await svc._call_runner("diff", hid, method="GET")
 
 
 # ── Files ──
@@ -480,30 +484,31 @@ async def get_workspace_diff(
 
 @router.get("/{hosted_id}/files", response_model=list[AgentFileResponse])
 async def list_agent_files(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """List all files in the agent's workspace."""
-    files = await svc.list_files(hosted_id, str(current_user.id))
+    files = await svc.list_files(str(hosted_id), str(current_user.id))
     return [_file_response(f) for f in files]
 
 
 @router.get("/{hosted_id}/files/download")
 async def download_files_archive(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Download all agent files as a zip archive (generated on-the-fly, not stored)."""
-    hosted = await svc.get_hosted_agent(hosted_id, str(current_user.id))
+    hid = str(hosted_id)
+    hosted = await svc.get_hosted_agent(hid, str(current_user.id))
     agent_name = hosted.get("agent_name", "agent") or "agent"
-    raw_files = await svc.repo.list_files(hosted_id)
+    raw_files = await svc.repo.list_files(hid)
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in raw_files:
-            file_data = await svc.repo.get_file(hosted_id, f["file_path"])
+            file_data = await svc.repo.get_file(hid, f["file_path"])
             content = (file_data["content"] if file_data else "") or ""
             zf.writestr(f["file_path"], content.encode("utf-8"))
     buf.seek(0)
@@ -517,7 +522,7 @@ async def download_files_archive(
 
 @router.post("/{hosted_id}/files/batch", response_model=AgentFileBatchResponse)
 async def batch_write_agent_files(
-    hosted_id: str,
+    hosted_id: UUID,
     body: AgentFileBatchRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
@@ -531,7 +536,7 @@ async def batch_write_agent_files(
     """
     items = [it.model_dump() for it in body.files]
     written, failed = await svc.write_files_batch(
-        hosted_id, str(current_user.id), items
+        str(hosted_id), str(current_user.id), items
     )
     return AgentFileBatchResponse(
         written=[_file_response(r) for r in written],
@@ -541,13 +546,13 @@ async def batch_write_agent_files(
 
 @router.get("/{hosted_id}/files/{file_path:path}", response_model=AgentFileResponse)
 async def read_agent_file(
-    hosted_id: str,
+    hosted_id: UUID,
     file_path: str,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Read a specific file from the agent's workspace."""
-    f = await svc.read_file(hosted_id, str(current_user.id), file_path)
+    f = await svc.read_file(str(hosted_id), str(current_user.id), file_path)
     resp = _file_response(f)
     return JSONResponse(
         content=resp.model_dump(),
@@ -557,7 +562,7 @@ async def read_agent_file(
 
 @router.put("/{hosted_id}/files", response_model=AgentFileResponse)
 async def write_agent_file(
-    hosted_id: str,
+    hosted_id: UUID,
     body: AgentFileWriteRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
@@ -573,7 +578,7 @@ async def write_agent_file(
     expected_version = _parse_if_match(if_match)
     try:
         f = await svc.write_file(
-            hosted_id, str(current_user.id),
+            str(hosted_id), str(current_user.id),
             body.file_path, body.content, body.file_type,
             if_match_version=expected_version,
         )
@@ -596,13 +601,13 @@ async def write_agent_file(
 
 @router.delete("/{hosted_id}/files/{file_path:path}", response_model=AgentActionResponse)
 async def delete_agent_file(
-    hosted_id: str,
+    hosted_id: UUID,
     file_path: str,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Delete a file from the agent's workspace."""
-    await svc.delete_file(hosted_id, str(current_user.id), file_path)
+    await svc.delete_file(str(hosted_id), str(current_user.id), file_path)
     return AgentActionResponse(status="deleted", message=f"File {file_path} deleted")
 
 
@@ -611,47 +616,47 @@ async def delete_agent_file(
 
 @router.get("/{hosted_id}/cron", response_model=list[CronTaskResponse])
 async def list_cron_tasks(
-    hosted_id: str,
+    hosted_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """List all cron tasks for a hosted agent."""
-    tasks = await svc.list_cron_tasks(hosted_id, str(current_user.id))
+    tasks = await svc.list_cron_tasks(str(hosted_id), str(current_user.id))
     return [CronTaskResponse.from_dict(t) for t in tasks]
 
 
 @router.post("/{hosted_id}/cron", response_model=CronTaskResponse, status_code=201)
 async def create_cron_task(
-    hosted_id: str,
+    hosted_id: UUID,
     body: CronTaskCreateRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Create a scheduled task for a hosted agent."""
-    result = await svc.create_cron_task(hosted_id, str(current_user.id), body.model_dump())
+    result = await svc.create_cron_task(str(hosted_id), str(current_user.id), body.model_dump())
     return CronTaskResponse.from_dict(result)
 
 
 @router.patch("/{hosted_id}/cron/{task_id}", response_model=CronTaskResponse)
 async def update_cron_task(
-    hosted_id: str,
-    task_id: str,
+    hosted_id: UUID,
+    task_id: UUID,
     body: CronTaskUpdateRequest,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Update a cron task."""
-    result = await svc.update_cron_task(hosted_id, str(current_user.id), task_id, body.model_dump(exclude_unset=True))
+    result = await svc.update_cron_task(str(hosted_id), str(current_user.id), str(task_id), body.model_dump(exclude_unset=True))
     return CronTaskResponse.from_dict(result)
 
 
 @router.delete("/{hosted_id}/cron/{task_id}", response_model=AgentActionResponse)
 async def delete_cron_task(
-    hosted_id: str,
-    task_id: str,
+    hosted_id: UUID,
+    task_id: UUID,
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
     """Delete a cron task."""
-    await svc.delete_cron_task(hosted_id, str(current_user.id), task_id)
+    await svc.delete_cron_task(str(hosted_id), str(current_user.id), str(task_id))
     return AgentActionResponse(status="deleted", message="Cron task deleted")
