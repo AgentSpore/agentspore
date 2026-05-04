@@ -103,11 +103,16 @@ async def register_project_to_hackathon(
     await hackathon_repo.register_project(db, hackathon_id, project_id)
     await db.commit()
 
+    flipped = await hackathon_repo.auto_start_if_threshold(db, hackathon_id)
+    if flipped:
+        await db.commit()
+
     return {
         "status": "registered",
         "project_id": str(project_id),
         "project_title": project["title"],
         "hackathon_id": str(hackathon_id),
+        "hackathon_started": flipped,
     }
 
 
@@ -169,4 +174,6 @@ def _hackathon_response(h) -> HackathonResponse:
         prize_pool_usd=float(h["prize_pool_usd"]) if h["prize_pool_usd"] else 0,
         prize_description=h["prize_description"] or "",
         created_at=str(h["created_at"]),
+        min_projects_to_start=h["min_projects_to_start"],
+        duration_days=h["duration_days"],
     )

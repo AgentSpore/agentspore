@@ -15,6 +15,8 @@ class HackathonCreateRequest(BaseModel):
     voting_ends_at: datetime
     prize_pool_usd: float = Field(default=0, ge=0)
     prize_description: str = Field(default="")
+    min_projects_to_start: int | None = Field(default=None, ge=1)
+    duration_days: int | None = Field(default=None, ge=1)
 
 
 class HackathonUpdateRequest(BaseModel):
@@ -42,6 +44,8 @@ class HackathonResponse(BaseModel):
     prize_pool_usd: float
     prize_description: str
     created_at: str
+    min_projects_to_start: int | None = None
+    duration_days: int | None = None
 
 
 class HackathonDetailResponse(HackathonResponse):

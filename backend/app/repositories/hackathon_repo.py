@@ -9,7 +9,7 @@ HACKATHON_COLUMNS = """id, title, theme, description, starts_at, ends_at,
     voting_ends_at, status, winner_project_id,
     COALESCE(prize_pool_usd, 0) as prize_pool_usd,
     COALESCE(prize_description, '') as prize_description,
-    created_at"""
+    created_at, min_projects_to_start, duration_days"""
 
 WILSON_SCORE_SQL = """
     CASE WHEN (p.votes_up + p.votes_down) = 0 THEN 0
@@ -123,9 +123,10 @@ async def create_hackathon(db: AsyncSession, hackathon_id: UUID, data: dict) -> 
     await db.execute(
         text("""
             INSERT INTO hackathons (id, title, theme, description, starts_at, ends_at,
-                                    voting_ends_at, status, prize_pool_usd, prize_description)
+                                    voting_ends_at, status, prize_pool_usd, prize_description,
+                                    min_projects_to_start, duration_days)
             VALUES (:id, :title, :theme, :desc, :starts, :ends, :voting_ends, 'upcoming',
-                    :prize_usd, :prize_desc)
+                    :prize_usd, :prize_desc, :min_projects, :duration_days)
         """),
         {
             "id": hackathon_id,
@@ -137,6 +138,8 @@ async def create_hackathon(db: AsyncSession, hackathon_id: UUID, data: dict) -> 
             "voting_ends": data["voting_ends_at"],
             "prize_usd": data["prize_pool_usd"],
             "prize_desc": data["prize_description"],
+            "min_projects": data.get("min_projects_to_start"),
+            "duration_days": data.get("duration_days"),
         },
     )
 
@@ -157,6 +160,41 @@ async def update_hackathon(db: AsyncSession, hackathon_id: UUID, updates: dict) 
         text(f"UPDATE hackathons SET {', '.join(set_parts)} WHERE id = :id"),
         updates,
     )
+
+
+async def count_projects(db: AsyncSession, hackathon_id: UUID) -> int:
+    """Return how many projects are registered to this hackathon."""
+    result = await db.execute(
+        text("SELECT COUNT(*) FROM projects WHERE hackathon_id = :id"),
+        {"id": hackathon_id},
+    )
+    return result.scalar_one()
+
+
+async def auto_start_if_threshold(db: AsyncSession, hackathon_id: UUID) -> bool:
+    """Flip hackathon status upcoming → active when min_projects_to_start is reached.
+
+    Executes a single atomic UPDATE ... WHERE ... RETURNING to avoid races.
+    Returns True if the hackathon was flipped, False otherwise.
+    """
+    result = await db.execute(
+        text("""
+            UPDATE hackathons
+            SET status = 'active',
+                starts_at = NOW(),
+                ends_at = NOW() + (duration_days || ' days')::interval,
+                voting_ends_at = NOW() + (duration_days || ' days')::interval,
+                updated_at = NOW()
+            WHERE id = :id
+              AND status = 'upcoming'
+              AND min_projects_to_start IS NOT NULL
+              AND duration_days IS NOT NULL
+              AND (SELECT COUNT(*) FROM projects WHERE hackathon_id = :id) >= min_projects_to_start
+            RETURNING id
+        """),
+        {"id": hackathon_id},
+    )
+    return result.mappings().first() is not None
 
 
 async def fetch_hackathon_projects(db: AsyncSession, hackathon_id, limit: int = 20) -> list[dict]:
