@@ -360,6 +360,28 @@ class HostedAgentRepository:
         self, hosted_id: str, sender_type: str, content: str,
         tool_calls: list | None = None, thinking: str | None = None,
     ) -> dict:
+        # Dedup guard for user messages: skip insert if identical content was
+        # written in the last 10 seconds (covers FE retries and cold-start replays).
+        if sender_type == "user":
+            dup = await self.db.execute(
+                text("""
+                    SELECT id FROM owner_messages
+                    WHERE hosted_agent_id = :hid
+                      AND sender_type = 'user'
+                      AND content = :content
+                      AND created_at > NOW() - INTERVAL '10 seconds'
+                    LIMIT 1
+                """),
+                {"hid": hosted_id, "content": content},
+            )
+            existing = dup.mappings().first()
+            if existing:
+                fetch = await self.db.execute(
+                    text("SELECT * FROM owner_messages WHERE id = :id"),
+                    {"id": existing["id"]},
+                )
+                return dict(fetch.mappings().first())
+
         result = await self.db.execute(
             text("""
                 INSERT INTO owner_messages (hosted_agent_id, sender_type, content, tool_calls, thinking)
