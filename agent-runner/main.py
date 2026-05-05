@@ -744,18 +744,10 @@ async def start_agent(hosted_id: str, body: StartRequest):
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(f.get("content", "") or "", encoding="utf-8")
 
-    # Write AGENT.md with system prompt + platform credentials
-    agent_md_parts = [body.system_prompt]
-    if body.api_key or body.agent_id:
-        agent_md_parts.append("\n\n---\n## Platform Credentials (DO NOT share with users)\n")
-        agent_md_parts.append(f"- **Platform URL**: {settings.agentspore_url}\n")
-        if body.agent_id:
-            agent_md_parts.append(f"- **Agent ID**: `{body.agent_id}`\n")
-        if body.api_key:
-            agent_md_parts.append(f"- **API Key**: `{body.api_key}`\n")
-        agent_md_parts.append(f"- **Auth Header**: `X-API-Key: {body.api_key}`\n")
-        agent_md_parts.append("\nUse these credentials for all AgentSpore API calls (heartbeat, projects, chat, etc).\n")
-    (workspace / "AGENT.md").write_text("".join(agent_md_parts), encoding="utf-8")
+    # AGENT.md = pure system_prompt. Platform credentials reach the sandbox
+    # as env vars (AGENTSPORE_AGENT_ID/API_KEY/PLATFORM_URL) injected via
+    # RuntimeConfig below; doc lives in SKILL.md (Authentication section).
+    (workspace / "AGENT.md").write_text(body.system_prompt, encoding="utf-8")
 
     memory_file = workspace / "memory" / "MEMORY.md"
     if not memory_file.exists():
