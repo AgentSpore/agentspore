@@ -185,19 +185,7 @@ class HostedAgentService:
         # /SKILL.md           — platform skill.md (SkillsToolset)
         # /memory/MEMORY.md   — persistent memory (MemoryToolset, branch "main")
         # /skills/            — custom skills directory (SkillsToolset)
-        agent_md = (
-            f"{system_prompt}\n\n"
-            "## Platform Credentials\n\n"
-            "Your credentials are injected as environment variables:\n"
-            "- `AGENTSPORE_AGENT_ID` — your agent ID\n"
-            "- `AGENTSPORE_API_KEY` — your API key\n"
-            "- `AGENTSPORE_PLATFORM_URL` — platform base URL\n\n"
-            "Use `X-API-Key: $AGENTSPORE_API_KEY` header for all API calls.\n\n"
-            "## Platform API\n\n"
-            "Study your SKILL.md file — it contains all available endpoints "
-            "for creating projects, pushing code, and interacting with the platform.\n"
-        )
-        await self.repo.upsert_file(hosted_id, "AGENT.md", agent_md, "config")
+        await self.repo.upsert_file(hosted_id, "AGENT.md", system_prompt, "config")
         await self.repo.upsert_file(hosted_id, "memory/MEMORY.md", "", "memory")
 
         # Auto-load platform skill.md
@@ -328,14 +316,6 @@ class HostedAgentService:
             if f["file_path"] == "AGENT.md":
                 content = (
                     f"{system_prompt}\n\n"
-                    "## Platform Credentials\n\n"
-                    "Your credentials are injected as environment variables:\n"
-                    "- `AGENTSPORE_AGENT_ID` — your agent ID\n"
-                    "- `AGENTSPORE_API_KEY` — your API key\n"
-                    "- `AGENTSPORE_PLATFORM_URL` — platform base URL\n\n"
-                    "Use `X-API-Key: $AGENTSPORE_API_KEY` header for all API calls.\n\n"
-                    "## Platform API\n\n"
-                    "Study your SKILL.md file for available endpoints.\n\n"
                     f"## Fork Info\n\nForked from **{source_name}** (@{source['agent_handle']})\n"
                 )
             elif f["file_path"] == "memory/MEMORY.md":
@@ -421,18 +401,9 @@ class HostedAgentService:
         if "model" in clean and not await self.openrouter.is_allowed(clean["model"]):
             raise HTTPException(400, "Model not available")
         if "system_prompt" in clean:
-            agent_md = (
-                f"{clean['system_prompt']}\n\n"
-                "## Platform Credentials\n\n"
-                "Your credentials are injected as environment variables:\n"
-                "- `AGENTSPORE_AGENT_ID` — your agent ID\n"
-                "- `AGENTSPORE_API_KEY` — your API key\n"
-                "- `AGENTSPORE_PLATFORM_URL` — platform base URL\n\n"
-                "Use `X-API-Key: $AGENTSPORE_API_KEY` header for all API calls.\n\n"
-                "## Platform API\n\n"
-                "Study your SKILL.md file for available endpoints.\n"
+            await self.repo.upsert_file(
+                hosted_id, "AGENT.md", clean["system_prompt"], "config"
             )
-            await self.repo.upsert_file(hosted_id, "AGENT.md", agent_md, "config")
         result = await self.repo.update(hosted_id, clean)
 
         # Auto-restart if running so new settings take effect
