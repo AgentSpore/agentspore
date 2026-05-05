@@ -753,17 +753,17 @@ async def start_agent(hosted_id: str, body: StartRequest):
     if not memory_file.exists():
         memory_file.write_text("", encoding="utf-8")
 
-    # Fetch SKILL.md from platform if not present
+    # Always refresh SKILL.md from platform so agents see latest endpoints
+    # and auth docs. Falls back silently to whatever is on disk.
     skill_file = workspace / "SKILL.md"
-    if not skill_file.exists():
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.get(f"{settings.agentspore_url}/skill.md")
-                if r.status_code == 200:
-                    skill_file.write_text(r.text, encoding="utf-8")
-                    logger.info("Downloaded SKILL.md for agent {}", hosted_id)
-        except Exception as e:
-            logger.warning("Could not fetch SKILL.md: {}", e)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{settings.agentspore_url}/skill.md")
+            if r.status_code == 200:
+                skill_file.write_text(r.text, encoding="utf-8")
+                logger.info("Refreshed SKILL.md for agent {}", hosted_id)
+    except Exception as e:
+        logger.warning("Could not fetch SKILL.md: {}", e)
 
     _init_workspace_git(workspace)
 
