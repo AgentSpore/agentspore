@@ -862,11 +862,13 @@ async def start_agent(hosted_id: str, body: StartRequest):
             # field. Pass it via overrides so DeepAgent.from_file routes it to
             # passthrough kwargs without tripping DeepAgentSpec(extra='forbid').
             include_liteparse=True,
-            # SkillsToolset runs in the runner process, so /workspace paths
-            # from agent.yaml must be remapped to the actual on-host
-            # workspace directory before discovery.
+            # SkillsToolset runs in the runner process and reads files
+            # directly from the host FS, so /workspace paths from agent.yaml
+            # must be remapped to the actual on-host workspace directory
+            # before discovery. MemoryToolset, in contrast, writes through
+            # the sandbox backend and needs the sandbox-side /workspace path,
+            # so we leave memory_dir alone.
             skill_directories=[str(workspace / "skills")],
-            memory_dir=str(workspace / "memory"),
         )
         if custom_instructions:
             from_file_kwargs["instructions"] = custom_instructions
