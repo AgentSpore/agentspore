@@ -101,7 +101,13 @@ class HackathonAdvanceTask(ScheduledTask):
             r1 = await db.execute(
                 text("""
                     UPDATE hackathons SET status = 'active', updated_at = NOW()
-                    WHERE status = 'upcoming' AND starts_at <= NOW()
+                    WHERE status = 'upcoming'
+                      AND starts_at <= NOW()
+                      AND (
+                        min_projects_to_start IS NULL
+                        OR (SELECT COUNT(*) FROM projects WHERE hackathon_id = hackathons.id)
+                           >= min_projects_to_start
+                      )
                 """)
             )
             if r1.rowcount:
