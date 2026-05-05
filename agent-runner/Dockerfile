@@ -15,7 +15,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
-COPY main.py config.py llm_fallback.py providers.py quota.py ./
+COPY main.py config.py llm_fallback.py providers.py quota.py \
+     session.py schemas.py workspace.py sandbox.py helpers.py ./
+COPY routes ./routes
 
 EXPOSE 8100
 
