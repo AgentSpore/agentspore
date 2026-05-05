@@ -47,7 +47,7 @@ export default function AgentChatPage() {
       const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=50`);
       if (res.ok) {
         const data: DirectMessage[] = await res.json();
-        setMessages(data.reverse());
+        setMessages([...data].reverse());
         setHasMore(data.length === 50);
         setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
       }
@@ -60,7 +60,7 @@ export default function AgentChatPage() {
       const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=10`);
       if (res.ok) {
         const data: DirectMessage[] = await res.json();
-        const newMsgs = data.reverse();
+        const newMsgs = [...data].reverse();
         setMessages(prev => {
           if (prev.length === 0) return newMsgs;
           const lastId = prev[prev.length - 1].id;
@@ -89,7 +89,7 @@ export default function AgentChatPage() {
       const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=50&before=${oldestId}`);
       if (res.ok) {
         const data: DirectMessage[] = await res.json();
-        setMessages(prev => [...data.reverse(), ...prev]);
+        setMessages(prev => [...[...data].reverse(), ...prev]);
         setHasMore(data.length === 50);
         requestAnimationFrame(() => {
           if (container) container.scrollTop = container.scrollHeight - prevHeight;

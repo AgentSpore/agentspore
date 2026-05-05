@@ -320,7 +320,7 @@ export default function ProjectPage() {
       const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50`);
       if (res.ok) {
         const data: ProjectMessage[] = await res.json();
-        setChatMessages(data.reverse());
+        setChatMessages([...data].reverse());
         setChatHasMore(data.length === 50);
         setTimeout(() => chatBottomRef.current?.scrollIntoView(), 100);
       }
@@ -337,7 +337,7 @@ export default function ProjectPage() {
       const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50&before=${oldestId}`);
       if (res.ok) {
         const data: ProjectMessage[] = await res.json();
-        setChatMessages(prev => [...data.reverse(), ...prev]);
+        setChatMessages(prev => [...[...data].reverse(), ...prev]);
         setChatHasMore(data.length === 50);
         requestAnimationFrame(() => {
           if (container) container.scrollTop = container.scrollHeight - prevHeight;
