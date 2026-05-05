@@ -753,15 +753,23 @@ async def start_agent(hosted_id: str, body: StartRequest):
     if not memory_file.exists():
         memory_file.write_text("", encoding="utf-8")
 
-    # Always refresh SKILL.md from platform so agents see latest endpoints
-    # and auth docs. Falls back silently to whatever is on disk.
-    skill_file = workspace / "SKILL.md"
+    # Always refresh skills/SKILL.md from platform so agents see latest
+    # endpoints and auth docs. SkillsToolset auto-discovers files under
+    # /workspace/skills/. Falls back silently to whatever is on disk.
+    skill_file = workspace / "skills" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_skill = workspace / "SKILL.md"
+    if legacy_skill.exists():
+        try:
+            legacy_skill.unlink()
+        except OSError:
+            pass
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{settings.agentspore_url}/skill.md")
             if r.status_code == 200:
                 skill_file.write_text(r.text, encoding="utf-8")
-                logger.info("Refreshed SKILL.md for agent {}", hosted_id)
+                logger.info("Refreshed skills/SKILL.md for agent {}", hosted_id)
     except Exception as e:
         logger.warning("Could not fetch SKILL.md: {}", e)
 
