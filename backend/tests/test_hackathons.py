@@ -236,6 +236,124 @@ class TestRegisterProjectAutoStart:
 
 
 # ---------------------------------------------------------------------------
+# Unit tests — HackathonAdvanceTask scheduler gating
+# ---------------------------------------------------------------------------
+
+class TestHackathonAdvanceTaskGating:
+    """Verify HackathonAdvanceTask respects min_projects_to_start."""
+
+    def _make_execute_mock(self, rowcount: int):
+        result = MagicMock()
+        result.rowcount = rowcount
+        result.mappings.return_value = iter([])
+        return result
+
+    @pytest.mark.asyncio
+    async def test_gated_hackathon_stays_upcoming_when_no_projects(self):
+        """Gated hackathon (min_projects_to_start set, 0 projects) stays upcoming after date passes."""
+        from app.core.background import HackathonAdvanceTask
+
+        r_upcoming = self._make_execute_mock(0)  # threshold not reached → no flip
+        r_voting = self._make_execute_mock(0)
+        r_voting_select = MagicMock()
+        r_voting_select.mappings.return_value = iter([])
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[r_upcoming, r_voting, r_voting_select])
+        db.commit = AsyncMock()
+        db.__aenter__ = AsyncMock(return_value=db)
+        db.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=db)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.core.background.async_session_maker", return_value=mock_session_cm):
+            task = HackathonAdvanceTask()
+            await task.run_once()
+
+        # First execute is the upcoming→active UPDATE; rowcount=0 means no flip occurred
+        first_call_sql = str(db.execute.call_args_list[0][0][0])
+        assert "upcoming" in first_call_sql
+        assert r_upcoming.rowcount == 0
+
+    @pytest.mark.asyncio
+    async def test_ungated_hackathon_flips_to_active_by_date(self):
+        """Ungated hackathon (min_projects_to_start IS NULL) flips active when starts_at passed."""
+        from app.core.background import HackathonAdvanceTask
+
+        r_upcoming = self._make_execute_mock(1)  # no gate → SQL matches → rowcount 1
+        r_voting = self._make_execute_mock(0)
+        r_voting_select = MagicMock()
+        r_voting_select.mappings.return_value = iter([])
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[r_upcoming, r_voting, r_voting_select])
+        db.commit = AsyncMock()
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=db)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.core.background.async_session_maker", return_value=mock_session_cm):
+            task = HackathonAdvanceTask()
+            await task.run_once()
+
+        assert r_upcoming.rowcount == 1
+
+    @pytest.mark.asyncio
+    async def test_gated_hackathon_flips_when_threshold_reached(self):
+        """Gated hackathon flips active when project count >= min_projects_to_start."""
+        from app.core.background import HackathonAdvanceTask
+
+        # DB evaluates subquery and returns rowcount=1 because threshold satisfied
+        r_upcoming = self._make_execute_mock(1)
+        r_voting = self._make_execute_mock(0)
+        r_voting_select = MagicMock()
+        r_voting_select.mappings.return_value = iter([])
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[r_upcoming, r_voting, r_voting_select])
+        db.commit = AsyncMock()
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=db)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.core.background.async_session_maker", return_value=mock_session_cm):
+            task = HackathonAdvanceTask()
+            await task.run_once()
+
+        assert r_upcoming.rowcount == 1
+
+    @pytest.mark.asyncio
+    async def test_sql_contains_min_projects_guard(self):
+        """The UPDATE SQL emitted by scheduler contains the min_projects_to_start guard."""
+        from app.core.background import HackathonAdvanceTask
+
+        r_upcoming = self._make_execute_mock(0)
+        r_voting = self._make_execute_mock(0)
+        r_voting_select = MagicMock()
+        r_voting_select.mappings.return_value = iter([])
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[r_upcoming, r_voting, r_voting_select])
+        db.commit = AsyncMock()
+
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=db)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("app.core.background.async_session_maker", return_value=mock_session_cm):
+            task = HackathonAdvanceTask()
+            await task.run_once()
+
+        first_sql = str(db.execute.call_args_list[0][0][0])
+        assert "min_projects_to_start" in first_sql
+        assert "SELECT COUNT(*)" in first_sql
+
+
+# ---------------------------------------------------------------------------
 # Unit tests — schemas
 # ---------------------------------------------------------------------------
 
