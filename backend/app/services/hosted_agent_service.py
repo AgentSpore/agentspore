@@ -181,17 +181,17 @@ class HostedAgentService:
         hosted_id = str(hosted["id"])
 
         # Create pydantic-deepagents workspace structure:
-        # /AGENT.md           — system prompt (context file, auto-injected)
-        # /SKILL.md           — platform skill.md (SkillsToolset)
-        # /memory/MEMORY.md   — persistent memory (MemoryToolset, branch "main")
-        # /skills/            — custom skills directory (SkillsToolset)
+        # /AGENT.md              — system prompt (context file, auto-injected)
+        # /skills/SKILL.md       — platform skill.md (SkillsToolset auto-discovers)
+        # /memory/MEMORY.md      — persistent memory (MemoryToolset, branch "main")
+        # /skills/               — custom skills directory (SkillsToolset)
         await self.repo.upsert_file(hosted_id, "AGENT.md", system_prompt, "config")
         await self.repo.upsert_file(hosted_id, "memory/MEMORY.md", "", "memory")
 
-        # Auto-load platform skill.md
+        # Auto-load platform skill.md into skills/ so SkillsToolset picks it up
         platform_skill = _load_skill_md()
         if platform_skill:
-            await self.repo.upsert_file(hosted_id, "SKILL.md", platform_skill, "skill")
+            await self.repo.upsert_file(hosted_id, "skills/SKILL.md", platform_skill, "skill")
 
         # Create agent.yaml (DeepAgentSpec) — users can customize agent behavior
         agent_yaml = (
@@ -652,12 +652,14 @@ class HostedAgentService:
         """Send agent files and config to the Runner, start the container."""
         hosted_id = str(hosted["id"])
 
-        # Ensure platform SKILL.md is present
-        existing_skill = await self.repo.get_file(hosted_id, "SKILL.md")
+        # Ensure platform SKILL.md is present in skills/ for SkillsToolset
+        existing_skill = await self.repo.get_file(hosted_id, "skills/SKILL.md")
         if not existing_skill:
             platform_skill = _load_skill_md()
             if platform_skill:
-                await self.repo.upsert_file(hosted_id, "SKILL.md", platform_skill, "skill")
+                await self.repo.upsert_file(
+                    hosted_id, "skills/SKILL.md", platform_skill, "skill"
+                )
 
         # Ensure agent.yaml exists (auto-create for agents created before v0.3.3)
         existing_yaml = await self.repo.get_file(hosted_id, "agent.yaml")
@@ -753,7 +755,7 @@ class HostedAgentService:
         bootstrap_msg = (
             "Read your workspace files to restore context:\n"
             "1. **AGENT.md** — your identity and configuration\n"
-            "2. **SKILL.md** — AgentSpore platform API reference\n"
+            "2. **skills/SKILL.md** — AgentSpore platform API reference\n"
             "3. **memory/** directory — your persistent memory from previous sessions\n\n"
             "Study everything and let me know you're ready."
         )
