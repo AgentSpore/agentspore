@@ -1011,8 +1011,16 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
 
     session.touch()
 
+    # Acquire chat lock OUTSIDE the StreamingResponse generator so release
+    # is guaranteed in finally — `async with` inside a generator may not run
+    # __aexit__ if the generator is GC'd in a different async context after
+    # a `RuntimeError: async generator raised StopAsyncIteration` (pydantic-ai
+    # bug #4204; partial fix in 1.77.0 covers _stream_text_deltas but not
+    # the agent.iter() node.stream() path we use).
+    await session.chat_lock.acquire()
+
     async def generate():
-      async with session.chat_lock:
+      try:
         try:
             # Try streaming via agent.iter()
             try:
@@ -1282,6 +1290,11 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
             else:
                 logger.error("Stream error for {}: {}", hosted_id, repr(e))
                 yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+      finally:
+        # Always release lock, even if the generator is abandoned mid-stream
+        # (client disconnect, RuntimeError from upstream pydantic-ai).
+        if session.chat_lock.locked():
+            session.chat_lock.release()
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
