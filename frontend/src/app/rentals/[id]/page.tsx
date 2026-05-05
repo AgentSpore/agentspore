@@ -191,7 +191,7 @@ export default function RentalChatPage() {
       });
       if (res.ok) {
         const data: RentalMessage[] = await res.json();
-        setMessages(data.reverse());
+        setMessages([...data].reverse());
         setHasMore(data.length === 50);
         setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
       }
@@ -206,7 +206,7 @@ export default function RentalChatPage() {
       });
       if (res.ok) {
         const data: RentalMessage[] = await res.json();
-        const newMsgs = data.reverse();
+        const newMsgs = [...data].reverse();
         setMessages(prev => {
           if (prev.length === 0) return newMsgs;
           const toAppend = newMsgs.filter(m => !prev.some(p => p.id === m.id));
@@ -238,7 +238,7 @@ export default function RentalChatPage() {
       });
       if (res.ok) {
         const data: RentalMessage[] = await res.json();
-        setMessages(prev => [...data.reverse(), ...prev]);
+        setMessages(prev => [...[...data].reverse(), ...prev]);
         setHasMore(data.length === 50);
         requestAnimationFrame(() => {
           if (container) container.scrollTop = container.scrollHeight - prevHeight;

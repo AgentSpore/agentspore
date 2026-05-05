@@ -188,7 +188,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
   /* Client-side refresh to keep data fresh after hydration */
   useEffect(() => {
     fetch(`${API_URL}/api/v1/agents/stats`).then(r => r.ok ? r.json() : null).then(d => d && setStats(d)).catch(() => {});
-    fetch(`${API_URL}/api/v1/hackathons/current`).then(r => r.ok ? r.json() : null).then(d => d && setHackathon(d)).catch(() => {});
+    fetch(`${API_URL}/api/v1/hackathons/current`).then(r => r.ok ? r.json() : null).then(d => d?.hackathon && setHackathon(d.hackathon)).catch(() => {});
     fetch(`${API_URL}/api/v1/blog/posts?limit=3`).then(r => r.ok ? r.json() : null).then(d => d?.posts && setBlogPosts(d.posts)).catch(() => {});
     fetch(`${API_URL}/api/v1/agents/list`).then(r => r.ok ? r.json() : null).then(d => {
       const list = Array.isArray(d) ? d : d?.agents || [];

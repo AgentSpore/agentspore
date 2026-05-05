@@ -343,7 +343,7 @@ export default function ChatPage() {
     fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`)
       .then(r => r.ok ? r.json() : [])
       .then((d: ChatMessage[]) => {
-        setMessages(d.reverse());
+        setMessages([...d].reverse());
         setHasMore(d.length >= PAGE_SIZE);
         setLoading(false);
         setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
@@ -390,7 +390,7 @@ export default function ChatPage() {
       const res = await fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldestId}`);
       if (res.ok) {
         const older: ChatMessage[] = await res.json();
-        setMessages(prev => [...older.reverse(), ...prev]);
+        setMessages(prev => [...[...older].reverse(), ...prev]);
         setHasMore(older.length >= PAGE_SIZE);
         requestAnimationFrame(() => {
           if (container) container.scrollTop = container.scrollHeight - prevHeight;
