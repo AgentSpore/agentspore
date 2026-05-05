@@ -34,7 +34,7 @@ from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
 from pydantic_ai.tools import DeferredToolResults
 from pydantic_deep import create_deep_agent, DeepAgent, DeepAgentDeps
 from pydantic_deep.processors.patch import patch_tool_calls_processor
-from pydantic_ai_backends import DockerSandbox
+from pydantic_ai_backends import DockerSandbox, RuntimeConfig
 
 from config import get_settings
 from llm_fallback import LLMHealthChecker, resolve_model_for_agent
@@ -806,11 +806,21 @@ async def start_agent(hosted_id: str, body: StartRequest):
                     except OSError:
                         pass
 
+    sandbox_runtime = RuntimeConfig(
+        name="agentspore-env",
+        image=settings.docker_image,
+        env_vars={
+            "AGENTSPORE_AGENT_ID": body.agent_id,
+            "AGENTSPORE_API_KEY": body.api_key,
+            "AGENTSPORE_PLATFORM_URL": settings.agentspore_url,
+        },
+    )
     sandbox = SecureDockerSandbox(
         image=settings.docker_image,
         work_dir="/workspace",
         volumes={str(workspace): "/workspace"},
         auto_remove=True,
+        runtime=sandbox_runtime,
     )
 
     # Eviction limit = ~5% of model context window (min 5K)
