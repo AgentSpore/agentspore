@@ -1110,7 +1110,12 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                     "tool_name": part.tool_name,
                                     "args": args,
                                 }) + "\n"
-                                all_tool_calls.append({"tool": part.tool_name, "args": args, "status": "done"})
+                                all_tool_calls.append({
+                                    "tool": part.tool_name,
+                                    "args": args,
+                                    "status": "done",
+                                    "tool_call_id": part.tool_call_id,
+                                })
 
                 result = run.result
                 session.message_history = sanitize_history(result.all_messages())[-100:]
@@ -1133,7 +1138,12 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 continue
                         approvals[tc.tool_call_id] = True
                         yield json.dumps({"type": "tool_call", "tool_name": tc.tool_name, "args": args}) + "\n"
-                        all_tool_calls.append({"tool": tc.tool_name, "args": args, "status": "done"})
+                        all_tool_calls.append({
+                            "tool": tc.tool_name,
+                            "args": args,
+                            "status": "done",
+                            "tool_call_id": tc.tool_call_id,
+                        })
                     logger.info("Auto-approving {} deferred tools ({} blocked)", sum(v for v in approvals.values()), sum(1 for v in approvals.values() if not v))
                     result = await session.agent.run(
                         deferred_tool_results=DeferredToolResults(approvals=approvals),
@@ -1145,28 +1155,24 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                     # Backfill tool results from all_messages into all_tool_calls.
                     # new_messages() on a deferred run only contains ToolReturnPart + final
                     # text — no ToolCallPart — so _extract_response would yield extra_tools=[].
-                    # Scan all_messages() for ToolReturnPart and attach result to the
-                    # matching all_tool_calls entry by tool_name.
+                    # Match by tool_call_id (unique per call) so that multiple calls of the
+                    # same tool in one turn (e.g. several execute() invocations) each receive
+                    # their own result instead of all sharing the first/last one.
+                    results_by_id: dict[str, str] = {}
                     for msg in result.all_messages():
                         if not hasattr(msg, "parts"):
                             continue
                         for part in msg.parts:
                             if isinstance(part, ToolReturnPart):
-                                result_text = str(part.content)[:500]
-                                # Patch ALL matching entries (streaming may have added a
-                                # duplicate before the deferred loop entry; both need result
-                                # so the dedup in final_tools always picks a populated entry).
-                                for tc in all_tool_calls:
-                                    if tc.get("tool") == part.tool_name and "result" not in tc:
-                                        tc["result"] = result_text
+                                results_by_id[part.tool_call_id] = str(part.content)[:500]
+                    for tc in all_tool_calls:
+                        tcid = tc.get("tool_call_id")
+                        if tcid and tcid in results_by_id and "result" not in tc:
+                            tc["result"] = results_by_id[tcid]
                     # Emit tool_result events with actual output now that results are available.
                     for tc in deferred.approvals:
                         if approvals.get(tc.tool_call_id):
-                            # Find matched result for this tool
-                            output = next(
-                                (t.get("result", "") for t in reversed(all_tool_calls) if t.get("tool") == tc.tool_name and "result" in t),
-                                "",
-                            )
+                            output = results_by_id.get(tc.tool_call_id, "")
                             yield json.dumps({"type": "tool_result", "tool_name": tc.tool_name, "output": output}) + "\n"
                     max_approvals -= 1
 
