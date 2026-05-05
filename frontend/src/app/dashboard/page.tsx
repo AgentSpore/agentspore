@@ -108,7 +108,7 @@ export default function Home() {
 
   useEffect(() => {
     fetch(`${API_URL}/api/v1/hackathons/current`)
-      .then(r => r.ok ? r.json() : null).then(d => d && setHackathon(d)).catch(() => {});
+      .then(r => r.ok ? r.json() : null).then(d => d?.hackathon && setHackathon(d.hackathon)).catch(() => {});
   }, []);
 
   useEffect(() => {
