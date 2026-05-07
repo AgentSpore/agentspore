@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { API_URL, HostedAgentListItem, HOSTED_STATUS, timeAgo } from "@/lib/api";
+import { API_URL, ExternalAgentItem, HostedAgentListItem, HOSTED_STATUS, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 
 function DotGrid() {
@@ -32,14 +32,22 @@ function modelShort(id: string): string {
 }
 
 export default function HostedAgentsPage() {
-  const [agents, setAgents] = useState<HostedAgentListItem[]>([]);
+  const [hostedAgents, setHostedAgents] = useState<HostedAgentListItem[]>([]);
+  const [externalAgents, setExternalAgents] = useState<ExternalAgentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/v1/hosted-agents`, { headers: authHeaders() })
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((d: HostedAgentListItem[]) => { setAgents(d); setLoading(false); })
+    const headers = authHeaders();
+    Promise.all([
+      fetch(`${API_URL}/api/v1/hosted-agents`, { headers }).then(r => r.ok ? r.json() as Promise<HostedAgentListItem[]> : []),
+      fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers }).then(r => r.ok ? r.json() as Promise<ExternalAgentItem[]> : []),
+    ])
+      .then(([hosted, external]) => {
+        setHostedAgents(hosted);
+        setExternalAgents(external);
+        setLoading(false);
+      })
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : "Failed to load");
         setLoading(false);
@@ -77,7 +85,7 @@ export default function HostedAgentsPage() {
           </div>
         )}
 
-        {!loading && !error && agents.length === 0 && (
+        {!loading && !error && hostedAgents.length === 0 && externalAgents.length === 0 && (
           <div className="space-y-8">
             {/* Hero */}
             <div className="text-center py-10 bg-white/[0.01] border border-neutral-800/50 rounded-xl">
@@ -133,9 +141,9 @@ export default function HostedAgentsPage() {
           </div>
         )}
 
-        {!loading && agents.length > 0 && (
+        {!loading && (hostedAgents.length > 0 || externalAgents.length > 0) && (
           <div className="grid gap-3">
-            {agents.map((a, i) => {
+            {hostedAgents.map((a, i) => {
               const st = HOSTED_STATUS[a.status] || HOSTED_STATUS.stopped;
               return (
                 <Link key={a.id} href={`/hosted-agents/${a.id}`}
@@ -143,7 +151,6 @@ export default function HostedAgentsPage() {
                   style={{ animationDelay: `${i * 60}ms` }}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-                      {/* Avatar */}
                       <div className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-mono shrink-0"
                         style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(34,211,238,0.1))", border: "1px solid rgba(139,92,246,0.2)" }}>
                         {a.agent_name.charAt(0).toUpperCase()}
@@ -152,6 +159,7 @@ export default function HostedAgentsPage() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-mono text-white group-hover:text-violet-300 transition-colors truncate">{a.agent_name}</span>
                           <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">@{a.agent_handle}</span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-violet-400/10 text-violet-400 border-violet-400/20">hosted</span>
                         </div>
                         <div className="flex items-center gap-2 sm:gap-3 mt-1 flex-wrap">
                           <span className="text-[10px] font-mono text-neutral-500 truncate max-w-[160px]">{modelShort(a.model)}</span>
@@ -177,6 +185,43 @@ export default function HostedAgentsPage() {
                 </Link>
               );
             })}
+            {externalAgents.map((a, i) => (
+              <Link key={a.id} href={`/agents/${a.id}`}
+                className="group block bg-white/[0.02] border border-neutral-800/50 rounded-xl p-4 sm:p-5 hover:border-cyan-500/20 hover:bg-white/[0.03] transition-all"
+                style={{ animationDelay: `${(hostedAgents.length + i) * 60}ms` }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-mono shrink-0"
+                      style={{ background: "linear-gradient(135deg, rgba(34,211,238,0.1), rgba(139,92,246,0.08))", border: "1px solid rgba(34,211,238,0.2)" }}>
+                      {a.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-mono text-white group-hover:text-cyan-300 transition-colors truncate">{a.name}</span>
+                        <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">@{a.handle}</span>
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-cyan-400/10 text-cyan-400 border-cyan-400/20">external</span>
+                      </div>
+                      <div className="flex items-center gap-2 sm:gap-3 mt-1 flex-wrap">
+                        <span className="text-[10px] font-mono text-neutral-500 truncate max-w-[160px]">{a.model_provider}/{a.model_name}</span>
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border sm:hidden ${a.is_active ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/50 text-neutral-400 border-neutral-600/30"}`}>
+                          {a.is_active ? "online" : "offline"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+                    <span className="text-[10px] font-mono text-violet-400 hidden sm:inline">{a.karma} karma</span>
+                    <span className={`text-[10px] font-mono px-2.5 py-1 rounded-full border hidden sm:inline ${a.is_active ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/50 text-neutral-400 border-neutral-600/30"}`}>
+                      {a.is_active ? "online" : "offline"}
+                    </span>
+                    <span className="text-[10px] font-mono text-neutral-700 hidden md:inline">{a.created_at ? timeAgo(a.created_at) : ""}</span>
+                    <svg className="w-4 h-4 text-neutral-700 group-hover:text-cyan-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                    </svg>
+                  </div>
+                </div>
+              </Link>
+            ))}
           </div>
         )}
       </div>

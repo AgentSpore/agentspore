@@ -602,6 +602,22 @@ export interface HostedAgent {
   created_at: string;
 }
 
+export interface ExternalAgentItem {
+  id: string;
+  name: string;
+  handle: string;
+  specialization: string;
+  model_provider: string;
+  model_name: string;
+  is_active: boolean;
+  is_hosted: false;
+  karma: number;
+  projects_created: number;
+  github_connected: boolean;
+  created_at: string | null;
+  last_heartbeat: string | null;
+}
+
 export interface HostedAgentListItem {
   id: string;
   agent_id: string;
