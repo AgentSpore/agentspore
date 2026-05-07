@@ -1185,6 +1185,18 @@ function FileTree({ agentId, selectedFile, onSelect }: {
       }
     }
 
+    // Sort each folder's children: directories first, then files, alphabetical within each group
+    for (const [, kids] of nodeChildren.entries()) {
+      kids.sort((a, b) => {
+        const aIsFile = a.startsWith("file:");
+        const bIsFile = b.startsWith("file:");
+        if (aIsFile !== bIsFile) return aIsFile ? 1 : -1;
+        const an = nodeData.get(a)?.name ?? "";
+        const bn = nodeData.get(b)?.name ?? "";
+        return an.localeCompare(bn);
+      });
+    }
+
     return {
       nodeMap: { data: nodeData, children: nodeChildren },
       rootChildren: nodeChildren.get("__root__") ?? [],
@@ -1917,6 +1929,48 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
   const stickyRef = useRef(true);
   const [hasBacklog, setHasBacklog] = useState(false);
 
+  // Chat drag-drop upload
+  const [chatDragOver, setChatDragOver] = useState(false);
+  const [chatUploadMsg, setChatUploadMsg] = useState<string | null>(null);
+  const chatUploadMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const TEXT_EXTS = new Set([".md", ".txt", ".py", ".js", ".ts", ".tsx", ".json", ".yaml", ".yml", ".csv", ".log", ".sh", ".sql"]);
+
+  const chatUploadFiles = async (fileList: FileList) => {
+    if (fileList.length === 0) return;
+    const files = Array.from(fileList);
+    let uploaded = 0;
+    const binaryNames: string[] = [];
+
+    for (const file of files) {
+      const ext = "." + (file.name.split(".").pop()?.toLowerCase() ?? "");
+      const isText = file.type.startsWith("text/") || TEXT_EXTS.has(ext);
+      if (!isText) { binaryNames.push(file.name); continue; }
+
+      try {
+        const content = await file.text();
+        await fetch(`/api/v1/hosted-agents/${agentId}/files`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file_path: file.name, content, file_type: "text" }),
+        });
+        uploaded++;
+      } catch {
+        binaryNames.push(file.name + " (upload error)");
+      }
+    }
+
+    if (chatUploadMsgTimerRef.current) clearTimeout(chatUploadMsgTimerRef.current);
+    if (binaryNames.length > 0 && uploaded === 0) {
+      setChatUploadMsg("Binary files not supported yet");
+    } else if (binaryNames.length > 0) {
+      setChatUploadMsg(`Uploaded ${uploaded} file${uploaded !== 1 ? "s" : ""} · ${binaryNames.length} skipped (binary)`);
+    } else {
+      setChatUploadMsg(`Uploaded ${uploaded} file${uploaded !== 1 ? "s" : ""}`);
+    }
+    chatUploadMsgTimerRef.current = setTimeout(() => setChatUploadMsg(null), 3000);
+  };
+
   // Throttled flush for stream deltas (avoid per-token re-render jitter)
   const streamFlushRaf = useRef<number | null>(null);
   const scheduleStreamFlush = () => {
@@ -2337,7 +2391,30 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
   const isStreaming = sending && (streamText || streamThinking || streamTools.length > 0);
 
   return (
-    <div className="h-full flex flex-col bg-white/[0.02] border border-neutral-800/50 rounded-xl overflow-hidden relative">
+    <div
+      className={`h-full flex flex-col bg-white/[0.02] border rounded-xl overflow-hidden relative transition-colors ${chatDragOver ? "border-violet-500/40 bg-violet-500/[0.04]" : "border-neutral-800/50"}`}
+      onDragOver={e => { e.preventDefault(); e.stopPropagation(); setChatDragOver(true); }}
+      onDragLeave={e => { e.preventDefault(); e.stopPropagation(); setChatDragOver(false); }}
+      onDrop={e => { e.preventDefault(); e.stopPropagation(); setChatDragOver(false); void chatUploadFiles(e.dataTransfer.files); }}>
+
+      {/* Chat upload toast */}
+      {chatUploadMsg && (
+        <div className="absolute top-10 right-3 z-30 px-3 py-1.5 text-[11px] font-mono bg-black/80 text-violet-200 border border-violet-400/30 rounded-lg shadow-lg backdrop-blur-sm">
+          {chatUploadMsg}
+        </div>
+      )}
+
+      {/* Chat drag overlay */}
+      {chatDragOver && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm rounded-xl">
+          <svg className="w-8 h-8 text-violet-400/80 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+          </svg>
+          <p className="text-xs font-mono text-violet-300/90">Drop files to upload</p>
+          <p className="text-[9px] font-mono text-neutral-500 mt-1">Text files only</p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="px-4 py-2 border-b border-neutral-800/40 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
