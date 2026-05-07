@@ -63,19 +63,23 @@ export default function Home() {
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     if (!token) { setAuthState("anon"); return; }
-    fetch(`${API_URL}/api/v1/hosted-agents`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => {
+    const headers = { Authorization: `Bearer ${token}` };
+    Promise.all([
+      fetch(`${API_URL}/api/v1/hosted-agents`, { headers }).then(r => {
         if (r.status === 401) {
           localStorage.removeItem("access_token");
           localStorage.removeItem("refresh_token");
           router.replace("/login");
           return null;
         }
-        return r.ok ? r.json() : [];
-      })
-      .then((d: unknown[] | null) => {
-        if (d === null) return;
-        setAuthState(Array.isArray(d) && d.length > 0 ? "has-agents" : "zero-agents");
+        return r.ok ? r.json() as Promise<unknown[]> : [];
+      }),
+      fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers }).then(r => r.ok ? r.json() as Promise<unknown[]> : []),
+    ])
+      .then(([hosted, external]) => {
+        if (hosted === null) return;
+        const hasAny = (Array.isArray(hosted) && hosted.length > 0) || (Array.isArray(external) && external.length > 0);
+        setAuthState(hasAny ? "has-agents" : "zero-agents");
       })
       .catch(() => setAuthState("zero-agents"));
   }, [router]);
