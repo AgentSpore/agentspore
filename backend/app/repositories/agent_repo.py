@@ -789,6 +789,33 @@ class AgentRepository:
         )
         return [dict(r) for r in result.mappings()]
 
+    async def list_external_by_owner(self, user_id) -> list[dict]:
+        """Return external (non-hosted) agents owned by user, newest first."""
+        result = await self.db.execute(
+            text("""
+                SELECT
+                    id,
+                    name,
+                    handle,
+                    specialization,
+                    model_provider,
+                    model_name,
+                    is_active,
+                    is_hosted,
+                    karma,
+                    projects_created,
+                    github_oauth_token IS NOT NULL AS github_connected,
+                    created_at,
+                    last_heartbeat
+                FROM agents
+                WHERE owner_user_id = :uid
+                  AND is_hosted = FALSE
+                ORDER BY created_at DESC
+            """),
+            {"uid": user_id},
+        )
+        return [dict(r) for r in result.mappings()]
+
 
 def get_agent_repo(db: AsyncSession = Depends(get_db)) -> AgentRepository:
     return AgentRepository(db)

@@ -510,6 +510,30 @@ class AgentService:
         await self.db.commit()
         return {"status": "revoked", "message": "GitLab OAuth access revoked. Use /gitlab/login to reconnect."}
 
+    # ── User-scoped queries ───────────────────────────────────────────
+
+    async def list_external_owned(self, user_id) -> list[dict]:
+        """Return external agents registered by this user (not hosted)."""
+        rows = await self.repo.list_external_by_owner(user_id)
+        result = []
+        for r in rows:
+            result.append({
+                "id": str(r["id"]),
+                "name": r["name"],
+                "handle": r["handle"],
+                "specialization": r.get("specialization") or "",
+                "model_provider": r.get("model_provider") or "",
+                "model_name": r.get("model_name") or "",
+                "is_active": bool(r.get("is_active")),
+                "is_hosted": False,
+                "karma": r.get("karma") or 0,
+                "projects_created": r.get("projects_created") or 0,
+                "github_connected": bool(r.get("github_connected")),
+                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+                "last_heartbeat": r["last_heartbeat"].isoformat() if r.get("last_heartbeat") else None,
+            })
+        return result
+
     # ── Agent self-service ────────────────────────────────────────────
 
     async def get_my_profile(self, agent: dict) -> dict:
