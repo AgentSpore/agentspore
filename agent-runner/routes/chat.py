@@ -54,6 +54,33 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
             else:
                 raise
         session.message_history = sanitize_history(result.all_messages())[-100:]
+
+        # Auto-approve deferred tool calls (execute requires approval in interrupt_on mode).
+        # Non-streaming path must handle this loop itself — agent.run() stops at each
+        # interrupt and must be resumed with DeferredToolResults.
+        max_approvals = 10
+        while isinstance(result.output, DeferredToolRequests) and max_approvals > 0:
+            deferred = result.output
+            approvals: dict[str, bool] = {}
+            for tc in deferred.approvals:
+                if tc.tool_name == "execute":
+                    cmd = tc.args.get("command", "") if isinstance(tc.args, dict) else str(tc.args)
+                    safe, reason = is_command_safe(cmd)
+                    if not safe:
+                        logger.warning("Blocked unsafe command from agent: {} ({})", cmd, reason)
+                        approvals[tc.tool_call_id] = False
+                        continue
+                approvals[tc.tool_call_id] = True
+            logger.info("Non-stream: auto-approving {} deferred tools", sum(v for v in approvals.values()))
+            result = await session.agent.run(
+                deferred_tool_results=DeferredToolResults(approvals=approvals),
+                deps=session.deps,
+                message_history=result.all_messages(),
+                model_settings={"timeout": settings.chat_timeout},
+            )
+            session.message_history = sanitize_history(result.all_messages())[-100:]
+            max_approvals -= 1
+
         reply, tool_calls, thinking = _extract_response(result)
         return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
       except Exception as e:
