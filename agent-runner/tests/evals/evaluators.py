@@ -5,10 +5,29 @@ evaluator inspects a single dimension of behavior.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+KNOWN_ENDPOINTS: frozenset[str] = frozenset(
+    {
+        "/api/v1/public/agents",
+        "/api/v1/agents/stats",
+        "/api/v1/blog/posts",
+        "/api/v1/agents/register",
+        "/api/v1/agents/heartbeat",
+        "/api/v1/agents/projects",
+        "/api/v1/chat/message",
+        "/api/v1/webhooks/github",
+        "/health",
+    }
+)
+
+# Matches any /api/v1/... path fragment in a shell command.
+_ENDPOINT_RE: re.Pattern[str] = re.compile(r"/(?:api/v1/[^\s\"'?#]+|health)")
 
 
 @dataclass
@@ -22,6 +41,7 @@ class AgentRun:
     response: str
     tool_calls: list[ToolCall] = field(default_factory=list)
     error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -73,7 +93,7 @@ class WriteFileBeforeCurlPost(Evaluator[Any, AgentRun]):
             if "curl" not in cmd or " -d " not in cmd:
                 continue
             if "-d @" not in cmd:
-                return False  # inline JSON → anti-pattern
+                return False  # inline JSON -> anti-pattern
             ref = cmd.split("-d @", 1)[1].split()[0].strip("\"'")
             if ref not in written:
                 return False
@@ -103,10 +123,97 @@ class HitsExpectedEndpoint(Evaluator[Any, AgentRun]):
     endpoint: str = ""
 
     def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
-        target = self.endpoint or (ctx.inputs.get("expected_endpoint") if isinstance(ctx.inputs, dict) else "")
+        target = self.endpoint or (
+            ctx.inputs.get("expected_endpoint") if isinstance(ctx.inputs, dict) else ""
+        )
         if not target:
             return True
         for tc in ctx.output.tool_calls:
             if tc.name == "execute" and target in tc.args.get("command", ""):
                 return True
         return False
+
+
+@dataclass
+class OnlyKnownEndpoints(Evaluator[Any, AgentRun]):
+    """Agent only hits endpoints from an explicit allowlist.
+
+    Catches wrong-endpoint bugs (e.g. /api/v1/public/stats 404 instead of
+    /api/v1/agents/stats). The allowlist is the platform's stable surface.
+    """
+
+    allowlist: frozenset[str] = field(default_factory=lambda: KNOWN_ENDPOINTS)
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        for tc in ctx.output.tool_calls:
+            if tc.name != "execute":
+                continue
+            cmd = tc.args.get("command", "")
+            for match in _ENDPOINT_RE.findall(cmd):
+                # Normalize: strip query string fragment that _ENDPOINT_RE may capture.
+                path = match.rstrip("/ ")
+                if path not in self.allowlist:
+                    return False
+        return True
+
+
+@dataclass
+class PostsBlogPost(Evaluator[Any, AgentRun]):
+    """Agent must issue at least one POST to /api/v1/blog/posts.
+
+    Catches workflows that fetch data but never publish (stops mid-flow).
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        for tc in ctx.output.tool_calls:
+            if tc.name != "execute":
+                continue
+            cmd = tc.args.get("command", "")
+            if "-X POST" in cmd and "/api/v1/blog/posts" in cmd:
+                return True
+        return False
+
+
+@dataclass
+class CostUnder(Evaluator[Any, AgentRun]):
+    """Total token cost stays below a budget ceiling (in USD).
+
+    Uses ctx.metrics if available; passes vacuously when metrics absent
+    (FunctionModel runs have zero cost). Set ``max_usd`` to the per-run budget.
+    """
+
+    max_usd: float = 0.01
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        metrics = getattr(ctx, "metrics", None)
+        if metrics is None:
+            return True
+        cost = getattr(metrics, "cost", None)
+        if cost is None:
+            return True
+        return float(cost) <= self.max_usd
+
+
+@dataclass
+class NoHallucinatedNumbers(Evaluator[Any, AgentRun]):
+    """Numbers appearing in the blog post content come from the API response.
+
+    Stub implementation: checks that any integer found in the final response
+    also appears in the ``expected_numbers`` metadata list supplied by the case.
+    When ``expected_numbers`` is absent the check passes vacuously.
+
+    For real-LLM runs, populate ``expected_numbers`` from the mock API fixture
+    or by parsing the stub tool return value.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        expected: list[int] | None = (
+            ctx.inputs.get("expected_numbers") if isinstance(ctx.inputs, dict) else None
+        )
+        if not expected:
+            return True
+        response_text = ctx.output.response or ""
+        found = {int(m) for m in re.findall(r"\b\d+\b", response_text)}
+        allowed = set(expected)
+        rogue = found - allowed
+        return len(rogue) == 0
