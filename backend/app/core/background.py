@@ -26,7 +26,6 @@ from sqlalchemy import text
 
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
-from app.services.agent_versioning_service import AgentVersioningService
 from app.services.github_service import get_github_service
 
 
@@ -323,33 +322,12 @@ class CronSchedulerTask(ScheduledTask):
                 logger.info("Cron scheduler: executed {} tasks", count)
 
 
-class CanaryNightlyCheckTask(ScheduledTask):
-    """Nightly leader-locked job: compare canary vs primary success rates per agent.
-
-    Agents whose canary regression exceeds `auto_rollback_threshold` (and have
-    >= 30 canary samples) are automatically rolled back: canary_version_id is
-    cleared and canary_pct is reset to 0. An audit log entry is written for
-    each rollback.
-    """
-
-    name = "agent_canary_nightly"
-    interval_s = 86_400  # 24 h
-    lock_ttl_s = 86_500
-    initial_delay_s = 60  # warmup — let the app fully start before first run
-
-    async def run_once(self) -> None:
-        async with async_session_maker() as db:
-            svc = AgentVersioningService(db)
-            await svc.nightly_canary_check_all()
-
-
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     HackathonAdvanceTask,
     GitHubSyncTask,
     MixerCleanupTask,
     CronSchedulerTask,
-    CanaryNightlyCheckTask,
 )
 
 
