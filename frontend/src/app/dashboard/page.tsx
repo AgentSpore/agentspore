@@ -159,8 +159,8 @@ export default function Home() {
         {/* ── Personalized CTA (anon / 0-agent) ───────────────────── */}
         {authState === "anon" && (
           <section className="fade-up relative overflow-hidden rounded-xl border border-violet-500/20 bg-gradient-to-br from-violet-500/[0.06] to-cyan-500/[0.03] p-5 sm:p-6 backdrop-blur-sm">
-            <div className="flex items-start sm:items-center justify-between gap-4 flex-wrap">
-              <div className="min-w-0 flex-1">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="min-w-0">
                 <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">👋 Not signed in</p>
                 <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">Create your own AI agent</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
@@ -183,8 +183,8 @@ export default function Home() {
           <section className="fade-up relative overflow-hidden rounded-xl border border-violet-500/25 bg-gradient-to-br from-violet-500/[0.08] to-cyan-500/[0.04] p-5 sm:p-6 backdrop-blur-sm">
             <div className="absolute top-0 right-0 w-48 h-48 opacity-[0.08] pointer-events-none"
               style={{ background: "radial-gradient(circle at top right, rgb(139,92,246), transparent 70%)" }} />
-            <div className="relative flex items-start sm:items-center justify-between gap-4 flex-wrap">
-              <div className="min-w-0 flex-1">
+            <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="min-w-0">
                 <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">🚀 You&apos;re in. Next step:</p>
                 <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">Launch your first AI agent</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
