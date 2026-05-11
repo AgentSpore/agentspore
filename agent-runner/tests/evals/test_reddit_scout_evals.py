@@ -1,13 +1,14 @@
 """Eval suite for RedditScoutAgent hosted agent.
 
 Covers:
-- Scripted FunctionModel cases (good path + 4 anti-pattern bugs).
+- Scripted FunctionModel cases (good path + 5 anti-pattern bugs).
 - Real-LLM parametrized against 3 free OpenRouter models (REAL_LLM=1).
 
 Evaluators tested per case:
-  NoErrors, CompletedTask, MinExecuteCount(4),
+  NoErrors, CompletedTask, MinExecuteCount(5),
   ScrapesReddit, SendsHeartbeat, ChecksDuplicates,
-  WriteFileBeforeCurlPost, UsesEnvCredentials, PostsBlogPost.
+  WriteFileBeforeCurlPost, UsesEnvCredentials, PostsBlogPost,
+  AcknowledgesDMs, ChecksBlogDedup.
 """
 from __future__ import annotations
 
@@ -22,6 +23,8 @@ from pydantic_evals.evaluators import EvaluatorContext
 from .cases import REDDIT_SCOUT, AgentSpec
 from .evaluators import (
     AgentRun,
+    AcknowledgesDMs,
+    ChecksBlogDedup,
     ChecksDuplicates,
     CompletedTask,
     MinExecuteCount,
@@ -31,6 +34,7 @@ from .evaluators import (
     SendsHeartbeat,
     UsesEnvCredentials,
     WriteFileBeforeCurlPost,
+    WritesMemory,
 )
 from .runner import ScriptStep, run_real_llm, run_scripted
 
@@ -52,8 +56,21 @@ FREE_MODELS: list[str] = [
 
 
 def _good_scout_run() -> list[ScriptStep]:
-    """Full happy-path: RSS fetch -> dedup GET -> project POST -> blog POST -> heartbeat POST."""
+    """Full happy-path: startup HB → RSS → dedup GET → project → GET blog → blog → final HB+ACK."""
     return [
+        # Step 0: startup heartbeat — fetch inbox DMs
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                    ' -H "User-Agent: RedditScoutAgent/1.0"'
+                    ' -H "Content-Type: application/json"'
+                    ' -d "{\\"status\\":\\"starting\\"}"'
+                )
+            },
+        ),
         # Step 1: fetch RSS via python3 inline script
         (
             "execute",
@@ -75,7 +92,7 @@ def _good_scout_run() -> list[ScriptStep]:
                 "command": (
                     'curl -s "$AGENTSPORE_PLATFORM_URL/api/v1/agents/projects?mine=true"'
                     ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
-                    ' -H "User-Agent: RedditScoutAgent-Hosted/1.0"'
+                    ' -H "User-Agent: RedditScoutAgent/1.0"'
                 )
             },
         ),
@@ -98,9 +115,20 @@ def _good_scout_run() -> list[ScriptStep]:
                 "command": (
                     'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/projects"'
                     ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
-                    ' -H "User-Agent: RedditScoutAgent-Hosted/1.0"'
+                    ' -H "User-Agent: RedditScoutAgent/1.0"'
                     ' -H "Content-Type: application/json"'
                     " -d @/tmp/project.json"
+                )
+            },
+        ),
+        # Step 3.5: GET recent blog posts (same-day dedup)
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s "$AGENTSPORE_PLATFORM_URL/api/v1/blog/posts?limit=10"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                    ' -H "User-Agent: RedditScoutAgent/1.0"'
                 )
             },
         ),
@@ -110,10 +138,10 @@ def _good_scout_run() -> list[ScriptStep]:
             {
                 "path": "/tmp/blog.json",
                 "content": (
-                    '{"title":"Reddit startup ideas scouted 2026-05-11",'
+                    '{"title":"Reddit Startup Pulse — 2026-05-12",'
                     '"content":"Analysed SaaS/startups/webdev subreddits. '
-                    "Top pain: complex CI tooling. Recommended idea: CIFlow — CI pipeline builder for small teams. "
-                    "Viability 8/10, uniqueness 7/10. Created project entry on platform.\","
+                    "Top pain: complex CI tooling. Recommended: CIFlow — CI pipeline builder. "
+                    "Viability 8/10, uniqueness 7/10. Project created on platform.\","
                     '"tags":["reddit","startup-ideas"]}'
                 ),
             },
@@ -125,44 +153,68 @@ def _good_scout_run() -> list[ScriptStep]:
                 "command": (
                     'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/blog/posts"'
                     ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
-                    ' -H "User-Agent: RedditScoutAgent-Hosted/1.0"'
+                    ' -H "User-Agent: RedditScoutAgent/1.0"'
                     ' -H "Content-Type: application/json"'
                     " -d @/tmp/blog.json"
                 )
             },
         ),
-        # Step 5a: write heartbeat file
-        (
-            "write_file",
-            {
-                "path": "/tmp/hb.json",
-                "content": (
-                    '{"status":"working",'
-                    '"completed_tasks":[{"title":"Reddit scouting complete"}],'
-                    '"insights":["CI tooling frustration dominant in r/SaaS"]}'
-                ),
-            },
-        ),
-        # Step 5b: POST heartbeat
+        # Step 5: final heartbeat — inline JSON + read_dm_ids to ACK inbox
         (
             "execute",
             {
                 "command": (
                     'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
                     ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
-                    ' -H "User-Agent: RedditScoutAgent-Hosted/1.0"'
+                    ' -H "User-Agent: RedditScoutAgent/1.0"'
                     ' -H "Content-Type: application/json"'
-                    " -d @/tmp/hb.json"
+                    ' -d "{\\"status\\":\\"working\\",'
+                    '\\"completed_tasks\\":[{\\"title\\":\\"Reddit scouting complete\\"}],'
+                    '\\"insights\\":[{\\"text\\":\\"CI tooling frustration dominant\\"}],'
+                    '\\"read_dm_ids\\":[\\"dm-test-001\\"]}"'
                 )
             },
         ),
-        "Scouted Reddit: found 1 high-scoring idea (CIFlow, 8/10). Project created, blog published, heartbeat sent.",
+        # Step 6: persist run summary to memory (mid-term store)
+        (
+            "write_memory",
+            {
+                "key": "last_run",
+                "value": (
+                    '{"run_date":"2026-05-12","blog_post_id":"mock-id-123",'
+                    '"acked_dm_ids":["dm-test-001"],'
+                    '"top_pain":"CI tooling frustration dominant",'
+                    '"session_id":"sess-a1b2c3d4"}'
+                ),
+            },
+        ),
+        "Scouted Reddit: found 1 high-scoring idea (CIFlow, 8/10). Blog id=mock-id-123. Session=sess-a1b2c3d4. ACKed DMs: dm-test-001. Memory updated.",
     ]
+
+
+def _bad_no_memory_update() -> list[ScriptStep]:
+    """Bug: completes full workflow but skips Step 6 (memory not persisted)."""
+    good = _good_scout_run()
+    # Drop the write_memory step (second-to-last); keep terminal text.
+    return [step for step in good if not (isinstance(step, tuple) and step[0] == "write_memory")]
 
 
 def _bad_no_reddit_fetch() -> list[ScriptStep]:
     """Bug: agent skips RSS fetch, invents project, misses ScrapesReddit."""
     return [
+        # Step 0: startup heartbeat (correct)
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                    ' -H "Content-Type: application/json"'
+                    ' -d "{\\"status\\":\\"starting\\"}"'
+                )
+            },
+        ),
+        # BUG: skips reddit.com fetch, goes straight to projects
         (
             "execute",
             {
@@ -188,6 +240,15 @@ def _bad_no_reddit_fetch() -> list[ScriptStep]:
             },
         ),
         (
+            "execute",
+            {
+                "command": (
+                    'curl -s "$AGENTSPORE_PLATFORM_URL/api/v1/blog/posts?limit=10"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                )
+            },
+        ),
+        (
             "write_file",
             {"path": "/tmp/blog.json", "content": '{"title":"Ideas","content":"some ideas","tags":["reddit"]}'},
         ),
@@ -203,19 +264,19 @@ def _bad_no_reddit_fetch() -> list[ScriptStep]:
             },
         ),
         (
-            "write_file",
-            {"path": "/tmp/hb.json", "content": '{"status":"working","completed_tasks":[{"title":"done"}],"insights":[]}'},
-        ),
-        (
             "execute",
             {
                 "command": (
                     'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
                     ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
                     ' -H "Content-Type: application/json"'
-                    " -d @/tmp/hb.json"
+                    ' -d "{\\"status\\":\\"working\\",\\"read_dm_ids\\":[\\"dm-test-001\\"]}"'
                 )
             },
+        ),
+        (
+            "write_memory",
+            {"key": "last_run", "value": "{\"run_date\":\"2026-05-12\"}"},
         ),
         "Scouted and posted ideas.",
     ]
@@ -224,6 +285,18 @@ def _bad_no_reddit_fetch() -> list[ScriptStep]:
 def _bad_no_dedup_check() -> list[ScriptStep]:
     """Bug: POSTs project without prior GET -- dedup check skipped."""
     return [
+        # Step 0: startup heartbeat (correct)
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                    ' -H "Content-Type: application/json"'
+                    ' -d "{\\"status\\":\\"starting\\"}"'
+                )
+            },
+        ),
         # RSS fetch present
         (
             "execute",
@@ -234,7 +307,7 @@ def _bad_no_dedup_check() -> list[ScriptStep]:
                 )
             },
         ),
-        # Immediately POST project WITHOUT a GET
+        # BUG: Immediately POST project WITHOUT a prior GET
         (
             "write_file",
             {"path": "/tmp/project.json", "content": '{"title":"NoDedup App","description":"...","tech_stack":["python"]}'},
@@ -247,6 +320,15 @@ def _bad_no_dedup_check() -> list[ScriptStep]:
                     ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
                     ' -H "Content-Type: application/json"'
                     " -d @/tmp/project.json"
+                )
+            },
+        ),
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s "$AGENTSPORE_PLATFORM_URL/api/v1/blog/posts?limit=10"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
                 )
             },
         ),
@@ -266,19 +348,19 @@ def _bad_no_dedup_check() -> list[ScriptStep]:
             },
         ),
         (
-            "write_file",
-            {"path": "/tmp/hb.json", "content": '{"status":"working","completed_tasks":[{"title":"done"}],"insights":[]}'},
-        ),
-        (
             "execute",
             {
                 "command": (
                     'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
                     ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
                     ' -H "Content-Type: application/json"'
-                    " -d @/tmp/hb.json"
+                    ' -d "{\\"status\\":\\"working\\",\\"read_dm_ids\\":[\\"dm-test-001\\"]}"'
                 )
             },
+        ),
+        (
+            "write_memory",
+            {"key": "last_run", "value": "{\"run_date\":\"2026-05-12\"}"},
         ),
         "Posted project without dedup.",
     ]
@@ -306,6 +388,15 @@ def _bad_no_heartbeat() -> list[ScriptStep]:
             },
         ),
         (
+            "execute",
+            {
+                "command": (
+                    'curl -s "$AGENTSPORE_PLATFORM_URL/api/v1/blog/posts?limit=10"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                )
+            },
+        ),
+        (
             "write_file",
             {"path": "/tmp/blog.json", "content": '{"title":"Scout","content":"...","tags":["reddit"]}'},
         ),
@@ -325,8 +416,20 @@ def _bad_no_heartbeat() -> list[ScriptStep]:
 
 
 def _bad_inline_json_post() -> list[ScriptStep]:
-    """Bug: uses inline JSON in curl -d instead of writing a file first."""
+    """Bug: uses inline JSON in curl -d for blog POST instead of writing a file first."""
     return [
+        # Step 0: startup heartbeat (correct)
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                    ' -H "Content-Type: application/json"'
+                    ' -d "{\\"status\\":\\"starting\\"}"'
+                )
+            },
+        ),
         (
             "execute",
             {
@@ -345,7 +448,16 @@ def _bad_inline_json_post() -> list[ScriptStep]:
                 )
             },
         ),
-        # Inline JSON anti-pattern -- no prior write_file
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s "$AGENTSPORE_PLATFORM_URL/api/v1/blog/posts?limit=10"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                )
+            },
+        ),
+        # BUG: Inline JSON anti-pattern -- no prior write_file for blog
         (
             "execute",
             {
@@ -358,9 +470,28 @@ def _bad_inline_json_post() -> list[ScriptStep]:
             },
         ),
         (
-            "write_file",
-            {"path": "/tmp/hb.json", "content": '{"status":"working","completed_tasks":[{"title":"done"}],"insights":[]}'},
+            "execute",
+            {
+                "command": (
+                    'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                    ' -H "Content-Type: application/json"'
+                    ' -d "{\\"status\\":\\"working\\",\\"read_dm_ids\\":[\\"dm-test-001\\"]}"'
+                )
+            },
         ),
+        (
+            "write_memory",
+            {"key": "last_run", "value": "{\"run_date\":\"2026-05-12\"}"},
+        ),
+        "Posted blog with inline JSON.",
+    ]
+
+
+def _bad_no_dm_ack() -> list[ScriptStep]:
+    """Bug: agent sends final heartbeat but doesn't include read_dm_ids (DMs not ACKed)."""
+    return [
+        # Step 0: startup heartbeat (gets DMs in response)
         (
             "execute",
             {
@@ -368,11 +499,69 @@ def _bad_inline_json_post() -> list[ScriptStep]:
                     'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
                     ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
                     ' -H "Content-Type: application/json"'
-                    " -d @/tmp/hb.json"
+                    ' -d "{\\"status\\":\\"starting\\"}"'
                 )
             },
         ),
-        "Posted blog with inline JSON.",
+        (
+            "execute",
+            {
+                "command": (
+                    "python3 -c \"import urllib.request; "
+                    "urllib.request.urlopen('https://www.reddit.com/r/SaaS/hot.rss')\" "
+                )
+            },
+        ),
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s "$AGENTSPORE_PLATFORM_URL/api/v1/agents/projects?mine=true"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                )
+            },
+        ),
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s "$AGENTSPORE_PLATFORM_URL/api/v1/blog/posts?limit=10"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                )
+            },
+        ),
+        (
+            "write_file",
+            {"path": "/tmp/blog.json", "content": '{"title":"Reddit Startup Pulse — 2026-05-12","content":"...","tags":["reddit"]}'},
+        ),
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/blog/posts"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                    ' -H "Content-Type: application/json"'
+                    " -d @/tmp/blog.json"
+                )
+            },
+        ),
+        # BUG: final heartbeat without read_dm_ids — DMs stay unread
+        (
+            "execute",
+            {
+                "command": (
+                    'curl -s -X POST "$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat"'
+                    ' -H "X-API-Key: $AGENTSPORE_API_KEY"'
+                    ' -H "Content-Type: application/json"'
+                    ' -d "{\\"status\\":\\"working\\",\\"completed_tasks\\":[{\\"title\\":\\"done\\"}]}"'
+                )
+            },
+        ),
+        (
+            "write_memory",
+            {"key": "last_run", "value": "{\"run_date\":\"2026-05-12\"}"},
+        ),
+        "Done, DMs not acknowledged.",
     ]
 
 
@@ -383,13 +572,16 @@ def _bad_inline_json_post() -> list[ScriptStep]:
 _SCOUT_EVALUATORS: list[Any] = [
     NoErrors(),
     CompletedTask(),
-    MinExecuteCount(min_count=4),
+    MinExecuteCount(min_count=5),
     ScrapesReddit(),
     SendsHeartbeat(),
     ChecksDuplicates(),
     WriteFileBeforeCurlPost(),
     UsesEnvCredentials(),
     PostsBlogPost(),
+    AcknowledgesDMs(),
+    ChecksBlogDedup(),
+    WritesMemory(),
 ]
 
 _SCOUT_EVALUATOR_NAMES: list[str] = [type(e).__name__ for e in _SCOUT_EVALUATORS]
@@ -400,31 +592,23 @@ _CASE_NAMES: list[str] = [
     "scout_bad_no_dedup",
     "scout_bad_no_heartbeat",
     "scout_bad_inline_json",
+    "scout_bad_no_dm_ack",
+    "scout_bad_no_memory",
 ]
 
-# Cells that must fail -- any deviation is a test failure.
+# bad_no_heartbeat execute calls: reddit + GET projects + GET blog + POST blog = 4 (< 5)
+# bad_no_reddit execute calls: startup HB + GET projects + POST project + GET blog + POST blog + final HB = 6 (>= 5) -- passes
 _EXPECTED_FAILURES: frozenset[tuple[str, str]] = frozenset(
     {
         ("scout_bad_no_reddit", "ScrapesReddit"),
-        ("scout_bad_no_reddit", "MinExecuteCount"),  # only 6 execute calls but 4 min? -- actually 4 in bad, passes; override: NO -- bad_no_reddit has 4 executes. Let's not mark this.
         ("scout_bad_no_dedup", "ChecksDuplicates"),
         ("scout_bad_no_heartbeat", "SendsHeartbeat"),
-        ("scout_bad_no_heartbeat", "MinExecuteCount"),  # 3 execute calls < 4
-        ("scout_bad_no_heartbeat", "CompletedTask"),    # "Done, but no heartbeat."
+        ("scout_bad_no_heartbeat", "MinExecuteCount"),   # 4 execute calls < 5
+        ("scout_bad_no_heartbeat", "WritesMemory"),      # bad-no-hb script lacks write_memory
+        # scout_bad_no_heartbeat::AcknowledgesDMs passes vacuously (no HB → no POSTs to check)
         ("scout_bad_inline_json", "WriteFileBeforeCurlPost"),
-    }
-)
-
-# Recalculate: bad_no_reddit has execute calls:
-# 1 GET projects, 1 POST project, 1 POST blog, 1 POST heartbeat = 4 -- MinExecuteCount passes.
-# Remove the incorrect marking.
-_EXPECTED_FAILURES = frozenset(
-    {
-        ("scout_bad_no_reddit", "ScrapesReddit"),
-        ("scout_bad_no_dedup", "ChecksDuplicates"),
-        ("scout_bad_no_heartbeat", "SendsHeartbeat"),
-        ("scout_bad_no_heartbeat", "MinExecuteCount"),  # 3 execute calls
-        ("scout_bad_inline_json", "WriteFileBeforeCurlPost"),
+        ("scout_bad_no_dm_ack", "AcknowledgesDMs"),
+        ("scout_bad_no_memory", "WritesMemory"),
     }
 )
 
@@ -455,6 +639,14 @@ def _build_dataset() -> Dataset[dict[str, Any], AgentRun, dict[str, Any]]:
         Case(
             name="scout_bad_inline_json",
             inputs={"agent": REDDIT_SCOUT, "script": _bad_inline_json_post()},
+        ),
+        Case(
+            name="scout_bad_no_dm_ack",
+            inputs={"agent": REDDIT_SCOUT, "script": _bad_no_dm_ack()},
+        ),
+        Case(
+            name="scout_bad_no_memory",
+            inputs={"agent": REDDIT_SCOUT, "script": _bad_no_memory_update()},
         ),
     ]
     return Dataset[dict[str, Any], AgentRun, dict[str, Any]](
@@ -549,6 +741,12 @@ async def test_scout_bad_cases_flagged(scout_report: Any) -> None:
 
     inline = {a.name: a.value for a in by_name["scout_bad_inline_json"].assertions.values()}
     assert inline["WriteFileBeforeCurlPost"] is False, "inline JSON must fail WriteFileBeforeCurlPost"
+
+    no_ack = {a.name: a.value for a in by_name["scout_bad_no_dm_ack"].assertions.values()}
+    assert no_ack["AcknowledgesDMs"] is False, "heartbeat without read_dm_ids must fail AcknowledgesDMs"
+
+    no_mem = {a.name: a.value for a in by_name["scout_bad_no_memory"].assertions.values()}
+    assert no_mem["WritesMemory"] is False, "missing write_memory must fail WritesMemory"
 
 
 # ---------------------------------------------------------------------------
