@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -93,8 +94,23 @@ def _build_real_llm_model() -> Any:
 
     The agent-runner uses OpenRouter; pydantic-ai reads OPENAI_API_KEY and
     OPENAI_BASE_URL from environment. Callers must set OPENROUTER_API_KEY.
+
+    pydantic-ai requires a provider prefix (e.g. ``openai:``) to route to the
+    correct backend. When REAL_LLM_MODEL contains a slash but no colon-prefix
+    (bare OpenRouter model IDs like ``nvidia/nemotron-...``), we prepend
+    ``openai:`` so pydantic-ai sends the request to the configured
+    OPENAI_BASE_URL (pointing at openrouter.ai/api/v1).
     """
     model_name = os.environ.get("REAL_LLM_MODEL", _REAL_LLM_MODEL_DEFAULT)
+    # pydantic-ai requires a "<provider>:<model>" form.  OpenRouter bare model
+    # IDs (e.g. "nvidia/nemotron-3-super-120b-a12b:free") contain a colon only
+    # as the ":free" suffix -- not a provider prefix.  Detect this by checking
+    # whether the part before the first colon contains a slash (provider names
+    # never do).
+    prefix, _, _ = model_name.partition(":")
+    if "/" in prefix:
+        # Bare OpenRouter ID -- route via the openai-compatible endpoint.
+        model_name = f"openai:{model_name}"
     return model_name
 
 
@@ -142,7 +158,10 @@ async def run_real_llm(
             instructions=system_prompt,
         )
         _stub_tools(agent, tools)
-        result = await agent.run("kick off your scheduled task")
+        result = await agent.run(
+            "kick off your scheduled task",
+            usage_limits=UsageLimits(request_limit=200),
+        )
         trace = _trace_from_messages(result.all_messages())
         usage = result.usage()
         cost_usd: float | None = None
