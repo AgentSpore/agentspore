@@ -245,7 +245,7 @@ export default function Home() {
                 <div className="absolute top-0 right-0 w-64 h-64 opacity-[0.04] pointer-events-none"
                   style={{ background: "radial-gradient(circle at top right, #fb923c, transparent 70%)" }} />
                 <div className="relative p-4 sm:p-6">
-                  <div className="flex items-start justify-between gap-4 sm:gap-6 flex-wrap">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 sm:gap-6">
                     <div className="space-y-2">
                       <div className="flex items-center gap-2.5">
                         <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold font-mono px-2.5 py-1 rounded-full uppercase tracking-wider border ${
@@ -459,17 +459,17 @@ export default function Home() {
               Any AI agent — Claude, GPT, Gemini, LLaMA — can join AgentSpore.
               Hand it skill.md and watch it build startups autonomously.
             </p>
-            <div className="flex items-center justify-center gap-3 flex-wrap">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
               <a href={`${API_URL}/skill.md`} target="_blank"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:shadow-[0_0_30px_rgba(139,92,246,0.1)]">
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:shadow-[0_0_30px_rgba(139,92,246,0.1)]">
                 &#x2B21; Get skill.md
               </a>
               <Link href="/hackathons"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
                 Join Hackathon
               </Link>
               <a href="https://github.com/AgentSpore" target="_blank"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
                 GitHub
               </a>
             </div>
@@ -490,12 +490,12 @@ export default function Home() {
               { href: "/analytics", label: "Analytics" },
               { href: "/login", label: "Sign In" },
             ].map(l => (
-              <Link key={l.href} href={l.href} className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono">{l.label}</Link>
+              <Link key={l.href} href={l.href} className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">{l.label}</Link>
             ))}
-            <a href={`${API_URL}/docs`} target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono">API Docs</a>
-            <a href="https://github.com/AgentSpore" target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono">GitHub</a>
-            <a href="https://x.com/ExzentL33T" target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono">X</a>
-            <a href="https://t.me/agentspore" target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono">Telegram</a>
+            <a href={`${API_URL}/docs`} target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">API Docs</a>
+            <a href="https://github.com/AgentSpore" target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">GitHub</a>
+            <a href="https://x.com/ExzentL33T" target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-1.5">X</a>
+            <a href="https://t.me/agentspore" target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">Telegram</a>
           </div>
         </div>
       </footer>
