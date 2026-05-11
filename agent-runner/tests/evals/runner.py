@@ -14,6 +14,7 @@ OpenRouter credentials come from ``OPENROUTER_API_KEY``.
 """
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -64,18 +65,51 @@ def _make_scripted_function(
     return fn
 
 
+_REDDIT_MOCK = json.dumps([
+    {"sub": "SaaS", "title": "Frustrated with manual invoice reconciliation every month", "link": "https://reddit.com/r/SaaS/1"},
+    {"sub": "SaaS", "title": "Wish there was a tool to auto-categorise support tickets by sentiment", "link": "https://reddit.com/r/SaaS/2"},
+    {"sub": "startups", "title": "Struggling to track which cold emails actually convert", "link": "https://reddit.com/r/startups/3"},
+    {"sub": "startups", "title": "Anyone else hate manually updating CRM after every call?", "link": "https://reddit.com/r/startups/4"},
+    {"sub": "webdev", "title": "How do I handle cron job failures silently breaking production?", "link": "https://reddit.com/r/webdev/5"},
+])
+
+_PROJECTS_MOCK = json.dumps({"items": [], "total": 0})
+_POST_OK = json.dumps({"id": "mock-id-123", "status": "created"})
+_HEARTBEAT_OK = json.dumps({"status": "ok", "received": True})
+
+
+def _smart_stub(name: str) -> Callable[..., str]:
+    """Return realistic mock data keyed on tool name + command content."""
+
+    def stub(**kwargs: Any) -> str:
+        if name == "write_file":
+            return "ok"
+        if name in ("execute", "http_get", "http_post"):
+            # Flatten all arg values to a single string for pattern matching.
+            flat = " ".join(
+                str(v) for val in kwargs.values()
+                for v in (val if isinstance(val, list) else [val])
+            )
+            if "reddit.com" in flat:
+                return _REDDIT_MOCK
+            if "/api/v1/agents/projects" in flat and "POST" not in flat and "-X POST" not in flat:
+                return _PROJECTS_MOCK
+            if "/api/v1/agents/projects" in flat:
+                return _POST_OK
+            if "/api/v1/blog/posts" in flat:
+                return _POST_OK
+            if "/api/v1/agents/heartbeat" in flat:
+                return _HEARTBEAT_OK
+        return f"[stub:{name}] ok"
+
+    stub.__name__ = name
+    return stub
+
+
 def _stub_tools(agent: Agent[Any, Any], tool_names: Iterable[str]) -> None:
-    """Register no-op tools so FunctionModel calls do not 422."""
+    """Register smart-stub tools: realistic mock responses for real-LLM runs."""
     for name in tool_names:
-
-        def make(n: str) -> Callable[..., str]:
-            def stub(**kwargs: Any) -> str:
-                return f"[stub:{n}] ok"
-
-            stub.__name__ = n
-            return stub
-
-        agent.tool_plain(make(name), name=name)
+        agent.tool_plain(_smart_stub(name), name=name)
 
 
 def _trace_from_messages(messages: list[ModelMessage]) -> list[ToolCall]:
@@ -84,7 +118,20 @@ def _trace_from_messages(messages: list[ModelMessage]) -> list[ToolCall]:
         if isinstance(msg, ModelResponse):
             for part in msg.parts:
                 if isinstance(part, ToolCallPart):
-                    args = part.args if isinstance(part.args, dict) else {}
+                    raw = part.args
+                    if isinstance(raw, dict):
+                        args = raw
+                    elif isinstance(raw, str):
+                        try:
+                            parsed = json.loads(raw)
+                            args = parsed if isinstance(parsed, dict) else {}
+                        except Exception:
+                            args = {}
+                    else:
+                        try:
+                            args = dict(raw)  # type: ignore[arg-type]
+                        except Exception:
+                            args = {}
                     trace.append(ToolCall(name=part.tool_name, args=args))
     return trace
 

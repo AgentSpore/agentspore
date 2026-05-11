@@ -12,6 +12,30 @@ from typing import Any
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 
+def _cmd(args: dict[str, Any]) -> str:
+    """Normalise execute-tool args to a single command string.
+
+    Models use different key names ('command', 'cmd', 'shell', 'script').
+    List-form args (e.g. ["bash", "-lc", "..."]) are joined with a space.
+    """
+    for key in ("command", "cmd", "shell", "script"):
+        val = args.get(key)
+        if isinstance(val, str) and val:
+            return val
+        if isinstance(val, list):
+            return " ".join(str(v) for v in val)
+    return " ".join(str(v) for v in args.values() if isinstance(v, (str, list)))
+
+
+def _path(args: dict[str, Any]) -> str:
+    """Normalise write_file args to a path string."""
+    for key in ("path", "file_path", "filename", "name"):
+        val = args.get(key, "")
+        if isinstance(val, str) and val:
+            return val
+    return ""
+
+
 KNOWN_ENDPOINTS: frozenset[str] = frozenset(
     {
         "/api/v1/public/agents",
@@ -88,13 +112,13 @@ class WriteFileBeforeCurlPost(Evaluator[Any, AgentRun]):
         written: set[str] = set()
         for tc in ctx.output.tool_calls:
             if tc.name == "write_file":
-                path = tc.args.get("path") or tc.args.get("file_path") or ""
+                path = _path(tc.args)
                 if path.startswith("/tmp/"):
                     written.add(path)
                 continue
             if tc.name != "execute":
                 continue
-            cmd = tc.args.get("command", "")
+            cmd = _cmd(tc.args)
             if "curl" not in cmd or " -d " not in cmd:
                 continue
             if "-d @" not in cmd:
@@ -113,7 +137,7 @@ class UsesEnvCredentials(Evaluator[Any, AgentRun]):
         for tc in ctx.output.tool_calls:
             if tc.name != "execute":
                 continue
-            cmd = tc.args.get("command", "")
+            cmd = _cmd(tc.args)
             if "agentspore.com" in cmd and "$AGENTSPORE_PLATFORM_URL" not in cmd:
                 return False
             if "X-API-Key:" in cmd and "$AGENTSPORE_API_KEY" not in cmd and "af_" in cmd:
@@ -134,7 +158,7 @@ class HitsExpectedEndpoint(Evaluator[Any, AgentRun]):
         if not target:
             return True
         for tc in ctx.output.tool_calls:
-            if tc.name == "execute" and target in tc.args.get("command", ""):
+            if tc.name == "execute" and target in _cmd(tc.args):
                 return True
         return False
 
@@ -153,7 +177,7 @@ class OnlyKnownEndpoints(Evaluator[Any, AgentRun]):
         for tc in ctx.output.tool_calls:
             if tc.name != "execute":
                 continue
-            cmd = tc.args.get("command", "")
+            cmd = _cmd(tc.args)
             for match in _ENDPOINT_RE.findall(cmd):
                 # Normalize: strip query string fragment that _ENDPOINT_RE may capture.
                 path = match.rstrip("/ ")
@@ -173,7 +197,7 @@ class PostsBlogPost(Evaluator[Any, AgentRun]):
         for tc in ctx.output.tool_calls:
             if tc.name != "execute":
                 continue
-            cmd = tc.args.get("command", "")
+            cmd = _cmd(tc.args)
             if "-X POST" in cmd and "/api/v1/blog/posts" in cmd:
                 return True
         return False
@@ -188,7 +212,7 @@ class ScrapesReddit(Evaluator[Any, AgentRun]):
 
     def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
         for tc in ctx.output.tool_calls:
-            if tc.name == "execute" and "reddit.com" in tc.args.get("command", ""):
+            if tc.name == "execute" and "reddit.com" in _cmd(tc.args):
                 return True
         return False
 
@@ -204,7 +228,7 @@ class SendsHeartbeat(Evaluator[Any, AgentRun]):
         for tc in ctx.output.tool_calls:
             if tc.name != "execute":
                 continue
-            cmd = tc.args.get("command", "")
+            cmd = _cmd(tc.args)
             if "-X POST" in cmd and "/api/v1/agents/heartbeat" in cmd:
                 return True
         return False
@@ -223,7 +247,7 @@ class ChecksDuplicates(Evaluator[Any, AgentRun]):
         for tc in ctx.output.tool_calls:
             if tc.name != "execute":
                 continue
-            cmd = tc.args.get("command", "")
+            cmd = _cmd(tc.args)
             if "/api/v1/agents/projects" not in cmd:
                 continue
             if "-X POST" in cmd:
