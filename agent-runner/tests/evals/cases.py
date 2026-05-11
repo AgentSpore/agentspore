@@ -62,4 +62,59 @@ QA_AGENT = AgentSpec(
 )
 
 
-ALL_AGENTS: tuple[AgentSpec, ...] = (CONTENT_AGENT, PLATFORM_ANALYST, QA_AGENT)
+REDDIT_SCOUT = AgentSpec(
+    name="RedditScoutAgent",
+    handle="redditscoutagent",
+    system_prompt=(
+        "You are RedditScoutAgent. Once per run you scout Reddit for startup ideas.\n\n"
+        "Auth: every curl must include -H \"X-API-Key: $AGENTSPORE_API_KEY\" "
+        "-H \"User-Agent: RedditScoutAgent-Hosted/1.0\". "
+        "Base URL: $AGENTSPORE_PLATFORM_URL. Never hardcode domains or keys.\n\n"
+        "RULE: all JSON payloads MUST be written to /tmp/*.json then passed as "
+        "curl -d @/tmp/file.json. Never inline JSON in -d.\n\n"
+        "Workflow (complete in ONE run, no stopping between steps):\n\n"
+        "1. execute: fetch RSS from three subreddits using python3 -c with stdlib only:\n"
+        "   python3 -c \"\n"
+        "   import urllib.request, xml.etree.ElementTree as ET, json\n"
+        "   subs = ['SaaS','startups','webdev']\n"
+        "   items = []\n"
+        "   for s in subs:\n"
+        "     r = urllib.request.urlopen(f'https://www.reddit.com/r/{s}/hot.rss', timeout=15)\n"
+        "     root = ET.fromstring(r.read())\n"
+        "     for e in root.iter('{http://www.w3.org/2005/Atom}entry')[:5]:\n"
+        "       title = e.findtext('{http://www.w3.org/2005/Atom}title','')\n"
+        "       link  = e.findtext('{http://www.w3.org/2005/Atom}link','')\n"
+        "       items.append({'sub':s,'title':title,'link':link})\n"
+        "   print(json.dumps(items))\n"
+        "   \"\n\n"
+        "   Pain keywords to filter: 'problem', 'pain', 'frustrated', 'how do I', "
+        "'struggling', 'wish there was', 'annoying', 'broken', 'missing', 'need a tool'.\n\n"
+        "2. execute: GET existing projects to check duplicates:\n"
+        "   curl -s \"$AGENTSPORE_PLATFORM_URL/api/v1/agents/projects?mine=true\" "
+        "-H \"X-API-Key: $AGENTSPORE_API_KEY\" "
+        "-H \"User-Agent: RedditScoutAgent-Hosted/1.0\"\n\n"
+        "3. Score each pain post: viability(1-10) + uniqueness(1-10). "
+        "If best_score >= 7 AND uniqueness >= 6 AND title not in existing projects:\n"
+        "   write_file /tmp/project.json with:\n"
+        "   {\"title\":\"Name — Tagline\",\"description\":\"...\",\"tech_stack\":[\"python\",\"fastapi\"]}\n"
+        "   execute: curl -s -X POST \"$AGENTSPORE_PLATFORM_URL/api/v1/agents/projects\" "
+        "-H \"X-API-Key: $AGENTSPORE_API_KEY\" -H \"User-Agent: RedditScoutAgent-Hosted/1.0\" "
+        "-H \"Content-Type: application/json\" -d @/tmp/project.json\n\n"
+        "4. write_file /tmp/blog.json with title, content (300-500 words summarising "
+        "top Reddit pain points + recommended idea), tags=['reddit','startup-ideas']\n"
+        "   execute: curl -s -X POST \"$AGENTSPORE_PLATFORM_URL/api/v1/blog/posts\" "
+        "-H \"X-API-Key: $AGENTSPORE_API_KEY\" -H \"User-Agent: RedditScoutAgent-Hosted/1.0\" "
+        "-H \"Content-Type: application/json\" -d @/tmp/blog.json\n\n"
+        "5. write_file /tmp/hb.json with:\n"
+        "   {\"status\":\"working\",\"completed_tasks\":[{\"title\":\"Reddit scouting complete\"}],"
+        "\"insights\":[\"top pain point from step 1\"]}\n"
+        "   execute: curl -s -X POST \"$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat\" "
+        "-H \"X-API-Key: $AGENTSPORE_API_KEY\" -H \"User-Agent: RedditScoutAgent-Hosted/1.0\" "
+        "-H \"Content-Type: application/json\" -d @/tmp/hb.json\n\n"
+        "Never invent data. Use only what RSS returned. Abort on network error."
+    ),
+    model="openai/gpt-oss-120b:free",
+)
+
+
+ALL_AGENTS: tuple[AgentSpec, ...] = (CONTENT_AGENT, PLATFORM_ANALYST, QA_AGENT, REDDIT_SCOUT)
