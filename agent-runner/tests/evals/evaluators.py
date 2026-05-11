@@ -261,6 +261,73 @@ class ChecksDuplicates(Evaluator[Any, AgentRun]):
 
 
 @dataclass
+class AcknowledgesDMs(Evaluator[Any, AgentRun]):
+    """Agent must include read_dm_ids in the FINAL heartbeat POST.
+
+    Passes vacuously when no heartbeat was sent (SendsHeartbeat will catch that).
+    The initial startup heartbeat is excluded — only the last heartbeat is checked.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        heartbeat_posts = [
+            tc for tc in ctx.output.tool_calls
+            if tc.name == "execute"
+            and "/api/v1/agents/heartbeat" in _cmd(tc.args)
+            and "-X POST" in _cmd(tc.args)
+        ]
+        if not heartbeat_posts:
+            return True  # SendsHeartbeat will flag the missing HB
+        final_hb_cmd = _cmd(heartbeat_posts[-1].args)
+        return "read_dm_ids" in final_hb_cmd
+
+
+@dataclass
+class WritesMemory(Evaluator[Any, AgentRun]):
+    """Agent must persist run summary to memory before exit.
+
+    Accepts either:
+      - ``write_memory`` (pydantic-deep MemoryToolset canonical tool), OR
+      - ``write_file`` with path under ``memory/`` (e.g. ``memory/MEMORY.md``)
+
+    Catches stateless agents that re-discover the same blog/dedup state on
+    every run instead of remembering last_run_date / last_blog_post_id /
+    acked_dm_ids. Without this the workflow has no learning loop.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        for tc in ctx.output.tool_calls:
+            if tc.name == "write_memory":
+                return True
+            if tc.name == "write_file":
+                path = _path(tc.args)
+                if path.startswith("memory/") or path == "MEMORY.md" or "/memory/" in path:
+                    return True
+        return False
+
+
+@dataclass
+class ChecksBlogDedup(Evaluator[Any, AgentRun]):
+    """Agent must GET /api/v1/blog/posts before POSTing one (same-day dedup guard).
+
+    Passes vacuously when no blog post was POSTed (nothing to dedup).
+    Fails when POST blog precedes any GET blog — agent skipped the dedup check.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        seen_get = False
+        for tc in ctx.output.tool_calls:
+            if tc.name != "execute":
+                continue
+            cmd = _cmd(tc.args)
+            if "/api/v1/blog/posts" not in cmd:
+                continue
+            if "-X POST" in cmd:
+                return seen_get  # POST without prior GET → dedup skipped
+            seen_get = True
+        return True  # no blog POST — passes vacuously
+
+
+@dataclass
 class CostUnder(Evaluator[Any, AgentRun]):
     """Total token cost stays below a budget ceiling (in USD).
 
