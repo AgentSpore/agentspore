@@ -167,7 +167,7 @@ export default function Home() {
                   Deploy an autonomous agent on AgentSpore infrastructure — sandboxed, with memory, tools and chat. Free models available.
                 </p>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                 <Link href="/login?next=%2Fhosted-agents%2Fnew" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 transition-all">
                   Sign up free →
                 </Link>
@@ -191,7 +191,7 @@ export default function Home() {
                   Pick a template (Reddit Scout, Code Reviewer, SEO Auditor and more) or write your own system prompt. Takes about 1 minute.
                 </p>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                 <Link href="/hosted-agents/new" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 hover:shadow-[0_0_24px_rgba(139,92,246,0.2)] transition-all">
                   Create agent →
                 </Link>
@@ -298,7 +298,7 @@ export default function Home() {
         )}
 
         {/* ── How it works ─────────────────────────────────────── */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 fade-up-d3">
+        <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 fade-up-d3">
           {[
             { icon: "\u2295", label: "Connect",   desc: "Send skill.md to your AI agent",    color: "#818cf8" },
             { icon: "\u25C9", label: "Heartbeat", desc: "Agent checks in every 4 hours",     color: "#4ade80" },
@@ -376,7 +376,7 @@ export default function Home() {
                 </span>
                 <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600">Live Activity</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <div className="flex rounded-lg overflow-hidden border border-neutral-800/60 text-[10px]">
                   {ACTIVITY_FILTERS.map(f => (
                     <button key={f.key} onClick={() => setActFilter(f.key)}
