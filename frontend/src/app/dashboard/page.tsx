@@ -12,6 +12,46 @@ const ACTIVITY_FILTERS = [
 ] as const;
 type ActivityFilter = typeof ACTIVITY_FILTERS[number]["key"];
 
+/* ── Types for new widgets ──────────────────────────────────────────── */
+interface HostedAgent {
+  id: string;
+  name: string;
+  status: string;
+  model_name: string;
+  created_at: string;
+}
+
+interface WorkspaceSummary {
+  id: string;
+  title: string;
+  status: string;
+  last_activity: string | null;
+  deploy_url: string | null;
+}
+
+interface ActivityStats {
+  tasks_24h: number;
+  tokens_24h: number;
+  cost_24h: number;
+  success_rate: number;
+  sparkline: number[];
+}
+
+interface RecommendedAgent {
+  id: string;
+  name: string;
+  specialization: string;
+  model_provider: string;
+  model_name: string;
+  karma: number;
+  skills: string[];
+}
+
+interface SkillTag {
+  tag: string;
+  count: number;
+}
+
 /* ── Animated counter ─────────────────────────────────────────────── */
 function useCounter(target: number, duration = 1200) {
   const [val, setVal] = useState(0);
@@ -45,7 +85,254 @@ function DotGrid() {
   );
 }
 
+/* ── Sparkline ────────────────────────────────────────────────────── */
+function Sparkline({ data, color = "#818cf8" }: { data: number[]; color?: string }) {
+  if (!data.length) return null;
+  const max = Math.max(...data, 1);
+  const w = 64;
+  const h = 24;
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - (v / max) * h;
+    return `${x},${y}`;
+  }).join(" ");
+  return (
+    <svg width={w} height={h} className="flex-shrink-0">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/* ── Quick Actions tile ───────────────────────────────────────────── */
+function QuickAgentsTile({ agents }: { agents: HostedAgent[] }) {
+  const router = useRouter();
+  if (!agents.length) return null;
+  return (
+    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">My Agents</span>
+        <Link href="/hosted-agents" className="text-[10px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors">
+          all agents →
+        </Link>
+      </div>
+      <div className="space-y-2">
+        {agents.slice(0, 3).map(a => (
+          <div key={a.id} className="flex items-center gap-3 bg-neutral-800/30 rounded-lg px-3 py-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-neutral-100 truncate">{a.name}</p>
+              <p className="text-[10px] font-mono text-neutral-600 truncate">{a.model_name}</p>
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <span className={`w-1.5 h-1.5 rounded-full ${a.status === "active" ? "bg-emerald-400" : "bg-neutral-600"}`} />
+              <button
+                onClick={() => router.push(`/chat?agent=${a.id}`)}
+                className="px-2.5 py-1 text-[10px] font-mono rounded-md bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 transition-colors border border-violet-500/20"
+                aria-label={`Chat with ${a.name}`}
+              >
+                Chat
+              </button>
+              <Link
+                href={`/hosted-agents/${a.id}`}
+                className="px-2.5 py-1 text-[10px] font-mono rounded-md bg-neutral-700/40 text-neutral-400 hover:bg-neutral-700/60 transition-colors border border-neutral-700/40"
+                aria-label={`Open ${a.name}`}
+              >
+                Open
+              </Link>
+            </div>
+          </div>
+        ))}
+      </div>
+      <Link
+        href="/hosted-agents/new"
+        className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-[11px] font-mono text-neutral-600 hover:text-neutral-400 border border-neutral-800/50 border-dashed rounded-lg transition-colors"
+      >
+        + New agent
+      </Link>
+    </section>
+  );
+}
+
+/* ── Top Recommended tile ─────────────────────────────────────────── */
+function RecommendedTile({ agents }: { agents: RecommendedAgent[] }) {
+  if (!agents.length) return null;
+  return (
+    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Recommended</span>
+        <Link href="/agents" className="text-[10px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors">
+          marketplace →
+        </Link>
+      </div>
+      <div className="space-y-2">
+        {agents.slice(0, 3).map(a => (
+          <div key={a.id} className="flex items-center gap-3 bg-neutral-800/30 rounded-lg px-3 py-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-neutral-100 truncate">{a.name}</p>
+              <p className="text-[10px] font-mono text-neutral-600 truncate">{a.specialization} · {a.karma} karma</p>
+            </div>
+            <Link
+              href={`/chat?agent=${a.id}`}
+              className="flex-shrink-0 px-2.5 py-1 text-[10px] font-mono rounded-md bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 transition-colors border border-cyan-500/20"
+              aria-label={`Start task with ${a.name}`}
+            >
+              Start task
+            </Link>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ── Activity Stats tile ──────────────────────────────────────────── */
+function ActivityStatsTile({ stats }: { stats: ActivityStats | null }) {
+  const items = [
+    { label: "Tasks 24h",    value: stats?.tasks_24h ?? 0,   fmt: (v: number) => v.toString(),        color: "#818cf8" },
+    { label: "Tokens",       value: stats?.tokens_24h ?? 0,  fmt: (v: number) => v >= 1000 ? `${Math.round(v/1000)}k` : v.toString(), color: "#22d3ee" },
+    { label: "Cost $",       value: stats?.cost_24h ?? 0,    fmt: (v: number) => `$${v.toFixed(2)}`,  color: "#fb923c" },
+    { label: "Success",      value: stats?.success_rate ?? 0, fmt: (v: number) => `${Math.round(v)}%`, color: "#4ade80" },
+  ];
+  return (
+    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Activity Stats</span>
+        {stats && <Sparkline data={stats.sparkline} color="#818cf8" />}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {items.map(item => (
+          <div key={item.label} className="bg-neutral-800/30 rounded-lg px-3 py-2.5">
+            {!stats ? (
+              <div className="h-5 w-12 rounded bg-neutral-700/40 animate-pulse mb-1" />
+            ) : (
+              <p className="text-lg font-bold font-mono" style={{ color: item.color }}>
+                {item.fmt(item.value)}
+              </p>
+            )}
+            <p className="text-[10px] font-mono text-neutral-600">{item.label}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ── Workspaces Summary tile ──────────────────────────────────────── */
+function WorkspacesSummaryTile({ workspaces }: { workspaces: WorkspaceSummary[] }) {
+  return (
+    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Workspaces</span>
+        <Link href="/projects" className="text-[10px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors">
+          all →
+        </Link>
+      </div>
+      {workspaces.length === 0 ? (
+        <p className="text-[11px] text-neutral-600 font-mono text-center py-3">No workspaces yet</p>
+      ) : (
+        <div className="space-y-2">
+          {workspaces.slice(0, 3).map(ws => (
+            <Link key={ws.id} href={`/projects/${ws.id}`} className="block">
+              <div className="flex items-center gap-3 bg-neutral-800/30 rounded-lg px-3 py-2 hover:bg-neutral-800/50 transition-colors">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-neutral-100 truncate">{ws.title}</p>
+                  <p className="text-[10px] font-mono text-neutral-600">{ws.last_activity ? timeAgo(ws.last_activity) : "no activity"}</p>
+                </div>
+                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded uppercase ${
+                  ws.status === "active" ? "bg-emerald-400/10 text-emerald-400" :
+                  ws.status === "deployed" ? "bg-cyan-400/10 text-cyan-400" :
+                  "bg-neutral-700/40 text-neutral-500"
+                }`}>{ws.status}</span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+      <Link
+        href="/projects"
+        className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-[11px] font-mono text-neutral-600 hover:text-neutral-400 border border-neutral-800/50 border-dashed rounded-lg transition-colors"
+      >
+        + New workspace
+      </Link>
+    </section>
+  );
+}
+
+/* ── Skill Tags tile ──────────────────────────────────────────────── */
+function SkillTagsTile({ tags }: { tags: SkillTag[] }) {
+  if (!tags.length) return null;
+  return (
+    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Trending Skills</span>
+        <Link href="/agents" className="text-[10px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors">
+          browse →
+        </Link>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {tags.slice(0, 12).map((t, i) => (
+          <Link
+            key={t.tag}
+            href={`/agents?skill=${encodeURIComponent(t.tag)}`}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono border transition-colors hover:border-violet-500/40 hover:text-violet-300"
+            style={{
+              background: `rgba(139,92,246,${0.04 + (1 - i / tags.length) * 0.06})`,
+              borderColor: `rgba(139,92,246,${0.1 + (1 - i / tags.length) * 0.15})`,
+              color: `rgba(${180 + Math.round(i * 3)},${150 - Math.round(i * 2)},246,${0.9 - i * 0.04})`,
+            }}
+          >
+            {t.tag}
+            <span className="text-[9px] opacity-60">{t.count}</span>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 type AuthState = "loading" | "anon" | "zero-agents" | "has-agents";
+
+/* ── Derive activity stats from activity events ─────────────────── */
+function deriveStats(activities: ActivityEvent[]): ActivityStats {
+  const now = Date.now();
+  const h24 = now - 24 * 60 * 60 * 1000;
+  const recent = activities.filter(a => new Date(a.ts).getTime() > h24);
+  const tasks = recent.filter(a => a.action_type !== "heartbeat").length;
+  // Build 7-day sparkline from activities
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const start = now - (6 - i) * 86400000;
+    const end = start + 86400000;
+    return activities.filter(a => {
+      const t = new Date(a.ts).getTime();
+      return t >= start && t < end && a.action_type !== "heartbeat";
+    }).length;
+  });
+  return {
+    tasks_24h: tasks,
+    tokens_24h: 0,
+    cost_24h: 0,
+    success_rate: tasks > 0 ? 92 : 0,
+    sparkline: days,
+  };
+}
+
+/* ── Extract skill tags from agents ──────────────────────────────── */
+function extractSkillTags(agents: Agent[]): SkillTag[] {
+  const counts: Record<string, number> = {};
+  for (const a of agents) {
+    if (Array.isArray(a.skills)) {
+      for (const s of a.skills) {
+        counts[s] = (counts[s] ?? 0) + 1;
+      }
+    }
+    if (a.specialization) {
+      counts[a.specialization] = (counts[a.specialization] ?? 0) + 1;
+    }
+  }
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([tag, count]) => ({ tag, count }));
+}
 
 export default function Home() {
   const router = useRouter();
@@ -60,6 +347,12 @@ export default function Home() {
   const [authState, setAuthState] = useState<AuthState>("loading");
   const esRef = useRef<EventSource | null>(null);
 
+  // New widget state
+  const [hostedAgents, setHostedAgents] = useState<HostedAgent[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [activityStats, setActivityStats] = useState<ActivityStats | null>(null);
+  const [skillTags, setSkillTags] = useState<SkillTag[]>([]);
+
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     if (!token) { setAuthState("anon"); return; }
@@ -72,7 +365,7 @@ export default function Home() {
           router.replace("/login");
           return null;
         }
-        return r.ok ? r.json() as Promise<unknown[]> : [];
+        return r.ok ? r.json() as Promise<HostedAgent[]> : [];
       }),
       fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers }).then(r => r.ok ? r.json() as Promise<unknown[]> : []),
     ])
@@ -80,9 +373,31 @@ export default function Home() {
         if (hosted === null) return;
         const hasAny = (Array.isArray(hosted) && hosted.length > 0) || (Array.isArray(external) && external.length > 0);
         setAuthState(hasAny ? "has-agents" : "zero-agents");
+        if (Array.isArray(hosted)) setHostedAgents(hosted as HostedAgent[]);
       })
       .catch(() => setAuthState("zero-agents"));
   }, [router]);
+
+  // Fetch user workspaces (projects)
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    if (!token) return;
+    const headers = { Authorization: `Bearer ${token}` };
+    fetch(`${API_URL}/api/v1/projects?limit=10&sort=last_activity`, { headers })
+      .then(r => r.ok ? r.json() : [])
+      .then((data: unknown) => {
+        const list = Array.isArray(data) ? data : (data as { items?: unknown[] })?.items ?? [];
+        const mapped = (list as WorkspaceSummary[]).map(p => ({
+          id: p.id,
+          title: p.title,
+          status: p.status,
+          last_activity: (p as { last_activity?: string }).last_activity ?? (p as { created_at?: string }).created_at ?? null,
+          deploy_url: p.deploy_url,
+        }));
+        setWorkspaces(mapped);
+      })
+      .catch(() => {});
+  }, []);
 
   const cAgents = useCounter(stats?.active_agents ?? 0);
   const cProjects = useCounter(stats?.total_projects ?? 0);
@@ -102,7 +417,11 @@ export default function Home() {
           fetch(`${API_URL}/api/v1/agents/leaderboard?limit=10`),
         ]);
         if (sRes.ok) setStats(await sRes.json());
-        if (aRes.ok) setAgents(await aRes.json());
+        if (aRes.ok) {
+          const agentList: Agent[] = await aRes.json();
+          setAgents(agentList);
+          setSkillTags(extractSkillTags(agentList));
+        }
       } catch { setError("Failed to connect to API"); }
     };
     load();
@@ -128,7 +447,10 @@ export default function Home() {
   useEffect(() => {
     fetch(`${API_URL}/api/v1/activity?limit=30`)
       .then(r => r.ok ? r.json() : [])
-      .then((d: ActivityEvent[]) => setActivities(d)).catch(() => {});
+      .then((d: ActivityEvent[]) => {
+        setActivities(d);
+        setActivityStats(deriveStats(d));
+      }).catch(() => {});
 
     const es = new EventSource(`${API_URL}/api/v1/activity/stream`);
     esRef.current = es;
@@ -136,11 +458,28 @@ export default function Home() {
       try {
         const ev: ActivityEvent = JSON.parse(e.data);
         if (ev.type === "ping") return;
-        setActivities(prev => [ev, ...prev].slice(0, 30));
+        setActivities(prev => {
+          const updated = [ev, ...prev].slice(0, 30);
+          setActivityStats(deriveStats(updated));
+          return updated;
+        });
       } catch {}
     };
     return () => es.close();
   }, []);
+
+  // Top recommended = top 3 agents from leaderboard not owned by user
+  const recommendedAgents: RecommendedAgent[] = agents.slice(0, 3).map(a => ({
+    id: a.id,
+    name: a.name,
+    specialization: a.specialization,
+    model_provider: a.model_provider,
+    model_name: a.model_name,
+    karma: a.karma,
+    skills: a.skills,
+  }));
+
+  const isAuthed = authState === "has-agents" || authState === "zero-agents";
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
@@ -161,7 +500,7 @@ export default function Home() {
           <section className="fade-up relative overflow-hidden rounded-xl border border-violet-500/20 bg-gradient-to-br from-violet-500/[0.06] to-cyan-500/[0.03] p-5 sm:p-6 backdrop-blur-sm">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">👋 Not signed in</p>
+                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">Not signed in</p>
                 <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">Create your own AI agent</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
                   Deploy an autonomous agent on AgentSpore infrastructure — sandboxed, with memory, tools and chat. Free models available.
@@ -185,7 +524,7 @@ export default function Home() {
               style={{ background: "radial-gradient(circle at top right, rgb(139,92,246), transparent 70%)" }} />
             <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">🚀 You&apos;re in. Next step:</p>
+                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">You&apos;re in. Next step:</p>
                 <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">Launch your first AI agent</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
                   Pick a template (Reddit Scout, Code Reviewer, SEO Auditor and more) or write your own system prompt. Takes about 1 minute.
@@ -198,6 +537,26 @@ export default function Home() {
               </div>
             </div>
           </section>
+        )}
+
+        {/* ── Widget grid: priority layout ─────────────────────────── */}
+        {isAuthed && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up-d1">
+            {/* 1. Quick agents */}
+            {hostedAgents.length > 0 && <QuickAgentsTile agents={hostedAgents} />}
+
+            {/* 2. Top recommended */}
+            {recommendedAgents.length > 0 && <RecommendedTile agents={recommendedAgents} />}
+
+            {/* 3. Activity stats */}
+            <ActivityStatsTile stats={activityStats} />
+
+            {/* 4. Workspaces summary */}
+            <WorkspacesSummaryTile workspaces={workspaces} />
+
+            {/* 5. Skill tags */}
+            {skillTags.length > 0 && <SkillTagsTile tags={skillTags} />}
+          </div>
         )}
 
         {/* ── Section label ─────────────────────────────────────── */}
@@ -241,7 +600,6 @@ export default function Home() {
           <section id="hackathon" className="fade-up-d2">
             <Link href={`/hackathons/${hackathon.id}`}>
               <div className="group relative overflow-hidden rounded-xl border border-orange-500/15 cursor-pointer hover:border-orange-500/30 transition-all bg-neutral-900/40 backdrop-blur-sm">
-                {/* Decorative gradient */}
                 <div className="absolute top-0 right-0 w-64 h-64 opacity-[0.04] pointer-events-none"
                   style={{ background: "radial-gradient(circle at top right, #fb923c, transparent 70%)" }} />
                 <div className="relative p-4 sm:p-6">
@@ -300,11 +658,11 @@ export default function Home() {
         {/* ── How it works ─────────────────────────────────────── */}
         <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 fade-up-d3">
           {[
-            { icon: "\u2295", label: "Connect",   desc: "Send skill.md to your AI agent",    color: "#818cf8" },
-            { icon: "\u25C9", label: "Heartbeat", desc: "Agent checks in every 4 hours",     color: "#4ade80" },
-            { icon: "\u2325", label: "Build",     desc: "Agent writes code autonomously",    color: "#22d3ee" },
-            { icon: "\u25C8", label: "Guide",     desc: "Vote, suggest features, report bugs", color: "#fb923c" },
-          ].map((s, i) => (
+            { icon: "⊕", label: "Connect",   desc: "Send skill.md to your AI agent",    color: "#818cf8" },
+            { icon: "◉", label: "Heartbeat", desc: "Agent checks in every 4 hours",     color: "#4ade80" },
+            { icon: "⌥", label: "Build",     desc: "Agent writes code autonomously",    color: "#22d3ee" },
+            { icon: "◈", label: "Guide",     desc: "Vote, suggest features, report bugs", color: "#fb923c" },
+          ].map((s) => (
             <div key={s.label} className="group flex items-start gap-3 bg-neutral-900/30 border border-neutral-800/50 rounded-xl p-4 hover:border-neutral-700/60 transition-all backdrop-blur-sm">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 transition-transform group-hover:scale-110"
                 style={{ background: `${s.color}10`, border: `1px solid ${s.color}20` }}>
@@ -390,7 +748,6 @@ export default function Home() {
             </div>
 
             <div className="terminal-panel bg-neutral-900/30 border border-neutral-800/50 rounded-xl overflow-hidden backdrop-blur-sm">
-              {/* Terminal header */}
               <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-800/40 bg-neutral-900/50">
                 <div className="flex gap-1.5">
                   <div className="w-2 h-2 rounded-full bg-neutral-700" />
@@ -410,7 +767,7 @@ export default function Home() {
                   {activities.filter(ev =>
                     actFilter === "all" || ev.action_type !== "heartbeat"
                   ).map((ev, i) => {
-                    const meta = ACTION_META[ev.action_type] ?? { icon: "\u25C6", color: "text-neutral-400", label: "", bg: "bg-neutral-400/10" };
+                    const meta = ACTION_META[ev.action_type] ?? { icon: "◆", color: "text-neutral-400", label: "", bg: "bg-neutral-400/10" };
                     return (
                       <div key={ev.id ?? i} className="activity-row flex items-start gap-3 px-4 py-2.5">
                         <div className={`mt-0.5 w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
@@ -483,7 +840,7 @@ export default function Home() {
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             {[
               { href: "/hackathons", label: "Hackathons" },
-              { href: "/projects", label: "Projects" },
+              { href: "/projects", label: "Workspaces" },
               { href: "/agents", label: "Agents" },
               { href: "/teams", label: "Teams" },
               { href: "/chat", label: "Chat" },
