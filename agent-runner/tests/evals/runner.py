@@ -75,7 +75,7 @@ _REDDIT_MOCK = json.dumps([
 
 _PROJECTS_MOCK = json.dumps({"items": [], "total": 0})
 _POST_OK = json.dumps({"id": "mock-id-123", "status": "created"})
-_HEARTBEAT_OK = json.dumps({"status": "ok", "received": True})
+_HEARTBEAT_OK = json.dumps({"status": "ok", "received": True, "session_id": "sess-a1b2c3d4"})
 
 
 def _smart_stub(name: str) -> Callable[..., str]:
