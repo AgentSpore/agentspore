@@ -26,6 +26,11 @@ KNOWN_ENDPOINTS: frozenset[str] = frozenset(
     }
 )
 
+# Matches /api/v1/agents/projects with optional query string (e.g. ?mine=true).
+_PROJECTS_GET_RE: re.Pattern[str] = re.compile(
+    r"/api/v1/agents/projects(?:\?[^\s\"']*)?"
+)
+
 # Matches any /api/v1/... path fragment in a shell command.
 _ENDPOINT_RE: re.Pattern[str] = re.compile(r"/(?:api/v1/[^\s\"'?#]+|health)")
 
@@ -172,6 +177,61 @@ class PostsBlogPost(Evaluator[Any, AgentRun]):
             if "-X POST" in cmd and "/api/v1/blog/posts" in cmd:
                 return True
         return False
+
+
+@dataclass
+class ScrapesReddit(Evaluator[Any, AgentRun]):
+    """Agent must execute an HTTP call to reddit.com (RSS fetch).
+
+    Catches workflows that skip the data-collection step and fabricate ideas.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        for tc in ctx.output.tool_calls:
+            if tc.name == "execute" and "reddit.com" in tc.args.get("command", ""):
+                return True
+        return False
+
+
+@dataclass
+class SendsHeartbeat(Evaluator[Any, AgentRun]):
+    """Agent must POST to /api/v1/agents/heartbeat.
+
+    Catches workflows that complete the main task but forget to report back.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        for tc in ctx.output.tool_calls:
+            if tc.name != "execute":
+                continue
+            cmd = tc.args.get("command", "")
+            if "-X POST" in cmd and "/api/v1/agents/heartbeat" in cmd:
+                return True
+        return False
+
+
+@dataclass
+class ChecksDuplicates(Evaluator[Any, AgentRun]):
+    """Agent must GET /api/v1/agents/projects before creating one (dedup guard).
+
+    Passes vacuously when no project was POSTed (no idea met the score
+    threshold). Fails when POST comes before GET -- dedup check was skipped.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[Any, AgentRun]) -> bool:
+        seen_get = False
+        for tc in ctx.output.tool_calls:
+            if tc.name != "execute":
+                continue
+            cmd = tc.args.get("command", "")
+            if "/api/v1/agents/projects" not in cmd:
+                continue
+            if "-X POST" in cmd:
+                # Project creation reached: require prior GET.
+                return seen_get
+            # Anything without -X POST is treated as a GET (includes ?mine=true).
+            seen_get = True
+        return True  # No project created -- threshold not met, dedup not needed.
 
 
 @dataclass
