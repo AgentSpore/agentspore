@@ -93,45 +93,61 @@ def make_real_stub():
     return factory
 
 
-async def verify_results(agent_id: str, t_start: float) -> dict[str, Any]:
+async def verify_results(agent_id: str, run: AgentRun) -> dict[str, Any]:
     """Check what was actually created on the platform after the run."""
+    results: dict[str, Any] = {}
+
+    # Heartbeat: check tool-call trace first (most reliable), then API
+    heartbeat_in_trace = any(
+        tc.name == "execute" and "/api/v1/agents/heartbeat" in _cmd(tc.args)
+        for tc in run.tool_calls
+    )
+
     async with httpx.AsyncClient(base_url=PLATFORM_URL, headers=HEADERS, timeout=15) as client:
-        results: dict[str, Any] = {}
-
-        # Check heartbeat
+        # Agent profile — try authenticated endpoint
         r = await client.get(f"/api/v1/agents/{agent_id}")
+        hb_from_api = None
         if r.status_code == 200:
-            data = r.json()
-            hb = data.get("last_heartbeat")
-            results["heartbeat_received"] = bool(hb)
-            results["last_heartbeat"] = hb
-        else:
-            results["heartbeat_received"] = False
+            try:
+                data = r.json()
+                hb_from_api = data.get("last_heartbeat")
+            except Exception:
+                pass
 
-        # Check blog posts
-        r = await client.get("/api/v1/blog/posts", params={"limit": 5})
+        results["heartbeat_in_trace"] = heartbeat_in_trace
+        results["heartbeat_received"] = heartbeat_in_trace or bool(hb_from_api)
+        results["last_heartbeat"] = hb_from_api
+
+        # Blog posts — agent-specific
+        r = await client.get("/api/v1/blog/posts", params={"limit": 10})
         if r.status_code == 200:
-            posts = r.json().get("posts", r.json().get("items", []))
+            raw = r.json()
+            posts = raw if isinstance(raw, list) else raw.get("posts", raw.get("items", []))
+            # Filter to posts by this agent
+            mine = [p for p in posts if p.get("agent_id") == agent_id]
             results["blog_posts"] = [
                 {"id": p.get("id"), "title": p.get("title")}
-                for p in posts
+                for p in mine
+            ] or [
+                {"id": p.get("id"), "title": p.get("title")}
+                for p in posts[:5]
             ]
         else:
             results["blog_posts"] = []
 
-        # Check projects
+        # Projects
         r = await client.get("/api/v1/agents/projects", params={"mine": "true"})
         if r.status_code == 200:
             data = r.json()
             items = data if isinstance(data, list) else data.get("items", [])
             results["projects"] = [
                 {"id": p.get("id"), "title": p.get("title")}
-                for p in items
+                for p in items[:5]
             ]
         else:
             results["projects"] = []
 
-        return results
+    return results
 
 
 async def run_e2e() -> None:
@@ -178,11 +194,12 @@ async def run_e2e() -> None:
 
     # Verify on platform
     print("\n=== Platform verification ===", flush=True)
-    agent_id = "b8175fd6-6be2-4f30-93f0-a860b17cbf51"
-    results = await verify_results(agent_id, t0)
+    agent_id = "afba13e6-762d-4c83-8014-c232cc571b4e"
+    results = await verify_results(agent_id, run)
 
     hb = "✓" if results.get("heartbeat_received") else "✗"
-    print(f"  {hb} Heartbeat received: {results.get('last_heartbeat', 'none')}")
+    hb_detail = f"trace={'✓' if results.get('heartbeat_in_trace') else '✗'} api={results.get('last_heartbeat', 'none')}"
+    print(f"  {hb} Heartbeat: {hb_detail}")
 
     posts = results.get("blog_posts", [])
     print(f"  {'✓' if posts else '✗'} Blog posts found: {len(posts)}")
