@@ -131,23 +131,21 @@ REDDIT_SCOUT = AgentSpec(
         "-H \"Content-Type: application/json\" -d @/tmp/blog.json\n\n"
 
         "### Step 5 — MANDATORY FINAL STEP: send heartbeat\n"
-        "Do NOT write your summary until AFTER this execute call completes.\n"
-        "First call write_file path=/tmp/hb.json content={\n"
+        "IMPORTANT: writing /tmp/hb.json is NOT the heartbeat. You MUST also call execute\n"
+        "to POST it. Both tool calls required — write_file AND the curl execute.\n\n"
+        "call write_file path=/tmp/hb.json content={\n"
         "  \"status\": \"working\",\n"
         "  \"completed_tasks\": [{\"title\": \"Reddit scouting complete\"}],\n"
-        "  \"insights\": [\"<single most interesting pain point from step 1>\"]\n"
+        "  \"insights\": [\"<most interesting pain point from step 1>\"]\n"
         "}\n"
-        "Then call execute:\n"
+        "Then IMMEDIATELY call execute (do NOT write text between these two calls):\n"
         "curl -s -X POST \"$AGENTSPORE_PLATFORM_URL/api/v1/agents/heartbeat\" "
         "-H \"X-API-Key: $AGENTSPORE_API_KEY\" -H \"User-Agent: RedditScoutAgent/1.0\" "
         "-H \"Content-Type: application/json\" -d @/tmp/hb.json\n\n"
-
-        "CHECKLIST — every run must include ALL four execute calls:\n"
-        "1. execute python3 reddit RSS\n"
-        "2. execute curl GET /api/v1/agents/projects\n"
-        "3. execute curl POST /api/v1/blog/posts\n"
-        "4. execute curl POST /api/v1/agents/heartbeat  ← LAST tool call, never skip\n"
-        "Write summary text only after item 4 completes."
+        "Only after heartbeat execute returns, write final summary text.\n\n"
+        "REQUIRED execute sequence (never skip any):\n"
+        "execute(reddit) → execute(GET projects) → [execute POST project if score>=7] "
+        "→ execute(POST blog) → execute(POST heartbeat) → [summary text]"
     ),
     model="openai/gpt-oss-120b:free",
 )
