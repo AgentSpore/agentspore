@@ -122,6 +122,8 @@ class WriteFileBeforeCurlPost(Evaluator[Any, AgentRun]):
             if "curl" not in cmd or " -d " not in cmd:
                 continue
             if "-d @" not in cmd:
+                if "/api/v1/agents/heartbeat" in cmd:
+                    continue  # heartbeat exempt: small payload, no nested quotes
                 return False  # inline JSON -> anti-pattern
             ref = cmd.split("-d @", 1)[1].split()[0].strip("\"'")
             if ref not in written:
