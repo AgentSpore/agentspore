@@ -56,9 +56,9 @@ def _validate_file_path(file_path: str) -> str:
 
 def _file_type_for(path: str) -> str:
     """Default file_type categorisation matching what _sync_files_from_runner uses."""
-    if "skills/" in path:
+    if ".deep/skills/" in path or path.startswith("skills/"):
         return "skill"
-    if "memory" in path.lower():
+    if ".deep/memory" in path or "memory" in path.lower():
         return "memory"
     if path == "AGENT.md":
         return "config"
@@ -180,18 +180,18 @@ class HostedAgentService:
 
         hosted_id = str(hosted["id"])
 
-        # Create pydantic-deepagents workspace structure:
-        # /AGENT.md              — system prompt (context file, auto-injected)
-        # /skills/SKILL.md       — platform skill.md (SkillsToolset auto-discovers)
-        # /memory/MEMORY.md      — persistent memory (MemoryToolset, branch "main")
-        # /skills/               — custom skills directory (SkillsToolset)
+        # Create pydantic-deepagents workspace structure under .deep/ namespace:
+        # /AGENT.md                    — system prompt (context file, auto-injected)
+        # /.deep/skills/SKILL.md       — platform skill.md (SkillsToolset auto-discovers)
+        # /.deep/memory/main/MEMORY.md — persistent memory (MemoryToolset, branch "main")
+        # /.deep/skills/               — custom skills directory (SkillsToolset)
+        # /.deep/agents/               — subagents (reserved for future multi-agent setups)
         await self.repo.upsert_file(hosted_id, "AGENT.md", system_prompt, "config")
-        await self.repo.upsert_file(hosted_id, "memory/MEMORY.md", "", "memory")
 
-        # Auto-load platform skill.md into skills/ so SkillsToolset picks it up
+        # Auto-load platform skill.md into .deep/skills/ so SkillsToolset picks it up
         platform_skill = _load_skill_md()
         if platform_skill:
-            await self.repo.upsert_file(hosted_id, "skills/SKILL.md", platform_skill, "skill")
+            await self.repo.upsert_file(hosted_id, ".deep/skills/SKILL.md", platform_skill, "skill")
 
         # Create agent.yaml (DeepAgentSpec) — users can customize agent behavior
         agent_yaml = (
@@ -205,7 +205,7 @@ class HostedAgentService:
             "include_subagents: false\n"
             "include_skills: true\n"
             "include_memory: true\n"
-            "memory_dir: /workspace/memory\n"
+            "memory_dir: /workspace/.deep/memory\n"
             "include_plan: true\n"
             "include_checkpoints: true\n"
             "checkpoint_frequency: every_turn\n"
@@ -218,14 +218,14 @@ class HostedAgentService:
             "web_search: false\n"
             "web_fetch: false\n"
             "skill_directories:\n"
-            "  - /workspace/skills\n"
+            "  - /workspace/.deep/skills\n"
         )
         await self.repo.upsert_file(hosted_id, "agent.yaml", agent_yaml, "config")
 
         # Add user skills as separate file if provided
         if skills:
             skill_content = "\n\n".join(f"## {s}\n{s} skill." for s in skills)
-            await self.repo.upsert_file(hosted_id, "skills/custom.md", skill_content, "skill")
+            await self.repo.upsert_file(hosted_id, ".deep/skills/custom.md", skill_content, "skill")
 
         return {
             **hosted,
@@ -318,7 +318,7 @@ class HostedAgentService:
                     f"{system_prompt}\n\n"
                     f"## Fork Info\n\nForked from **{source_name}** (@{source['agent_handle']})\n"
                 )
-            elif f["file_path"] == "memory/MEMORY.md":
+            elif f["file_path"] == ".deep/memory/MEMORY.md":
                 # Copy memory but add fork note
                 content = f"# Memory\n\nForked from {source_name}.\n\n{content}"
             await self.repo.upsert_file(hosted_id, f["file_path"], content, f["file_type"])
@@ -469,7 +469,7 @@ class HostedAgentService:
         try:
             summary_msg = (
                 "You are about to be stopped. Before shutdown, update your memory file "
-                "memory/MEMORY.md with key learnings, decisions, and context "
+                ".deep/memory/MEMORY.md with key learnings, decisions, and context "
                 "from this session that you'll need in the next session. Be concise."
             )
             await self._call_runner("chat", hid, {"content": summary_msg})
@@ -652,13 +652,13 @@ class HostedAgentService:
         """Send agent files and config to the Runner, start the container."""
         hosted_id = str(hosted["id"])
 
-        # Ensure platform SKILL.md is present in skills/ for SkillsToolset
-        existing_skill = await self.repo.get_file(hosted_id, "skills/SKILL.md")
+        # Ensure platform SKILL.md is present in .deep/skills/ for SkillsToolset
+        existing_skill = await self.repo.get_file(hosted_id, ".deep/skills/SKILL.md")
         if not existing_skill:
             platform_skill = _load_skill_md()
             if platform_skill:
                 await self.repo.upsert_file(
-                    hosted_id, "skills/SKILL.md", platform_skill, "skill"
+                    hosted_id, ".deep/skills/SKILL.md", platform_skill, "skill"
                 )
 
         # Ensure agent.yaml exists (auto-create for agents created before v0.3.3)
@@ -672,7 +672,7 @@ class HostedAgentService:
                 "include_execute: true\n"
                 "include_skills: true\n"
                 "include_memory: true\n"
-                "memory_dir: /workspace/memory\n"
+                "memory_dir: /workspace/.deep/memory\n"
                 "include_plan: true\n"
                 "include_checkpoints: true\n"
                 "checkpoint_frequency: every_turn\n"
@@ -683,7 +683,7 @@ class HostedAgentService:
                 "web_search: false\n"
                 "web_fetch: false\n"
                 "skill_directories:\n"
-                "  - /workspace/skills\n"
+                "  - /workspace/.deep/skills\n"
             )
             await self.repo.upsert_file(hosted_id, "agent.yaml", default_yaml, "config")
 
@@ -755,8 +755,8 @@ class HostedAgentService:
         bootstrap_msg = (
             "Read your workspace files to restore context:\n"
             "1. **AGENT.md** — your identity and configuration\n"
-            "2. **skills/SKILL.md** — AgentSpore platform API reference\n"
-            "3. **memory/** directory — your persistent memory from previous sessions\n\n"
+            "2. **.deep/skills/SKILL.md** — AgentSpore platform API reference\n"
+            "3. **.deep/memory/** directory — your persistent memory from previous sessions\n\n"
             "Study everything and let me know you're ready."
         )
 
