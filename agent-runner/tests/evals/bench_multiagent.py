@@ -6,12 +6,23 @@ Phase 1: RedditScoutAgent — scouts Reddit, creates project, spawns MVP subagen
 Phase 2: QAAgent — receives DM from Phase 1, spawns test-writer subagent,
          pushes tests, replies to RedditScout.
 
+Provider selection (free tiers, OpenAI-compatible):
+    LLM_PROVIDER=openrouter|cerebras|groq|gemini  (default: openrouter)
+    Each provider auto-sets OPENAI_API_KEY/OPENAI_BASE_URL/REAL_LLM_MODEL
+    from its own env var (CEREBRAS_API_KEY / GROQ_API_KEY / GEMINI_API_KEY /
+    OPENROUTER_API_KEY). You may override REAL_LLM_MODEL per-provider.
+
+Dedup test mode:
+    BENCH_DEDUP_TEST=1 — _PROJECTS_EMPTY mock returns a project with today's
+    created_at; agent must SKIP Step 3 → no project created.
+
+Required env (Docker-based subagent runs):
+    DOCKER_HOST=unix:///Users/exzent/.docker/run/docker.sock
+    TESTCONTAINERS_RYUK_DISABLED=true
+
 Run:
     cd agent-runner
-    OPENAI_API_KEY=$OPENROUTER_API_KEY \\
-    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \\
-    REAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b:free \\
-    uv run python -m tests.evals.bench_multiagent
+    LLM_PROVIDER=groq GROQ_API_KEY=... uv run python -m tests.evals.bench_multiagent
 """
 from __future__ import annotations
 
@@ -23,7 +34,60 @@ import subprocess
 import sys
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any
+
+# ── Provider switcher ─────────────────────────────────────────────────────────
+# Each provider entry: (base_url, default_model, key_env_name)
+_PROVIDERS: dict[str, tuple[str, str, str]] = {
+    "openrouter": (
+        "https://openrouter.ai/api/v1",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "OPENROUTER_API_KEY",
+    ),
+    "cerebras": (
+        "https://api.cerebras.ai/v1",
+        "llama-3.3-70b",
+        "CEREBRAS_API_KEY",
+    ),
+    "groq": (
+        "https://api.groq.com/openai/v1",
+        "llama-3.3-70b-versatile",
+        "GROQ_API_KEY",
+    ),
+    "gemini": (
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "gemini-2.5-flash",
+        "GEMINI_API_KEY",
+    ),
+}
+
+
+def _select_provider() -> str:
+    """Configure OPENAI_* env from LLM_PROVIDER. Return provider name actually used."""
+    requested = os.environ.get("LLM_PROVIDER", "").lower().strip() or "openrouter"
+    if requested not in _PROVIDERS:
+        print(f"[provider] unknown LLM_PROVIDER={requested!r}, falling back to openrouter")
+        requested = "openrouter"
+
+    # If requested provider has no key, try fallback chain.
+    chain = [requested] + [p for p in ("groq", "cerebras", "gemini", "openrouter") if p != requested]
+    for prov in chain:
+        base, default_model, key_env = _PROVIDERS[prov]
+        key = os.environ.get(key_env, "")
+        if not key:
+            continue
+        os.environ["OPENAI_API_KEY"] = key
+        os.environ["OPENAI_BASE_URL"] = base
+        os.environ.setdefault("REAL_LLM_MODEL", default_model)
+        if prov != requested:
+            print(f"[provider] {key_env} not set; using {prov} instead")
+        return prov
+
+    raise RuntimeError(
+        "No API key found. Set one of GROQ_API_KEY, CEREBRAS_API_KEY, "
+        "GEMINI_API_KEY, or OPENROUTER_API_KEY."
+    )
 
 from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
@@ -138,6 +202,19 @@ _REDDIT_PAIN = json.dumps([
     {"sub": "webdev", "title": "How do I build a microservice that diffs swagger.json against running FastAPI routes? Spent 2 days looking, no open-source solution exists", "link": "https://reddit.com/r/webdev/3"},
 ])
 _PROJECTS_EMPTY = json.dumps({"items": [], "total": 0})
+
+_DEDUP_MODE = os.environ.get("BENCH_DEDUP_TEST", "").strip() in ("1", "true", "yes")
+_TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+_PROJECTS_TODAY = json.dumps({
+    "items": [{
+        "id": "proj-existing-today",
+        "title": "Already Built Today",
+        "created_at": _TODAY,
+        "repo_url": "https://github.com/AgentSpore/already-built-today",
+    }],
+    "total": 1,
+})
+_PROJECTS_LIST_RESPONSE = _PROJECTS_TODAY if _DEDUP_MODE else _PROJECTS_EMPTY
 _PROJECT_CREATED = json.dumps({
     "id": "proj-abc-123",
     "title": "Invoice Reconciliation Tool",
@@ -199,13 +276,25 @@ def make_reddit_scout_stubs(state: PipelineState, model: str) -> dict[str, Any]:
         if local is not None:
             return local
 
-        # Mock curl calls
+        # Mock curl calls — DM endpoint: /api/v1/chat/dm/reply (new) or /dm/<handle> (old)
+        if "/chat/dm/reply" in cmd and "POST" in cmd:
+            # Read the file specified with -d @/tmp/...json to get to_agent_handle
+            import re
+            m = re.search(r"-d @(/tmp/\S+)", cmd)
+            if m and os.path.exists(m.group(1)):
+                try:
+                    dm_data = json.load(open(m.group(1)))
+                    target = dm_data.get("to_agent_handle", "unknown")
+                    content = dm_data.get("content", "")
+                    state.capture_dm(target, content, "redditscouthosted")
+                except Exception:
+                    pass
+            return _DM_OK
         if "/dm/qaagent" in cmd and "POST" in cmd:
-            # Also try to read the dm file if written separately
-            state.capture_dm("qaagent", "[DM via execute curl to /dm/qaagent]", "redditscouthosted")
+            state.capture_dm("qaagent", "[DM via old URL]", "redditscouthosted")
             return _DM_OK
         if "/dm/contentagent" in cmd and "POST" in cmd:
-            state.capture_dm("contentagent", "[DM via execute curl to /dm/contentagent]", "redditscouthosted")
+            state.capture_dm("contentagent", "[DM via old URL]", "redditscouthosted")
             return _DM_OK
         if "/dm/" in cmd and "POST" in cmd:
             return _DM_OK
@@ -225,7 +314,7 @@ def make_reddit_scout_stubs(state: PipelineState, model: str) -> dict[str, Any]:
             state.project_created = json.loads(_PROJECT_CREATED)
             return _PROJECT_CREATED
         if "/api/v1/agents/projects" in cmd:
-            return _PROJECTS_EMPTY
+            return _PROJECTS_LIST_RESPONSE
         if "/api/v1/blog/posts" in cmd and "POST" in cmd:
             return _BLOG_OK
         if "/api/v1/blog/posts" in cmd:
@@ -311,6 +400,8 @@ def make_qa_agent_stubs(
                     except Exception:
                         pass
             return _PUSH_OK
+        if "/chat/dm/reply" in cmd and "POST" in cmd:
+            return _DM_OK
         if "/dm/" in cmd and "POST" in cmd:
             return _DM_OK
         if "/api/v1/agents/stats" in cmd or "/health" in cmd.split("?")[0]:
@@ -375,8 +466,10 @@ def _list_dir(path: str) -> list[str]:
 
 
 async def main():
+    provider = _select_provider()
     model = _build_real_llm_model()
-    print(f"Model: {model}\n{'='*60}", flush=True)
+    print(f"Provider: {provider}  Model: {model}  Dedup-mode: {_DEDUP_MODE}", flush=True)
+    print("=" * 60, flush=True)
 
     # Clean slate
     shutil.rmtree("/tmp/proj", ignore_errors=True)
@@ -426,19 +519,27 @@ async def main():
     print("PIPELINE RESULTS")
     print(f"{'='*60}")
 
-    checks = {
-        "RS: no error":         rs_run.error is None,
-        "RS: project created":  state.project_created is not None,
-        "RS: code written":     bool(proj_files),
-        "RS: main.py present":  "main.py" in proj_files,
-        "RS: code pushed":      bool(state.files_pushed),
-        "RS: DM → QA":          len(state.inbox_for("qaagent")) > 0,
-        "RS: DM → Content":     len(state.inbox_for("contentagent")) > 0,
-        "QA: no error":         qa_run.error is None,
-        "QA: tests written":    bool(test_files),
-        "QA: test_*.py present": any("test_" in f for f in test_files),
-        "QA: tests pushed":     bool(state.tests_pushed),
-    }
+    if _DEDUP_MODE:
+        checks = {
+            "RS: no error":              rs_run.error is None,
+            "DEDUP: no project created": state.project_created is None,
+            "DEDUP: no code pushed":     not state.files_pushed,
+            "DEDUP: no DM → QA":         len(state.inbox_for("qaagent")) == 0,
+        }
+    else:
+        checks = {
+            "RS: no error":         rs_run.error is None,
+            "RS: project created":  state.project_created is not None,
+            "RS: code written":     bool(proj_files),
+            "RS: main.py present":  "main.py" in proj_files,
+            "RS: code pushed":      bool(state.files_pushed),
+            "RS: DM → QA":          len(state.inbox_for("qaagent")) > 0,
+            "RS: DM → Content":     len(state.inbox_for("contentagent")) > 0,
+            "QA: no error":         qa_run.error is None,
+            "QA: tests written":    bool(test_files),
+            "QA: test_*.py present": any("test_" in f for f in test_files),
+            "QA: tests pushed":     bool(state.tests_pushed),
+        }
 
     passed = sum(v for v in checks.values())
     total = len(checks)
