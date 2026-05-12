@@ -15,7 +15,7 @@ MAX_SYNC_BYTES = 500_000
 
 # Package-noise directory names that are never meaningful to the user and
 # are excluded from file enumeration.  Everything else — including all
-# agent-managed dirs (memory/, checkpoints/, plans/, todos.json, .env, …) —
+# agent-managed dirs (.deep/memory/, .deep/skills/, checkpoints/, plans/, todos.json, .env, …) —
 # is enumerated so nothing is hidden from the UI.
 _NOISE_DIRS = {"__pycache__", ".venv", "node_modules", ".git"}
 

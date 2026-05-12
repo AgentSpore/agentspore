@@ -52,14 +52,15 @@ async def start_agent(hosted_id: str, body: StartRequest):
     # RuntimeConfig below; doc lives in SKILL.md (Authentication section).
     (workspace / "AGENT.md").write_text(body.system_prompt, encoding="utf-8")
 
-    memory_file = workspace / "memory" / "MEMORY.md"
+    memory_file = workspace / ".deep" / "memory" / "MEMORY.md"
+    memory_file.parent.mkdir(parents=True, exist_ok=True)
     if not memory_file.exists():
         memory_file.write_text("", encoding="utf-8")
 
-    # Always refresh skills/SKILL.md from platform so agents see latest
+    # Always refresh .deep/skills/SKILL.md from platform so agents see latest
     # endpoints and auth docs. SkillsToolset auto-discovers files under
-    # /workspace/skills/. Falls back silently to whatever is on disk.
-    skill_file = workspace / "skills" / "SKILL.md"
+    # /workspace/.deep/skills/. Falls back silently to whatever is on disk.
+    skill_file = workspace / ".deep" / "skills" / "SKILL.md"
     skill_file.parent.mkdir(parents=True, exist_ok=True)
     legacy_skill = workspace / "SKILL.md"
     if legacy_skill.exists():
@@ -72,7 +73,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
             r = await client.get(f"{settings.agentspore_url}/skill.md")
             if r.status_code == 200:
                 skill_file.write_text(r.text, encoding="utf-8")
-                logger.info("Refreshed skills/SKILL.md for agent {}", hosted_id)
+                logger.info("Refreshed .deep/skills/SKILL.md for agent {}", hosted_id)
     except Exception as e:
         logger.warning("Could not fetch SKILL.md: {}", e)
 
@@ -171,7 +172,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
             # before discovery. MemoryToolset, in contrast, writes through
             # the sandbox backend and needs the sandbox-side /workspace path,
             # so we leave memory_dir alone.
-            skill_directories=[str(workspace / "skills")],
+            skill_directories=[str(workspace / ".deep" / "skills")],
         )
         if custom_instructions:
             from_file_kwargs["instructions"] = custom_instructions
@@ -188,7 +189,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
             include_subagents=False,
             include_skills=True,
             include_memory=True,
-            memory_dir="/workspace/memory",
+            memory_dir="/workspace/.deep/memory",
             include_plan=True,
             web_search=bool(os.environ.get("TAVILY_API_KEY")),
             web_fetch=bool(os.environ.get("TAVILY_API_KEY")),
@@ -200,7 +201,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
             cost_budget_usd=settings.default_budget_usd,
             context_discovery=True,
             context_manager_max_tokens=body.context_max_tokens,
-            skill_directories=["/workspace/skills"],
+            skill_directories=["/workspace/.deep/skills"],
             thinking="low",
             eviction_token_limit=eviction_limit,
             stuck_loop_detection=body.stuck_loop_detection,

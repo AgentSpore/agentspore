@@ -24,6 +24,25 @@ from loguru import logger
 from starlette.responses import JSONResponse
 
 from config import get_settings
+
+# ── Monkey-patch: collapse pydantic-deep MemoryToolset {memory_dir}/main/ subdir
+# Default `get_memory_path` returns "{memory_dir}/{agent_name}/MEMORY.md" with
+# agent_name hardcoded to "main" by `create_deep_agent` (see pydantic_deep
+# agent.py:709). Hosted agents do not use subagents (include_subagents=False),
+# so the per-agent subdirectory has no purpose and produces a confusing layout
+# (`/workspace/.deep/memory/main/MEMORY.md`). Override to write directly into
+# the configured memory_dir as `{memory_dir}/MEMORY.md`. Safe because we never
+# instantiate multiple AgentMemoryToolset siblings on the same memory_dir.
+import pydantic_deep.toolsets.memory as _pdmem  # noqa: E402
+
+_DEFAULT_MEMORY_FILENAME = _pdmem.DEFAULT_MEMORY_FILENAME
+
+
+def _flat_get_memory_path(memory_dir: str, agent_name: str) -> str:
+    return f"{memory_dir.rstrip('/')}/{_DEFAULT_MEMORY_FILENAME}"
+
+
+_pdmem.get_memory_path = _flat_get_memory_path
 from llm_fallback import resolve_model_for_agent  # noqa: F401 — kept for API compat
 from quota import DiskQuotaManager
 
