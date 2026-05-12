@@ -7,6 +7,7 @@ import time
 
 import httpx
 from loguru import logger
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -14,8 +15,10 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     ToolCallPart,
 )
+from pydantic_ai.tools import DeferredToolResults
 from pydantic_ai_backends import DockerSandbox
 from pydantic_deep.processors.patch import patch_tool_calls_processor
+from sandbox import is_command_safe
 
 from config import get_settings
 
@@ -322,7 +325,32 @@ class AgentSession:
                     message_history=self.message_history,
                     model_settings={"timeout": settings.chat_timeout},
                 )
-                self.message_history = result.all_messages()[-100:]
+                self.message_history = sanitize_history(result.all_messages())[-100:]
+
+                # Auto-approve deferred tool calls (execute is interrupt_on by default)
+                max_approvals = 10
+                while isinstance(result.output, DeferredToolRequests) and max_approvals > 0:
+                    deferred = result.output
+                    approvals: dict[str, bool] = {}
+                    for tc in deferred.approvals:
+                        if tc.tool_name == "execute":
+                            cmd = tc.args.get("command", "") if isinstance(tc.args, dict) else str(tc.args)
+                            safe, reason = is_command_safe(cmd)
+                            if not safe:
+                                logger.warning("Auto-react blocked unsafe command: {} ({})", cmd, reason)
+                                approvals[tc.tool_call_id] = False
+                                continue
+                        approvals[tc.tool_call_id] = True
+                    logger.info("Auto-react: approving {} deferred tools for {}", sum(v for v in approvals.values()), self.hosted_id)
+                    result = await self.agent.run(
+                        deferred_tool_results=DeferredToolResults(approvals=approvals),
+                        deps=self.deps,
+                        message_history=result.all_messages(),
+                        model_settings={"timeout": settings.chat_timeout},
+                    )
+                    self.message_history = sanitize_history(result.all_messages())[-100:]
+                    max_approvals -= 1
+
                 logger.info("Auto-reacted to {} for {}", event.get("type"), self.hosted_id)
             except Exception as e:
                 logger.warning("Auto-react failed for {}: {}", self.hosted_id, e)
