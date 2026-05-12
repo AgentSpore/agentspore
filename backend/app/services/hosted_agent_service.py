@@ -883,7 +883,7 @@ class HostedAgentService:
             runner_headers["X-Runner-Key"] = self.settings.agent_runner_key
         try:
             async with httpx.AsyncClient(
-                timeout=httpx.Timeout(180.0, connect=10.0),
+                timeout=httpx.Timeout(1800.0, connect=10.0),
             ) as client:
                 async with client.stream(
                     "POST",
@@ -1315,7 +1315,7 @@ class HostedAgentService:
         if self.settings.agent_runner_key:
             headers["X-Runner-Key"] = self.settings.agent_runner_key
         try:
-            timeout = 180 if action == "chat" else 60
+            timeout = 1800 if action == "chat" else 60
             async with httpx.AsyncClient(timeout=timeout) as client:
                 if method == "GET":
                     resp = await client.get(url, headers=headers)
