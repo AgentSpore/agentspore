@@ -287,7 +287,8 @@ class WritesMemory(Evaluator[Any, AgentRun]):
 
     Accepts either:
       - ``write_memory`` (pydantic-deep MemoryToolset canonical tool), OR
-      - ``write_file`` with path under ``memory/`` (e.g. ``memory/MEMORY.md``)
+      - ``write_file`` with path under ``.deep/memory/`` or legacy ``memory/``
+        (e.g. ``.deep/memory/MEMORY.md``)
 
     Catches stateless agents that re-discover the same blog/dedup state on
     every run instead of remembering last_run_date / last_blog_post_id /
@@ -300,7 +301,12 @@ class WritesMemory(Evaluator[Any, AgentRun]):
                 return True
             if tc.name == "write_file":
                 path = _path(tc.args)
-                if path.startswith("memory/") or path == "MEMORY.md" or "/memory/" in path:
+                if (
+                    path.startswith(".deep/memory/")
+                    or path.startswith("memory/")
+                    or path == "MEMORY.md"
+                    or "/memory/" in path
+                ):
                     return True
         return False
 
