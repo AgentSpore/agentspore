@@ -7,7 +7,13 @@ import time
 
 import httpx
 from loguru import logger
-from pydantic_ai.messages import ModelRequest, ModelResponse, SystemPromptPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    ToolCallPart,
+)
 from pydantic_ai_backends import DockerSandbox
 from pydantic_deep.processors.patch import patch_tool_calls_processor
 
@@ -56,13 +62,26 @@ def sanitize_history(messages: list) -> list:
             break
         cleaned = cleaned[:-1]
 
-    # patch_tool_calls_processor expects ModelMessage objects; skip for raw dicts.
-    if cleaned and not isinstance(cleaned[0], dict):
+    # Convert restored dict-form messages into ModelMessage objects.
+    # pydantic-ai-slim 1.93+ accesses ``state.conversation_id`` on each
+    # message during ``agent.run()``; raw dicts raise
+    # ``AttributeError("'dict' object has no attribute 'conversation_id'")``
+    # and surface as HTTP 500 on the chat endpoint.
+    if cleaned and isinstance(cleaned[0], dict):
         try:
-            return patch_tool_calls_processor(cleaned)
+            cleaned = ModelMessagesTypeAdapter.validate_python(cleaned)
         except Exception as e:
-            logger.warning("History sanitize fallback (patch failed): {}", e)
-    return cleaned
+            logger.warning(
+                "History deserialize failed for {} messages, dropping history: {}",
+                len(cleaned), e,
+            )
+            return []
+
+    try:
+        return patch_tool_calls_processor(cleaned)
+    except Exception as e:
+        logger.warning("History sanitize fallback (patch failed): {}", e)
+        return cleaned
 
 
 class AgentSession:
