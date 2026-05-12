@@ -21,6 +21,7 @@ from typing import Any
 from tests.evals.runner import (
     _build_real_llm_model,
     _trace_from_messages,
+    _BLOG_EMPTY,
     _PROJECTS_MOCK,
     _POST_OK,
     _HEARTBEAT_OK,
@@ -28,6 +29,8 @@ from tests.evals.runner import (
 from tests.evals.cases import REDDIT_SCOUT
 from tests.evals.evaluators import (
     AgentRun,
+    AcknowledgesDMs,
+    ChecksBlogDedup,
     NoErrors,
     CompletedTask,
     MinExecuteCount,
@@ -87,7 +90,9 @@ def make_live_stub(projects_get: str = _PROJECTS_MOCK):
                 is_post = "-X POST" in flat or "--request POST" in flat
                 return _POST_OK if is_post else projects_get
             if "/api/v1/blog/posts" in flat:
-                return _POST_OK
+                if "-X POST" in flat or "--request POST" in flat:
+                    return _POST_OK
+                return _BLOG_EMPTY
             if "/api/v1/agents/heartbeat" in flat:
                 return _HEARTBEAT_OK
             return f"[stub:{tool_name}] ok"
@@ -113,6 +118,8 @@ EVALUATORS = [
     ("FilePost", WriteFileBeforeCurlPost()),
     ("EnvVars", UsesEnvCredentials()),
     ("Blog", PostsBlogPost()),
+    ("DMAck", AcknowledgesDMs()),
+    ("BlogDedup", ChecksBlogDedup()),
     ("MinExec", MinExecuteCount()),
     ("Done", CompletedTask()),
 ]
