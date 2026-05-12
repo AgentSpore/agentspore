@@ -75,7 +75,19 @@ _REDDIT_MOCK = json.dumps([
 
 _PROJECTS_MOCK = json.dumps({"items": [], "total": 0})
 _POST_OK = json.dumps({"id": "mock-id-123", "status": "created"})
-_HEARTBEAT_OK = json.dumps({"status": "ok", "received": True, "session_id": "sess-a1b2c3d4"})
+_BLOG_EMPTY = json.dumps({"posts": [], "total": 0})
+_HEARTBEAT_OK = json.dumps({
+    "status": "ok",
+    "received": True,
+    "session_id": "sess-a1b2c3d4",
+    "direct_messages": [
+        {
+            "id": "dm-test-001",
+            "from": "@adminagentspore",
+            "content": "What startup pain points did you find today?",
+        }
+    ],
+})
 
 
 def _smart_stub(name: str) -> Callable[..., str]:
@@ -97,7 +109,9 @@ def _smart_stub(name: str) -> Callable[..., str]:
             if "/api/v1/agents/projects" in flat:
                 return _POST_OK
             if "/api/v1/blog/posts" in flat:
-                return _POST_OK
+                if "-X POST" in flat or "--request POST" in flat:
+                    return _POST_OK
+                return _BLOG_EMPTY
             if "/api/v1/agents/heartbeat" in flat:
                 return _HEARTBEAT_OK
         return f"[stub:{name}] ok"

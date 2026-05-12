@@ -42,12 +42,13 @@ from .runner import ScriptStep, run_real_llm, run_scripted
 PLATFORM_TOOLS: tuple[str, ...] = ("execute", "write_file", "read_file", "list_files")
 
 FREE_MODELS: list[str] = [
+    # Verified working 2026-05-12 (12/12 evaluators each)
     "nvidia/nemotron-3-super-120b-a12b:free",
     "openai/gpt-oss-120b:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "nousresearch/hermes-3-llama-3.1-405b:free",
-    "qwen/qwen3-next-80b-a3b-instruct:free",
     "minimax/minimax-m2.5:free",
+    # Removed: meta-llama/llama-3.3-70b-instruct:free — 404 (providers ignored)
+    # Removed: nousresearch/hermes-3-llama-3.1-405b:free — 404 (providers ignored)
+    # Removed: qwen/qwen3-next-80b-a3b-instruct:free — 404 (providers ignored)
 ]
 
 # ---------------------------------------------------------------------------
