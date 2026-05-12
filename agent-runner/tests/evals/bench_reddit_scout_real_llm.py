@@ -11,10 +11,10 @@ from __future__ import annotations
 import asyncio, json, os, sys, time
 from typing import Any
 
-from tests.evals.runner import _build_real_llm_model, _trace_from_messages, _PROJECTS_MOCK, _POST_OK, _HEARTBEAT_OK
+from tests.evals.runner import _build_real_llm_model, _trace_from_messages, _BLOG_EMPTY, _PROJECTS_MOCK, _POST_OK, _HEARTBEAT_OK
 from tests.evals.cases import REDDIT_SCOUT
 from tests.evals.evaluators import (
-    AgentRun, NoErrors, CompletedTask, MinExecuteCount,
+    AgentRun, AcknowledgesDMs, ChecksBlogDedup, NoErrors, CompletedTask, MinExecuteCount,
     ScrapesReddit, SendsHeartbeat, ChecksDuplicates,
     WriteFileBeforeCurlPost, UsesEnvCredentials, PostsBlogPost,
 )
@@ -39,6 +39,7 @@ EVALUATORS = [
     ("NoErr",    NoErrors()), ("Reddit",  ScrapesReddit()), ("Heartbt", SendsHeartbeat()),
     ("Dedup",    ChecksDuplicates()), ("FilePost", WriteFileBeforeCurlPost()),
     ("EnvVars",  UsesEnvCredentials()), ("Blog", PostsBlogPost()),
+    ("DMAck",    AcknowledgesDMs()), ("BlogDedup", ChecksBlogDedup()),
     ("MinExec",  MinExecuteCount()), ("Done", CompletedTask()),
 ]
 
@@ -52,7 +53,8 @@ def make_stub(cfg: dict[str, Any]):
             if "reddit.com" in flat: return cfg["reddit"]
             if "/api/v1/agents/projects" in flat:
                 return _POST_OK if ("-X POST" in flat or "POST" in flat) else cfg["projects_get"]
-            if "/api/v1/blog/posts" in flat: return _POST_OK
+            if "/api/v1/blog/posts" in flat:
+                return _POST_OK if ("-X POST" in flat or "--request POST" in flat) else _BLOG_EMPTY
             if "/api/v1/agents/heartbeat" in flat: return _HEARTBEAT_OK
             return f"[stub:{tool_name}] ok"
         fn.__name__ = tool_name
