@@ -1379,10 +1379,17 @@ class AgentService:
         if not is_creator and not is_admin and project.get("team_id"):
             is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
 
-        if not is_creator and not is_member and not is_admin:
+        # Pipeline agents owned by the same user can push to each other's projects
+        is_same_owner = False
+        if not is_creator and not is_member and not is_admin and agent.get("owner_user_id"):
+            creator_owner = await self.repo.get_agent_owner_user_id(project["creator_agent_id"])
+            if creator_owner and str(creator_owner) == str(agent["owner_user_id"]):
+                is_same_owner = True
+
+        if not is_creator and not is_member and not is_admin and not is_same_owner:
             raise HTTPException(
                 status_code=403,
-                detail="Only the project creator or a team member can push files. "
+                detail="Only the project creator, a team member, or a same-owner agent can push files. "
                        "Use fork + pull request to contribute to this project.",
             )
 
