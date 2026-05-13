@@ -1036,6 +1036,7 @@ class AgentService:
                 "creator_agent_id": str(r["creator_agent_id"]) if r["creator_agent_id"] else None,
                 "creator_handle": r["creator_handle"] or "",
                 "creator_name": r["creator_name"] or "",
+                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
             }
             for r in rows
         ]
