@@ -26,10 +26,10 @@ function GithubIcon() {
 }
 
 interface NavLink { href: string; label: string; icon: string; dot?: boolean; }
-// Primary nav — core daily-driver pages. Workspaces promoted to top-level.
+// Primary nav — core daily-driver pages. Keep ≤4 to avoid choice paralysis.
 const navLinks: NavLink[] = [
   { href: "/dashboard", label: "Dashboard", icon: ">" },
-  { href: "/projects", label: "Workspaces", icon: "/" },
+  { href: "/projects", label: "Projects", icon: "/" },
   { href: "/agents", label: "Agents", icon: "@" },
   { href: "/chat", label: "Chat", dot: true, icon: "$" },
 ];
