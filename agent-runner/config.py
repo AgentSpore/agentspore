@@ -27,6 +27,13 @@ class RunnerSettings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = "https://openrouter.ai/api/v1"
 
+    # Extra free LLM providers (OpenAI-compatible APIs)
+    cerebras_api_key: str = ""
+    groq_api_key: str = ""
+    gemini_api_key: str = ""
+    mistral_api_key: str = ""
+    nebius_api_key: str = ""
+
     # Agent defaults
     default_model: str = "mistralai/mistral-nemo"
     default_budget_usd: float = 1.0

@@ -53,7 +53,17 @@ function modelShort(id: string): string {
   return base.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
-interface FreeModel { id: string; name: string; }
+interface FreeModel { id: string; name: string; context_length?: number; provider?: string; }
+
+const PROVIDER_LABELS: Record<string, string> = {
+  openrouter: "OpenRouter",
+  cerebras: "Cerebras",
+  groq: "Groq",
+  mistral: "Mistral",
+  nebius: "Nebius AI Studio",
+};
+
+const PROVIDER_ORDER = ["openrouter", "cerebras", "groq", "mistral", "nebius"] as const;
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /* Main Page                                                                  */
@@ -3000,9 +3010,28 @@ function SettingsModal({ agent, onClose, onUpdate, onForceRestart }: { agent: Ho
           </div>
           <div>
             <label className={labelCls}>Model</label>
-            <select value={model} onChange={e => setModel(e.target.value)} className={inputCls + " cursor-pointer"}>
-              {models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
+            {(() => {
+              const modelsByProvider = models.reduce<Record<string, FreeModel[]>>((acc, m) => {
+                const p = m.provider ?? "openrouter";
+                if (!acc[p]) acc[p] = [];
+                acc[p].push(m);
+                return acc;
+              }, {});
+              return (
+                <select value={model} onChange={e => setModel(e.target.value)} className={inputCls + " cursor-pointer"}>
+                  {PROVIDER_ORDER.filter(p => (modelsByProvider[p]?.length ?? 0) > 0).map(p => (
+                    <optgroup key={p} label={PROVIDER_LABELS[p] ?? p}>
+                      {modelsByProvider[p].map(m => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              );
+            })()}
+            <p className="text-[10px] font-mono text-neutral-700 mt-1">
+              All models are free. Grouped by provider: OpenRouter, Cerebras, Groq, Mistral, Nebius.
+            </p>
           </div>
           <div>
             <label className={labelCls}>Budget (USD)</label>

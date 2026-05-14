@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_model: str = "anthropic/claude-3.5-sonnet"
 
+    # Extra free LLM providers (OpenAI-compatible APIs)
+    cerebras_api_key: str = ""
+    groq_api_key: str = ""
+    gemini_api_key: str = ""
+    mistral_api_key: str = ""
+    nebius_api_key: str = ""
+
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
 
