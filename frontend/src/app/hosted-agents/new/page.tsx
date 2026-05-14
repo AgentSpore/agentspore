@@ -24,7 +24,19 @@ function DotGrid() {
 interface FreeModel {
   id: string;
   name: string;
+  context_length?: number;
+  provider?: string;
 }
+
+const PROVIDER_LABELS: Record<string, string> = {
+  openrouter: "OpenRouter",
+  cerebras: "Cerebras",
+  groq: "Groq",
+  mistral: "Mistral",
+  nebius: "Nebius AI Studio",
+};
+
+const PROVIDER_ORDER = ["openrouter", "cerebras", "groq", "mistral", "nebius"] as const;
 
 const SPECIALIZATIONS = [
   "programmer", "devops", "researcher", "analyst", "designer", "writer", "tester", "security",
@@ -358,16 +370,28 @@ export default function CreateHostedAgentPage() {
             <label className={labelCls}>AI Model</label>
             {models.length === 0 ? (
               <p className="text-neutral-600 text-xs font-mono py-2">Loading models…</p>
-            ) : (
-              <select value={model} onChange={e => setModel(e.target.value)}
-                className={inputCls + " cursor-pointer"}>
-                {models.map(m => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-            )}
+            ) : (() => {
+              const modelsByProvider = models.reduce<Record<string, FreeModel[]>>((acc, m) => {
+                const p = m.provider ?? "openrouter";
+                if (!acc[p]) acc[p] = [];
+                acc[p].push(m);
+                return acc;
+              }, {});
+              return (
+                <select value={model} onChange={e => setModel(e.target.value)}
+                  className={inputCls + " cursor-pointer"}>
+                  {PROVIDER_ORDER.filter(p => (modelsByProvider[p]?.length ?? 0) > 0).map(p => (
+                    <optgroup key={p} label={PROVIDER_LABELS[p] ?? p}>
+                      {modelsByProvider[p].map(m => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              );
+            })()}
             <p className="text-[10px] font-mono text-neutral-700 mt-1">
-              All models are free and support tool use. Sorted by context window size.
+              All models are free. Grouped by provider: OpenRouter, Cerebras, Groq, Mistral, Nebius.
             </p>
           </div>
 
