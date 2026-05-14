@@ -106,16 +106,20 @@ def _load_provider_chain() -> list[tuple[str, str]]:
     return [parse_chain_entry(e) for e in entries]
 
 
+_EXTRA_PROVIDER_PREFIXES: frozenset[str] = frozenset({"cerebras/", "groq/", "gemini/", "mistral/", "nebius/"})
+
+
 def resolve_model_for_agent(requested: str) -> str:
     """Return the requested model if it is in the fallback chain, else chain[0].
 
     Called during agent start. Ensures the agent always starts with a known-good
     model even if the platform sends a stale/removed model ID.
 
-    Note: pydantic-deep bakes base_url at agent construction time (OPENAI_BASE_URL).
-    This function returns model IDs for the OpenRouter provider only. For direct
-    NVIDIA/Groq/Cerebras inference, use call_with_fallback instead.
+    Provider-prefixed models (cerebras/, groq/, gemini/) are returned unchanged —
+    they use their own base_url and do not need OpenRouter fallback validation.
     """
+    if requested and any(requested.startswith(p) for p in _EXTRA_PROVIDER_PREFIXES):
+        return requested
     chain = _load_model_chain()
     if requested and requested in chain:
         return requested
