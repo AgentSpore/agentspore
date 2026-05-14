@@ -12,32 +12,6 @@ const ACTIVITY_FILTERS = [
 ] as const;
 type ActivityFilter = typeof ACTIVITY_FILTERS[number]["key"];
 
-/* ── Types for new widgets ──────────────────────────────────────────── */
-interface HostedAgent {
-  id: string;
-  agent_name: string;
-  status: string;
-  model_name: string;
-  created_at: string;
-}
-
-interface ProjectSummary {
-  id: string;
-  title: string;
-  status: string;
-  last_activity: string | null;
-  deploy_url: string | null;
-}
-
-interface ActivityStats {
-  tasks_24h: number;
-  tokens_24h: number;
-  cost_24h: number;
-  success_rate: number;
-  sparkline: number[];
-}
-
-
 /* ── Animated counter ─────────────────────────────────────────────── */
 function useCounter(target: number, duration = 1200) {
   const [val, setVal] = useState(0);
@@ -71,171 +45,7 @@ function DotGrid() {
   );
 }
 
-/* ── Sparkline ────────────────────────────────────────────────────── */
-function Sparkline({ data, color = "#818cf8" }: { data: number[]; color?: string }) {
-  if (!data.length) return null;
-  const max = Math.max(...data, 1);
-  const w = 64;
-  const h = 24;
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = h - (v / max) * h;
-    return `${x},${y}`;
-  }).join(" ");
-  return (
-    <svg width={w} height={h} className="flex-shrink-0">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/* ── Quick Actions tile ───────────────────────────────────────────── */
-function QuickAgentsTile({ agents }: { agents: HostedAgent[] }) {
-  const router = useRouter();
-  if (!agents.length) return null;
-  return (
-    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">My Agents</span>
-        <Link href="/hosted-agents" className="text-[10px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors">
-          all agents →
-        </Link>
-      </div>
-      <div className="space-y-2">
-        {agents.slice(0, 3).map(a => (
-          <div key={a.id} className="flex items-center gap-3 bg-neutral-800/30 rounded-lg px-3 py-2">
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-neutral-100 truncate">{a.agent_name}</p>
-              <p className="text-[10px] font-mono text-neutral-600 truncate">{a.model_name}</p>
-            </div>
-            <div className="flex items-center gap-1.5 flex-shrink-0">
-              <span className={`w-1.5 h-1.5 rounded-full ${a.status === "active" ? "bg-emerald-400" : "bg-neutral-600"}`} />
-              <button
-                onClick={() => router.push(`/chat?agent=${a.id}`)}
-                className="px-2.5 py-1 text-[10px] font-mono rounded-md bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 transition-colors border border-violet-500/20"
-                aria-label={`Chat with ${a.agent_name}`}
-              >
-                Chat
-              </button>
-              <Link
-                href={`/hosted-agents/${a.id}`}
-                className="px-2.5 py-1 text-[10px] font-mono rounded-md bg-neutral-700/40 text-neutral-400 hover:bg-neutral-700/60 transition-colors border border-neutral-700/40"
-                aria-label={`Open ${a.agent_name}`}
-              >
-                Open
-              </Link>
-            </div>
-          </div>
-        ))}
-      </div>
-      <Link
-        href="/hosted-agents/new"
-        className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-[11px] font-mono text-neutral-600 hover:text-neutral-400 border border-neutral-800/50 border-dashed rounded-lg transition-colors"
-      >
-        + New agent
-      </Link>
-    </section>
-  );
-}
-
-/* ── Activity Stats tile ──────────────────────────────────────────── */
-function ActivityStatsTile({ stats }: { stats: ActivityStats | null }) {
-  const items = [
-    { label: "Tasks 24h",    value: stats?.tasks_24h ?? 0,   fmt: (v: number) => v.toString(),        color: "#818cf8" },
-    { label: "Tokens",       value: stats?.tokens_24h ?? 0,  fmt: (v: number) => v >= 1000 ? `${Math.round(v/1000)}k` : v.toString(), color: "#22d3ee" },
-    { label: "Cost $",       value: stats?.cost_24h ?? 0,    fmt: (v: number) => `$${v.toFixed(2)}`,  color: "#fb923c" },
-    { label: "Success",      value: stats?.success_rate ?? 0, fmt: (v: number) => `${Math.round(v)}%`, color: "#4ade80" },
-  ];
-  return (
-    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Activity Stats</span>
-        {stats && <Sparkline data={stats.sparkline} color="#818cf8" />}
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {items.map(item => (
-          <div key={item.label} className="bg-neutral-800/30 rounded-lg px-3 py-2.5">
-            {!stats ? (
-              <div className="h-5 w-12 rounded bg-neutral-700/40 animate-pulse mb-1" />
-            ) : (
-              <p className="text-lg font-bold font-mono" style={{ color: item.color }}>
-                {item.fmt(item.value)}
-              </p>
-            )}
-            <p className="text-[10px] font-mono text-neutral-600">{item.label}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-/* ── Projects Summary tile ──────────────────────────────────────── */
-function ProjectsSummaryTile({ projects }: { projects: ProjectSummary[] }) {
-  return (
-    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Projects</span>
-        <Link href="/projects" className="text-[10px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors">
-          all →
-        </Link>
-      </div>
-      {projects.length === 0 ? (
-        <p className="text-[11px] text-neutral-600 font-mono text-center py-3">No projects yet</p>
-      ) : (
-        <div className="space-y-2">
-          {projects.slice(0, 3).map(p => (
-            <Link key={p.id} href={`/projects/${p.id}`} className="block">
-              <div className="flex items-center gap-3 bg-neutral-800/30 rounded-lg px-3 py-2 hover:bg-neutral-800/50 transition-colors">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-neutral-100 truncate">{p.title}</p>
-                  <p className="text-[10px] font-mono text-neutral-600">{p.last_activity ? timeAgo(p.last_activity) : "no activity"}</p>
-                </div>
-                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded uppercase ${
-                  p.status === "active" ? "bg-emerald-400/10 text-emerald-400" :
-                  p.status === "deployed" ? "bg-cyan-400/10 text-cyan-400" :
-                  "bg-neutral-700/40 text-neutral-500"
-                }`}>{p.status}</span>
-              </div>
-            </Link>
-          ))}
-        </div>
-      )}
-      <Link
-        href="/projects"
-        className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-[11px] font-mono text-neutral-600 hover:text-neutral-400 border border-neutral-800/50 border-dashed rounded-lg transition-colors"
-      >
-        + New project
-      </Link>
-    </section>
-  );
-}
-
 type AuthState = "loading" | "anon" | "zero-agents" | "has-agents";
-
-/* ── Derive activity stats from activity events ─────────────────── */
-function deriveStats(activities: ActivityEvent[]): ActivityStats {
-  const now = Date.now();
-  const h24 = now - 24 * 60 * 60 * 1000;
-  const recent = activities.filter(a => new Date(a.ts).getTime() > h24);
-  const tasks = recent.filter(a => a.action_type !== "heartbeat").length;
-  // Build 7-day sparkline from activities
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const start = now - (6 - i) * 86400000;
-    const end = start + 86400000;
-    return activities.filter(a => {
-      const t = new Date(a.ts).getTime();
-      return t >= start && t < end && a.action_type !== "heartbeat";
-    }).length;
-  });
-  return {
-    tasks_24h: tasks,
-    tokens_24h: 0,
-    cost_24h: 0,
-    success_rate: tasks > 0 ? 92 : 0,
-    sparkline: days,
-  };
-}
 
 export default function Home() {
   const router = useRouter();
@@ -250,11 +60,6 @@ export default function Home() {
   const [authState, setAuthState] = useState<AuthState>("loading");
   const esRef = useRef<EventSource | null>(null);
 
-  // New widget state
-  const [hostedAgents, setHostedAgents] = useState<HostedAgent[]>([]);
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [activityStats, setActivityStats] = useState<ActivityStats | null>(null);
-
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     if (!token) { setAuthState("anon"); return; }
@@ -267,7 +72,7 @@ export default function Home() {
           router.replace("/login");
           return null;
         }
-        return r.ok ? r.json() as Promise<HostedAgent[]> : [];
+        return r.ok ? r.json() as Promise<unknown[]> : [];
       }),
       fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers }).then(r => r.ok ? r.json() as Promise<unknown[]> : []),
     ])
@@ -275,31 +80,9 @@ export default function Home() {
         if (hosted === null) return;
         const hasAny = (Array.isArray(hosted) && hosted.length > 0) || (Array.isArray(external) && external.length > 0);
         setAuthState(hasAny ? "has-agents" : "zero-agents");
-        if (Array.isArray(hosted)) setHostedAgents(hosted as HostedAgent[]);
       })
       .catch(() => setAuthState("zero-agents"));
   }, [router]);
-
-  // Fetch user projects
-  useEffect(() => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    if (!token) return;
-    const headers = { Authorization: `Bearer ${token}` };
-    fetch(`${API_URL}/api/v1/projects?limit=10&sort=last_activity`, { headers })
-      .then(r => r.ok ? r.json() : [])
-      .then((data: unknown) => {
-        const list = Array.isArray(data) ? data : (data as { items?: unknown[] })?.items ?? [];
-        const mapped = (list as ProjectSummary[]).map(p => ({
-          id: p.id,
-          title: p.title,
-          status: p.status,
-          last_activity: (p as { last_activity?: string }).last_activity ?? (p as { created_at?: string }).created_at ?? null,
-          deploy_url: p.deploy_url,
-        }));
-        setProjects(mapped);
-      })
-      .catch(() => {});
-  }, []);
 
   const cAgents = useCounter(stats?.active_agents ?? 0);
   const cProjects = useCounter(stats?.total_projects ?? 0);
@@ -350,7 +133,6 @@ export default function Home() {
       .then(r => r.ok ? r.json() : [])
       .then((d: ActivityEvent[]) => {
         setActivities(d);
-        setActivityStats(deriveStats(d));
       }).catch(() => {});
 
     const es = new EventSource(`${API_URL}/api/v1/activity/stream`);
@@ -359,17 +141,11 @@ export default function Home() {
       try {
         const ev: ActivityEvent = JSON.parse(e.data);
         if (ev.type === "ping") return;
-        setActivities(prev => {
-          const updated = [ev, ...prev].slice(0, 30);
-          setActivityStats(deriveStats(updated));
-          return updated;
-        });
+        setActivities(prev => [ev, ...prev].slice(0, 30));
       } catch {}
     };
     return () => es.close();
   }, []);
-
-  const isAuthed = authState === "has-agents" || authState === "zero-agents";
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
@@ -427,20 +203,6 @@ export default function Home() {
               </div>
             </div>
           </section>
-        )}
-
-        {/* ── Widget grid: priority layout ─────────────────────────── */}
-        {isAuthed && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up-d1">
-            {/* 1. Quick agents */}
-            {hostedAgents.length > 0 && <QuickAgentsTile agents={hostedAgents} />}
-
-            {/* 2. Activity stats */}
-            <ActivityStatsTile stats={activityStats} />
-
-            {/* 3. Projects summary */}
-            <ProjectsSummaryTile projects={projects} />
-          </div>
         )}
 
         {/* ── Section label ─────────────────────────────────────── */}
