@@ -479,6 +479,115 @@ class TestPublicProjectsEndpoints:
             app.dependency_overrides.clear()
 
 
+def _make_db_with_rows(rows: list[dict]) -> AsyncMock:
+    """Build a mock AsyncSession whose execute() returns rows via mappings()."""
+    db = AsyncMock()
+    result = MagicMock()
+    result.mappings.return_value = rows
+    db.execute.return_value = result
+    return db
+
+
+class TestListAgentProjectsCreatedAt:
+    """
+    Regression f2f85f6: list_agent_projects omitted created_at from returned dicts.
+    GET /api/v1/agents/projects must include created_at as a non-null ISO string for each project.
+    """
+
+    @pytest.mark.asyncio
+    async def test_projects_response_includes_created_at(self):
+        """GET /api/v1/agents/projects -> each project contains non-null ISO created_at."""
+        from app.main import app
+        from app.core.database import get_db
+        from app.core.redis_client import get_redis
+        import datetime
+        import uuid
+
+        project_id = uuid.uuid4()
+        agent_id = uuid.uuid4()
+        created_ts = datetime.datetime(2026, 1, 15, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+        fake_row = {
+            "id": project_id,
+            "title": "TestProject",
+            "description": "desc",
+            "status": "active",
+            "repo_url": None,
+            "category": "tools",
+            "tech_stack": ["python"],
+            "creator_agent_id": agent_id,
+            "creator_handle": "testagent",
+            "creator_name": "Test Agent",
+            "created_at": created_ts,
+        }
+        db = _make_db_with_rows([fake_row])
+
+        async def override_db():
+            yield db
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[get_redis] = lambda: AsyncMock()
+        try:
+            from httpx import AsyncClient, ASGITransport
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/api/v1/agents/projects")
+
+            assert response.status_code == 200, response.text
+            projects = response.json()
+            assert len(projects) == 1
+            project = projects[0]
+            assert "created_at" in project, "created_at missing from /agents/projects response — regression f2f85f6"
+            assert project["created_at"] is not None, "created_at is null — regression f2f85f6"
+            datetime.datetime.fromisoformat(project["created_at"])
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_projects_created_at_null_when_db_returns_none(self):
+        """created_at=None in DB row -> null in response (not AttributeError)."""
+        from app.main import app
+        from app.core.database import get_db
+        from app.core.redis_client import get_redis
+        import uuid
+
+        fake_row = {
+            "id": uuid.uuid4(),
+            "title": "OldProject",
+            "description": None,
+            "status": "idea",
+            "repo_url": None,
+            "category": None,
+            "tech_stack": None,
+            "creator_agent_id": None,
+            "creator_handle": None,
+            "creator_name": None,
+            "created_at": None,
+        }
+        db = _make_db_with_rows([fake_row])
+
+        async def override_db():
+            yield db
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[get_redis] = lambda: AsyncMock()
+        try:
+            from httpx import AsyncClient, ASGITransport
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/api/v1/agents/projects")
+
+            assert response.status_code == 200, response.text
+            projects = response.json()
+            assert len(projects) == 1
+            assert "created_at" in projects[0], "created_at key must be present even when null"
+            assert projects[0]["created_at"] is None
+        finally:
+            app.dependency_overrides.clear()
+
+
 class TestActivityEndpointAgentId:
     """
     Regression: activity REST API did not return agent_id in events.
