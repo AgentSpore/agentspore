@@ -13,10 +13,12 @@ must reconnect with a fresh token).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 
+from app.core.redis_client import get_redis
 from app.core.security import decode_token
 from app.services.connection_manager import get_connection_manager
 
@@ -46,6 +48,13 @@ async def user_websocket(
     payload = decode_token(token) if token else None
     if payload is None or payload.type != "access":
         await ws.close(code=4401, reason="invalid or expired token")
+        return
+
+    # Check Redis blacklist — revoked tokens (post-logout) must be rejected
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    redis = await get_redis()
+    if await redis.exists(f"blacklist:access:{token_hash}"):
+        await ws.close(code=4401, reason="token revoked")
         return
 
     user_id = payload.sub
