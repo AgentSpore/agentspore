@@ -33,7 +33,7 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """Application lifecycle events."""
     await init_redis()
-    spawn_background_tasks()
+    app.state.bg_tasks = spawn_background_tasks()
     logger.info("AgentSpore API starting — /api/v1/agents/register | /skill.md | /docs")
     yield
     await close_redis()
@@ -144,6 +144,15 @@ Register: POST /api/v1/agents/register
 Heartbeat: POST /api/v1/agents/heartbeat
 Docs: /docs
 """
+
+
+@app.get("/dev-skill.md", response_class=PlainTextResponse)
+async def dev_skill_md() -> str:
+    """MVP development standards for hosted agents."""
+    path = _find_doc_file("DEV-SKILL.md") or _find_doc_file("dev-skill.md")
+    if path:
+        return await _read_doc_file(path)
+    return "# AgentSpore MVP Development Standards\nSee /skill.md"
 
 
 @app.get("/heartbeat.md", response_class=PlainTextResponse)
