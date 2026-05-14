@@ -21,7 +21,7 @@ interface HostedAgent {
   created_at: string;
 }
 
-interface WorkspaceSummary {
+interface ProjectSummary {
   id: string;
   title: string;
   status: string;
@@ -216,32 +216,32 @@ function ActivityStatsTile({ stats }: { stats: ActivityStats | null }) {
   );
 }
 
-/* ── Workspaces Summary tile ──────────────────────────────────────── */
-function WorkspacesSummaryTile({ workspaces }: { workspaces: WorkspaceSummary[] }) {
+/* ── Projects Summary tile ──────────────────────────────────────── */
+function ProjectsSummaryTile({ projects }: { projects: ProjectSummary[] }) {
   return (
     <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Workspaces</span>
+        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Projects</span>
         <Link href="/projects" className="text-[10px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors">
           all →
         </Link>
       </div>
-      {workspaces.length === 0 ? (
-        <p className="text-[11px] text-neutral-600 font-mono text-center py-3">No workspaces yet</p>
+      {projects.length === 0 ? (
+        <p className="text-[11px] text-neutral-600 font-mono text-center py-3">No projects yet</p>
       ) : (
         <div className="space-y-2">
-          {workspaces.slice(0, 3).map(ws => (
-            <Link key={ws.id} href={`/projects/${ws.id}`} className="block">
+          {projects.slice(0, 3).map(p => (
+            <Link key={p.id} href={`/projects/${p.id}`} className="block">
               <div className="flex items-center gap-3 bg-neutral-800/30 rounded-lg px-3 py-2 hover:bg-neutral-800/50 transition-colors">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-neutral-100 truncate">{ws.title}</p>
-                  <p className="text-[10px] font-mono text-neutral-600">{ws.last_activity ? timeAgo(ws.last_activity) : "no activity"}</p>
+                  <p className="text-sm font-medium text-neutral-100 truncate">{p.title}</p>
+                  <p className="text-[10px] font-mono text-neutral-600">{p.last_activity ? timeAgo(p.last_activity) : "no activity"}</p>
                 </div>
                 <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded uppercase ${
-                  ws.status === "active" ? "bg-emerald-400/10 text-emerald-400" :
-                  ws.status === "deployed" ? "bg-cyan-400/10 text-cyan-400" :
+                  p.status === "active" ? "bg-emerald-400/10 text-emerald-400" :
+                  p.status === "deployed" ? "bg-cyan-400/10 text-cyan-400" :
                   "bg-neutral-700/40 text-neutral-500"
-                }`}>{ws.status}</span>
+                }`}>{p.status}</span>
               </div>
             </Link>
           ))}
@@ -251,7 +251,7 @@ function WorkspacesSummaryTile({ workspaces }: { workspaces: WorkspaceSummary[] 
         href="/projects"
         className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-[11px] font-mono text-neutral-600 hover:text-neutral-400 border border-neutral-800/50 border-dashed rounded-lg transition-colors"
       >
-        + New workspace
+        + New project
       </Link>
     </section>
   );
@@ -349,7 +349,7 @@ export default function Home() {
 
   // New widget state
   const [hostedAgents, setHostedAgents] = useState<HostedAgent[]>([]);
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activityStats, setActivityStats] = useState<ActivityStats | null>(null);
   const [skillTags, setSkillTags] = useState<SkillTag[]>([]);
 
@@ -378,7 +378,7 @@ export default function Home() {
       .catch(() => setAuthState("zero-agents"));
   }, [router]);
 
-  // Fetch user workspaces (projects)
+  // Fetch user projects
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     if (!token) return;
@@ -387,14 +387,14 @@ export default function Home() {
       .then(r => r.ok ? r.json() : [])
       .then((data: unknown) => {
         const list = Array.isArray(data) ? data : (data as { items?: unknown[] })?.items ?? [];
-        const mapped = (list as WorkspaceSummary[]).map(p => ({
+        const mapped = (list as ProjectSummary[]).map(p => ({
           id: p.id,
           title: p.title,
           status: p.status,
           last_activity: (p as { last_activity?: string }).last_activity ?? (p as { created_at?: string }).created_at ?? null,
           deploy_url: p.deploy_url,
         }));
-        setWorkspaces(mapped);
+        setProjects(mapped);
       })
       .catch(() => {});
   }, []);
@@ -551,8 +551,8 @@ export default function Home() {
             {/* 3. Activity stats */}
             <ActivityStatsTile stats={activityStats} />
 
-            {/* 4. Workspaces summary */}
-            <WorkspacesSummaryTile workspaces={workspaces} />
+            {/* 4. Projects summary */}
+            <ProjectsSummaryTile projects={projects} />
 
             {/* 5. Skill tags */}
             {skillTags.length > 0 && <SkillTagsTile tags={skillTags} />}
@@ -840,7 +840,7 @@ export default function Home() {
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             {[
               { href: "/hackathons", label: "Hackathons" },
-              { href: "/projects", label: "Workspaces" },
+              { href: "/projects", label: "Projects" },
               { href: "/agents", label: "Agents" },
               { href: "/teams", label: "Teams" },
               { href: "/chat", label: "Chat" },
