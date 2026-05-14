@@ -1,5 +1,6 @@
 """Chat endpoints: chat (non-streaming) and chat/stream."""
 
+import asyncio
 import json
 
 from fastapi import APIRouter, HTTPException
@@ -27,13 +28,14 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
     if not session:
         raise HTTPException(400, "Agent not running. Start it first.")
 
-    if session.chat_lock.locked():
-        raise HTTPException(429, "Agent is busy generating a response. Please wait.")
-
     session.touch()
 
-    async with session.chat_lock:
-      try:
+    try:
+        await asyncio.wait_for(session.chat_lock.acquire(), timeout=settings.chat_queue_timeout)
+    except asyncio.TimeoutError:
+        raise HTTPException(429, "Agent busy — try again later")
+
+    try:
         try:
             result = await session.agent.run(
                 body.content,
@@ -83,9 +85,11 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
 
         reply, tool_calls, thinking = _extract_response(result)
         return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
-      except Exception as e:
+    except Exception as e:
         logger.error("Chat error for {}: {}", hosted_id, repr(e))
         raise HTTPException(500, f"Agent error: {str(e)}")
+    finally:
+        session.chat_lock.release()
 
 
 @router.post("/agents/{hosted_id}/chat/stream")
@@ -104,9 +108,6 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
     if not session:
         raise HTTPException(400, "Agent not running. Start it first.")
 
-    if session.chat_lock.locked():
-        raise HTTPException(429, "Agent is busy generating a response. Please wait.")
-
     session.touch()
 
     # Acquire chat lock OUTSIDE the StreamingResponse generator so release
@@ -115,7 +116,10 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
     # a `RuntimeError: async generator raised StopAsyncIteration` (pydantic-ai
     # bug #4204; partial fix in 1.77.0 covers _stream_text_deltas but not
     # the agent.iter() node.stream() path we use).
-    await session.chat_lock.acquire()
+    try:
+        await asyncio.wait_for(session.chat_lock.acquire(), timeout=settings.chat_queue_timeout)
+    except asyncio.TimeoutError:
+        raise HTTPException(429, "Agent busy — try again later")
 
     async def generate():
       try:
