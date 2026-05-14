@@ -97,42 +97,63 @@ OPENROUTER = Provider(
             tool_use=True,
             context_window=262_144,
             priority=1,
-            notes="Production default. Verified working 2026-05.",
+            notes="Production default. RS eval PASS 2026-05.",
         ),
         ModelSpec(
             model_id="openai/gpt-oss-120b:free",
             tool_use=True,
             context_window=131_072,
             priority=2,
-            notes="OpenAI oss 120B via OpenRouter. Reliable tool_use.",
+            notes="RS eval PASS 2026-05. QA eval partial (PostsBlogPost fail).",
+        ),
+        ModelSpec(
+            model_id="deepseek/deepseek-v4-flash:free",
+            tool_use=True,
+            context_window=256_000,
+            priority=3,
+            notes="DeepSeek V4 Flash free. 256K ctx. Strong reasoning.",
+        ),
+        ModelSpec(
+            model_id="qwen/qwen3-coder:free",
+            tool_use=True,
+            context_window=262_000,
+            priority=4,
+            notes="Qwen 3 Coder free. Excellent code generation.",
+        ),
+        ModelSpec(
+            model_id="meta-llama/llama-3.3-70b-instruct:free",
+            tool_use=True,
+            context_window=65_536,
+            priority=5,
+            notes="Llama 3.3 70B free via OpenRouter.",
+        ),
+        ModelSpec(
+            model_id="minimax/minimax-m2.5:free",
+            tool_use=True,
+            context_window=196_608,
+            priority=6,
+            notes="MiniMax M2.5 free. Large ctx.",
         ),
         ModelSpec(
             model_id="google/gemma-4-31b-it:free",
             tool_use=True,
             context_window=262_144,
-            priority=3,
+            priority=7,
             notes="Gemma 4 31B instruct, Google-hosted.",
-        ),
-        ModelSpec(
-            model_id="google/gemma-4-26b-a4b-it:free",
-            tool_use=True,
-            context_window=262_144,
-            priority=4,
-            notes="Gemma 4 MoE variant.",
         ),
         ModelSpec(
             model_id="nvidia/nemotron-3-nano-30b-a3b:free",
             tool_use=True,
             context_window=256_000,
-            priority=5,
+            priority=8,
             notes="Lighter NVIDIA fallback.",
         ),
         ModelSpec(
             model_id="openai/gpt-oss-20b:free",
             tool_use=True,
             context_window=131_072,
-            priority=6,
-            notes="Lighter OpenAI oss fallback.",
+            priority=9,
+            notes="Lightweight OpenAI oss fallback.",
         ),
     ],
 )
@@ -195,32 +216,39 @@ GROQ = Provider(
     api_key_env="GROQ_API_KEY",
     models=[
         ModelSpec(
+            model_id="openai/gpt-oss-120b",
+            tool_use=True,
+            context_window=131_072,
+            priority=1,
+            notes="OpenAI OSS 120B on Groq ultra-fast inference. Verified 2026-05.",
+        ),
+        ModelSpec(
             model_id="llama-3.3-70b-versatile",
             tool_use=True,
             context_window=128_000,
-            priority=1,
-            notes="Groq flagship. ~14400 req/day free. Very fast (~300 t/s).",
+            priority=2,
+            notes="Groq Llama 3.3 70B. ~14400 req/day free. ~300 t/s.",
         ),
         ModelSpec(
-            model_id="llama-3.1-70b-versatile",
+            model_id="qwen/qwen3-32b",
+            tool_use=True,
+            context_window=131_072,
+            priority=3,
+            notes="Qwen 3 32B on Groq. Strong reasoning + tool_use.",
+        ),
+        ModelSpec(
+            model_id="meta-llama/llama-4-scout-17b-16e-instruct",
+            tool_use=True,
+            context_window=131_072,
+            priority=4,
+            notes="Llama 4 Scout 17B MoE on Groq. Fast, efficient.",
+        ),
+        ModelSpec(
+            model_id="llama-3.1-8b-instant",
             tool_use=True,
             context_window=128_000,
-            priority=2,
-            notes="Llama 3.1 70B on Groq.",
-        ),
-        ModelSpec(
-            model_id="gemma2-9b-it",
-            tool_use=True,
-            context_window=8_192,
-            priority=3,
-            notes="Gemma 2 9B. Fast, small ctx.",
-        ),
-        ModelSpec(
-            model_id="llama-3.2-90b-vision-preview",
-            tool_use=True,
-            context_window=8_192,
-            priority=4,
-            notes="Llama 3.2 90B vision, limited ctx on free.",
+            priority=5,
+            notes="Llama 3.1 8B instant. Lightweight fallback.",
         ),
     ],
 )
@@ -235,18 +263,110 @@ CEREBRAS = Provider(
     api_key_env="CEREBRAS_API_KEY",
     models=[
         ModelSpec(
-            model_id="llama3.1-70b",
+            model_id="gpt-oss-120b",
             tool_use=True,
-            context_window=128_000,
+            context_window=131_072,
             priority=1,
-            notes="Cerebras Llama 3.1 70B. ~1M tokens/day free. Fastest inference.",
+            notes="OpenAI OSS 120B on Cerebras wafer-scale. Ultra-fast. Verified 2026-05.",
+        ),
+        ModelSpec(
+            model_id="qwen-3-235b-a22b-instruct-2507",
+            tool_use=True,
+            context_window=131_072,
+            priority=2,
+            notes="Qwen 3 235B MoE on Cerebras. Huge capacity, fast inference.",
         ),
         ModelSpec(
             model_id="llama3.1-8b",
+            tool_use=False,
+            context_window=128_000,
+            priority=3,
+            notes="Llama 3.1 8B. Too small for tool_use in practice.",
+        ),
+    ],
+)
+
+# Mistral AI — free tier on open models, good instruction following.
+# Key: https://console.mistral.ai  (free tier with rate limits).
+# Tool use: supported on mistral-small and above.
+MISTRAL = Provider(
+    name="mistral",
+    base_url="https://api.mistral.ai/v1",
+    api_key_env="MISTRAL_API_KEY",
+    models=[
+        ModelSpec(
+            model_id="mistral-small-latest",
+            tool_use=True,
+            context_window=32_000,
+            priority=1,
+            notes="Mistral Small, free tier rate-limited. Good tool_use.",
+        ),
+        ModelSpec(
+            model_id="open-mixtral-8x22b",
+            tool_use=True,
+            context_window=65_536,
+            priority=2,
+            notes="Mixtral 8x22B open weights. Free tier.",
+        ),
+        ModelSpec(
+            model_id="open-mistral-7b",
+            tool_use=False,
+            context_window=32_000,
+            priority=3,
+            notes="Mistral 7B open weights. No tool_use.",
+        ),
+    ],
+)
+
+# Nebius AI Studio — hosts open-source models, generous free tier.
+# Key: https://studio.nebius.ai  (no credit card on free plan).
+# Tool use: supported on Llama and Qwen models.
+NEBIUS = Provider(
+    name="nebius",
+    base_url="https://api.studio.nebius.ai/v1",
+    api_key_env="NEBIUS_API_KEY",
+    models=[
+        ModelSpec(
+            model_id="NousResearch/Hermes-4-70B",
+            tool_use=True,
+            context_window=131_072,
+            priority=1,
+            notes="Hermes 4 70B — best-in-class tool_use. Verified 2026-05.",
+        ),
+        ModelSpec(
+            model_id="NousResearch/Hermes-4-405B",
+            tool_use=True,
+            context_window=131_072,
+            priority=2,
+            notes="Hermes 4 405B — largest Hermes. Superior reasoning.",
+        ),
+        ModelSpec(
+            model_id="nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
             tool_use=True,
             context_window=128_000,
-            priority=2,
-            notes="Llama 3.1 8B. Even faster, lighter.",
+            priority=3,
+            notes="Nemotron Ultra 253B on Nebius. Very capable.",
+        ),
+        ModelSpec(
+            model_id="Qwen/Qwen3-32B",
+            tool_use=True,
+            context_window=32_000,
+            priority=4,
+            notes="Qwen 3 32B on Nebius.",
+        ),
+        ModelSpec(
+            model_id="meta-llama/Llama-3.3-70B-Instruct",
+            tool_use=False,
+            context_window=128_000,
+            priority=5,
+            notes="Llama 3.3 70B on Nebius. 0 tool calls observed 2026-05.",
+        ),
+        ModelSpec(
+            model_id="meta-llama/Meta-Llama-3.1-8B-Instruct",
+            tool_use=False,
+            context_window=128_000,
+            priority=6,
+            notes="Llama 3.1 8B lightweight fallback. No reliable tool_use.",
         ),
     ],
 )
@@ -289,6 +409,8 @@ ALL_PROVIDERS: list[Provider] = [
     NVIDIA_NIM,
     GROQ,
     CEREBRAS,
+    MISTRAL,
+    NEBIUS,
     TOGETHER,
 ]
 
@@ -358,6 +480,20 @@ def build_default_chain() -> list[tuple[str, str]]:
         for m in sorted(cerebras.models, key=lambda x: x.priority):
             if m.tool_use:
                 chain.append(("cerebras", m.model_id))
+
+    # Mistral
+    mistral = PROVIDER_BY_NAME["mistral"]
+    if mistral.is_active:
+        for m in sorted(mistral.models, key=lambda x: x.priority):
+            if m.tool_use:
+                chain.append(("mistral", m.model_id))
+
+    # Nebius
+    nebius = PROVIDER_BY_NAME["nebius"]
+    if nebius.is_active:
+        for m in sorted(nebius.models, key=lambda x: x.priority):
+            if m.tool_use:
+                chain.append(("nebius", m.model_id))
 
     # Together
     together = PROVIDER_BY_NAME["together"]
