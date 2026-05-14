@@ -15,7 +15,7 @@ type ActivityFilter = typeof ACTIVITY_FILTERS[number]["key"];
 /* ── Types for new widgets ──────────────────────────────────────────── */
 interface HostedAgent {
   id: string;
-  name: string;
+  agent_name: string;
   status: string;
   model_name: string;
   created_at: string;
@@ -37,20 +37,6 @@ interface ActivityStats {
   sparkline: number[];
 }
 
-interface RecommendedAgent {
-  id: string;
-  name: string;
-  specialization: string;
-  model_provider: string;
-  model_name: string;
-  karma: number;
-  skills: string[];
-}
-
-interface SkillTag {
-  tag: string;
-  count: number;
-}
 
 /* ── Animated counter ─────────────────────────────────────────────── */
 function useCounter(target: number, duration = 1200) {
@@ -119,7 +105,7 @@ function QuickAgentsTile({ agents }: { agents: HostedAgent[] }) {
         {agents.slice(0, 3).map(a => (
           <div key={a.id} className="flex items-center gap-3 bg-neutral-800/30 rounded-lg px-3 py-2">
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-neutral-100 truncate">{a.name}</p>
+              <p className="text-sm font-medium text-neutral-100 truncate">{a.agent_name}</p>
               <p className="text-[10px] font-mono text-neutral-600 truncate">{a.model_name}</p>
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -127,14 +113,14 @@ function QuickAgentsTile({ agents }: { agents: HostedAgent[] }) {
               <button
                 onClick={() => router.push(`/chat?agent=${a.id}`)}
                 className="px-2.5 py-1 text-[10px] font-mono rounded-md bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 transition-colors border border-violet-500/20"
-                aria-label={`Chat with ${a.name}`}
+                aria-label={`Chat with ${a.agent_name}`}
               >
                 Chat
               </button>
               <Link
                 href={`/hosted-agents/${a.id}`}
                 className="px-2.5 py-1 text-[10px] font-mono rounded-md bg-neutral-700/40 text-neutral-400 hover:bg-neutral-700/60 transition-colors border border-neutral-700/40"
-                aria-label={`Open ${a.name}`}
+                aria-label={`Open ${a.agent_name}`}
               >
                 Open
               </Link>
@@ -148,38 +134,6 @@ function QuickAgentsTile({ agents }: { agents: HostedAgent[] }) {
       >
         + New agent
       </Link>
-    </section>
-  );
-}
-
-/* ── Top Recommended tile ─────────────────────────────────────────── */
-function RecommendedTile({ agents }: { agents: RecommendedAgent[] }) {
-  if (!agents.length) return null;
-  return (
-    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Recommended</span>
-        <Link href="/agents" className="text-[10px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors">
-          marketplace →
-        </Link>
-      </div>
-      <div className="space-y-2">
-        {agents.slice(0, 3).map(a => (
-          <div key={a.id} className="flex items-center gap-3 bg-neutral-800/30 rounded-lg px-3 py-2">
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-neutral-100 truncate">{a.name}</p>
-              <p className="text-[10px] font-mono text-neutral-600 truncate">{a.specialization} · {a.karma} karma</p>
-            </div>
-            <Link
-              href={`/chat?agent=${a.id}`}
-              className="flex-shrink-0 px-2.5 py-1 text-[10px] font-mono rounded-md bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 transition-colors border border-cyan-500/20"
-              aria-label={`Start task with ${a.name}`}
-            >
-              Start task
-            </Link>
-          </div>
-        ))}
-      </div>
     </section>
   );
 }
@@ -257,38 +211,6 @@ function ProjectsSummaryTile({ projects }: { projects: ProjectSummary[] }) {
   );
 }
 
-/* ── Skill Tags tile ──────────────────────────────────────────────── */
-function SkillTagsTile({ tags }: { tags: SkillTag[] }) {
-  if (!tags.length) return null;
-  return (
-    <section className="fade-up bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-4 backdrop-blur-sm">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">Trending Skills</span>
-        <Link href="/agents" className="text-[10px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors">
-          browse →
-        </Link>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {tags.slice(0, 12).map((t, i) => (
-          <Link
-            key={t.tag}
-            href={`/agents?skill=${encodeURIComponent(t.tag)}`}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono border transition-colors hover:border-violet-500/40 hover:text-violet-300"
-            style={{
-              background: `rgba(139,92,246,${0.04 + (1 - i / tags.length) * 0.06})`,
-              borderColor: `rgba(139,92,246,${0.1 + (1 - i / tags.length) * 0.15})`,
-              color: `rgba(${180 + Math.round(i * 3)},${150 - Math.round(i * 2)},246,${0.9 - i * 0.04})`,
-            }}
-          >
-            {t.tag}
-            <span className="text-[9px] opacity-60">{t.count}</span>
-          </Link>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 type AuthState = "loading" | "anon" | "zero-agents" | "has-agents";
 
 /* ── Derive activity stats from activity events ─────────────────── */
@@ -315,25 +237,6 @@ function deriveStats(activities: ActivityEvent[]): ActivityStats {
   };
 }
 
-/* ── Extract skill tags from agents ──────────────────────────────── */
-function extractSkillTags(agents: Agent[]): SkillTag[] {
-  const counts: Record<string, number> = {};
-  for (const a of agents) {
-    if (Array.isArray(a.skills)) {
-      for (const s of a.skills) {
-        counts[s] = (counts[s] ?? 0) + 1;
-      }
-    }
-    if (a.specialization) {
-      counts[a.specialization] = (counts[a.specialization] ?? 0) + 1;
-    }
-  }
-  return Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 12)
-    .map(([tag, count]) => ({ tag, count }));
-}
-
 export default function Home() {
   const router = useRouter();
   const [stats, setStats] = useState<PlatformStats | null>(null);
@@ -351,7 +254,6 @@ export default function Home() {
   const [hostedAgents, setHostedAgents] = useState<HostedAgent[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activityStats, setActivityStats] = useState<ActivityStats | null>(null);
-  const [skillTags, setSkillTags] = useState<SkillTag[]>([]);
 
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -420,7 +322,6 @@ export default function Home() {
         if (aRes.ok) {
           const agentList: Agent[] = await aRes.json();
           setAgents(agentList);
-          setSkillTags(extractSkillTags(agentList));
         }
       } catch { setError("Failed to connect to API"); }
     };
@@ -467,17 +368,6 @@ export default function Home() {
     };
     return () => es.close();
   }, []);
-
-  // Top recommended = top 3 agents from leaderboard not owned by user
-  const recommendedAgents: RecommendedAgent[] = agents.slice(0, 3).map(a => ({
-    id: a.id,
-    name: a.name,
-    specialization: a.specialization,
-    model_provider: a.model_provider,
-    model_name: a.model_name,
-    karma: a.karma,
-    skills: a.skills,
-  }));
 
   const isAuthed = authState === "has-agents" || authState === "zero-agents";
 
@@ -545,17 +435,11 @@ export default function Home() {
             {/* 1. Quick agents */}
             {hostedAgents.length > 0 && <QuickAgentsTile agents={hostedAgents} />}
 
-            {/* 2. Top recommended */}
-            {recommendedAgents.length > 0 && <RecommendedTile agents={recommendedAgents} />}
-
-            {/* 3. Activity stats */}
+            {/* 2. Activity stats */}
             <ActivityStatsTile stats={activityStats} />
 
-            {/* 4. Projects summary */}
+            {/* 3. Projects summary */}
             <ProjectsSummaryTile projects={projects} />
-
-            {/* 5. Skill tags */}
-            {skillTags.length > 0 && <SkillTagsTile tags={skillTags} />}
           </div>
         )}
 
