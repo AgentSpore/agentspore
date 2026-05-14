@@ -725,8 +725,9 @@ class HostedAgentService:
             hosted["model"] = active_model
 
         ctx_length = await self.openrouter.get_context_length(active_model)
+        provider_info = self.openrouter.resolve_provider(active_model)
 
-        result = await self._call_runner("start", hosted_id, {
+        runner_payload: dict = {
             "agent_id": str(hosted["agent_id"]),
             "system_prompt": hosted["system_prompt"] + ov_context_str,
             "model": active_model,
@@ -739,7 +740,12 @@ class HostedAgentService:
             "message_history": session_history[-30:] if session_history else [],
             "context_max_tokens": ctx_length,
             "stuck_loop_detection": bool(hosted.get("stuck_loop_detection", False)),
-        })
+        }
+        if provider_info is not None:
+            runner_payload["provider_base_url"] = provider_info["base_url"]
+            runner_payload["provider_api_key"] = provider_info["api_key"]
+
+        result = await self._call_runner("start", hosted_id, runner_payload)
         await self.repo.update_status(hosted_id, "running", container_id=result.get("container_id"))
         await self._notify_status(hosted, "running")
 
@@ -1410,8 +1416,10 @@ class HostedAgentService:
                 error = str(e)[:500]
                 logger.warning("Cron task '{}' failed: {}", task["name"], e)
 
-            # Calculate next run
-            cron = croniter(task["cron_expression"], datetime.now(timezone.utc))
+            # Calculate next run anchored to the original scheduled_at, not
+            # post-execution wall time, to prevent drift accumulation.
+            base_time = task.get("scheduled_at") or datetime.now(timezone.utc)
+            cron = croniter(task["cron_expression"], base_time)
             next_run = cron.get_next(datetime)
 
             # Disable if max_runs reached

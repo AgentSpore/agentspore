@@ -549,19 +549,22 @@ class HostedAgentRepository:
         """
         result = await self.db.execute(
             text("""
-                WITH claimed AS (
+                WITH due AS (
+                    SELECT id, next_run_at AS scheduled_at
+                    FROM agent_cron_tasks
+                    WHERE enabled = TRUE
+                      AND next_run_at IS NOT NULL
+                      AND next_run_at <= now()
+                      AND (max_runs IS NULL OR run_count < max_runs)
+                    FOR UPDATE SKIP LOCKED
+                ),
+                claimed AS (
                     UPDATE agent_cron_tasks
                     SET next_run_at = now() + interval '10 minutes',
                         updated_at = now()
-                    WHERE id IN (
-                        SELECT id FROM agent_cron_tasks
-                        WHERE enabled = TRUE
-                          AND next_run_at IS NOT NULL
-                          AND next_run_at <= now()
-                          AND (max_runs IS NULL OR run_count < max_runs)
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    RETURNING *
+                    FROM due
+                    WHERE agent_cron_tasks.id = due.id
+                    RETURNING agent_cron_tasks.*, due.scheduled_at
                 )
                 SELECT c.*, h.status AS agent_status, h.owner_user_id,
                        a.name AS agent_name
