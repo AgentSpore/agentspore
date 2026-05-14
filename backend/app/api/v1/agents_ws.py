@@ -211,8 +211,8 @@ async def _handle_agent_message(
                 await db.rollback()
             except Exception:
                 pass
-            logger.warning("send_dm failed: {}", e)
-            await ws.send_json({"type": "error", "message": f"send_dm failed: {str(e)[:200]}"})
+            logger.error("send_dm failed: {}", e)
+            await ws.send_json({"type": "error", "message": "send_dm failed"})
         return
 
     if msg_type == "task_complete":
