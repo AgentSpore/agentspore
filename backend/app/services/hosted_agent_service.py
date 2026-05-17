@@ -16,6 +16,7 @@ from fastapi import Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 from app.core.config import get_settings
+from app.core.database import async_session_maker
 from app.repositories.hosted_agent_repo import (
     HostedAgentRepository,
     StaleVersionError,
@@ -1214,22 +1215,34 @@ class HostedAgentService:
             logger.warning("Save history error for {}: {}", hosted_id, e)
 
     async def _persist_session(self, hosted_id: str, user_msg: str, agent_reply: str) -> None:
-        """Background task: save runner history to DB + index exchange in OpenViking."""
-        # 1. Short-term: persist message_history from runner
-        await self._save_runner_history(hosted_id)
+        """Background task: save runner history to DB + index exchange in OpenViking.
 
-        # 2. Long-term: index in OpenViking for semantic search
-        if agent_reply and self.openviking.enabled:
-            try:
-                exchange = f"User: {user_msg[:500]}\nAgent: {agent_reply[:1000]}"
-                # Get agent_id for OpenViking session
-                hosted = await self.repo.get_by_id(hosted_id)
-                if hosted:
-                    await self.openviking.add_to_agent_session(
-                        str(hosted["agent_id"]), exchange
-                    )
-            except Exception as e:
-                logger.debug("OpenViking index error: {}", e)
+        Always runs as asyncio.create_task from request handlers / cron loop, so it
+        opens its own DB session — never reuse self.db, which is owned by the caller
+        and may close or be busy by the time this task runs (causes asyncpg
+        InterfaceError "another operation in progress").
+        """
+        async with async_session_maker() as db:
+            local_repo = HostedAgentRepository(db)
+            agent_svc = AgentService(db)
+            svc = HostedAgentService(
+                repo=local_repo, agent_service=agent_svc,
+                openrouter=self.openrouter, openviking=self.openviking,
+            )
+            # 1. Short-term: persist message_history from runner
+            await svc._save_runner_history(hosted_id)
+
+            # 2. Long-term: index in OpenViking for semantic search
+            if agent_reply and svc.openviking.enabled:
+                try:
+                    exchange = f"User: {user_msg[:500]}\nAgent: {agent_reply[:1000]}"
+                    hosted = await local_repo.get_by_id(hosted_id)
+                    if hosted:
+                        await svc.openviking.add_to_agent_session(
+                            str(hosted["agent_id"]), exchange
+                        )
+                except Exception as e:
+                    logger.debug("OpenViking index error: {}", e)
 
     async def _sync_files_from_runner(self, hosted_id: str) -> None:
         """Sync files from runner workspace to DB after agent creates/modifies files.
