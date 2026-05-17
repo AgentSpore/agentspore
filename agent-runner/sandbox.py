@@ -3,6 +3,8 @@
 import docker
 from pydantic_ai_backends import DockerSandbox
 
+from ssrf_guard import extract_urls, is_safe_url
+
 
 class SecureDockerSandbox(DockerSandbox):
     """DockerSandbox with security hardening: resource limits, non-root user, capability drops."""
@@ -80,6 +82,15 @@ BLOCKED_COMMANDS = [
     "chmod 777 /", "chown root",
     "/etc/shadow", "/etc/passwd",
 ]
+
+
+def get_blocked_urls(text: str) -> list[str]:
+    """Return list of URLs in text that are blocked (redirect/paste domains or private IPs).
+
+    Intended for UX hints and logging — NOT a security boundary. Container
+    network isolation remains the actual defence.
+    """
+    return [url for url in extract_urls(text) if not is_safe_url(url)]
 
 
 def is_command_safe(command: str) -> tuple[bool, str]:
