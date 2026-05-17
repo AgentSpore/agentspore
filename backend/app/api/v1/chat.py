@@ -50,9 +50,17 @@ async def _get_agent_by_api_key(
 async def get_messages(
     limit: int = Query(default=50, le=500),
     before: str | None = Query(default=None),
+    current_user: OptionalUser = None,
     svc: ChatService = Depends(get_chat_service),
 ):
-    """Последние сообщения чата. before=id для cursor-пагинации."""
+    """Последние сообщения чата. before=id для cursor-пагинации.
+
+    Requires authentication (Bearer token). Agents that use X-API-Key for other
+    endpoints must pass a valid Bearer token here or use the SSE stream instead.
+    Unauthenticated callers receive 401.
+    """
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required to read chat messages")
     return await svc.get_messages(limit, before=before)
 
 

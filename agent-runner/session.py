@@ -21,6 +21,7 @@ from pydantic_deep.processors.patch import patch_tool_calls_processor
 from sandbox import is_command_safe
 
 from config import get_settings
+from content_sanitizer import risk_score, sanitize_for_agent_context
 
 settings = get_settings()
 
@@ -156,8 +157,19 @@ class AgentSession:
                     data = resp.json()
                     memory_ctx = data.get("memory_context", [])
                     if memory_ctx and isinstance(memory_ctx, list):
-                        ctx_text = "\n".join(str(m)[:200] for m in memory_ctx[:5])
+                        sanitized_items = [
+                            sanitize_for_agent_context(str(m), max_len=200)
+                            for m in memory_ctx[:5]
+                        ]
+                        ctx_text = "\n".join(sanitized_items)
                         if ctx_text.strip():
+                            raw_combined = "\n".join(str(m) for m in memory_ctx[:5])
+                            score = risk_score(raw_combined)
+                            if score > 50:
+                                logger.warning(
+                                    "High-risk content in heartbeat memory_context score={}: {!r}",
+                                    score, raw_combined[:100],
+                                )
                             self.message_history.append(
                                 ModelRequest(parts=[SystemPromptPart(
                                     content=f"[Platform memory update]\n{ctx_text}"
@@ -275,24 +287,61 @@ class AgentSession:
             asyncio.create_task(self._auto_react(event))
 
     def _format_event_for_context(self, event: dict) -> str | None:
-        """Convert a platform event to a system prompt fragment."""
+        """Convert a platform event to a system prompt fragment.
+
+        All user-supplied strings are sanitized via sanitize_for_agent_context()
+        before injection to neutralize bidirectional override characters and
+        mirrored Unicode used in prompt-injection attacks.
+        """
         et = event.get("type")
         if et == "dm":
             sender = event.get("from_name") or event.get("from") or "unknown"
-            return f"[Real-time DM from {sender}]\n{event.get('content', '')}"
+            raw_content = event.get("content", "")
+            score = risk_score(raw_content)
+            if score > 50:
+                logger.warning(
+                    "High-risk content in event type='{}' score={}: {!r}",
+                    et, score, raw_content[:100],
+                )
+            content = sanitize_for_agent_context(raw_content)
+            sender = sanitize_for_agent_context(str(sender), max_len=100)
+            return f"[Real-time DM from {sender}]\n{content}"
         if et == "task":
-            return f"[Real-time task assigned: {event.get('title', '')}]\nPriority: {event.get('priority', 'normal')}"
+            title = sanitize_for_agent_context(event.get("title", ""), max_len=200)
+            priority = sanitize_for_agent_context(event.get("priority", "normal"), max_len=50)
+            return f"[Real-time task assigned: {title}]\nPriority: {priority}"
         if et == "notification":
-            return f"[Real-time notification: {event.get('title', '')}]\nType: {event.get('task_type', '')}"
+            title = sanitize_for_agent_context(event.get("title", ""), max_len=200)
+            task_type = sanitize_for_agent_context(event.get("task_type", ""), max_len=100)
+            return f"[Real-time notification: {title}]\nType: {task_type}"
         if et == "mention":
-            return f"[You were mentioned by {event.get('from', '')}]\nContext: {event.get('context', '')}"
+            from_who = sanitize_for_agent_context(event.get("from", ""), max_len=100)
+            raw_context = event.get("context", "")
+            score = risk_score(raw_context)
+            if score > 50:
+                logger.warning(
+                    "High-risk content in event type='{}' score={}: {!r}",
+                    et, score, raw_context[:100],
+                )
+            context = sanitize_for_agent_context(raw_context)
+            return f"[You were mentioned by {from_who}]\nContext: {context}"
         if et == "rental_message":
-            return f"[Real-time rental message]\n{event.get('content', '')}"
+            raw_content = event.get("content", "")
+            score = risk_score(raw_content)
+            if score > 50:
+                logger.warning(
+                    "High-risk content in event type='{}' score={}: {!r}",
+                    et, score, raw_content[:100],
+                )
+            content = sanitize_for_agent_context(raw_content)
+            return f"[Real-time rental message]\n{content}"
         if et == "memory_context":
             items = event.get("items", [])
             if not items:
                 return None
-            ctx = "\n".join(str(i)[:200] for i in items[:5])
+            ctx = "\n".join(
+                sanitize_for_agent_context(str(i), max_len=200) for i in items[:5]
+            )
             return f"[Platform memory update]\n{ctx}"
         return None
 

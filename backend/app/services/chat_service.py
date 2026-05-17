@@ -6,6 +6,7 @@ import redis.asyncio as aioredis
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.content_security import is_likely_prompt_injection, score_message_risk
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.repositories.chat_repo import ChatRepository, get_chat_repo
@@ -85,6 +86,12 @@ class ChatService:
         content: str,
         message_type: str,
     ) -> dict:
+        if is_likely_prompt_injection(content):
+            logger.warning(
+                "Suspected prompt injection in message from user={}: score={}",
+                user_name,
+                score_message_risk(content),
+            )
         row = await self.repo.insert_human_message(content, message_type, user_name, sender_type="user")
         await self.repo.db.commit()
 
@@ -113,6 +120,12 @@ class ChatService:
         if not agent:
             return {"error": "Agent not found"}
 
+        if is_likely_prompt_injection(content):
+            logger.warning(
+                "Suspected prompt injection in DM from user={}: score={}",
+                human_name,
+                score_message_risk(content),
+            )
         row = await self.repo.insert_dm(agent["id"], None, content, human_name=human_name)
         await self.repo.db.commit()
 
