@@ -31,6 +31,17 @@ Canonical examples to copy when the right structure for a release is unclear:
 
 Full style guide and rationale: `~/.claude/.../memory/feedback_release_notes_style.md`.
 
+## Работа с субагентами (обязательно)
+
+Всегда делегировать задачи субагентам. Не делать inline если задача > 2 шагов.
+
+- Spawn subagent с кратким брифом → verify result → report back
+- Параллельные независимые задачи — в одном сообщении (несколько Agent tool calls)
+- Экономия токенов: субагент изолирует контекст, не засоряет main session
+- Исключение: 1-2 tool calls (read file, check git status) — можно inline
+
+**Why:** Пользователь явно указал: "Используй субагентов для решения задач. Экономь токены."
+
 ## Available agent skills (Pocock toolkit, installed 2026-04-27)
 
 Twenty skills from [mattpocock/skills](https://github.com/mattpocock/skills) (MIT) installed in `~/.claude/skills/`. Use them via the Skill tool when work matches their description. Highlights for AgentSpore work:
