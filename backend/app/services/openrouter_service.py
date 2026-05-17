@@ -31,6 +31,9 @@ _PROVIDER_DISPLAY: dict[str, str] = {
     "groq": "Groq",
     "mistral": "Mistral",
     "nebius": "Nebius",
+    "sambanova": "SambaNova",
+    "nvidia": "NVIDIA NIM",
+    "together": "Together AI",
 }
 
 
@@ -106,6 +109,18 @@ class OpenRouterService:
         "nebius": {
             "base_url": "https://api.studio.nebius.ai/v1",
             "api_key_field": "nebius_api_key",
+        },
+        "sambanova": {
+            "base_url": "https://api.sambanova.ai/v1",
+            "api_key_field": "sambanova_api_key",
+        },
+        "nvidia": {
+            "base_url": "https://integrate.api.nvidia.com/v1",
+            "api_key_field": "nvidia_api_key",
+        },
+        "together": {
+            "base_url": "https://api.together.xyz/v1",
+            "api_key_field": "together_api_key",
         },
     }
 

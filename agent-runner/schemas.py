@@ -15,6 +15,8 @@ class StartRequest(BaseModel):
     message_history: list[dict] = []
     context_max_tokens: int = 128_000
     stuck_loop_detection: bool = False
+    provider_base_url: str = ""
+    provider_api_key: str = ""
 
 
 class ChatRequest(BaseModel):

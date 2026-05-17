@@ -249,6 +249,7 @@ class ForkableAgentItem(BaseModel):
 class FreeModelInfo(BaseModel):
     id: str
     name: str
+    provider: str = "openrouter"
 
 
 class FreeModelsResponse(BaseModel):

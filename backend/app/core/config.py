@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     mistral_api_key: str = ""
     nebius_api_key: str = ""
+    sambanova_api_key: str = ""
+    nvidia_api_key: str = ""
+    together_api_key: str = ""
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
