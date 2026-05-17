@@ -263,25 +263,32 @@ CEREBRAS = Provider(
     api_key_env="CEREBRAS_API_KEY",
     models=[
         ModelSpec(
-            model_id="gpt-oss-120b",
-            tool_use=True,
-            context_window=131_072,
-            priority=1,
-            notes="OpenAI OSS 120B on Cerebras wafer-scale. Ultra-fast. Verified 2026-05.",
-        ),
-        ModelSpec(
             model_id="qwen-3-235b-a22b-instruct-2507",
             tool_use=True,
             context_window=131_072,
-            priority=2,
-            notes="Qwen 3 235B MoE on Cerebras. Huge capacity, fast inference.",
+            priority=1,
+            notes="Qwen 3 235B MoE on Cerebras. Fast inference. Verified content=OK 2026-05.",
         ),
         ModelSpec(
             model_id="llama3.1-8b",
             tool_use=False,
             context_window=128_000,
-            priority=3,
+            priority=2,
             notes="Llama 3.1 8B. Too small for tool_use in practice.",
+        ),
+        ModelSpec(
+            model_id="gpt-oss-120b",
+            tool_use=False,
+            context_window=131_072,
+            priority=99,
+            notes="THINKING-ONLY: content=None, reasoning field only. Breaks agent. Excluded from chain.",
+        ),
+        ModelSpec(
+            model_id="zai-glm-4.7",
+            tool_use=False,
+            context_window=131_072,
+            priority=99,
+            notes="THINKING-ONLY: content=None, reasoning field only. Breaks agent. Excluded from chain.",
         ),
     ],
 )
@@ -306,14 +313,14 @@ MISTRAL = Provider(
             tool_use=True,
             context_window=65_536,
             priority=2,
-            notes="Mixtral 8x22B open weights. Free tier.",
+            notes="Mixtral 8x22B open weights. Not in /models list but chat still works 2026-05.",
         ),
         ModelSpec(
-            model_id="open-mistral-7b",
+            model_id="open-mistral-nemo",
             tool_use=False,
-            context_window=32_000,
+            context_window=128_000,
             priority=3,
-            notes="Mistral 7B open weights. No tool_use.",
+            notes="Mistral Nemo 7B, 128K ctx. Replaces open-mistral-7b (removed from API 2026-05).",
         ),
     ],
 )
@@ -341,32 +348,120 @@ NEBIUS = Provider(
             notes="Hermes 4 405B — largest Hermes. Superior reasoning.",
         ),
         ModelSpec(
+            model_id="deepseek-ai/DeepSeek-V3.2",
+            tool_use=True,
+            context_window=131_072,
+            priority=3,
+            notes="DeepSeek V3.2 on Nebius. content=OK verified 2026-05.",
+        ),
+        ModelSpec(
             model_id="nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
             tool_use=True,
             context_window=128_000,
-            priority=3,
+            priority=4,
             notes="Nemotron Ultra 253B on Nebius. Very capable.",
         ),
         ModelSpec(
             model_id="Qwen/Qwen3-32B",
             tool_use=True,
             context_window=32_000,
-            priority=4,
+            priority=5,
             notes="Qwen 3 32B on Nebius.",
         ),
         ModelSpec(
             model_id="meta-llama/Llama-3.3-70B-Instruct",
             tool_use=False,
             context_window=128_000,
-            priority=5,
+            priority=6,
             notes="Llama 3.3 70B on Nebius. 0 tool calls observed 2026-05.",
         ),
         ModelSpec(
             model_id="meta-llama/Meta-Llama-3.1-8B-Instruct",
             tool_use=False,
             context_window=128_000,
-            priority=6,
+            priority=7,
             notes="Llama 3.1 8B lightweight fallback. No reliable tool_use.",
+        ),
+        ModelSpec(
+            model_id="openai/gpt-oss-120b",
+            tool_use=False,
+            context_window=131_072,
+            priority=99,
+            notes="THINKING-ONLY: content=None, reasoning_content only. Breaks agent. Excluded from chain.",
+        ),
+        ModelSpec(
+            model_id="Qwen/Qwen3.5-397B-A17B",
+            tool_use=False,
+            context_window=131_072,
+            priority=99,
+            notes="THINKING-ONLY: content=None verified 2026-05. Excluded from chain.",
+        ),
+    ],
+)
+
+# SambaNova Cloud — high-throughput inference for open-source models.
+# Key: https://cloud.sambanova.ai  (free tier available).
+# Tool use: supported on Llama 3.3 70B and Llama 4; NOT on DeepSeek.
+SAMBANOVA = Provider(
+    name="sambanova",
+    base_url="https://api.sambanova.ai/v1",
+    api_key_env="SAMBANOVA_API_KEY",
+    models=[
+        ModelSpec(
+            model_id="Meta-Llama-3.3-70B-Instruct",
+            tool_use=True,
+            context_window=131_072,
+            priority=1,
+            notes="Llama 3.3 70B on SambaNova. High-throughput, tool_use supported.",
+        ),
+        ModelSpec(
+            model_id="Llama-4-Maverick-17B-128E-Instruct",
+            tool_use=True,
+            context_window=131_072,
+            priority=2,
+            notes="Llama 4 Maverick 17B MoE on SambaNova.",
+        ),
+        ModelSpec(
+            model_id="MiniMax-M2.5",
+            tool_use=True,
+            context_window=131_072,
+            priority=3,
+            notes="MiniMax M2.5 on SambaNova. Listed in /models 2026-05, unverified tool_use.",
+        ),
+        ModelSpec(
+            model_id="MiniMax-M2.7",
+            tool_use=True,
+            context_window=131_072,
+            priority=4,
+            notes="MiniMax M2.7 on SambaNova. Listed in /models 2026-05, unverified tool_use.",
+        ),
+        ModelSpec(
+            model_id="gemma-3-12b-it",
+            tool_use=True,
+            context_window=131_072,
+            priority=5,
+            notes="Gemma 3 12B on SambaNova.",
+        ),
+        ModelSpec(
+            model_id="DeepSeek-V3.1",
+            tool_use=False,
+            context_window=131_072,
+            priority=6,
+            notes="DeepSeek V3.1 on SambaNova. No tool_use.",
+        ),
+        ModelSpec(
+            model_id="DeepSeek-V3.2",
+            tool_use=False,
+            context_window=131_072,
+            priority=7,
+            notes="DeepSeek V3.2 on SambaNova. Listed in /models 2026-05, no tool_use expected.",
+        ),
+        ModelSpec(
+            model_id="gpt-oss-120b",
+            tool_use=False,
+            context_window=131_072,
+            priority=99,
+            notes="Likely thinking-only (pattern from Cerebras/Nebius). Verify before enabling.",
         ),
     ],
 )
@@ -412,6 +507,7 @@ ALL_PROVIDERS: list[Provider] = [
     MISTRAL,
     NEBIUS,
     TOGETHER,
+    SAMBANOVA,
 ]
 
 # Map name → Provider for O(1) lookup.
@@ -501,6 +597,13 @@ def build_default_chain() -> list[tuple[str, str]]:
         for m in sorted(together.models, key=lambda x: x.priority):
             if m.tool_use:
                 chain.append(("together", m.model_id))
+
+    # SambaNova
+    sambanova = PROVIDER_BY_NAME["sambanova"]
+    if sambanova.is_active:
+        for m in sorted(sambanova.models, key=lambda x: x.priority):
+            if m.tool_use:
+                chain.append(("sambanova", m.model_id))
 
     return chain
 

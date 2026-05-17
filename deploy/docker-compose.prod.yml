@@ -127,6 +127,15 @@ services:
       MAX_HOSTED_AGENTS_PER_USER: "${MAX_HOSTED_AGENTS_PER_USER:-1}"
 
       CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
+
+      # LLM provider API keys (agent-runner fallback providers)
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
+      NEBIUS_API_KEY: "${NEBIUS_API_KEY:-}"
+      SAMBANOVA_API_KEY: "${SAMBANOVA_API_KEY:-}"
+      NVIDIA_API_KEY: "${NVIDIA_API_KEY:-}"
+      TOGETHER_API_KEY: "${TOGETHER_API_KEY:-}"
     dns:
       - 8.8.8.8
       - 1.1.1.1

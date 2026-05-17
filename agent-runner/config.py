@@ -33,6 +33,7 @@ class RunnerSettings(BaseSettings):
     gemini_api_key: str = ""
     mistral_api_key: str = ""
     nebius_api_key: str = ""
+    sambanova_api_key: str = ""
 
     # Agent defaults
     default_model: str = "mistralai/mistral-nemo"

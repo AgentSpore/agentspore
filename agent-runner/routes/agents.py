@@ -1,11 +1,14 @@
 """Agent lifecycle endpoints: start, stop, status."""
 
 import os
+from pathlib import PurePosixPath
 
 import httpx
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 from pydantic_ai import DeferredToolRequests
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_backends import RuntimeConfig
 
 from config import get_settings
@@ -40,6 +43,11 @@ async def start_agent(hosted_id: str, body: StartRequest):
     for f in body.files:
         fp = f.get("file_path", "")
         if not fp:
+            continue
+        # Skip virtual-env and bytecode dirs — overwriting an in-use
+        # interpreter binary raises OSError ETXTBSY (errno 26).
+        _skip_parts = {"venv", ".venv", "__pycache__", "node_modules"}
+        if _skip_parts.intersection(PurePosixPath(fp).parts):
             continue
         file_path = workspace / fp
         if not str(file_path).startswith(str(workspace)):
@@ -142,12 +150,24 @@ async def start_agent(hosted_id: str, body: StartRequest):
     # Resolve model through fallback chain — guards against stale / removed model IDs.
     resolved_model = resolve_model_for_agent(body.model)
 
+    # Strip provider prefix for API call (e.g. "cerebras/llama-3.3-70b" → "llama-3.3-70b").
+    # OpenRouter models keep the full ID including :free suffix.
+    api_model = resolved_model
+    if "/" in resolved_model and not resolved_model.endswith(":free"):
+        api_model = resolved_model.split("/", 1)[1]
+
+    effective_base_url = body.provider_base_url or settings.openai_base_url
+    effective_api_key = body.provider_api_key or settings.openai_api_key
+
+    openai_provider = OpenAIProvider(base_url=effective_base_url, api_key=effective_api_key)
+    model_obj = OpenAIModel(api_model, provider=openai_provider)
+
     # Load agent from workspace agent.yaml if exists, otherwise use defaults
     agent_yaml = workspace / "agent.yaml"
     if agent_yaml.exists():
         logger.info("Loading agent spec from {}", agent_yaml)
         from_file_kwargs = dict(
-            model=f"openai:{resolved_model}",
+            model=model_obj,
             backend=sandbox,
             output_type=[str, DeferredToolRequests],
             cost_budget_usd=settings.default_budget_usd,
@@ -179,7 +199,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
         agent, deps = DeepAgent.from_file(str(agent_yaml), **from_file_kwargs)
     else:
         agent = create_deep_agent(
-            model=f"openai:{resolved_model}",
+            model=model_obj,
             instructions=custom_instructions,
             output_type=[str, DeferredToolRequests],
             include_todo=True,
