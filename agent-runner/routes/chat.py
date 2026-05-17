@@ -21,6 +21,54 @@ settings = get_settings()
 router = APIRouter()
 
 
+# Transient upstream LLM failures: OpenRouter/Nemotron sometimes return 200 OK with
+# a NULL body (id/choices/model/object all None) → pydantic ChatCompletion validation
+# raises ValidationError → bubbled up as "Invalid response from openai chat
+# completions endpoint" or similar. These are flaky upstream issues that retry fixes.
+_TRANSIENT_LLM_ERROR_MARKERS: tuple[str, ...] = (
+    "Invalid response from",
+    "validation errors for ChatCompletion",
+    "validation error for ChatCompletion",
+    "Input should be a valid",
+    "503 Service Unavailable",
+    "502 Bad Gateway",
+    "504 Gateway Timeout",
+)
+
+
+def _is_transient_llm_error(exc: Exception) -> bool:
+    """Return True if an exception is a flaky upstream LLM response worth retrying."""
+    msg = str(exc)
+    return any(marker in msg for marker in _TRANSIENT_LLM_ERROR_MARKERS)
+
+
+async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 3, base_delay: float = 1.0):
+    """Invoke an async agent.run() coroutine, retrying on transient upstream LLM errors.
+
+    coro_factory: callable that returns a fresh coroutine (NOT a bare coroutine — those
+    cannot be re-awaited after a failure). Pass `lambda: session.agent.run(...)`.
+
+    Retries with exponential backoff (1s, 2s, 4s by default) up to max_attempts. Non-transient
+    errors propagate on the first failure so the caller's existing handlers see them.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await coro_factory()
+        except Exception as exc:
+            if not _is_transient_llm_error(exc) or attempt == max_attempts:
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            logger.warning(
+                "Transient LLM error (attempt {}/{}): {} — retrying in {}s",
+                attempt, max_attempts, str(exc)[:200], delay,
+            )
+            last_exc = exc
+            await asyncio.sleep(delay)
+    if last_exc:
+        raise last_exc
+
+
 @router.post("/agents/{hosted_id}/chat", response_model=ChatResponse)
 async def chat_with_agent(hosted_id: str, body: ChatRequest):
     """Send a message to the hosted agent and get a reply (non-streaming fallback)."""
@@ -37,22 +85,22 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
 
     try:
         try:
-            result = await session.agent.run(
+            result = await _run_with_llm_retry(lambda: session.agent.run(
                 body.content,
                 deps=session.deps,
                 message_history=session.message_history,
                 model_settings={"timeout": settings.chat_timeout},
-            )
+            ))
         except Exception as hist_err:
             if "unprocessed tool calls" in str(hist_err):
                 logger.warning("Clearing corrupted history for {}: {}", hosted_id, hist_err)
                 session.message_history = []
-                result = await session.agent.run(
+                result = await _run_with_llm_retry(lambda: session.agent.run(
                     body.content,
                     deps=session.deps,
                     message_history=[],
                     model_settings={"timeout": settings.chat_timeout},
-                )
+                ))
             else:
                 raise
         session.message_history = sanitize_history(result.all_messages())[-100:]
@@ -74,12 +122,13 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
                         continue
                 approvals[tc.tool_call_id] = True
             logger.info("Non-stream: auto-approving {} deferred tools", sum(v for v in approvals.values()))
-            result = await session.agent.run(
+            prev_messages = result.all_messages()
+            result = await _run_with_llm_retry(lambda: session.agent.run(
                 deferred_tool_results=DeferredToolResults(approvals=approvals),
                 deps=session.deps,
-                message_history=result.all_messages(),
+                message_history=prev_messages,
                 model_settings={"timeout": settings.chat_timeout},
-            )
+            ))
             session.message_history = sanitize_history(result.all_messages())[-100:]
             max_approvals -= 1
 
