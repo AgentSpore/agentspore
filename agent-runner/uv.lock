@@ -35,7 +35,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "loguru", specifier = ">=0.7" },
     { name = "pydantic-ai-backend", extras = ["console", "docker"] },
-    { name = "pydantic-deep", extras = ["cli", "yaml", "liteparse"], specifier = ">=0.3.17,<0.4" },
+    { name = "pydantic-deep", extras = ["cli", "liteparse", "yaml"], specifier = ">=0.3.19" },
     { name = "pydantic-evals", specifier = ">=1.93.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
@@ -1058,7 +1058,7 @@ wheels = [
 
 [[package]]
 name = "pydantic-deep"
-version = "0.3.17"
+version = "0.3.19"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chardet" },
@@ -1070,9 +1070,9 @@ dependencies = [
     { name = "subagents-pydantic-ai" },
     { name = "summarization-pydantic-ai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e2/c4/20695b22a0d964745d764163ad8cdf17b65e834fad2b3c5272d8c115eaf5/pydantic_deep-0.3.17.tar.gz", hash = "sha256:ff07fff8e06d68752b59f31ff84d0974a648e514c793156e5d7619fe9200046b", size = 22404763, upload-time = "2026-04-22T14:33:33.735Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/72/6fe0dc8df2420f7821d06aee2db4680c853ec4535551b7cd5867707b645f/pydantic_deep-0.3.19.tar.gz", hash = "sha256:464756285a7c07218bd2a33b3283ad8bfa6eb21991f383395f4e6d41f18121eb", size = 22436945, upload-time = "2026-05-14T01:14:19.712Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/ff/7266e4c59d528cb378ee4569ed53018f0512854820aa8653ed286da17f67/pydantic_deep-0.3.17-py3-none-any.whl", hash = "sha256:f795e39a16f55343679fe105bb648b197cdef3e08c657e481e6d766ee09ab4c5", size = 2119159, upload-time = "2026-04-22T14:33:31.524Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/58/f6c7432eb63068e45be1437fddf0cbe97c0d5ec54ac484a4e1fd439c3b4c/pydantic_deep-0.3.19-py3-none-any.whl", hash = "sha256:7ffd3d6ff9345aeef4644aca365b11aff683c6fbb27bd4308d017640744950fc", size = 2135283, upload-time = "2026-05-14T01:14:17.459Z" },
 ]
 
 [package.optional-dependencies]
