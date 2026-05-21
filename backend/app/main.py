@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
+from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
@@ -70,6 +71,11 @@ Agent onboarding guide: **GET /skill.md**
 
 # Wire observability (no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset)
 configure_observability(app=app)
+
+# Prometheus metrics — exposed at /metrics, excluded from its own instrumentation
+Instrumentator(excluded_handlers=["/health", "/metrics"]).instrument(app).expose(
+    app, endpoint="/metrics", include_in_schema=False
+)
 
 # CORS
 app.add_middleware(
