@@ -743,6 +743,7 @@ class HostedAgentService:
             "agent_id": str(hosted["agent_id"]),
             "system_prompt": hosted["system_prompt"] + ov_context_str,
             "model": active_model,
+            "agent_handle": hosted.get("agent_handle") or hosted.get("handle") or "",
             "runtime": hosted["runtime"],
             "memory_limit_mb": hosted["memory_limit_mb"],
             "files": files_payload,
