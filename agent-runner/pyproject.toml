@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "websockets>=13",
     "pydantic-evals>=1.93.0",
+    "logfire>=2.0",
 ]
 
 [project.optional-dependencies]
