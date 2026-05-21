@@ -44,6 +44,7 @@ def _flat_get_memory_path(memory_dir: str, agent_name: str) -> str:
 
 _pdmem.get_memory_path = _flat_get_memory_path
 import observability
+from prometheus_fastapi_instrumentator import Instrumentator
 
 observability.configure()
 
@@ -168,6 +169,11 @@ app = FastAPI(title="Agent Runner", version="0.3.0", lifespan=lifespan)
 # Wire FastAPI auto-instrumentation now that ``app`` exists. No-op when
 # OTEL_EXPORTER_OTLP_ENDPOINT is unset (local dev / CI).
 observability.configure(app=app)
+
+# Prometheus metrics — expose /metrics (unauthenticated, excluded from tracing).
+Instrumentator(
+    excluded_handlers=["/health", "/metrics"],
+).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
 @app.middleware("http")

@@ -14,6 +14,7 @@ dependencies = [
     "websockets>=13",
     "pydantic-evals>=1.93.0",
     "logfire>=2.0",
+    "prometheus-fastapi-instrumentator>=7.0",
 ]
 
 [project.optional-dependencies]
