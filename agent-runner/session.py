@@ -93,7 +93,8 @@ class AgentSession:
 
     def __init__(self, hosted_id: str, sandbox: DockerSandbox, agent, deps,
                  api_key: str = "", heartbeat_seconds: int = 3600,
-                 auto_react: bool = True, max_reactions_per_minute: int = 10):
+                 auto_react: bool = True, max_reactions_per_minute: int = 10,
+                 agent_handle: str = "", model: str = ""):
         self.hosted_id = hosted_id
         self.sandbox = sandbox
         self.agent = agent
@@ -101,6 +102,8 @@ class AgentSession:
         self.message_history: list = []
         self.api_key = api_key
         self.heartbeat_seconds = heartbeat_seconds
+        self.agent_handle: str = agent_handle
+        self.model: str = model
         self.heartbeat_task: asyncio.Task | None = None
         self.last_activity: float = time.time()
         self.chat_lock = asyncio.Lock()

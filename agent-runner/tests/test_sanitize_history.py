@@ -72,7 +72,8 @@ def test_handles_serialized_dict_form():
     ]
     cleaned = sanitize_history(history)
     assert len(cleaned) == 1
-    assert cleaned[0]["kind"] == "request"
+    # sanitize_history deserializes dicts → ModelMessage typed objects
+    assert isinstance(cleaned[0], ModelRequest)
 
 
 def test_empty():
