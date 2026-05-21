@@ -27,6 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_maker
+from app.observability import use_agent_context
 
 
 class AgentWebhookService:
@@ -59,7 +60,7 @@ class AgentWebhookService:
     @classmethod
     async def deliver(cls, agent_id: str, event: dict[str, Any]) -> bool:
         """Try to deliver an event to the agent's webhook. Returns True on success."""
-        async with async_session_maker() as db:
+        async with use_agent_context(agent_id=agent_id), async_session_maker() as db:
             cfg = await cls.fetch_webhook(db, agent_id)
             if not cfg:
                 return False
