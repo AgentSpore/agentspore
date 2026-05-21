@@ -1,6 +1,7 @@
 """HostedAgentService — business logic for hosted agents on platform infrastructure."""
 
 import asyncio
+import contextvars
 import json
 import time
 from collections import OrderedDict
@@ -12,6 +13,7 @@ from urllib.parse import quote
 from croniter import croniter
 
 import httpx
+import logfire
 from fastapi import Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
@@ -852,7 +854,8 @@ class HostedAgentService:
                 if response.get("tool_calls"):
                     await self._sync_files_from_runner(hosted_id)
                 # Persist session history + index in OpenViking (background)
-                asyncio.create_task(self._persist_session(hosted_id, content, response.get("reply", "")))
+                _ctx = contextvars.copy_context()
+                asyncio.create_task(_ctx.run(self._persist_session, hosted_id, content, response.get("reply", "")))
             except Exception as e:
                 logger.warning("Runner chat error: {}", e)
 
@@ -951,7 +954,8 @@ class HostedAgentService:
                             )
                             if final_tools:
                                 await self._sync_files_from_runner(hosted_id)
-                            asyncio.create_task(self._persist_session(hosted_id, content, final_reply))
+                            _ctx = contextvars.copy_context()
+                            asyncio.create_task(_ctx.run(self._persist_session, hosted_id, content, final_reply))
                         except Exception as save_exc:
                             logger.warning("Failed to persist reply before done: {}", save_exc)
 
@@ -1238,8 +1242,14 @@ class HostedAgentService:
         opens its own DB session — never reuse self.db, which is owned by the caller
         and may close or be busy by the time this task runs (causes asyncpg
         InterfaceError "another operation in progress").
+
+        Context propagation: callers use contextvars.copy_context().run() so the OTel
+        trace context (and W3C Baggage with agent_id/handle/model) is inherited by
+        this task. A direct logfire.span is used instead of use_agent_context to avoid
+        creating a new root trace — this span joins the existing trace via the copied
+        context.
         """
-        async with use_agent_context(agent_id=hosted_id):
+        with logfire.span("agent.persist_session", agent_id=str(hosted_id)):
             async with async_session_maker() as db:
                 local_repo = HostedAgentRepository(db)
                 agent_svc = AgentService(db)
