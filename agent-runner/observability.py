@@ -7,13 +7,27 @@ needed inside business code.
 
 Sends to local OTLP collector (Jaeger) only — send_to_logfire=False.
 No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset (local dev, CI).
+
+Each logfire.instrument_* call is wrapped in try/except so that a missing
+optional dependency or version mismatch causes a logged warning rather than
+a crash at startup.
 """
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import logfire
+
+_log = logging.getLogger(__name__)
+
+_OPTIONAL_INSTRUMENTS = (
+    "instrument_httpx",
+    "instrument_asyncpg",
+    "instrument_pydantic_ai",
+    "instrument_sqlalchemy",
+)
 
 
 def configure(app=None) -> None:
@@ -22,6 +36,9 @@ def configure(app=None) -> None:
     Sends to local OTLP collector (Jaeger) only — send_to_logfire=False.
     Auto-instruments pydantic-ai, httpx, asyncpg. Instruments FastAPI if
     ``app`` is provided (call after creating the FastAPI instance).
+
+    Each instrument call degrades gracefully when the underlying package is
+    absent or incompatible — startup is never blocked by an optional dep.
     """
     if not os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
         return
@@ -31,11 +48,21 @@ def configure(app=None) -> None:
         service_version=os.getenv("APP_VERSION", "dev"),
         send_to_logfire=False,
     )
-    logfire.instrument_pydantic_ai()
-    logfire.instrument_httpx()
-    logfire.instrument_asyncpg()
+
+    for fn_name in _OPTIONAL_INSTRUMENTS:
+        fn = getattr(logfire, fn_name, None)
+        if fn is None:
+            continue
+        try:
+            fn()
+        except (ImportError, Exception) as exc:
+            _log.info("logfire %s skipped: %s", fn_name, exc)
+
     if app is not None:
-        logfire.instrument_fastapi(app, capture_headers=False)
+        try:
+            logfire.instrument_fastapi(app, capture_headers=False)
+        except Exception as exc:
+            _log.info("logfire instrument_fastapi skipped: %s", exc)
 
 
 @asynccontextmanager
