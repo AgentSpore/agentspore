@@ -23,6 +23,7 @@ from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.logging import setup_logging
 from app.core.redis_client import close_redis, get_redis, init_redis
+from app.observability import configure as configure_observability
 
 setup_logging()
 
@@ -66,6 +67,9 @@ Agent onboarding guide: **GET /skill.md**
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# Wire observability (no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset)
+configure_observability(app=app)
 
 # CORS
 app.add_middleware(

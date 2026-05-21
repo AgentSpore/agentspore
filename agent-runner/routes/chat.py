@@ -12,6 +12,7 @@ from pydantic_ai.tools import DeferredToolResults
 
 from config import get_settings
 from helpers import _extract_response
+from observability import use_agent_context
 from sandbox import is_command_safe
 from schemas import ChatRequest, ChatResponse
 from session import sanitize_history, sessions
@@ -84,56 +85,61 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
         raise HTTPException(429, "Agent busy — try again later")
 
     try:
-        try:
-            result = await _run_with_llm_retry(lambda: session.agent.run(
-                body.content,
-                deps=session.deps,
-                message_history=session.message_history,
-                model_settings={"timeout": settings.chat_timeout},
-            ))
-        except Exception as hist_err:
-            if "unprocessed tool calls" in str(hist_err):
-                logger.warning("Clearing corrupted history for {}: {}", hosted_id, hist_err)
-                session.message_history = []
+        async with use_agent_context(
+            agent_id=hosted_id,
+            agent_handle=getattr(session, "agent_handle", None) or None,
+            model=getattr(session, "model", None) or None,
+        ):
+            try:
                 result = await _run_with_llm_retry(lambda: session.agent.run(
                     body.content,
                     deps=session.deps,
-                    message_history=[],
+                    message_history=session.message_history,
                     model_settings={"timeout": settings.chat_timeout},
                 ))
-            else:
-                raise
-        session.message_history = sanitize_history(result.all_messages())[-100:]
-
-        # Auto-approve deferred tool calls (execute requires approval in interrupt_on mode).
-        # Non-streaming path must handle this loop itself — agent.run() stops at each
-        # interrupt and must be resumed with DeferredToolResults.
-        max_approvals = 10
-        while isinstance(result.output, DeferredToolRequests) and max_approvals > 0:
-            deferred = result.output
-            approvals: dict[str, bool] = {}
-            for tc in deferred.approvals:
-                if tc.tool_name == "execute":
-                    cmd = tc.args.get("command", "") if isinstance(tc.args, dict) else str(tc.args)
-                    safe, reason = is_command_safe(cmd)
-                    if not safe:
-                        logger.warning("Blocked unsafe command from agent: {} ({})", cmd, reason)
-                        approvals[tc.tool_call_id] = False
-                        continue
-                approvals[tc.tool_call_id] = True
-            logger.info("Non-stream: auto-approving {} deferred tools", sum(v for v in approvals.values()))
-            prev_messages = result.all_messages()
-            result = await _run_with_llm_retry(lambda: session.agent.run(
-                deferred_tool_results=DeferredToolResults(approvals=approvals),
-                deps=session.deps,
-                message_history=prev_messages,
-                model_settings={"timeout": settings.chat_timeout},
-            ))
+            except Exception as hist_err:
+                if "unprocessed tool calls" in str(hist_err):
+                    logger.warning("Clearing corrupted history for {}: {}", hosted_id, hist_err)
+                    session.message_history = []
+                    result = await _run_with_llm_retry(lambda: session.agent.run(
+                        body.content,
+                        deps=session.deps,
+                        message_history=[],
+                        model_settings={"timeout": settings.chat_timeout},
+                    ))
+                else:
+                    raise
             session.message_history = sanitize_history(result.all_messages())[-100:]
-            max_approvals -= 1
 
-        reply, tool_calls, thinking = _extract_response(result)
-        return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
+            # Auto-approve deferred tool calls (execute requires approval in interrupt_on mode).
+            # Non-streaming path must handle this loop itself — agent.run() stops at each
+            # interrupt and must be resumed with DeferredToolResults.
+            max_approvals = 10
+            while isinstance(result.output, DeferredToolRequests) and max_approvals > 0:
+                deferred = result.output
+                approvals: dict[str, bool] = {}
+                for tc in deferred.approvals:
+                    if tc.tool_name == "execute":
+                        cmd = tc.args.get("command", "") if isinstance(tc.args, dict) else str(tc.args)
+                        safe, reason = is_command_safe(cmd)
+                        if not safe:
+                            logger.warning("Blocked unsafe command from agent: {} ({})", cmd, reason)
+                            approvals[tc.tool_call_id] = False
+                            continue
+                    approvals[tc.tool_call_id] = True
+                logger.info("Non-stream: auto-approving {} deferred tools", sum(v for v in approvals.values()))
+                prev_messages = result.all_messages()
+                result = await _run_with_llm_retry(lambda: session.agent.run(
+                    deferred_tool_results=DeferredToolResults(approvals=approvals),
+                    deps=session.deps,
+                    message_history=prev_messages,
+                    model_settings={"timeout": settings.chat_timeout},
+                ))
+                session.message_history = sanitize_history(result.all_messages())[-100:]
+                max_approvals -= 1
+
+            reply, tool_calls, thinking = _extract_response(result)
+            return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
     except Exception as e:
         logger.error("Chat error for {}: {}", hosted_id, repr(e))
         raise HTTPException(500, f"Agent error: {str(e)}")
