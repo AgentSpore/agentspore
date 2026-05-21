@@ -236,6 +236,8 @@ async def start_agent(hosted_id: str, body: StartRequest):
         deps=deps,
         api_key=body.api_key,
         heartbeat_seconds=body.heartbeat_seconds,
+        agent_handle=body.agent_handle,
+        model=resolved_model,
     )
 
     # Restore message_history from platform DB (short-term memory).
