@@ -27,6 +27,7 @@ from app.services.openrouter_service import OpenRouterService, get_openrouter_se
 from app.services.openviking_service import OpenVikingService, get_openviking_service
 from app.schemas.hosted_agents import DEFAULT_RUNTIME
 from app.services.connection_manager import deliver_user_event
+from app.observability import use_agent_context
 
 from loguru import logger
 
@@ -449,7 +450,12 @@ class HostedAgentService:
         hosted = await self.get_hosted_agent(hosted_id, user_id)
         if hosted["status"] == "running":
             raise HTTPException(400, "Agent is already running")
-        return await self._start_agent_internal(hosted)
+        async with use_agent_context(
+            agent_id=str(hosted["id"]),
+            agent_handle=hosted.get("agent_handle"),
+            model=hosted.get("model"),
+        ):
+            return await self._start_agent_internal(hosted)
 
     async def stop_agent(self, hosted_id: str, user_id: str) -> dict:
         """Stop the agent container on the infra server.
@@ -490,19 +496,24 @@ class HostedAgentService:
         """Restart the agent: quick stop, then start. No session summary."""
         hosted = await self.get_hosted_agent(hosted_id, user_id)
         hid = str(hosted["id"])
-        if hosted["status"] == "running":
-            try:
-                await self._save_runner_history(hid)
-                await self._sync_files_from_runner(hid)
-            except Exception:
-                pass
-            try:
-                await self._call_runner("stop", hid)
-            except Exception:
-                pass
-        await self.repo.update_status(hid, "stopped")
-        refreshed = await self.repo.get_by_id(hid)
-        return await self._start_agent_internal(refreshed or hosted)
+        async with use_agent_context(
+            agent_id=hid,
+            agent_handle=hosted.get("agent_handle"),
+            model=hosted.get("model"),
+        ):
+            if hosted["status"] == "running":
+                try:
+                    await self._save_runner_history(hid)
+                    await self._sync_files_from_runner(hid)
+                except Exception:
+                    pass
+                try:
+                    await self._call_runner("stop", hid)
+                except Exception:
+                    pass
+            await self.repo.update_status(hid, "stopped")
+            refreshed = await self.repo.get_by_id(hid)
+            return await self._start_agent_internal(refreshed or hosted)
 
     async def _notify_status(self, hosted: dict, status: str) -> None:
         """Push hosted-agent status change to the owner's browser tabs."""
@@ -815,29 +826,34 @@ class HostedAgentService:
         hosted = await self.get_hosted_agent(hosted_id, user_id)
         msg = await self.repo.add_owner_message(hosted_id, "user", content)
 
-        if hosted["status"] != "running":
-            try:
-                await self.ensure_running(hosted_id, source="chat")
-            except HostedAgentRunnerUnavailable as exc:
-                raise HTTPException(503, str(exc)) from exc
-            except HostedAgentTooManyFailures as exc:
-                raise HTTPException(503, "Agent failed to start 3 times in the last 5 minutes. Use Force Restart in Settings.") from exc
+        async with use_agent_context(
+            agent_id=str(hosted["id"]),
+            agent_handle=hosted.get("agent_handle"),
+            model=hosted.get("model"),
+        ):
+            if hosted["status"] != "running":
+                try:
+                    await self.ensure_running(hosted_id, source="chat")
+                except HostedAgentRunnerUnavailable as exc:
+                    raise HTTPException(503, str(exc)) from exc
+                except HostedAgentTooManyFailures as exc:
+                    raise HTTPException(503, "Agent failed to start 3 times in the last 5 minutes. Use Force Restart in Settings.") from exc
 
-        try:
-            response = await self._call_runner("chat", hosted_id, {"content": content})
-            if response.get("reply"):
-                await self.repo.add_owner_message(
-                    hosted_id, "agent", response["reply"],
-                    tool_calls=response.get("tool_calls"),
-                    thinking=response.get("thinking"),
-                )
-            # Sync files from runner workspace → DB after tool use
-            if response.get("tool_calls"):
-                await self._sync_files_from_runner(hosted_id)
-            # Persist session history + index in OpenViking (background)
-            asyncio.create_task(self._persist_session(hosted_id, content, response.get("reply", "")))
-        except Exception as e:
-            logger.warning("Runner chat error: {}", e)
+            try:
+                response = await self._call_runner("chat", hosted_id, {"content": content})
+                if response.get("reply"):
+                    await self.repo.add_owner_message(
+                        hosted_id, "agent", response["reply"],
+                        tool_calls=response.get("tool_calls"),
+                        thinking=response.get("thinking"),
+                    )
+                # Sync files from runner workspace → DB after tool use
+                if response.get("tool_calls"):
+                    await self._sync_files_from_runner(hosted_id)
+                # Persist session history + index in OpenViking (background)
+                asyncio.create_task(self._persist_session(hosted_id, content, response.get("reply", "")))
+            except Exception as e:
+                logger.warning("Runner chat error: {}", e)
 
         return msg
 
@@ -1222,27 +1238,28 @@ class HostedAgentService:
         and may close or be busy by the time this task runs (causes asyncpg
         InterfaceError "another operation in progress").
         """
-        async with async_session_maker() as db:
-            local_repo = HostedAgentRepository(db)
-            agent_svc = AgentService(db)
-            svc = HostedAgentService(
-                repo=local_repo, agent_service=agent_svc,
-                openrouter=self.openrouter, openviking=self.openviking,
-            )
-            # 1. Short-term: persist message_history from runner
-            await svc._save_runner_history(hosted_id)
+        async with use_agent_context(agent_id=hosted_id):
+            async with async_session_maker() as db:
+                local_repo = HostedAgentRepository(db)
+                agent_svc = AgentService(db)
+                svc = HostedAgentService(
+                    repo=local_repo, agent_service=agent_svc,
+                    openrouter=self.openrouter, openviking=self.openviking,
+                )
+                # 1. Short-term: persist message_history from runner
+                await svc._save_runner_history(hosted_id)
 
-            # 2. Long-term: index in OpenViking for semantic search
-            if agent_reply and svc.openviking.enabled:
-                try:
-                    exchange = f"User: {user_msg[:500]}\nAgent: {agent_reply[:1000]}"
-                    hosted = await local_repo.get_by_id(hosted_id)
-                    if hosted:
-                        await svc.openviking.add_to_agent_session(
-                            str(hosted["agent_id"]), exchange
-                        )
-                except Exception as e:
-                    logger.debug("OpenViking index error: {}", e)
+                # 2. Long-term: index in OpenViking for semantic search
+                if agent_reply and svc.openviking.enabled:
+                    try:
+                        exchange = f"User: {user_msg[:500]}\nAgent: {agent_reply[:1000]}"
+                        hosted = await local_repo.get_by_id(hosted_id)
+                        if hosted:
+                            await svc.openviking.add_to_agent_session(
+                                str(hosted["agent_id"]), exchange
+                            )
+                    except Exception as e:
+                        logger.debug("OpenViking index error: {}", e)
 
     async def _sync_files_from_runner(self, hosted_id: str) -> None:
         """Sync files from runner workspace to DB after agent creates/modifies files.
@@ -1416,18 +1433,23 @@ class HostedAgentService:
             hosted_id = str(task["hosted_agent_id"])
             task_id = str(task["id"])
             error = None
-            try:
-                # Auto-start if needed (ensure_running already waits until ready)
-                if task["auto_start"] and task["agent_status"] != "running":
-                    await self.ensure_running(hosted_id, source="cron")
+            async with use_agent_context(
+                agent_id=hosted_id,
+                agent_handle=task.get("agent_handle"),
+                cron_run_id=task_id,
+            ):
+                try:
+                    # Auto-start if needed (ensure_running already waits until ready)
+                    if task["auto_start"] and task["agent_status"] != "running":
+                        await self.ensure_running(hosted_id, source="cron")
 
-                # Send task prompt as owner message
-                await self.send_owner_message(hosted_id, str(task["owner_user_id"]), task["task_prompt"])
-                executed += 1
-                logger.info("Cron task '{}' executed for agent {}", task["name"], task.get("agent_name", hosted_id))
-            except Exception as e:
-                error = str(e)[:500]
-                logger.warning("Cron task '{}' failed: {}", task["name"], e)
+                    # Send task prompt as owner message
+                    await self.send_owner_message(hosted_id, str(task["owner_user_id"]), task["task_prompt"])
+                    executed += 1
+                    logger.info("Cron task '{}' executed for agent {}", task["name"], task.get("agent_name", hosted_id))
+                except Exception as e:
+                    error = str(e)[:500]
+                    logger.warning("Cron task '{}' failed: {}", task["name"], e)
 
             # Calculate next run anchored to the original scheduled_at, not
             # post-execution wall time, to prevent drift accumulation.

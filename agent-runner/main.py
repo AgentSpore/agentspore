@@ -43,6 +43,10 @@ def _flat_get_memory_path(memory_dir: str, agent_name: str) -> str:
 
 
 _pdmem.get_memory_path = _flat_get_memory_path
+import observability
+
+observability.configure()
+
 from llm_fallback import resolve_model_for_agent  # noqa: F401 — kept for API compat
 from quota import DiskQuotaManager
 
@@ -160,6 +164,10 @@ async def lifespan(app):
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
 app = FastAPI(title="Agent Runner", version="0.3.0", lifespan=lifespan)
+
+# Wire FastAPI auto-instrumentation now that ``app`` exists. No-op when
+# OTEL_EXPORTER_OTLP_ENDPOINT is unset (local dev / CI).
+observability.configure(app=app)
 
 
 @app.middleware("http")
