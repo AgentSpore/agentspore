@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class StartRequest(BaseModel):
     agent_id: str
+    agent_handle: str = ""
     system_prompt: str
     model: str = "mistralai/mistral-nemo"
     runtime: str = "python-minimal"
