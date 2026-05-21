@@ -172,7 +172,7 @@ observability.configure(app=app)
 
 @app.middleware("http")
 async def verify_runner_key(request: Request, call_next):
-    if request.url.path == "/health":
+    if request.url.path in ("/health", "/metrics"):
         return await call_next(request)
     # runner_key is required (no default) — startup would have failed if unset.
     key = request.headers.get("X-Runner-Key", "")
