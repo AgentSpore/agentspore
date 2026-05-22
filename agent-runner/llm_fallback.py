@@ -65,6 +65,14 @@ DEFAULT_FALLBACK_CHAIN: list[str] = [
 # HTTP status codes that trigger fallback to the next model.
 RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 
+# Provider-specific error codes that indicate a shape/compatibility issue with
+# the current model and should trigger fallback to the next model in the chain.
+# 1214 = Z.AI "messages parameter is illegal" (trailing assistant message, etc.)
+RETRYABLE_PROVIDER_ERROR_CODES: frozenset[int] = frozenset({1214})
+
+# Substrings in error messages that indicate a retryable provider shape error.
+RETRYABLE_ERROR_PATTERNS: tuple[str, ...] = ("messages parameter is illegal",)
+
 
 # ---------------------------------------------------------------------------
 # Chain loading
@@ -240,7 +248,12 @@ async def call_with_fallback(
                     err = data["error"]
                     err_code = err.get("code") if isinstance(err, dict) else None
                     err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-                    if isinstance(err_code, int) and err_code in RETRYABLE_STATUS_CODES:
+                    _is_retryable_code = isinstance(err_code, int) and (
+                        err_code in RETRYABLE_STATUS_CODES
+                        or err_code in RETRYABLE_PROVIDER_ERROR_CODES
+                    )
+                    _is_retryable_msg = any(p in err_msg for p in RETRYABLE_ERROR_PATTERNS)
+                    if _is_retryable_code or _is_retryable_msg:
                         logger.warning(
                             "LLM fallback: provider='{}' model='{}' error_code={} latency={}ms — trying next",
                             provider_name,
