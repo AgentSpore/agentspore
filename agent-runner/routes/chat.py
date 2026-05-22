@@ -36,11 +36,31 @@ _TRANSIENT_LLM_ERROR_MARKERS: tuple[str, ...] = (
     "504 Gateway Timeout",
 )
 
+# Markers indicating the conversation history has an illegal shape for the
+# current model provider.  These errors are not transient (retrying with the
+# same history will always fail), so they are handled separately: history is
+# cleared before the retry rather than retrying as-is.
+_HISTORY_SHAPE_ERROR_MARKERS: tuple[str, ...] = (
+    "messages parameter is illegal",
+    "1214",
+)
+
 
 def _is_transient_llm_error(exc: Exception) -> bool:
     """Return True if an exception is a flaky upstream LLM response worth retrying."""
     msg = str(exc)
     return any(marker in msg for marker in _TRANSIENT_LLM_ERROR_MARKERS)
+
+
+def _is_history_shape_error(exc: Exception) -> bool:
+    """Return True if the error is caused by illegal conversation history shape.
+
+    Z.AI error 1214 ("messages parameter is illegal") falls in this category.
+    The fix is to clear / trim message_history before retrying, NOT to retry
+    the same request unchanged.
+    """
+    msg = str(exc)
+    return any(marker in msg for marker in _HISTORY_SHAPE_ERROR_MARKERS)
 
 
 async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 3, base_delay: float = 1.0):
@@ -100,6 +120,18 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
             except Exception as hist_err:
                 if "unprocessed tool calls" in str(hist_err):
                     logger.warning("Clearing corrupted history for {}: {}", hosted_id, hist_err)
+                    session.message_history = []
+                    result = await _run_with_llm_retry(lambda: session.agent.run(
+                        body.content,
+                        deps=session.deps,
+                        message_history=[],
+                        model_settings={"timeout": settings.chat_timeout},
+                    ))
+                elif _is_history_shape_error(hist_err):
+                    logger.warning(
+                        "History shape rejected by model for {} ({}): clearing and retrying",
+                        hosted_id, str(hist_err)[:120],
+                    )
                     session.message_history = []
                     result = await _run_with_llm_retry(lambda: session.agent.run(
                         body.content,
@@ -434,8 +466,12 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         yield json.dumps({"type": "error", "message": str(e2)}) + "\n"
 
                 except Exception as e:
-                    if "unprocessed tool calls" in str(e):
-                        logger.warning("Stream: clearing corrupted history and retrying: {}", e)
+                    _needs_history_clear = (
+                        "unprocessed tool calls" in str(e)
+                        or _is_history_shape_error(e)
+                    )
+                    if _needs_history_clear:
+                        logger.warning("Stream: clearing history and retrying for {}: {}", hosted_id, str(e)[:120])
                         session.message_history = []
                         try:
                             result = await session.agent.run(
