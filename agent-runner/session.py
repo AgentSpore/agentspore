@@ -107,6 +107,11 @@ class AgentSession:
         self.heartbeat_task: asyncio.Task | None = None
         self.last_activity: float = time.time()
         self.chat_lock = asyncio.Lock()
+        # Tracks which owner_session_id currently holds chat_lock (None = bootstrap or unknown).
+        # Set before yielding to business logic; cleared in finally after release.
+        self.active_session_id: str | None = None
+        # Flipped to True after the first chat_lock cycle completes (bootstrap done).
+        self.bootstrap_done: bool = False
 
         # Disk quota background watcher
         self.quota_watcher_task: asyncio.Task | None = None
