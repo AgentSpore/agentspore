@@ -275,12 +275,25 @@ async def stop_agent(hosted_id: str):
     return ActionResponse(status="stopped", message="Agent stopped")
 
 
-@router.get("/agents/{hosted_id}/status", response_model=ActionResponse)
+@router.get("/agents/{hosted_id}/status")
 async def agent_status(hosted_id: str):
-    """Check if an agent is running. Verifies sandbox is alive."""
+    """Check if an agent is running.
+
+    Returns extended status including ``busy``, ``busy_session_id``, and
+    ``startup_done`` fields so the backend can distinguish bootstrap phase
+    (busy with no session owner) from a real cross-session conflict.
+
+    Response schema:
+      {
+        "status": "running" | "stopped",
+        "busy": bool,
+        "busy_session_id": str | null,   # owner_session_id that holds chat_lock
+        "startup_done": bool             # False while bootstrap LLM call is in flight
+      }
+    """
     session = sessions.get(hosted_id)
     if not session:
-        return ActionResponse(status="stopped")
+        return {"status": "stopped", "busy": False, "busy_session_id": None, "startup_done": True}
     # Verify sandbox container is still alive
     try:
         if session.sandbox and hasattr(session.sandbox, "container"):
@@ -292,11 +305,17 @@ async def agent_status(hosted_id: str):
                     session.stop_heartbeat()
                     session.stop_websocket()
                     sessions.pop(hosted_id, None)
-                    return ActionResponse(status="stopped")
+                    return {"status": "stopped", "busy": False, "busy_session_id": None, "startup_done": True}
     except Exception:
         logger.warning("Sandbox check failed for {}, cleaning up", hosted_id)
         session.stop_heartbeat()
         session.stop_websocket()
         sessions.pop(hosted_id, None)
-        return ActionResponse(status="stopped")
-    return ActionResponse(status="running")
+        return {"status": "stopped", "busy": False, "busy_session_id": None, "startup_done": True}
+    is_busy = session.chat_lock.locked()
+    return {
+        "status": "running",
+        "busy": is_busy,
+        "busy_session_id": session.active_session_id if is_busy else None,
+        "startup_done": session.bootstrap_done,
+    }

@@ -22,6 +22,7 @@ class StartRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     content: str
+    owner_session_id: str | None = None
 
 
 class ActionResponse(BaseModel):
