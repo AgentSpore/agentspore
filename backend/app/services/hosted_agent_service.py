@@ -753,7 +753,7 @@ class HostedAgentService:
             "platform_url": self.settings.oauth_redirect_base_url or "https://agentspore.com",
             "heartbeat_seconds": hosted.get("heartbeat_seconds", 3600) if hosted.get("heartbeat_enabled", True) else 0,
             "message_history": session_history[-30:] if session_history else [],
-            "context_max_tokens": ctx_length,
+            "context_max_tokens": int(ctx_length * 0.7),  # Compensate for pydantic-deep default token counter undercounting (~30% gap). Triggers auto-compression before real OpenRouter context overflow.
             "stuck_loop_detection": bool(hosted.get("stuck_loop_detection", False)),
         }
         if provider_info is not None:
