@@ -15,6 +15,7 @@ When max_concurrent_sessions == 1 (default) or no owner_session_id:
 
 import asyncio
 import json
+import time
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -26,6 +27,7 @@ from pydantic_ai.tools import DeferredToolResults
 from config import get_settings
 from helpers import _extract_response
 from observability import use_agent_context
+from replay_sampler import maybe_sample
 from sandbox import is_command_safe
 from schemas import ChatRequest, ChatResponse
 from session import sanitize_history, sessions
@@ -229,10 +231,22 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
             session.active_session_id = body.owner_session_id
 
             try:
+                _chat_started_at = time.monotonic()
                 async with session.worker_pool.llm_semaphore:
                     result_resp = await _run_chat_nonstream(
                         hosted_id, body, session, worker.message_history
                     )
+                maybe_sample(
+                    hosted_agent_id=hosted_id,
+                    agent_handle=getattr(session, "agent_handle", None) or "",
+                    model=getattr(session, "model", None) or "",
+                    trace_id=None,
+                    input_messages=[{"role": "user", "content": body.content}],
+                    output_text=result_resp.reply,
+                    tool_calls=result_resp.tool_calls or [],
+                    started_at=_chat_started_at,
+                    status="completed",
+                )
                 return result_resp
             except Exception as e:
                 logger.error("Chat error for {} session {}: {}", hosted_id, body.owner_session_id, repr(e))
@@ -255,8 +269,20 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
     # Track which session owns the lock so /status can report busy_session_id.
     session.active_session_id = body.owner_session_id
 
+    _chat_started_at = time.monotonic()
     try:
         result_resp = await _run_chat_nonstream(hosted_id, body, session, session.message_history)
+        maybe_sample(
+            hosted_agent_id=hosted_id,
+            agent_handle=getattr(session, "agent_handle", None) or "",
+            model=getattr(session, "model", None) or "",
+            trace_id=None,
+            input_messages=[{"role": "user", "content": body.content}],
+            output_text=result_resp.reply,
+            tool_calls=result_resp.tool_calls or [],
+            started_at=_chat_started_at,
+            status="completed",
+        )
         return result_resp
     except Exception as e:
         logger.error("Chat error for {}: {}", hosted_id, repr(e))
@@ -329,6 +355,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
     # selection above. The generate() closure captures them by name.
 
     async def generate():
+        _stream_started_at = time.monotonic()
         try:
             async with use_agent_context(
                 agent_id=hosted_id,
@@ -528,6 +555,17 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                             "tool_calls": final_tools,
                             "thinking": thinking,
                         }) + "\n"
+                        maybe_sample(
+                            hosted_agent_id=hosted_id,
+                            agent_handle=getattr(session, "agent_handle", None) or "",
+                            model=getattr(session, "model", None) or "",
+                            trace_id=None,
+                            input_messages=[{"role": "user", "content": body.content}],
+                            output_text=reply,
+                            tool_calls=final_tools,
+                            started_at=_stream_started_at,
+                            status="completed",
+                        )
 
                 except AttributeError:
                     # agent.iter() not available — use non-streaming agent.run()
@@ -589,6 +627,17 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                             "tool_calls": tool_calls,
                             "thinking": thinking,
                         }) + "\n"
+                        maybe_sample(
+                            hosted_agent_id=hosted_id,
+                            agent_handle=getattr(session, "agent_handle", None) or "",
+                            model=getattr(session, "model", None) or "",
+                            trace_id=None,
+                            input_messages=[{"role": "user", "content": body.content}],
+                            output_text=reply,
+                            tool_calls=tool_calls,
+                            started_at=_stream_started_at,
+                            status="completed",
+                        )
                     except Exception as e2:
                         logger.error("Fallback chat error: {}", repr(e2))
                         yield json.dumps({"type": "error", "message": str(e2)}) + "\n"
@@ -618,6 +667,17 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 "tool_calls": tool_calls,
                                 "thinking": thinking,
                             }) + "\n"
+                            maybe_sample(
+                                hosted_agent_id=hosted_id,
+                                agent_handle=getattr(session, "agent_handle", None) or "",
+                                model=getattr(session, "model", None) or "",
+                                trace_id=None,
+                                input_messages=[{"role": "user", "content": body.content}],
+                                output_text=reply,
+                                tool_calls=tool_calls,
+                                started_at=_stream_started_at,
+                                status="completed",
+                            )
                         except Exception as e2:
                             logger.error("Retry after history clear failed: {}", repr(e2))
                             yield json.dumps({"type": "error", "message": str(e2)}) + "\n"
