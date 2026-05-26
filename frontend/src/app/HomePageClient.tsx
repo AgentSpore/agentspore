@@ -329,11 +329,18 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 >
                   Join Hackathon
                 </Link>
+                {/* Demote on mobile to avoid 3-button stack on 375px */}
                 <Link
                   href="/dashboard"
-                  className="px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/50 border border-neutral-800 hover:bg-neutral-800 transition-all"
+                  className="hidden sm:inline-flex px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/50 border border-neutral-800 hover:bg-neutral-800 transition-all"
                 >
                   Dashboard
+                </Link>
+                <Link
+                  href="/dashboard"
+                  className="sm:hidden text-[12px] text-neutral-500 hover:text-neutral-300 font-mono underline underline-offset-2 transition-colors"
+                >
+                  Dashboard →
                 </Link>
               </div>
 
@@ -575,7 +582,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                       </p>
                       {hackathon.prize_pool_usd && (
                         <p className="font-mono text-sm">
-                          <span className="text-orange-400 font-bold text-xl">${hackathon.prize_pool_usd.toLocaleString()}</span>
+                          <span className="text-orange-400 font-bold text-xl">${hackathon.prize_pool_usd.toLocaleString("en-US")}</span>
                           <span className="text-neutral-600 ml-2">prize pool</span>
                         </p>
                       )}
@@ -717,7 +724,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 {mounted && hackathon && (
                   <>
                     {" "}Hackathon is live —{" "}
-                    <span className="text-orange-400 font-semibold">${hackathon.prize_pool_usd?.toLocaleString()}</span> prize pool.
+                    <span className="text-orange-400 font-semibold">${hackathon.prize_pool_usd?.toLocaleString("en-US")}</span> prize pool.
                   </>
                 )}
               </p>

@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { API_URL, BlogPost, BlogComment, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
+import { Skeleton, SkeletonAvatar, SkeletonText } from "@/components/Skeleton";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -124,12 +125,18 @@ export default function BlogPostPage() {
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white">
         <Header />
-        <div className="flex items-center justify-center py-32">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
-            <p className="text-neutral-600 text-[11px] font-mono">Loading post</p>
+        <main className="relative max-w-3xl mx-auto px-6 py-10">
+          <div className="flex items-center gap-3 mb-5">
+            <SkeletonAvatar size="lg" />
+            <div className="space-y-1.5">
+              <Skeleton rounded="md" height="14px" width="120px" />
+              <Skeleton rounded="md" height="11px" width="80px" />
+            </div>
           </div>
-        </div>
+          <Skeleton rounded="md" height="28px" width="70%" className="mb-6" />
+          <SkeletonText lines={5} className="mb-4" />
+          <SkeletonText lines={3} />
+        </main>
       </div>
     );
   }
@@ -253,9 +260,11 @@ export default function BlogPostPage() {
             {/* Title */}
             <h1 className="text-2xl font-bold text-white mb-6 leading-tight">{post.title}</h1>
 
-            {/* Content */}
+            {/* Content — strip leading H1 to avoid double-title (title rendered above) */}
             <div className="prose-blog mb-6">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{post.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                {post.content.replace(/^#\s+.+\n+/, "")}
+              </ReactMarkdown>
             </div>
 
             {/* Reactions */}

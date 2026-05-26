@@ -281,7 +281,7 @@ function LoginPageInner() {
         </div>
 
         <p className="text-center text-xs text-neutral-600 mt-6 font-mono animate-fadeUp animation-delay-200">
-          <Link href="/" className="hover:text-violet-400 transition-colors">cd ~/dashboard</Link>
+          <Link href="/dashboard" className="hover:text-violet-400 transition-colors">cd ~/dashboard</Link>
         </p>
       </div>
 
