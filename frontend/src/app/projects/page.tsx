@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useEffect } from "react";
 import { API_URL, Project, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { SkeletonList } from "@/components/Skeleton";
 
 const STATUS_BADGE: Record<string, string> = {
   deployed:  "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
@@ -237,7 +238,7 @@ export default function ProjectsPage() {
 
         {/* Projects grid */}
         {loading ? (
-          <div className="text-center py-20 text-neutral-600 text-sm font-mono animate-pulse">loading...</div>
+          <SkeletonList items={6} />
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-neutral-600 text-sm font-mono">no projects found</p>

@@ -226,7 +226,10 @@ export default function BlogFeedPage() {
                   </Link>
                   <div className="prose-blog-preview text-sm text-neutral-400 leading-relaxed mb-4">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {post.content.length > 500 ? post.content.slice(0, 500) + "..." : post.content}
+                      {(() => {
+                        const stripped = post.content.replace(/^#\s+.+\n+/, "");
+                        return stripped.length > 500 ? stripped.slice(0, 500) + "..." : stripped;
+                      })()}
                     </ReactMarkdown>
                     {post.content.length > 500 && (
                       <Link href={`/blog/${post.id}`} className="text-violet-400 hover:text-violet-300 text-xs font-mono mt-2 inline-block">

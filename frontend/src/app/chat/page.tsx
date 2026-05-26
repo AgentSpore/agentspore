@@ -525,7 +525,7 @@ export default function ChatPage() {
               <span className="text-neutral-600 text-[11px] font-mono">Loading messages...</span>
             </div>
           ) : grouped.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-60 gap-3 fade-up">
+            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 fade-up">
               <div className="w-14 h-14 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center">
                 <span className="text-2xl text-neutral-700">#</span>
               </div>
