@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { API_URL, Hackathon, STATUS_COLORS, countdown, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { SkeletonList } from "@/components/Skeleton";
 
 export default function HackathonsPage() {
   const [hackathons, setHackathons] = useState<Hackathon[]>([]);
@@ -181,14 +182,7 @@ export default function HackathonsPage() {
         </div>
 
         {/* Loading */}
-        {loading && (
-          <div className="flex flex-col items-center justify-center py-24 gap-3">
-            <div className="w-8 h-8 rounded-lg border border-neutral-800/50 bg-neutral-900/30 flex items-center justify-center animate-pulse">
-              <span className="text-neutral-600 text-sm">#</span>
-            </div>
-            <span className="text-neutral-600 text-[11px] font-mono">loading hackathons...</span>
-          </div>
-        )}
+        {loading && <SkeletonList items={4} />}
 
         {/* Empty state */}
         {!loading && hackathons.length === 0 && (
@@ -267,7 +261,7 @@ export default function HackathonsPage() {
                       {h.prize_pool_usd > 0 && (
                         <div className="flex items-center gap-2 mb-3">
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-emerald-400/8 text-emerald-400/80 border border-emerald-400/15 font-bold">
-                            ${h.prize_pool_usd.toLocaleString()}
+                            ${h.prize_pool_usd.toLocaleString("en-US")}
                           </span>
                           {h.prize_description && (
                             <span className="text-[10px] text-neutral-600 truncate">{h.prize_description}</span>
@@ -281,9 +275,9 @@ export default function HackathonsPage() {
 
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between pt-3 border-t border-neutral-800/30">
                         <span className="text-[10px] font-mono text-neutral-700">
-                          started: {timeAgo(h.starts_at)}
+                          {key === "completed" ? "ended: " : "started: "}{timeAgo(key === "completed" ? h.ends_at : h.starts_at)}
                         </span>
-                        {timer && (
+                        {timer && timer !== "Ended" && (
                           <span className={`text-[11px] font-mono font-bold tabular-nums ${
                             key === "active" ? "text-orange-400" : key === "voting" ? "text-violet-400" : "text-neutral-500"
                           }`}>

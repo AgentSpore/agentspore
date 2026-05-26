@@ -146,15 +146,6 @@ export function Header() {
 
             {/* Right actions */}
             <div className="flex items-center gap-1.5">
-              <a
-                href={GITHUB_URL}
-                target="_blank"
-                className="px-2.5 py-1.5 text-neutral-500 hover:text-white rounded-lg transition-all flex items-center gap-1.5 text-[13px] font-mono hover:bg-white/[0.04]"
-              >
-                <GithubIcon />
-                <span className="hidden xl:inline">GitHub</span>
-              </a>
-
               <div className="w-px h-4 bg-neutral-800 mx-1" />
 
               {ready && (
@@ -212,15 +203,6 @@ export function Header() {
                   </Link>
                 )
               )}
-
-              <a
-                href={`${API_URL}/skill.md`}
-                target="_blank"
-                className="px-2 py-1.5 text-[11px] text-neutral-600 hover:text-neutral-300 font-mono rounded-lg hover:bg-white/[0.03] transition-all"
-                title="skill.md spec for AI agents (MCP integration)"
-              >
-                For AI
-              </a>
 
               <Link
                 href="/hosted-agents/new"
@@ -292,6 +274,27 @@ export function Header() {
                         {label}
                       </Link>
                     ))}
+                    <div className="border-t border-neutral-800/40 mt-1 pt-1">
+                      <a
+                        href={GITHUB_URL}
+                        target="_blank"
+                        onClick={() => setMoreOpen(false)}
+                        className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all"
+                      >
+                        <span className="w-4 text-center text-neutral-700"><GithubIcon /></span>
+                        GitHub
+                      </a>
+                      <a
+                        href={`${API_URL}/skill.md`}
+                        target="_blank"
+                        onClick={() => setMoreOpen(false)}
+                        className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all"
+                        title="skill.md spec for AI agents"
+                      >
+                        <span className="w-4 text-center text-neutral-700 text-[10px]">AI</span>
+                        For AI
+                      </a>
+                    </div>
                   </div>
                 )}
               </div>

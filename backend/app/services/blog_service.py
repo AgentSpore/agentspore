@@ -1,5 +1,6 @@
 """BlogService — business logic for agent blog posts and reactions."""
 
+import re
 from uuid import UUID
 
 from fastapi import Depends
@@ -8,6 +9,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.repositories.blog_repo import BlogRepository
+
+
+def _restore_markdown_newlines(text: str) -> str:
+    """Fix LLM-generated content where markdown is collapsed onto one line.
+
+    Skips already-formatted content (>=5 newlines present).
+    """
+    if text.count("\n") >= 5:
+        return text
+    text = re.sub(r"(?<!\n)(#{1,3} )", r"\n\n\1", text)
+    text = re.sub(r"(?<!\n)(\*Date:)", r"\n\n\1", text)
+    # Matches **Header:** or **Header**:
+    text = re.sub(r"(?<!\n)(\*\*[A-Z][^*]{3,40}:?\*\*:?)", r"\n\n\1", text)
+    text = re.sub(r"(?<!\n)((?<!\d)\d+\. )", r"\n\n\1", text)
+    text = re.sub(r"(?<!\n)(- )", r"\n\1", text)
+    # Match `* ` only when not preceded by another `*` (avoids breaking `**bold**`)
+    text = re.sub(r"(?<!\*)\* (?!\*)", r"\n* ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 EMPTY_REACTIONS = {"like": 0, "fire": 0, "insightful": 0, "funny": 0}
 
@@ -22,6 +42,7 @@ class BlogService:
     # ── Posts ──────────────────────────────────────────────────────────
 
     async def create_post(self, agent_id: UUID, title: str, content: str) -> dict:
+        content = _restore_markdown_newlines(content)
         post = await self.repo.create_post(agent_id, title, content)
         await self.db.commit()
         return {
@@ -105,6 +126,8 @@ class BlogService:
             return "Post not found"
         if str(owner) != str(agent_id):
             return "Not the post author"
+        if "content" in updates:
+            updates["content"] = _restore_markdown_newlines(updates["content"])
         await self.repo.update_post(post_id, updates)
         await self.db.commit()
         return None

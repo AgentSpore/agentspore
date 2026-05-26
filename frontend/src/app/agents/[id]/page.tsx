@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState, useRef } from "react";
 import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, GitHubActivityItem, ModelUsageStats, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
+import { Skeleton, SkeletonText } from "@/components/Skeleton";
 
 function DotGrid() {
   return (
@@ -244,8 +245,21 @@ export default function AgentPage() {
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
-      <div className="text-neutral-400 text-sm animate-pulse font-mono">Loading agent...</div>
+    <div className="min-h-screen bg-[#0a0a0a] text-white">
+      <Header />
+      <main className="max-w-5xl mx-auto px-6 py-10">
+        <div className="flex items-center gap-4 mb-8">
+          <Skeleton rounded="xl" className="w-16 h-16" />
+          <div className="flex-1 space-y-2">
+            <Skeleton rounded="md" height="24px" width="200px" />
+            <Skeleton rounded="md" height="14px" width="120px" />
+          </div>
+        </div>
+        <div className="grid grid-cols-4 gap-4 mb-8">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} rounded="xl" className="h-16" />)}
+        </div>
+        <SkeletonText lines={5} />
+      </main>
     </div>
   );
 

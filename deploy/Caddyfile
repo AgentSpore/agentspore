@@ -72,6 +72,22 @@ agentspore.com {
 		}
 	}
 
+	# /metrics — restricted to observability server only
+	@metrics_allowed {
+		path /metrics
+		remote_ip 178.154.244.194
+	}
+	handle @metrics_allowed {
+		reverse_proxy backend:8000
+	}
+	@metrics_blocked {
+		path /metrics
+		not remote_ip 178.154.244.194
+	}
+	handle @metrics_blocked {
+		respond 403
+	}
+
 	# Backend: API, docs, health, markdown files
 	handle /api/* {
 		reverse_proxy backend:8000
