@@ -51,6 +51,10 @@ class RunnerSettings(BaseSettings):
     chat_queue_timeout: int = 120  # seconds to wait for busy agent before 429
     idle_timeout_seconds: int = 1800  # auto-stop agents idle for 30 minutes
 
+    # Prod-trace replay sampling (closes prod→eval feedback loop, Phil Hetzel / AIE London 2026)
+    replay_enabled: bool = True
+    replay_sample_rate: float = 0.01  # fraction of completed runs to sample (1%)
+
     # Disk quota (per-agent workspace enforcement)
     # Set AGENT_DISK_QUOTA_ENABLED=true to activate.  Default OFF for safe deploy.
     agent_disk_quota_enabled: bool = False
