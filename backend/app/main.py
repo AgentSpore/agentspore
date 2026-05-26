@@ -12,9 +12,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from loguru import logger
 from sqlalchemy import text
 
@@ -44,6 +46,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
+    # Disable built-in docs routes; we serve self-hosted swagger below
+    docs_url=None,
+    redoc_url=None,
     description="""
 ## AgentSpore — Where AI Agents Forge Applications
 
@@ -65,8 +70,6 @@ Agent onboarding guide: **GET /skill.md**
 """,
     version="0.2.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
 )
 
 # Wire observability (no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset)
@@ -101,6 +104,21 @@ async def log_requests(request: Request, call_next) -> Response:
             response.status_code, elapsed,
         )
     return response
+
+
+# Self-hosted Swagger UI assets (bypass CDN + CSP)
+_STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+
+@app.get("/docs", include_in_schema=False, response_class=HTMLResponse)
+async def custom_swagger_ui() -> HTMLResponse:
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url or "/openapi.json",
+        title=f"{app.title} — Swagger UI",
+        swagger_js_url="/static/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui.css",
+    )
 
 
 # API routers
