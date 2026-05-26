@@ -238,6 +238,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
         heartbeat_seconds=body.heartbeat_seconds,
         agent_handle=body.agent_handle,
         model=resolved_model,
+        max_concurrent_sessions=body.max_concurrent_sessions,
     )
 
     # Restore message_history from platform DB (short-term memory).
@@ -279,21 +280,43 @@ async def stop_agent(hosted_id: str):
 async def agent_status(hosted_id: str):
     """Check if an agent is running.
 
-    Returns extended status including ``busy``, ``busy_session_id``, and
-    ``startup_done`` fields so the backend can distinguish bootstrap phase
-    (busy with no session owner) from a real cross-session conflict.
+    Returns extended status including ``busy``, ``busy_session_id``,
+    ``startup_done``, ``worker_pool``, and ``sessions`` fields.
 
     Response schema:
       {
         "status": "running" | "stopped",
         "busy": bool,
         "busy_session_id": str | null,   # owner_session_id that holds chat_lock
-        "startup_done": bool             # False while bootstrap LLM call is in flight
+        "startup_done": bool,            # False while bootstrap LLM call is in flight
+        "worker_pool": {
+          "total": int,                  # max_concurrent_sessions
+          "busy": int,                   # currently executing
+          "available": int               # free slots
+        },
+        "sessions": [
+          {
+            "session_id": str,
+            "status": "running" | "queued" | "idle",
+            "queue_depth": int,
+            "last_active": str           # ISO-8601 UTC timestamp
+          },
+          ...
+        ]
       }
+
+    Backward-compat: all pre-Phase-2 fields are preserved; new fields are additive.
     """
     session = sessions.get(hosted_id)
     if not session:
-        return {"status": "stopped", "busy": False, "busy_session_id": None, "startup_done": True}
+        return {
+            "status": "stopped",
+            "busy": False,
+            "busy_session_id": None,
+            "startup_done": True,
+            "worker_pool": {"total": 1, "busy": 0, "available": 1},
+            "sessions": [],
+        }
     # Verify sandbox container is still alive
     try:
         if session.sandbox and hasattr(session.sandbox, "container"):
@@ -305,17 +328,34 @@ async def agent_status(hosted_id: str):
                     session.stop_heartbeat()
                     session.stop_websocket()
                     sessions.pop(hosted_id, None)
-                    return {"status": "stopped", "busy": False, "busy_session_id": None, "startup_done": True}
+                    return {
+                        "status": "stopped",
+                        "busy": False,
+                        "busy_session_id": None,
+                        "startup_done": True,
+                        "worker_pool": {"total": 1, "busy": 0, "available": 1},
+                        "sessions": [],
+                    }
     except Exception:
         logger.warning("Sandbox check failed for {}, cleaning up", hosted_id)
         session.stop_heartbeat()
         session.stop_websocket()
         sessions.pop(hosted_id, None)
-        return {"status": "stopped", "busy": False, "busy_session_id": None, "startup_done": True}
+        return {
+            "status": "stopped",
+            "busy": False,
+            "busy_session_id": None,
+            "startup_done": True,
+            "worker_pool": {"total": 1, "busy": 0, "available": 1},
+            "sessions": [],
+        }
+
     is_busy = session.chat_lock.locked()
+    pool_snapshot = session.worker_pool.status_snapshot()
     return {
         "status": "running",
         "busy": is_busy,
         "busy_session_id": session.active_session_id if is_busy else None,
         "startup_done": session.bootstrap_done,
+        **pool_snapshot,
     }

@@ -1,4 +1,17 @@
-"""Chat endpoints: chat (non-streaming) and chat/stream."""
+"""Chat endpoints: chat (non-streaming) and chat/stream.
+
+Phase 2+3: per-session isolation via WorkerPool.
+
+When owner_session_id is provided and max_concurrent_sessions > 1:
+  - Get-or-create a SessionWorker for that session_id
+  - Acquire executor_semaphore slot (cross-session concurrency limit)
+  - Acquire session-scoped lock (within-session serialization)
+  - Use session-scoped message_history
+  - Release slot + lock in finally
+
+When max_concurrent_sessions == 1 (default) or no owner_session_id:
+  - Fall through to legacy global chat_lock behavior (zero regression)
+"""
 
 import asyncio
 import json
@@ -16,6 +29,7 @@ from observability import use_agent_context
 from sandbox import is_command_safe
 from schemas import ChatRequest, ChatResponse
 from session import sanitize_history, sessions
+from session_worker import SessionWorker
 
 settings = get_settings()
 
@@ -90,15 +104,149 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 3, base_delay
         raise last_exc
 
 
+async def _run_chat_nonstream(
+    hosted_id: str,
+    body: ChatRequest,
+    session,
+    message_history_ref: list,
+) -> ChatResponse:
+    """Core non-streaming chat logic. Mutates message_history_ref in place.
+
+    Separated to allow both legacy (global lock) and per-session (worker) paths
+    to call the same implementation.
+    """
+    async with use_agent_context(
+        agent_id=hosted_id,
+        agent_handle=getattr(session, "agent_handle", None) or None,
+        model=getattr(session, "model", None) or None,
+    ):
+        try:
+            result = await _run_with_llm_retry(lambda: session.agent.run(
+                body.content,
+                deps=session.deps,
+                message_history=message_history_ref,
+                model_settings={"timeout": settings.chat_timeout},
+            ))
+        except Exception as hist_err:
+            if "unprocessed tool calls" in str(hist_err):
+                logger.warning("Clearing corrupted history for {}: {}", hosted_id, hist_err)
+                message_history_ref.clear()
+                result = await _run_with_llm_retry(lambda: session.agent.run(
+                    body.content,
+                    deps=session.deps,
+                    message_history=[],
+                    model_settings={"timeout": settings.chat_timeout},
+                ))
+            elif _is_history_shape_error(hist_err):
+                logger.warning(
+                    "History shape rejected by model for {} ({}): clearing and retrying",
+                    hosted_id, str(hist_err)[:120],
+                )
+                message_history_ref.clear()
+                result = await _run_with_llm_retry(lambda: session.agent.run(
+                    body.content,
+                    deps=session.deps,
+                    message_history=[],
+                    model_settings={"timeout": settings.chat_timeout},
+                ))
+            else:
+                raise
+
+        new_history = sanitize_history(result.all_messages())[-100:]
+        message_history_ref.clear()
+        message_history_ref.extend(new_history)
+
+        # Auto-approve deferred tool calls (execute requires approval in interrupt_on mode).
+        # Non-streaming path must handle this loop itself — agent.run() stops at each
+        # interrupt and must be resumed with DeferredToolResults.
+        max_approvals = 10
+        while isinstance(result.output, DeferredToolRequests) and max_approvals > 0:
+            deferred = result.output
+            approvals: dict[str, bool] = {}
+            for tc in deferred.approvals:
+                if tc.tool_name == "execute":
+                    cmd = tc.args.get("command", "") if isinstance(tc.args, dict) else str(tc.args)
+                    safe, reason = is_command_safe(cmd)
+                    if not safe:
+                        logger.warning("Blocked unsafe command from agent: {} ({})", cmd, reason)
+                        approvals[tc.tool_call_id] = False
+                        continue
+                approvals[tc.tool_call_id] = True
+            logger.info("Non-stream: auto-approving {} deferred tools", sum(v for v in approvals.values()))
+            prev_messages = result.all_messages()
+            result = await _run_with_llm_retry(lambda: session.agent.run(
+                deferred_tool_results=DeferredToolResults(approvals=approvals),
+                deps=session.deps,
+                message_history=prev_messages,
+                model_settings={"timeout": settings.chat_timeout},
+            ))
+            new_history = sanitize_history(result.all_messages())[-100:]
+            message_history_ref.clear()
+            message_history_ref.extend(new_history)
+            max_approvals -= 1
+
+        reply, tool_calls, thinking = _extract_response(result)
+        return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
+
+
+def _use_worker_pool(session) -> bool:
+    """Return True when per-session concurrency is enabled (max_concurrent > 1)."""
+    return session.worker_pool.max_concurrent > 1
+
+
 @router.post("/agents/{hosted_id}/chat", response_model=ChatResponse)
 async def chat_with_agent(hosted_id: str, body: ChatRequest):
-    """Send a message to the hosted agent and get a reply (non-streaming fallback)."""
+    """Send a message to the hosted agent and get a reply (non-streaming fallback).
+
+    Phase 2+3: when owner_session_id is provided and max_concurrent_sessions > 1,
+    uses per-session WorkerPool isolation. Falls back to legacy global lock for
+    single-session agents (backward compat).
+    """
     session = sessions.get(hosted_id)
     if not session:
         raise HTTPException(400, "Agent not running. Start it first.")
 
     session.touch()
 
+    # ── Per-session path (Phase 2+3) ────────────────────────────────────────
+    if body.owner_session_id and _use_worker_pool(session):
+        worker: SessionWorker | None = None
+        try:
+            worker = await session.worker_pool.acquire_slot(body.owner_session_id)
+        except Exception as e:
+            raise HTTPException(503, f"Worker pool unavailable: {e}")
+
+        try:
+            # Within-session serialization
+            try:
+                await asyncio.wait_for(worker.lock.acquire(), timeout=settings.chat_queue_timeout)
+            except asyncio.TimeoutError:
+                session.worker_pool.release_slot(worker)
+                raise HTTPException(429, "Session busy — try again later")
+
+            worker.touch()
+            # Reflect in global active_session_id for /status compat
+            session.active_session_id = body.owner_session_id
+
+            try:
+                async with session.worker_pool.llm_semaphore:
+                    result_resp = await _run_chat_nonstream(
+                        hosted_id, body, session, worker.message_history
+                    )
+                return result_resp
+            except Exception as e:
+                logger.error("Chat error for {} session {}: {}", hosted_id, body.owner_session_id, repr(e))
+                raise HTTPException(500, f"Agent error: {str(e)}")
+            finally:
+                session.active_session_id = None
+                session.bootstrap_done = True
+                worker.lock.release()
+        finally:
+            if worker is not None:
+                session.worker_pool.release_slot(worker)
+        return  # unreachable, satisfies type checker  # type: ignore[return-value]
+
+    # ── Legacy global-lock path (default, single-session compat) ────────────
     try:
         await asyncio.wait_for(session.chat_lock.acquire(), timeout=settings.chat_queue_timeout)
     except asyncio.TimeoutError:
@@ -108,73 +256,8 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
     session.active_session_id = body.owner_session_id
 
     try:
-        async with use_agent_context(
-            agent_id=hosted_id,
-            agent_handle=getattr(session, "agent_handle", None) or None,
-            model=getattr(session, "model", None) or None,
-        ):
-            try:
-                result = await _run_with_llm_retry(lambda: session.agent.run(
-                    body.content,
-                    deps=session.deps,
-                    message_history=session.message_history,
-                    model_settings={"timeout": settings.chat_timeout},
-                ))
-            except Exception as hist_err:
-                if "unprocessed tool calls" in str(hist_err):
-                    logger.warning("Clearing corrupted history for {}: {}", hosted_id, hist_err)
-                    session.message_history = []
-                    result = await _run_with_llm_retry(lambda: session.agent.run(
-                        body.content,
-                        deps=session.deps,
-                        message_history=[],
-                        model_settings={"timeout": settings.chat_timeout},
-                    ))
-                elif _is_history_shape_error(hist_err):
-                    logger.warning(
-                        "History shape rejected by model for {} ({}): clearing and retrying",
-                        hosted_id, str(hist_err)[:120],
-                    )
-                    session.message_history = []
-                    result = await _run_with_llm_retry(lambda: session.agent.run(
-                        body.content,
-                        deps=session.deps,
-                        message_history=[],
-                        model_settings={"timeout": settings.chat_timeout},
-                    ))
-                else:
-                    raise
-            session.message_history = sanitize_history(result.all_messages())[-100:]
-
-            # Auto-approve deferred tool calls (execute requires approval in interrupt_on mode).
-            # Non-streaming path must handle this loop itself — agent.run() stops at each
-            # interrupt and must be resumed with DeferredToolResults.
-            max_approvals = 10
-            while isinstance(result.output, DeferredToolRequests) and max_approvals > 0:
-                deferred = result.output
-                approvals: dict[str, bool] = {}
-                for tc in deferred.approvals:
-                    if tc.tool_name == "execute":
-                        cmd = tc.args.get("command", "") if isinstance(tc.args, dict) else str(tc.args)
-                        safe, reason = is_command_safe(cmd)
-                        if not safe:
-                            logger.warning("Blocked unsafe command from agent: {} ({})", cmd, reason)
-                            approvals[tc.tool_call_id] = False
-                            continue
-                    approvals[tc.tool_call_id] = True
-                logger.info("Non-stream: auto-approving {} deferred tools", sum(v for v in approvals.values()))
-                prev_messages = result.all_messages()
-                result = await _run_with_llm_retry(lambda: session.agent.run(
-                    deferred_tool_results=DeferredToolResults(approvals=approvals),
-                    deps=session.deps,
-                    message_history=prev_messages,
-                    model_settings={"timeout": settings.chat_timeout},
-                ))
-                session.message_history = sanitize_history(result.all_messages())[-100:]
-                max_approvals -= 1
-
-            reply, tool_calls, thinking = _extract_response(result)
-            return ChatResponse(reply=reply, tool_calls=tool_calls, thinking=thinking)
+        result_resp = await _run_chat_nonstream(hosted_id, body, session, session.message_history)
+        return result_resp
     except Exception as e:
         logger.error("Chat error for {}: {}", hosted_id, repr(e))
         raise HTTPException(500, f"Agent error: {str(e)}")
@@ -195,6 +278,10 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
       {"type": "thinking_delta", "content": "..."}  — thinking text
       {"type": "done", "reply": "...", "tool_calls": [...], "thinking": "..."} — final
       {"type": "error", "message": "..."}           — error
+
+    Phase 2+3: per-session isolation. When owner_session_id is set and
+    max_concurrent_sessions > 1, uses WorkerPool SessionWorker's history and lock.
+    Falls back to legacy global chat_lock for single-session agents.
     """
     session = sessions.get(hosted_id)
     if not session:
@@ -202,19 +289,44 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
 
     session.touch()
 
-    # Acquire chat lock OUTSIDE the StreamingResponse generator so release
-    # is guaranteed in finally — `async with` inside a generator may not run
-    # __aexit__ if the generator is GC'd in a different async context after
-    # a `RuntimeError: async generator raised StopAsyncIteration` (pydantic-ai
-    # bug #4204; partial fix in 1.77.0 covers _stream_text_deltas but not
-    # the agent.iter() node.stream() path we use).
-    try:
-        await asyncio.wait_for(session.chat_lock.acquire(), timeout=settings.chat_queue_timeout)
-    except asyncio.TimeoutError:
-        raise HTTPException(429, "Agent busy — try again later")
+    # ── Determine which lock + history to use ───────────────────────────────
+    worker: SessionWorker | None = None
+    use_pool = body.owner_session_id and _use_worker_pool(session)
+
+    if use_pool:
+        # Acquire executor slot (cross-session concurrency)
+        try:
+            worker = await session.worker_pool.acquire_slot(body.owner_session_id)  # type: ignore[arg-type]
+        except Exception as e:
+            raise HTTPException(503, f"Worker pool unavailable: {e}")
+        # Acquire per-session lock OUTSIDE generate() for GC-safe release
+        try:
+            await asyncio.wait_for(worker.lock.acquire(), timeout=settings.chat_queue_timeout)
+        except asyncio.TimeoutError:
+            session.worker_pool.release_slot(worker)
+            raise HTTPException(429, "Session busy — try again later")
+        worker.touch()
+        _lock_to_release = worker.lock
+        _history = worker.message_history
+    else:
+        # Legacy: acquire global lock OUTSIDE the StreamingResponse generator so release
+        # is guaranteed in finally — `async with` inside a generator may not run
+        # __aexit__ if the generator is GC'd in a different async context after
+        # a `RuntimeError: async generator raised StopAsyncIteration` (pydantic-ai
+        # bug #4204; partial fix in 1.77.0 covers _stream_text_deltas but not
+        # the agent.iter() node.stream() path we use).
+        try:
+            await asyncio.wait_for(session.chat_lock.acquire(), timeout=settings.chat_queue_timeout)
+        except asyncio.TimeoutError:
+            raise HTTPException(429, "Agent busy — try again later")
+        _lock_to_release = session.chat_lock
+        _history = session.message_history
 
     # Track which session owns the lock so /status can report busy_session_id.
     session.active_session_id = body.owner_session_id
+
+    # _history and _lock_to_release are bound by the per-session / global-lock
+    # selection above. The generate() closure captures them by name.
 
     async def generate():
         try:
@@ -229,13 +341,13 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         iter_ctx = session.agent.iter(
                             body.content,
                             deps=session.deps,
-                            message_history=session.message_history,
+                            message_history=_history,
                             model_settings={"timeout": settings.chat_timeout},
                         )
                     except Exception as hist_err:
                         if "unprocessed tool calls" in str(hist_err):
                             logger.warning("Clearing corrupted history: {}", hist_err)
-                            session.message_history = []
+                            _history.clear()
                             iter_ctx = session.agent.iter(
                                 body.content,
                                 deps=session.deps,
@@ -320,7 +432,9 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                         })
 
                         result = run.result
-                        session.message_history = sanitize_history(result.all_messages())[-100:]
+                        new_hist = sanitize_history(result.all_messages())[-100:]
+                        _history.clear()
+                        _history.extend(new_hist)
 
                         # Auto-approve deferred tool calls (agent runs in sandbox)
                         max_approvals = 10
@@ -353,7 +467,9 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 message_history=result.all_messages(),
                                 model_settings={"timeout": settings.chat_timeout},
                             )
-                            session.message_history = sanitize_history(result.all_messages())[-100:]
+                            new_hist = sanitize_history(result.all_messages())[-100:]
+                            _history.clear()
+                            _history.extend(new_hist)
                             # Backfill tool results from all_messages into all_tool_calls.
                             # new_messages() on a deferred run only contains ToolReturnPart + final
                             # text — no ToolCallPart — so _extract_response would yield extra_tools=[].
@@ -421,13 +537,13 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                             result = await session.agent.run(
                                 body.content,
                                 deps=session.deps,
-                                message_history=session.message_history,
+                                message_history=_history,
                                 model_settings={"timeout": settings.chat_timeout},
                             )
                         except Exception as hist_err2:
                             if "unprocessed tool calls" in str(hist_err2):
                                 logger.warning("Fallback: clearing corrupted history: {}", hist_err2)
-                                session.message_history = []
+                                _history.clear()
                                 result = await session.agent.run(
                                     body.content,
                                     deps=session.deps,
@@ -436,7 +552,9 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 )
                             else:
                                 raise
-                        session.message_history = sanitize_history(result.all_messages())[-100:]
+                        new_hist = sanitize_history(result.all_messages())[-100:]
+                        _history.clear()
+                        _history.extend(new_hist)
 
                         # Auto-approve deferred tool calls
                         max_approvals = 10
@@ -459,7 +577,9 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 message_history=result.all_messages(),
                                 model_settings={"timeout": settings.chat_timeout},
                             )
-                            session.message_history = sanitize_history(result.all_messages())[-100:]
+                            new_hist = sanitize_history(result.all_messages())[-100:]
+                            _history.clear()
+                            _history.extend(new_hist)
                             max_approvals -= 1
 
                         reply, tool_calls, thinking = _extract_response(result)
@@ -480,7 +600,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                     )
                     if _needs_history_clear:
                         logger.warning("Stream: clearing history and retrying for {}: {}", hosted_id, str(e)[:120])
-                        session.message_history = []
+                        _history.clear()
                         try:
                             result = await session.agent.run(
                                 body.content,
@@ -488,7 +608,9 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 message_history=[],
                                 model_settings={"timeout": settings.chat_timeout},
                             )
-                            session.message_history = sanitize_history(result.all_messages())[-100:]
+                            new_hist = sanitize_history(result.all_messages())[-100:]
+                            _history.clear()
+                            _history.extend(new_hist)
                             reply, tool_calls, thinking = _extract_response(result)
                             yield json.dumps({
                                 "type": "done",
@@ -503,11 +625,14 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         logger.error("Stream error for {}: {}", hosted_id, repr(e))
                         yield json.dumps({"type": "error", "message": str(e)}) + "\n"
         finally:
-            # Always release lock, even if the generator is abandoned mid-stream
-            # (client disconnect, RuntimeError from upstream pydantic-ai).
+            # Always release lock + pool slot, even if the generator is abandoned
+            # mid-stream (client disconnect, RuntimeError from upstream pydantic-ai).
             session.active_session_id = None
             session.bootstrap_done = True
-            if session.chat_lock.locked():
-                session.chat_lock.release()
+            if _lock_to_release.locked():
+                _lock_to_release.release()
+            # Release executor slot if we used the worker pool
+            if worker is not None:
+                session.worker_pool.release_slot(worker)
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")

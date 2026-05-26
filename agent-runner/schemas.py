@@ -18,6 +18,8 @@ class StartRequest(BaseModel):
     stuck_loop_detection: bool = False
     provider_base_url: str = ""
     provider_api_key: str = ""
+    # Phase 2+3: per-session concurrency. Default 1 = current single-session behavior.
+    max_concurrent_sessions: int = 1
 
 
 class ChatRequest(BaseModel):
