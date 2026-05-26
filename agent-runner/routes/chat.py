@@ -104,6 +104,9 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
     except asyncio.TimeoutError:
         raise HTTPException(429, "Agent busy — try again later")
 
+    # Track which session owns the lock so /status can report busy_session_id.
+    session.active_session_id = body.owner_session_id
+
     try:
         async with use_agent_context(
             agent_id=hosted_id,
@@ -176,6 +179,8 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
         logger.error("Chat error for {}: {}", hosted_id, repr(e))
         raise HTTPException(500, f"Agent error: {str(e)}")
     finally:
+        session.active_session_id = None
+        session.bootstrap_done = True
         session.chat_lock.release()
 
 
@@ -207,6 +212,9 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
         await asyncio.wait_for(session.chat_lock.acquire(), timeout=settings.chat_queue_timeout)
     except asyncio.TimeoutError:
         raise HTTPException(429, "Agent busy — try again later")
+
+    # Track which session owns the lock so /status can report busy_session_id.
+    session.active_session_id = body.owner_session_id
 
     async def generate():
         try:
@@ -497,6 +505,8 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
         finally:
             # Always release lock, even if the generator is abandoned mid-stream
             # (client disconnect, RuntimeError from upstream pydantic-ai).
+            session.active_session_id = None
+            session.bootstrap_done = True
             if session.chat_lock.locked():
                 session.chat_lock.release()
 
