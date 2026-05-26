@@ -3,6 +3,7 @@
 import asyncio
 import collections
 import json
+import os
 import time
 
 import httpx
@@ -22,6 +23,7 @@ from sandbox import is_command_safe
 
 from config import get_settings
 from content_sanitizer import risk_score, sanitize_for_agent_context
+from session_worker import WorkerPool
 
 settings = get_settings()
 
@@ -89,12 +91,19 @@ def sanitize_history(messages: list) -> list:
 
 
 class AgentSession:
-    """Holds a running agent's sandbox, agent instance, message history, and heartbeat task."""
+    """Holds a running agent's sandbox, agent instance, message history, and heartbeat task.
+
+    Phase 2+3: per-session isolation via WorkerPool.
+      - worker_pool: WorkerPool — manages SessionWorker instances keyed by owner_session_id
+      - chat_lock / active_session_id kept for backward-compat with /status and auto_react
+      - message_history on AgentSession is the GLOBAL fallback for requests without session_id
+    """
 
     def __init__(self, hosted_id: str, sandbox: DockerSandbox, agent, deps,
                  api_key: str = "", heartbeat_seconds: int = 3600,
                  auto_react: bool = True, max_reactions_per_minute: int = 10,
-                 agent_handle: str = "", model: str = ""):
+                 agent_handle: str = "", model: str = "",
+                 max_concurrent_sessions: int = 1):
         self.hosted_id = hosted_id
         self.sandbox = sandbox
         self.agent = agent
@@ -106,6 +115,7 @@ class AgentSession:
         self.model: str = model
         self.heartbeat_task: asyncio.Task | None = None
         self.last_activity: float = time.time()
+        # Backward-compat global lock (used by auto_react and sessionless requests)
         self.chat_lock = asyncio.Lock()
         # Tracks which owner_session_id currently holds chat_lock (None = bootstrap or unknown).
         # Set before yielding to business logic; cleared in finally after release.
@@ -125,6 +135,19 @@ class AgentSession:
         # Idempotency: ring buffer of recent event ids to drop replays
         self._seen_event_ids: collections.deque = collections.deque(maxlen=512)
 
+        # Per-session worker pool (Phase 2+3)
+        max_session_instances = int(
+            os.environ.get("MAX_SESSION_INSTANCES_PER_AGENT", "20")
+        )
+        self.worker_pool = WorkerPool(
+            hosted_id=hosted_id,
+            workspace_root=settings.workspace_root,
+            max_concurrent=max_concurrent_sessions,
+            max_llm_concurrent=max(3, max_concurrent_sessions),
+            max_session_instances=max_session_instances,
+            session_ttl_seconds=settings.idle_timeout_seconds,
+        )
+
     def touch(self):
         """Update last activity timestamp."""
         self.last_activity = time.time()
@@ -137,12 +160,14 @@ class AgentSession:
         """Start periodic heartbeat for this agent."""
         if self.api_key and self.heartbeat_seconds > 0:
             self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        self.worker_pool.start_eviction_task()
 
     def stop_heartbeat(self):
         """Stop heartbeat task."""
         if self.heartbeat_task:
             self.heartbeat_task.cancel()
             self.heartbeat_task = None
+        self.worker_pool.stop_eviction_task()
 
     async def _heartbeat_loop(self):
         """Send heartbeat to AgentSpore platform at configured interval."""
