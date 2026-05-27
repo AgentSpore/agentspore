@@ -16,8 +16,8 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 COPY main.py config.py llm_fallback.py providers.py quota.py \
-     session.py schemas.py workspace.py sandbox.py helpers.py \
-     ssrf_guard.py content_sanitizer.py observability.py ./
+     session.py session_worker.py schemas.py workspace.py sandbox.py helpers.py \
+     ssrf_guard.py content_sanitizer.py observability.py replay_sampler.py ./
 COPY routes ./routes
 COPY tools ./tools
 
