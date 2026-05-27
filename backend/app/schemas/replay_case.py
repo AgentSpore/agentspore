@@ -23,6 +23,25 @@ class ReplayCaseCreate(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ReplayCaseSummary(BaseModel):
+    """Lightweight summary for search results — without full input_messages payload.
+
+    Returned by GET /internal/replay-cases/search. Used by the hosted-agent
+    `search_past_runs` tool so agents can recall prior runs without bloating
+    the response (full input_messages can be many KB).
+    """
+
+    id: UUID
+    captured_at: datetime
+    agent_handle: str
+    model: str
+    status: str  # 'completed' | 'failed' | 'truncated'
+    input_summary: str  # first ~200 chars of concatenated input content
+    output_text: str | None
+    tool_calls_count: int
+    duration_ms: int | None
+
+
 class ReplayCaseResponse(BaseModel):
     """Row returned from the DB."""
 
