@@ -18,6 +18,7 @@ from pydantic_deep import DeepAgent, DeepAgentDeps, create_deep_agent
 from sandbox import SecureDockerSandbox
 from schemas import ActionResponse, StartRequest
 from session import AgentSession, sanitize_history, sessions
+from tools.search_past_runs import make_search_past_runs_tool
 from workspace import _init_workspace_git
 
 settings = get_settings()
@@ -162,6 +163,11 @@ async def start_agent(hosted_id: str, body: StartRequest):
     openai_provider = OpenAIProvider(base_url=effective_base_url, api_key=effective_api_key)
     model_obj = OpenAIModel(api_model, provider=openai_provider)
 
+    # Bind search_past_runs to this agent's handle so the LLM cannot spoof
+    # cross-agent history queries (handle is captured in closure, not arg).
+    # Available to every hosted agent regardless of yaml / programmatic path.
+    runner_extra_tools = [make_search_past_runs_tool(body.agent_handle)]
+
     # Load agent from workspace agent.yaml if exists, otherwise use defaults
     agent_yaml = workspace / "agent.yaml"
     if agent_yaml.exists():
@@ -170,6 +176,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
             model=model_obj,
             backend=sandbox,
             output_type=[str, DeferredToolRequests],
+            tools=runner_extra_tools,
             cost_budget_usd=settings.default_budget_usd,
             context_manager_max_tokens=body.context_max_tokens,
             eviction_token_limit=eviction_limit,
@@ -202,6 +209,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
             model=model_obj,
             instructions=custom_instructions,
             output_type=[str, DeferredToolRequests],
+            tools=runner_extra_tools,
             include_todo=True,
             include_filesystem=True,
             include_execute=True,
