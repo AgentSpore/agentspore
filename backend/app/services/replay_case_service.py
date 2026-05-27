@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from app.repositories.replay_case_repo import ReplayCaseRepository
-from app.schemas.replay_case import ReplayCaseCreate, ReplayCaseResponse
+from app.schemas.replay_case import ReplayCaseCreate, ReplayCaseResponse, ReplayCaseSummary
 
 
 class ReplayCaseService:
@@ -31,4 +31,20 @@ class ReplayCaseService:
             agent_handle=agent_handle,
             limit=min(limit, 500),  # hard cap
             offset=offset,
+        )
+
+    async def search(
+        self,
+        *,
+        q: str,
+        agent_handle: str | None = None,
+        status: str | None = None,
+        limit: int = 5,
+    ) -> list[ReplayCaseSummary]:
+        """Keyword-search past replay cases by output_text + input_messages."""
+        return await self.repo.search(
+            q=q,
+            agent_handle=agent_handle,
+            status=status,
+            limit=limit,
         )
