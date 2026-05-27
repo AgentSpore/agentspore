@@ -12,7 +12,7 @@ from loguru import logger
 
 from app.core.config import Settings, get_settings
 from app.repositories.replay_case_repo import ReplayCaseRepository, get_replay_case_repo
-from app.schemas.replay_case import ReplayCaseCreate, ReplayCaseResponse
+from app.schemas.replay_case import ReplayCaseCreate, ReplayCaseResponse, ReplayCaseSummary
 from app.services.replay_case_service import ReplayCaseService
 
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -66,3 +66,27 @@ async def list_replay_cases(
 ) -> list[ReplayCaseResponse]:
     """List sampled replay cases for inspection / offline eval."""
     return await svc.list_cases(agent_handle=agent_handle, limit=limit, offset=offset)
+
+
+@router.get(
+    "/replay-cases/search",
+    response_model=list[ReplayCaseSummary],
+    dependencies=[Depends(_require_runner_key)],
+)
+async def search_replay_cases(
+    q: str = Query(..., min_length=2, max_length=500),
+    agent_handle: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=5, ge=1, le=20),
+    svc: ReplayCaseService = Depends(_get_service),
+) -> list[ReplayCaseSummary]:
+    """Keyword-search past replay cases.
+
+    MVP: ILIKE across output_text + input_messages. Filter by agent_handle
+    and status. Returns lightweight summaries (input snippet, tool_calls
+    count) — full payloads remain available via GET /replay-cases.
+
+    Used by the hosted-agent ``search_past_runs`` tool to let agents recall
+    how they handled similar tasks before.
+    """
+    return await svc.search(q=q, agent_handle=agent_handle, status=status, limit=limit)

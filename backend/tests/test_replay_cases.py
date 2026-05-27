@@ -10,6 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.repositories.replay_case_repo import ReplayCaseRepository
+from app.schemas.replay_case import ReplayCaseCreate, ReplayCaseSummary
+
 try:
     from testcontainers.postgres import PostgresContainer
     _HAS_TC = True
@@ -196,6 +199,114 @@ class TestReplayCaseRepo:
         filtered = await repo.list_by_agent(agent_handle=handle)
         assert len(filtered) == 1
         assert filtered[0].agent_handle == handle
+
+
+class TestReplayCaseSearch:
+    """Search endpoint tests against real Postgres (via testcontainers)."""
+
+    @pytest.mark.asyncio
+    async def test_search_finds_matching_output_text(self, db_session):
+        hosted_id = await _create_hosted(db_session)
+        repo = ReplayCaseRepository(db_session)
+
+        await repo.create(
+            ReplayCaseCreate(
+                hosted_agent_id=uuid.UUID(hosted_id),
+                agent_handle="bot-search-1",
+                model="m",
+                input_messages=[{"role": "user", "content": "irrelevant"}],
+                output_text="Posted a blog about reddit AI agents successfully",
+                status="completed",
+            )
+        )
+        await repo.create(
+            ReplayCaseCreate(
+                hosted_agent_id=uuid.UUID(hosted_id),
+                agent_handle="bot-search-1",
+                model="m",
+                input_messages=[{"role": "user", "content": "noise"}],
+                output_text="something completely unrelated",
+                status="completed",
+            )
+        )
+
+        results = await repo.search(q="reddit AI", limit=5)
+        assert any("reddit AI" in (r.output_text or "") for r in results)
+        assert all("unrelated" not in (r.output_text or "") for r in results)
+
+    @pytest.mark.asyncio
+    async def test_search_filters_by_agent_handle(self, db_session):
+        hosted_id = await _create_hosted(db_session)
+        repo = ReplayCaseRepository(db_session)
+        handle_a = f"bot-handle-a-{uuid.uuid4().hex[:6]}"
+        handle_b = f"bot-handle-b-{uuid.uuid4().hex[:6]}"
+
+        for handle in (handle_a, handle_b):
+            await repo.create(
+                ReplayCaseCreate(
+                    hosted_agent_id=uuid.UUID(hosted_id),
+                    agent_handle=handle,
+                    model="m",
+                    input_messages=[{"role": "user", "content": "shared keyword zorblax"}],
+                    output_text="done",
+                    status="completed",
+                )
+            )
+
+        results = await repo.search(q="zorblax", agent_handle=handle_a, limit=10)
+        assert len(results) == 1
+        assert results[0].agent_handle == handle_a
+
+    @pytest.mark.asyncio
+    async def test_search_respects_limit(self, db_session):
+        hosted_id = await _create_hosted(db_session)
+        repo = ReplayCaseRepository(db_session)
+        marker = f"limit-marker-{uuid.uuid4().hex[:8]}"
+
+        for _ in range(7):
+            await repo.create(
+                ReplayCaseCreate(
+                    hosted_agent_id=uuid.UUID(hosted_id),
+                    agent_handle="limit-bot",
+                    model="m",
+                    input_messages=[],
+                    output_text=f"output with {marker} inside",
+                    status="completed",
+                )
+            )
+
+        results = await repo.search(q=marker, limit=3)
+        assert len(results) == 3
+
+    @pytest.mark.asyncio
+    async def test_search_returns_summary_not_full_payload(self, db_session):
+        """Summary contains tool_calls_count + input_summary snippet, not full payload."""
+        hosted_id = await _create_hosted(db_session)
+        repo = ReplayCaseRepository(db_session)
+        long_content = "x" * 500
+        marker = f"snippet-{uuid.uuid4().hex[:8]}"
+
+        await repo.create(
+            ReplayCaseCreate(
+                hosted_agent_id=uuid.UUID(hosted_id),
+                agent_handle="snippet-bot",
+                model="m",
+                input_messages=[{"role": "user", "content": f"{marker} {long_content}"}],
+                output_text="result",
+                tool_calls=[{"tool": "execute"}, {"tool": "write_file"}, {"tool": "execute"}],
+                duration_ms=4242,
+                status="completed",
+            )
+        )
+
+        results = await repo.search(q=marker, limit=5)
+        assert len(results) >= 1
+        summary = results[0]
+        assert isinstance(summary, ReplayCaseSummary)
+        assert summary.tool_calls_count == 3
+        assert len(summary.input_summary) <= 200
+        assert marker in summary.input_summary
+        assert summary.duration_ms == 4242
 
 
 class TestReplayCaseEndpointAuth:
