@@ -41,7 +41,6 @@ def create_svc_factory():
             "runtime": "python-minimal",
             "memory_limit_mb": 256,
         })
-        repo.upsert_file = AsyncMock(return_value={"file_path": "AGENT.md", "version": 1})
         repo.delete = AsyncMock()
         repo.db = AsyncMock()
 
