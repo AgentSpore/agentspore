@@ -304,11 +304,13 @@ async def _auto_wake_hosted(agent_id: str, event: dict[str, Any]) -> None:
     re-publish the triggering event manually.
     """
     try:
-        from app.core.database import async_session_maker
-        from app.repositories.hosted_agent_repo import HostedAgentRepository
-        from app.services.agent_service import AgentService
-        from app.services.hosted_agent_service import HostedAgentService
-        from app.services.openrouter_service import OpenRouterService
+        # Local import: circular dep — hosted_agent_service imports connection_manager
+        # (deliver_user_event) at module top, so it can't be imported here at module top.
+        from app.core.database import async_session_maker  # noqa: PLC0415
+        from app.repositories.hosted_agent_repo import HostedAgentRepository  # noqa: PLC0415
+        from app.services.agent_service import AgentService  # noqa: PLC0415
+        from app.services.hosted_agent_service import HostedAgentService  # noqa: PLC0415
+        from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
 
         async with async_session_maker() as db:
             repo = HostedAgentRepository(db)
