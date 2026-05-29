@@ -1292,8 +1292,24 @@ class HostedAgentService:
             new_sha = runner_data.get("version", "") or ""
 
         # P5a: runner is sole write target; no DB upsert.
-        row = {"file_path": file_path, "content": content, "version": new_sha}
-        await self._emit_file_event(hosted_id, user_id, "file_updated", row)
+        # Build full _file_response-compatible dict via _runner_file_to_dict.
+        # Runner PUT response may omit size_bytes/modified_at — synthesise from
+        # the local write (content byte length, empty mtime string as fallback).
+        runner_entry = {
+            "file_path": file_path,
+            "content": content,
+            "size_bytes": len(content.encode()) if content else 0,
+            "truncated": False,
+            "is_binary": False,
+            "version": new_sha,
+            "modified_at": "",
+        }
+        row = self._runner_file_to_dict(runner_entry)
+        # Emit event with minimal row fields expected by downstream consumers.
+        await self._emit_file_event(
+            hosted_id, user_id, "file_updated",
+            {"file_path": file_path, "content": content, "version": new_sha},
+        )
         return row
 
     async def write_files_batch(
@@ -1328,18 +1344,31 @@ class HostedAgentService:
                 sha_map[item["file_path"]] = result
 
         # P5a: runner is sole write target; no DB upsert.
+        # Build full _file_response-compatible dict for each written file so
+        # the API-route _file_response() call does not KeyError on id/file_type/
+        # size_bytes/updated_at/truncated/is_binary.
         failed_paths = {f["file_path"] for f in failed}
         written_rows: list[dict] = []
         for item in items:
             if item["file_path"] in failed_paths:
                 continue
-            row = {
+            content = item["content"]
+            new_sha = sha_map.get(item["file_path"], "")
+            runner_entry = {
                 "file_path": item["file_path"],
-                "content": item["content"],
-                "version": sha_map.get(item["file_path"], ""),
+                "content": content,
+                "size_bytes": len(content.encode()) if content else 0,
+                "truncated": False,
+                "is_binary": False,
+                "version": new_sha,
+                "modified_at": "",
             }
+            row = self._runner_file_to_dict(runner_entry)
             written_rows.append(row)
-            await self._emit_file_event(hosted_id, user_id, "file_updated", row)
+            await self._emit_file_event(
+                hosted_id, user_id, "file_updated",
+                {"file_path": item["file_path"], "content": content, "version": new_sha},
+            )
         return written_rows, failed
 
     @staticmethod
