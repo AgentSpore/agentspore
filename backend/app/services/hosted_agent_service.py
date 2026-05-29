@@ -667,50 +667,56 @@ class HostedAgentService:
         """Send agent files and config to the Runner, start the container."""
         hosted_id = str(hosted["id"])
 
-        # Ensure platform SKILL.md is present in .deep/skills/ for SkillsToolset
-        existing_skill = await self.repo.get_file(hosted_id, ".deep/skills/SKILL.md")
-        if not existing_skill:
-            platform_skill = _load_skill_md()
-            if platform_skill:
-                await self.repo.upsert_file(
-                    hosted_id, ".deep/skills/SKILL.md", platform_skill, "skill"
-                )
-
-        # Ensure agent.yaml exists (auto-create for agents created before v0.3.3)
-        existing_yaml = await self.repo.get_file(hosted_id, "agent.yaml")
-        if not existing_yaml:
-            default_yaml = (
-                "# Agent configuration — auto-generated\n"
-                "# NOTE: model and instructions are managed via Settings UI\n"
-                "include_todo: true\n"
-                "include_filesystem: true\n"
-                "include_execute: true\n"
-                "include_skills: true\n"
-                "include_memory: true\n"
-                "memory_dir: /workspace/.deep/memory\n"
-                "include_plan: true\n"
-                "include_checkpoints: true\n"
-                "checkpoint_frequency: every_turn\n"
-                "max_checkpoints: 50\n"
-                "context_manager: true\n"
-                "context_discovery: true\n"
-                "thinking: low\n"
-                "web_search: false\n"
-                "web_fetch: false\n"
-                "skill_directories:\n"
-                "  - /workspace/.deep/skills\n"
-            )
-            await self.repo.upsert_file(hosted_id, "agent.yaml", default_yaml, "config")
-
-        raw_files = await self.repo.list_files(hosted_id)
-        files_payload = []
-        for f in raw_files:
-            file_data = await self.repo.get_file(hosted_id, f["file_path"])
-            files_payload.append({
-                "file_path": f["file_path"],
-                "content": file_data["content"] if file_data else "",
-                "file_type": f["file_type"],
-            })
+        # Build config-only payload from hosted_agents row — no agent_files DB loop.
+        # The workspace dir is persistent across restarts; only seed files that do not
+        # yet exist on disk (runner applies no-clobber guard on its side).
+        #
+        # What goes in files_payload:
+        #   agent.yaml — canonical DeepAgentSpec generated from the agent row.
+        #                If the agent has a custom agent.yaml in agent_files (user
+        #                edited it), the runner's no-clobber guard will keep the
+        #                on-disk version intact (file already exists → skip write).
+        #
+        # NOT sent:
+        #   SKILL.md — runner always fetches live from platform /skill.md endpoint.
+        #   AGENT.md — runner writes it from StartRequest.system_prompt (already below).
+        #   custom.md — STOP: .deep/skills/custom.md lives only in agent_files with no
+        #               dedicated column in hosted_agents. Seeding it on cold-start
+        #               requires a migration (out of scope for this epic). Existing
+        #               installations retain it on-disk from first creation; new cold
+        #               workspaces will lack it until P5 adds the column.
+        agent_yaml_content = (
+            "# Agent configuration — auto-generated\n"
+            "# NOTE: model and instructions are managed via Settings UI\n"
+            "# and will override values in this file\n"
+            "include_todo: true\n"
+            "include_filesystem: true\n"
+            "include_execute: true\n"
+            "include_subagents: false\n"
+            "include_skills: true\n"
+            "include_memory: true\n"
+            "memory_dir: /workspace/.deep/memory\n"
+            "include_plan: true\n"
+            "include_checkpoints: true\n"
+            "checkpoint_frequency: every_turn\n"
+            "max_checkpoints: 50\n"
+            "context_manager: true\n"
+            "context_discovery: true\n"
+            "cost_tracking: true\n"
+            "thinking: low\n"
+            "# eviction_token_limit: auto (10% of model context, set by runner)\n"
+            "web_search: false\n"
+            "web_fetch: false\n"
+            "skill_directories:\n"
+            "  - /workspace/.deep/skills\n"
+        )
+        files_payload = [
+            {
+                "file_path": "agent.yaml",
+                "content": agent_yaml_content,
+                "file_type": "config",
+            }
+        ]
 
         full = await self.repo.get_by_id(hosted_id, include_api_key=True)
         agent_api_key = str(full.get("agent_api_key", "") or "") if full else ""
