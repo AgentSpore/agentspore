@@ -8,6 +8,11 @@ Covers the bug fixes and Tier 1 features added for the file-ops overhaul:
 - Batch upload rolls back on partial DB failure
 - Path traversal and absolute paths are rejected
 - delete_file URL-encodes special characters before calling runner
+
+API-route-level tests (no Docker required):
+- PUT /hosted-agents/{id}/files returns 200 with full AgentFileResponse shape
+- POST /hosted-agents/{id}/files/batch returns 200 with full AgentFileResponse per item
+  These tests catch KeyError in _file_response() if service returns truncated dict.
 """
 
 from __future__ import annotations
@@ -18,12 +23,15 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from fastapi import HTTPException
+from httpx import ASGITransport
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.api.deps import get_current_user
 from app.core.etag import parse_if_match as _parse_if_match
+from app.main import app as fastapi_app
 from app.repositories.hosted_agent_repo import HostedAgentRepository, StaleVersionError
-from app.services.hosted_agent_service import HostedAgentService
+from app.services.hosted_agent_service import HostedAgentService, get_hosted_agent_service
 
 try:
     from testcontainers.postgres import (
@@ -788,3 +796,173 @@ async def test_list_running_agents_empty_files_payload(monkeypatch):
     assert result[0]["files"] == [], "P5a: files payload must be empty"
     repo.list_files.assert_not_called()
     repo.get_file.assert_not_called()
+
+
+# ── API-route-level tests: regression guard for P5a KeyError in _file_response ──
+#
+# These tests exercise the full router → service → _file_response() path without
+# Docker or a real DB. They catch ``KeyError: 'id'`` (and any other missing key)
+# that would occur if write_file/write_files_batch return a truncated dict.
+#
+# Pattern: override get_hosted_agent_service and get_current_user via
+# fastapi_app.dependency_overrides, call the real route through ASGITransport.
+# No testcontainers needed — the service mock short-circuits DB access.
+# All imports are at module top level (fastapi_app, get_current_user,
+# get_hosted_agent_service imported above).
+
+_HOSTED_ID = str(uuid.uuid4())
+_FILE_RESPONSE_FIELDS = frozenset({
+    "id", "file_path", "file_type", "content",
+    "size_bytes", "updated_at", "version", "truncated", "is_binary",
+})
+
+
+def full_file_dict(file_path: str = "README.md", content: str = "hello") -> dict:
+    """Return a dict matching all keys consumed by _file_response().
+
+    Plain factory (not a fixture) because callers vary file_path/content
+    per-assertion. Named without _make_/_build_/_create_ prefix per style gate.
+    """
+    return {
+        "id": "",
+        "file_path": file_path,
+        "file_type": "text",
+        "content": content,
+        "size_bytes": len(content.encode()),
+        "updated_at": "",
+        "version": "sha000abc123",
+        "truncated": False,
+        "is_binary": False,
+    }
+
+
+@pytest.fixture
+def api_client_with_svc_mock():
+    """Yield (AsyncClient, svc_mock) with dependency overrides pre-wired.
+
+    write_file and write_files_batch return values are set by each test so the
+    route exercises _file_response() with whatever shape the service produces.
+    """
+    mock_user = MagicMock()
+    mock_user.id = uuid.uuid4()
+
+    svc_mock = MagicMock()
+    svc_mock.write_file = AsyncMock()
+    svc_mock.write_files_batch = AsyncMock()
+
+    fastapi_app.dependency_overrides[get_current_user] = lambda: mock_user
+    fastapi_app.dependency_overrides[get_hosted_agent_service] = lambda: svc_mock
+
+    transport = ASGITransport(app=fastapi_app)
+    client = httpx.AsyncClient(transport=transport, base_url="http://test")
+
+    yield client, svc_mock
+
+    fastapi_app.dependency_overrides.pop(get_current_user, None)
+    fastapi_app.dependency_overrides.pop(get_hosted_agent_service, None)
+
+
+@pytest.mark.asyncio
+async def test_put_files_route_returns_200_with_full_shape(api_client_with_svc_mock):
+    """PUT /hosted-agents/{id}/files → 200 with all AgentFileResponse fields.
+
+    Regression guard: if write_file returns a truncated dict (e.g. missing
+    ``id``), _file_response() raises KeyError → 500. This test fails before
+    the P5a fix and passes after.
+    """
+    client, svc_mock = api_client_with_svc_mock
+    svc_mock.write_file.return_value = full_file_dict("AGENT.md", "# Agent")
+
+    resp = await client.put(
+        f"/api/v1/hosted-agents/{_HOSTED_ID}/files",
+        json={"file_path": "AGENT.md", "content": "# Agent", "file_type": "text"},
+        headers={"Authorization": "Bearer fake-token"},
+    )
+
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    data = resp.json()
+    missing = _FILE_RESPONSE_FIELDS - set(data.keys())
+    assert not missing, f"Response missing keys: {missing}"
+    assert data["file_path"] == "AGENT.md"
+    assert data["version"] == "sha000abc123"
+
+
+@pytest.mark.asyncio
+async def test_put_files_route_all_file_response_field_types(api_client_with_svc_mock):
+    """PUT /hosted-agents/{id}/files: verify type of each _file_response field.
+
+    Catches KeyError and type mismatches that would surface as 500 or 422.
+    """
+    client, svc_mock = api_client_with_svc_mock
+    svc_mock.write_file.return_value = full_file_dict("src/main.py", "print('hi')")
+
+    resp = await client.put(
+        f"/api/v1/hosted-agents/{_HOSTED_ID}/files",
+        json={"file_path": "src/main.py", "content": "print('hi')", "file_type": "text"},
+        headers={"Authorization": "Bearer fake-token"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data["id"], str)
+    assert isinstance(data["size_bytes"], int)
+    assert isinstance(data["truncated"], bool)
+    assert isinstance(data["is_binary"], bool)
+    assert isinstance(data["file_type"], str)
+    assert isinstance(data["updated_at"], str)
+
+
+@pytest.mark.asyncio
+async def test_batch_files_route_returns_200_with_full_shape(api_client_with_svc_mock):
+    """POST /hosted-agents/{id}/files/batch → 200 with full AgentFileResponse per item.
+
+    Regression guard: if write_files_batch returns truncated dicts, the route's
+    [_file_response(r) for r in written] call raises KeyError → 500.
+    """
+    client, svc_mock = api_client_with_svc_mock
+    written = [
+        full_file_dict("a.md", "alpha"),
+        full_file_dict("b.md", "beta"),
+    ]
+    svc_mock.write_files_batch.return_value = (written, [])
+
+    resp = await client.post(
+        f"/api/v1/hosted-agents/{_HOSTED_ID}/files/batch",
+        json={"files": [
+            {"file_path": "a.md", "content": "alpha", "file_type": "text"},
+            {"file_path": "b.md", "content": "beta", "file_type": "text"},
+        ]},
+        headers={"Authorization": "Bearer fake-token"},
+    )
+
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    data = resp.json()
+    assert "written" in data
+    assert len(data["written"]) == 2
+    for item in data["written"]:
+        missing = _FILE_RESPONSE_FIELDS - set(item.keys())
+        assert not missing, f"Batch item missing keys: {missing}"
+
+
+@pytest.mark.asyncio
+async def test_batch_files_route_partial_failure_still_200(api_client_with_svc_mock):
+    """POST batch with partial runner failure → 200, 1 written + 1 failed reported."""
+    client, svc_mock = api_client_with_svc_mock
+    written = [full_file_dict("ok.md", "fine")]
+    failed = [{"file_path": "bad.md", "error": "runner timeout"}]
+    svc_mock.write_files_batch.return_value = (written, failed)
+
+    resp = await client.post(
+        f"/api/v1/hosted-agents/{_HOSTED_ID}/files/batch",
+        json={"files": [
+            {"file_path": "ok.md", "content": "fine", "file_type": "text"},
+            {"file_path": "bad.md", "content": "boom", "file_type": "text"},
+        ]},
+        headers={"Authorization": "Bearer fake-token"},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["written"]) == 1
+    assert len(data["failed"]) == 1
+    assert data["failed"][0]["file_path"] == "bad.md"
