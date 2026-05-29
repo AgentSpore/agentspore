@@ -312,19 +312,21 @@ class HostedAgentService:
         )
         await self.repo.db.commit()
 
-        # Copy all files from source, replacing AGENT.md with new credentials
-        source_files = await self.repo.list_files_with_content(source_hosted_id)
-        for f in source_files:
-            content = f["content"] or ""
-            if f["file_path"] == "AGENT.md":
-                content = (
-                    f"{system_prompt}\n\n"
-                    f"## Fork Info\n\nForked from **{source_name}** (@{source['agent_handle']})\n"
-                )
-            elif f["file_path"] == ".deep/memory/MEMORY.md":
-                # Copy memory but add fork note
-                content = f"# Memory\n\nForked from {source_name}.\n\n{content}"
-            await self.repo.upsert_file(hosted_id, f["file_path"], content, f["file_type"])
+        # Copy all files from source workspace dir → new agent workspace dir.
+        # P4b: runner dir is the source of truth; DB agent_files is legacy.
+        # Fallback: if source dir is empty (agent created but never started,
+        # files only in DB) → read from DB transitionally until P4c/P5.
+        source_files = await self._fork_read_source_files(
+            source_hosted_id=source_hosted_id,
+            source_name=source_name,
+        )
+        await self._fork_seed_new_agent(
+            hosted_id=hosted_id,
+            source_files=source_files,
+            source_name=source_name,
+            source_handle=source["agent_handle"],
+            system_prompt=system_prompt,
+        )
 
         # Increment fork count on source
         await self.repo.increment_fork_count(str(source["agent_id"]))
@@ -335,6 +337,146 @@ class HostedAgentService:
             "agent_handle": reg["handle"],
             "forked_from_agent_name": source_name,
         }
+
+    async def _fork_read_source_files(
+        self,
+        *,
+        source_hosted_id: str,
+        source_name: str,
+    ) -> list[dict]:
+        """Return source workspace files for fork — runner-authoritative with DB fallback.
+
+        Primary path: GET runner /agents/{source_id}/files (persistent dir,
+        works even when agent is stopped).  If runner is unavailable or the
+        dir is empty (agent was created but never started — files only in DB),
+        fall back to ``list_files_with_content`` from agent_files DB.
+        Fallback is transitional and will be removed in P4c/P5.
+
+        Returns:
+            List of dicts with at least ``file_path``, ``content``, ``file_type`` keys.
+        """
+        if self.runner_url:
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.get(
+                        f"{self.runner_url}/agents/{source_hosted_id}/files",
+                        headers=self._runner_headers(),
+                    )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    runner_files = data.get("files", []) if isinstance(data, dict) else data
+                    if runner_files:
+                        return [
+                            {
+                                "file_path": f["file_path"],
+                                "content": f.get("content") or "",
+                                "file_type": _file_type_for(f["file_path"]),
+                            }
+                            for f in runner_files
+                        ]
+                    # Empty dir — source agent never started; fall through to DB.
+                    logger.warning(
+                        "fork source {} runner dir empty — falling back to DB (P4c will remove)",
+                        source_hosted_id,
+                    )
+                else:
+                    logger.warning(
+                        "fork source {} runner GET files returned {} — falling back to DB",
+                        source_hosted_id,
+                        resp.status_code,
+                    )
+            except httpx.RequestError as exc:
+                logger.warning(
+                    "fork source {} runner unreachable: {} — falling back to DB",
+                    source_hosted_id,
+                    exc,
+                )
+
+        # DB fallback (transitional — P4c/P5 will drop).
+        return await self.repo.list_files_with_content(source_hosted_id)
+
+    async def _fork_seed_new_agent(
+        self,
+        *,
+        hosted_id: str,
+        source_files: list[dict],
+        source_name: str,
+        source_handle: str,
+        system_prompt: str,
+    ) -> None:
+        """Apply fork transformations and seed new agent workspace via runner import.
+
+        Transforms:
+        - ``AGENT.md``: replaced with fork system_prompt + fork lineage header.
+        - ``.deep/memory/MEMORY.md``: prepend "Forked from <source_name>." note.
+
+        Seeds via ``POST /agents/{hosted_id}/files/import`` (creates dir if absent).
+        """
+        import_items: list[dict] = []
+        for f in source_files:
+            raw_path: str = f.get("file_path", "") or ""
+            # Defense-in-depth: validate each path before forwarding to the runner.
+            # Malformed paths (traversal, absolute, NUL) are skipped with a warning
+            # so a poisoned source workspace cannot escape the sandbox.
+            try:
+                _validate_file_path(raw_path)
+            except HTTPException:
+                logger.warning(
+                    "fork: skipping invalid file path {} from source {} — traversal/absolute/NUL",
+                    raw_path,
+                    hosted_id,
+                )
+                continue
+            content: str = f.get("content") or ""
+            if raw_path == "AGENT.md":
+                content = (
+                    f"{system_prompt}\n\n"
+                    f"## Fork Info\n\nForked from **{source_name}** (@{source_handle})\n"
+                )
+            elif raw_path == ".deep/memory/MEMORY.md":
+                content = f"# Memory\n\nForked from {source_name}.\n\n{content}"
+            import_items.append({"file_path": raw_path, "content": content})
+
+        if not import_items:
+            logger.warning(
+                "fork: no files to seed for new hosted agent {} (source had 0 files)",
+                hosted_id,
+            )
+            return
+
+        if not self.runner_url:
+            logger.warning(
+                "fork: runner_url not configured — new agent {} workspace not seeded",
+                hosted_id,
+            )
+            return
+
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(
+                    f"{self.runner_url}/agents/{hosted_id}/files/import",
+                    json={"files": import_items},
+                    headers=self._runner_headers(),
+                )
+            if resp.status_code == 200:
+                result = resp.json()
+                logger.info(
+                    "fork: seeded {} files into runner workspace for {}",
+                    result.get("imported", len(import_items)),
+                    hosted_id,
+                )
+            else:
+                logger.warning(
+                    "fork: runner import returned {} for {} — workspace not seeded",
+                    resp.status_code,
+                    hosted_id,
+                )
+        except httpx.RequestError as exc:
+            logger.warning(
+                "fork: runner import unavailable for {}: {} — workspace not seeded",
+                hosted_id,
+                exc,
+            )
 
     async def list_forkable_agents(self) -> list[dict]:
         """List all public agents available for forking."""

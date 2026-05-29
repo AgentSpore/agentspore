@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from config import get_settings
-from schemas import WriteFileRequest
+from schemas import ImportFilesRequest, WriteFileRequest
 from workspace import (
     IGNORED_DIRS,
     MAX_SYNC_BYTES,
@@ -124,8 +124,9 @@ async def list_workspace_files(
     return {"files": files}
 
 
-# NOTE: /files/download must be registered BEFORE /files/{file_path:path}
-# so that the literal "download" segment is not swallowed by the path wildcard.
+# NOTE: /files/download and /files/import must be registered BEFORE
+# /files/{file_path:path} so that literal segments are not swallowed by the
+# path wildcard.
 @router.get("/agents/{hosted_id}/files/download")
 async def download_workspace_zip(
     hosted_id: str,
@@ -171,6 +172,77 @@ async def download_workspace_zip(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/agents/{hosted_id}/files/import")
+async def import_workspace_files(
+    hosted_id: str,
+    body: ImportFilesRequest,
+) -> dict:
+    """Bulk-seed a workspace directory with files.
+
+    Creates the workspace dir if it does not yet exist (cold import for a
+    freshly forked or newly created agent whose container has never started).
+    Overwrites without optimistic-lock — callers (fork, creation) always
+    write into a fresh dir with no concurrent readers.
+
+    Path-traversal guard applied to every ``file_path`` via
+    ``_safe_workspace_path``.  Binary content is not supported (UTF-8 text
+    only); non-decodable payloads produce a 400.
+
+    Args:
+        body: List of ``{file_path, content}`` items to write.
+
+    Returns:
+        ``{imported: N}`` where N is the count of files written.
+
+    Raises:
+        400: path traversal attempt or non-UTF-8 content.
+    """
+    workspace = settings.workspace_root / hosted_id
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    # Quota enforcement: mirrors PUT logic — block the entire import when the
+    # hard limit is already exceeded.  disk_quota may be None in tests / local
+    # dev without the quota module wired.
+    if disk_quota is not None and body.files:
+        # Check once before writing any file (bulk seed = single quota gate).
+        usage_mb, allowed = await disk_quota.check_quota_async(hosted_id)
+        if not allowed:
+            raise HTTPException(
+                507,
+                f"Disk quota exceeded ({disk_quota.get_limits()[1]} MB). "
+                "Delete files via the file ops tab to free space.",
+            )
+        soft_mb, _ = disk_quota.get_limits()
+        if usage_mb >= soft_mb:
+            asyncio.create_task(disk_quota.handle_soft_breach(hosted_id, usage_mb))
+
+    imported = 0
+    for item in body.files:
+        target = _safe_workspace_path(workspace, item.file_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.write_text(item.content, encoding="utf-8")
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise HTTPException(
+                400, f"Non-UTF-8 content in {item.file_path}: {exc}"
+            ) from exc
+        try:
+            if os.getuid() == 0:
+                os.chown(target, 1000, 1000)
+            else:
+                os.chmod(target, 0o666)
+        except OSError:
+            pass
+        imported += 1
+
+    # Invalidate quota cache so next check reflects post-import disk state.
+    if disk_quota is not None:
+        disk_quota.invalidate(hosted_id)
+
+    logger.info("import_workspace_files: {} files → {}", imported, hosted_id)
+    return {"imported": imported}
 
 
 @router.get("/agents/{hosted_id}/files/{file_path:path}")
