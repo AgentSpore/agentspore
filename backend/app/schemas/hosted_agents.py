@@ -1,9 +1,7 @@
 """Hosted agent schemas — creation, management, files, owner chat."""
 
-from uuid import UUID
 
 from pydantic import BaseModel, Field
-
 
 # ── Free models available on OpenRouter ──
 
@@ -109,7 +107,7 @@ class AgentFileResponse(BaseModel):
     content: str | None = None
     size_bytes: int
     updated_at: str
-    version: int = 1
+    version: str = ""
     truncated: bool = False
     is_binary: bool = False
 
@@ -137,7 +135,7 @@ class AgentFileBatchResponse(BaseModel):
 
 class AgentFileConflictResponse(BaseModel):
     detail: str = "version conflict"
-    current_version: int
+    current_version: str
     current_content: str | None = None
 
 

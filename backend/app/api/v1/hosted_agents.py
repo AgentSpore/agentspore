@@ -1,11 +1,9 @@
 """Hosted Agents API — create, manage, and chat with platform-hosted AI agents."""
 
-import io
-import re
 import secrets
-import zipfile
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from loguru import logger
@@ -13,6 +11,8 @@ from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
 from app.core.config import Settings, get_settings
+from app.core.etag import parse_if_match as _parse_if_match
+from app.core.redis_client import get_redis
 from app.repositories.hosted_agent_repo import StaleVersionError
 from app.schemas.hosted_agents import (
     AgentActionResponse,
@@ -23,8 +23,8 @@ from app.schemas.hosted_agents import (
     CronTaskCreateRequest,
     CronTaskResponse,
     CronTaskUpdateRequest,
-    ForkAgentRequest,
     ForkableAgentItem,
+    ForkAgentRequest,
     FreeModelInfo,
     FreeModelsResponse,
     HostedAgentCreateRequest,
@@ -41,29 +41,7 @@ from app.services.hosted_agent_service import (
     HostedAgentTooManyFailures,
     get_hosted_agent_service,
 )
-from app.core.redis_client import get_redis
 from app.services.openrouter_service import OpenRouterService, get_openrouter_service
-
-
-_ETAG_RE = re.compile(r'^(?:W/)?"?v(\d+)"?$')
-
-
-def _parse_if_match(if_match: str | None) -> int | None:
-    """Parse an ``If-Match`` header into an integer version.
-
-    Accepts ``"v3"``, ``v3``, ``W/"v3"`` (weak ETag). Rejects ``*`` and
-    anything else with a 400 because the UI must either send a valid
-    version or omit the header entirely (best-effort save).
-    """
-    if not if_match:
-        return None
-    if_match = if_match.strip()
-    if if_match == "*":
-        raise HTTPException(400, "If-Match: * is not supported")
-    match = _ETAG_RE.match(if_match)
-    if not match:
-        raise HTTPException(400, f"Malformed If-Match header: {if_match}")
-    return int(match.group(1))
 
 
 def _file_response(f: dict) -> AgentFileResponse:
@@ -74,7 +52,7 @@ def _file_response(f: dict) -> AgentFileResponse:
         content=f.get("content"),
         size_bytes=f["size_bytes"],
         updated_at=str(f["updated_at"]),
-        version=f.get("version", 1),
+        version=str(f.get("version") or ""),
         truncated=f.get("truncated", False),
         is_binary=f.get("is_binary", False),
     )
@@ -486,10 +464,17 @@ async def get_workspace_diff(
 async def list_agent_files(
     hosted_id: UUID,
     current_user: CurrentUser,
+    include_hidden: bool = Query(default=False),
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
-    """List all files in the agent's workspace."""
-    files = await svc.list_files(str(hosted_id), str(current_user.id))
+    """List all files in the agent's workspace (runner-authoritative).
+
+    Query params:
+        include_hidden: When True, include hidden dirs (venv/, node_modules/, etc).
+    """
+    files = await svc.list_files(
+        str(hosted_id), str(current_user.id), include_hidden=include_hidden
+    )
     return [_file_response(f) for f in files]
 
 
@@ -497,26 +482,49 @@ async def list_agent_files(
 async def download_files_archive(
     hosted_id: UUID,
     current_user: CurrentUser,
+    include_hidden: bool = Query(default=False),
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
-    """Download all agent files as a zip archive (generated on-the-fly, not stored)."""
+    """Stream workspace ZIP directly from the runner (runner-authoritative).
+
+    Proxies runner /files/download so the ZIP contains live on-disk files.
+
+    Query params:
+        include_hidden: When True, include hidden dirs in the archive.
+    """
     hid = str(hosted_id)
     hosted = await svc.get_hosted_agent(hid, str(current_user.id))
     agent_name = hosted.get("agent_name", "agent") or "agent"
-    raw_files = await svc.repo.list_files(hid)
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for f in raw_files:
-            file_data = await svc.repo.get_file(hid, f["file_path"])
-            content = (file_data["content"] if file_data else "") or ""
-            zf.writestr(f["file_path"], content.encode("utf-8"))
-    buf.seek(0)
-    archive_bytes = buf.getvalue()
+    if not svc.runner_url:
+        raise HTTPException(503, "Agent runner not configured")
+
+    params: dict = {"include_hidden": "true"} if include_hidden else {}
+    runner_download_url = f"{svc.runner_url}/agents/{hid}/files/download"
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.get(
+                runner_download_url,
+                headers=svc._runner_headers(),
+                params=params,
+            )
+    except Exception as exc:
+        logger.warning("Runner download unavailable for {}: {}", hid, exc)
+        raise HTTPException(503, "Agent runner unavailable")
+
+    if resp.status_code == 404:
+        raise HTTPException(404, "Agent workspace not found")
+    if resp.status_code != 200:
+        logger.warning("Runner download {} returned {}", hid, resp.status_code)
+        raise HTTPException(503, "Agent runner error")
+
+    archive_bytes = resp.content
     return StreamingResponse(
         iter([archive_bytes]),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{agent_name}-workspace.zip"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{agent_name}-workspace.zip"',
+        },
     )
 
 
@@ -551,12 +559,15 @@ async def read_agent_file(
     current_user: CurrentUser,
     svc: HostedAgentService = Depends(get_hosted_agent_service),
 ):
-    """Read a specific file from the agent's workspace."""
+    """Read a specific file from the agent's workspace (runner-authoritative).
+
+    Returns ETag header with the sha version for optimistic-lock writes.
+    """
     f = await svc.read_file(str(hosted_id), str(current_user.id), file_path)
     resp = _file_response(f)
     return JSONResponse(
         content=resp.model_dump(),
-        headers={"ETag": f'"v{resp.version}"'},
+        headers={"ETag": f'"{resp.version}"'},
     )
 
 
@@ -570,10 +581,10 @@ async def write_agent_file(
 ):
     """Write or update a file in the agent's workspace.
 
-    ``If-Match: "v{N}"`` enables conflict detection: if the current
-    version on disk does not equal N the server returns 412 with the
-    current version and content so the UI can show a diff modal. Omit
-    the header for best-effort save (legacy behaviour).
+    ``If-Match: "<sha>"`` enables optimistic-lock conflict detection on the
+    runner disk. If the on-disk sha differs the server returns 412 with the
+    current sha version and content so the UI can show a diff modal. Omit
+    the header for an unconditional (best-effort) save.
     """
     expected_version = _parse_if_match(if_match)
     try:
@@ -590,12 +601,12 @@ async def write_agent_file(
                 "current_version": exc.current_version,
                 "current_content": exc.current_content,
             },
-            headers={"ETag": f'"v{exc.current_version}"'},
+            headers={"ETag": f'"{exc.current_version}"'},
         )
     resp = _file_response(f)
     return JSONResponse(
         content=resp.model_dump(),
-        headers={"ETag": f'"v{resp.version}"'},
+        headers={"ETag": f'"{resp.version}"'},
     )
 
 

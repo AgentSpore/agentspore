@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 
-
 UPDATABLE_FIELDS = frozenset({
     "system_prompt", "model", "budget_usd",
     "heartbeat_enabled", "heartbeat_seconds",
@@ -18,14 +17,14 @@ UPDATABLE_FIELDS = frozenset({
 
 
 class StaleVersionError(Exception):
-    """Raised by ``upsert_file`` when ``If-Match`` does not match current row.
+    """Raised when an ``If-Match`` sha does not match the current file version.
 
-    Carries the current version and content so the API layer can turn
-    this into a 412 Precondition Failed response with enough information
+    Carries the current version (sha string) and content so the API layer can
+    turn this into a 412 Precondition Failed response with enough information
     for the UI's conflict modal.
     """
 
-    def __init__(self, current_version: int, current_content: str | None):
+    def __init__(self, current_version: str, current_content: str | None):
         super().__init__(f"version conflict (current={current_version})")
         self.current_version = current_version
         self.current_content = current_content

@@ -17,6 +17,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from fastapi import HTTPException
+
+from app.core.etag import parse_if_match as _parse_if_match
 
 try:
     from testcontainers.postgres import PostgresContainer
@@ -197,14 +200,26 @@ async def test_write_file_bumps_version(db_session, monkeypatch):
     repo = HostedAgentRepository(db_session)
     svc = _make_service(repo)
 
-    monkeypatch.setattr(svc, "_push_file_to_runner", AsyncMock())
+    # P3: write_file calls runner PUT first; mock httpx directly
+    async def fake_put(self, url, json=None, headers=None, **kwargs):
+        return httpx.Response(200, json={"status": "written", "version": "sha000000001"})
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "put", fake_put)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
 
     await svc.write_file(hosted_id, owner_id, "x.md", "v1")
     await svc.write_file(hosted_id, owner_id, "x.md", "v2")
     await svc.write_file(hosted_id, owner_id, "x.md", "v3")
 
     row = await repo.get_file(hosted_id, "x.md")
-    assert row["version"] == 3
+    assert row["version"] == 3  # DB integer version still increments
     assert row["content"] == "v3"
 
 
@@ -220,19 +235,41 @@ async def test_etag_conflict_raises_stale(db_session, monkeypatch):
     repo = HostedAgentRepository(db_session)
     svc = _make_service(repo)
 
-    monkeypatch.setattr(svc, "_push_file_to_runner", AsyncMock())
+    current_sha = "currentsha001"
 
-    await svc.write_file(hosted_id, owner_id, "x.md", "first")
-    await svc.write_file(hosted_id, owner_id, "x.md", "second")  # version → 2
+    # P3: write_file is runner-first; simulate 412 from runner on stale sha
+    async def fake_put_stale(self, url, json=None, headers=None, **kwargs):
+        if_match = (headers or {}).get("If-Match")
+        if if_match and if_match != current_sha:
+            return httpx.Response(
+                412,
+                json={
+                    "detail": {
+                        "message": "Precondition Failed",
+                        "current_version": current_sha,
+                        "current_content": "current file content",
+                    }
+                },
+            )
+        return httpx.Response(200, json={"status": "written", "version": current_sha})
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "put", fake_put_stale)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
 
     with pytest.raises(StaleVersionError) as exc_info:
-        # Client thinks version is 1, but disk is at 2 — conflict
         await svc.write_file(
-            hosted_id, owner_id, "x.md", "third", if_match_version=1
+            hosted_id, owner_id, "x.md", "third", if_match_version="oldsha000001"
         )
 
-    assert exc_info.value.current_version == 2
-    assert exc_info.value.current_content == "second"
+    assert exc_info.value.current_version == current_sha
+    assert exc_info.value.current_content == "current file content"
 
 
 @pytest.mark.asyncio
@@ -242,13 +279,27 @@ async def test_etag_match_succeeds(db_session, monkeypatch):
     hosted_id, owner_id = await _create_hosted(db_session)
     repo = HostedAgentRepository(db_session)
     svc = _make_service(repo)
-    monkeypatch.setattr(svc, "_push_file_to_runner", AsyncMock())
+
+    # P3: write_file is runner-first; mock httpx for unconditional success
+    async def fake_put(self, url, json=None, headers=None, **kwargs):
+        return httpx.Response(200, json={"status": "written", "version": "newsha000001"})
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "put", fake_put)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
 
     await svc.write_file(hosted_id, owner_id, "x.md", "first")
-    row = await svc.write_file(
-        hosted_id, owner_id, "x.md", "second", if_match_version=1
+    result = await svc.write_file(
+        hosted_id, owner_id, "x.md", "second", if_match_version="matchingsha"
     )
-    assert row["version"] == 2
+    # version in return is sha from runner (not DB int)
+    assert result["version"] == "newsha000001"
 
 
 @pytest.mark.asyncio
@@ -439,7 +490,10 @@ async def test_delete_nonexistent_subpath_raises_404(db_session):
 
 @pytest.mark.asyncio
 async def test_batch_write_atomic_on_failure(db_session, monkeypatch):
-    """A failure mid-batch must roll back rows that were just created."""
+    """DB failure mid-batch is best-effort: successful rows kept, c.md gets
+    synthetic entry, no rollback-delete, no exception raised.
+    Transitional dual-write: runner authoritative, DB best-effort (removed in P5).
+    """
     from app.repositories.hosted_agent_repo import HostedAgentRepository
 
     hosted_id, owner_id = await _create_hosted(db_session)
@@ -465,17 +519,19 @@ async def test_batch_write_atomic_on_failure(db_session, monkeypatch):
         {"file_path": "c.md", "content": "c", "file_type": "text"},
     ]
 
-    from fastapi import HTTPException
+    # Best-effort: must NOT raise — all 3 returned (c.md synthetic on DB fail)
+    written, failed = await svc.write_files_batch(hosted_id, owner_id, items)
+    assert len(failed) == 0  # runner push mock does not fail
+    written_paths = {r["file_path"] for r in written}
+    assert "a.md" in written_paths
+    assert "b.md" in written_paths
+    assert "c.md" in written_paths  # synthetic row returned despite DB error
 
-    with pytest.raises(HTTPException):
-        await svc.write_files_batch(hosted_id, owner_id, items)
-
-    # Rollback: only newly-created rows should be removed. Both a.md and
-    # b.md were just created in this call, so both should be gone.
+    # a.md and b.md persisted in DB; c.md DB row absent but NOT rolled back
     rows = await repo.list_files(hosted_id)
     paths = {r["file_path"] for r in rows}
-    assert "a.md" not in paths
-    assert "b.md" not in paths
+    assert "a.md" in paths
+    assert "b.md" in paths
 
 
 @pytest.mark.asyncio
@@ -506,19 +562,249 @@ async def test_batch_write_runner_failures_reported_per_file(db_session, monkeyp
     assert failed[0]["file_path"] == "b.md"
 
 
-def test_parse_if_match_header_accepts_quoted_and_bare():
-    from app.api.v1.hosted_agents import _parse_if_match
+def test_parse_if_match_header_accepts_sha_forms():
+    """_parse_if_match returns an opaque sha string (not int).
 
+    Accepts bare sha, quoted sha, and weak-ETag form.
+    Legacy ``v{int}`` is accepted as-is (opaque string, not parsed to int).
+    """
     assert _parse_if_match(None) is None
-    assert _parse_if_match('"v3"') == 3
-    assert _parse_if_match("v3") == 3
-    assert _parse_if_match('W/"v7"') == 7
+    assert _parse_if_match('"abc123def456"') == "abc123def456"
+    assert _parse_if_match("abc123def456") == "abc123def456"
+    assert _parse_if_match('W/"abc123def456"') == "abc123def456"
+    assert _parse_if_match('"v3"') == "v3"
+    assert _parse_if_match("v3") == "v3"
 
 
-def test_parse_if_match_rejects_wildcard_and_garbage():
-    from app.api.v1.hosted_agents import _parse_if_match
-    from fastapi import HTTPException
+def test_parse_if_match_rejects_wildcard_and_empty():
+    with pytest.raises(HTTPException):
+        _parse_if_match("*")
+    with pytest.raises(HTTPException):
+        _parse_if_match('""')  # empty quoted string → 400
 
-    for bad in ["*", "garbage", '"abc"', "vX"]:
-        with pytest.raises(HTTPException):
-            _parse_if_match(bad)
+
+# ── Runner-authoritative read/write tests (no real DB) ────────────────────────
+#
+# These tests use _make_service(MagicMock()) to build a service without a DB.
+# HostedAgentService.__init__ calls get_settings() which fails when extra env
+# vars are present (e.g. AGENTSPORE_REDIS_PORT). We patch get_settings() to
+# return a minimal settings mock so the constructor succeeds without real config.
+
+def _svc_no_db(monkeypatch) -> object:
+    """Build a HostedAgentService with no DB and runner_url pre-configured.
+
+    Patches ``get_settings`` so ``HostedAgentService.__init__`` gets a mock
+    settings object with ``agent_runner_url`` and ``agent_runner_key`` set,
+    which avoids a real DB connection attempt for runner-only tests.
+    """
+    mock_settings = MagicMock()
+    mock_settings.agent_runner_url = "http://runner.test"
+    mock_settings.agent_runner_key = "test-key"
+    monkeypatch.setattr("app.services.hosted_agent_service.get_settings", lambda: mock_settings)
+    return _make_service(MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_list_files_reads_from_runner_sha_version(monkeypatch):
+    """list_files returns version=sha string from runner (not int)."""
+    svc = _svc_no_db(monkeypatch)
+
+    runner_payload = {
+        "files": [
+            {
+                "file_path": "AGENT.md",
+                "content": "# Agent",
+                "size_bytes": 7,
+                "truncated": False,
+                "is_binary": False,
+                "version": "abc123def456",
+                "modified_at": "2026-05-29T12:00:00+00:00",
+            }
+        ]
+    }
+
+    async def fake_get(self, url, headers=None, params=None, **kwargs):
+        return httpx.Response(200, json=runner_payload)
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
+
+    files = await svc.list_files("hosted-123", "user-456")
+
+    assert len(files) == 1
+    assert files[0]["version"] == "abc123def456"
+    assert files[0]["updated_at"] == "2026-05-29T12:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_list_files_runner_down_returns_503(monkeypatch):
+    """list_files raises HTTPException 503 when runner is unreachable."""
+    svc = _svc_no_db(monkeypatch)
+
+    async def fake_get(self, url, **kwargs):
+        raise ConnectionError("runner down")
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.list_files("hosted-123", "user-456")
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_read_file_returns_sha_version(monkeypatch):
+    """read_file returns version=sha from runner response."""
+    svc = _svc_no_db(monkeypatch)
+
+    async def fake_get(self, url, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "file_path": "README.md",
+                "content": "hello",
+                "size_bytes": 5,
+                "truncated": False,
+                "is_binary": False,
+                "version": "deadbeef0001",
+                "modified_at": "2026-05-29T08:00:00+00:00",
+            },
+        )
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
+
+    result = await svc.read_file("hosted-123", "user-456", "README.md")
+
+    assert result["version"] == "deadbeef0001"
+    assert result["updated_at"] == "2026-05-29T08:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_read_file_404_from_runner(monkeypatch):
+    """read_file raises HTTPException 404 when runner returns 404."""
+    svc = _svc_no_db(monkeypatch)
+
+    async def fake_get(self, url, **kwargs):
+        return httpx.Response(404, json={"detail": "File not found"})
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.read_file("hosted-123", "user-456", "missing.md")
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_write_file_412_raises_stale_with_sha(monkeypatch):
+    """write_file raises StaleVersionError carrying sha current_version on runner 412."""
+    svc = _svc_no_db(monkeypatch)
+
+    async def fake_put(self, url, json=None, headers=None, **kwargs):
+        return httpx.Response(
+            412,
+            json={
+                "detail": {
+                    "message": "Precondition Failed",
+                    "current_version": "newshaabcdef",
+                    "current_content": "current body",
+                }
+            },
+        )
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "put", fake_put)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
+
+    with pytest.raises(Exception) as exc_info:
+        await svc.write_file(
+            "hosted-123", "user-456", "file.md", "body",
+            if_match_version="oldshaabcdef",
+        )
+
+    assert exc_info.type.__name__ == "StaleVersionError"
+    assert exc_info.value.current_version == "newshaabcdef"
+    assert exc_info.value.current_content == "current body"
+
+
+@pytest.mark.asyncio
+async def test_write_file_runner_503_on_error(monkeypatch):
+    """write_file raises HTTPException 503 on non-412 runner error."""
+    svc = _svc_no_db(monkeypatch)
+
+    async def fake_put(self, url, **kwargs):
+        return httpx.Response(500, json={"detail": "internal error"})
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "put", fake_put)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.write_file("hosted-123", "user-456", "file.md", "body")
+    assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_list_files_include_hidden_forwarded(monkeypatch):
+    """list_files passes include_hidden=true to runner query params."""
+    svc = _svc_no_db(monkeypatch)
+
+    captured: dict = {}
+
+    async def fake_get(self, url, headers=None, params=None, **kwargs):
+        captured["params"] = params
+        return httpx.Response(200, json={"files": []})
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
+
+    await svc.list_files("hosted-123", "user-456", include_hidden=True)
+    assert captured.get("params") == {"include_hidden": "true"}
