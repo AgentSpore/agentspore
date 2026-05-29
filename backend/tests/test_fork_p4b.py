@@ -1,12 +1,12 @@
-"""Unit tests for P4b fork dir-to-dir copy via runner (no testcontainers required).
+"""Unit tests for P5a fork — runner-only, no DB fallback (no testcontainers required).
 
 Covers:
   - _fork_read_source_files: uses runner GET when dir non-empty
-  - _fork_read_source_files: falls back to DB when runner returns empty list
-  - _fork_read_source_files: falls back to DB when runner is unreachable
+  - _fork_read_source_files: returns [] on empty runner dir (P5a: no DB fallback)
+  - _fork_read_source_files: returns [] on runner error (P5a: no DB fallback)
   - _fork_seed_new_agent: POSTs to runner /files/import with correct payload
   - _fork_seed_new_agent: applies AGENT.md / MEMORY.md transformations
-  - list_files_with_content repo method: NOT removed (still accessible)
+  - list_files_with_content repo method: NOT removed (still accessible, P5b drops it)
 """
 
 from __future__ import annotations
@@ -110,16 +110,12 @@ async def test_fork_read_source_files_uses_runner_when_non_empty(service_factory
 
 
 @pytest.mark.asyncio
-async def test_fork_read_source_files_falls_back_to_db_on_empty_runner_dir(
+async def test_fork_read_source_files_empty_runner_dir_returns_empty(
     service_factory,
 ):
-    """Runner returns empty list (agent never started) → DB fallback used."""
-    db_files = [
-        {"file_path": "AGENT.md", "content": "db prompt", "file_type": "config"},
-        {"file_path": "agent.yaml", "content": "x: 1", "file_type": "config"},
-    ]
+    """P5a: runner returns empty list → empty workspace fork (no DB fallback)."""
     repo_mock = MagicMock()
-    repo_mock.list_files_with_content = AsyncMock(return_value=db_files)
+    repo_mock.list_files_with_content = AsyncMock()
     svc = service_factory(repo=repo_mock)
 
     mock_response = MagicMock()
@@ -138,20 +134,18 @@ async def test_fork_read_source_files_falls_back_to_db_on_empty_runner_dir(
             source_name="SourceBot",
         )
 
-    assert result == db_files
-    repo_mock.list_files_with_content.assert_called_once_with("source-id")
+    # P5a: no DB fallback; empty dir → empty fork workspace
+    assert result == []
+    repo_mock.list_files_with_content.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_fork_read_source_files_falls_back_to_db_on_runner_error(
+async def test_fork_read_source_files_runner_error_returns_empty(
     service_factory,
 ):
-    """Runner returns non-200 → DB fallback used."""
-    db_files = [
-        {"file_path": "AGENT.md", "content": "fallback", "file_type": "config"},
-    ]
+    """P5a: runner returns non-200 → empty list (no DB fallback)."""
     repo_mock = MagicMock()
-    repo_mock.list_files_with_content = AsyncMock(return_value=db_files)
+    repo_mock.list_files_with_content = AsyncMock()
     svc = service_factory(repo=repo_mock)
 
     mock_response = MagicMock()
@@ -169,20 +163,17 @@ async def test_fork_read_source_files_falls_back_to_db_on_runner_error(
             source_name="SourceBot",
         )
 
-    assert result == db_files
-    repo_mock.list_files_with_content.assert_called_once_with("source-id")
+    assert result == []
+    repo_mock.list_files_with_content.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_fork_read_source_files_falls_back_to_db_on_request_error(
+async def test_fork_read_source_files_runner_unreachable_returns_empty(
     service_factory,
 ):
-    """Runner raises RequestError (unreachable) → DB fallback used."""
-    db_files = [
-        {"file_path": "AGENT.md", "content": "offline fallback", "file_type": "config"},
-    ]
+    """P5a: runner raises RequestError → empty list (no DB fallback)."""
     repo_mock = MagicMock()
-    repo_mock.list_files_with_content = AsyncMock(return_value=db_files)
+    repo_mock.list_files_with_content = AsyncMock()
     svc = service_factory(repo=repo_mock)
 
     with patch("httpx.AsyncClient") as mock_client_cls:
@@ -197,8 +188,8 @@ async def test_fork_read_source_files_falls_back_to_db_on_request_error(
             source_name="SourceBot",
         )
 
-    assert result == db_files
-    repo_mock.list_files_with_content.assert_called_once_with("source-id")
+    assert result == []
+    repo_mock.list_files_with_content.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
