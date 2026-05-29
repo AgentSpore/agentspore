@@ -18,11 +18,17 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.etag import parse_if_match as _parse_if_match
+from app.repositories.hosted_agent_repo import HostedAgentRepository, StaleVersionError
+from app.services.hosted_agent_service import HostedAgentService
 
 try:
-    from testcontainers.postgres import PostgresContainer
+    from testcontainers.postgres import (
+        PostgresContainer,  # noqa: PLC0415 — optional dep, skip if not installed
+    )
     _HAS_TC = True
 except Exception:
     _HAS_TC = False
@@ -87,9 +93,6 @@ def pg_container():
 
 @pytest.fixture
 async def db_session(pg_container):
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from sqlalchemy import text
-
     pg_async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
     engine = create_async_engine(pg_async_url, future=True)
     async with engine.begin() as conn:
@@ -106,10 +109,8 @@ async def db_session(pg_container):
     await engine.dispose()
 
 
-async def _create_hosted(db_session) -> tuple[str, str]:
+async def insert_hosted(db_session) -> tuple[str, str]:
     """Insert a hosted_agent row and return (hosted_id, owner_user_id)."""
-    from sqlalchemy import text
-
     hosted_id = str(uuid.uuid4())
     agent_id = str(uuid.uuid4())
     owner_id = str(uuid.uuid4())
@@ -132,14 +133,13 @@ async def _create_hosted(db_session) -> tuple[str, str]:
     return hosted_id, owner_id
 
 
-def _make_service(repo):
+def build_service(repo):
     """Build a HostedAgentService with all external collaborators mocked.
 
     The service is wired with ``get_hosted_agent`` short-circuited because
     every public file method calls it for an ownership check; the file
     methods themselves are what we want to exercise here.
     """
-    from app.services.hosted_agent_service import HostedAgentService
 
     svc = HostedAgentService(
         repo=repo,
@@ -157,19 +157,17 @@ def _make_service(repo):
 
 @pytest.mark.asyncio
 async def test_write_file_pushes_to_runner_disk(db_session, monkeypatch):
-    """write_file must DB-commit AND HTTP PUT to the runner."""
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-
-    hosted_id, owner_id = await _create_hosted(db_session)
+    """P5a: write_file must PUT to runner and NOT write to DB."""
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
 
     sent: dict = {}
 
     async def fake_put(self, url, json=None, **kwargs):
         sent["url"] = url
         sent["json"] = json
-        return httpx.Response(200, json={"status": "written"})
+        return httpx.Response(200, json={"status": "written", "version": "sha000000001"})
 
     async def fake_aenter(self):
         return self
@@ -181,24 +179,22 @@ async def test_write_file_pushes_to_runner_disk(db_session, monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
     monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
 
-    await svc.write_file(hosted_id, owner_id, "AGENT.md", "hello world")
+    result = await svc.write_file(hosted_id, owner_id, "AGENT.md", "hello world")
 
     assert sent["url"] == f"http://runner.test/agents/{hosted_id}/files"
     assert sent["json"]["file_path"] == "AGENT.md"
     assert sent["json"]["content"] == "hello world"
-
+    # P5a: no DB write — file must NOT appear in agent_files table
     row = await repo.get_file(hosted_id, "AGENT.md")
-    assert row["content"] == "hello world"
-    assert row["version"] == 1
+    assert row is None, "P5a: write_file must not upsert to DB"
+    assert result["version"] == "sha000000001"
 
 
 @pytest.mark.asyncio
 async def test_write_file_bumps_version(db_session, monkeypatch):
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-
-    hosted_id, owner_id = await _create_hosted(db_session)
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
 
     # P3: write_file calls runner PUT first; mock httpx directly
     async def fake_put(self, url, json=None, headers=None, **kwargs):
@@ -216,24 +212,21 @@ async def test_write_file_bumps_version(db_session, monkeypatch):
 
     await svc.write_file(hosted_id, owner_id, "x.md", "v1")
     await svc.write_file(hosted_id, owner_id, "x.md", "v2")
-    await svc.write_file(hosted_id, owner_id, "x.md", "v3")
+    result = await svc.write_file(hosted_id, owner_id, "x.md", "v3")
 
+    # P5a: no DB rows — runner is sole write target
     row = await repo.get_file(hosted_id, "x.md")
-    assert row["version"] == 3  # DB integer version still increments
-    assert row["content"] == "v3"
+    assert row is None, "P5a: write_file must not upsert to DB"
+    assert result["version"] == "sha000000001"
 
 
 @pytest.mark.asyncio
 async def test_etag_conflict_raises_stale(db_session, monkeypatch):
     """Stale If-Match must raise StaleVersionError with current content."""
-    from app.repositories.hosted_agent_repo import (
-        HostedAgentRepository,
-        StaleVersionError,
-    )
 
-    hosted_id, owner_id = await _create_hosted(db_session)
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
 
     current_sha = "currentsha001"
 
@@ -274,11 +267,9 @@ async def test_etag_conflict_raises_stale(db_session, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_etag_match_succeeds(db_session, monkeypatch):
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-
-    hosted_id, owner_id = await _create_hosted(db_session)
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
 
     # P3: write_file is runner-first; mock httpx for unconditional success
     async def fake_put(self, url, json=None, headers=None, **kwargs):
@@ -303,35 +294,14 @@ async def test_etag_match_succeeds(db_session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sync_prunes_ghost_files(db_session, monkeypatch):
-    """Files removed by the agent on disk must disappear from DB on next sync."""
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-
-    hosted_id, _ = await _create_hosted(db_session)
+async def test_write_file_no_db_row_after_write(db_session, monkeypatch):
+    """P5a: write_file leaves agent_files table empty (runner-only)."""
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
 
-    # Seed three files in DB (simulating a previous sync)
-    await repo.upsert_file(hosted_id, "keep.md", "k", "text")
-    await repo.upsert_file(hosted_id, "delete-me.md", "d", "text")
-    await repo.upsert_file(hosted_id, "also-keep.md", "a", "text")
-
-    # Mock runner /files returning only two of them — the agent deleted "delete-me.md"
-    runner_response = {
-        "files": [
-            {"file_path": "keep.md", "content": "k-updated", "size_bytes": 9},
-            {"file_path": "also-keep.md", "content": "a", "size_bytes": 1},
-        ]
-    }
-
-    class FakeResp:
-        status_code = 200
-
-        def json(self):
-            return runner_response
-
-    async def fake_get(self, url, **kwargs):
-        return FakeResp()
+    async def fake_put(self, url, json=None, headers=None, **kwargs):
+        return httpx.Response(200, json={"status": "written", "version": "sha000abc123"})
 
     async def fake_aenter(self):
         return self
@@ -339,64 +309,49 @@ async def test_sync_prunes_ghost_files(db_session, monkeypatch):
     async def fake_aexit(self, *args):
         return False
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "put", fake_put)
     monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
     monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
 
-    await svc._sync_files_from_runner(hosted_id)
+    await svc.write_file(hosted_id, owner_id, "keep.md", "k")
+    await svc.write_file(hosted_id, owner_id, "also-keep.md", "a")
 
     rows = await repo.list_files(hosted_id)
-    paths = {r["file_path"] for r in rows}
-    assert "keep.md" in paths
-    assert "also-keep.md" in paths
-    assert "delete-me.md" not in paths
+    assert rows == [], "P5a: write_file must not persist rows to agent_files"
 
 
 @pytest.mark.asyncio
-async def test_sync_empty_runner_response_does_not_wipe(db_session, monkeypatch):
-    """Empty runner /files (transient error) must NOT wipe existing rows."""
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-
-    hosted_id, _ = await _create_hosted(db_session)
+async def test_batch_write_no_db_rows(db_session, monkeypatch):
+    """P5a: write_files_batch leaves agent_files table empty (runner-only)."""
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
 
-    await repo.upsert_file(hosted_id, "keep.md", "k", "text")
+    sha_n = {"n": 0}
 
-    class FakeResp:
-        status_code = 200
+    async def fake_push(hid, fp, content):
+        sha_n["n"] += 1
+        return f"sha{sha_n['n']:09d}"
 
-        def json(self):
-            return {"files": []}
+    monkeypatch.setattr(svc, "_push_file_to_runner", fake_push)
 
-    async def fake_get(self, url, **kwargs):
-        return FakeResp()
+    items = [
+        {"file_path": "a.md", "content": "a", "file_type": "text"},
+        {"file_path": "b.md", "content": "b", "file_type": "text"},
+    ]
+    written, failed = await svc.write_files_batch(hosted_id, owner_id, items)
 
-    async def fake_aenter(self):
-        return self
-
-    async def fake_aexit(self, *args):
-        return False
-
-    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
-    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
-    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
-
-    await svc._sync_files_from_runner(hosted_id)
-
+    assert len(failed) == 0
     rows = await repo.list_files(hosted_id)
-    assert {r["file_path"] for r in rows} == {"keep.md"}
+    assert rows == [], "P5a: write_files_batch must not persist rows to agent_files"
 
 
 @pytest.mark.asyncio
 async def test_path_traversal_rejected(db_session):
     """Service-layer write_file must reject `../`, absolute paths, and NUL."""
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-    from fastapi import HTTPException
-
-    hosted_id, owner_id = await _create_hosted(db_session)
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
 
     bad_paths = ["../etc/passwd", "/etc/passwd", "a/../../b", "x\x00.md", ""]
     for bad in bad_paths:
@@ -407,14 +362,10 @@ async def test_path_traversal_rejected(db_session):
 
 @pytest.mark.asyncio
 async def test_delete_file_url_encodes_special_chars(db_session, monkeypatch):
-    """delete_file must URL-quote spaces / unicode before calling the runner."""
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-
-    hosted_id, owner_id = await _create_hosted(db_session)
+    """P5a: delete_file must URL-quote spaces / unicode before calling the runner."""
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
-
-    await repo.upsert_file(hosted_id, "my notes/файл.md", "x", "text")
+    svc = build_service(repo)
 
     captured: dict = {}
 
@@ -434,54 +385,63 @@ async def test_delete_file_url_encodes_special_chars(db_session, monkeypatch):
 
     await svc.delete_file(hosted_id, owner_id, "my notes/файл.md")
 
-    # Spaces must be %20, cyrillic must be percent-encoded utf-8, "/" must
-    # be preserved so the runner path-router still matches.
     assert "my%20notes/" in captured["url"]
     assert "%D1%84" in captured["url"]  # 'ф' utf-8
 
 
 @pytest.mark.asyncio
-async def test_delete_subpath_file_succeeds(db_session, monkeypatch):
-    """M2: delete_file must resolve correctly for paths with directory separators.
-
-    Reproduces the bug where DELETE /files/notes/test.md returned 404
-    while the file was visible via GET /files.  The service + repo layer must
-    match on the exact file_path string including the slash.
-    """
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-
-    hosted_id, owner_id = await _create_hosted(db_session)
+async def test_delete_file_runner_only_no_db_call(db_session, monkeypatch):
+    """P5a: delete_file calls runner DELETE and does NOT touch DB repo."""
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
 
-    # Insert a file that lives in a subdirectory
-    await repo.upsert_file(hosted_id, "notes/test.md", "hello", "text")
+    runner_url_called: list[str] = []
 
-    # Confirm it is visible via list_files
-    files_before = await repo.list_files(hosted_id)
-    assert any(f["file_path"] == "notes/test.md" for f in files_before)
+    async def fake_delete(self, url, **kwargs):
+        runner_url_called.append(url)
+        return httpx.Response(200, json={"status": "deleted"})
 
-    # Patch out runner HTTP call — we're testing DB round-trip only
-    monkeypatch.setattr(
-        "httpx.AsyncClient.delete",
-        AsyncMock(return_value=httpx.Response(200, json={"status": "deleted"})),
-    )
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "delete", fake_delete)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
 
     await svc.delete_file(hosted_id, owner_id, "notes/test.md")
 
-    files_after = await repo.list_files(hosted_id)
-    assert not any(f["file_path"] == "notes/test.md" for f in files_after)
+    assert any(
+        "notes/test.md" in url or "notes%2Ftest.md" in url
+        for url in runner_url_called
+    )
+    # DB table must be empty — no rows were inserted or deleted
+    rows = await repo.list_files(hosted_id)
+    assert rows == [], "P5a: delete_file must not touch agent_files DB"
 
 
 @pytest.mark.asyncio
-async def test_delete_nonexistent_subpath_raises_404(db_session):
-    """Deleting a subpath file that doesn't exist must return 404, not 500."""
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-    from fastapi import HTTPException
-
-    hosted_id, owner_id = await _create_hosted(db_session)
+async def test_delete_nonexistent_raises_404_via_runner(db_session, monkeypatch):
+    """P5a: delete_file raises HTTP 404 when runner returns 404 (file not on disk)."""
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
+
+    async def fake_delete(self, url, **kwargs):
+        return httpx.Response(404, json={"detail": "File not found"})
+
+    async def fake_aenter(self):
+        return self
+
+    async def fake_aexit(self, *args):
+        return False
+
+    monkeypatch.setattr(httpx.AsyncClient, "delete", fake_delete)
+    monkeypatch.setattr(httpx.AsyncClient, "__aenter__", fake_aenter)
+    monkeypatch.setattr(httpx.AsyncClient, "__aexit__", fake_aexit)
 
     with pytest.raises(HTTPException) as exc_info:
         await svc.delete_file(hosted_id, owner_id, "deep/nested/missing.md")
@@ -489,29 +449,19 @@ async def test_delete_nonexistent_subpath_raises_404(db_session):
 
 
 @pytest.mark.asyncio
-async def test_batch_write_atomic_on_failure(db_session, monkeypatch):
-    """DB failure mid-batch is best-effort: successful rows kept, c.md gets
-    synthetic entry, no rollback-delete, no exception raised.
-    Transitional dual-write: runner authoritative, DB best-effort (removed in P5).
-    """
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-
-    hosted_id, owner_id = await _create_hosted(db_session)
+async def test_batch_write_runner_only(db_session, monkeypatch):
+    """P5a: write_files_batch is runner-only; all 3 items returned, no DB rows."""
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
-    monkeypatch.setattr(svc, "_push_file_to_runner", AsyncMock())
+    svc = build_service(repo)
 
-    # Make the third upsert fail
-    real_upsert = repo.upsert_file
-    call_count = {"n": 0}
+    sha_n = {"n": 0}
 
-    async def flaky_upsert(*args, **kwargs):
-        call_count["n"] += 1
-        if call_count["n"] == 3:
-            raise RuntimeError("synthetic DB failure")
-        return await real_upsert(*args, **kwargs)
+    async def fake_push(hid, fp, content):
+        sha_n["n"] += 1
+        return f"sha{sha_n['n']:09d}"
 
-    monkeypatch.setattr(repo, "upsert_file", flaky_upsert)
+    monkeypatch.setattr(svc, "_push_file_to_runner", fake_push)
 
     items = [
         {"file_path": "a.md", "content": "a", "file_type": "text"},
@@ -519,33 +469,26 @@ async def test_batch_write_atomic_on_failure(db_session, monkeypatch):
         {"file_path": "c.md", "content": "c", "file_type": "text"},
     ]
 
-    # Best-effort: must NOT raise — all 3 returned (c.md synthetic on DB fail)
     written, failed = await svc.write_files_batch(hosted_id, owner_id, items)
-    assert len(failed) == 0  # runner push mock does not fail
+    assert len(failed) == 0
     written_paths = {r["file_path"] for r in written}
-    assert "a.md" in written_paths
-    assert "b.md" in written_paths
-    assert "c.md" in written_paths  # synthetic row returned despite DB error
+    assert written_paths == {"a.md", "b.md", "c.md"}
 
-    # a.md and b.md persisted in DB; c.md DB row absent but NOT rolled back
     rows = await repo.list_files(hosted_id)
-    paths = {r["file_path"] for r in rows}
-    assert "a.md" in paths
-    assert "b.md" in paths
+    assert rows == [], "P5a: write_files_batch must not persist rows to agent_files"
 
 
 @pytest.mark.asyncio
 async def test_batch_write_runner_failures_reported_per_file(db_session, monkeypatch):
-    """Batch write should report per-file runner push failures without aborting."""
-    from app.repositories.hosted_agent_repo import HostedAgentRepository
-
-    hosted_id, owner_id = await _create_hosted(db_session)
+    """Batch write reports per-file runner push failures without aborting."""
+    hosted_id, owner_id = await insert_hosted(db_session)
     repo = HostedAgentRepository(db_session)
-    svc = _make_service(repo)
+    svc = build_service(repo)
 
     async def flaky_push(hid, file_path, content):
         if file_path == "b.md":
             raise RuntimeError("runner timeout")
+        return "sha000000001"
 
     monkeypatch.setattr(svc, "_push_file_to_runner", flaky_push)
 
@@ -555,9 +498,8 @@ async def test_batch_write_runner_failures_reported_per_file(db_session, monkeyp
     ]
     written, failed = await svc.write_files_batch(hosted_id, owner_id, items)
 
-    # DB succeeded for both
-    assert len(written) == 2
-    # Runner push reports b.md failure
+    assert len(written) == 1
+    assert written[0]["file_path"] == "a.md"
     assert len(failed) == 1
     assert failed[0]["file_path"] == "b.md"
 
@@ -590,7 +532,7 @@ def test_parse_if_match_rejects_wildcard_and_empty():
 # vars are present (e.g. AGENTSPORE_REDIS_PORT). We patch get_settings() to
 # return a minimal settings mock so the constructor succeeds without real config.
 
-def _svc_no_db(monkeypatch) -> object:
+def svc_no_db(monkeypatch) -> HostedAgentService:
     """Build a HostedAgentService with no DB and runner_url pre-configured.
 
     Patches ``get_settings`` so ``HostedAgentService.__init__`` gets a mock
@@ -601,13 +543,13 @@ def _svc_no_db(monkeypatch) -> object:
     mock_settings.agent_runner_url = "http://runner.test"
     mock_settings.agent_runner_key = "test-key"
     monkeypatch.setattr("app.services.hosted_agent_service.get_settings", lambda: mock_settings)
-    return _make_service(MagicMock())
+    return build_service(MagicMock())
 
 
 @pytest.mark.asyncio
 async def test_list_files_reads_from_runner_sha_version(monkeypatch):
     """list_files returns version=sha string from runner (not int)."""
-    svc = _svc_no_db(monkeypatch)
+    svc = svc_no_db(monkeypatch)
 
     runner_payload = {
         "files": [
@@ -646,7 +588,7 @@ async def test_list_files_reads_from_runner_sha_version(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_files_runner_down_returns_503(monkeypatch):
     """list_files raises HTTPException 503 when runner is unreachable."""
-    svc = _svc_no_db(monkeypatch)
+    svc = svc_no_db(monkeypatch)
 
     async def fake_get(self, url, **kwargs):
         raise ConnectionError("runner down")
@@ -669,7 +611,7 @@ async def test_list_files_runner_down_returns_503(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_file_returns_sha_version(monkeypatch):
     """read_file returns version=sha from runner response."""
-    svc = _svc_no_db(monkeypatch)
+    svc = svc_no_db(monkeypatch)
 
     async def fake_get(self, url, **kwargs):
         return httpx.Response(
@@ -704,7 +646,7 @@ async def test_read_file_returns_sha_version(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_file_404_from_runner(monkeypatch):
     """read_file raises HTTPException 404 when runner returns 404."""
-    svc = _svc_no_db(monkeypatch)
+    svc = svc_no_db(monkeypatch)
 
     async def fake_get(self, url, **kwargs):
         return httpx.Response(404, json={"detail": "File not found"})
@@ -727,7 +669,7 @@ async def test_read_file_404_from_runner(monkeypatch):
 @pytest.mark.asyncio
 async def test_write_file_412_raises_stale_with_sha(monkeypatch):
     """write_file raises StaleVersionError carrying sha current_version on runner 412."""
-    svc = _svc_no_db(monkeypatch)
+    svc = svc_no_db(monkeypatch)
 
     async def fake_put(self, url, json=None, headers=None, **kwargs):
         return httpx.Response(
@@ -765,7 +707,7 @@ async def test_write_file_412_raises_stale_with_sha(monkeypatch):
 @pytest.mark.asyncio
 async def test_write_file_runner_503_on_error(monkeypatch):
     """write_file raises HTTPException 503 on non-412 runner error."""
-    svc = _svc_no_db(monkeypatch)
+    svc = svc_no_db(monkeypatch)
 
     async def fake_put(self, url, **kwargs):
         return httpx.Response(500, json={"detail": "internal error"})
@@ -788,7 +730,7 @@ async def test_write_file_runner_503_on_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_files_include_hidden_forwarded(monkeypatch):
     """list_files passes include_hidden=true to runner query params."""
-    svc = _svc_no_db(monkeypatch)
+    svc = svc_no_db(monkeypatch)
 
     captured: dict = {}
 
@@ -808,3 +750,41 @@ async def test_list_files_include_hidden_forwarded(monkeypatch):
 
     await svc.list_files("hosted-123", "user-456", include_hidden=True)
     assert captured.get("params") == {"include_hidden": "true"}
+
+
+@pytest.mark.asyncio
+async def test_list_running_agents_empty_files_payload(monkeypatch):
+    """P5a: list_running_agents must return files=[] — DB list_files/get_file not called."""
+    mock_settings = MagicMock()
+    mock_settings.agent_runner_url = "http://runner.test"
+    mock_settings.agent_runner_key = "test-key"
+    mock_settings.oauth_redirect_base_url = "https://agentspore.com"
+    monkeypatch.setattr("app.services.hosted_agent_service.get_settings", lambda: mock_settings)
+
+    repo = MagicMock()
+    repo.list_running = AsyncMock(return_value=[
+        {
+            "id": "hosted-abc",
+            "agent_id": "agent-xyz",
+            "system_prompt": "You are a test agent",
+            "model": "test/model:free",
+            "runtime": "python-minimal",
+            "agent_api_key": "af_test_key",
+            "heartbeat_seconds": 3600,
+        }
+    ])
+    svc = HostedAgentService(
+        repo=repo,
+        agent_service=MagicMock(),
+        openrouter=MagicMock(),
+        openviking=MagicMock(),
+    )
+    svc.runner_url = "http://runner.test"
+    svc.settings = mock_settings
+
+    result = await svc.list_running_agents()
+
+    assert len(result) == 1
+    assert result[0]["files"] == [], "P5a: files payload must be empty"
+    repo.list_files.assert_not_called()
+    repo.get_file.assert_not_called()

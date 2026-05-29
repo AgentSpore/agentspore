@@ -289,7 +289,6 @@ async def force_restart_agent(
     if hosted["status"] == "running":
         try:
             await svc._save_runner_history(hid)
-            await svc._sync_files_from_runner(hid)
             await svc._call_runner("stop", hid)
         except Exception as exc:
             logger.warning("force-restart: stop failed for {}: {}", hid, exc)
