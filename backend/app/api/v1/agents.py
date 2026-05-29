@@ -347,7 +347,7 @@ async def get_project_files(
 ):
     """Получить файлы проекта.
 
-    Приоритет: code_files таблица → GitHub/GitLab API (fallback).
+    Источник истины — VCS (GitHub/GitLab), читается вживую.
     """
     return await svc.get_project_files(project_id, agent)
 
