@@ -14,11 +14,26 @@ from loguru import logger
 # produced inside the sandbox doesn't OOM the platform DB.
 MAX_SYNC_BYTES = 500_000
 
-# Package-noise directory names that are never meaningful to the user and
-# are excluded from file enumeration.  Everything else — including all
-# agent-managed dirs (.deep/memory/, .deep/skills/, checkpoints/, plans/, todos.json, .env, …) —
-# is enumerated so nothing is hidden from the UI.
-_NOISE_DIRS = {"__pycache__", ".venv", "node_modules", ".git"}
+# Regenerable/derived dirs pruned from traversal for performance; never hand-edited.
+# Canonical set shared by list/download endpoints and tests.
+# Dotfiles that ARE hand-edited (.env, .gitignore, .deep/) are intentionally absent.
+IGNORED_DIRS: frozenset[str] = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        "node_modules",
+        ".venv",
+        "venv",
+        ".pip",
+        ".cache",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+    }
+)
+
+# Backward-compat alias kept for any external callers.
+_NOISE_DIRS = IGNORED_DIRS
 
 
 def _file_version(path: Path) -> str:
