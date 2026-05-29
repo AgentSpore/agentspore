@@ -4,6 +4,7 @@ import asyncio
 import io
 import os
 import zipfile
+from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -12,8 +13,8 @@ from loguru import logger
 from config import get_settings
 from schemas import WriteFileRequest
 from workspace import (
+    IGNORED_DIRS,
     MAX_SYNC_BYTES,
-    _NOISE_DIRS,
     _file_version,
     _run_git,
     _safe_workspace_path,
@@ -29,27 +30,65 @@ router = APIRouter()
 disk_quota = None
 
 
+def _iter_workspace_files(
+    workspace: os.PathLike, *, include_hidden: bool
+) -> list[tuple[str, str]]:
+    """Walk ``workspace`` and return sorted ``(rel_path, abs_path)`` pairs.
+
+    When ``include_hidden=False`` (default) we prune ``IGNORED_DIRS`` at the
+    ``os.walk`` level — the OS never descends into those subtrees, which is
+    the key perf win vs. ``rglob("*")`` + post-filter.  Dotfiles and
+    dot-dirs that are NOT in ``IGNORED_DIRS`` (e.g. ``.env``, ``.gitignore``,
+    ``.deep/``) are always included regardless of this flag.
+
+    Args:
+        workspace: Absolute path to the agent workspace root.
+        include_hidden: When ``True`` walk everything (no pruning).
+
+    Returns:
+        List of ``(rel_path_str, abs_path_str)`` sorted by rel_path.
+    """
+    workspace = os.fspath(workspace)
+    entries: list[tuple[str, str]] = []
+    for dirpath, dirnames, filenames in os.walk(workspace):
+        if not include_hidden:
+            # In-place prune: os.walk will not descend into removed names.
+            dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS)
+        else:
+            dirnames.sort()
+        for filename in sorted(filenames):
+            abs_path = os.path.join(dirpath, filename)
+            rel = os.path.relpath(abs_path, workspace)
+            entries.append((rel, abs_path))
+    entries.sort(key=lambda t: t[0])
+    return entries
+
+
 @router.get("/agents/{hosted_id}/files")
-async def list_workspace_files(hosted_id: str):
+async def list_workspace_files(
+    hosted_id: str,
+    include_hidden: bool = False,
+):
     """List all files in the agent's workspace (disk, not DB).
 
     Files are streamed back with content when small and decodable; for
     binary or oversize files we send ``content=None`` and a flag so the
     platform side can flag the row in DB instead of silently dropping it.
     Each file entry includes a ``version`` field (SHA-256[:12] of raw bytes).
+
+    Query params:
+        include_hidden: When ``True``, include ``IGNORED_DIRS`` subtrees
+            (e.g. ``node_modules/``, ``.venv/``).  Default ``False``.
     """
     workspace = settings.workspace_root / hosted_id
     if not workspace.exists():
         return {"files": []}
 
     files = []
-    for path in sorted(workspace.rglob("*")):
-        if not path.is_file():
-            continue
-        # Skip package noise dirs anywhere in the tree.
-        if _NOISE_DIRS.intersection(path.relative_to(workspace).parts):
-            continue
-        rel = str(path.relative_to(workspace))
+    for rel, abs_path in _iter_workspace_files(
+        workspace, include_hidden=include_hidden
+    ):
+        path = Path(abs_path)
         try:
             stat_size = path.stat().st_size
         except OSError:
@@ -84,29 +123,37 @@ async def list_workspace_files(hosted_id: str):
 # NOTE: /files/download must be registered BEFORE /files/{file_path:path}
 # so that the literal "download" segment is not swallowed by the path wildcard.
 @router.get("/agents/{hosted_id}/files/download")
-async def download_workspace_zip(hosted_id: str):
+async def download_workspace_zip(
+    hosted_id: str,
+    include_hidden: bool = False,
+):
     """Stream the agent workspace as a ZIP archive.
 
-    All files except ``_NOISE_DIRS`` subtrees are included — binary files
-    are included as-is (no ``MAX_SYNC_BYTES`` cap here, this is raw export).
-    ZIP built in executor thread to avoid blocking the event loop; full archive
-    held in memory (workspaces are small — code, not data).
+    All files except ``IGNORED_DIRS`` subtrees are included by default —
+    binary files are included as-is (no ``MAX_SYNC_BYTES`` cap here, this
+    is raw export).  ZIP built in executor thread to avoid blocking the
+    event loop; full archive held in memory (workspaces are small — code,
+    not data).
+
+    Query params:
+        include_hidden: When ``True``, include ``IGNORED_DIRS`` subtrees.
+            Default ``False``.
     """
     workspace = settings.workspace_root / hosted_id
     if not workspace.exists():
         raise HTTPException(404, "Agent workspace not found")
 
+    # Capture include_hidden for the closure (avoids cell-var-from-loop lint).
+    _include_hidden = include_hidden
+
     def _build_zip() -> bytes:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for path in sorted(workspace.rglob("*")):
-                if not path.is_file():
-                    continue
-                if _NOISE_DIRS.intersection(path.relative_to(workspace).parts):
-                    continue
-                rel = str(path.relative_to(workspace))
+            for rel, abs_path in _iter_workspace_files(
+                workspace, include_hidden=_include_hidden
+            ):
                 try:
-                    zf.write(path, arcname=rel)
+                    zf.write(abs_path, arcname=rel)
                 except OSError as exc:
                     logger.warning("download_zip: skipping {} — {}", rel, exc)
         return buf.getvalue()

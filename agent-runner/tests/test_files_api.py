@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from config import RunnerSettings  # noqa: E402
-from workspace import _file_version  # noqa: E402
+from workspace import IGNORED_DIRS, _file_version  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -418,3 +418,162 @@ class TestDownloadWorkspaceZip:
         assert resp.status_code in (200, 404)
         if resp.status_code == 200:
             assert resp.headers["content-type"] == "application/zip"
+
+
+# ---------------------------------------------------------------------------
+# Canonical IGNORED_DIRS set
+# ---------------------------------------------------------------------------
+
+
+class TestIgnoredDirs:
+    def test_canonical_set_contains_expected_entries(self) -> None:
+        expected = {
+            ".git",
+            "__pycache__",
+            "node_modules",
+            ".venv",
+            "venv",
+            ".pip",
+            ".cache",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+        }
+        assert expected == set(IGNORED_DIRS)
+
+    def test_is_frozenset(self) -> None:
+        assert isinstance(IGNORED_DIRS, frozenset)
+
+
+# ---------------------------------------------------------------------------
+# include_hidden=false  (default) — prune at os.walk level
+# ---------------------------------------------------------------------------
+
+
+class TestListIncludeHidden:
+    def test_default_hides_node_modules(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        workspace = tmp_path / "agent-ih1"
+        workspace.mkdir()
+        nm = workspace / "node_modules"
+        nm.mkdir()
+        (nm / "x.js").write_text("module.exports={}", encoding="utf-8")
+        (workspace / "app.py").write_text("pass", encoding="utf-8")
+
+        client = file_client_factory(tmp_path)
+        resp = client.get("/agents/agent-ih1/files")
+        assert resp.status_code == 200
+        paths = [f["file_path"] for f in resp.json()["files"]]
+        assert "app.py" in paths
+        assert not any("node_modules" in p for p in paths)
+
+    def test_include_hidden_true_shows_node_modules(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        workspace = tmp_path / "agent-ih2"
+        workspace.mkdir()
+        nm = workspace / "node_modules"
+        nm.mkdir()
+        (nm / "x.js").write_text("module.exports={}", encoding="utf-8")
+        (workspace / "app.py").write_text("pass", encoding="utf-8")
+
+        client = file_client_factory(tmp_path)
+        resp = client.get("/agents/agent-ih2/files?include_hidden=true")
+        assert resp.status_code == 200
+        paths = [f["file_path"] for f in resp.json()["files"]]
+        assert "app.py" in paths
+        assert any("node_modules" in p for p in paths)
+
+    def test_default_prunes_all_ignored_dirs(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        """File deeply nested inside an ignored dir must be absent from default listing."""
+        workspace = tmp_path / "agent-ih3"
+        workspace.mkdir()
+        deep = workspace / ".venv" / "lib" / "python3.12" / "site-packages"
+        deep.mkdir(parents=True)
+        (deep / "secret.py").write_text("# installed lib", encoding="utf-8")
+        (workspace / "main.py").write_text("# user file", encoding="utf-8")
+
+        client = file_client_factory(tmp_path)
+        resp = client.get("/agents/agent-ih3/files")
+        paths = [f["file_path"] for f in resp.json()["files"]]
+        # Deeply nested .venv file absent
+        assert not any(".venv" in p for p in paths)
+        # User file present
+        assert "main.py" in paths
+
+    def test_dotfiles_not_in_ignored_visible_always(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        """.env and .gitignore are dotfiles but NOT in IGNORED_DIRS — always visible."""
+        workspace = tmp_path / "agent-ih4"
+        workspace.mkdir()
+        (workspace / ".env").write_text("SECRET=1", encoding="utf-8")
+        (workspace / ".gitignore").write_text("*.pyc", encoding="utf-8")
+        (workspace / "code.py").write_text("x=1", encoding="utf-8")
+
+        client = file_client_factory(tmp_path)
+        resp = client.get("/agents/agent-ih4/files")
+        paths = [f["file_path"] for f in resp.json()["files"]]
+        assert ".env" in paths
+        assert ".gitignore" in paths
+        assert "code.py" in paths
+
+    def test_single_file_endpoint_explicit_path_always_returns(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        """Single-file GET /{path} with explicit path inside ignored dir → 200 (no prune)."""
+        workspace = tmp_path / "agent-ih5"
+        workspace.mkdir()
+        nm = workspace / "node_modules"
+        nm.mkdir()
+        (nm / "pkg.js").write_text("module={}", encoding="utf-8")
+
+        client = file_client_factory(tmp_path)
+        resp = client.get("/agents/agent-ih5/files/node_modules/pkg.js")
+        # Explicit path is always served; no pruning on single-file endpoint.
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "module={}"
+
+
+# ---------------------------------------------------------------------------
+# include_hidden on download ZIP
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadIncludeHidden:
+    def test_default_zip_excludes_ignored(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        workspace = tmp_path / "agent-dih1"
+        workspace.mkdir()
+        (workspace / "node_modules").mkdir()
+        (workspace / "node_modules" / "a.js").write_text("x", encoding="utf-8")
+        (workspace / "real.py").write_text("pass", encoding="utf-8")
+
+        client = file_client_factory(tmp_path)
+        resp = client.get("/agents/agent-dih1/files/download")
+        assert resp.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            names = zf.namelist()
+        assert "real.py" in names
+        assert not any("node_modules" in n for n in names)
+
+    def test_include_hidden_zip_includes_ignored(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        workspace = tmp_path / "agent-dih2"
+        workspace.mkdir()
+        (workspace / "node_modules").mkdir()
+        (workspace / "node_modules" / "a.js").write_text("x", encoding="utf-8")
+        (workspace / "real.py").write_text("pass", encoding="utf-8")
+
+        client = file_client_factory(tmp_path)
+        resp = client.get("/agents/agent-dih2/files/download?include_hidden=true")
+        assert resp.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            names = zf.namelist()
+        assert "real.py" in names
+        assert any("node_modules" in n for n in names)
