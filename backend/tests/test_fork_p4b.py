@@ -6,7 +6,7 @@ Covers:
   - _fork_read_source_files: returns [] on runner error (P5a: no DB fallback)
   - _fork_seed_new_agent: POSTs to runner /files/import with correct payload
   - _fork_seed_new_agent: applies AGENT.md / MEMORY.md transformations
-  - list_files_with_content repo method: NOT removed (still accessible, P5b drops it)
+  - list_files_with_content repo method: REMOVED in P5b (V64 drops agent_files table)
 """
 
 from __future__ import annotations
@@ -394,16 +394,17 @@ async def test_fork_seed_handles_none_content(service_factory):
 
 
 # ---------------------------------------------------------------------------
-# list_files_with_content NOT removed (P5 will drop it)
+# list_files_with_content removed in P5b (V64 drops agent_files table)
 # ---------------------------------------------------------------------------
 
 
-def test_list_files_with_content_repo_method_still_exists():
-    """HostedAgentRepository.list_files_with_content must NOT be removed.
+def test_list_files_with_content_repo_method_removed():
+    """HostedAgentRepository.list_files_with_content must be absent in P5b+.
 
-    P4b DB fallback path relies on this method. P4c/P5 will remove it.
+    The agent_files table was dropped in V64. Runner workspace is the sole
+    source of truth. This gate prevents re-introducing a DB fallback path.
     """
-    assert hasattr(HostedAgentRepository, "list_files_with_content"), (
-        "list_files_with_content was removed from HostedAgentRepository — "
-        "P4b DB fallback requires it until P4c/P5"
+    assert not hasattr(HostedAgentRepository, "list_files_with_content"), (
+        "list_files_with_content still exists on HostedAgentRepository — "
+        "it must be removed: agent_files table is gone (V64, P5b)"
     )

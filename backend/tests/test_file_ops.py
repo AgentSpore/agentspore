@@ -75,22 +75,9 @@ CREATE TABLE IF NOT EXISTS hosted_agents (
     session_history JSONB,
     created_at TIMESTAMPTZ DEFAULT now()
 );
-
-CREATE TABLE IF NOT EXISTS agent_files (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    hosted_agent_id UUID NOT NULL REFERENCES hosted_agents(id) ON DELETE CASCADE,
-    file_path VARCHAR(500) NOT NULL,
-    file_type VARCHAR(20) NOT NULL DEFAULT 'text',
-    content TEXT,
-    size_bytes INTEGER NOT NULL DEFAULT 0,
-    version INTEGER NOT NULL DEFAULT 1,
-    truncated BOOLEAN NOT NULL DEFAULT FALSE,
-    is_binary BOOLEAN NOT NULL DEFAULT FALSE,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_agent_file UNIQUE (hosted_agent_id, file_path)
-);
 """
+# Note: agent_files table dropped in V64 (P5b live-FS epic).
+# Runner workspace is the sole source of truth for files.
 
 
 @pytest.fixture(scope="module")
@@ -113,7 +100,7 @@ async def db_session(pg_container):
         yield session
     # Truncate so each test sees a clean DB without dropping the schema
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE agent_files, hosted_agents, agents CASCADE"))
+        await conn.execute(text("TRUNCATE hosted_agents, agents CASCADE"))
     await engine.dispose()
 
 
@@ -192,9 +179,7 @@ async def test_write_file_pushes_to_runner_disk(db_session, monkeypatch):
     assert sent["url"] == f"http://runner.test/agents/{hosted_id}/files"
     assert sent["json"]["file_path"] == "AGENT.md"
     assert sent["json"]["content"] == "hello world"
-    # P5a: no DB write — file must NOT appear in agent_files table
-    row = await repo.get_file(hosted_id, "AGENT.md")
-    assert row is None, "P5a: write_file must not upsert to DB"
+    # P5b: agent_files table dropped — runner is sole write target
     assert result["version"] == "sha000000001"
 
 
@@ -222,9 +207,7 @@ async def test_write_file_bumps_version(db_session, monkeypatch):
     await svc.write_file(hosted_id, owner_id, "x.md", "v2")
     result = await svc.write_file(hosted_id, owner_id, "x.md", "v3")
 
-    # P5a: no DB rows — runner is sole write target
-    row = await repo.get_file(hosted_id, "x.md")
-    assert row is None, "P5a: write_file must not upsert to DB"
+    # P5b: agent_files table dropped — runner is sole write target
     assert result["version"] == "sha000000001"
 
 
@@ -323,9 +306,7 @@ async def test_write_file_no_db_row_after_write(db_session, monkeypatch):
 
     await svc.write_file(hosted_id, owner_id, "keep.md", "k")
     await svc.write_file(hosted_id, owner_id, "also-keep.md", "a")
-
-    rows = await repo.list_files(hosted_id)
-    assert rows == [], "P5a: write_file must not persist rows to agent_files"
+    # P5b: agent_files table dropped — no DB assertion needed, runner is sole target
 
 
 @pytest.mark.asyncio
@@ -350,8 +331,7 @@ async def test_batch_write_no_db_rows(db_session, monkeypatch):
     written, failed = await svc.write_files_batch(hosted_id, owner_id, items)
 
     assert len(failed) == 0
-    rows = await repo.list_files(hosted_id)
-    assert rows == [], "P5a: write_files_batch must not persist rows to agent_files"
+    # P5b: agent_files table dropped — no DB assertion needed
 
 
 @pytest.mark.asyncio
@@ -426,9 +406,7 @@ async def test_delete_file_runner_only_no_db_call(db_session, monkeypatch):
         "notes/test.md" in url or "notes%2Ftest.md" in url
         for url in runner_url_called
     )
-    # DB table must be empty — no rows were inserted or deleted
-    rows = await repo.list_files(hosted_id)
-    assert rows == [], "P5a: delete_file must not touch agent_files DB"
+    # P5b: agent_files table dropped — runner is sole delete target
 
 
 @pytest.mark.asyncio
@@ -481,9 +459,7 @@ async def test_batch_write_runner_only(db_session, monkeypatch):
     assert len(failed) == 0
     written_paths = {r["file_path"] for r in written}
     assert written_paths == {"a.md", "b.md", "c.md"}
-
-    rows = await repo.list_files(hosted_id)
-    assert rows == [], "P5a: write_files_batch must not persist rows to agent_files"
+    # P5b: agent_files table dropped — no DB assertion needed
 
 
 @pytest.mark.asyncio
