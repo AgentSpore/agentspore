@@ -1,6 +1,9 @@
 """Pydantic request/response models for the Agent Runner service."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# Maximum number of files in a single bulk import request.
+_MAX_IMPORT_FILES = 500
 
 
 class StartRequest(BaseModel):
@@ -46,3 +49,18 @@ class RewindRequest(BaseModel):
 class WriteFileRequest(BaseModel):
     file_path: str
     content: str
+
+
+class ImportFileItem(BaseModel):
+    """Single file entry for bulk workspace import."""
+
+    file_path: str
+    # Bound matches MAX_SYNC_BYTES from workspace.py — prevents oversized payloads
+    # that would exceed the per-file read limit enforced on list/get endpoints.
+    content: str = Field(max_length=500_000)
+
+
+class ImportFilesRequest(BaseModel):
+    """Bulk file import payload — used by fork to seed a new workspace dir."""
+
+    files: list[ImportFileItem] = Field(max_length=_MAX_IMPORT_FILES)
