@@ -306,10 +306,12 @@ class CronSchedulerTask(ScheduledTask):
 
     async def run_once(self) -> None:
         async with async_session_maker() as db:
-            from app.repositories.hosted_agent_repo import HostedAgentRepository
-            from app.services.agent_service import AgentService
-            from app.services.hosted_agent_service import HostedAgentService
-            from app.services.openrouter_service import OpenRouterService
+            # Local import: circular dep — hosted_agent_service imports connection_manager
+            # at module top, so the service layer can't be imported at this core module's top.
+            from app.repositories.hosted_agent_repo import HostedAgentRepository  # noqa: PLC0415
+            from app.services.agent_service import AgentService  # noqa: PLC0415
+            from app.services.hosted_agent_service import HostedAgentService  # noqa: PLC0415
+            from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
 
             repo = HostedAgentRepository(db)
             agent_svc = AgentService(db)
