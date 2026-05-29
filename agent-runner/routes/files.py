@@ -4,6 +4,7 @@ import asyncio
 import io
 import os
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
@@ -90,7 +91,8 @@ async def list_workspace_files(
     ):
         path = Path(abs_path)
         try:
-            stat_size = path.stat().st_size
+            stat = path.stat()
+            stat_size = stat.st_size
         except OSError:
             continue
         truncated = stat_size > MAX_SYNC_BYTES
@@ -107,6 +109,7 @@ async def list_workspace_files(
             version = _file_version(path)
         except OSError:
             version = None
+        modified_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
         files.append(
             {
                 "file_path": rel,
@@ -115,6 +118,7 @@ async def list_workspace_files(
                 "truncated": truncated,
                 "is_binary": is_binary,
                 "version": version,
+                "modified_at": modified_at,
             }
         )
     return {"files": files}
@@ -190,7 +194,8 @@ async def get_workspace_file(hosted_id: str, file_path: str):
         raise HTTPException(404, "File not found")
 
     try:
-        stat_size = target.stat().st_size
+        stat = target.stat()
+        stat_size = stat.st_size
     except OSError as exc:
         raise HTTPException(500, f"Cannot stat file: {exc}") from exc
 
@@ -206,6 +211,7 @@ async def get_workspace_file(hosted_id: str, file_path: str):
             content = None
 
     version = _file_version(target)
+    modified_at = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
 
     return {
         "file_path": file_path,
@@ -214,6 +220,7 @@ async def get_workspace_file(hosted_id: str, file_path: str):
         "truncated": truncated,
         "is_binary": is_binary,
         "version": version,
+        "modified_at": modified_at,
     }
 
 

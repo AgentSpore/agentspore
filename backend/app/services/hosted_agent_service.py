@@ -10,28 +10,27 @@ from pathlib import Path
 from typing import AsyncGenerator
 from urllib.parse import quote
 
-from croniter import croniter
-
 import httpx
 import logfire
+from croniter import croniter
 from fastapi import Depends, HTTPException
-from sqlalchemy.exc import IntegrityError
+from loguru import logger
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+
 from app.core.config import get_settings
 from app.core.database import async_session_maker
+from app.observability import use_agent_context
 from app.repositories.hosted_agent_repo import (
     HostedAgentRepository,
     StaleVersionError,
     get_hosted_agent_repo,
 )
+from app.schemas.hosted_agents import DEFAULT_RUNTIME
 from app.services.agent_service import AgentService, get_agent_service
+from app.services.connection_manager import deliver_user_event
 from app.services.openrouter_service import OpenRouterService, get_openrouter_service
 from app.services.openviking_service import OpenVikingService, get_openviking_service
-from app.schemas.hosted_agents import DEFAULT_RUNTIME
-from app.services.connection_manager import deliver_user_event
-from app.observability import use_agent_context
-
-from loguru import logger
 
 
 class HostedAgentRunnerUnavailable(Exception):
@@ -564,7 +563,9 @@ class HostedAgentService:
         # ── Auto-start failure guard (Redis TTL counter) ─────────────────────
         redis_key = f"hosted:autostart_failures:{hosted_id}"
         try:
-            from app.core.redis_client import get_redis  # top-level in redis module, ok to import here
+            from app.core.redis_client import (
+                get_redis,  # top-level in redis module, ok to import here
+            )
             redis = await get_redis()
             raw = await redis.get(redis_key)
             failure_count = int(raw) if raw else 0
@@ -1051,35 +1052,90 @@ class HostedAgentService:
         file_path: str,
         content: str,
         file_type: str = "text",
-        if_match_version: int | None = None,
+        if_match_version: str | None = None,
     ) -> dict:
-        """Write or update a file in the agent's workspace.
+        """Write or update a file (runner-first, DB dual-write).
 
-        Persists the row in DB (bumping ``version``) and pushes the same
-        content to the runner's on-disk workspace so the running agent
-        sees the edit immediately. Emits a `hosted_agent_file` WS event
-        on success so other browser tabs (and the file panel itself)
-        update without polling.
+        Flow:
+          1. PUT to runner with ``If-Match: <sha>`` when provided.
+             Runner validates sha vs on-disk sha and either writes or 412s.
+          2. DB upsert (blind, no sha check) — keeps fork/start seed fresh.
+          3. Return dict with ``version`` = sha returned by runner.
 
-        ``if_match_version``: optional ETag. When the row exists and its
-        version differs, ``StaleVersionError`` propagates up to the API
-        layer where it becomes a 412 with the current content payload.
+        Args:
+            if_match_version: Opaque sha string from the previous read ETag.
+                Triggers optimistic-lock on the runner. ``None`` = unconditional.
+
+        Raises:
+            StaleVersionError: 412 from runner — carries ``current_version``
+                (sha) and ``current_content`` for the conflict modal.
+            HTTPException(503): runner unreachable or returns non-412 error.
         """
         await self.get_hosted_agent(hosted_id, user_id)
         _validate_file_path(file_path)
+
+        new_sha: str = ""
+        if self.runner_url:
+            url = f"{self.runner_url}/agents/{hosted_id}/files"
+            headers = dict(self._runner_headers())
+            if if_match_version:
+                headers["If-Match"] = if_match_version
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.put(
+                        url,
+                        json={"file_path": file_path, "content": content},
+                        headers=headers,
+                    )
+            except httpx.RequestError as exc:
+                logger.warning(
+                    "Runner write_file unavailable for {}/{}: {}", hosted_id, file_path, exc
+                )
+                raise HTTPException(503, "Agent runner unavailable") from exc
+
+            if resp.status_code == 412:
+                detail = resp.json() if resp.content else {}
+                # runner returns detail as nested dict under "detail" key
+                inner = detail.get("detail", detail) if isinstance(detail, dict) else {}
+                if isinstance(inner, dict):
+                    cv = inner.get("current_version", "")
+                    cc = inner.get("current_content")
+                else:
+                    cv = ""
+                    cc = None
+                raise StaleVersionError(
+                    current_version=str(cv),
+                    current_content=cc,
+                )
+            if resp.status_code not in (200, 201):
+                logger.warning(
+                    "Runner write_file {} returned {}", file_path, resp.status_code
+                )
+                raise HTTPException(503, "Agent runner error")
+
+            runner_data = resp.json() if resp.content else {}
+            new_sha = runner_data.get("version", "") or ""
+
+        # Transitional dual-write: runner authoritative, DB mirror best-effort
+        # for fork/start (removed in P5).
+        db_version = 1
         try:
-            row = await self.repo.upsert_file(
-                hosted_id, file_path, content, file_type,
-                if_match_version=if_match_version,
+            row = await self.repo.upsert_file(hosted_id, file_path, content, file_type)
+            db_version = int(row.get("version") or 1)
+        except Exception as exc:
+            logger.error(
+                "DB mirror upsert failed after runner write {} {}: {}"
+                " — runner is source of truth, DB stale until next sync",
+                hosted_id,
+                file_path,
+                exc,
             )
-        except StaleVersionError:
-            raise
-        # Push to runner disk so a running agent sees the new content
-        # without needing a restart. Failure here is non-fatal — the DB
-        # row is the source of truth, and the runner pulls fresh files
-        # on next start.
-        await self._push_file_to_runner(hosted_id, file_path, content)
-        action = "file_updated" if (row.get("version") or 1) > 1 else "file_created"
+            row = {"file_path": file_path, "content": content}
+
+        action = "file_updated" if db_version > 1 else "file_created"
+        # Overlay sha version so the response contract is sha end-to-end.
+        row = dict(row)
+        row["version"] = new_sha
         await self._emit_file_event(hosted_id, user_id, action, row)
         return row
 
@@ -1100,61 +1156,154 @@ class HostedAgentService:
         for item in items:
             _validate_file_path(item["file_path"])
 
-        # We rely on the repository's per-call commit; for the atomic
-        # promise we collect rows first, and on failure undo by deleting
-        # rows we created in this call. Cleaner than reaching into the
-        # session because upsert_file already decides created-vs-updated.
-        written_rows: list[dict] = []
-        try:
-            for item in items:
-                row = await self.repo.upsert_file(
-                    hosted_id,
-                    item["file_path"],
-                    item["content"],
-                    item.get("file_type") or _file_type_for(item["file_path"]),
-                )
-                written_rows.append(row)
-        except Exception as exc:
-            # Best-effort rollback of rows that committed before the
-            # failure. We can't truly transaction this across N upserts
-            # given the service's commit-per-call repo, so we delete
-            # paths whose version is exactly 1 (i.e. just created).
-            for row in written_rows:
-                if (row.get("version") or 1) == 1:
-                    try:
-                        await self.repo.delete_file(hosted_id, row["file_path"])
-                    except Exception:
-                        pass
-            logger.warning("Batch upload rolled back for {}: {}", hosted_id, exc)
-            raise HTTPException(400, f"Batch failed: {exc}")
-
+        # Phase 1: push all files to runner concurrently (unconditional, no
+        # If-Match for batch). Collect (file_path → new_sha) for response.
         push_tasks = [
             self._push_file_to_runner(hosted_id, item["file_path"], item["content"])
             for item in items
         ]
         push_results = await asyncio.gather(*push_tasks, return_exceptions=True)
         failed: list[dict] = []
+        sha_map: dict[str, str] = {}
         for item, result in zip(items, push_results):
             if isinstance(result, Exception):
                 failed.append({"file_path": item["file_path"], "error": str(result)[:200]})
+            elif isinstance(result, str):
+                sha_map[item["file_path"]] = result
 
-        for row in written_rows:
-            action = "file_updated" if (row.get("version") or 1) > 1 else "file_created"
+        # Phase 2: DB upsert for all non-failed files (dual-write for fork/start).
+        # Transitional dual-write: runner authoritative, DB mirror best-effort
+        # for fork/start (removed in P5). No rollback-delete — runner write is
+        # durable; partial DB rows are harmless and self-heal on next sync.
+        failed_paths = {f["file_path"] for f in failed}
+        written_rows: list[dict] = []
+        db_versions: list[int] = []
+        for item in items:
+            if item["file_path"] in failed_paths:
+                continue
+            db_ver = 1
+            try:
+                row = await self.repo.upsert_file(
+                    hosted_id,
+                    item["file_path"],
+                    item["content"],
+                    item.get("file_type") or _file_type_for(item["file_path"]),
+                )
+                db_ver = int(row.get("version") or 1)
+            except Exception as exc:
+                logger.error(
+                    "DB mirror upsert failed after runner write {} {}: {}"
+                    " — runner is source of truth, DB stale until next sync",
+                    hosted_id,
+                    item["file_path"],
+                    exc,
+                )
+                row = {"file_path": item["file_path"], "content": item["content"]}
+            db_versions.append(db_ver)
+            row = dict(row)
+            row["version"] = sha_map.get(item["file_path"], "")
+            written_rows.append(row)
+
+        for row, db_ver in zip(written_rows, db_versions):
+            action = "file_updated" if db_ver > 1 else "file_created"
             await self._emit_file_event(hosted_id, user_id, action, row)
         return written_rows, failed
 
-    async def read_file(self, hosted_id: str, user_id: str, file_path: str) -> dict:
-        """Read a file from the agent's workspace."""
-        await self.get_hosted_agent(hosted_id, user_id)
-        f = await self.repo.get_file(hosted_id, file_path)
-        if not f:
-            raise HTTPException(404, "File not found")
-        return f
+    def _runner_headers(self) -> dict:
+        """Build X-Runner-Key auth headers for outbound runner requests."""
+        if self.settings.agent_runner_key:
+            return {"X-Runner-Key": self.settings.agent_runner_key}
+        return {}
 
-    async def list_files(self, hosted_id: str, user_id: str) -> list[dict]:
-        """List all files in the agent's workspace."""
+    @staticmethod
+    def _runner_file_to_dict(entry: dict, fallback_id: str | None = None) -> dict:
+        """Map a runner file entry to a shape compatible with ``_file_response``.
+
+        Runner entries: file_path, content, size_bytes, truncated, is_binary,
+        version (12-char sha hex string), modified_at (ISO8601 mtime).
+
+        ``version`` is the raw sha from the runner — treated as an opaque
+        string by the frontend; the DB integer version is no longer in the
+        read contract.
+        """
+        return {
+            "id": fallback_id or "",
+            "file_path": entry["file_path"],
+            "file_type": _file_type_for(entry["file_path"]),
+            "content": entry.get("content"),
+            "size_bytes": entry.get("size_bytes", 0),
+            "updated_at": entry.get("modified_at", ""),
+            "version": entry.get("version") or "",
+            "truncated": entry.get("truncated", False),
+            "is_binary": entry.get("is_binary", False),
+        }
+
+    async def read_file(
+        self, hosted_id: str, user_id: str, file_path: str
+    ) -> dict:
+        """Read a file from the agent's workspace (runner-authoritative).
+
+        Raises:
+            503: runner unreachable — DB is no longer authoritative for reads.
+            404: file does not exist on runner disk.
+        """
         await self.get_hosted_agent(hosted_id, user_id)
-        return await self.repo.list_files(hosted_id)
+        if not self.runner_url:
+            raise HTTPException(503, "Agent runner not configured")
+        url = (
+            f"{self.runner_url}/agents/{hosted_id}/files/"
+            f"{quote(file_path, safe='/')}"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=self._runner_headers())
+        except Exception as exc:
+            logger.warning("Runner read_file unavailable for {}: {}", file_path, exc)
+            raise HTTPException(503, "Agent runner unavailable") from exc
+        if resp.status_code == 404:
+            raise HTTPException(404, "File not found")
+        if resp.status_code != 200:
+            logger.warning(
+                "Runner read_file {} returned {}", file_path, resp.status_code
+            )
+            raise HTTPException(503, "Agent runner error")
+        entry = resp.json()
+        return self._runner_file_to_dict(entry)
+
+    async def list_files(
+        self, hosted_id: str, user_id: str, *, include_hidden: bool = False
+    ) -> list[dict]:
+        """List files in the agent's workspace (runner-authoritative).
+
+        Args:
+            include_hidden: When True, include IGNORED_DIRS subtrees
+                (venv/, node_modules/, etc.).
+
+        Raises:
+            503: runner unreachable.
+        """
+        await self.get_hosted_agent(hosted_id, user_id)
+        if not self.runner_url:
+            raise HTTPException(503, "Agent runner not configured")
+        params = {"include_hidden": "true"} if include_hidden else {}
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    f"{self.runner_url}/agents/{hosted_id}/files",
+                    headers=self._runner_headers(),
+                    params=params,
+                )
+        except Exception as exc:
+            logger.warning("Runner list_files unavailable for {}: {}", hosted_id, exc)
+            raise HTTPException(503, "Agent runner unavailable") from exc
+        if resp.status_code != 200:
+            logger.warning(
+                "Runner list_files {} returned {}", hosted_id, resp.status_code
+            )
+            raise HTTPException(503, "Agent runner error")
+        data = resp.json()
+        files = data.get("files", []) if isinstance(data, dict) else data
+        return [self._runner_file_to_dict(f) for f in files]
 
     async def delete_file(self, hosted_id: str, user_id: str, file_path: str) -> None:
         """Delete a file from the agent's workspace (DB + runner disk)."""
@@ -1164,40 +1313,47 @@ class HostedAgentService:
         if not deleted:
             raise HTTPException(404, "File not found")
         if self.runner_url:
-            rh = {"X-Runner-Key": self.settings.agent_runner_key} if self.settings.agent_runner_key else {}
             # quote() is critical: spaces / unicode / `#` would otherwise
             # be silently swallowed by httpx URL parsing or rejected by
             # the runner. ``safe='/'`` keeps directory separators intact.
             url = f"{self.runner_url}/agents/{hosted_id}/files/{quote(file_path, safe='/')}"
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    await client.delete(url, headers=rh)
+                    await client.delete(url, headers=self._runner_headers())
             except Exception as exc:
                 logger.debug("Runner delete fallthrough for {}: {}", file_path, exc)
         await self._emit_file_event(
             hosted_id, user_id, "file_deleted", {"file_path": file_path}
         )
 
-    async def _push_file_to_runner(self, hosted_id: str, file_path: str, content: str) -> None:
+    async def _push_file_to_runner(
+        self, hosted_id: str, file_path: str, content: str
+    ) -> str:
         """PUT the file's content onto the runner's on-disk workspace.
 
-        Silent failure — the DB row is authoritative; the next agent
-        start re-seeds the workspace from DB anyway. We log at debug
-        because this fires on every save and a runner restart can drop
-        a few of these without operator concern.
+        Returns the new sha version string from the runner, or empty string on
+        any failure.  Failure is non-fatal for the batch path — the DB row is
+        the fork/start seed; a runner restart re-syncs from DB.
+
+        Returns:
+            sha string (12-char hex) on success, empty string on failure.
         """
         if not self.runner_url:
-            return
-        rh = {"X-Runner-Key": self.settings.agent_runner_key} if self.settings.agent_runner_key else {}
+            return ""
+        rh = self._runner_headers()
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                await client.put(
+                resp = await client.put(
                     f"{self.runner_url}/agents/{hosted_id}/files",
                     json={"file_path": file_path, "content": content},
                     headers=rh,
                 )
+            if resp.status_code in (200, 201):
+                data = resp.json() if resp.content else {}
+                return data.get("version", "") or ""
         except Exception as exc:
             logger.debug("Runner push fallthrough for {}/{}: {}", hosted_id, file_path, exc)
+        return ""
 
     async def _emit_file_event(
         self, hosted_id: str, user_id: str, action: str, row: dict
