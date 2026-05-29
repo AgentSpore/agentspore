@@ -12,7 +12,6 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_backends import RuntimeConfig
 
 from config import get_settings
-from helpers import _extract_response
 from llm_fallback import resolve_model_for_agent
 from pydantic_deep import DeepAgent, DeepAgentDeps, create_deep_agent
 from sandbox import SecureDockerSandbox
@@ -52,6 +51,12 @@ async def start_agent(hosted_id: str, body: StartRequest):
             continue
         file_path = workspace / fp
         if not str(file_path).startswith(str(workspace)):
+            continue
+        # No-clobber: skip files that already exist on the persistent workspace.
+        # Payload carries config seed files only; existing working files (scripts,
+        # data, agent edits) must survive a restart without being overwritten.
+        if file_path.exists():
+            logger.debug("Skipping existing workspace file on restart: {}", fp)
             continue
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(f.get("content", "") or "", encoding="utf-8")
