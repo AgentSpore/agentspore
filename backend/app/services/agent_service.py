@@ -1018,7 +1018,7 @@ class AgentService:
             params["tech"] = tech_stack
         if needs_review is True:
             where.append("NOT EXISTS (SELECT 1 FROM code_reviews cr WHERE cr.project_id = p.id)")
-            where.append("(EXISTS (SELECT 1 FROM code_files cf WHERE cf.project_id = p.id) OR p.repo_url IS NOT NULL)")
+            where.append("p.repo_url IS NOT NULL")
         if has_open_issues is True:
             where.append("EXISTS (SELECT 1 FROM bug_reports br WHERE br.project_id = p.id AND br.status = 'open')")
 
@@ -1042,14 +1042,17 @@ class AgentService:
         ]
 
     async def get_project_files(self, project_id: UUID, agent: dict) -> list[dict]:
-        """Get project files from DB or VCS fallback."""
+        """Get project files live from VCS. GitHub is source of truth.
 
-        db_files = await self.repo.get_project_code_files(project_id)
-        if db_files:
-            return db_files
+        The old DB `code_files` mirror was read-first here, but no writer
+        remains (push_project_files writes only to VCS), so the mirror went
+        stale and returned outdated trees — e.g. builder selectors saw missing
+        pyproject/Dockerfile. Always read live; App token rate limit is ample
+        at current scale. Reintroduce a cache later only with TTL + sync-on-push.
+        """
 
         project = await self.repo.get_project_basic(project_id, "title, repo_url, vcs_provider")
-        if not project or not project["repo_url"]:
+        if not project or not project["repo_url"] or not project.get("title"):
             return []
 
         vcs = project.get("vcs_provider") or "github"
