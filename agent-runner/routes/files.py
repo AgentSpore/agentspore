@@ -1,9 +1,12 @@
-"""Workspace file endpoints: list, write, delete, diff."""
+"""Workspace file endpoints: list, write, delete, diff, download."""
 
 import asyncio
+import io
 import os
+import zipfile
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from config import get_settings
@@ -11,6 +14,7 @@ from schemas import WriteFileRequest
 from workspace import (
     MAX_SYNC_BYTES,
     _NOISE_DIRS,
+    _file_version,
     _run_git,
     _safe_workspace_path,
     _status_label,
@@ -32,6 +36,7 @@ async def list_workspace_files(hosted_id: str):
     Files are streamed back with content when small and decodable; for
     binary or oversize files we send ``content=None`` and a flag so the
     platform side can flag the row in DB instead of silently dropping it.
+    Each file entry includes a ``version`` field (SHA-256[:12] of raw bytes).
     """
     workspace = settings.workspace_root / hosted_id
     if not workspace.exists():
@@ -59,29 +64,161 @@ async def list_workspace_files(hosted_id: str):
                 is_binary = True
             except PermissionError:
                 content = None
-        files.append({
-            "file_path": rel,
-            "content": content,
-            "size_bytes": stat_size,
-            "truncated": truncated,
-            "is_binary": is_binary,
-        })
+        try:
+            version = _file_version(path)
+        except OSError:
+            version = None
+        files.append(
+            {
+                "file_path": rel,
+                "content": content,
+                "size_bytes": stat_size,
+                "truncated": truncated,
+                "is_binary": is_binary,
+                "version": version,
+            }
+        )
     return {"files": files}
 
 
+# NOTE: /files/download must be registered BEFORE /files/{file_path:path}
+# so that the literal "download" segment is not swallowed by the path wildcard.
+@router.get("/agents/{hosted_id}/files/download")
+async def download_workspace_zip(hosted_id: str):
+    """Stream the agent workspace as a ZIP archive.
+
+    All files except ``_NOISE_DIRS`` subtrees are included — binary files
+    are included as-is (no ``MAX_SYNC_BYTES`` cap here, this is raw export).
+    ZIP built in executor thread to avoid blocking the event loop; full archive
+    held in memory (workspaces are small — code, not data).
+    """
+    workspace = settings.workspace_root / hosted_id
+    if not workspace.exists():
+        raise HTTPException(404, "Agent workspace not found")
+
+    def _build_zip() -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(workspace.rglob("*")):
+                if not path.is_file():
+                    continue
+                if _NOISE_DIRS.intersection(path.relative_to(workspace).parts):
+                    continue
+                rel = str(path.relative_to(workspace))
+                try:
+                    zf.write(path, arcname=rel)
+                except OSError as exc:
+                    logger.warning("download_zip: skipping {} — {}", rel, exc)
+        return buf.getvalue()
+
+    # Build in a thread to avoid blocking the event loop on large workspaces.
+    data = await asyncio.get_event_loop().run_in_executor(None, _build_zip)
+
+    filename = f"workspace-{hosted_id}.zip"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/agents/{hosted_id}/files/{file_path:path}")
+async def get_workspace_file(hosted_id: str, file_path: str):
+    """Return metadata and (when feasible) content of a single workspace file.
+
+    Returns:
+        JSON with ``file_path``, ``content`` (``None`` for binary/oversize),
+        ``size_bytes``, ``truncated``, ``is_binary``, ``version``.
+
+    Raises:
+        404 if the file does not exist.
+        400/403 for invalid/traversal paths (raised by ``_safe_workspace_path``).
+    """
+    workspace = settings.workspace_root / hosted_id
+    if not workspace.exists():
+        raise HTTPException(404, "Agent workspace not found")
+
+    target = _safe_workspace_path(workspace, file_path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(404, "File not found")
+
+    try:
+        stat_size = target.stat().st_size
+    except OSError as exc:
+        raise HTTPException(500, f"Cannot stat file: {exc}") from exc
+
+    truncated = stat_size > MAX_SYNC_BYTES
+    is_binary = False
+    content: str | None = None
+    if not truncated:
+        try:
+            content = target.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            is_binary = True
+        except PermissionError:
+            content = None
+
+    version = _file_version(target)
+
+    return {
+        "file_path": file_path,
+        "content": content,
+        "size_bytes": stat_size,
+        "truncated": truncated,
+        "is_binary": is_binary,
+        "version": version,
+    }
+
+
 @router.put("/agents/{hosted_id}/files")
-async def write_workspace_file(hosted_id: str, body: WriteFileRequest):
+async def write_workspace_file(
+    hosted_id: str,
+    body: WriteFileRequest,
+    if_match: str | None = Header(default=None, alias="If-Match"),
+):
     """Write or update a file on the agent's workspace disk.
 
     Mirrors what ``write_file`` in pydantic-deep does internally so a UI
     edit becomes visible to the running agent without restart. The file
     is also re-added to the git workspace so ``/diff`` reflects it.
+
+    Optimistic concurrency (If-Match header):
+        - If ``If-Match`` is provided and the file already exists, the
+          current version is compared.  A mismatch returns **412** with
+          ``current_version`` and ``current_content`` (``None`` for
+          binary/oversize) so the caller can resolve the conflict.
+        - If ``If-Match`` is absent the write proceeds unconditionally
+          (backward-compatible behaviour).
+
+    Returns:
+        ``{status, file_path, size_bytes, version}`` on success.
     """
     workspace = settings.workspace_root / hosted_id
     if not workspace.exists():
         raise HTTPException(404, "Agent workspace not found")
 
     target = _safe_workspace_path(workspace, body.file_path)
+
+    # Optimistic lock: check current version before any quota/write logic.
+    if if_match is not None and target.exists() and target.is_file():
+        current_version = _file_version(target)
+        if current_version != if_match:
+            # Read current content for conflict resolution (same rules as list).
+            current_size = target.stat().st_size
+            current_content: str | None = None
+            if current_size <= MAX_SYNC_BYTES:
+                try:
+                    current_content = target.read_text(encoding="utf-8")
+                except (UnicodeDecodeError, PermissionError):
+                    current_content = None
+            raise HTTPException(
+                412,
+                detail={
+                    "message": "Precondition Failed: version mismatch",
+                    "current_version": current_version,
+                    "current_content": current_content,
+                },
+            )
 
     # Quota enforcement: infrastructure paths (checkpoints/) bypass the
     # hard-limit block; all other agent-controlled writes are checked.
@@ -112,10 +249,12 @@ async def write_workspace_file(hosted_id: str, body: WriteFileRequest):
     except OSError:
         pass
 
+    new_version = _file_version(target)
     return {
         "status": "written",
         "file_path": body.file_path,
         "size_bytes": len(body.content.encode("utf-8")),
+        "version": new_version,
     }
 
 
@@ -143,7 +282,9 @@ async def get_workspace_diff(hosted_id: str):
     if not workspace.exists() or not (workspace / ".git").exists():
         return {"files": [], "git_available": False}
 
-    status = _run_git(workspace, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    status = _run_git(
+        workspace, "status", "--porcelain=v1", "-z", "--untracked-files=all"
+    )
     if status.returncode != 0:
         logger.warning("git status failed for {}: {}", hosted_id, status.stderr.strip())
         return {"files": [], "git_available": False}
@@ -165,16 +306,20 @@ async def get_workspace_diff(hosted_id: str):
                 content = full.read_text(encoding="utf-8")
             except (UnicodeDecodeError, PermissionError, FileNotFoundError):
                 content = ""
-            files.append({
-                "path": path,
-                "status": "added",
-                "patch": _synthetic_add_patch(path, content),
-            })
+            files.append(
+                {
+                    "path": path,
+                    "status": "added",
+                    "patch": _synthetic_add_patch(path, content),
+                }
+            )
             continue
         patch = _run_git(workspace, "diff", "HEAD", "--", path)
-        files.append({
-            "path": path,
-            "status": _status_label(state),
-            "patch": patch.stdout if patch.returncode == 0 else "",
-        })
+        files.append(
+            {
+                "path": path,
+                "status": _status_label(state),
+                "patch": patch.stdout if patch.returncode == 0 else "",
+            }
+        )
     return {"files": files, "git_available": True}

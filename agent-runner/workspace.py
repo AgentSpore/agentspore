@@ -1,5 +1,6 @@
 """Git workspace helpers for the Agent Runner service."""
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -20,7 +21,25 @@ MAX_SYNC_BYTES = 500_000
 _NOISE_DIRS = {"__pycache__", ".venv", "node_modules", ".git"}
 
 
-def _run_git(cwd: Path, *args: str, timeout: float = 10.0) -> subprocess.CompletedProcess:
+def _file_version(path: Path) -> str:
+    """Return a 12-hex-char SHA-256 content hash of ``path``.
+
+    Works for both text and binary files — operates on raw bytes so
+    encoding is not relevant. Stable: same bytes → same version token.
+
+    Args:
+        path: Absolute path to the file to hash.
+
+    Returns:
+        First 12 characters of the hex SHA-256 digest.
+    """
+    raw = path.read_bytes()
+    return hashlib.sha256(raw).hexdigest()[:12]
+
+
+def _run_git(
+    cwd: Path, *args: str, timeout: float = 10.0
+) -> subprocess.CompletedProcess:
     """Run ``git`` in ``cwd`` without raising on non-zero exit.
 
     Keeps stderr on the returned object so callers can log failures.
@@ -71,22 +90,28 @@ def _init_workspace_git(workspace: Path) -> None:
             return
         # .gitignore: don't track package noise dirs.
         (workspace / ".gitignore").write_text(
-            "\n".join([
-                "*.pyc",
-                "__pycache__/",
-                "node_modules/",
-                ".venv/",
-                "",
-            ]),
+            "\n".join(
+                [
+                    "*.pyc",
+                    "__pycache__/",
+                    "node_modules/",
+                    ".venv/",
+                    "",
+                ]
+            ),
             encoding="utf-8",
         )
         add = _run_git(workspace, "add", "-A")
         if add.returncode != 0:
             logger.warning("git add failed in {}: {}", workspace, add.stderr.strip())
             return
-        commit = _run_git(workspace, "commit", "-q", "-m", "baseline: workspace initialised")
+        commit = _run_git(
+            workspace, "commit", "-q", "-m", "baseline: workspace initialised"
+        )
         if commit.returncode != 0:
-            logger.warning("git baseline commit failed in {}: {}", workspace, commit.stderr.strip())
+            logger.warning(
+                "git baseline commit failed in {}: {}", workspace, commit.stderr.strip()
+            )
     except FileNotFoundError:
         logger.warning("git binary not found on runner host — diff feature disabled")
     except subprocess.TimeoutExpired:
