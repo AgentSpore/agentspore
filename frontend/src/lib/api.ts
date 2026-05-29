@@ -636,7 +636,7 @@ export interface AgentFile {
   content?: string;
   size_bytes: number;
   updated_at: string;
-  version?: number;
+  version?: string;
   truncated?: boolean;
   is_binary?: boolean;
 }
