@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import io
+import secrets
 import sys
 import zipfile
 from pathlib import Path
@@ -23,7 +24,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import routes.files as files_mod
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 # Bootstrap: make the runner source importable.
@@ -577,3 +579,147 @@ class TestDownloadIncludeHidden:
             names = zf.namelist()
         assert "real.py" in names
         assert any("node_modules" in n for n in names)
+
+
+# ---------------------------------------------------------------------------
+# POST /agents/{id}/files/import  (bulk workspace seed)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def import_auth_client_factory():
+    """Return a factory building a TestClient with full auth middleware."""
+
+    def _build(workspace_root: Path, runner_key: str = "import-test-key") -> TestClient:
+        fresh_settings = RunnerSettings(
+            runner_key=runner_key,
+            workspace_root=workspace_root,
+        )
+        importlib.reload(files_mod)
+        files_mod.settings = fresh_settings
+        quota_mock = MagicMock()
+        quota_mock.is_checkpoint_path.return_value = False
+        quota_mock.check_quota_async = AsyncMock(return_value=(0.0, True))
+        quota_mock.get_limits.return_value = (150, 200)
+        quota_mock.handle_soft_breach = AsyncMock()
+        quota_mock.invalidate.return_value = None
+        files_mod.disk_quota = quota_mock
+
+        app_with_auth = FastAPI()
+
+        @app_with_auth.middleware("http")
+        async def _auth_middleware(request: Request, call_next):
+            key = request.headers.get("X-Runner-Key", "")
+            if not key or not secrets.compare_digest(key, runner_key):
+                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+            return await call_next(request)
+
+        app_with_auth.include_router(files_mod.router)
+        return TestClient(app_with_auth, raise_server_exceptions=False)
+
+    return _build
+
+
+class TestImportWorkspaceFiles:
+    """POST /agents/{id}/files/import — cold dir creation, path-traversal guard, auth."""
+
+    def test_cold_import_creates_dir_and_writes_files(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        """Import into non-existent workspace dir — dir and files created."""
+        # Do NOT pre-create workspace dir to exercise cold-path mkdir.
+        client = file_client_factory(tmp_path)
+        resp = client.post(
+            "/agents/agent-import1/files/import",
+            json={
+                "files": [
+                    {"file_path": "AGENT.md", "content": "System prompt"},
+                    {"file_path": ".deep/memory/MEMORY.md", "content": "# Memory"},
+                    {"file_path": "subdir/config.yaml", "content": "key: value"},
+                ]
+            },
+            headers={"X-Runner-Key": "test-key"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"imported": 3}
+
+        workspace = tmp_path / "agent-import1"
+        assert (workspace / "AGENT.md").read_text(encoding="utf-8") == "System prompt"
+        assert (workspace / ".deep" / "memory" / "MEMORY.md").read_text(
+            encoding="utf-8"
+        ) == "# Memory"
+        assert (workspace / "subdir" / "config.yaml").read_text(
+            encoding="utf-8"
+        ) == "key: value"
+
+    def test_import_overwrites_existing_file(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        """Import into existing workspace overwrites without conflict."""
+        workspace = tmp_path / "agent-import2"
+        workspace.mkdir()
+        (workspace / "AGENT.md").write_text("old content", encoding="utf-8")
+
+        client = file_client_factory(tmp_path)
+        resp = client.post(
+            "/agents/agent-import2/files/import",
+            json={"files": [{"file_path": "AGENT.md", "content": "new content"}]},
+            headers={"X-Runner-Key": "test-key"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["imported"] == 1
+        assert (workspace / "AGENT.md").read_text(encoding="utf-8") == "new content"
+
+    def test_import_empty_list_returns_zero(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        """Empty files list → imported: 0, no error."""
+        client = file_client_factory(tmp_path)
+        resp = client.post(
+            "/agents/agent-import3/files/import",
+            json={"files": []},
+            headers={"X-Runner-Key": "test-key"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"imported": 0}
+
+    def test_path_traversal_rejected(
+        self, tmp_path: Path, file_client_factory
+    ) -> None:
+        """Path with ``..`` segment must be rejected with 400/403."""
+        client = file_client_factory(tmp_path)
+        resp = client.post(
+            "/agents/agent-import-trav/files/import",
+            json={"files": [{"file_path": "../escape.txt", "content": "pwned"}]},
+            headers={"X-Runner-Key": "test-key"},
+        )
+        assert resp.status_code in (400, 403)
+
+    def test_import_requires_valid_runner_key(
+        self, tmp_path: Path, import_auth_client_factory
+    ) -> None:
+        """Missing or wrong X-Runner-Key rejected; correct key succeeds."""
+        client = import_auth_client_factory(tmp_path, runner_key="import-test-key")
+
+        # No key → 401
+        resp = client.post(
+            "/agents/agent-auth-check/files/import",
+            json={"files": [{"file_path": "x.txt", "content": "hi"}]},
+        )
+        assert resp.status_code == 401
+
+        # Wrong key → 401
+        resp = client.post(
+            "/agents/agent-auth-check/files/import",
+            json={"files": [{"file_path": "x.txt", "content": "hi"}]},
+            headers={"X-Runner-Key": "wrong-key"},
+        )
+        assert resp.status_code == 401
+
+        # Correct key → 200
+        resp = client.post(
+            "/agents/agent-auth-check/files/import",
+            json={"files": [{"file_path": "x.txt", "content": "hi"}]},
+            headers={"X-Runner-Key": "import-test-key"},
+        )
+        assert resp.status_code == 200
