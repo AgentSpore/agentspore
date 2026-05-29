@@ -1,4 +1,8 @@
-"""Repository for hosted agents — CRUD, files, owner messages."""
+"""Repository for hosted agents — CRUD, owner messages.
+
+Note: agent_files table was dropped in V64 (P5b live-FS epic).
+Runner workspace (persistent bind mount) is the sole source of truth for files.
+"""
 
 import json
 from datetime import datetime, timezone
@@ -31,7 +35,11 @@ class StaleVersionError(Exception):
 
 
 class HostedAgentRepository:
-    """Data access for hosted_agents, agent_files, owner_messages tables."""
+    """Data access for hosted_agents and owner_messages tables.
+
+    The agent_files table was dropped in V64 (live-FS epic P5b).
+    File operations go through the runner API only.
+    """
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -167,115 +175,6 @@ class HostedAgentRepository:
         raw = row["session_history"]
         return raw if isinstance(raw, list) else json.loads(raw)
 
-    # ── Files ──
-
-    async def upsert_file(
-        self,
-        hosted_id: str,
-        file_path: str,
-        content: str,
-        file_type: str = "text",
-        *,
-        truncated: bool = False,
-        is_binary: bool = False,
-        if_match_version: int | None = None,
-    ) -> dict:
-        """Upsert a file row, bumping ``version`` on every write.
-
-        ``if_match_version``: when set, raises ``StaleVersionError`` (caught
-        by the service layer and turned into HTTP 412) if the existing
-        row's version does not match — used by the editor's ETag flow so
-        a UI save can't silently overwrite an agent edit.
-        """
-        if if_match_version is not None:
-            existing = await self.get_file(hosted_id, file_path)
-            current_version = (existing or {}).get("version", 0)
-            if existing and current_version != if_match_version:
-                raise StaleVersionError(
-                    current_version=current_version,
-                    current_content=existing.get("content"),
-                )
-        result = await self.db.execute(
-            text("""
-                INSERT INTO agent_files (
-                    hosted_agent_id, file_path, content, file_type,
-                    size_bytes, truncated, is_binary, version
-                )
-                VALUES (
-                    :hosted_agent_id, :file_path, :content, :file_type,
-                    :size_bytes, :truncated, :is_binary, 1
-                )
-                ON CONFLICT (hosted_agent_id, file_path) DO UPDATE
-                SET content = :content,
-                    file_type = :file_type,
-                    size_bytes = :size_bytes,
-                    truncated = :truncated,
-                    is_binary = :is_binary,
-                    version = agent_files.version + 1,
-                    updated_at = now()
-                RETURNING *
-            """),
-            {
-                "hosted_agent_id": hosted_id,
-                "file_path": file_path,
-                "content": content,
-                "file_type": file_type,
-                "size_bytes": len(content.encode("utf-8")),
-                "truncated": truncated,
-                "is_binary": is_binary,
-            },
-        )
-        await self.db.commit()
-        return dict(result.mappings().first())
-
-    async def prune_missing_files(self, hosted_id: str, keep_paths: set[str]) -> list[str]:
-        """Delete agent_files rows whose path is not in ``keep_paths``.
-
-        Used after a sync from the runner: anything the agent removed on
-        disk should disappear from the UI. Returns the paths that were
-        pruned so callers can emit `file_deleted` WS events. ``keep_paths``
-        is allowed to be empty — no rows are deleted in that case (we
-        treat empty as "runner returned nothing", which usually means a
-        broken sync rather than a wholesale wipe).
-        """
-        if not keep_paths:
-            return []
-        # asyncpg/SQLAlchemy: use ANY(:array) for an in-list against a
-        # bind parameter without N-arity expansion.
-        result = await self.db.execute(
-            text("""
-                DELETE FROM agent_files
-                WHERE hosted_agent_id = :hid
-                  AND NOT (file_path = ANY(:keep))
-                RETURNING file_path
-            """),
-            {
-                "hid": hosted_id,
-                "keep": list(keep_paths),
-            },
-        )
-        await self.db.commit()
-        return [r["file_path"] for r in result.mappings()]
-
-    async def get_file(self, hosted_id: str, file_path: str) -> dict | None:
-        result = await self.db.execute(
-            text("SELECT * FROM agent_files WHERE hosted_agent_id = :hid AND file_path = :fp"),
-            {"hid": hosted_id, "fp": file_path},
-        )
-        row = result.mappings().first()
-        return dict(row) if row else None
-
-    async def list_files(self, hosted_id: str) -> list[dict]:
-        result = await self.db.execute(
-            text("""
-                SELECT id, file_path, file_type, size_bytes, updated_at,
-                       created_at, version, truncated, is_binary
-                FROM agent_files WHERE hosted_agent_id = :hid ORDER BY file_path
-            """),
-            {"hid": hosted_id},
-        )
-        return [dict(r) for r in result.mappings()]
-
     async def get_public_by_id(self, hosted_id: str) -> dict | None:
         """Get a public hosted agent (no owner check)."""
         result = await self.db.execute(
@@ -333,25 +232,6 @@ class HostedAgentRepository:
             {"id": agent_id},
         )
         await self.db.commit()
-
-    async def list_files_with_content(self, hosted_id: str) -> list[dict]:
-        """List all files with content for cloning."""
-        result = await self.db.execute(
-            text("""
-                SELECT file_path, file_type, content, size_bytes
-                FROM agent_files WHERE hosted_agent_id = :hid ORDER BY file_path
-            """),
-            {"hid": hosted_id},
-        )
-        return [dict(r) for r in result.mappings()]
-
-    async def delete_file(self, hosted_id: str, file_path: str) -> bool:
-        result = await self.db.execute(
-            text("DELETE FROM agent_files WHERE hosted_agent_id = :hid AND file_path = :fp"),
-            {"hid": hosted_id, "fp": file_path},
-        )
-        await self.db.commit()
-        return result.rowcount > 0
 
     # ── Owner messages ──
 

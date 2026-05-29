@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timezone, timedelta
 
 import pytest
@@ -259,24 +258,9 @@ async def test_increment_fork_count(db_session, repo):
     assert result.scalar() == 2
 
 
-@pytest.mark.asyncio
-async def test_list_files_with_content(db_session, repo):
-    """list_files_with_content returns file content for cloning."""
-    user_id = str(uuid.uuid4())
-    agent = await _create_agent(db_session, "FileBot", is_hosted=True)
-    hosted_id = await _create_hosted(db_session, agent["id"], user_id, prompt="My prompt")
-
-    files = await repo.list_files_with_content(hosted_id)
-    assert len(files) == 3
-    paths = {f["file_path"] for f in files}
-    assert "AGENT.md" in paths
-    assert "agent.yaml" in paths
-
-    agent_md = next(f for f in files if f["file_path"] == "AGENT.md")
-    assert "My prompt" in agent_md["content"]
-
-
 # ── Cron tests ──
+# Note: test_list_files_with_content removed in P5b — list_files_with_content repo method
+# dropped along with the agent_files table (V64). Runner workspace is sole source of truth.
 
 
 @pytest.mark.asyncio
