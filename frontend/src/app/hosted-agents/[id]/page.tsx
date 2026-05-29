@@ -1519,8 +1519,8 @@ function EditorPanel({ agentId, filePath, onClose }: {
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
   const [dirty, setDirty] = useState(false);
-  const [loadedVersion, setLoadedVersion] = useState<number>(0);
-  const [conflict, setConflict] = useState<{ currentVersion: number; currentContent: string } | null>(null);
+  const [loadedVersion, setLoadedVersion] = useState<string>("");
+  const [conflict, setConflict] = useState<{ currentVersion: string; currentContent: string } | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [isBinary, setIsBinary] = useState(false);
 
@@ -1535,9 +1535,9 @@ function EditorPanel({ agentId, filePath, onClose }: {
         const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
         const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/${encodedFilePath}`);
         if (res.ok && !cancelled) {
-          const f: AgentFile & { version?: number; truncated?: boolean; is_binary?: boolean } = await res.json();
+          const f: AgentFile & { version?: string; truncated?: boolean; is_binary?: boolean } = await res.json();
           setContent(f.content || "");
-          setLoadedVersion(f.version ?? 1);
+          setLoadedVersion(f.version ?? "");
           setTruncated(!!f.truncated);
           setIsBinary(!!f.is_binary);
         }
@@ -1555,7 +1555,7 @@ function EditorPanel({ agentId, filePath, onClose }: {
     const prevDirty = dirty;
     setDirty(false);
     const headers: Record<string, string> = {};
-    if (loadedVersion && !force) headers["If-Match"] = `"v${loadedVersion}"`;
+    if (loadedVersion && !force) headers["If-Match"] = `"${loadedVersion}"`;
     try {
       const body = overrideContent !== undefined ? overrideContent : content;
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files`, {
@@ -1566,7 +1566,7 @@ function EditorPanel({ agentId, filePath, onClose }: {
       if (res.status === 412) {
         const data = await res.json().catch(() => ({}));
         setConflict({
-          currentVersion: data.current_version ?? 0,
+          currentVersion: data.current_version ?? "",
           currentContent: data.current_content ?? "",
         });
         setDirty(prevDirty);
@@ -1675,7 +1675,7 @@ function EditorPanel({ agentId, filePath, onClose }: {
             <h3 className="text-sm font-mono text-amber-300 mb-2">File changed by agent</h3>
             <p className="text-[11px] font-mono text-neutral-400 leading-relaxed mb-4">
               The agent edited <span className="text-neutral-200">{filePath}</span> while you were typing.
-              Your version is based on v{loadedVersion}; current is v{conflict.currentVersion}.
+              Your version is based on {loadedVersion.slice(0, 8) || "unknown"}; current is {conflict.currentVersion.slice(0, 8) || "unknown"}.
               Choose how to resolve the conflict.
             </p>
             <div className="bg-white/[0.02] border border-neutral-800/50 rounded p-2 mb-4 max-h-[180px] overflow-auto">
