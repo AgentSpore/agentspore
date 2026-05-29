@@ -183,52 +183,94 @@ class HostedAgentService:
 
         hosted_id = str(hosted["id"])
 
-        # Create pydantic-deepagents workspace structure under .deep/ namespace:
-        # /AGENT.md                    — system prompt (context file, auto-injected)
-        # /.deep/skills/SKILL.md       — platform skill.md (SkillsToolset auto-discovers)
-        # /.deep/memory/main/MEMORY.md — persistent memory (MemoryToolset, branch "main")
-        # /.deep/skills/               — custom skills directory (SkillsToolset)
-        # /.deep/agents/               — subagents (reserved for future multi-agent setups)
-        await self.repo.upsert_file(hosted_id, "AGENT.md", system_prompt, "config")
+        # Seed initial workspace on the runner via import.
+        # Includes: AGENT.md, agent.yaml, platform SKILL.md, and custom.md if skills given.
+        # Runner creates the persistent workspace dir on first import — no DB agent_files writes.
+        # Fail-fast: if runner is down at creation time, abort and clean up the dangling row.
+        if not self.runner_url:
+            # Rollback: deactivate platform agent + delete hosted row.
+            # repo.create() committed above intentionally (before runner call) so that
+            # rollback-delete operates on a real committed row, and a retry after failure
+            # finds a clean state without orphan rows.
+            await self.agent_svc.db.execute(
+                text("UPDATE agents SET is_active = FALSE WHERE id = :id"),
+                {"id": reg["agent_id"]},
+            )
+            await self.agent_svc.db.commit()
+            try:
+                await self.repo.delete(hosted_id)
+            except Exception as del_exc:
+                logger.error(
+                    "Rollback delete failed for orphaned hosted agent {}"
+                    " after creation failure: {}",
+                    hosted_id,
+                    del_exc,
+                )
+            raise HTTPException(
+                503,
+                "Agent runner unavailable — required to create workspace",
+            )
 
-        # Auto-load platform skill.md into .deep/skills/ so SkillsToolset picks it up
+        import_items: list[dict] = [
+            {"file_path": "AGENT.md", "content": system_prompt, "file_type": "config"},
+            {
+                "file_path": "agent.yaml",
+                "content": self._default_agent_yaml(),
+                "file_type": "config",
+            },
+        ]
         platform_skill = _load_skill_md()
         if platform_skill:
-            await self.repo.upsert_file(hosted_id, ".deep/skills/SKILL.md", platform_skill, "skill")
-
-        # Create agent.yaml (DeepAgentSpec) — users can customize agent behavior
-        agent_yaml = (
-            "# Agent configuration — edit to customize behavior\n"
-            "# Changes take effect on next restart\n"
-            "# NOTE: model and instructions are managed via Settings UI\n"
-            "# and will override values in this file\n"
-            "include_todo: true\n"
-            "include_filesystem: true\n"
-            "include_execute: true\n"
-            "include_subagents: false\n"
-            "include_skills: true\n"
-            "include_memory: true\n"
-            "memory_dir: /workspace/.deep/memory\n"
-            "include_plan: true\n"
-            "include_checkpoints: true\n"
-            "checkpoint_frequency: every_turn\n"
-            "max_checkpoints: 50\n"
-            "context_manager: true\n"
-            "context_discovery: true\n"
-            "cost_tracking: true\n"
-            "thinking: low\n"
-            "# eviction_token_limit: auto (10% of model context, set by runner)\n"
-            "web_search: false\n"
-            "web_fetch: false\n"
-            "skill_directories:\n"
-            "  - /workspace/.deep/skills\n"
-        )
-        await self.repo.upsert_file(hosted_id, "agent.yaml", agent_yaml, "config")
-
-        # Add user skills as separate file if provided
+            import_items.append(
+                {"file_path": ".deep/skills/SKILL.md", "content": platform_skill, "file_type": "skill"}  # noqa: E501 — pre-existing line-length limit in file
+            )
         if skills:
             skill_content = "\n\n".join(f"## {s}\n{s} skill." for s in skills)
-            await self.repo.upsert_file(hosted_id, ".deep/skills/custom.md", skill_content, "skill")
+            import_items.append(
+                {"file_path": ".deep/skills/custom.md", "content": skill_content, "file_type": "skill"}  # noqa: E501
+            )
+
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(
+                    f"{self.runner_url}/agents/{hosted_id}/files/import",
+                    json={"files": import_items},
+                    headers=self._runner_headers(),
+                )
+            resp.raise_for_status()
+            logger.info(
+                "create_hosted_agent: seeded {} files into runner workspace for {}",
+                len(import_items),
+                hosted_id,
+            )
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            logger.error(
+                "create_hosted_agent: runner import failed for {}: {} — rolling back",
+                hosted_id,
+                exc,
+            )
+            # Rollback: deactivate platform agent + delete hosted row.
+            # repo.create() committed above intentionally (before runner call) so that
+            # rollback-delete operates on a real committed row, and a retry after failure
+            # finds a clean state without orphan rows.
+            await self.agent_svc.db.execute(
+                text("UPDATE agents SET is_active = FALSE WHERE id = :id"),
+                {"id": reg["agent_id"]},
+            )
+            await self.agent_svc.db.commit()
+            try:
+                await self.repo.delete(hosted_id)
+            except Exception as del_exc:
+                logger.error(
+                    "Rollback delete failed for orphaned hosted agent {}"
+                    " after creation failure: {}",
+                    hosted_id,
+                    del_exc,
+                )
+            raise HTTPException(
+                503,
+                "Agent runner unavailable — required to create workspace",
+            ) from exc
 
         return {
             **hosted,
@@ -827,35 +869,10 @@ class HostedAgentService:
         #               requires a migration (out of scope for this epic). Existing
         #               installations retain it on-disk from first creation; new cold
         #               workspaces will lack it until P5 adds the column.
-        agent_yaml_content = (
-            "# Agent configuration — auto-generated\n"
-            "# NOTE: model and instructions are managed via Settings UI\n"
-            "# and will override values in this file\n"
-            "include_todo: true\n"
-            "include_filesystem: true\n"
-            "include_execute: true\n"
-            "include_subagents: false\n"
-            "include_skills: true\n"
-            "include_memory: true\n"
-            "memory_dir: /workspace/.deep/memory\n"
-            "include_plan: true\n"
-            "include_checkpoints: true\n"
-            "checkpoint_frequency: every_turn\n"
-            "max_checkpoints: 50\n"
-            "context_manager: true\n"
-            "context_discovery: true\n"
-            "cost_tracking: true\n"
-            "thinking: low\n"
-            "# eviction_token_limit: auto (10% of model context, set by runner)\n"
-            "web_search: false\n"
-            "web_fetch: false\n"
-            "skill_directories:\n"
-            "  - /workspace/.deep/skills\n"
-        )
         files_payload = [
             {
                 "file_path": "agent.yaml",
-                "content": agent_yaml_content,
+                "content": self._default_agent_yaml(),
                 "file_type": "config",
             }
         ]
@@ -1356,6 +1373,40 @@ class HostedAgentService:
             action = "file_updated" if db_ver > 1 else "file_created"
             await self._emit_file_event(hosted_id, user_id, action, row)
         return written_rows, failed
+
+    @staticmethod
+    def _default_agent_yaml() -> str:
+        """Return the canonical agent.yaml (DeepAgentSpec) content.
+
+        Single source of truth shared by ``create_hosted_agent`` (initial
+        workspace seed) and ``_start_agent_internal`` (cold-start files).
+        """
+        return (
+            "# Agent configuration — edit to customize behavior\n"
+            "# Changes take effect on next restart\n"
+            "# NOTE: model and instructions are managed via Settings UI\n"
+            "# and will override values in this file\n"
+            "include_todo: true\n"
+            "include_filesystem: true\n"
+            "include_execute: true\n"
+            "include_subagents: false\n"
+            "include_skills: true\n"
+            "include_memory: true\n"
+            "memory_dir: /workspace/.deep/memory\n"
+            "include_plan: true\n"
+            "include_checkpoints: true\n"
+            "checkpoint_frequency: every_turn\n"
+            "max_checkpoints: 50\n"
+            "context_manager: true\n"
+            "context_discovery: true\n"
+            "cost_tracking: true\n"
+            "thinking: low\n"
+            "# eviction_token_limit: auto (10% of model context, set by runner)\n"
+            "web_search: false\n"
+            "web_fetch: false\n"
+            "skill_directories:\n"
+            "  - /workspace/.deep/skills\n"
+        )
 
     def _runner_headers(self) -> dict:
         """Build X-Runner-Key auth headers for outbound runner requests."""
