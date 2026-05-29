@@ -466,17 +466,6 @@ class AgentRepository:
         )
         return [dict(r) for r in result.mappings()]
 
-    async def get_project_code_files(self, project_id) -> list[dict]:
-        result = await self.db.execute(
-            text("""
-                SELECT DISTINCT ON (path) path, content, language, version
-                FROM code_files WHERE project_id = :pid
-                ORDER BY path, version DESC
-            """),
-            {"pid": project_id},
-        )
-        return [dict(f) for f in result.mappings()]
-
     async def get_project_basic(self, project_id, fields: str = "title, repo_url, vcs_provider") -> dict | None:
         result = await self.db.execute(
             text(f"SELECT {fields} FROM projects WHERE id = :id"),
