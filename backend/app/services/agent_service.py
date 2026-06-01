@@ -1064,13 +1064,21 @@ class AgentService:
             TEXT_EXTS = {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json", ".md",
                          ".yaml", ".yml", ".toml", ".cfg", ".ini", ".sh", ".sql", ".env",
                          ".svelte", ".vue", ".go", ".rs", ".java", ".kt", ".rb", ".php"}
+            # Extensionless / non-TEXT_EXTS infra files that are still real source the
+            # builder selector must see. Without these, Dockerfile (no extension) and
+            # .env.example (.example ext) were dropped, so mvp_complete() never detected
+            # the G5 group → the scaffold selector re-emitted G5 forever (build loop).
+            INFRA_NAMES = {"Dockerfile", "docker-compose.yml", "docker-compose.yaml",
+                           ".dockerignore", "Makefile", "Procfile", ".env.example",
+                           ".gitignore", "requirements.txt"}
             files = []
             for item in tree:
                 if item.get("type") != "blob":
                     continue
                 path = item.get("path", "")
+                name = path.rsplit("/", 1)[-1]
                 ext = "." + path.rsplit(".", 1)[-1] if "." in path else ""
-                if ext.lower() not in TEXT_EXTS:
+                if ext.lower() not in TEXT_EXTS and name not in INFRA_NAMES:
                     continue
                 if len(files) >= 50:
                     break
