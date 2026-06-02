@@ -46,12 +46,12 @@ from app.services.openrouter_service import OpenRouterService, get_openrouter_se
 
 def _file_response(f: dict) -> AgentFileResponse:
     return AgentFileResponse(
-        id=str(f["id"]),
+        id=str(f.get("id") or ""),
         file_path=f["file_path"],
-        file_type=f["file_type"],
+        file_type=f.get("file_type", "text"),
         content=f.get("content"),
-        size_bytes=f["size_bytes"],
-        updated_at=str(f["updated_at"]),
+        size_bytes=f.get("size_bytes", 0),
+        updated_at=str(f.get("updated_at") or ""),
         version=str(f.get("version") or ""),
         truncated=f.get("truncated", False),
         is_binary=f.get("is_binary", False),
@@ -197,6 +197,8 @@ async def update_self_hosted_agent(
     updates = body.model_dump(exclude_unset=True)
     await svc.update_agent(str(hosted["id"]), str(hosted["owner_user_id"]), updates)
     refreshed = await svc.repo.get_by_id(str(hosted["id"]))
+    if not refreshed:
+        raise HTTPException(404, "Hosted agent not found")
     return HostedAgentResponse.from_dict(refreshed)
 
 

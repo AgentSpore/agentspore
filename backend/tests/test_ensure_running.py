@@ -7,18 +7,24 @@ from __future__ import annotations
 
 import asyncio
 import json
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+
+from app.services.hosted_agent_service import (
+    HostedAgentRunnerUnavailable,
+    HostedAgentTooManyFailures,
+)
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 
 def _make_svc(hosted_status: str = "stopped", runner_url: str = "http://runner"):
     """Construct a minimal HostedAgentService with all external deps mocked."""
-    from app.services.hosted_agent_service import HostedAgentService
     from collections import OrderedDict
+
+    from app.services.hosted_agent_service import HostedAgentService
 
     hosted_row = {
         "id": "h1",
@@ -145,8 +151,6 @@ async def test_ensure_running_parallel_calls_start_once():
 @pytest.mark.asyncio
 async def test_ensure_running_too_many_failures():
     """Raises HostedAgentTooManyFailures when Redis counter >= 3."""
-    from app.services.hosted_agent_service import HostedAgentTooManyFailures
-
     svc, _ = _make_svc(hosted_status="stopped")
     mock_redis = _make_mock_redis(failure_count=3)
 
@@ -158,9 +162,6 @@ async def test_ensure_running_too_many_failures():
 @pytest.mark.asyncio
 async def test_ensure_running_runner_unavailable_increments_counter():
     """When _start_agent_internal raises 503, failure counter is incremented."""
-    from fastapi import HTTPException
-    from app.services.hosted_agent_service import HostedAgentRunnerUnavailable
-
     svc, _ = _make_svc(hosted_status="stopped")
     mock_redis = _make_mock_redis()
 
@@ -226,6 +227,67 @@ async def test_ensure_running_non_chat_source_does_not_skip_bootstrap():
     assert captured_kwargs["skip_bootstrap"] is False
 
 
+# ─── BUG-1: redis unavailable → no UnboundLocalError ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ensure_running_redis_unavailable_start_succeeds():
+    """When Redis is down, ensure_running still cold-starts the agent without error."""
+    svc, _ = _make_svc(hosted_status="stopped")
+
+    with patch.object(svc, "_start_agent_internal", new_callable=AsyncMock) as mock_start:
+        mock_start.return_value = None
+        with patch(
+            "app.core.redis_client.get_redis",
+            side_effect=ConnectionError("redis down"),
+        ):
+            result = await svc.ensure_running("h1", source="chat")
+
+    assert result is False
+    mock_start.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_running_redis_unavailable_http_start_fail_no_unbound():
+    """When Redis is down AND _start_agent_internal raises HTTP 503 — no UnboundLocalError.
+    Lock must be released (not dangling).
+    """
+    svc, _ = _make_svc(hosted_status="stopped")
+
+    async def failing_start(hosted, skip_bootstrap=False):
+        raise HTTPException(503, "runner gone")
+
+    with patch.object(svc, "_start_agent_internal", side_effect=failing_start):
+        with patch(
+            "app.core.redis_client.get_redis",
+            side_effect=ConnectionError("redis down"),
+        ):
+            with pytest.raises(HostedAgentRunnerUnavailable):
+                await svc.ensure_running("h1", source="chat")
+
+    # Lock must be released after the exception
+    assert "h1" not in svc._starting_locks
+
+
+@pytest.mark.asyncio
+async def test_ensure_running_redis_unavailable_generic_start_fail_no_unbound():
+    """When Redis is down AND _start_agent_internal raises a generic exception — no UnboundLocalError."""
+    svc, _ = _make_svc(hosted_status="stopped")
+
+    async def failing_start(hosted, skip_bootstrap=False):
+        raise RuntimeError("container exploded")
+
+    with patch.object(svc, "_start_agent_internal", side_effect=failing_start):
+        with patch(
+            "app.core.redis_client.get_redis",
+            side_effect=ConnectionError("redis down"),
+        ):
+            with pytest.raises(HostedAgentRunnerUnavailable):
+                await svc.ensure_running("h1", source="chat")
+
+    assert "h1" not in svc._starting_locks
+
+
 # ─── stream_owner_message phase events ──────────────────────────────────────
 
 
@@ -279,11 +341,11 @@ async def test_stream_owner_message_runner_unavailable_retryable_error():
     svc, hosted_row = _make_svc(hosted_status="stopped")
     svc.repo.add_owner_message = AsyncMock(return_value={"id": "m1"})
 
-    async def failing_ensure(hosted_id, *, source):
+    async def failing_ensure_unavail(hosted_id, *, source):
         raise HostedAgentRunnerUnavailable("runner down")
 
     events = []
-    with patch.object(svc, "ensure_running", side_effect=failing_ensure):
+    with patch.object(svc, "ensure_running", side_effect=failing_ensure_unavail):
         with patch.object(svc, "get_hosted_agent", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = dict(hosted_row)
             async for line in svc.stream_owner_message("h1", "u1", "hi"):
@@ -302,16 +364,14 @@ async def test_stream_owner_message_runner_unavailable_retryable_error():
 @pytest.mark.asyncio
 async def test_stream_owner_message_too_many_failures_non_retryable():
     """stream_owner_message emits non-retryable error when failure limit exceeded."""
-    from app.services.hosted_agent_service import HostedAgentTooManyFailures
-
     svc, hosted_row = _make_svc(hosted_status="stopped")
     svc.repo.add_owner_message = AsyncMock(return_value={"id": "m1"})
 
-    async def failing_ensure(hosted_id, *, source):
+    async def failing_ensure_too_many(hosted_id, *, source):
         raise HostedAgentTooManyFailures("too many")
 
     events = []
-    with patch.object(svc, "ensure_running", side_effect=failing_ensure):
+    with patch.object(svc, "ensure_running", side_effect=failing_ensure_too_many):
         with patch.object(svc, "get_hosted_agent", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = dict(hosted_row)
             async for line in svc.stream_owner_message("h1", "u1", "hi"):
