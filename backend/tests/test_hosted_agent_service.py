@@ -13,6 +13,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.hosted_agent_service import HostedAgentService
+from app.services.runner_client import RunnerFileClient
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -72,6 +73,7 @@ def create_svc_factory():
         svc.runner_url = runner_url
         svc.settings = settings
         svc._starting_locks = OrderedDict()
+        svc._rc = RunnerFileClient(runner_url=runner_url, runner_key="")
         return svc
 
     return _create
