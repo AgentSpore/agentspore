@@ -8,8 +8,6 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
-from urllib.parse import quote
-
 import httpx
 import logfire
 from croniter import croniter
@@ -23,7 +21,6 @@ from app.core.database import async_session_maker
 from app.observability import use_agent_context
 from app.repositories.hosted_agent_repo import (
     HostedAgentRepository,
-    StaleVersionError,
     get_hosted_agent_repo,
 )
 from app.schemas.hosted_agents import DEFAULT_RUNTIME
@@ -31,6 +28,7 @@ from app.services.agent_service import AgentService, get_agent_service
 from app.services.connection_manager import deliver_user_event
 from app.services.openrouter_service import OpenRouterService, get_openrouter_service
 from app.services.openviking_service import OpenVikingService, get_openviking_service
+from app.services.runner_client import RunnerFileClient
 
 
 class HostedAgentRunnerUnavailable(Exception):
@@ -114,6 +112,10 @@ class HostedAgentService:
         self.openviking = openviking or OpenVikingService()
         self.runner_url = self.settings.agent_runner_url
         self._starting_locks = OrderedDict()
+        self._rc = RunnerFileClient(
+            runner_url=self.settings.agent_runner_url,
+            runner_key=self.settings.agent_runner_key,
+        )
 
     # ── CRUD ──
 
@@ -231,19 +233,13 @@ class HostedAgentService:
             )
 
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(
-                    f"{self.runner_url}/agents/{hosted_id}/files/import",
-                    json={"files": import_items},
-                    headers=self._runner_headers(),
-                )
-            resp.raise_for_status()
+            await self._rc.post_import(hosted_id, import_items, timeout=20)
             logger.info(
                 "create_hosted_agent: seeded {} files into runner workspace for {}",
                 len(import_items),
                 hosted_id,
             )
-        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+        except Exception as exc:
             logger.error(
                 "create_hosted_agent: runner import failed for {}: {} — rolling back",
                 hosted_id,
@@ -399,43 +395,22 @@ class HostedAgentService:
         if not self.runner_url:
             logger.warning("fork source {}: runner not configured — forking with empty workspace", source_hosted_id)
             return []
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    f"{self.runner_url}/agents/{source_hosted_id}/files",
-                    headers=self._runner_headers(),
-                )
-            if resp.status_code == 200:
-                data = resp.json()
-                runner_files = data.get("files", []) if isinstance(data, dict) else data
-                if runner_files:
-                    return [
-                        {
-                            "file_path": f["file_path"],
-                            "content": f.get("content") or "",
-                            "file_type": _file_type_for(f["file_path"]),
-                        }
-                        for f in runner_files
-                    ]
-                # Empty dir — source never populated; fork proceeds with empty workspace.
-                logger.warning(
-                    "fork source {} runner dir empty — forking with empty workspace (P5a: no DB fallback)",
-                    source_hosted_id,
-                )
-                return []
-            logger.warning(
-                "fork source {} runner GET files returned {} — forking with empty workspace",
-                source_hosted_id,
-                resp.status_code,
-            )
-            return []
-        except httpx.RequestError as exc:
-            logger.warning(
-                "fork source {} runner unreachable: {} — forking with empty workspace (P5a: no DB fallback)",
-                source_hosted_id,
-                exc,
-            )
-            return []
+        runner_files = await self._rc.soft_list_files(source_hosted_id, timeout=15)
+        if runner_files:
+            return [
+                {
+                    "file_path": f["file_path"],
+                    "content": f.get("content") or "",
+                    "file_type": _file_type_for(f["file_path"]),
+                }
+                for f in runner_files
+            ]
+        # Empty dir — source never populated; fork proceeds with empty workspace.
+        logger.warning(
+            "fork source {} runner dir empty — forking with empty workspace (P5a: no DB fallback)",
+            source_hosted_id,
+        )
+        return []
 
     async def _fork_seed_new_agent(
         self,
@@ -493,31 +468,17 @@ class HostedAgentService:
             )
             return
 
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(
-                    f"{self.runner_url}/agents/{hosted_id}/files/import",
-                    json={"files": import_items},
-                    headers=self._runner_headers(),
-                )
-            if resp.status_code == 200:
-                result = resp.json()
-                logger.info(
-                    "fork: seeded {} files into runner workspace for {}",
-                    result.get("imported", len(import_items)),
-                    hosted_id,
-                )
-            else:
-                logger.warning(
-                    "fork: runner import returned {} for {} — workspace not seeded",
-                    resp.status_code,
-                    hosted_id,
-                )
-        except httpx.RequestError as exc:
-            logger.warning(
-                "fork: runner import unavailable for {}: {} — workspace not seeded",
+        imported = await self._rc.soft_post_import(hosted_id, import_items, timeout=20)
+        if imported >= 0:
+            logger.info(
+                "fork: seeded {} files into runner workspace for {}",
+                imported,
                 hosted_id,
-                exc,
+            )
+        else:
+            logger.warning(
+                "fork: runner import failed for {} — workspace not seeded",
+                hosted_id,
             )
 
     async def list_forkable_agents(self) -> list[dict]:
@@ -534,19 +495,16 @@ class HostedAgentService:
             raise HTTPException(404, "Hosted agent not found")
         if str(hosted["owner_user_id"]) != user_id:
             raise HTTPException(403, "Not your agent")
-        # Auto-detect dead agents: DB says running but runner lost them (e.g. runner restart)
+        # Auto-detect dead agents: DB says running but runner lost them (e.g. runner restart).
+        # soft_get_status returns None when runner is unreachable (network error) — in that
+        # case we leave DB status unchanged so a transient runner blip doesn't flip all agents.
         if hosted["status"] == "running" and self.runner_url:
-            try:
-                rh = {"X-Runner-Key": self.settings.agent_runner_key} if self.settings.agent_runner_key else {}
-                async with httpx.AsyncClient(timeout=3) as client:
-                    resp = await client.get(f"{self.runner_url}/agents/{hosted_id}/status", headers=rh)
-                    if resp.status_code != 200 or resp.json().get("status") != "running":
-                        await self.repo.update_status(hosted_id, "stopped")
-                        hosted["status"] = "stopped"
-                        await self._notify_status(hosted, "stopped")
-                        logger.warning("Agent {} was dead on runner — auto-corrected to stopped", hosted_id)
-            except Exception:
-                pass  # Runner unreachable — don't change status
+            status_data = await self._rc.soft_get_status(hosted_id, timeout=3)
+            if status_data is not None and status_data.get("status") != "running":
+                await self.repo.update_status(hosted_id, "stopped")
+                hosted["status"] = "stopped"
+                await self._notify_status(hosted, "stopped")
+                logger.warning("Agent {} was dead on runner — auto-corrected to stopped", hosted_id)
         return hosted
 
     async def list_my_agents(self, user_id: str) -> list[dict]:
@@ -593,13 +551,9 @@ class HostedAgentService:
             # If runner is down/dir absent the next agent start re-writes from system_prompt.
             if self.runner_url:
                 try:
-                    rh = self._runner_headers()
-                    async with httpx.AsyncClient(timeout=10) as client:
-                        await client.put(
-                            f"{self.runner_url}/agents/{hosted_id}/files",
-                            json={"file_path": "AGENT.md", "content": clean["system_prompt"]},
-                            headers=rh,
-                        )
+                    await self._rc.put_file(
+                        hosted_id, "AGENT.md", clean["system_prompt"], timeout=10
+                    )
                 except Exception as exc:
                     logger.warning(
                         "update_agent: runner PUT AGENT.md failed for {} — will re-write on next start: {}",
@@ -1255,44 +1209,13 @@ class HostedAgentService:
 
         new_sha: str = ""
         if self.runner_url:
-            url = f"{self.runner_url}/agents/{hosted_id}/files"
-            headers = dict(self._runner_headers())
-            if if_match_version:
-                headers["If-Match"] = if_match_version
-            try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.put(
-                        url,
-                        json={"file_path": file_path, "content": content},
-                        headers=headers,
-                    )
-            except httpx.RequestError as exc:
-                logger.warning(
-                    "Runner write_file unavailable for {}/{}: {}", hosted_id, file_path, exc
-                )
-                raise HTTPException(503, "Agent runner unavailable") from exc
-
-            if resp.status_code == 412:
-                detail = resp.json() if resp.content else {}
-                # runner returns detail as nested dict under "detail" key
-                inner = detail.get("detail", detail) if isinstance(detail, dict) else {}
-                if isinstance(inner, dict):
-                    cv = inner.get("current_version", "")
-                    cc = inner.get("current_content")
-                else:
-                    cv = ""
-                    cc = None
-                raise StaleVersionError(
-                    current_version=str(cv),
-                    current_content=cc,
-                )
-            if resp.status_code not in (200, 201):
-                logger.warning(
-                    "Runner write_file {} returned {}", file_path, resp.status_code
-                )
-                raise HTTPException(503, "Agent runner error")
-
-            runner_data = resp.json() if resp.content else {}
+            runner_data = await self._rc.put_file(
+                hosted_id,
+                file_path,
+                content,
+                timeout=10,
+                if_match=if_match_version,
+            )
             new_sha = runner_data.get("version", "") or ""
 
         # P5a: runner is sole write target; no DB upsert.
@@ -1409,12 +1332,6 @@ class HostedAgentService:
             "  - /workspace/.deep/skills\n"
         )
 
-    def _runner_headers(self) -> dict:
-        """Build X-Runner-Key auth headers for outbound runner requests."""
-        if self.settings.agent_runner_key:
-            return {"X-Runner-Key": self.settings.agent_runner_key}
-        return {}
-
     @staticmethod
     def _runner_file_to_dict(entry: dict, fallback_id: str | None = None) -> dict:
         """Map a runner file entry to a shape compatible with ``_file_response``.
@@ -1450,24 +1367,7 @@ class HostedAgentService:
         await self.get_hosted_agent(hosted_id, user_id)
         if not self.runner_url:
             raise HTTPException(503, "Agent runner not configured")
-        url = (
-            f"{self.runner_url}/agents/{hosted_id}/files/"
-            f"{quote(file_path, safe='/')}"
-        )
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(url, headers=self._runner_headers())
-        except Exception as exc:
-            logger.warning("Runner read_file unavailable for {}: {}", file_path, exc)
-            raise HTTPException(503, "Agent runner unavailable") from exc
-        if resp.status_code == 404:
-            raise HTTPException(404, "File not found")
-        if resp.status_code != 200:
-            logger.warning(
-                "Runner read_file {} returned {}", file_path, resp.status_code
-            )
-            raise HTTPException(503, "Agent runner error")
-        entry = resp.json()
+        entry = await self._rc.get_file(hosted_id, file_path, timeout=10)
         return self._runner_file_to_dict(entry)
 
     async def list_files(
@@ -1485,24 +1385,7 @@ class HostedAgentService:
         await self.get_hosted_agent(hosted_id, user_id)
         if not self.runner_url:
             raise HTTPException(503, "Agent runner not configured")
-        params = {"include_hidden": "true"} if include_hidden else {}
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    f"{self.runner_url}/agents/{hosted_id}/files",
-                    headers=self._runner_headers(),
-                    params=params,
-                )
-        except Exception as exc:
-            logger.warning("Runner list_files unavailable for {}: {}", hosted_id, exc)
-            raise HTTPException(503, "Agent runner unavailable") from exc
-        if resp.status_code != 200:
-            logger.warning(
-                "Runner list_files {} returned {}", hosted_id, resp.status_code
-            )
-            raise HTTPException(503, "Agent runner error")
-        data = resp.json()
-        files = data.get("files", []) if isinstance(data, dict) else data
+        files = await self._rc.list_files(hosted_id, timeout=15, include_hidden=include_hidden)
         return [self._runner_file_to_dict(f) for f in files]
 
     async def delete_file(self, hosted_id: str, user_id: str, file_path: str) -> None:
@@ -1516,24 +1399,31 @@ class HostedAgentService:
         _validate_file_path(file_path)
         if not self.runner_url:
             raise HTTPException(503, "Agent runner not configured")
-        # quote() is critical: spaces / unicode / `#` would otherwise
-        # be silently swallowed by httpx URL parsing or rejected by
-        # the runner. ``safe='/'`` keeps directory separators intact.
-        url = f"{self.runner_url}/agents/{hosted_id}/files/{quote(file_path, safe='/')}"
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.delete(url, headers=self._runner_headers())
-        except Exception as exc:
-            logger.warning("Runner delete_file unavailable for {}: {}", file_path, exc)
-            raise HTTPException(503, "Agent runner unavailable") from exc
-        if resp.status_code == 404:
-            raise HTTPException(404, "File not found")
-        if resp.status_code not in (200, 204):
-            logger.warning("Runner delete_file {} returned {}", file_path, resp.status_code)
-            raise HTTPException(503, "Agent runner error")
+        # URL-encoding is handled inside RunnerFileClient._file_url via quote(safe='/').
+        await self._rc.delete_file(hosted_id, file_path, timeout=10)
         await self._emit_file_event(
             hosted_id, user_id, "file_deleted", {"file_path": file_path}
         )
+
+    async def download_files_archive(
+        self, hosted_id: str, user_id: str, *, include_hidden: bool = False
+    ) -> bytes:
+        """Download workspace as a ZIP archive from the runner.
+
+        Args:
+            include_hidden: When True, include hidden dirs in the archive.
+
+        Returns:
+            Raw ZIP bytes from the runner.
+
+        Raises:
+            HTTPException(503): runner not configured or unreachable.
+            HTTPException(404): agent workspace not found on runner.
+        """
+        await self.get_hosted_agent(hosted_id, user_id)
+        if not self.runner_url:
+            raise HTTPException(503, "Agent runner not configured")
+        return await self._rc.get_download(hosted_id, timeout=60, include_hidden=include_hidden)
 
     async def _push_file_to_runner(
         self, hosted_id: str, file_path: str, content: str
@@ -1547,22 +1437,7 @@ class HostedAgentService:
         Returns:
             sha string (12-char hex) on success, empty string on failure.
         """
-        if not self.runner_url:
-            return ""
-        rh = self._runner_headers()
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.put(
-                    f"{self.runner_url}/agents/{hosted_id}/files",
-                    json={"file_path": file_path, "content": content},
-                    headers=rh,
-                )
-            if resp.status_code in (200, 201):
-                data = resp.json() if resp.content else {}
-                return data.get("version", "") or ""
-        except Exception as exc:
-            logger.debug("Runner push fallthrough for {}/{}: {}", hosted_id, file_path, exc)
-        return ""
+        return await self._rc.soft_put_file(hosted_id, file_path, content, timeout=10)
 
     async def _emit_file_event(
         self, hosted_id: str, user_id: str, action: str, row: dict
@@ -1586,17 +1461,13 @@ class HostedAgentService:
 
     async def _save_runner_history(self, hosted_id: str) -> None:
         """Fetch message_history from runner and save to DB."""
+        if not self.runner_url:
+            return
         try:
-            if not self.runner_url:
-                return
-            rh = {"X-Runner-Key": self.settings.agent_runner_key} if self.settings.agent_runner_key else {}
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(f"{self.runner_url}/agents/{hosted_id}/history", headers=rh)
-                if resp.status_code == 200:
-                    history = resp.json().get("history", [])
-                    if history:
-                        await self.repo.save_session_history(hosted_id, history)
-                        logger.debug("Saved {} messages for {}", len(history), hosted_id)
+            history = await self._rc.soft_get_history(hosted_id, timeout=10)
+            if history:
+                await self.repo.save_session_history(hosted_id, history)
+                logger.debug("Saved {} messages for {}", len(history), hosted_id)
         except Exception as e:
             logger.warning("Save history error for {}: {}", hosted_id, e)
 

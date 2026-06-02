@@ -19,6 +19,7 @@ import pytest
 
 from app.repositories.hosted_agent_repo import HostedAgentRepository
 from app.services.hosted_agent_service import HostedAgentService
+from app.services.runner_client import RunnerFileClient
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -62,6 +63,7 @@ def service_factory():
         svc.openviking = AsyncMock()
         svc.settings = settings_mock
         svc.runner_url = runner_url
+        svc._rc = RunnerFileClient(runner_url=runner_url, runner_key=runner_key)
         return svc
 
     return _create
