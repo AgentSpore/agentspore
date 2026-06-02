@@ -1098,10 +1098,14 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     try {
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/download`);
       if (!res.ok) return;
+      const disposition = res.headers.get("content-disposition") ?? "";
+      // Parse filename from: attachment; filename="foo.zip" or filename*=UTF-8''foo.zip
+      const match = disposition.match(/filename\*?=(?:UTF-8''|"?)([^";]+)"?/i);
+      const filename = match ? decodeURIComponent(match[1].trim()) : "agent-workspace.zip";
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url;
-      a.download = "agent-workspace.zip"; a.click(); URL.revokeObjectURL(url);
+      a.download = filename; a.click(); URL.revokeObjectURL(url);
     } catch { /* ignore */ }
   };
 
@@ -1208,7 +1212,7 @@ function FileTree({ agentId, selectedFile, onSelect }: {
       nodeMap: { data: nodeData, children: nodeChildren },
       rootChildren: nodeChildren.get("__root__") ?? [],
     };
-  }, [visibleFiles]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [visibleFiles]);
 
   // Default expanded: all top-level dirs (depth-1 folders that are direct children of root)
   const defaultExpanded = useMemo<string[]>(() => {
@@ -1217,16 +1221,24 @@ function FileTree({ agentId, selectedFile, onSelect }: {
 
   const [expandedItems, setExpandedItems] = useState<string[]>(defaultExpanded);
 
-  // Sync expandedItems when files first load (defaultExpanded starts empty before loadFiles resolves)
+  // Sync expandedItems when defaultExpanded changes (first load or after toggle/create adds new dirs).
+  // Strategy: merge new dirs into expanded rather than replacing, so user collapses are preserved.
   const prevDefaultExpandedRef = useRef<string[]>(defaultExpanded);
   useEffect(() => {
-    // Only auto-apply when transitioning from empty to populated (first load)
-    // and when no search is active (so manual collapses by user are preserved).
-    if (!searchLower && prevDefaultExpandedRef.current.length === 0 && defaultExpanded.length > 0) {
-      setExpandedItems(defaultExpanded);
+    if (searchLower) return; // search expansion handled by separate effect below
+    const prev = prevDefaultExpandedRef.current;
+    const added = defaultExpanded.filter(id => !prev.includes(id));
+    if (added.length > 0) {
+      setExpandedItems(current => {
+        const merged = [...current];
+        for (const id of added) {
+          if (!merged.includes(id)) merged.push(id);
+        }
+        return merged;
+      });
     }
     prevDefaultExpandedRef.current = defaultExpanded;
-  }, [defaultExpanded, searchLower]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [defaultExpanded, searchLower]);
 
   // When search changes, auto-expand all ancestor folders of matching files
   useEffect(() => {
@@ -1717,7 +1729,14 @@ function EditorPanel({ agentId, filePath, onClose }: {
         <span className="text-[9px] font-mono text-neutral-700">
           {content.split("\n").length} lines · {(content.length / 1024).toFixed(1)} KB
         </span>
-        <span className="text-[9px] font-mono text-neutral-700">Ctrl+S to save</span>
+        <div className="flex items-center gap-3">
+          {loadedVersion && (
+            <span className="text-[9px] font-mono text-neutral-700" title={`Version: ${loadedVersion}`}>
+              v: {loadedVersion.slice(0, 7)}
+            </span>
+          )}
+          <span className="text-[9px] font-mono text-neutral-700">Ctrl+S to save</span>
+        </div>
       </div>
     </div>
   );
