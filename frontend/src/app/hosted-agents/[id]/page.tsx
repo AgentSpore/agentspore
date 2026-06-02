@@ -1008,6 +1008,13 @@ function FileTree({ agentId, selectedFile, onSelect }: {
         setNewFileName("");
         setShowNewFile(false);
         await loadFiles();
+        // Force headless-tree to rebuild its item list. The library only calls
+        // rebuildItemMeta() when the expandedItems reference changes (setConfig
+        // compares by ===). loadFiles() updates nodeMap, but when creating a
+        // root-level file no new folder appears, so expandedItems stays the same
+        // reference and the tree renders stale data. A new-array identity flush
+        // is the minimal correct trigger.
+        setExpandedItems(e => [...e]);
         onSelect(path);
       }
     } catch { /* ignore */ }
@@ -1087,7 +1094,11 @@ function FileTree({ agentId, selectedFile, onSelect }: {
     if (failed.length) problems.push(`Failed ${failed.length}: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`);
     if (problems.length) setUploadError(problems.join(" · "));
 
-    if (successCount > 0) await loadFiles();
+    if (successCount > 0) {
+      await loadFiles();
+      // Same headless-tree flush as in createFile — see comment there.
+      setExpandedItems(e => [...e]);
+    }
     setUploading(false);
     setUploadProgress({ current: 0, total: 0, name: "" });
     if (fileInputRef.current) fileInputRef.current.value = "";
