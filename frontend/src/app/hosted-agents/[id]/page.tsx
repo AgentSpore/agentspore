@@ -1008,13 +1008,8 @@ function FileTree({ agentId, selectedFile, onSelect }: {
         setNewFileName("");
         setShowNewFile(false);
         await loadFiles();
-        // Force headless-tree to rebuild its item list. The library only calls
-        // rebuildItemMeta() when the expandedItems reference changes (setConfig
-        // compares by ===). loadFiles() updates nodeMap, but when creating a
-        // root-level file no new folder appears, so expandedItems stays the same
-        // reference and the tree renders stale data. A new-array identity flush
-        // is the minimal correct trigger.
-        setExpandedItems(e => [...e]);
+        // nodeMap changes after loadFiles() → the sync effect produces a new expandedItems
+        // reference automatically → headless-tree rebuilds. No explicit flush needed here.
         onSelect(path);
       }
     } catch { /* ignore */ }
@@ -1096,8 +1091,8 @@ function FileTree({ agentId, selectedFile, onSelect }: {
 
     if (successCount > 0) {
       await loadFiles();
-      // Same headless-tree flush as in createFile — see comment there.
-      setExpandedItems(e => [...e]);
+      // nodeMap changes after loadFiles() → the sync effect produces a new expandedItems
+      // reference automatically → headless-tree rebuilds. No explicit flush needed here.
     }
     setUploading(false);
     setUploadProgress({ current: 0, total: 0, name: "" });
@@ -1232,10 +1227,20 @@ function FileTree({ agentId, selectedFile, onSelect }: {
 
   const [expandedItems, setExpandedItems] = useState<string[]>(defaultExpanded);
 
-  // Sync expandedItems when defaultExpanded changes (first load or after toggle/create adds new dirs).
-  // Strategy: merge new dirs into expanded rather than replacing, so user collapses are preserved.
-  // Also prune stale folder IDs that no longer exist in nodeMap (e.g. after the last file in a
-  // folder is deleted). Without the prune, headless-tree renders orphan folder rows with count 0.
+  // Sync expandedItems whenever nodeMap changes (covers ALL file mutations: create/delete/upload).
+  // headless-tree only calls rebuildItemMeta() when the expandedItems *reference* changes
+  // (setConfig uses strict-eq hasChangedExpandedItems). We therefore ALWAYS produce a new array
+  // reference here so every nodeMap change (= any visibleFiles change) forces a full rebuild.
+  //
+  // Strategy: prune stale folder IDs that no longer exist in nodeMap, then merge any newly-
+  // appeared dirs from defaultExpanded. The identity bail-out that was here previously was
+  // intentionally REMOVED: returning `current` (same reference) when content is unchanged
+  // prevented headless-tree from seeing the mutation, which caused ghost folder rows after
+  // root-file delete (the deleted item's stale itemInstance rendered via getItem fallback).
+  //
+  // Anti-loop proof: nodeMap is a useMemo derived from visibleFiles (deps: files + search).
+  // setExpandedItems does NOT mutate files or search, so nodeMap is stable after the effect
+  // runs — the effect does not re-trigger itself.
   const prevDefaultExpandedRef = useRef<string[]>(defaultExpanded);
   useEffect(() => {
     if (searchLower) return; // search expansion handled by separate effect below
@@ -1248,10 +1253,8 @@ function FileTree({ agentId, selectedFile, onSelect }: {
       for (const id of added) {
         if (!merged.includes(id)) merged.push(id);
       }
-      // Avoid a re-render when nothing actually changed.
-      if (merged.length === current.length && merged.every((id, i) => id === current[i])) {
-        return current;
-      }
+      // Always return a new array reference so headless-tree always rebuilds on nodeMap change.
+      // Do NOT restore the identity bail-out here — it breaks ghost-row cleanup on root-file delete.
       return merged;
     });
     prevDefaultExpandedRef.current = defaultExpanded;
