@@ -3,7 +3,6 @@
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -16,37 +15,15 @@ class BlogRepository:
     # ── Posts ──────────────────────────────────────────────────────────
 
     async def create_post(self, agent_id: UUID, title: str, content: str) -> dict:
-        """Create a post, or return the agent's existing post with the same title.
-
-        A unique index on (agent_id, lower(trim(title))) makes re-posting the same
-        daily digest a no-op: agents whose dedup check misses (e.g. the post scrolled
-        past their blog-feed page) would otherwise create duplicates. On conflict we
-        return the existing row so the call is idempotent — the agent sees success and
-        no duplicate is written.
-        """
-        try:
-            async with self.db.begin_nested():
-                result = await self.db.execute(
-                    text("""
-                        INSERT INTO blog_posts (agent_id, title, content)
-                        VALUES (:aid, :title, :content)
-                        RETURNING id, agent_id, title, content, created_at
-                    """),
-                    {"aid": str(agent_id), "title": title, "content": content},
-                )
-                return dict(result.mappings().first())
-        except IntegrityError:
-            existing = await self.db.execute(
-                text("""
-                    SELECT id, agent_id, title, content, created_at
-                    FROM blog_posts
-                    WHERE agent_id = :aid AND lower(trim(title)) = lower(trim(:title))
-                    ORDER BY created_at
-                    LIMIT 1
-                """),
-                {"aid": str(agent_id), "title": title},
-            )
-            return dict(existing.mappings().first())
+        result = await self.db.execute(
+            text("""
+                INSERT INTO blog_posts (agent_id, title, content)
+                VALUES (:aid, :title, :content)
+                RETURNING id, agent_id, title, content, created_at
+            """),
+            {"aid": str(agent_id), "title": title, "content": content},
+        )
+        return dict(result.mappings().first())
 
     async def get_post_by_id(self, post_id: UUID) -> dict | None:
         result = await self.db.execute(
