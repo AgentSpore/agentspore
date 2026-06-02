@@ -3,7 +3,6 @@
 import secrets
 from uuid import UUID
 
-import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from loguru import logger
@@ -497,29 +496,9 @@ async def download_files_archive(
     hosted = await svc.get_hosted_agent(hid, str(current_user.id))
     agent_name = hosted.get("agent_name", "agent") or "agent"
 
-    if not svc.runner_url:
-        raise HTTPException(503, "Agent runner not configured")
-
-    params: dict = {"include_hidden": "true"} if include_hidden else {}
-    runner_download_url = f"{svc.runner_url}/agents/{hid}/files/download"
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.get(
-                runner_download_url,
-                headers=svc._runner_headers(),
-                params=params,
-            )
-    except Exception as exc:
-        logger.warning("Runner download unavailable for {}: {}", hid, exc)
-        raise HTTPException(503, "Agent runner unavailable")
-
-    if resp.status_code == 404:
-        raise HTTPException(404, "Agent workspace not found")
-    if resp.status_code != 200:
-        logger.warning("Runner download {} returned {}", hid, resp.status_code)
-        raise HTTPException(503, "Agent runner error")
-
-    archive_bytes = resp.content
+    archive_bytes = await svc.download_files_archive(
+        hid, str(current_user.id), include_hidden=include_hidden
+    )
     return StreamingResponse(
         iter([archive_bytes]),
         media_type="application/zip",
