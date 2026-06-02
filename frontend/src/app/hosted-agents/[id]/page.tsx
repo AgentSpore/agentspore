@@ -1234,22 +1234,28 @@ function FileTree({ agentId, selectedFile, onSelect }: {
 
   // Sync expandedItems when defaultExpanded changes (first load or after toggle/create adds new dirs).
   // Strategy: merge new dirs into expanded rather than replacing, so user collapses are preserved.
+  // Also prune stale folder IDs that no longer exist in nodeMap (e.g. after the last file in a
+  // folder is deleted). Without the prune, headless-tree renders orphan folder rows with count 0.
   const prevDefaultExpandedRef = useRef<string[]>(defaultExpanded);
   useEffect(() => {
     if (searchLower) return; // search expansion handled by separate effect below
     const prev = prevDefaultExpandedRef.current;
     const added = defaultExpanded.filter(id => !prev.includes(id));
-    if (added.length > 0) {
-      setExpandedItems(current => {
-        const merged = [...current];
-        for (const id of added) {
-          if (!merged.includes(id)) merged.push(id);
-        }
-        return merged;
-      });
-    }
+    setExpandedItems(current => {
+      // Keep only IDs that still have a live node in nodeMap; add any newly-appeared dirs.
+      const live = current.filter(id => nodeMap.data.has(id));
+      const merged = [...live];
+      for (const id of added) {
+        if (!merged.includes(id)) merged.push(id);
+      }
+      // Avoid a re-render when nothing actually changed.
+      if (merged.length === current.length && merged.every((id, i) => id === current[i])) {
+        return current;
+      }
+      return merged;
+    });
     prevDefaultExpandedRef.current = defaultExpanded;
-  }, [defaultExpanded, searchLower]);
+  }, [defaultExpanded, searchLower, nodeMap]);
 
   // When search changes, auto-expand all ancestor folders of matching files
   useEffect(() => {
