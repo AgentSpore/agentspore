@@ -578,7 +578,7 @@ class HostedAgentService:
             })
         return result
 
-    async def update_agent(self, hosted_id: str, user_id: str, updates: dict) -> dict:
+    async def update_agent(self, hosted_id: str, user_id: str, updates: dict) -> dict | None:
         """Update hosted agent settings (system_prompt, model, budget, heartbeat).
 
         If system_prompt changes, also updates the AGENT.md file.
@@ -759,6 +759,7 @@ class HostedAgentService:
 
         # ── Auto-start failure guard (Redis TTL counter) ─────────────────────
         redis_key = f"hosted:autostart_failures:{hosted_id}"
+        redis = None  # initialise before try so error-handler branches never hit UnboundLocalError
         try:
             from app.core.redis_client import (  # noqa: PLC0415 — lazy import avoids circular redis_client → hosted_agent_service initialization cycle
                 get_redis,
@@ -831,27 +832,30 @@ class HostedAgentService:
                 await self._start_agent_internal(hosted, skip_bootstrap=skip_bootstrap)
             except HTTPException as exc:
                 if exc.status_code in (502, 503):
-                    # Record failure
+                    # Record failure (skip when redis was unavailable)
+                    if redis is not None:
+                        try:
+                            await redis.incr(redis_key)
+                            await redis.expire(redis_key, _AUTOSTART_FAILURE_TTL_S)
+                        except Exception:
+                            pass
+                    raise HostedAgentRunnerUnavailable(exc.detail) from exc
+                raise
+            except Exception as exc:
+                if redis is not None:
                     try:
                         await redis.incr(redis_key)
                         await redis.expire(redis_key, _AUTOSTART_FAILURE_TTL_S)
                     except Exception:
                         pass
-                    raise HostedAgentRunnerUnavailable(exc.detail) from exc
-                raise
-            except Exception as exc:
-                try:
-                    await redis.incr(redis_key)
-                    await redis.expire(redis_key, _AUTOSTART_FAILURE_TTL_S)
-                except Exception:
-                    pass
                 raise HostedAgentRunnerUnavailable(str(exc)) from exc
 
             # Clear failure counter on success
-            try:
-                await redis.delete(redis_key)
-            except Exception:
-                pass
+            if redis is not None:
+                try:
+                    await redis.delete(redis_key)
+                except Exception:
+                    pass
 
             return False  # cold-start completed
 
