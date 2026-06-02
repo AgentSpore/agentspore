@@ -119,6 +119,44 @@ class HostedAgentService:
 
     # ── CRUD ──
 
+    async def _rollback_creation(
+        self,
+        agent_id: str,
+        hosted_id: str,
+        reason: str,
+        cause: BaseException | None = None,
+    ) -> None:
+        """Deactivate the platform agent and delete the hosted row, then raise 503.
+
+        Called when agent creation fails after the DB rows have been committed —
+        runner is unavailable or import failed.  Logs but does not re-raise
+        the cleanup failure so the primary error always surfaces.
+
+        Args:
+            agent_id: Platform agent UUID (agents.id).
+            hosted_id: Hosted-agents record UUID (hosted_agents.id).
+            reason: Human-readable cause for the 503 detail string.
+            cause: Original exception to chain onto the 503 for traceback context.
+
+        Raises:
+            HTTPException(503): always.
+        """
+        await self.agent_svc.db.execute(
+            text("UPDATE agents SET is_active = FALSE WHERE id = :id"),
+            {"id": agent_id},
+        )
+        await self.agent_svc.db.commit()
+        try:
+            await self.repo.delete(hosted_id)
+        except Exception as del_exc:
+            logger.error(
+                "Rollback delete failed for orphaned hosted agent {}"
+                " after creation failure: {}",
+                hosted_id,
+                del_exc,
+            )
+        raise HTTPException(503, reason) from cause
+
     async def create_hosted_agent(
         self,
         *,
@@ -190,26 +228,12 @@ class HostedAgentService:
         # Runner creates the persistent workspace dir on first import — no DB agent_files writes.
         # Fail-fast: if runner is down at creation time, abort and clean up the dangling row.
         if not self.runner_url:
-            # Rollback: deactivate platform agent + delete hosted row.
             # repo.create() committed above intentionally (before runner call) so that
             # rollback-delete operates on a real committed row, and a retry after failure
             # finds a clean state without orphan rows.
-            await self.agent_svc.db.execute(
-                text("UPDATE agents SET is_active = FALSE WHERE id = :id"),
-                {"id": reg["agent_id"]},
-            )
-            await self.agent_svc.db.commit()
-            try:
-                await self.repo.delete(hosted_id)
-            except Exception as del_exc:
-                logger.error(
-                    "Rollback delete failed for orphaned hosted agent {}"
-                    " after creation failure: {}",
-                    hosted_id,
-                    del_exc,
-                )
-            raise HTTPException(
-                503,
+            await self._rollback_creation(
+                reg["agent_id"],
+                hosted_id,
                 "Agent runner unavailable — required to create workspace",
             )
 
@@ -245,28 +269,13 @@ class HostedAgentService:
                 hosted_id,
                 exc,
             )
-            # Rollback: deactivate platform agent + delete hosted row.
-            # repo.create() committed above intentionally (before runner call) so that
-            # rollback-delete operates on a real committed row, and a retry after failure
-            # finds a clean state without orphan rows.
-            await self.agent_svc.db.execute(
-                text("UPDATE agents SET is_active = FALSE WHERE id = :id"),
-                {"id": reg["agent_id"]},
-            )
-            await self.agent_svc.db.commit()
-            try:
-                await self.repo.delete(hosted_id)
-            except Exception as del_exc:
-                logger.error(
-                    "Rollback delete failed for orphaned hosted agent {}"
-                    " after creation failure: {}",
-                    hosted_id,
-                    del_exc,
-                )
-            raise HTTPException(
-                503,
+            # repo.create() committed above intentionally (before runner call).
+            await self._rollback_creation(
+                reg["agent_id"],
+                hosted_id,
                 "Agent runner unavailable — required to create workspace",
-            ) from exc
+                cause=exc,
+            )
 
         return {
             **hosted,
@@ -351,9 +360,7 @@ class HostedAgentService:
         await self.repo.db.commit()
 
         # Copy all files from source workspace dir → new agent workspace dir.
-        # P4b: runner dir is the source of truth; DB agent_files is legacy.
-        # Fallback: if source dir is empty (agent created but never started,
-        # files only in DB) → read from DB transitionally until P4c/P5.
+        # Runner dir is the sole source of truth (P5 complete, no DB fallback).
         source_files = await self._fork_read_source_files(
             source_hosted_id=source_hosted_id,
             source_name=source_name,
@@ -835,11 +842,10 @@ class HostedAgentService:
         # NOT sent:
         #   SKILL.md — runner always fetches live from platform /skill.md endpoint.
         #   AGENT.md — runner writes it from StartRequest.system_prompt (already below).
-        #   custom.md — STOP: .deep/skills/custom.md lives only in agent_files with no
-        #               dedicated column in hosted_agents. Seeding it on cold-start
-        #               requires a migration (out of scope for this epic). Existing
-        #               installations retain it on-disk from first creation; new cold
-        #               workspaces will lack it until P5 adds the column.
+        #   custom.md — seeded once at agent creation time by create_hosted_agent/fork,
+        #               persists in the runner workspace directory. start does not
+        #               re-seed it (config-only cold-start); it is always present on
+        #               disk from the initial import.
         files_payload = [
             {
                 "file_path": "agent.yaml",
@@ -1219,19 +1225,11 @@ class HostedAgentService:
             new_sha = runner_data.get("version", "") or ""
 
         # P5a: runner is sole write target; no DB upsert.
-        # Build full _file_response-compatible dict via _runner_file_to_dict.
         # Runner PUT response may omit size_bytes/modified_at — synthesise from
         # the local write (content byte length, empty mtime string as fallback).
-        runner_entry = {
-            "file_path": file_path,
-            "content": content,
-            "size_bytes": len(content.encode()) if content else 0,
-            "truncated": False,
-            "is_binary": False,
-            "version": new_sha,
-            "modified_at": "",
-        }
-        row = self._runner_file_to_dict(runner_entry)
+        row = self._runner_file_to_dict(
+            self._synthesise_write_entry(file_path, content, new_sha)
+        )
         # Emit event with minimal row fields expected by downstream consumers.
         await self._emit_file_event(
             hosted_id, user_id, "file_updated",
@@ -1281,22 +1279,41 @@ class HostedAgentService:
                 continue
             content = item["content"]
             new_sha = sha_map.get(item["file_path"], "")
-            runner_entry = {
-                "file_path": item["file_path"],
-                "content": content,
-                "size_bytes": len(content.encode()) if content else 0,
-                "truncated": False,
-                "is_binary": False,
-                "version": new_sha,
-                "modified_at": "",
-            }
-            row = self._runner_file_to_dict(runner_entry)
+            row = self._runner_file_to_dict(
+                self._synthesise_write_entry(item["file_path"], content, new_sha)
+            )
             written_rows.append(row)
             await self._emit_file_event(
                 hosted_id, user_id, "file_updated",
                 {"file_path": item["file_path"], "content": content, "version": new_sha},
             )
         return written_rows, failed
+
+    @staticmethod
+    def _synthesise_write_entry(file_path: str, content: str, sha: str) -> dict:
+        """Build a runner-entry dict for a just-written file.
+
+        Returns the shape expected by :meth:`_runner_file_to_dict`:
+        ``file_path``, ``content``, ``size_bytes``, ``truncated``,
+        ``is_binary``, ``version``, ``modified_at``.
+
+        Used by :meth:`write_file` and :meth:`write_files_batch` so both
+        paths produce identical dicts from a single source.
+
+        Args:
+            file_path: Workspace-relative path of the written file.
+            content: Text content that was written.
+            sha: Version sha returned by the runner PUT response.
+        """
+        return {
+            "file_path": file_path,
+            "content": content,
+            "size_bytes": len(content.encode()) if content else 0,
+            "truncated": False,
+            "is_binary": False,
+            "version": sha,
+            "modified_at": "",
+        }
 
     @staticmethod
     def _default_agent_yaml() -> str:

@@ -32,9 +32,6 @@ IGNORED_DIRS: frozenset[str] = frozenset(
     }
 )
 
-# Backward-compat alias kept for any external callers.
-_NOISE_DIRS = IGNORED_DIRS
-
 
 def _file_version(path: Path) -> str:
     """Return a 12-hex-char SHA-256 content hash of ``path``.
