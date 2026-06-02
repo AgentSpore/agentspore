@@ -95,6 +95,9 @@ function HostedAgentManagePageInner() {
   const [activeTab, setActiveTab] = useState<"chat" | "files" | "guide" | "cron">("chat");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [hasUnreadFiles, setHasUnreadFiles] = useState(false);
+  // Escape-hatch ref: FileTree writes a callback here so the parent can cancel
+  // the create-mode when the editor is closed (e.g. clicking × in EditorPanel header).
+  const cancelFileCreateRef = useRef<() => void>(() => {});
 
   // Cron tasks
   type CronTask = {
@@ -480,12 +483,12 @@ function HostedAgentManagePageInner() {
             <div className="h-full flex flex-col sm:flex-row gap-1.5">
               {/* File tree — hidden on mobile when a file is selected */}
               <div className={`sm:w-[240px] sm:shrink-0 ${selectedFile ? "hidden sm:block" : ""}`}>
-                <FileTree agentId={id} selectedFile={selectedFile} onSelect={setSelectedFile} />
+                <FileTree agentId={id} selectedFile={selectedFile} onSelect={setSelectedFile} cancelCreateRef={cancelFileCreateRef} />
               </div>
               {/* Editor — full width on mobile */}
               <div className={`flex-1 min-w-0 ${!selectedFile ? "hidden sm:block" : ""}`}>
                 {selectedFile ? (
-                  <EditorPanel agentId={id} filePath={selectedFile} onClose={() => setSelectedFile(null)} />
+                  <EditorPanel agentId={id} filePath={selectedFile} onClose={() => { cancelFileCreateRef.current(); setSelectedFile(null); }} />
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center bg-white/[0.02] border border-neutral-800/50 rounded-xl">
                     <svg className="w-10 h-10 text-neutral-800 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
@@ -927,10 +930,12 @@ function HostedAgentManagePageInner() {
 /* File Tree Sidebar                                                          */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
-function FileTree({ agentId, selectedFile, onSelect }: {
+function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
   agentId: string;
   selectedFile: string | null;
   onSelect: (path: string | null) => void;
+  /** Ref the parent writes: called in EditorPanel onClose to cancel an in-progress file create. */
+  cancelCreateRef?: React.RefObject<() => void>;
 }) {
   const [files, setFiles] = useState<AgentFile[]>([]);
   const [newFileName, setNewFileName] = useState("");
@@ -1226,6 +1231,18 @@ function FileTree({ agentId, selectedFile, onSelect }: {
   }, [rootChildren]);
 
   const [expandedItems, setExpandedItems] = useState<string[]>(defaultExpanded);
+
+  // Escape-hatch: keep the parent's cancelCreateRef pointing at the current reset function.
+  // The parent calls this from EditorPanel's onClose (× button) to cancel an in-progress
+  // new-file create when the editor is closed while showNewFile is active.
+  // Writing to a ref during render is the recommended React escape-hatch for stable callbacks;
+  // this is intentional (see https://react.dev/learn/referencing-values-with-refs#best-practices).
+  if (cancelCreateRef) {
+    cancelCreateRef.current = () => { // eslint-disable-line react-hooks/refs
+      setShowNewFile(false);
+      setNewFileName("");
+    };
+  }
 
   // Sync expandedItems whenever nodeMap changes (covers ALL file mutations: create/delete/upload).
   // headless-tree only calls rebuildItemMeta() when the expandedItems *reference* changes
@@ -1576,14 +1593,20 @@ function EditorPanel({ agentId, filePath, onClose }: {
       try {
         const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
         const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agentId}/files/${encodedFilePath}`);
-        if (res.ok && !cancelled) {
-          const f: AgentFile & { version?: string; truncated?: boolean; is_binary?: boolean } = await res.json();
-          setContent(f.content || "");
-          setLoadedVersion(f.version ?? "");
-          setTruncated(!!f.truncated);
-          setIsBinary(!!f.is_binary);
+        if (!cancelled) {
+          if (res.ok) {
+            const f: AgentFile & { version?: string; truncated?: boolean; is_binary?: boolean } = await res.json();
+            setContent(f.content || "");
+            setLoadedVersion(f.version ?? "");
+            setTruncated(!!f.truncated);
+            setIsBinary(!!f.is_binary);
+          } else {
+            setError(`Failed to load (${res.status})`);
+          }
         }
-      } catch { /* ignore */ }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load");
+      }
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
