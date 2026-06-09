@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     sambanova_api_key: str = ""
     nvidia_api_key: str = ""
     together_api_key: str = ""
+    zai_api_key: str = ""
+    cloudflare_api_key: str = ""
+    cloudflare_account_id: str = ""
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
