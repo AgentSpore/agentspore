@@ -2,8 +2,9 @@
 
 Extra providers (Cerebras, Groq, Mistral, Nebius, Z.AI, Cloudflare Workers AI,
 …) are fetched dynamically from their /models endpoints and cached alongside
-OpenRouter models. Providers may declare an optional `model_filter` substring
-(e.g. Z.AI free tier = Flash models only) and an `account_id_field` whose value
+OpenRouter models. Providers may declare a `static_models` list to skip the
+/models fetch entirely (e.g. Z.AI's free Flash models are hidden by its /models
+endpoint but work via chat/completions) and an `account_id_field` whose value
 is substituted into a `{account_id}` placeholder in the base_url (Cloudflare).
 """
 
@@ -130,8 +131,10 @@ class OpenRouterService:
         "zai": {
             "base_url": "https://api.z.ai/api/paas/v4",
             "api_key_field": "zai_api_key",
-            # Z.AI lists paid models on /models; only the Flash family is free.
-            "model_filter": "flash",
+            # Z.AI's /models endpoint lists ONLY paid models (glm-4.5, glm-4.6,
+            # glm-5, …); the free Flash family is hidden there but works via
+            # chat/completions (verified live 2026-06-09). Serve a static list.
+            "static_models": ["glm-4.7-flash", "glm-4.5-flash"],
         },
         "cloudflare": {
             # {account_id} is substituted from `account_id_field` at consume time.
@@ -203,7 +206,21 @@ class OpenRouterService:
             if resolved is None:
                 continue
             base_url, api_key = resolved
-            model_filter = cfg.get("model_filter")
+
+            # Static-model providers: emit declared IDs without hitting /models
+            # (the provider's /models endpoint hides these free models).
+            static_models = cfg.get("static_models")
+            if static_models:
+                for mid in static_models:
+                    ctx = 131072
+                    result.append({
+                        "id": f"{provider_name}/{mid}",
+                        "name": _model_label(provider_name, mid, ctx),
+                        "context_length": ctx,
+                        "provider": provider_name,
+                    })
+                continue
+
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
                     resp = await client.get(
@@ -227,8 +244,6 @@ class OpenRouterService:
                 mid = m.get("id", "")
                 ctx = int(m.get("context_window") or m.get("max_tokens") or 32768)
                 if not _is_chat_model(mid, ctx):
-                    continue
-                if model_filter and model_filter not in mid.lower():
                     continue
                 platform_id = f"{provider_name}/{mid}"
                 result.append({

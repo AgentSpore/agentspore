@@ -127,18 +127,20 @@ async def test_is_allowed_zai_needs_key():
 
 
 @pytest.mark.asyncio
-async def test_zai_model_filter_excludes_non_flash():
+async def test_zai_serves_static_flash_models_without_fetch():
+    # Z.AI's /models hides the free Flash family; serve it from a static list
+    # and never hit the network for this provider.
     settings = _settings(zai_api_key="zai-secret")
     svc = OpenRouterService()
-    resp = _mock_models_response(["glm-4.5-flash", "glm-4.6", "glm-4.7-flash"])
+    resp = _mock_models_response(["glm-4.6", "glm-5"])  # what /models WOULD return
     urls: list[str] = []
     with _patch_settings(settings), _patch_models_fetch(urls, resp):
         models = await svc._extra_provider_models()
     ids = {m["id"] for m in models}
-    assert "zai/glm-4.5-flash" in ids
     assert "zai/glm-4.7-flash" in ids
-    assert "zai/glm-4.6" not in ids  # paid, no "flash" -> filtered
-    assert urls == ["https://api.z.ai/api/paas/v4/models"]
+    assert "zai/glm-4.5-flash" in ids
+    assert "zai/glm-4.6" not in ids  # paid model from /models never emitted
+    assert urls == []  # no /models fetch for a static-model provider
 
 
 @pytest.mark.asyncio
@@ -170,7 +172,7 @@ async def test_cloudflare_skipped_without_account_id():
 
 @pytest.mark.asyncio
 async def test_provider_models_fetch_failure_returns_empty():
-    settings = _settings(zai_api_key="zai-secret")
+    settings = _settings(cerebras_api_key="cb-secret")
     svc = OpenRouterService()
 
     async def _boom(url, *args, **kwargs):
@@ -187,7 +189,7 @@ async def test_provider_models_fetch_failure_returns_empty():
 
 @pytest.mark.asyncio
 async def test_provider_models_unexpected_shape_returns_empty():
-    settings = _settings(zai_api_key="zai-secret")
+    settings = _settings(cerebras_api_key="cb-secret")
     svc = OpenRouterService()
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
