@@ -61,9 +61,14 @@ const PROVIDER_LABELS: Record<string, string> = {
   groq: "Groq",
   mistral: "Mistral",
   nebius: "Nebius AI Studio",
+  nvidia: "NVIDIA NIM",
+  sambanova: "SambaNova",
+  together: "Together AI",
+  zai: "Z.AI",
+  cloudflare: "Cloudflare Workers AI",
 };
 
-const PROVIDER_ORDER = ["openrouter", "cerebras", "groq", "mistral", "nebius"] as const;
+const PROVIDER_ORDER = ["openrouter", "cerebras", "groq", "mistral", "nebius", "nvidia", "sambanova", "together", "zai", "cloudflare"] as const;
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /* Main Page                                                                  */
@@ -3102,7 +3107,7 @@ function SettingsModal({ agent, onClose, onUpdate, onForceRestart }: { agent: Ho
               );
             })()}
             <p className="text-[10px] font-mono text-neutral-700 mt-1">
-              All models are free. Grouped by provider: OpenRouter, Cerebras, Groq, Mistral, Nebius.
+              All models are free. Grouped by provider: OpenRouter, Cerebras, Groq, Mistral, Nebius, NVIDIA NIM, SambaNova, Together AI, Z.AI, Cloudflare.
             </p>
           </div>
           <div>

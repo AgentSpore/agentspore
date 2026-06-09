@@ -1,7 +1,10 @@
 """OpenRouterService — fetches and caches free models with tool support from OpenRouter API.
 
-Extra providers (Cerebras, Groq, Mistral, Nebius) are fetched dynamically from
-their /models endpoints and cached alongside OpenRouter models.
+Extra providers (Cerebras, Groq, Mistral, Nebius, Z.AI, Cloudflare Workers AI,
+…) are fetched dynamically from their /models endpoints and cached alongside
+OpenRouter models. Providers may declare an optional `model_filter` substring
+(e.g. Z.AI free tier = Flash models only) and an `account_id_field` whose value
+is substituted into a `{account_id}` placeholder in the base_url (Cloudflare).
 """
 
 import time
@@ -34,6 +37,8 @@ _PROVIDER_DISPLAY: dict[str, str] = {
     "sambanova": "SambaNova",
     "nvidia": "NVIDIA NIM",
     "together": "Together AI",
+    "zai": "Z.AI",
+    "cloudflare": "Cloudflare Workers AI",
 }
 
 
@@ -122,6 +127,18 @@ class OpenRouterService:
             "base_url": "https://api.together.xyz/v1",
             "api_key_field": "together_api_key",
         },
+        "zai": {
+            "base_url": "https://api.z.ai/api/paas/v4",
+            "api_key_field": "zai_api_key",
+            # Z.AI lists paid models on /models; only the Flash family is free.
+            "model_filter": "flash",
+        },
+        "cloudflare": {
+            # {account_id} is substituted from `account_id_field` at consume time.
+            "base_url": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+            "api_key_field": "cloudflare_api_key",
+            "account_id_field": "cloudflare_account_id",
+        },
     }
 
     # Gemini kept static — no standard /models endpoint.
@@ -145,6 +162,28 @@ class OpenRouterService:
         "api_key_field": "gemini_api_key",
     }
 
+    @staticmethod
+    def _resolve_provider_cfg(cfg: dict, settings) -> tuple[str, str] | None:
+        """Resolve (base_url, api_key) for an extra-provider config entry.
+
+        Returns None when the provider is not fully configured (missing api key,
+        or a required account_id placeholder cannot be substituted). For entries
+        with an `account_id_field`, the `{account_id}` placeholder in `base_url`
+        is filled and the provider is active only when BOTH the key and the
+        account id are set.
+        """
+        api_key = getattr(settings, cfg["api_key_field"], "")
+        if not api_key:
+            return None
+        base_url = cfg["base_url"]
+        account_field = cfg.get("account_id_field")
+        if account_field:
+            account_id = getattr(settings, account_field, "")
+            if not account_id:
+                return None
+            base_url = base_url.format(account_id=account_id)
+        return base_url, api_key
+
     def __init__(self) -> None:
         self._cache: list[dict] = []
         self._cache_ts: float = 0
@@ -160,13 +199,15 @@ class OpenRouterService:
         result: list[dict] = []
 
         for provider_name, cfg in self.EXTRA_PROVIDERS.items():
-            api_key = getattr(settings, cfg["api_key_field"], "")
-            if not api_key:
+            resolved = self._resolve_provider_cfg(cfg, settings)
+            if resolved is None:
                 continue
+            base_url, api_key = resolved
+            model_filter = cfg.get("model_filter")
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
                     resp = await client.get(
-                        f"{cfg['base_url']}/models",
+                        f"{base_url}/models",
                         headers={"Authorization": f"Bearer {api_key}"},
                     )
                     resp.raise_for_status()
@@ -174,11 +215,20 @@ class OpenRouterService:
             except Exception as e:
                 logger.warning("Failed to fetch {} models: {}", provider_name, e)
                 continue
+            if not isinstance(data, dict):
+                logger.warning(
+                    "Unexpected {} /models payload shape: {}",
+                    provider_name,
+                    type(data).__name__,
+                )
+                continue
 
             for m in data.get("data", []):
                 mid = m.get("id", "")
                 ctx = int(m.get("context_window") or m.get("max_tokens") or 32768)
                 if not _is_chat_model(mid, ctx):
+                    continue
+                if model_filter and model_filter not in mid.lower():
                     continue
                 platform_id = f"{provider_name}/{mid}"
                 result.append({
@@ -257,7 +307,7 @@ class OpenRouterService:
         for provider_name, cfg in self.EXTRA_PROVIDERS.items():
             if model_id.startswith(f"{provider_name}/"):
                 settings = get_settings()
-                return bool(getattr(settings, cfg["api_key_field"], ""))
+                return self._resolve_provider_cfg(cfg, settings) is not None
         if model_id.startswith("gemini/"):
             settings = get_settings()
             return bool(getattr(settings, self.GEMINI_CFG["api_key_field"], ""))
@@ -273,9 +323,10 @@ class OpenRouterService:
         settings = get_settings()
         for provider_name, cfg in self.EXTRA_PROVIDERS.items():
             if model_id.startswith(f"{provider_name}/"):
-                api_key = getattr(settings, cfg["api_key_field"], "")
-                if api_key:
-                    return {"base_url": cfg["base_url"], "api_key": api_key}
+                resolved = self._resolve_provider_cfg(cfg, settings)
+                if resolved is not None:
+                    base_url, api_key = resolved
+                    return {"base_url": base_url, "api_key": api_key}
         if model_id.startswith("gemini/"):
             api_key = getattr(settings, self.GEMINI_CFG["api_key_field"], "")
             if api_key:
