@@ -114,7 +114,9 @@ def _load_provider_chain() -> list[tuple[str, str]]:
     return [parse_chain_entry(e) for e in entries]
 
 
-_EXTRA_PROVIDER_PREFIXES: frozenset[str] = frozenset({"cerebras/", "groq/", "gemini/", "mistral/", "nebius/", "sambanova/"})
+_EXTRA_PROVIDER_PREFIXES: frozenset[str] = frozenset(
+    {"cerebras/", "groq/", "gemini/", "mistral/", "nebius/", "sambanova/", "zai/", "cloudflare/", "together/"}
+)
 
 
 def resolve_model_for_agent(requested: str) -> str:
