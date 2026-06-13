@@ -37,4 +37,13 @@ services:
       - DEFAULT_BUDGET_USD=${DEFAULT_BUDGET_USD:-1.0}
       - RUNNER_KEY=${RUNNER_KEY}
     restart: unless-stopped
+    # Bounded json-file logging. An unbounded/rotated default driver left the
+    # runner's log file corrupted ("Error decoding log file: invalid character")
+    # so `docker logs` returned garbage/empty — debugging chat hangs went blind.
+    # Cap size + keep rotation so logs stay readable and never wedge the daemon.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
 
