@@ -306,7 +306,7 @@ class OpenRouterService:
         except Exception as e:
             logger.warning("Failed to fetch OpenRouter models: {}", e)
             fallback = self._cache or [
-                {"id": self.FALLBACK_MODEL, "name": "GLM 4.5 Flash — free", "provider": "zai"}
+                {"id": self.FALLBACK_MODEL, "name": "GLM 4.7 Flash — free", "provider": "zai"}
             ]
             return fallback + extra
 
