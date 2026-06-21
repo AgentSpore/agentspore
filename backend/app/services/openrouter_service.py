@@ -115,7 +115,7 @@ class OpenRouterService:
     # zai_api_key, prefix-routed to the Z.AI base_url by resolve_provider, and
     # NOT a member of the OpenRouter-blocked set — so a fallback never lands on a
     # provider we hold no key for or on a privacy-blocked OpenRouter slug.
-    FALLBACK_MODEL = "zai/glm-4.5-flash"
+    FALLBACK_MODEL = "zai/glm-4.7-flash"
 
     # Extra providers: models fetched dynamically via /models API.
     # Gemini does not expose a standard /models endpoint — keep static.
