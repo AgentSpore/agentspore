@@ -40,7 +40,12 @@ _PROVIDER_DISPLAY: dict[str, str] = {
     "together": "Together AI",
     "zai": "Z.AI",
     "cloudflare": "Cloudflare Workers AI",
+    "deepseek": "DeepSeek",
 }
+
+# Providers billed per-token (no free tier). Their model labels are suffixed
+# '— paid' instead of '— free' so the picker never misrepresents cost.
+_PAID_PROVIDERS: frozenset[str] = frozenset({"deepseek"})
 
 
 def _is_chat_model(model_id: str, context_window: int) -> bool:
@@ -55,7 +60,8 @@ def _model_label(provider: str, model_id: str, ctx: int) -> str:
     """Build human-readable label: '<short-id> (Provider) — free, <N>K ctx'."""
     ctx_label = f"{ctx // 1024}K" if ctx >= 1024 else str(ctx)
     short = model_id.split("/")[-1]
-    return f"{short} ({_PROVIDER_DISPLAY.get(provider, provider)}) — free, {ctx_label} ctx"
+    cost = "paid" if provider in _PAID_PROVIDERS else "free"
+    return f"{short} ({_PROVIDER_DISPLAY.get(provider, provider)}) — {cost}, {ctx_label} ctx"
 
 
 def _provider_prefix(model_id: str) -> str:
@@ -155,6 +161,14 @@ class OpenRouterService:
             "base_url": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
             "api_key_field": "cloudflare_api_key",
             "account_id_field": "cloudflare_account_id",
+        },
+        "deepseek": {
+            "base_url": "https://api.deepseek.com",
+            "api_key_field": "deepseek_api_key",
+            # DeepSeek /models lists deepseek-chat (V3/V4, tool-calling) + deepseek-reasoner
+            # (no function-calling). Serve only the tool-capable one — agents need tools.
+            "static_models": ["deepseek-chat"],
+            "paid": True,
         },
     }
 
@@ -335,14 +349,21 @@ class OpenRouterService:
         if model_id in self.BLOCKED_MODELS:
             return False
         # Prefix-based check for extra providers — avoids full model fetch.
-        prefix = _provider_prefix(model_id)
-        cfg = self.EXTRA_PROVIDERS.get(prefix)
-        if cfg is not None:
-            settings = get_settings()
-            return self._resolve_provider_cfg(cfg, settings) is not None
-        if prefix == "gemini":
-            settings = get_settings()
-            return bool(getattr(settings, self.GEMINI_CFG["api_key_field"], ""))
+        # ':free' is the OpenRouter marker: OpenRouter free models always end with
+        # it (e.g. deepseek/...:free, nvidia/...:free) and direct extra-provider
+        # models never do. Skip the prefix shortcut for ':free' ids so they fall
+        # through to the OpenRouter membership check instead of mis-routing to a
+        # same-named direct provider (e.g. EXTRA_PROVIDERS['deepseek']).
+        normalized = model_id.strip().lower()
+        if not normalized.endswith(":free"):
+            prefix = _provider_prefix(model_id)
+            cfg = self.EXTRA_PROVIDERS.get(prefix)
+            if cfg is not None:
+                settings = get_settings()
+                return self._resolve_provider_cfg(cfg, settings) is not None
+            if prefix == "gemini":
+                settings = get_settings()
+                return bool(getattr(settings, self.GEMINI_CFG["api_key_field"], ""))
         models = await self.get_models()
         return any(m["id"] == model_id for m in models)
 
@@ -352,6 +373,11 @@ class OpenRouterService:
         Used by hosted_agent_service to pass per-provider base_url and api_key
         to the runner when starting an agent with an extra-provider model.
         """
+        # ':free' is the OpenRouter marker (see is_allowed): never prefix-route a
+        # ':free' id to a same-named direct extra provider — it belongs to
+        # OpenRouter, so return None and let the caller use the OpenRouter path.
+        if model_id.strip().lower().endswith(":free"):
+            return None
         settings = get_settings()
         prefix = _provider_prefix(model_id)
         cfg = self.EXTRA_PROVIDERS.get(prefix)
