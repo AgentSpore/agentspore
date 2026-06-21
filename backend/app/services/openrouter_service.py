@@ -58,6 +58,17 @@ def _model_label(provider: str, model_id: str, ctx: int) -> str:
     return f"{short} ({_PROVIDER_DISPLAY.get(provider, provider)}) — free, {ctx_label} ctx"
 
 
+def _provider_prefix(model_id: str) -> str:
+    """Return the lowercased provider segment of a model id (text before first '/').
+
+    Normalizes whitespace and case so prefix routing is robust to model strings
+    that were stored with stray spacing or mixed case (e.g. ' Zai/glm-4.5-flash ').
+    Returns '' when there is no '/' separator.
+    """
+    head, sep, _ = model_id.strip().partition("/")
+    return head.lower() if sep else ""
+
+
 class OpenRouterService:
     """Manages model discovery across OpenRouter and extra LLM providers.
 
@@ -93,9 +104,12 @@ class OpenRouterService:
         "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
     })
 
-    # Preferred fallback when current selection is unavailable.
-    # Verified responsive as of 2026-04-17.
-    FALLBACK_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+    # Preferred fallback when the current selection is unavailable.
+    # Points at the first-party Z.AI free flash model: guaranteed-live via
+    # zai_api_key, prefix-routed to the Z.AI base_url by resolve_provider, and
+    # NOT a member of the OpenRouter-blocked set — so a fallback never lands on a
+    # provider we hold no key for or on a privacy-blocked OpenRouter slug.
+    FALLBACK_MODEL = "zai/glm-4.5-flash"
 
     # Extra providers: models fetched dynamically via /models API.
     # Gemini does not expose a standard /models endpoint — keep static.
@@ -277,7 +291,9 @@ class OpenRouterService:
                 data = resp.json()
         except Exception as e:
             logger.warning("Failed to fetch OpenRouter models: {}", e)
-            fallback = self._cache or [{"id": self.FALLBACK_MODEL, "name": "Nemotron 3 Super 120B — free", "provider": "openrouter"}]
+            fallback = self._cache or [
+                {"id": self.FALLBACK_MODEL, "name": "GLM 4.5 Flash — free", "provider": "zai"}
+            ]
             return fallback + extra
 
         models = []
@@ -318,12 +334,13 @@ class OpenRouterService:
         """Check if a model ID is in the allowed list."""
         if model_id in self.BLOCKED_MODELS:
             return False
-        # Prefix-based check for extra providers — avoids full model fetch
-        for provider_name, cfg in self.EXTRA_PROVIDERS.items():
-            if model_id.startswith(f"{provider_name}/"):
-                settings = get_settings()
-                return self._resolve_provider_cfg(cfg, settings) is not None
-        if model_id.startswith("gemini/"):
+        # Prefix-based check for extra providers — avoids full model fetch.
+        prefix = _provider_prefix(model_id)
+        cfg = self.EXTRA_PROVIDERS.get(prefix)
+        if cfg is not None:
+            settings = get_settings()
+            return self._resolve_provider_cfg(cfg, settings) is not None
+        if prefix == "gemini":
             settings = get_settings()
             return bool(getattr(settings, self.GEMINI_CFG["api_key_field"], ""))
         models = await self.get_models()
@@ -336,13 +353,14 @@ class OpenRouterService:
         to the runner when starting an agent with an extra-provider model.
         """
         settings = get_settings()
-        for provider_name, cfg in self.EXTRA_PROVIDERS.items():
-            if model_id.startswith(f"{provider_name}/"):
-                resolved = self._resolve_provider_cfg(cfg, settings)
-                if resolved is not None:
-                    base_url, api_key = resolved
-                    return {"base_url": base_url, "api_key": api_key}
-        if model_id.startswith("gemini/"):
+        prefix = _provider_prefix(model_id)
+        cfg = self.EXTRA_PROVIDERS.get(prefix)
+        if cfg is not None:
+            resolved = self._resolve_provider_cfg(cfg, settings)
+            if resolved is not None:
+                base_url, api_key = resolved
+                return {"base_url": base_url, "api_key": api_key}
+        if prefix == "gemini":
             api_key = getattr(settings, self.GEMINI_CFG["api_key_field"], "")
             if api_key:
                 return {"base_url": self.GEMINI_CFG["base_url"], "api_key": api_key}
@@ -351,14 +369,17 @@ class OpenRouterService:
     async def resolve_model(self, model_id: str) -> str:
         """Return `model_id` if it is still runtime-reachable, otherwise the fallback.
 
-        Extra provider models pass through unchanged (prefix-routed).
-        OpenRouter blocked models fall back to FALLBACK_MODEL.
+        Extra provider models (zai/, cloudflare/, gemini/, …) pass through
+        unchanged — they are prefix-routed to their own base_url at call time and
+        must never be downgraded to the OpenRouter fallback. Prefix matching is
+        normalized (whitespace-stripped, case-insensitive) so a model id stored
+        with stray spacing or mixed case still routes to its provider instead of
+        falling through to FALLBACK_MODEL.
+
+        Only genuinely blocked OpenRouter models fall back to FALLBACK_MODEL.
         """
-        # Extra provider models — pass through unchanged, prefix-routed at call time
-        for provider_name in self.EXTRA_PROVIDERS:
-            if model_id.startswith(f"{provider_name}/"):
-                return model_id
-        if model_id.startswith("gemini/"):
+        prefix = _provider_prefix(model_id)
+        if prefix in self.EXTRA_PROVIDERS or prefix == "gemini":
             return model_id
         if model_id in self.BLOCKED_MODELS:
             logger.warning("Model {} blocked; falling back to {}", model_id, self.FALLBACK_MODEL)
