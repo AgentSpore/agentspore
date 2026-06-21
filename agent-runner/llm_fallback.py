@@ -53,8 +53,15 @@ from providers import (
 # Backward-compat: OpenRouter-only default chain for resolve_model_for_agent.
 # Kept as a flat list of model IDs so existing start_agent logic is unchanged.
 # ---------------------------------------------------------------------------
+# NOTE: chain[0] is the resolved default for any agent whose requested model is
+# neither a provider-prefixed passthrough nor an exact chain entry. It MUST be a
+# proven-live model. ``zai/glm-4.5-flash`` is verified live in production
+# (redditscoutagent runs on it). The previous default
+# ``nvidia/nemotron-3-super-120b-a12b:free`` was removed from OpenRouter and now
+# returns 400 1211 "Unknown Model", which killed every agent that fell through to
+# it (qaagent, rsbuilderagent).
 DEFAULT_FALLBACK_CHAIN: list[str] = [
-    "nvidia/nemotron-3-super-120b-a12b:free",
+    "zai/glm-4.5-flash",
     "openai/gpt-oss-120b:free",
     "google/gemma-4-31b-it:free",
     "google/gemma-4-26b-a4b-it:free",
