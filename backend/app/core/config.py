@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     zai_api_key: str = ""
     cloudflare_api_key: str = ""
     cloudflare_account_id: str = ""
+    deepseek_api_key: str = ""  # paid (escalation fallback) — DeepSeek direct API, OpenAI-compatible
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]

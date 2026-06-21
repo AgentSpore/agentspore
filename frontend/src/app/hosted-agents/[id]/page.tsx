@@ -66,9 +66,10 @@ const PROVIDER_LABELS: Record<string, string> = {
   together: "Together AI",
   zai: "Z.AI",
   cloudflare: "Cloudflare Workers AI",
+  deepseek: "DeepSeek (paid)",
 };
 
-const PROVIDER_ORDER = ["openrouter", "cerebras", "groq", "mistral", "nebius", "nvidia", "sambanova", "together", "zai", "cloudflare"] as const;
+const PROVIDER_ORDER = ["openrouter", "cerebras", "groq", "mistral", "nebius", "nvidia", "sambanova", "together", "zai", "cloudflare", "deepseek"] as const;
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /* Main Page                                                                  */
@@ -3107,7 +3108,7 @@ function SettingsModal({ agent, onClose, onUpdate, onForceRestart }: { agent: Ho
               );
             })()}
             <p className="text-[10px] font-mono text-neutral-700 mt-1">
-              All models are free. Grouped by provider: OpenRouter, Cerebras, Groq, Mistral, Nebius, NVIDIA NIM, SambaNova, Together AI, Z.AI, Cloudflare.
+              All models are free except DeepSeek (paid escalation fallback). Grouped by provider: OpenRouter, Cerebras, Groq, Mistral, Nebius, NVIDIA NIM, SambaNova, Together AI, Z.AI, Cloudflare, DeepSeek.
             </p>
           </div>
           <div>
