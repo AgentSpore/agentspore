@@ -637,26 +637,33 @@ class TestResolveModelForAgent:
 
 
 class TestDeadNemotronNeverResolved:
-    """Regression: the removed nvidia nemotron slug returns 400 1211 from
-    OpenRouter and must never be the resolved default (it killed qaagent /
-    rsbuilderagent). chain[0] must be the proven-live zai/glm-4.5-flash.
+    """Regression: two removed slugs return 400 from their providers and must
+    never be the resolved default (they killed qaagent / rsbuilderagent).
+    chain[0] must be the proven-live zai/glm-4.7-flash.
+
+    Dead set:
+      - nvidia/nemotron-3-super-120b-a12b:free  — OpenRouter 400 1211 "Unknown Model"
+      - zai/glm-4.5-flash                        — Z.AI 400 "not a valid model ID"
     """
 
-    DEAD_SLUG = "nvidia/nemotron-3-super-120b-a12b:free"
-    LIVE_DEFAULT = "zai/glm-4.5-flash"
+    DEAD_SLUGS = frozenset({
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "zai/glm-4.5-flash",
+    })
+    LIVE_DEFAULT = "zai/glm-4.7-flash"
 
-    def test_dead_nemotron_is_not_chain_head(self):
-        assert DEFAULT_FALLBACK_CHAIN[0] != self.DEAD_SLUG
+    def test_dead_slugs_are_not_chain_head(self):
+        assert DEFAULT_FALLBACK_CHAIN[0] not in self.DEAD_SLUGS
         assert DEFAULT_FALLBACK_CHAIN[0] == self.LIVE_DEFAULT
 
     def test_zai_flash_passes_through(self, monkeypatch):
         monkeypatch.delenv("LLM_FALLBACK_CHAIN", raising=False)
         assert resolve_model_for_agent(self.LIVE_DEFAULT) == self.LIVE_DEFAULT
 
-    def test_unknown_model_never_resolves_to_dead_nemotron(self, monkeypatch):
+    def test_unknown_model_never_resolves_to_dead_slug(self, monkeypatch):
         monkeypatch.delenv("LLM_FALLBACK_CHAIN", raising=False)
         result = resolve_model_for_agent("nonexistent/model")
-        assert result != self.DEAD_SLUG
+        assert result not in self.DEAD_SLUGS
         assert result == self.LIVE_DEFAULT
 
 

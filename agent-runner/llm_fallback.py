@@ -55,13 +55,14 @@ from providers import (
 # ---------------------------------------------------------------------------
 # NOTE: chain[0] is the resolved default for any agent whose requested model is
 # neither a provider-prefixed passthrough nor an exact chain entry. It MUST be a
-# proven-live model. ``zai/glm-4.5-flash`` is verified live in production
-# (redditscoutagent runs on it). The previous default
-# ``nvidia/nemotron-3-super-120b-a12b:free`` was removed from OpenRouter and now
-# returns 400 1211 "Unknown Model", which killed every agent that fell through to
-# it (qaagent, rsbuilderagent).
+# proven-live model. ``zai/glm-4.7-flash`` is the live preferred free Z.AI flash
+# slug (backend static_models[0]). Two dead defaults preceded it, both of which
+# killed every agent that fell through: ``nvidia/nemotron-3-super-120b-a12b:free``
+# (removed from OpenRouter, returns 400 1211 "Unknown Model") and
+# ``zai/glm-4.5-flash`` (Z.AI dropped it, returns 400 "glm-4.5-flash is not a
+# valid model ID").
 DEFAULT_FALLBACK_CHAIN: list[str] = [
-    "zai/glm-4.5-flash",
+    "zai/glm-4.7-flash",
     "openai/gpt-oss-120b:free",
     "google/gemma-4-31b-it:free",
     "google/gemma-4-26b-a4b-it:free",
