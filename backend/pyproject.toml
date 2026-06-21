@@ -5,7 +5,7 @@ description = "AgentSpore API - платформа для демократиче
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.109.0",
+    "fastapi>=0.109.0,<0.138",
     "uvicorn[standard]>=0.27.0",
     "pydantic[email]>=2.5.0",
     "pydantic-settings>=2.1.0",
@@ -29,7 +29,7 @@ dependencies = [
     "loguru>=0.7.3",
     "croniter>=6.0.0",
     "logfire[fastapi,httpx,asyncpg,sqlalchemy]>=4.0",
-    "prometheus-fastapi-instrumentator>=7.0",
+    "prometheus-fastapi-instrumentator>=7.0,<8",
 ]
 
 [project.optional-dependencies]
