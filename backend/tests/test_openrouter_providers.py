@@ -23,6 +23,7 @@ _BLANK_PROVIDER_KEYS = {
     "zai_api_key": "",
     "cloudflare_api_key": "",
     "cloudflare_account_id": "",
+    "deepseek_api_key": "",
 }
 
 
@@ -299,3 +300,72 @@ def test_resolve_provider_zai_robust_to_casing_and_whitespace():
     with _patch_settings(settings):
         info = svc.resolve_provider(" ZAI/glm-4.5-flash ")
     assert info == {"base_url": "https://api.z.ai/api/paas/v4", "api_key": "zai-secret"}
+
+
+# ── DeepSeek (first paid provider) ───────────────────────────────────────────
+
+
+def test_resolve_provider_deepseek_returns_base_url_when_key_set():
+    settings = _settings(deepseek_api_key="ds-secret")
+    svc = OpenRouterService()
+    with _patch_settings(settings):
+        info = svc.resolve_provider("deepseek/deepseek-chat")
+    assert info == {"base_url": "https://api.deepseek.com", "api_key": "ds-secret"}
+
+
+def test_resolve_provider_deepseek_none_when_key_unset():
+    svc = OpenRouterService()
+    with _patch_settings(_settings()):
+        assert svc.resolve_provider("deepseek/deepseek-chat") is None
+
+
+@pytest.mark.asyncio
+async def test_deepseek_static_model_labelled_paid_without_fetch():
+    settings = _settings(deepseek_api_key="ds-secret")
+    svc = OpenRouterService()
+    resp = _mock_models_response(["deepseek-reasoner"])  # what /models WOULD return
+    urls: list[str] = []
+    with _patch_settings(settings), _patch_models_fetch(urls, resp):
+        models = await svc._extra_provider_models()
+    ds = [m for m in models if m["id"] == "deepseek/deepseek-chat"]
+    assert len(ds) == 1
+    assert "paid" in ds[0]["name"]
+    assert "free" not in ds[0]["name"]
+    assert urls == []  # static-model provider never hits /models
+
+
+# ── prefix collision: ':free' ids belong to OpenRouter, not direct providers ──
+
+
+def test_resolve_provider_deepseek_free_slug_routes_to_openrouter():
+    """A 'deepseek/...:free' OpenRouter slug must NOT mis-route to the paid API.
+
+    Regression: adding EXTRA_PROVIDERS['deepseek'] made _provider_prefix match
+    OpenRouter free models like deepseek/*:free — once the key is set they would
+    be sent to the direct paid endpoint. ':free' is the OpenRouter marker.
+    """
+    settings = _settings(deepseek_api_key="ds-secret")
+    svc = OpenRouterService()
+    with _patch_settings(settings):
+        assert svc.resolve_provider("deepseek/deepseek-chat-v3-0324:free") is None
+
+
+def test_resolve_provider_nvidia_free_slug_routes_to_openrouter():
+    settings = _settings(nvidia_api_key="nv-secret")
+    svc = OpenRouterService()
+    with _patch_settings(settings):
+        assert svc.resolve_provider("nvidia/nemotron-3-super-120b-a12b:free") is None
+
+
+@pytest.mark.asyncio
+async def test_is_allowed_free_slug_does_not_short_circuit_extra_provider():
+    """':free' ids fall through to get_models membership, not the prefix shortcut.
+
+    With deepseek_api_key set, the deepseek/*:free slug must not be auto-allowed
+    via the extra-provider branch — resolve_provider returning None is the
+    load-bearing guarantee that it routes through OpenRouter.
+    """
+    settings = _settings(deepseek_api_key="ds-secret")
+    svc = OpenRouterService()
+    with _patch_settings(settings):
+        assert svc.resolve_provider("deepseek/deepseek-chat-v3-0324:free") is None
