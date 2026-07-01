@@ -55,18 +55,27 @@ from providers import (
 # ---------------------------------------------------------------------------
 # NOTE: chain[0] is the resolved default for any agent whose requested model is
 # neither a provider-prefixed passthrough nor an exact chain entry. It MUST be a
-# proven-live model. ``zai/glm-4.7-flash`` is the live preferred free Z.AI flash
-# slug (backend static_models[0]). Two dead defaults preceded it, both of which
-# killed every agent that fell through: ``nvidia/nemotron-3-super-120b-a12b:free``
-# (removed from OpenRouter, returns 400 1211 "Unknown Model") and
-# ``zai/glm-4.5-flash`` (Z.AI dropped it, returns 400 "glm-4.5-flash is not a
-# valid model ID").
+# proven-live model that reliably returns non-null `content` (call_with_fallback
+# only retries on HTTP 429/5xx and RETRYABLE_PROVIDER_ERROR_CODES — it does NOT
+# detect a 200 response with content=null, so a silently-broken model at chain[0]
+# is worse than a dead one: a dead slug 400s and falls through instantly, a
+# broken-but-live one returns empty replies with no retry).
+# ``openai/gpt-oss-120b:free`` is confirmed (2026-07-01) to return real content
+# at low max_tokens and is genuinely free — kept as the safe default.
+# ``zai/glm-4.7-flash`` (three previous defaults were all dead slugs: this one
+# was missing the required hyphen — OpenRouter's real slug is ``z-ai/glm-4.7-flash``
+# — plus two earlier removed models, ``nvidia/nemotron-3-super-120b-a12b:free``
+# and ``zai/glm-4.5-flash``). The corrected ``z-ai/glm-4.7-flash`` IS live, but is
+# a thinking-only model: at low max_tokens it burns the whole budget on the
+# `reasoning` field and returns content=null with finish_reason="length" — a
+# silent-empty-reply trap if used as chain[0]. Kept further down the chain,
+# not as the default, until callers guarantee a generous max_tokens.
 DEFAULT_FALLBACK_CHAIN: list[str] = [
-    "zai/glm-4.7-flash",
     "openai/gpt-oss-120b:free",
     "google/gemma-4-31b-it:free",
     "google/gemma-4-26b-a4b-it:free",
     "nvidia/nemotron-3-nano-30b-a3b:free",
+    "z-ai/glm-4.7-flash",
     "openai/gpt-oss-20b:free",
 ]
 
