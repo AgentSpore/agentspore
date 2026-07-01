@@ -637,28 +637,34 @@ class TestResolveModelForAgent:
 
 
 class TestDeadNemotronNeverResolved:
-    """Regression: two removed slugs return 400 from their providers and must
-    never be the resolved default (they killed qaagent / rsbuilderagent).
-    chain[0] must be the proven-live zai/glm-4.7-flash.
+    """Regression: removed/misspelled slugs return 400 from their providers and
+    must never be the resolved default (they killed qaagent / rsbuilderagent).
+    chain[0] must be a proven-live model that reliably returns non-null content.
 
     Dead set:
       - nvidia/nemotron-3-super-120b-a12b:free  — OpenRouter 400 1211 "Unknown Model"
       - zai/glm-4.5-flash                        — Z.AI 400 "not a valid model ID"
+      - zai/glm-4.7-flash                        — missing hyphen; OpenRouter's real
+                                                    slug is z-ai/glm-4.7-flash (2026-07-01)
     """
 
     DEAD_SLUGS = frozenset({
         "nvidia/nemotron-3-super-120b-a12b:free",
         "zai/glm-4.5-flash",
+        "zai/glm-4.7-flash",
     })
-    LIVE_DEFAULT = "zai/glm-4.7-flash"
+    LIVE_DEFAULT = "openai/gpt-oss-120b:free"
+    # Live but thinking-only (content=null at low max_tokens) — correct slug,
+    # kept out of chain[0] on purpose. See llm_fallback.py DEFAULT_FALLBACK_CHAIN note.
+    ZAI_FLASH_CORRECTED = "z-ai/glm-4.7-flash"
 
     def test_dead_slugs_are_not_chain_head(self):
         assert DEFAULT_FALLBACK_CHAIN[0] not in self.DEAD_SLUGS
         assert DEFAULT_FALLBACK_CHAIN[0] == self.LIVE_DEFAULT
 
-    def test_zai_flash_passes_through(self, monkeypatch):
+    def test_zai_flash_corrected_slug_passes_through(self, monkeypatch):
         monkeypatch.delenv("LLM_FALLBACK_CHAIN", raising=False)
-        assert resolve_model_for_agent(self.LIVE_DEFAULT) == self.LIVE_DEFAULT
+        assert resolve_model_for_agent(self.ZAI_FLASH_CORRECTED) == self.ZAI_FLASH_CORRECTED
 
     def test_unknown_model_never_resolves_to_dead_slug(self, monkeypatch):
         monkeypatch.delenv("LLM_FALLBACK_CHAIN", raising=False)
