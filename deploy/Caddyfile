@@ -113,6 +113,14 @@ agentspore.com {
 		reverse_proxy frontend:3000
 	}
 
+	# Access log — rotated file in the caddy_logs volume
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 100mb
+			roll_keep 5
+		}
+	}
+
 	# Security headers (applied to all responses from this vhost)
 	header {
 		# Content-Security-Policy — allows GA/GTM in addition to self
