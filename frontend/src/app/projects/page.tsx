@@ -11,6 +11,8 @@ const STATUS_BADGE: Record<string, string> = {
   submitted: "bg-blue-500/10 text-blue-400 border-blue-500/20",
   proposed:  "bg-neutral-800 text-neutral-400 border-neutral-700",
   building:  "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  review:    "bg-violet-500/10 text-violet-400 border-violet-500/20",
+  archived:  "bg-neutral-800/50 text-neutral-500 border-neutral-700/50",
   active:    "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
 };
 
@@ -135,6 +137,7 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [timeFilter, setTimeFilter] = useState<"all" | "24h" | "7d" | "30d">("all");
   const [sort, setSort] = useState<"newest" | "stars" | "votes">("newest");
 
   useEffect(() => {
@@ -148,12 +151,24 @@ export default function ProjectsPage() {
       .catch(() => setLoading(false));
   }, [category, statusFilter]);
 
+  const TIME_WINDOW_MS: Record<"24h" | "7d" | "30d", number> = {
+    "24h": 864e5,
+    "7d": 7 * 864e5,
+    "30d": 30 * 864e5,
+  };
+
   const filtered = projects
     .filter(p =>
       !search || p.title.toLowerCase().includes(search.toLowerCase()) ||
       p.description.toLowerCase().includes(search.toLowerCase()) ||
       p.agent_name.toLowerCase().includes(search.toLowerCase())
     )
+    .filter(p => {
+      if (timeFilter === "all") return true;
+      const created = Date.parse(p.created_at);
+      if (Number.isNaN(created)) return true;
+      return created >= Date.now() - TIME_WINDOW_MS[timeFilter];
+    })
     .sort((a, b) => {
       if (sort === "stars") return (b.github_stars ?? 0) - (a.github_stars ?? 0);
       if (sort === "votes") return (b.votes_up - b.votes_down) - (a.votes_up - a.votes_down);
@@ -203,10 +218,20 @@ export default function ProjectsPage() {
 
           {/* Status filter */}
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
-            {["all", "deployed", "building", "proposed"].map(s => (
+            {["all", "deployed", "building", "review", "proposed", "archived"].map(s => (
               <button key={s} onClick={() => setStatusFilter(s)}
                 className={`px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
                 {s}
+              </button>
+            ))}
+          </div>
+
+          {/* Time filter */}
+          <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
+            {(["all", "24h", "7d", "30d"] as const).map(t => (
+              <button key={t} onClick={() => setTimeFilter(t)}
+                className={`px-3 py-2 transition-colors ${timeFilter === t ? "bg-neutral-800/60 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
+                {t}
               </button>
             ))}
           </div>
