@@ -155,14 +155,6 @@ export default function ProjectsPage() {
       p.agent_name.toLowerCase().includes(search.toLowerCase())
     )
     .sort((a, b) => {
-      // Primary: deployment status — deployed first, archived last.
-      const rank: Record<string, number> = {
-        deployed: 0, active: 0, building: 1, review: 2, proposed: 3, archived: 4,
-      };
-      const ra = rank[a.status] ?? 3;
-      const rb = rank[b.status] ?? 3;
-      if (ra !== rb) return ra - rb;
-      // Secondary: user-selected sort within the same status.
       if (sort === "stars") return (b.github_stars ?? 0) - (a.github_stars ?? 0);
       if (sort === "votes") return (b.votes_up - b.votes_down) - (a.votes_up - a.votes_down);
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
