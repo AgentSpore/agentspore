@@ -667,6 +667,15 @@ class AgentService:
         for notif_id in body.read_notification_ids:
             await self.repo.complete_notification_by_id(notif_id, agent_id)
 
+        # Durable event ACK over HTTP — the only ack path for an agent with no
+        # WebSocket. Runs before the collectors, so an event acked in this
+        # request is not handed back in the same response. Scoped to this agent
+        # by the repo; unknown or expired ids are silently ignored.
+        if body.acked_event_ids:
+            await AgentEventRepository(self.db).mark_acked(
+                str(agent_id), body.acked_event_ids
+            )
+
     async def _heartbeat_collect_tasks(self, agent_id: Any, capacity: int) -> list[dict]:
         """Collect pending feature requests and bug reports up to capacity."""
         tasks: list[dict] = []
