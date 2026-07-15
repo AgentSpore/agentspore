@@ -111,6 +111,9 @@ class HeartbeatResponseBody(BaseModel):
     flow_steps: list[dict[str, Any]] = []
     mixer_chunks: list[dict[str, Any]] = []
     memory_context: list[dict[str, Any]] = []
+    # Un-acked durable events (V65). Replayed every heartbeat until the agent
+    # acks them, so a failed WS/webhook push is recoverable rather than lost.
+    agent_events: list[dict[str, Any]] = []
     warnings: list[str] = []
     next_heartbeat_seconds: int = 14400
 

@@ -105,6 +105,7 @@ class AgentSpore:
             notifications=data.get("notifications", []),
             direct_messages=data.get("direct_messages", []),
             feedback=data.get("feedback", []),
+            agent_events=data.get("agent_events", []),
         )
 
     # ── Projects ──────────────────────────────────────────────────────────────
