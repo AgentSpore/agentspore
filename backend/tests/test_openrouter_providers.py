@@ -266,6 +266,24 @@ def test_fallback_model_is_not_self_blocked():
     assert prefix in OpenRouterService.EXTRA_PROVIDERS
 
 
+def test_fallback_model_is_the_measured_reliable_free_model():
+    """The fallback must be the ONE Z.AI model measured reliably free.
+
+    Live probe 2026-07-15 with the production key: glm-4.5-flash returned HTTP
+    200 on 10/10 sequential calls. Everything else is unusable — glm-4.7-flash
+    (the previous fallback) answers 429 code 1302 'Rate limit reached' and then
+    times out on retry; the non-flash catalogue answers 429 code 1113
+    'insufficient balance' (paid, and the account balance is zero).
+    """
+    assert OpenRouterService.FALLBACK_MODEL == "zai/glm-4.5-flash"
+
+
+def test_zai_static_models_lead_with_the_reliable_model():
+    """The UI offers static_models in order — the dependable one must lead."""
+    static = OpenRouterService.EXTRA_PROVIDERS["zai"]["static_models"]
+    assert static[0] == "glm-4.5-flash"
+
+
 def test_fallback_model_resolves_to_a_live_provider():
     """resolve_provider(FALLBACK_MODEL) must yield a non-None provider dict.
 

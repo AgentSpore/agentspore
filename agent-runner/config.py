@@ -34,6 +34,9 @@ class RunnerSettings(BaseSettings):
     mistral_api_key: str = ""
     nebius_api_key: str = ""
     sambanova_api_key: str = ""
+    # Z.AI (GLM) — the only LLM provider reachable from our hosts; every other
+    # one geo-blocks Russian ASNs with HTTP 403 (verified 2026-07-15).
+    zai_api_key: str = ""
 
     # Agent defaults
     default_model: str = "mistralai/mistral-nemo"

@@ -15,6 +15,7 @@ When max_concurrent_sessions == 1 (default) or no owner_session_id:
 
 import asyncio
 import json
+import random
 import time
 
 from fastapi import APIRouter, HTTPException
@@ -50,6 +51,34 @@ _TRANSIENT_LLM_ERROR_MARKERS: tuple[str, ...] = (
     "503 Service Unavailable",
     "502 Bad Gateway",
     "504 Gateway Timeout",
+    # Rate limiting. Z.AI's free GLM tier serves only ~3 concurrent requests
+    # (measured 2026-07-15: 6 parallel calls → 3×200, 3×429 code 1302); the
+    # 4th+ caller gets 429 until an in-flight request finishes. Since Z.AI is
+    # the only provider our hosts can reach, backing off IS the resilience —
+    # there is no second provider to fall over to.
+    # Markers are deliberately specific — a bare "429" substring would also
+    # match unrelated digits (token counts, ids) and retry non-transient errors.
+    "Error code: 429",      # openai SDK RateLimitError repr
+    "429 Too Many Requests",  # httpx status-line repr
+    "Too Many Requests",
+    "Rate limit reached",   # Z.AI error code 1302 message text
+    "rate_limit_exceeded",  # OpenAI-compatible error.code
+)
+
+# Errors that arrive with HTTP 429 but are PERMANENT, so they must never be
+# retried. Z.AI reports a zero balance as 429 code 1113 ("Insufficient balance
+# or no resource package"), which the openai SDK renders as
+# "Error code: 429 - {'error': {'code': '1113', ...}}" — indistinguishable from
+# a rate limit by HTTP status alone. Only the JSON `code` field separates "slow
+# down and try again" (1302) from "this account cannot pay" (1113). Retrying
+# 1113 would burn the whole backoff on a request that can never succeed.
+# Checked BEFORE the transient markers, which is what makes them precise.
+_PERMANENT_LLM_ERROR_MARKERS: tuple[str, ...] = (
+    "'code': '1113'",
+    '"code": "1113"',
+    "'code': 1113",
+    '"code": 1113',
+    "Insufficient balance",
 )
 
 # Markers indicating the conversation history has an illegal shape for the
@@ -63,8 +92,15 @@ _HISTORY_SHAPE_ERROR_MARKERS: tuple[str, ...] = (
 
 
 def _is_transient_llm_error(exc: Exception) -> bool:
-    """Return True if an exception is a flaky upstream LLM response worth retrying."""
+    """Return True if an exception is a flaky upstream LLM response worth retrying.
+
+    A permanent provider error wins over the transient markers: HTTP 429 covers
+    both "rate limited" (retry) and "insufficient balance" (hopeless), so the
+    JSON error code decides.
+    """
     msg = str(exc)
+    if any(marker in msg for marker in _PERMANENT_LLM_ERROR_MARKERS):
+        return False
     return any(marker in msg for marker in _TRANSIENT_LLM_ERROR_MARKERS)
 
 
@@ -79,14 +115,28 @@ def _is_history_shape_error(exc: Exception) -> bool:
     return any(marker in msg for marker in _HISTORY_SHAPE_ERROR_MARKERS)
 
 
-async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 3, base_delay: float = 1.0):
+async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay: float = 1.0):
     """Invoke an async agent.run() coroutine, retrying on transient upstream LLM errors.
 
     coro_factory: callable that returns a fresh coroutine (NOT a bare coroutine — those
     cannot be re-awaited after a failure). Pass `lambda: session.agent.run(...)`.
 
-    Retries with exponential backoff (1s, 2s, 4s by default) up to max_attempts. Non-transient
-    errors propagate on the first failure so the caller's existing handlers see them.
+    Retries with exponential backoff and equal jitter (~1s, ~2s, ~4s by default) up to
+    max_attempts. Non-transient errors propagate on the first failure so the caller's
+    existing handlers see them.
+
+    Sizing rationale — the upstream free GLM tier serves ~3 concurrent requests and
+    429s the rest (measured 2026-07-15), while 10/10 sequential calls succeed. So a
+    429 clears as soon as an in-flight request drains, and retrying is the only
+    resilience available: there is no second provider to fall over to.
+      - 4 attempts (was 3): worst-case wait ~7s, well inside chat_timeout=120s,
+        and it lets a request survive three separate contention windows.
+      - Equal jitter: several requests rejected by the same burst would otherwise
+        wake in lockstep at exactly 1s and collide again. Each delay is randomised
+        over [0.5×, 1.0×] of its window — half the backoff is fixed (guaranteeing
+        the upstream gets some breathing room) and half is random (spreading the
+        retries out). This is AWS's "equal jitter", NOT "full jitter", which would
+        randomise over the whole [0, 1.0×] window and can retry almost instantly.
     """
     last_exc: Exception | None = None
     for attempt in range(1, max_attempts + 1):
@@ -95,7 +145,7 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 3, base_delay
         except Exception as exc:
             if not _is_transient_llm_error(exc) or attempt == max_attempts:
                 raise
-            delay = base_delay * (2 ** (attempt - 1))
+            delay = base_delay * (2 ** (attempt - 1)) * random.uniform(0.5, 1.0)
             logger.warning(
                 "Transient LLM error (attempt {}/{}): {} — retrying in {}s",
                 attempt, max_attempts, str(exc)[:200], delay,

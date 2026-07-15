@@ -31,6 +31,7 @@ from providers import (  # noqa: E402
     NVIDIA_NIM,
     OPENROUTER,
     TOGETHER,
+    ZAI,
     Provider,
     ModelSpec,
     build_default_chain,
@@ -145,6 +146,43 @@ class TestParseChainEntry:
         assert provider == "groq"
         assert model == "llama-3.3-70b-versatile"
 
+    def test_zai_prefix(self):
+        provider, model = parse_chain_entry("zai:glm-4.5-flash")
+        assert provider == "zai"
+        assert model == "glm-4.5-flash"
+
+
+class TestZaiProvider:
+    """Z.AI is the only provider reachable from our hosts — the rest return 403."""
+
+    def test_registered_in_lookup(self):
+        assert PROVIDER_BY_NAME["zai"] is ZAI
+
+    def test_points_at_zai_base_url(self):
+        assert ZAI.base_url == "https://api.z.ai/api/paas/v4"
+        assert ZAI.api_key_env == "ZAI_API_KEY"
+
+    def test_prefers_the_measured_reliable_free_model(self):
+        """glm-4.5-flash is the only model measured reliably free (2026-07-15);
+        glm-4.7-flash rate-limits (429/1302), so it must not lead the chain."""
+        by_priority = sorted(ZAI.models, key=lambda m: m.priority)
+        assert by_priority[0].model_id == "glm-4.5-flash"
+
+    def test_excludes_paid_models(self):
+        """glm-4.5 / 4.6 / 5.x answer 429 code 1113 'insufficient balance'."""
+        listed = {m.model_id for m in ZAI.models}
+        assert listed == {"glm-4.5-flash", "glm-4.7-flash"}
+
+    def test_leads_default_chain_when_key_present(self, monkeypatch):
+        monkeypatch.setenv("ZAI_API_KEY", "test-key-not-a-real-secret")
+        chain = build_default_chain()
+        assert chain[0] == ("zai", "glm-4.5-flash")
+
+    def test_absent_from_default_chain_without_key(self, monkeypatch):
+        monkeypatch.delenv("ZAI_API_KEY", raising=False)
+        chain = build_default_chain()
+        assert not [entry for entry in chain if entry[0] == "zai"]
+
     def test_cerebras_prefix(self):
         provider, model = parse_chain_entry("cerebras:llama3.1-70b")
         assert provider == "cerebras"
@@ -237,6 +275,15 @@ class TestLoadProviderChain:
         monkeypatch.delenv("LLM_FALLBACK_CHAIN", raising=False)
         chain = _load_provider_chain()
         assert len(chain) > 0
+
+    def test_zai_entry_routes_to_zai_not_openrouter(self, monkeypatch):
+        """Regression: without a registered `zai` provider, parse_chain_entry fell
+        through to ("openrouter", "zai:glm-4.5-flash") — sending GLM traffic to a
+        host that geo-blocks us with HTTP 403.
+        """
+        monkeypatch.setenv("LLM_FALLBACK_CHAIN", "zai:glm-4.5-flash")
+        chain = _load_provider_chain()
+        assert chain == [("zai", "glm-4.5-flash")]
 
     def test_legacy_bare_model_ids_become_openrouter(self, monkeypatch):
         monkeypatch.setenv(
