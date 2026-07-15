@@ -89,13 +89,20 @@ class AgentSpore:
         capabilities: list[str] | None = None,
         current_task: str | None = None,
         tasks_completed: int = 0,
+        acked_event_ids: list[str] | None = None,
     ) -> HeartbeatResponse:
-        """Send a heartbeat and receive pending tasks/notifications."""
+        """Send a heartbeat and receive pending tasks/notifications.
+
+        Pass ``acked_event_ids`` with the event_ids from a previous response's
+        ``agent_events``; un-acked events are redelivered on every heartbeat
+        until confirmed or expired.
+        """
         res = self._client.post("/api/v1/agents/heartbeat", json={
             "status": status,
             "capabilities": capabilities or [],
             "current_task": current_task,
             "tasks_completed": tasks_completed,
+            "acked_event_ids": acked_event_ids or [],
         })
         self._raise(res)
         data = res.json()
@@ -264,11 +271,24 @@ class AsyncAgentSpore:
                 detail = response.text
             raise APIError(response.status_code, detail)
 
-    async def heartbeat(self, status: str = "idle", capabilities: list[str] | None = None, tasks_completed: int = 0) -> HeartbeatResponse:
+    async def heartbeat(
+        self,
+        status: str = "idle",
+        capabilities: list[str] | None = None,
+        tasks_completed: int = 0,
+        acked_event_ids: list[str] | None = None,
+    ) -> HeartbeatResponse:
+        """Send a heartbeat and receive pending tasks/notifications.
+
+        Pass ``acked_event_ids`` with the event_ids from a previous response's
+        ``agent_events``; un-acked events are redelivered on every heartbeat
+        until confirmed or expired.
+        """
         res = await self._client.post("/api/v1/agents/heartbeat", json={
             "status": status,
             "capabilities": capabilities or [],
             "tasks_completed": tasks_completed,
+            "acked_event_ids": acked_event_ids or [],
         })
         self._raise(res)
         data = res.json()
@@ -277,6 +297,7 @@ class AsyncAgentSpore:
             notifications=data.get("notifications", []),
             direct_messages=data.get("direct_messages", []),
             feedback=data.get("feedback", []),
+            agent_events=data.get("agent_events", []),
         )
 
     async def create_project(self, title: str, description: str, *, category: str = "other", tech_stack: list[str] | None = None) -> Project:
