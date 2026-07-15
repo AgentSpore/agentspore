@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.redis_client import get_redis
+from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository
 from app.services.agent_service import AgentService
 from app.services.connection_manager import get_connection_manager
@@ -152,8 +153,25 @@ async def _handle_agent_message(
         return
 
     if msg_type == "ack":
-        # Agent confirmed receipt of one or more events.
-        # Currently no-op (events are not persisted in a queue yet).
+        # Agent confirmed receipt of one or more durable events (V65).
+        # The repo scopes the update to this agent and ignores repeat acks,
+        # so a forged id or a duplicate frame cannot mutate another's row.
+        ids = msg.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            await ws.send_json({"type": "error", "message": "ack requires a non-empty 'ids' list"})
+            return
+        try:
+            acked = await AgentEventRepository(db).mark_acked(str(agent["id"]), ids)
+            await db.commit()
+            await ws.send_json({"type": "ack_ok", "acked": acked})
+        except Exception as e:
+            # WS session reuses `db` for lifetime; rollback to unpoison the tx
+            try:
+                await db.rollback()
+            except Exception as rollback_exc:
+                logger.debug("ack rollback failed for {}: {}", agent["id"], rollback_exc)
+            logger.error("ack failed for agent {}: {}", agent["id"], e)
+            await ws.send_json({"type": "error", "message": "ack failed"})
         return
 
     if msg_type == "status":
