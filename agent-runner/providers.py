@@ -498,6 +498,45 @@ TOGETHER = Provider(
     ],
 )
 
+# Z.AI — first-party GLM API, OpenAI-compatible.
+# Key: https://z.ai  (ZAI_API_KEY).
+# The only provider still reachable from our hosts: OpenRouter, OpenAI, Groq,
+# Anthropic, Gemini, Cerebras and Nebius all answer HTTP 403 "Access denied by
+# security policy" to Russian ASNs (verified 2026-07-15).
+#
+# Free-tier reality, measured live with the production key on 2026-07-15 — this
+# overrides Z.AI's published price list:
+#   - glm-4.5-flash  → HTTP 200, 10/10 sequential calls, correct output.
+#                      THE ONLY RELIABLY-FREE MODEL.
+#   - glm-4.7-flash  → HTTP 429 code 1302 (request rate limit), then a timeout
+#                      on retry. Free on paper, not dependable → priority 2.
+#   - glm-4.6v-flash → HTTP 429 code 1305 (temporarily overloaded); vision-only.
+#   - glm-4.5 / -air / 4.6 / 4.7 / 5 / 5-turbo / 5.1 / 5.2
+#                    → HTTP 429 code 1113 "insufficient balance" = paid tier,
+#                      account balance is zero → excluded entirely.
+# Concurrency ceiling ~3 in-flight requests (6 parallel → 3×200, 3×429/1302).
+ZAI = Provider(
+    name="zai",
+    base_url="https://api.z.ai/api/paas/v4",
+    api_key_env="ZAI_API_KEY",
+    models=[
+        ModelSpec(
+            model_id="glm-4.5-flash",
+            tool_use=True,
+            context_window=128_000,
+            priority=1,
+            notes="Only measured-reliable free GLM. ~3 concurrent max; 429/1302 above that.",
+        ),
+        ModelSpec(
+            model_id="glm-4.7-flash",
+            tool_use=True,
+            context_window=128_000,
+            priority=2,
+            notes="Free per price list but rate-limits (429/1302) and times out on retry.",
+        ),
+    ],
+)
+
 # Canonical registry — order matters: used for default chain construction.
 ALL_PROVIDERS: list[Provider] = [
     OPENROUTER,
@@ -508,6 +547,7 @@ ALL_PROVIDERS: list[Provider] = [
     NEBIUS,
     TOGETHER,
     SAMBANOVA,
+    ZAI,
 ]
 
 # Map name → Provider for O(1) lookup.
@@ -542,15 +582,24 @@ def build_default_chain() -> list[tuple[str, str]]:
     """Build the default multi-provider fallback chain.
 
     Priority:
-      1. NVIDIA NIM primary (if key available) — direct, no OpenRouter margin
-      2. OpenRouter free tier — existing production chain
-      3. Groq (if key available) — ultra-fast fallback
-      4. Cerebras (if key available) — highest raw throughput
-      5. Together (if key available) — extra coverage
+      1. Z.AI (if key available) — the only provider reachable from our hosts
+      2. NVIDIA NIM (if key available) — direct, no OpenRouter margin
+      3. OpenRouter free tier — existing production chain
+      4. Groq (if key available) — ultra-fast fallback
+      5. Cerebras (if key available) — highest raw throughput
+      6. Together (if key available) — extra coverage
 
     Only includes chat-capable models (tool_use check excluded embeddings).
     """
     chain: list[tuple[str, str]] = []
+
+    # Z.AI first if key present: every other provider below geo-blocks our hosts
+    # with HTTP 403 (verified 2026-07-15), so a reachable model must lead.
+    zai = PROVIDER_BY_NAME["zai"]
+    if zai.is_active:
+        for m in sorted(zai.models, key=lambda x: x.priority):
+            if m.tool_use:
+                chain.append(("zai", m.model_id))
 
     # NVIDIA NIM first if key present
     nvidia = PROVIDER_BY_NAME["nvidia"]

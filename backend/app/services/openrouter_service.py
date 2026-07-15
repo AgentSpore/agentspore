@@ -115,7 +115,18 @@ class OpenRouterService:
     # zai_api_key, prefix-routed to the Z.AI base_url by resolve_provider, and
     # NOT a member of the OpenRouter-blocked set — so a fallback never lands on a
     # provider we hold no key for or on a privacy-blocked OpenRouter slug.
-    FALLBACK_MODEL = "zai/glm-4.7-flash"
+    #
+    # glm-4.5-flash is the ONLY Z.AI model measured reliably free (2026-07-15
+    # live probe with the production key): 10/10 sequential calls returned
+    # HTTP 200 with correct content. The rest of the catalogue is unusable:
+    #   - glm-4.7-flash  → HTTP 429 code 1302 (request rate limit), then a
+    #                      timeout on retry-with-backoff. Free per the price
+    #                      list, but not dependable.
+    #   - glm-4.6v-flash → HTTP 429 code 1305 (temporarily overloaded); vision.
+    #   - glm-4.5 / -air / 4.6 / 4.7 / 5 / 5-turbo / 5.1 / 5.2
+    #                    → HTTP 429 code 1113 "insufficient balance" = paid.
+    # Concurrency ceiling is ~3 in-flight requests (6 parallel → 3×200, 3×429).
+    FALLBACK_MODEL = "zai/glm-4.5-flash"
 
     # Extra providers: models fetched dynamically via /models API.
     # Gemini does not expose a standard /models endpoint — keep static.
@@ -154,7 +165,10 @@ class OpenRouterService:
             # Z.AI's /models endpoint lists ONLY paid models (glm-4.5, glm-4.6,
             # glm-5, …); the free Flash family is hidden there but works via
             # chat/completions (verified live 2026-06-09). Serve a static list.
-            "static_models": ["glm-4.7-flash", "glm-4.5-flash"],
+            # Order matters — the first entry is what the UI offers first.
+            # glm-4.5-flash leads because it is the only measured-reliable free
+            # model; glm-4.7-flash stays listed but rate-limits (429/1302).
+            "static_models": ["glm-4.5-flash", "glm-4.7-flash"],
         },
         "cloudflare": {
             # {account_id} is substituted from `account_id_field` at consume time.
@@ -306,7 +320,7 @@ class OpenRouterService:
         except Exception as e:
             logger.warning("Failed to fetch OpenRouter models: {}", e)
             fallback = self._cache or [
-                {"id": self.FALLBACK_MODEL, "name": "GLM 4.7 Flash — free", "provider": "zai"}
+                {"id": self.FALLBACK_MODEL, "name": "GLM 4.5 Flash — free", "provider": "zai"}
             ]
             return fallback + extra
 
