@@ -27,6 +27,7 @@ from testcontainers.postgres import PostgresContainer
 
 from app.core.background import ALL_TASKS, ScheduledTask
 from app.repositories.agent_event_repo import AgentEventRepository
+from app.schemas.agents import HeartbeatRequestBody
 from app.services import connection_manager as cm
 from app.services.connection_manager import ConnectionManager, DeliveryResult
 
@@ -245,6 +246,53 @@ async def test_deliver_event_returns_failed_for_non_durable_undeliverable_event(
     assert result == DeliveryResult.FAILED
 
 
+@pytest.mark.asyncio
+async def test_persist_failure_aborts_before_transport():
+    """Outbox write fails → FAILED, and the event is never dispatched.
+
+    The failure path, not the happy one: with no row there is no retry and no
+    ack, so reporting DELIVERED because a WS frame happened to land would be
+    the same class of lie phase 0 exists to remove.
+    """
+    with (
+        patch.object(cm, "_persist_durable_event", AsyncMock(return_value=None)),
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=True)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        send = AsyncMock(return_value=True)  # transport WOULD have succeeded
+        get_mgr.return_value.send = send
+        result = await cm.deliver_event("agent-1", {"type": "battle_turn"})
+
+    assert result == DeliveryResult.FAILED
+    send.assert_not_awaited()  # never dispatched without a durable row
+
+
+@pytest.mark.asyncio
+async def test_default_ttl_outlives_the_documented_heartbeat_interval():
+    """QUEUED promises the next heartbeat — the default TTL must survive it.
+
+    An agent polling exactly as documented (skill.md / docs/HEARTBEAT.md:
+    every 14400s) receives the event, then acks on the FOLLOWING heartbeat.
+    """
+    assert cm.DURABLE_EVENT_TTL_SECONDS > 2 * cm.HEARTBEAT_INTERVAL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_caller_can_shorten_ttl_for_a_deadline_bound_event():
+    """A battle turn is worthless after its round — callers pass their own TTL."""
+    persist = AsyncMock(return_value="evt-1")
+    with (
+        patch.object(cm, "_persist_durable_event", persist),
+        patch.object(cm, "_record_dispatch", AsyncMock()),
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=False)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        get_mgr.return_value.send = AsyncMock(return_value=False)
+        await cm.deliver_event("agent-1", {"type": "battle_turn"}, ttl_seconds=600)
+
+    assert persist.await_args.args[2] == 600
+
+
 # ── Step 4: ACK ownership invariant ───────────────────────────────────
 
 
@@ -303,6 +351,66 @@ async def test_heartbeat_drain_returns_unacked_event_after_failed_delivery(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_heartbeat_ack_stops_redelivery_for_an_agent_without_ws(
+    db_session, agent_id
+):
+    """The recovery channel a WS-less agent actually uses, end to end.
+
+    Receive via heartbeat #1 → ack via heartbeat #2 → gone by heartbeat #3.
+    Without an HTTP ack path this loops forever: mark_drained sets 'delivered',
+    which is still a live status, so the row comes back every single time.
+    """
+    repo = AgentEventRepository(db_session)
+    event_id = await repo.create(agent_id, "battle_turn", {"n": 1}, ttl_seconds=600)
+    await repo.mark_dispatched(event_id, "queued")  # no WS, nobody home
+    await db_session.commit()
+
+    # Heartbeat #1: agent receives it.
+    first = await repo.list_unacked(agent_id)
+    await repo.mark_drained([str(r["event_id"]) for r in first])
+    await db_session.commit()
+    assert [str(r["event_id"]) for r in first] == [event_id]
+
+    # Heartbeat #2: agent sends acked_event_ids; still redelivered until acked.
+    second = await repo.list_unacked(agent_id)
+    assert [str(r["event_id"]) for r in second] == [event_id]
+    await repo.mark_acked(agent_id, [event_id])
+    await db_session.commit()
+
+    # Heartbeat #3: gone for good.
+    assert await repo.list_unacked(agent_id) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_expired_event_cannot_be_acked(db_session, agent_id):
+    """A late ACK must not resurrect a dead event into a false liveness signal."""
+    await db_session.execute(
+        text("""
+            INSERT INTO agent_events
+                (event_id, target_agent_id, type, payload, status, dispatched_at, expires_at)
+            VALUES (CAST(:e AS UUID), CAST(:a AS UUID), 'battle_turn', '{}'::jsonb,
+                    'delivered', NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 minute')
+        """),
+        {"e": (expired_id := str(uuid.uuid4())), "a": agent_id},
+    )
+    await db_session.commit()
+
+    acked = await AgentEventRepository(db_session).mark_acked(agent_id, [expired_id])
+    await db_session.commit()
+
+    row = (await db_session.execute(
+        text("SELECT status, acked_at FROM agent_events WHERE event_id = CAST(:e AS UUID)"),
+        {"e": expired_id},
+    )).mappings().one()
+
+    assert acked == []
+    assert row["acked_at"] is None
+    assert row["status"] == "delivered"  # untouched, not resurrected to 'acked'
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_expired_events_are_not_drained(db_session, agent_id):
     """An event past expires_at is never handed to the agent."""
     await db_session.execute(
@@ -316,6 +424,32 @@ async def test_expired_events_are_not_drained(db_session, agent_id):
     await db_session.commit()
 
     assert await AgentEventRepository(db_session).list_unacked(agent_id) == []
+
+
+# ── SDK parity (no Docker) ────────────────────────────────────────────
+
+
+def test_both_sdk_clients_expose_agent_events():
+    """Sync and async clients must map agent_events identically.
+
+    types.py defaults the field to [], so an async client that forgets to map
+    it loses events silently — no error, just an agent that never acts.
+    """
+    sdk_src = (
+        Path(__file__).resolve().parents[2] / "sdk" / "python" / "agentspore" / "client.py"
+    ).read_text()
+
+    # One occurrence per client (sync + async).
+    assert sdk_src.count('agent_events=data.get("agent_events", [])') == 2
+    # Both must be able to ack over HTTP.
+    assert sdk_src.count('"acked_event_ids": acked_event_ids or []') == 2
+
+
+def test_heartbeat_request_schema_accepts_acked_event_ids():
+    """The HTTP ack path an agent without a WebSocket depends on."""
+    body = HeartbeatRequestBody(acked_event_ids=["a", "b"])
+    assert body.acked_event_ids == ["a", "b"]
+    assert HeartbeatRequestBody().acked_event_ids == []  # optional
 
 
 # ── Step 6: background leader-lock invariant (no Docker) ──────────────

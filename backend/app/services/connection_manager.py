@@ -47,8 +47,19 @@ DURABLE_EVENTS: frozenset[str] = frozenset({
     "battle_turn", "battle_ready_check",
 })
 
-# How long a durable event stays live before the reaper may expire it.
-DURABLE_EVENT_TTL_SECONDS = 3600
+# Default lifetime of a durable event.
+#
+# This number must clear the documented heartbeat cadence, or QUEUED would be
+# a fresh lie: an agent polling exactly as documented (every 14400s — see
+# skill.md and docs/HEARTBEAT.md) would find its event already expired and
+# filtered out by list_unacked. A queued event waits up to one full interval
+# to be drained, and the agent acks on the FOLLOWING heartbeat — so the floor
+# is two intervals, plus margin for jitter and clock skew.
+#
+# Callers with a real domain deadline pass their own ttl_seconds: a battle
+# turn is worthless after ~10 minutes and should expire with the round.
+HEARTBEAT_INTERVAL_SECONDS = 14400  # keep in sync with HeartbeatResponseBody
+DURABLE_EVENT_TTL_SECONDS = 2 * HEARTBEAT_INTERVAL_SECONDS + 3600  # 32400
 
 
 class DeliveryResult(str, Enum):
@@ -300,13 +311,19 @@ async def deliver_user_event(user_id: str, event: dict[str, Any]) -> None:
         logger.debug("deliver_user_event failed for {}: {}", user_id, exc)
 
 
-async def _persist_durable_event(agent_id: str, event: dict[str, Any]) -> str | None:
+async def _persist_durable_event(
+    agent_id: str, event: dict[str, Any], ttl_seconds: int
+) -> str | None:
     """Write a durable event to the outbox and commit before any transport.
 
     Committing first means a crash mid-delivery loses at most the live push,
     never the event: the heartbeat drain replays it. Same discipline as
     EventPublisher.publish_and_commit — the DB row is the source of truth,
     the live push is a convenience.
+
+    Returns None if the row could not be written; the caller must then treat
+    the delivery as failed rather than proceed, or the outbox guarantee would
+    hold only on the happy path.
     """
     try:
         async with async_session_maker() as db:
@@ -314,7 +331,7 @@ async def _persist_durable_event(agent_id: str, event: dict[str, Any]) -> str | 
                 target_agent_id=agent_id,
                 event_type=event["type"],
                 payload=event,
-                ttl_seconds=DURABLE_EVENT_TTL_SECONDS,
+                ttl_seconds=ttl_seconds,
             )
             await db.commit()
             return event_id
@@ -333,7 +350,9 @@ async def _record_dispatch(event_id: str, status: str) -> None:
         logger.warning("Dispatch status write failed for event {}: {}", event_id, exc)
 
 
-async def deliver_event(agent_id: str, event: dict[str, Any]) -> DeliveryResult:
+async def deliver_event(
+    agent_id: str, event: dict[str, Any], ttl_seconds: int | None = None
+) -> DeliveryResult:
     """Deliver an event to an agent with full fallback chain.
 
     Order:
@@ -343,20 +362,35 @@ async def deliver_event(agent_id: str, event: dict[str, Any]) -> DeliveryResult:
     3. Webhook (if registered)
     4. Heartbeat drain (durable types) / auto-wake (wakeable types)
 
+    ``ttl_seconds`` overrides how long a durable event stays live; defaults to
+    DURABLE_EVENT_TTL_SECONDS, which clears the documented heartbeat cadence.
+    Pass a shorter one when the event has a real deadline (a battle round).
+
     Returns an honest result rather than None:
       DELIVERED — a live receiver was confirmed
       QUEUED    — no live receiver, but the event is durably stored and the
                   next heartbeat will hand it over
-      FAILED    — no live receiver and nothing was stored (non-durable type)
+      FAILED    — no live receiver and nothing was stored, either because the
+                  type is not durable or because the outbox write failed
 
     This is the main entry point for platform code that wants to push
     events to agents in real-time.
     """
     event_id: str | None = None
     if event.get("type") in DURABLE_EVENTS:
-        event_id = await _persist_durable_event(agent_id, event)
-        if event_id:
-            event.setdefault("event_id", event_id)
+        event_id = await _persist_durable_event(
+            agent_id, event, ttl_seconds or DURABLE_EVENT_TTL_SECONDS
+        )
+        if event_id is None:
+            # No row means no recovery path: a live push could still land, but
+            # we would have no way to retry or to know it was ever acked. Fail
+            # loudly instead of reporting a delivery we cannot stand behind.
+            logger.error(
+                "Durable event {} for {} not persisted — refusing to dispatch",
+                event.get("type"), agent_id,
+            )
+            return DeliveryResult.FAILED
+        event.setdefault("event_id", event_id)
 
     manager = get_connection_manager()
     delivered = await manager.send(agent_id, event)

@@ -21,10 +21,16 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Statuses of an event that is still live: not yet acknowledged, not expired.
+# Single source of truth — mirrors the partial indexes in V65__agent_events.sql.
 LIVE_STATUSES: tuple[str, ...] = ("pending", "delivered", "queued")
 
+# Rendered once at import: a SQL tuple literal for IN (...). Built from
+# LIVE_STATUSES so the set is defined in exactly one place. Safe from
+# injection — the values are module constants, never user input.
+_LIVE_STATUSES_SQL = "({})".format(", ".join(f"'{s}'" for s in LIVE_STATUSES))
+
 _ACK_STMT = text(
-    """
+    f"""
     UPDATE agent_events
     SET status = 'acked',
         acked_at = NOW(),
@@ -32,6 +38,8 @@ _ACK_STMT = text(
     WHERE event_id = ANY(:event_ids)
       AND target_agent_id = :agent_id
       AND acked_at IS NULL
+      AND status IN {_LIVE_STATUSES_SQL}
+      AND expires_at > NOW()
     RETURNING event_id
     """
 ).bindparams(
@@ -108,13 +116,13 @@ class AgentEventRepository:
         """
         result = await self.db.execute(
             text(
-                """
+                f"""
                 SELECT event_id, type, payload, status, attempt_count,
                        created_at, dispatched_at, expires_at
                 FROM agent_events
                 WHERE target_agent_id = CAST(:agent_id AS UUID)
                   AND acked_at IS NULL
-                  AND status <> 'expired'
+                  AND status IN {_LIVE_STATUSES_SQL}
                   AND expires_at > NOW()
                 ORDER BY created_at
                 """
@@ -148,11 +156,14 @@ class AgentEventRepository:
     async def mark_acked(self, target_agent_id: str, event_ids: list[str]) -> list[str]:
         """Acknowledge events on behalf of ``target_agent_id``.
 
-        Returns the ids actually transitioned. Only the target agent can ack
-        (``target_agent_id`` guard), and a repeat ack is a no-op rather than
-        an error (``acked_at IS NULL`` guard) — so acked_at never moves once
-        set. Both properties are load-bearing: the ack is the platform's only
-        truthful liveness signal.
+        Returns the ids actually transitioned. Guarantees, all load-bearing
+        because the ack is the platform's only truthful liveness signal:
+        - only the target agent can ack (``target_agent_id`` guard);
+        - a repeat ack is a no-op, not an error (``acked_at IS NULL``), so
+          acked_at never moves once set;
+        - an expired event can no longer be acked (``expires_at``/status
+          guards) — otherwise a late ack would resurrect a dead event into
+          'acked' and report liveness the agent never had.
         """
         if not event_ids:
             return []
