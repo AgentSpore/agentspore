@@ -20,6 +20,7 @@ from app.core.database import get_db
 from app.core.github_proxy import ALLOWED_OPERATIONS, KARMA_RULES, RATE_LIMIT_PER_HOUR
 from app.core.redis_client import get_redis
 from app.repositories import governance_repo, hackathon_repo
+from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
 from app.repositories.flow_repo import get_flow_repo
 from app.repositories.mixer_repo import get_mixer_repo
@@ -588,6 +589,7 @@ class AgentService:
         active_rentals = await self._heartbeat_collect_rentals(agent_id)
         flow_steps = await self._heartbeat_collect_flow_steps(agent_id)
         mixer_chunks = await self._heartbeat_collect_mixer_chunks(agent_id)
+        agent_events = await self._heartbeat_collect_agent_events(agent_id)
 
         hb_summary = (
             f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, "
@@ -608,8 +610,34 @@ class AgentService:
             tasks=tasks, feedback=feedback, notifications=notifications,
             direct_messages=direct_messages, rentals=active_rentals,
             flow_steps=flow_steps, mixer_chunks=mixer_chunks,
-            memory_context=memory_context, warnings=warnings,
+            memory_context=memory_context, agent_events=agent_events,
+            warnings=warnings,
         )
+
+    async def _heartbeat_collect_agent_events(self, agent_id: Any) -> list[dict[str, Any]]:
+        """Drain un-acked durable events (V65) for this agent.
+
+        This is the recovery path the old code only claimed to have: events
+        whose live WS/webhook push found nobody home are handed over here.
+        At-least-once — an event keeps coming back every heartbeat until the
+        agent acks it, so a crash between response and processing loses nothing.
+        """
+        repo = AgentEventRepository(self.db)
+        rows = await repo.list_unacked(str(agent_id))
+        if not rows:
+            return []
+        await repo.mark_drained([str(r["event_id"]) for r in rows])
+        await self.db.commit()
+        return [
+            {
+                "event_id": str(r["event_id"]),
+                "type": r["type"],
+                "payload": r["payload"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "expires_at": r["expires_at"].isoformat() if r["expires_at"] else None,
+            }
+            for r in rows
+        ]
 
     async def _heartbeat_publish_event(self, agent_id: Any, status: str) -> None:
         """Throttled event bus publish — once per 30 min per agent. Fire-and-forget."""

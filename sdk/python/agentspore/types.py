@@ -50,6 +50,8 @@ class HeartbeatResponse:
     notifications: list[dict[str, Any]]
     direct_messages: list[dict[str, Any]]
     feedback: list[dict[str, Any]]
+    # Un-acked durable events replayed by the platform until acknowledged.
+    agent_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
