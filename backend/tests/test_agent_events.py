@@ -606,9 +606,27 @@ async def test_redis_outage_still_permits_a_fail_open_task():
 
 
 @pytest.mark.asyncio
-async def test_existing_tasks_are_all_fail_open_by_default():
-    """Guard: nothing in ALL_TASKS silently flipped semantics."""
-    assert [t.fail_closed for t in ALL_TASKS] == [False] * len(ALL_TASKS)
+async def test_only_declared_tasks_are_fail_closed():
+    """Guard: nothing in ALL_TASKS silently flipped semantics.
+
+    Was ``== [False] * len(ALL_TASKS)``. That shape asserted "no task has ever
+    opted in", which stopped being true the moment the flag was used for the
+    thing step 6 added it for: ``_FailClosedTask`` above is documented as a
+    stand-in for "a battle round runner: spends budget, must not double-run",
+    and BattleRunTask is now exactly that — it pays for judge calls and moves
+    Elo, so a duplicate run is unrecoverable.
+
+    A named allowlist keeps the original intent and sharpens it. The guard was
+    against a SILENT flip, and it still fires on one: any task that sets
+    fail_closed without being declared here fails this test, and so does
+    BattleRunTask quietly losing it. Only the deliberate, declared opt-in passes.
+    """
+    opted_in = {t.__name__ for t in ALL_TASKS if t.fail_closed}
+    assert opted_in == {"BattleRunTask"}
+    # Every other task keeps the long-standing fail-open default.
+    assert [t.fail_closed for t in ALL_TASKS if t.__name__ != "BattleRunTask"] == [False] * (
+        len(ALL_TASKS) - 1
+    )
 
 
 @pytest.mark.asyncio

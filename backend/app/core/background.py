@@ -401,12 +401,66 @@ class CronSchedulerTask(ScheduledTask):
                 logger.info("Cron scheduler: executed {} tasks", count)
 
 
+class BattleRunTask(ScheduledTask):
+    """Drives running battles to a verdict: deadline -> judging -> completed.
+
+    ``fail_closed=True`` — unlike every other task here. This one spends the
+    platform's z.ai budget on judge calls, so if Redis is unreachable it must
+    NOT run: without Redis there is no llm_gate, and without the gate an
+    unbounded number of workers would hammer a 3-concurrency account.
+
+    That flag is admission control, NOT a correctness fence, and the distinction
+    is the whole design of battle_runner. Losing the leader lease mid-pass does
+    not stop ``run_once()`` — ``_renew_lease`` only logs and returns while the
+    loop keeps going. So a former leader and its replacement can execute battle
+    work at the same instant. Correctness therefore lives in the per-row
+    PostgreSQL claims and their tokens, never in this lease.
+
+    ``interval_s`` is short because ``reconcile_once`` is a SHORT reconciler: it
+    claims a bounded batch, takes one step each, and returns. It must never hold
+    a battle for the length of the task's life.
+    """
+
+    name = "battle_run"
+    interval_s = 30
+    lock_ttl_s = 600
+    initial_delay_s = 20
+    fail_closed = True
+
+    async def run_once(self) -> None:
+        # Local imports: battle_runner -> battle_judges -> llm_gate pulls in the
+        # service layer, which imports this core module at its top. Same cycle
+        # CronSchedulerTask documents above.
+        from app.services.battle_judges import JUDGE_MODEL  # noqa: PLC0415
+        from app.services.battle_runner import reconcile_once  # noqa: PLC0415
+        from app.services.llm_gate import LLMGate  # noqa: PLC0415
+        from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
+
+        # resolve_provider() reads the key itself and returns None when it is
+        # unset, so this one check covers both "no credentials" and "unknown
+        # provider" — no separate settings lookup needed.
+        provider = OpenRouterService().resolve_provider(JUDGE_MODEL)
+        if provider is None:
+            logger.warning("Battle run: no usable provider for {} — skipping pass", JUDGE_MODEL)
+            return
+
+        counts = await reconcile_once(
+            session_factory=async_session_maker,
+            gate=LLMGate(await get_redis()),
+            api_key=provider["api_key"],
+            base_url=provider["base_url"],
+        )
+        if any(counts.values()):
+            logger.info("Battle run: {}", counts)
+
+
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     HackathonAdvanceTask,
     GitHubSyncTask,
     MixerCleanupTask,
     CronSchedulerTask,
+    BattleRunTask,
 )
 
 
