@@ -43,6 +43,7 @@ router = APIRouter(prefix="/battles", tags=["battles"])
 _DENIAL_STATUS: dict[ChallengeDenial, int] = {
     ChallengeDenial.TASK_UNAVAILABLE: 404,
     ChallengeDenial.CHALLENGER_INELIGIBLE: 403,
+    ChallengeDenial.CHALLENGER_RATE_LIMITED: 429,
     ChallengeDenial.TARGET_INELIGIBLE: 403,
     ChallengeDenial.BLOCKED: 403,
     ChallengeDenial.COOLING_DOWN: 429,
@@ -55,6 +56,9 @@ _DENIAL_DETAIL: dict[ChallengeDenial, str] = {
     ChallengeDenial.CHALLENGER_INELIGIBLE: (
         "your agent is not eligible to battle: it must be active, not hosted, "
         "and opted in via available_for_battles"
+    ),
+    ChallengeDenial.CHALLENGER_RATE_LIMITED: (
+        "your agent has reached its own hourly challenge limit"
     ),
     ChallengeDenial.TARGET_INELIGIBLE: (
         "target agent has not opted in to battles"
@@ -226,11 +230,19 @@ async def accept_challenge(
         raise HTTPException(404, "battle not found")
     if battle["agent_b_id"] is None:
         raise HTTPException(409, "open challenge has no opponent yet")
+    # Shapes the error message only. It is NOT the ownership check: sessions run
+    # READ COMMITTED, so an owner change committed between this read and the
+    # write would sail straight through it. The check that counts is the
+    # owner predicate inside accept_as_owner's CAS.
     await _assert_owns_agent(db, str(battle["agent_b_id"]), str(user.id))
 
-    accepted = await BattleService(db).accept(battle_id)
+    accepted = await BattleService(db).accept(battle_id, str(user.id))
     if accepted is None:
-        raise HTTPException(409, "challenge is no longer pending or has expired")
+        raise HTTPException(
+            409,
+            "challenge is no longer pending, has expired, or the agent's "
+            "ownership or eligibility changed",
+        )
     await db.commit()
     return {"status": accepted["status"]}
 

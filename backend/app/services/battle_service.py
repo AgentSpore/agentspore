@@ -132,7 +132,7 @@ class BattleService:
             logger.warning("Challenge limiter unavailable for {}: {}", agent_a_id, exc)
             raise LimiterUnavailableError from exc
         if count > CHALLENGER_RATE_LIMIT:
-            raise ChallengeDeniedError(ChallengeDenial.TARGET_CAPPED)
+            raise ChallengeDeniedError(ChallengeDenial.CHALLENGER_RATE_LIMITED)
 
     async def create_challenge(
         self,
@@ -205,7 +205,7 @@ class BattleService:
 
     # -- consent ------------------------------------------------------------
 
-    async def accept(self, battle_id: str) -> dict | None:
+    async def accept(self, battle_id: str, accepting_user_id: str) -> dict | None:
         """Record B's owner consent. Does not commit. None = not acceptable.
 
         Consent only. It does not reserve, ping, or start anything, and it
@@ -213,8 +213,12 @@ class BattleService:
         module docstring. Readiness is established separately, immediately
         before the start, because liveness proven now says nothing about
         liveness at start time.
+
+        ``accepting_user_id`` is carried into the CAS rather than checked
+        before it: consent is the fact that authorises spending an owner's
+        money, so the write itself must prove the writer owns the agent.
         """
-        return await self.repo.mark_accepted(battle_id)
+        return await self.repo.accept_as_owner(battle_id, accepting_user_id)
 
     async def decline(self, battle_id: str) -> dict | None:
         """Record B's owner refusal and start the cooldown. Does not commit.
@@ -345,20 +349,19 @@ class BattleService:
         return results
 
     async def try_queue(self, battle_id: str, readiness_generation: int) -> dict | None:
-        """reserved -> queued, iff both current ready-ACKs are in. No commit.
+        """reserved -> queued, iff every admission condition holds. No commit.
 
-        Returns the queued battle, or None when readiness is not (yet) proven.
+        Returns the queued battle, or None when it is not (yet) admissible.
         None is not an error: the usual reason is that an agent simply has not
         acked yet, and the caller retries until the lease lapses.
 
-        The ACK check and the CAS run in one transaction on purpose. NOW() is
-        the transaction timestamp, so both statements evaluate every deadline
-        against the same instant — the lease cannot expire between proving
-        readiness and acting on it.
+        One statement does all of it — consent, eligibility, ownership, live
+        reservations and both exact ready-ACKs. Readiness alone was never the
+        whole question: an agent can change owner or be deactivated after
+        acking, and the reservations can be reaped out from under a battle that
+        is still holding a live lease.
         """
-        if not await self.repo.both_sides_ready(battle_id, readiness_generation):
-            return None
-        return await self.repo.mark_queued(battle_id, readiness_generation)
+        return await self.repo.admit_to_queue(battle_id, readiness_generation)
 
     async def release_expired_readiness(self, battle_id: str) -> dict | None:
         """reserved -> accepted once the lease lapsed. Frees BOTH. No commit.
