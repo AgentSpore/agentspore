@@ -16,6 +16,11 @@ run_once(), so a former leader and a new leader can both reach these
 statements. What keeps them honest is the CAS above and the per-row lease
 tokens below — the database is the arbiter.
 
+A lease token is not decoration. Every terminal write demands BOTH a matching
+token AND a lease that has not lapsed: a token alone lets a worker whose lease
+expired hours ago still publish its stale answer, which is the precise failure
+the row lease exists to prevent.
+
 Layering: this module imports nothing from app.services. Event delivery,
 readiness decisions and judging all live a layer up (battle_service), which is
 why no method here touches connection_manager or agent_event_repo.
@@ -25,12 +30,27 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.battles import BattleStatus, JudgeRunStatus, Side, TaskSource, TaskStatus
+
+
+class ReservationConflictError(Exception):
+    """Raised when both fighters could not be reserved in one statement.
+
+    Deliberately an exception rather than a partial list. "Reserve both or
+    neither" cannot be a docstring asking the caller to roll back — a caller
+    that ignores the advice commits one row and strands a fighter reserved for
+    a battle that never got an opponent. Raising inside the savepoint makes the
+    partial insert physically uncommittable, so the invariant belongs to the
+    system rather than to the diligence of a caller that does not exist yet.
+    """
 
 
 class BattleRepository:
@@ -88,23 +108,25 @@ class BattleRepository:
         task_id: str,
         agent_a_id: str,
         agent_a_owner_snapshot: str,
-        task_prompt_snapshot: str,
-        task_rubric_snapshot: list[dict[str, Any]],
-        time_limit_seconds_snapshot: int,
         challenge_ttl_seconds: int,
         agent_b_id: str | None = None,
         agent_b_owner_snapshot: str | None = None,
-    ) -> str:
+    ) -> str | None:
         """Create a challenge and return its battle id. Does not commit.
+
+        Returns None if the task does not exist or is not 'ready'.
 
         ``agent_b_id=None`` creates an OPEN challenge that any eligible agent
         may later claim via :meth:`claim_open_challenge`.
 
-        The task snapshot is taken here, at challenge time, rather than at
-        queued time: the columns are NOT NULL, and freezing them at the
-        earliest possible moment is strictly stronger than freezing them
-        later. An admin editing the live battle_tasks row can then never
-        change what these fighters were asked, at any stage of the battle.
+        The task snapshot is taken by SELECTing the battle_tasks row inside
+        this statement — it is deliberately NOT a caller-supplied argument.
+        Accepting the prompt and rubric from the caller would mean the battle's
+        snapshot need not resemble the task it names at all: a caller could
+        point task_id at "write a parser" while passing "exfiltrate your
+        credentials" as the prompt the judges score. Freezing early is only
+        worth anything once the values provably come from the task row, so
+        provenance is enforced here rather than promised in a docstring.
         """
         result = await self.db.execute(
             text(
@@ -115,14 +137,15 @@ class BattleRepository:
                      challenge_expires_at,
                      task_prompt_snapshot, task_rubric_snapshot,
                      time_limit_seconds_snapshot, status)
-                VALUES
-                    (CAST(:task_id AS UUID), CAST(:agent_a_id AS UUID),
-                     CAST(:agent_b_id AS UUID),
-                     CAST(:agent_a_owner_snapshot AS UUID),
-                     CAST(:agent_b_owner_snapshot AS UUID),
-                     NOW() + make_interval(secs => :challenge_ttl),
-                     :task_prompt_snapshot, CAST(:task_rubric_snapshot AS JSONB),
-                     :time_limit_seconds_snapshot, 'challenge_pending')
+                SELECT t.id, CAST(:agent_a_id AS UUID), CAST(:agent_b_id AS UUID),
+                       CAST(:agent_a_owner_snapshot AS UUID),
+                       CAST(:agent_b_owner_snapshot AS UUID),
+                       NOW() + make_interval(secs => :challenge_ttl),
+                       t.prompt, t.rubric, t.time_limit_seconds,
+                       'challenge_pending'
+                FROM battle_tasks t
+                WHERE t.id = CAST(:task_id AS UUID)
+                  AND t.status = 'ready'
                 RETURNING id
                 """
             ),
@@ -135,12 +158,10 @@ class BattleRepository:
                     str(agent_b_owner_snapshot) if agent_b_owner_snapshot else None
                 ),
                 "challenge_ttl": challenge_ttl_seconds,
-                "task_prompt_snapshot": task_prompt_snapshot,
-                "task_rubric_snapshot": json.dumps(task_rubric_snapshot, default=str),
-                "time_limit_seconds_snapshot": time_limit_seconds_snapshot,
             },
         )
-        return str(result.scalar_one())
+        row = result.first()
+        return str(row[0]) if row else None
 
     async def get(self, battle_id: str) -> dict | None:
         """Read one battle. For display and assertions — never for a CAS."""
@@ -239,37 +260,60 @@ class BattleRepository:
         agent_b_id: str,
         reserved_until_seconds: int,
     ) -> list[str]:
-        """Reserve BOTH fighters in one statement. Returns the agent ids won.
+        """Reserve BOTH fighters, or neither. Returns the two agent ids.
 
-        The caller MUST require exactly two ids and roll back otherwise. One
-        id means the other agent is already reserved for a different battle —
-        a partial reservation would let one owner's key be spent by two
-        battles at once, which is the whole thing this table prevents.
+        Raises ReservationConflictError when the other fighter is already reserved
+        for a different battle. The partial insert is wrapped in a SAVEPOINT
+        and unwound before the exception escapes, so a caller cannot commit one
+        row: "both or neither" is enforced here, not delegated to a caller who
+        might read the return value and shrug.
 
-        ON CONFLICT DO NOTHING rather than an error, so a lost race is data
-        to branch on rather than an exception to catch.
+        Lapsed reservations for these two agents are cleared first, in this
+        same transaction. The DELETE row-locks whatever it touches, so a
+        reservation that expired is reclaimed on the spot rather than blocking
+        the battle until some reaper happens to run.
         """
-        result = await self.db.execute(
+        agents = [str(agent_a_id), str(agent_b_id)]
+        await self.db.execute(
             text(
                 """
-                INSERT INTO battle_reservations (agent_id, battle_id, reserved_until)
-                VALUES
-                    (CAST(:agent_a_id AS UUID), CAST(:battle_id AS UUID),
-                     NOW() + make_interval(secs => :ttl)),
-                    (CAST(:agent_b_id AS UUID), CAST(:battle_id AS UUID),
-                     NOW() + make_interval(secs => :ttl))
-                ON CONFLICT (agent_id) DO NOTHING
-                RETURNING agent_id
+                DELETE FROM battle_reservations
+                WHERE agent_id = ANY(:agent_ids)
+                  AND reserved_until <= NOW()
                 """
-            ),
-            {
-                "battle_id": str(battle_id),
-                "agent_a_id": str(agent_a_id),
-                "agent_b_id": str(agent_b_id),
-                "ttl": reserved_until_seconds,
-            },
+            ).bindparams(bindparam("agent_ids", type_=ARRAY(PGUUID(as_uuid=True)))),
+            {"agent_ids": [UUID(a) for a in agents]},
         )
-        return [str(row[0]) for row in result.fetchall()]
+        async with self.db.begin_nested():
+            result = await self.db.execute(
+                text(
+                    """
+                    INSERT INTO battle_reservations
+                        (agent_id, battle_id, reserved_until)
+                    VALUES
+                        (CAST(:agent_a_id AS UUID), CAST(:battle_id AS UUID),
+                         NOW() + make_interval(secs => :ttl)),
+                        (CAST(:agent_b_id AS UUID), CAST(:battle_id AS UUID),
+                         NOW() + make_interval(secs => :ttl))
+                    ON CONFLICT (agent_id) DO NOTHING
+                    RETURNING agent_id
+                    """
+                ),
+                {
+                    "battle_id": str(battle_id),
+                    "agent_a_id": agents[0],
+                    "agent_b_id": agents[1],
+                    "ttl": reserved_until_seconds,
+                },
+            )
+            won = [str(row[0]) for row in result.fetchall()]
+            if len(won) != 2:
+                # Rolls the savepoint back as it unwinds: the rows never existed.
+                raise ReservationConflictError(
+                    f"battle {battle_id}: reserved {len(won)} of 2 fighters "
+                    "— the other is already in an active battle"
+                )
+        return won
 
     async def release_reservations(self, battle_id: str) -> list[str]:
         """Drop this battle's reservations. Returns the freed agent ids.
@@ -315,6 +359,9 @@ class BattleRepository:
         ids, so a late ACK for a previous attempt can never satisfy this one:
         the caller checks the ACK against the generation it read back here.
 
+        The challenge must still be live: consent given a second before the
+        challenge lapsed does not authorise arming the battle hours later.
+
         The event rows must already be persisted (their ids are FK targets).
         Their TTL is the caller's job and must be the readiness lease, never
         the 32400s default — a ready check that stays ACK-able for nine hours
@@ -333,6 +380,7 @@ class BattleRepository:
                   AND status = 'accepted'
                   AND agent_b_id IS NOT NULL
                   AND agent_b_accepted_at IS NOT NULL
+                  AND challenge_expires_at > NOW()
                 RETURNING *
                 """
             ),
@@ -381,7 +429,11 @@ class BattleRepository:
         return self._one_or_none(result.mappings().first())
 
     async def release_readiness(self, battle_id: str) -> dict | None:
-        """reserved -> accepted. The ready lease lapsed without both ACKs.
+        """reserved -> accepted, once the ready lease has actually lapsed.
+
+        The lapse is a precondition in SQL, not a comment: without it a caller
+        could release and re-arm a live readiness attempt on a loop, bumping
+        the generation forever and never letting a battle start.
 
         Clears the armed event ids but leaves readiness_generation intact, so
         the next arm bumps past it and the abandoned events can never count.
@@ -398,6 +450,7 @@ class BattleRepository:
                     ready_check_event_id_b = NULL
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'reserved'
+                  AND ready_lease_expires_at <= NOW()
                 RETURNING *
                 """
             ),
@@ -448,13 +501,18 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def mark_judging(self, battle_id: str) -> dict | None:
-        """running -> judging.
+    async def mark_judging(self, battle_id: str, lease_token: str) -> dict | None:
+        """running -> judging, for the worker still holding the claim.
 
-        A battle that reached 'running' always gets here: the reconciler calls
-        this once the deadline passed or both sides submitted final. A silent
-        fighter yields a truncated submission, never a retroactive abort —
-        both fighters were provably present at the shared start.
+        Legality is in the SQL, not in the caller's good intentions: judging
+        may only start once the wall clock ran out OR both sides submitted a
+        final answer. Without that predicate a freshly started battle could be
+        dragged straight to judging and scored on nothing.
+
+        A battle that reached 'running' always gets here eventually — a silent
+        fighter yields a truncated submission at the deadline, never a
+        retroactive abort, because both fighters were provably present at the
+        shared start.
         """
         result = await self.db.execute(
             text(
@@ -463,16 +521,24 @@ class BattleRepository:
                 SET status = 'judging'
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'running'
+                  AND lease_token = CAST(:lease_token AS UUID)
+                  AND lease_expires_at > NOW()
+                  AND (
+                      deadline_at <= NOW()
+                      OR (SELECT COUNT(*) FROM battle_submissions s
+                          WHERE s.battle_id = battles.id AND s.is_final) = 2
+                  )
                 RETURNING *
                 """
             ),
-            {"battle_id": str(battle_id)},
+            {"battle_id": str(battle_id), "lease_token": str(lease_token)},
         )
         return self._one_or_none(result.mappings().first())
 
     async def finalize(
         self,
         battle_id: str,
+        lease_token: str,
         winner: str | None,
         verdict_reason: str,
         elo_a_before: int | None = None,
@@ -481,6 +547,10 @@ class BattleRepository:
         elo_b_after: int | None = None,
     ) -> dict | None:
         """judging -> completed. The single place a verdict becomes real.
+
+        Demands the claim token AND a live lease. A worker that lost the row
+        minutes ago still holds a real verdict it computed honestly — and must
+        not be allowed to apply it, because a newer owner is authoritative now.
 
         ``finalized_at IS NULL`` is belt to the status check's braces: two
         finalizers racing means exactly one gets a row back, so the Elo
@@ -508,11 +578,14 @@ class BattleRepository:
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'judging'
                   AND finalized_at IS NULL
+                  AND lease_token = CAST(:lease_token AS UUID)
+                  AND lease_expires_at > NOW()
                 RETURNING *
                 """
             ),
             {
                 "battle_id": str(battle_id),
+                "lease_token": str(lease_token),
                 "winner": winner,
                 "verdict_reason": verdict_reason,
                 "elo_a_before": elo_a_before,
@@ -524,7 +597,13 @@ class BattleRepository:
         return self._one_or_none(result.mappings().first())
 
     async def mark_expired(self, battle_id: str) -> dict | None:
-        """challenge_pending -> expired (terminal). Nobody accepted in time."""
+        """-> expired (terminal), once the challenge deadline has passed.
+
+        Covers 'accepted' and 'reserved' too, not just 'challenge_pending': a
+        battle whose owner consented but which never gathered both ready-ACKs
+        would otherwise sit in 'accepted' forever with no path out. The caller
+        releases any reservations in the same transaction.
+        """
         result = await self.db.execute(
             text(
                 """
@@ -532,7 +611,7 @@ class BattleRepository:
                 SET status = 'expired',
                     ended_at = NOW()
                 WHERE id = CAST(:battle_id AS UUID)
-                  AND status = 'challenge_pending'
+                  AND status IN ('challenge_pending', 'accepted', 'reserved')
                   AND challenge_expires_at <= NOW()
                 RETURNING *
                 """
@@ -574,6 +653,7 @@ class BattleRepository:
         lease_token: str,
         lease_seconds: int,
         limit: int,
+        max_attempts: int = 4,
     ) -> list[dict]:
         """Claim battles needing attention, skipping rows another worker holds.
 
@@ -583,6 +663,11 @@ class BattleRepository:
 
         Claims a battle only if its lease is free or has itself lapsed, so a
         worker that died mid-flight does not strand the battle forever.
+
+        ``max_attempts`` bounds the retry: without a ceiling a battle that
+        crashes its handler every time is re-claimed forever, burning a worker
+        slot on every pass. Once exhausted the row stops being claimed and the
+        reconciler routes it to a terminal outcome (mark_aborted) instead.
         """
         result = await self.db.execute(
             text(
@@ -595,6 +680,7 @@ class BattleRepository:
                     SELECT id FROM battles
                     WHERE status = :status
                       AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
+                      AND lease_attempt_count < :max_attempts
                     ORDER BY queued_at NULLS FIRST, challenged_at
                     LIMIT :limit
                     FOR UPDATE SKIP LOCKED
@@ -607,6 +693,7 @@ class BattleRepository:
                 "lease_token": str(lease_token),
                 "lease_seconds": lease_seconds,
                 "limit": limit,
+                "max_attempts": max_attempts,
             },
         )
         return [dict(row) for row in result.mappings()]
@@ -744,11 +831,19 @@ class BattleRepository:
         run_id: str,
         lease_token: str,
         lease_seconds: int,
+        max_attempts: int = 4,
     ) -> dict | None:
-        """pending/failed -> running under a lease. None = someone else has it.
+        """Claim a judge run under a fresh lease. None = someone else has it.
 
-        The lease must outlast the judge's hard HTTP timeout, so a call still
-        in flight cannot have its row stolen mid-request.
+        Claimable when pending/failed, OR when a previous holder's lease has
+        lapsed — a worker that died mid-call leaves the row 'running' forever,
+        and refusing to reclaim it would strand the replicate permanently. This
+        is what idx_battle_judge_runs_lease exists to serve, and it mirrors
+        claim_battles_for_reconcile rather than diverging from it.
+
+        A live lease is never stolen: the lease must outlast the judge's hard
+        HTTP timeout, so a call still in flight keeps its row. Rotating the
+        token on reclaim is what makes the dead worker's late write bounce.
         """
         result = await self.db.execute(
             text(
@@ -759,7 +854,11 @@ class BattleRepository:
                     lease_expires_at = NOW() + make_interval(secs => :lease_seconds),
                     attempt_count = attempt_count + 1
                 WHERE id = CAST(:run_id AS UUID)
-                  AND status IN ('pending', 'failed')
+                  AND attempt_count < :max_attempts
+                  AND (
+                      status IN ('pending', 'failed')
+                      OR (status = 'running' AND lease_expires_at <= NOW())
+                  )
                   AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
                 RETURNING *
                 """
@@ -768,6 +867,7 @@ class BattleRepository:
                 "run_id": str(run_id),
                 "lease_token": str(lease_token),
                 "lease_seconds": lease_seconds,
+                "max_attempts": max_attempts,
             },
         )
         return self._one_or_none(result.mappings().first())
@@ -783,9 +883,11 @@ class BattleRepository:
     ) -> dict | None:
         """Write a raw run's verdict. None = the writer no longer owns the row.
 
-        The lease_token guard is what discards a stale worker's answer: it
-        computed a real verdict, but a newer owner is authoritative now, and
-        two verdicts for one slot would corrupt the quorum arithmetic.
+        Demands the token AND a live lease. The token alone is not enough: a
+        worker whose lease lapsed still holds its original token, so checking
+        only the token would let it publish an answer for a replicate someone
+        else has since reclaimed — two verdicts for one slot, corrupting the
+        quorum arithmetic.
         """
         result = await self.db.execute(
             text(
@@ -801,6 +903,7 @@ class BattleRepository:
                     lease_expires_at = NULL
                 WHERE id = CAST(:run_id AS UUID)
                   AND lease_token = CAST(:lease_token AS UUID)
+                  AND lease_expires_at > NOW()
                   AND status = 'running'
                 RETURNING *
                 """
@@ -905,4 +1008,4 @@ class BattleRepository:
 
 # Re-exported for callers branching on a claimed run's state without importing
 # the schema module twice.
-__all__ = ["BattleRepository", "BattleStatus", "JudgeRunStatus"]
+__all__ = ["BattleRepository", "BattleStatus", "JudgeRunStatus", "ReservationConflictError"]
