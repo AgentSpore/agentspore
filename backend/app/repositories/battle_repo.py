@@ -370,9 +370,7 @@ class BattleRepository:
                 "category": category,
                 "time_limit_seconds": time_limit_seconds,
                 "status": status.value,
-                "created_by_user_id": (
-                    str(created_by_user_id) if created_by_user_id else None
-                ),
+                "created_by_user_id": (str(created_by_user_id) if created_by_user_id else None),
             },
         )
         return str(result.scalar_one())
@@ -584,10 +582,7 @@ class BattleRepository:
     async def get(self, battle_id: str) -> dict | None:
         """Read one battle. For display and assertions — never for a CAS."""
         result = await self.db.execute(
-            text(
-                "SELECT * FROM battles "
-                "WHERE id = CAST(:battle_id AS UUID)"
-            ),
+            text("SELECT * FROM battles WHERE id = CAST(:battle_id AS UUID)"),
             {"battle_id": str(battle_id)},
         )
         row = result.mappings().first()
@@ -816,9 +811,7 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def accept_as_owner(
-        self, battle_id: str, accepting_user_id: str
-    ) -> dict | None:
+    async def accept_as_owner(self, battle_id: str, accepting_user_id: str) -> dict | None:
         """challenge_pending -> accepted, iff ``accepting_user_id`` owns B NOW.
 
         The only consent path application code may use.
@@ -893,9 +886,7 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def decline_as_owner(
-        self, battle_id: str, declining_user_id: str
-    ) -> dict | None:
+    async def decline_as_owner(self, battle_id: str, declining_user_id: str) -> dict | None:
         """challenge_pending -> declined, iff ``declining_user_id`` owns B NOW.
 
         The only refusal path application code may use. Symmetrical to
@@ -1084,9 +1075,7 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def admit_to_queue(
-        self, battle_id: str, readiness_generation: int
-    ) -> dict | None:
+    async def admit_to_queue(self, battle_id: str, readiness_generation: int) -> dict | None:
         """reserved -> queued, iff EVERY admission condition holds. No commit.
 
         The only queueing path application code may use. One statement, because
@@ -1773,6 +1762,92 @@ class BattleRepository:
         )
         row = result.first()
         return str(row[0]) if row else None
+
+    # -- rating -------------------------------------------------------------
+
+    async def lock_fighter_ratings(self, battle_id: str) -> dict | None:
+        """Lock both fighters and read the ratings a verdict will move. No commit.
+
+        FOR UPDATE, because the ratings read here are the ones written back: an
+        unlocked read-modify-write loses an update when one agent settles two
+        battles at once — both read 1200, both write 1200+delta, and one delta
+        vanishes. The battle-row CAS in :meth:`finalize` cannot prevent that; it
+        serialises the finalizers of ONE battle, whereas this serialises the
+        writers of one AGENT across different battles.
+
+        ``ORDER BY id`` is a deadlock rule, not cosmetics: two battles sharing
+        the same pair of fighters in opposite roles would otherwise lock them in
+        opposite orders and deadlock. One consistent order makes that impossible.
+
+        Returns the owner snapshots too, so the caller decides self-play from the
+        ownership frozen AT THE START rather than ownership now — an agent sold
+        mid-battle must not retroactively change whether the battle rates.
+        """
+        battle = await self.db.execute(
+            text(
+                """
+                SELECT agent_a_id, agent_b_id,
+                       agent_a_owner_snapshot, agent_b_owner_snapshot
+                  FROM battles WHERE id = CAST(:battle_id AS UUID)
+                """
+            ),
+            {"battle_id": str(battle_id)},
+        )
+        row = self._one_or_none(battle.mappings().first())
+        if not row or not row["agent_b_id"]:
+            return None
+
+        ratings = await self.db.execute(
+            text(
+                """
+                SELECT id, battle_elo
+                  FROM agents
+                 WHERE id IN (CAST(:agent_a_id AS UUID), CAST(:agent_b_id AS UUID))
+                 ORDER BY id
+                   FOR UPDATE
+                """
+            ),
+            {"agent_a_id": str(row["agent_a_id"]), "agent_b_id": str(row["agent_b_id"])},
+        )
+        elo_by_agent = {str(r["id"]): r["battle_elo"] for r in ratings.mappings()}
+        if len(elo_by_agent) != 2:
+            return None
+
+        return {
+            **row,
+            "elo_a": elo_by_agent[str(row["agent_a_id"])],
+            "elo_b": elo_by_agent[str(row["agent_b_id"])],
+        }
+
+    async def apply_rating(self, agent_id: str, new_elo: int, outcome: str) -> bool:
+        """Write one fighter's post-battle rating and counter. No commit.
+
+        ``outcome`` is 'win' | 'loss' | 'tie' and bumps exactly one counter, in
+        the SAME statement as the rating: a rating that moved without a recorded
+        battle is unauditable, so the two must never be writable apart.
+
+        The caller already holds this row's lock from
+        :meth:`lock_fighter_ratings`, so False here is a genuine anomaly (the
+        agent vanished) rather than a lost race.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE agents
+                SET battle_elo = :new_elo,
+                    battle_wins = battle_wins
+                        + CASE WHEN :outcome = 'win' THEN 1 ELSE 0 END,
+                    battle_losses = battle_losses
+                        + CASE WHEN :outcome = 'loss' THEN 1 ELSE 0 END,
+                    battle_ties = battle_ties
+                        + CASE WHEN :outcome = 'tie' THEN 1 ELSE 0 END
+                WHERE id = CAST(:agent_id AS UUID)
+                RETURNING id
+                """
+            ),
+            {"agent_id": str(agent_id), "new_elo": new_elo, "outcome": outcome},
+        )
+        return result.first() is not None
 
     async def list_judgements(self, battle_id: str) -> list[dict]:
         """Every collapsed vote of a battle."""
