@@ -29,6 +29,7 @@ why no method here touches connection_manager or agent_event_repo.
 from __future__ import annotations
 
 import json
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
@@ -53,11 +54,212 @@ class ReservationConflictError(Exception):
     """
 
 
+class ChallengeDenial(str, Enum):
+    """Why an admission gate refused a challenge.
+
+    Exists so the API can answer 403 vs 409 vs 429 truthfully. The gate that
+    actually protects the target is the predicate set inside create_battle's
+    INSERT; this enum only names what a diagnostic read saw, so the caller can
+    say WHICH rule bit rather than a generic "denied".
+    """
+
+    TASK_UNAVAILABLE = "task_unavailable"
+    CHALLENGER_INELIGIBLE = "challenger_ineligible"
+    TARGET_INELIGIBLE = "target_ineligible"
+    BLOCKED = "blocked"
+    COOLING_DOWN = "cooling_down"
+    TARGET_CAPPED = "target_capped"
+    PAIR_ALREADY_ENGAGED = "pair_already_engaged"
+
+
+# Namespace for pg_advisory_xact_lock, so battle challenge locks cannot collide
+# with any other advisory-lock user in this database. Arbitrary but fixed.
+CHALLENGE_LOCK_NAMESPACE = 0x62_74_6C_31  # "btl1"
+
+# An agent is eligible to fight only while all four hold. Hosted agents are
+# excluded because their inference is paid by the platform, not by an owner who
+# opted in. Rendered once and interpolated into the statements below so the rule
+# is defined in exactly one place — the values are literals, never user input.
+_AGENT_ELIGIBLE_SQL = """
+    a.is_active = TRUE
+    AND a.is_hosted = FALSE
+    AND a.available_for_battles = TRUE
+    AND a.owner_user_id IS NOT NULL
+"""
+
+# A battle that still owes its fighters something. A pair may have exactly one
+# of these at a time, and the challenge cap counts them.
+_ENGAGED_STATUSES_SQL = (
+    "('challenge_pending', 'accepted', 'reserved', 'queued', 'running', 'judging')"
+)
+
+
 class BattleRepository:
     """All database operations for battles and their satellites."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    # -- admission ----------------------------------------------------------
+
+    async def lock_challenge_target(self, target_agent_id: str) -> None:
+        """Serialise challenge creation against ONE target, until commit.
+
+        Without this the per-target cap is not a cap: two concurrent
+        challengers both COUNT the committed rows under READ COMMITTED, both
+        see cap-1, and both insert — the boundary leaks by exactly the number
+        of concurrent callers, which is the case a cap exists to stop.
+
+        An advisory lock rather than ``SELECT ... FROM agents FOR UPDATE``:
+        row-locking the agent would also block every heartbeat
+        (``UPDATE agents SET last_heartbeat``) for as long as a challenge
+        transaction runs. The contention we want is challenge-vs-challenge on
+        one target, and nothing else. The lock is released by commit or
+        rollback, so a crashed challenger cannot wedge a target.
+
+        Open challenges (no target yet) skip this: there is no target to cap.
+        """
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, hashtext(:target))"),
+            {"ns": CHALLENGE_LOCK_NAMESPACE, "target": str(target_agent_id)},
+        )
+
+    async def diagnose_challenge(
+        self,
+        task_id: str,
+        agent_a_id: str,
+        challenger_owner_user_id: str,
+        agent_b_id: str | None,
+        target_cap: int,
+        target_window_seconds: int,
+    ) -> ChallengeDenial | None:
+        """Name the first rule that refuses this challenge. None = admissible.
+
+        Diagnostic ONLY. It is deliberately NOT the gate: a read that decides
+        and an insert that acts are two statements, and between them the world
+        moves. The real gate is the predicate set inside create_battle, which
+        re-checks every one of these in the INSERT itself. This exists so a
+        refusal can say "cooldown" instead of "no", which a single boolean from
+        the INSERT can never do.
+        """
+        result = await self.db.execute(
+            text(
+                f"""
+                SELECT
+                    EXISTS (
+                        SELECT 1 FROM battle_tasks t
+                        WHERE t.id = CAST(:task_id AS UUID) AND t.status = 'ready'
+                    ) AS task_ok,
+                    EXISTS (
+                        SELECT 1 FROM agents a
+                        WHERE a.id = CAST(:agent_a_id AS UUID)
+                          AND a.owner_user_id = CAST(:challenger_owner AS UUID)
+                          AND {_AGENT_ELIGIBLE_SQL}
+                    ) AS challenger_ok,
+                    (
+                        CAST(:agent_b_id AS UUID) IS NULL
+                        OR EXISTS (
+                            SELECT 1 FROM agents a
+                            WHERE a.id = CAST(:agent_b_id AS UUID)
+                              AND {_AGENT_ELIGIBLE_SQL}
+                        )
+                    ) AS target_ok,
+                    EXISTS (
+                        SELECT 1 FROM battle_blocks bl
+                        WHERE (bl.blocker_agent_id = CAST(:agent_b_id AS UUID)
+                               AND bl.blocked_agent_id = CAST(:agent_a_id AS UUID))
+                           OR (bl.blocker_agent_id = CAST(:agent_a_id AS UUID)
+                               AND bl.blocked_agent_id = CAST(:agent_b_id AS UUID))
+                    ) AS blocked,
+                    EXISTS (
+                        SELECT 1 FROM battle_challenge_cooldowns c
+                        WHERE c.challenger_agent_id = CAST(:agent_a_id AS UUID)
+                          AND c.target_agent_id = CAST(:agent_b_id AS UUID)
+                          AND c.cooldown_until > NOW()
+                    ) AS cooling,
+                    (
+                        CAST(:agent_b_id AS UUID) IS NOT NULL
+                        AND (
+                            SELECT COUNT(*) FROM battles b
+                            WHERE b.agent_b_id = CAST(:agent_b_id AS UUID)
+                              AND b.challenged_at
+                                  > NOW() - make_interval(secs => :target_window)
+                        ) >= :target_cap
+                    ) AS capped,
+                    EXISTS (
+                        SELECT 1 FROM battles b
+                        WHERE b.status IN {_ENGAGED_STATUSES_SQL}
+                          AND (
+                              (b.agent_a_id = CAST(:agent_a_id AS UUID)
+                               AND b.agent_b_id = CAST(:agent_b_id AS UUID))
+                              OR (b.agent_a_id = CAST(:agent_b_id AS UUID)
+                                  AND b.agent_b_id = CAST(:agent_a_id AS UUID))
+                          )
+                    ) AS pair_engaged
+                """
+            ),
+            {
+                "task_id": str(task_id),
+                "agent_a_id": str(agent_a_id),
+                "challenger_owner": str(challenger_owner_user_id),
+                "agent_b_id": str(agent_b_id) if agent_b_id else None,
+                "target_cap": target_cap,
+                "target_window": target_window_seconds,
+            },
+        )
+        row = result.mappings().one()
+        # Ordered most-specific-last so the message names the interesting rule:
+        # a blocked pair is more informative than "target ineligible".
+        if not row["task_ok"]:
+            return ChallengeDenial.TASK_UNAVAILABLE
+        if not row["challenger_ok"]:
+            return ChallengeDenial.CHALLENGER_INELIGIBLE
+        if not row["target_ok"]:
+            return ChallengeDenial.TARGET_INELIGIBLE
+        if row["blocked"]:
+            return ChallengeDenial.BLOCKED
+        if row["cooling"]:
+            return ChallengeDenial.COOLING_DOWN
+        if row["pair_engaged"]:
+            return ChallengeDenial.PAIR_ALREADY_ENGAGED
+        if row["capped"]:
+            return ChallengeDenial.TARGET_CAPPED
+        return None
+
+    async def upsert_cooldown(
+        self,
+        challenger_agent_id: str,
+        target_agent_id: str,
+        cooldown_seconds: int,
+    ) -> None:
+        """Start (or extend) the decline cooldown for one ordered pair.
+
+        GREATEST on conflict so a later decline can only push the cooldown
+        further out. Taking the new value unconditionally would let a
+        challenger shorten its own penalty by provoking a second, faster
+        decline.
+        """
+        await self.db.execute(
+            text(
+                """
+                INSERT INTO battle_challenge_cooldowns
+                    (challenger_agent_id, target_agent_id, cooldown_until)
+                VALUES
+                    (CAST(:challenger AS UUID), CAST(:target AS UUID),
+                     NOW() + make_interval(secs => :cooldown))
+                ON CONFLICT (challenger_agent_id, target_agent_id) DO UPDATE
+                SET cooldown_until = GREATEST(
+                    battle_challenge_cooldowns.cooldown_until,
+                    EXCLUDED.cooldown_until
+                )
+                """
+            ),
+            {
+                "challenger": str(challenger_agent_id),
+                "target": str(target_agent_id),
+                "cooldown": cooldown_seconds,
+            },
+        )
 
     # -- tasks --------------------------------------------------------------
 
@@ -112,7 +314,17 @@ class BattleRepository:
         agent_b_id: str | None = None,
         agent_b_owner_snapshot: str | None = None,
     ) -> str | None:
-        """Create a challenge and return its battle id. Does not commit.
+        """Insert a challenge row and return its id. Does not commit.
+
+        The STATE-MACHINE primitive: it enforces the task snapshot's
+        provenance and nothing else. It does NOT enforce admission — opt-in,
+        caps, cooldowns, blocks and the pair rule are product policy, and this
+        method is the layer underneath policy.
+
+        Application code must call :meth:`create_challenge` instead, which is
+        this insert plus every admission predicate. This one exists for the
+        state-machine tests, which construct battles in order to exercise
+        transitions and have no business satisfying the challenge rules.
 
         Returns None if the task does not exist or is not 'ready'.
 
@@ -128,9 +340,139 @@ class BattleRepository:
         worth anything once the values provably come from the task row, so
         provenance is enforced here rather than promised in a docstring.
         """
+        return await self._insert_challenge(
+            task_id=task_id,
+            agent_a_id=agent_a_id,
+            agent_a_owner_snapshot=agent_a_owner_snapshot,
+            challenge_ttl_seconds=challenge_ttl_seconds,
+            agent_b_id=agent_b_id,
+            agent_b_owner_snapshot=agent_b_owner_snapshot,
+            admission_sql="",
+            admission_params={},
+        )
+
+    async def create_challenge(
+        self,
+        task_id: str,
+        agent_a_id: str,
+        agent_a_owner_snapshot: str,
+        challenge_ttl_seconds: int,
+        target_cap: int,
+        target_window_seconds: int,
+        agent_b_id: str | None = None,
+        agent_b_owner_snapshot: str | None = None,
+    ) -> str | None:
+        """Create a challenge, enforcing EVERY admission rule. No commit.
+
+        The only creation path application code may use. Returns None when any
+        rule refuses: either fighter ineligible, pair blocked, challenger in
+        cooldown, target at its cap, or the pair already engaged. Call
+        :meth:`diagnose_challenge` first if the caller needs to say which.
+
+        Every rule is a predicate of THIS statement, not a check the caller
+        performed a moment ago. A challenge spends the target owner's inference
+        budget, so "we looked and it was fine" is not good enough: between a
+        SELECT and an INSERT the target can opt out, block the challenger, or
+        reach its cap. Zero rows means the insert never happened — the only
+        form of "denied" worth having, because it leaves nothing to clean up.
+
+        The per-target cap additionally requires :meth:`lock_challenge_target`
+        in this transaction: the COUNT cannot see a concurrent uncommitted
+        challenge, so the lock is what makes N mean N.
+
+        ``agent_b_id=None`` opens the challenge. The target-shaped rules are
+        skipped here and enforced by :meth:`claim_open_challenge` instead,
+        against the agent that actually turns up.
+
+        The challenger's ownership is verified against the agents row rather
+        than trusted: agent_a_owner_snapshot is frozen into the battle and
+        later decides rating eligibility, so an unchecked value would let a
+        caller snapshot an owner that never owned the agent.
+        """
+        return await self._insert_challenge(
+            task_id=task_id,
+            agent_a_id=agent_a_id,
+            agent_a_owner_snapshot=agent_a_owner_snapshot,
+            challenge_ttl_seconds=challenge_ttl_seconds,
+            agent_b_id=agent_b_id,
+            agent_b_owner_snapshot=agent_b_owner_snapshot,
+            admission_sql=f"""
+                  AND EXISTS (
+                      SELECT 1 FROM agents a
+                      WHERE a.id = CAST(:agent_a_id AS UUID)
+                        AND a.owner_user_id = CAST(:agent_a_owner_snapshot AS UUID)
+                        AND {_AGENT_ELIGIBLE_SQL}
+                  )
+                  AND (
+                      CAST(:agent_b_id AS UUID) IS NULL
+                      OR EXISTS (
+                          SELECT 1 FROM agents a
+                          WHERE a.id = CAST(:agent_b_id AS UUID)
+                            AND a.owner_user_id
+                                = CAST(:agent_b_owner_snapshot AS UUID)
+                            AND {_AGENT_ELIGIBLE_SQL}
+                      )
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM battle_blocks bl
+                      WHERE (bl.blocker_agent_id = CAST(:agent_b_id AS UUID)
+                             AND bl.blocked_agent_id = CAST(:agent_a_id AS UUID))
+                         OR (bl.blocker_agent_id = CAST(:agent_a_id AS UUID)
+                             AND bl.blocked_agent_id = CAST(:agent_b_id AS UUID))
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM battle_challenge_cooldowns c
+                      WHERE c.challenger_agent_id = CAST(:agent_a_id AS UUID)
+                        AND c.target_agent_id = CAST(:agent_b_id AS UUID)
+                        AND c.cooldown_until > NOW()
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM battles b
+                      WHERE b.status IN {_ENGAGED_STATUSES_SQL}
+                        AND (
+                            (b.agent_a_id = CAST(:agent_a_id AS UUID)
+                             AND b.agent_b_id = CAST(:agent_b_id AS UUID))
+                            OR (b.agent_a_id = CAST(:agent_b_id AS UUID)
+                                AND b.agent_b_id = CAST(:agent_a_id AS UUID))
+                        )
+                  )
+                  AND (
+                      CAST(:agent_b_id AS UUID) IS NULL
+                      OR (
+                          SELECT COUNT(*) FROM battles b
+                          WHERE b.agent_b_id = CAST(:agent_b_id AS UUID)
+                            AND b.challenged_at
+                                > NOW() - make_interval(secs => :target_window)
+                      ) < :target_cap
+                  )
+            """,
+            admission_params={
+                "target_cap": target_cap,
+                "target_window": target_window_seconds,
+            },
+        )
+
+    async def _insert_challenge(
+        self,
+        task_id: str,
+        agent_a_id: str,
+        agent_a_owner_snapshot: str,
+        challenge_ttl_seconds: int,
+        agent_b_id: str | None,
+        agent_b_owner_snapshot: str | None,
+        admission_sql: str,
+        admission_params: dict[str, Any],
+    ) -> str | None:
+        """The one INSERT behind create_battle and create_challenge.
+
+        Shared so the two paths cannot drift: the column list, the snapshot
+        provenance and the 'ready' guard are written once. ``admission_sql`` is
+        a fragment built from module constants in this file — never from
+        caller input, and never interpolated with a parameter value.
+        """
         result = await self.db.execute(
             text(
-                """
+                f"""
                 INSERT INTO battles
                     (task_id, agent_a_id, agent_b_id,
                      agent_a_owner_snapshot, agent_b_owner_snapshot,
@@ -146,6 +488,7 @@ class BattleRepository:
                 FROM battle_tasks t
                 WHERE t.id = CAST(:task_id AS UUID)
                   AND t.status = 'ready'
+                  {admission_sql}
                 RETURNING id
                 """
             ),
@@ -158,6 +501,7 @@ class BattleRepository:
                     str(agent_b_owner_snapshot) if agent_b_owner_snapshot else None
                 ),
                 "challenge_ttl": challenge_ttl_seconds,
+                **admission_params,
             },
         )
         row = result.first()
@@ -175,6 +519,45 @@ class BattleRepository:
         row = result.mappings().first()
         return dict(row) if row else None
 
+    async def list_battles(
+        self,
+        status: BattleStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Public battle list, newest challenge first."""
+        result = await self.db.execute(
+            text(
+                """
+                SELECT * FROM battles
+                WHERE (CAST(:status AS VARCHAR) IS NULL OR status = :status)
+                ORDER BY challenged_at DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            {
+                "status": status.value if status else None,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        return [dict(row) for row in result.mappings()]
+
+    async def list_tasks(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """Public task list — only what a new battle may actually use."""
+        result = await self.db.execute(
+            text(
+                """
+                SELECT * FROM battle_tasks
+                WHERE status = 'ready'
+                ORDER BY created_at DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            {"limit": limit, "offset": offset},
+        )
+        return [dict(row) for row in result.mappings()]
+
     async def claim_open_challenge(
         self,
         battle_id: str,
@@ -189,6 +572,14 @@ class BattleRepository:
         Claiming is NOT consent: the battle stays 'challenge_pending' and B's
         owner must still accept. The two are separate facts with separate
         lifetimes.
+
+        Like :meth:`create_battle`, this is the state-machine primitive and
+        enforces no admission policy. There is no claim endpoint yet; when one
+        ships it must NOT call this directly, or an open challenge becomes the
+        way to bypass every rule create_challenge enforces — challenge nobody,
+        and wait for the agent you blocked to claim it. That path needs the
+        create_challenge treatment (eligibility, blocks and the pair rule as
+        predicates of THIS update) before it is exposed.
         """
         result = await self.db.execute(
             text(
@@ -392,6 +783,61 @@ class BattleRepository:
             },
         )
         return self._one_or_none(result.mappings().first())
+
+    async def both_sides_ready(self, battle_id: str, readiness_generation: int) -> bool:
+        """Are BOTH current-generation ready-ACKs in, from the right agents?
+
+        This is the ACK evidence :meth:`mark_queued` deliberately refuses to
+        gather. It must run in the same transaction as that call — which is
+        also what makes the read honest rather than a read-then-write race:
+        NOW() is the transaction timestamp, so this query and the CAS that
+        follows evaluate every deadline against the SAME instant. Nothing can
+        expire between them.
+
+        The event ids come from the battle row, never from the caller. A
+        caller-supplied pair would let anyone nominate two events they know are
+        acked and queue a battle nobody agreed to — the same provenance hole
+        create_battle closes for the task snapshot.
+
+        Every clause is load-bearing:
+        - the generation pins this to the CURRENT attempt, so a late ACK from a
+          previous arming can never satisfy this one;
+        - target_agent_id must match the SIDE the event was armed for, so B's
+          ACK cannot stand in for A's;
+        - type = 'battle_ready_check' means a generic ACK for some unrelated
+          event is not readiness — mark_acked() never looks at event type, so
+          if this did not check it, nothing would;
+        - acked_at < ready_lease_expires_at keeps an ACK that arrived after the
+          lease lapsed out of the count, rather than relying on the lease check
+          in mark_queued to imply it.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT COUNT(*) = 2
+                FROM battles b
+                JOIN agent_events e
+                  ON e.event_id IN (b.ready_check_event_id_a,
+                                    b.ready_check_event_id_b)
+                WHERE b.id = CAST(:battle_id AS UUID)
+                  AND b.status = 'reserved'
+                  AND b.readiness_generation = :readiness_generation
+                  AND b.ready_lease_expires_at > NOW()
+                  AND e.type = 'battle_ready_check'
+                  AND e.acked_at IS NOT NULL
+                  AND e.acked_at < b.ready_lease_expires_at
+                  AND e.target_agent_id = CASE
+                          WHEN e.event_id = b.ready_check_event_id_a
+                          THEN b.agent_a_id ELSE b.agent_b_id
+                      END
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "readiness_generation": readiness_generation,
+            },
+        )
+        return bool(result.scalar())
 
     async def mark_queued(self, battle_id: str, readiness_generation: int) -> dict | None:
         """reserved -> queued, only for the generation the caller verified.
@@ -1008,4 +1454,10 @@ class BattleRepository:
 
 # Re-exported for callers branching on a claimed run's state without importing
 # the schema module twice.
-__all__ = ["BattleRepository", "BattleStatus", "JudgeRunStatus", "ReservationConflictError"]
+__all__ = [
+    "BattleRepository",
+    "BattleStatus",
+    "ChallengeDenial",
+    "JudgeRunStatus",
+    "ReservationConflictError",
+]
