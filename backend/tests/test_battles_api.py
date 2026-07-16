@@ -37,6 +37,7 @@ from app.repositories.battle_repo import BattleRepository, ChallengeDenial
 from app.schemas.battles import BattleStatus, TaskSource
 from app.services import battle_service as battle_service_module
 from app.services.battle_service import (
+    CHALLENGER_RATE_LIMIT,
     TARGET_CHALLENGE_CAP,
     TARGET_CHALLENGE_WINDOW_SECONDS,
     BattleService,
@@ -415,6 +416,104 @@ async def test_one_pending_challenge_per_pair(db, owner_id, task_id, make_agent)
     assert await _count_battles(db, target) == 1
 
 
+async def test_challenger_rate_limit_names_the_challenger_not_the_target(
+    db, owner_id, task_id, make_agent, redis_up
+):
+    """The caller's own quota must not be reported as the target being full.
+
+    Telling an owner "the target has reached its limit" when the target is
+    nowhere near it sends them to look at somebody else's state for a problem
+    that is theirs. Both answer 429; only one of them is true.
+    """
+    challenger = await make_agent()
+    redis_up.counters[f"battle:challenge:ratelimit:{challenger}"] = (
+        CHALLENGER_RATE_LIMIT
+    )
+
+    with pytest.raises(ChallengeDeniedError) as denied:
+        await BattleService(db).create_challenge(
+            task_id=task_id,
+            agent_a_id=challenger,
+            challenger_owner_user_id=owner_id,
+            agent_b_id=await make_agent(),
+        )
+    await db.rollback()
+    assert denied.value.reason is ChallengeDenial.CHALLENGER_RATE_LIMITED
+    assert _DENIAL_STATUS[ChallengeDenial.CHALLENGER_RATE_LIMITED] == 429
+
+
+# ── consent: ownership is proven by the write, not by an earlier read ────────
+
+
+async def test_accept_by_a_user_who_no_longer_owns_the_agent_is_refused(
+    db, owner_id, task_id, make_agent
+):
+    """Consent must be written by the CURRENT owner, not a stale reader.
+
+    The live race: the router reads owner_user_id = U1 and passes, ownership.py
+    links the agent to U2 and commits, and the consent that authorises spending
+    U2's money is then recorded on U1's say-so. Sessions are READ COMMITTED, so
+    the router's read is stale the instant it lands — only the CAS can decide.
+    """
+    agent_a = await make_agent()
+    agent_b = await make_agent()
+    svc = BattleService(db)
+
+    battle_id = await svc.create_challenge(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        challenger_owner_user_id=owner_id,
+        agent_b_id=agent_b,
+    )
+    await db.commit()
+
+    # The handover the router cannot see: agent B now belongs to someone else.
+    new_owner = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO users (id, email) VALUES (CAST(:id AS UUID), :e)"),
+        {"id": new_owner, "e": f"new-{new_owner[:8]}@example.test"},
+    )
+    await db.execute(
+        text(
+            "UPDATE agents SET owner_user_id = CAST(:u AS UUID) "
+            "WHERE id = CAST(:a AS UUID)"
+        ),
+        {"u": new_owner, "a": agent_b},
+    )
+    await db.commit()
+
+    # The old owner may no longer consent...
+    assert await svc.accept(battle_id, owner_id) is None
+    await db.rollback()
+    # ...and neither may the new one: the snapshot that decides rating still
+    # names the old owner, so nobody in this battle agreed to fight this one.
+    assert await svc.accept(battle_id, new_owner) is None
+    await db.rollback()
+
+    battle = await BattleRepository(db).get(battle_id)
+    assert battle["agent_b_accepted_at"] is None
+    assert battle["status"] == BattleStatus.CHALLENGE_PENDING.value
+
+
+async def test_accept_by_a_stranger_is_refused(db, owner_id, task_id, make_agent):
+    """A user who never owned B cannot consent on B's behalf."""
+    agent_a = await make_agent()
+    agent_b = await make_agent()
+    svc = BattleService(db)
+    battle_id = await svc.create_challenge(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        challenger_owner_user_id=owner_id,
+        agent_b_id=agent_b,
+    )
+    await db.commit()
+
+    stranger = str(uuid.uuid4())
+    assert await svc.accept(battle_id, stranger) is None
+    await db.rollback()
+    assert (await BattleRepository(db).get(battle_id))["agent_b_accepted_at"] is None
+
+
 # ── readiness subcases ──────────────────────────────────────────────────────
 
 
@@ -432,7 +531,7 @@ async def armed_battle(db, owner_id, task_id, make_agent):
         agent_b_id=agent_b,
     )
     await db.commit()
-    assert await svc.accept(battle_id) is not None
+    assert await svc.accept(battle_id, owner_id) is not None
     await db.commit()
 
     armed = await svc.arm_readiness(battle_id)
@@ -562,6 +661,159 @@ async def test_stale_generation_ack_never_queues(db, armed_battle):
     assert await svc.try_queue(battle_id, old_generation) is None
     # And the new one is not satisfied by the ACKs of the old events.
     assert await svc.try_queue(battle_id, rearmed["readiness_generation"]) is None
+
+
+async def _ack_both(svc, armed_battle) -> None:
+    """Both sides ready-ACK the current generation. The happy precondition."""
+    for side, agent_key in (("a", "agent_a_id"), ("b", "agent_b_id")):
+        acked = await svc.events.mark_acked(
+            str(armed_battle[agent_key]),
+            [str(armed_battle[f"ready_check_event_id_{side}"])],
+        )
+        assert len(acked) == 1
+
+
+async def test_reaped_reservations_never_queue_the_battle(db, armed_battle):
+    """Ready-ACKs are not enough: the battle must still HOLD both fighters.
+
+    delete_expired_reservations() reaps on wall-clock time alone and consults no
+    battle. With RESERVATION_SECONDS=90 and READY_LEASE_SECONDS=60 a battle can
+    be admissible on ACKs while holding nothing, and an unguarded queue would
+    let it start while both fighters are free for another battle — the exact
+    double-spend of both owners' keys reservations exist to prevent.
+    """
+    svc = BattleService(db)
+    battle_id = str(armed_battle["id"])
+    await _ack_both(svc, armed_battle)
+    await db.commit()
+
+    freed = await BattleRepository(db).release_reservations(battle_id)
+    await db.commit()
+    assert len(freed) == 2
+
+    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"]) is None
+
+
+async def test_owner_change_after_ack_never_queues(db, armed_battle):
+    """A fighter that changed hands after acking must not start.
+
+    The snapshots decide rating and reward, so a battle whose fighter now
+    belongs to someone else is a battle between parties who never both agreed.
+    """
+    svc = BattleService(db)
+    battle_id = str(armed_battle["id"])
+    await _ack_both(svc, armed_battle)
+
+    new_owner = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO users (id, email) VALUES (CAST(:id AS UUID), :e)"),
+        {"id": new_owner, "e": f"new-{new_owner[:8]}@example.test"},
+    )
+    await db.execute(
+        text(
+            "UPDATE agents SET owner_user_id = CAST(:u AS UUID) "
+            "WHERE id = CAST(:a AS UUID)"
+        ),
+        {"u": new_owner, "a": str(armed_battle["agent_b_id"])},
+    )
+    await db.commit()
+
+    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"]) is None
+
+
+async def test_deactivated_fighter_after_ack_never_queues(db, armed_battle):
+    """is_active goes FALSE as a SIDE EFFECT of revoking OAuth.
+
+    revoke_github_oauth (agent_repo.py:140) deactivates the agent; nothing in
+    that path knows battles exist. An agent therefore drops out of eligibility
+    silently, and only a re-check at the consequential transition can notice.
+    """
+    svc = BattleService(db)
+    battle_id = str(armed_battle["id"])
+    await _ack_both(svc, armed_battle)
+    await db.execute(
+        text(
+            "UPDATE agents SET is_active = FALSE WHERE id = CAST(:a AS UUID)"
+        ),
+        {"a": str(armed_battle["agent_a_id"])},
+    )
+    await db.commit()
+
+    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"]) is None
+
+
+async def test_start_refuses_a_battle_holding_no_reservations(db, armed_battle):
+    """The start re-proves the holds; the queue's verdict is not inherited.
+
+    An arbitrary interval passes between queueing and starting, and the reaper
+    runs on wall-clock time throughout it. Starting is when the money is spent.
+    """
+    svc = BattleService(db)
+    repo = BattleRepository(db)
+    battle_id = str(armed_battle["id"])
+    await _ack_both(svc, armed_battle)
+    await db.commit()
+
+    queued = await svc.try_queue(battle_id, armed_battle["readiness_generation"])
+    await db.commit()
+    assert queued is not None
+
+    # The reaper catches up between queue and start.
+    assert len(await repo.release_reservations(battle_id)) == 2
+    await db.commit()
+
+    started = await repo.start_if_still_eligible(
+        battle_id=battle_id, lease_token=str(uuid.uuid4()), lease_seconds=60
+    )
+    assert started is None
+    await db.rollback()
+    assert (await repo.get(battle_id))["status"] == BattleStatus.QUEUED.value
+
+
+async def test_start_refuses_a_deactivated_fighter(db, armed_battle):
+    """Eligibility is re-proven at the start, not inherited from the queue."""
+    svc = BattleService(db)
+    repo = BattleRepository(db)
+    battle_id = str(armed_battle["id"])
+    await _ack_both(svc, armed_battle)
+    await db.commit()
+
+    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"])
+    await db.commit()
+
+    await db.execute(
+        text("UPDATE agents SET is_active = FALSE WHERE id = CAST(:a AS UUID)"),
+        {"a": str(armed_battle["agent_b_id"])},
+    )
+    await db.commit()
+
+    assert (
+        await repo.start_if_still_eligible(
+            battle_id=battle_id, lease_token=str(uuid.uuid4()), lease_seconds=60
+        )
+        is None
+    )
+    await db.rollback()
+
+
+async def test_start_succeeds_when_everything_still_holds(db, armed_battle):
+    """The one path through: eligible, owned as snapshotted, both reserved."""
+    svc = BattleService(db)
+    repo = BattleRepository(db)
+    battle_id = str(armed_battle["id"])
+    await _ack_both(svc, armed_battle)
+    await db.commit()
+
+    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"])
+    await db.commit()
+
+    started = await repo.start_if_still_eligible(
+        battle_id=battle_id, lease_token=str(uuid.uuid4()), lease_seconds=60
+    )
+    await db.commit()
+    assert started is not None
+    assert started["status"] == BattleStatus.RUNNING.value
+    assert started["deadline_at"] is not None
 
 
 async def test_both_current_acks_queue_the_battle(db, armed_battle):
