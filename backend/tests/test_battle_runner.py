@@ -16,9 +16,10 @@ The judge model is mocked. What is under test is the settlement transaction, not
 the panel: feeding it real LLM calls would make it slow, flaky, and no more
 convincing about the thing being asserted.
 
-NOT covered here, stated plainly: the full reconcile_once() loop against a live
-scheduler, and judge-panel HTTP behaviour. Those need the runner wired into
-background.py, which this step has not yet done — see the report's `outstanding`.
+NOT covered here, stated plainly: the full reconcile_once() loop driven by the
+live BattleRunTask, and judge-panel HTTP behaviour. The task IS registered in
+background.py ALL_TASKS, but nothing here exercises the scheduler itself — the
+wiring is proven only by an import smoke check, not by a test.
 """
 
 from __future__ import annotations
@@ -144,6 +145,8 @@ async def _battle_in_judging(
     elo_a: int = DEFAULT_ELO,
     elo_b: int = DEFAULT_ELO,
     same_owner: bool = False,
+    agent_a: str | None = None,
+    agent_b: str | None = None,
 ) -> tuple[str, str, str, str]:
     """Drive a battle to 'judging' with collapsed votes. Returns ids + token.
 
@@ -151,14 +154,17 @@ async def _battle_in_judging(
     row: a battle assembled by hand could satisfy the settlement CAS while being
     a state the machine can never actually produce, and the test would prove
     nothing about the real path.
+
+    ``agent_a``/``agent_b`` may name EXISTING fighters, which is what lets a
+    caller build two battles sharing one — see the lost-update test.
     """
     repo = BattleRepository(session)
     events = AgentEventRepository(session)
 
     owner_a = await _new_owner(session)
     owner_b = owner_a if same_owner else await _new_owner(session)
-    agent_a = await _new_agent(session, elo_a)
-    agent_b = await _new_agent(session, elo_b)
+    agent_a = agent_a or await _new_agent(session, elo_a)
+    agent_b = agent_b or await _new_agent(session, elo_b)
 
     battle_id = await repo._create_battle(
         task_id=task_id,
@@ -312,6 +318,155 @@ class TestSettlementIsExactlyOnce:
         # authoritative, so this result must be discarded.
         assert await _settle_in_own_session(session_maker, battle_id, str(uuid.uuid4())) is None
         assert await _elo(session_maker, agent_a) == DEFAULT_ELO
+
+
+class TestSharedFighterLostUpdate:
+    """The FOR UPDATE in lock_fighter_ratings — the guard, with its proof.
+
+    This is a DIFFERENT race from the one above, and the CAS cannot cover it.
+    ``finalize`` serialises the finalizers of ONE battle; this serialises the
+    writers of one AGENT across two battles. Nothing in the battle row is
+    contended here — two distinct rows settle — so only the agent row lock stops
+    a read-modify-write from losing an update.
+
+    Reachability, since ``battle_reservations.agent_id`` is a PRIMARY KEY and so
+    normally pins a fighter to one battle: ``reserved_until`` is wall-clock and
+    nothing renews it when a battle starts, so ``delete_expired_reservations()``
+    can free a fighter WHILE their battle is still running. A second battle may
+    then reserve them, and both can reach 'judging'. The path is narrow, but it
+    is real, and it is exactly the state constructed below.
+    """
+
+    async def test_lock_fighter_ratings_blocks_a_second_writer_of_the_same_agent(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """The lock itself, proven by the only thing that distinguishes it: BLOCKING.
+
+        The settlement-level test below does NOT prove this, and it took a
+        surviving mutant to notice. Two coroutines under asyncio.gather do not
+        reliably interleave inside the read-modify-write window: whichever
+        transaction starts first usually finishes before the other's SELECT
+        runs, so the second reads the ALREADY-updated rating and produces the
+        correct answer with or without the lock. Removing FOR UPDATE left that
+        test green.
+
+        So the property is forced here instead of hoped for: hold the lock in
+        one transaction and assert the second writer CANNOT proceed until the
+        first commits. That is exactly what FOR UPDATE buys and the only thing
+        that dies when it is removed.
+        """
+        shared = await _new_agent(db_session)
+        opponent_one = await _new_agent(db_session)
+        opponent_two = await _new_agent(db_session)
+        await db_session.commit()
+
+        battle_one, _, _, _ = await _battle_in_judging(
+            db_session,
+            task_id,
+            votes=[Vote.A, Vote.A, Vote.A],
+            agent_a=shared,
+            agent_b=opponent_one,
+        )
+        await db_session.execute(
+            text("DELETE FROM battle_reservations WHERE agent_id = CAST(:a AS UUID)"), {"a": shared}
+        )
+        await db_session.commit()
+        battle_two, _, _, _ = await _battle_in_judging(
+            db_session,
+            task_id,
+            votes=[Vote.A, Vote.A, Vote.A],
+            agent_a=shared,
+            agent_b=opponent_two,
+        )
+
+        async with session_maker() as s1, session_maker() as s2:
+            repo_one, repo_two = BattleRepository(s1), BattleRepository(s2)
+
+            first = await repo_one.lock_fighter_ratings(battle_one)
+            assert first["elo_a"] == DEFAULT_ELO
+
+            # A second writer of the SAME agent, in a real concurrent transaction.
+            contender = asyncio.create_task(repo_two.lock_fighter_ratings(battle_two))
+            await asyncio.sleep(0.4)
+
+            # THE assertion. With FOR UPDATE this is still waiting on s1's lock;
+            # without it, it has already read a stale 1200 and a lost update is
+            # inevitable.
+            assert not contender.done(), "FOR UPDATE did not block: a lost update is possible"
+
+            await repo_one.apply_rating(shared, DEFAULT_ELO + K_FACTOR // 2, "win")
+            await s1.commit()
+
+            second = await asyncio.wait_for(contender, timeout=5.0)
+            # Having waited, it reads the COMMITTED rating — never the stale one.
+            assert second["elo_a"] == DEFAULT_ELO + K_FACTOR // 2
+            await s2.rollback()
+
+    async def test_two_battles_sharing_a_fighter_both_rate_and_compose_sequentially(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        shared = await _new_agent(db_session)
+        opponent_one = await _new_agent(db_session)
+        opponent_two = await _new_agent(db_session)
+        await db_session.commit()
+
+        battle_one, _, _, token_one = await _battle_in_judging(
+            db_session,
+            task_id,
+            votes=[Vote.A, Vote.A, Vote.A],
+            agent_a=shared,
+            agent_b=opponent_one,
+        )
+
+        # The reaper frees the shared fighter mid-battle: their reservation
+        # lapsed on wall-clock time while battle_one was still running. This is
+        # delete_expired_reservations()' effect, not a shortcut around the rule.
+        await db_session.execute(
+            text("DELETE FROM battle_reservations WHERE agent_id = CAST(:a AS UUID)"),
+            {"a": shared},
+        )
+        await db_session.commit()
+
+        battle_two, _, _, token_two = await _battle_in_judging(
+            db_session,
+            task_id,
+            votes=[Vote.A, Vote.A, Vote.A],
+            agent_a=shared,
+            agent_b=opponent_two,
+        )
+
+        assert await _elo(session_maker, shared) == DEFAULT_ELO
+
+        # Both battles settle at the same instant, on two real connections.
+        first, second = await asyncio.gather(
+            _settle_in_own_session(session_maker, battle_one, token_one),
+            _settle_in_own_session(session_maker, battle_two, token_two),
+            return_exceptions=True,
+        )
+        for outcome in (first, second):
+            assert not isinstance(outcome, Exception), outcome
+
+        # Both are real, distinct battles: BOTH must rate. (Unlike the
+        # same-battle race, where exactly one wins.)
+        assert first is not None and first.applied is True
+        assert second is not None and second.applied is True
+
+        # Two wins from 1200 against two 1200 opponents, applied SEQUENTIALLY:
+        # 1200 -> 1216 (+16 at even odds), then 1216 vs 1200 -> +15 = 1231.
+        # Order-independent, because both opponents are identical.
+        # A lost update reads 1200 twice and writes 1216 twice -> 1216.
+        assert await _elo(session_maker, shared) == 1231, "lost update: one rating write vanished"
+        assert await _counters(session_maker, shared) == (2, 0, 0)
+
+        # The opponents are ORDER-DEPENDENT, unlike the shared fighter. Whoever
+        # settles first loses to a 1200-rated shared fighter (-16 -> 1184); the
+        # other loses to a 1216-rated one, which is less costly (-15 -> 1185).
+        # Which is which is a real race, so assert the SET — pinning either to a
+        # single value would be a flaky test asserting a coin flip.
+        assert {
+            await _elo(session_maker, opponent_one),
+            await _elo(session_maker, opponent_two),
+        } == {1184, 1185}
 
 
 class TestVerdictToRating:
