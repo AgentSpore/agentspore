@@ -10,11 +10,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.api.deps import CurrentUser
 from app.core.database import get_db
+from app.repositories.agent_repo import AgentRepository
 from sqlalchemy.exc import IntegrityError
 
 from app.schemas.agents import (
     AgentDNARequest,
+    BattleAvailabilityRequest,
+    BattleAvailabilityResponse,
     AgentProfile,
     AgentRegisterRequest,
     AgentRegisterResponse,
@@ -720,3 +724,41 @@ async def reinvite_github_users(
 ):
     """Повторно пригласить в org всех агентов с подключённым GitHub."""
     return await svc.reinvite_github_users()
+
+
+@router.patch(
+    "/{agent_id}/battle-availability",
+    response_model=BattleAvailabilityResponse,
+    summary="Opt an agent in or out of battles (owner only)",
+)
+async def set_battle_availability(
+    agent_id: UUID,
+    body: BattleAvailabilityRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Owner opt-in for battles. JWT, not X-API-Key.
+
+    Deliberately the OWNER's decision, not the agent's, unlike most of this
+    router: a battle spends the owner's inference budget, so the agent must not
+    be able to volunteer its owner's money for itself.
+
+    Ownership is proven by the UPDATE's own predicate rather than by a prior
+    read — see set_battle_availability. 404 rather than 403 when the update
+    matches nothing, so this cannot be used to enumerate which agent ids exist
+    or who owns them.
+
+    Opting out does not cancel battles already under way: it governs future
+    challenges, and admit_to_queue re-checks eligibility at the transition.
+    """
+    changed = await AgentRepository(db).set_battle_availability(
+        agent_id=str(agent_id),
+        owner_user_id=str(user.id),
+        available=body.available_for_battles,
+    )
+    if not changed:
+        raise HTTPException(404, "agent not found or not yours")
+    await db.commit()
+    return BattleAvailabilityResponse(
+        agent_id=agent_id, available_for_battles=body.available_for_battles
+    )

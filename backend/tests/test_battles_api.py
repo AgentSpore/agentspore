@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from app.api.v1.battles import _DENIAL_STATUS
+from app.repositories.agent_repo import AgentRepository
 from app.repositories.battle_repo import BattleRepository, ChallengeDenial
 from app.schemas.battles import BattleStatus, TaskSource
 from app.services import battle_service as battle_service_module
@@ -475,6 +476,116 @@ async def test_list_battles_filters_by_status_and_lists_unfiltered(
     # A status this battle is not in must not return it.
     completed = await repo.list_battles(status=BattleStatus.COMPLETED, limit=100)
     assert battle_id not in {str(b["id"]) for b in completed}
+
+
+# ── opt-in: the flag has to be reachable, or the feature does not exist ─────
+
+
+async def test_owner_can_opt_in_and_out_and_the_gate_follows(
+    db, owner_id, task_id, make_agent
+):
+    """The toggle is the whole feature: default is FALSE, so without a way to
+    set it no agent can ever be challenged.
+
+    Opting out must be visible to the admission gate immediately — a flag the
+    gate ignores would be worse than no flag, since the owner would believe
+    they had said no.
+    """
+    repo = AgentRepository(db)
+    target = await make_agent(available=False)
+    challenger = await make_agent()
+    svc = BattleService(db)
+
+    # Opted out (the DEFAULT state of every agent): challenge is refused.
+    with pytest.raises(ChallengeDeniedError) as denied:
+        await svc.create_challenge(
+            task_id=task_id,
+            agent_a_id=challenger,
+            challenger_owner_user_id=owner_id,
+            agent_b_id=target,
+        )
+    await db.rollback()
+    assert denied.value.reason is ChallengeDenial.TARGET_INELIGIBLE
+
+    # Owner opts in → the same challenge is now admissible.
+    assert await repo.set_battle_availability(target, owner_id, True) is True
+    await db.commit()
+    battle_id = await svc.create_challenge(
+        task_id=task_id,
+        agent_a_id=challenger,
+        challenger_owner_user_id=owner_id,
+        agent_b_id=target,
+    )
+    await db.commit()
+    assert battle_id is not None
+
+    # Owner opts back out → refused again, and the gate says why.
+    assert await repo.set_battle_availability(target, owner_id, False) is True
+    await db.commit()
+    other = await make_agent()
+    with pytest.raises(ChallengeDeniedError) as denied_again:
+        await svc.create_challenge(
+            task_id=task_id,
+            agent_a_id=other,
+            challenger_owner_user_id=owner_id,
+            agent_b_id=target,
+        )
+    await db.rollback()
+    assert denied_again.value.reason is ChallengeDenial.TARGET_INELIGIBLE
+
+
+async def test_opting_out_does_not_disturb_a_battle_already_under_way(
+    db, owner_id, task_id, make_agent
+):
+    """Opting out governs FUTURE challenges; it does not cancel a live battle.
+
+    The snapshots and both owners' consent are already fixed. Cascading a
+    toggle into running battles would let one owner destroy work the other
+    agreed to — and it is unnecessary, because admit_to_queue re-checks
+    eligibility at the transition and will refuse on its own.
+    """
+    repo = AgentRepository(db)
+    target = await make_agent()
+    challenger = await make_agent()
+    svc = BattleService(db)
+    battle_id = await svc.create_challenge(
+        task_id=task_id,
+        agent_a_id=challenger,
+        challenger_owner_user_id=owner_id,
+        agent_b_id=target,
+    )
+    await db.commit()
+    assert await svc.accept(battle_id, owner_id) is not None
+    await db.commit()
+
+    assert await repo.set_battle_availability(target, owner_id, False) is True
+    await db.commit()
+
+    battle = await BattleRepository(db).get(battle_id)
+    assert battle["status"] == BattleStatus.ACCEPTED.value  # untouched
+    assert battle["agent_b_accepted_at"] is not None
+
+
+async def test_only_the_owner_can_toggle_battle_availability(
+    db, owner_id, make_agent
+):
+    """A stranger cannot volunteer someone else's agent — or its owner's money."""
+    repo = AgentRepository(db)
+    agent = await make_agent(available=False)
+    stranger = str(uuid.uuid4())
+
+    assert await repo.set_battle_availability(agent, stranger, True) is False
+    await db.rollback()
+
+    still_off = (
+        await db.execute(
+            text(
+                "SELECT available_for_battles FROM agents WHERE id = CAST(:a AS UUID)"
+            ),
+            {"a": agent},
+        )
+    ).scalar()
+    assert still_off is False
 
 
 # ── consent: ownership is proven by the write, not by an earlier read ────────

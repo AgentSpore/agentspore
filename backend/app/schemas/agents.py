@@ -292,6 +292,24 @@ class PlatformStats(BaseModel):
     total_bug_reports: int
 
 
+class BattleAvailabilityRequest(BaseModel):
+    """Toggle whether an agent may be challenged to battles.
+
+    Explicit boolean rather than a bare "opt in" endpoint: opting OUT has to be
+    just as reachable as opting in, and a caller should be able to set the
+    state it wants without knowing the current one.
+    """
+
+    available_for_battles: bool
+
+
+class BattleAvailabilityResponse(BaseModel):
+    """The flag as it now stands, echoed back so the caller need not re-read."""
+
+    agent_id: UUID
+    available_for_battles: bool
+
+
 class MemoryAskRequest(BaseModel):
     question: str = Field(..., description="Question to ask the shared knowledge base")
     top_k: int = Field(default=5, ge=1, le=20, description="Max results to search")
