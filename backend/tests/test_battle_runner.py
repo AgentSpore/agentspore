@@ -26,7 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -39,7 +42,8 @@ from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side, TaskSource, Vote
 from app.services.battle_judges import JUDGE_KIND_LLM, JUDGE_MODEL, replicate_seed
-from app.services.battle_runner import BattleRunner
+from app.services.battle_runner import BattleRunner, reconcile_once
+from app.services.connection_manager import DeliveryResult
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
@@ -59,6 +63,12 @@ CREATE TABLE IF NOT EXISTS agents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     handle TEXT NOT NULL,
     name TEXT NOT NULL DEFAULT '',
+    -- The chain test drives real admission, and admission reads these: an
+    -- agent must be active, not hosted, owned, and opted in. V66 adds
+    -- available_for_battles by ALTER, so only the pre-existing ones are here.
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_hosted BOOLEAN NOT NULL DEFAULT FALSE,
+    owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 """
@@ -642,3 +652,190 @@ class TestDeadlineClosure:
         async with session_maker() as session:
             submissions = await BattleRepository(session).list_submissions(battle_id)
         assert len([s for s in submissions if s["is_final"]]) == 2
+
+
+class TestTheWholeChain:
+    """The test whose absence let four dead links reach the end of the build.
+
+    There were 153 tests on the parts and none on whether they were connected.
+    BattleService.arm_readiness, dispatch_ready_checks, try_queue and
+    start_if_still_eligible were each written, covered and mutation-proven — and
+    each had zero callers. A battle could be created, accepted and acked, and
+    then nothing happened, forever. Every unit test passed the entire time.
+
+    So this asserts the shaft, not the parts: one battle walks challenge ->
+    accept -> reserve -> ready-check dispatched -> ACK -> queued -> running ->
+    judging, driven ONLY by reconcile_once. Judges are mocked; the pipeline is
+    not.
+    """
+
+    async def test_a_battle_walks_the_whole_chain_driven_only_by_the_reconciler(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        repo = BattleRepository(db_session)
+        owner_a, owner_b = await _new_owner(db_session), await _new_owner(db_session)
+        agent_a, agent_b = await _new_agent(db_session), await _new_agent(db_session)
+        # Both fighters must be opted in and eligible, or admission refuses them.
+        await db_session.execute(
+            text(
+                "UPDATE agents SET available_for_battles = TRUE, is_active = TRUE, "
+                "owner_user_id = CAST(:o AS UUID) WHERE id = CAST(:a AS UUID)"
+            ),
+            {"o": owner_a, "a": agent_a},
+        )
+        await db_session.execute(
+            text(
+                "UPDATE agents SET available_for_battles = TRUE, is_active = TRUE, "
+                "owner_user_id = CAST(:o AS UUID) WHERE id = CAST(:a AS UUID)"
+            ),
+            {"o": owner_b, "a": agent_b},
+        )
+
+        battle_id = await repo._create_battle(
+            task_id=task_id,
+            agent_a_id=agent_a,
+            agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600,
+            agent_b_id=agent_b,
+            agent_b_owner_snapshot=owner_b,
+        )
+        assert await repo._mark_accepted(battle_id) is not None
+        await db_session.commit()
+
+        # dispatch_existing is patched, not the row creation: this test asserts
+        # the durable agent_events rows exist, which is the fact that matters —
+        # transport is best-effort and has its own tests. Without the patch the
+        # test would hit real Redis/webhooks and prove only that CI has no network.
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None,
+            api_key="unused", base_url="http://unused",
+        )
+
+        # -- pass 1: accepted -> reserved, and the ready-checks GO OUT ---------
+        with _no_transport():
+            counts = await drive()
+        assert counts["armed"] == 1, counts
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "reserved"
+
+        # The link nobody noticed was missing: without dispatch_ready_checks a
+        # fighter is never told to ack, so the chain dies here silently.
+        events = await _ready_checks(session_maker, battle_id, (agent_a, agent_b))
+        assert len(events) == 2, "each fighter gets exactly one ready-check"
+        assert {str(e["target_agent_id"]) for e in events} == {agent_a, agent_b}
+
+        # -- pass 2: still reserved, because nobody acked ----------------------
+        with _no_transport():
+            counts = await drive()
+        assert counts["queued"] == 0
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "reserved"
+
+        # -- both fighters ack -------------------------------------------------
+        async with session_maker() as session:
+            event_repo = AgentEventRepository(session)
+            for agent_id, event_key in (
+                (agent_a, "ready_check_event_id_a"),
+                (agent_b, "ready_check_event_id_b"),
+            ):
+                acked = await event_repo.mark_acked(agent_id, [str(battle[event_key])])
+                assert len(acked) == 1
+            await session.commit()
+
+        # -- pass 3: reserved -> queued -> running, in ONE pass ----------------
+        # The phases run in order within a single pass, so a battle that is ready
+        # advances as far as it legitimately can per tick rather than waiting a
+        # tick per link. Both counters are asserted because each proves its own
+        # link fired — which is what makes a missing branch fail at its own step.
+        with _no_transport():
+            counts = await drive()
+        assert counts["queued"] == 1, counts
+        assert counts["started"] == 1, counts
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "running"
+        assert battle["started_at"] is not None
+        assert battle["deadline_at"] is not None
+        assert battle["deadline_at"] > battle["started_at"]
+
+        turns = await _turn_events(session_maker, (agent_a, agent_b))
+        assert len(turns) == 2, "the fighters must be told to fight"
+        assert {str(t["target_agent_id"]) for t in turns} == {agent_a, agent_b}
+        # The turn expires with the battle, not on the 32400s default.
+        assert all(t["expires_at"] <= battle["deadline_at"] for t in turns)
+
+        # -- the clock runs out, then: running -> judging ----------------------
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET challenged_at = NOW() - INTERVAL '30 minutes', "
+                    "queued_at = NOW() - INTERVAL '20 minutes', "
+                    "started_at = NOW() - INTERVAL '10 minutes', "
+                    "deadline_at = NOW() - INTERVAL '1 second', "
+                    # Free the row for the next pass to claim. BOTH columns:
+                    # V66's battle_lease_token_has_expiry forbids a token with
+                    # no expiry, so clearing only one is not a legal state.
+                    "lease_token = NULL, lease_expires_at = NULL "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+
+        with _no_transport(), patch(
+            "app.services.battle_runner.BattleRunner.run_judge_panel",
+            AsyncMock(return_value=[]),
+        ):
+            counts = await drive()
+        assert counts["judged"] == 1, counts
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+            submissions = await BattleRepository(session).list_submissions(battle_id)
+        # Neither fighter answered, so each gets a synthetic truncated final and
+        # the battle is judged on silence rather than aborted.
+        assert battle["status"] in ("judging", "completed")
+        assert len([s for s in submissions if s["is_final"]]) == 2
+        assert all(s["truncated"] for s in submissions)
+
+
+@contextmanager
+def _no_transport():
+    """Silence BOTH outbound seams. The durable rows are the fact under test.
+
+    Two patches, because each module imported dispatch_existing into its own
+    namespace: patching one leaves the other making real network calls.
+    """
+    queued = AsyncMock(return_value=DeliveryResult.QUEUED)
+    with (
+        patch("app.services.battle_service.dispatch_existing", queued),
+        patch("app.services.battle_runner.dispatch_existing", queued),
+    ):
+        yield
+
+
+async def _ready_checks(session_maker, battle_id: str, agents: tuple[str, str]) -> list[dict]:
+    async with session_maker() as session:
+        rows = await session.execute(
+            text(
+                "SELECT * FROM agent_events WHERE type = 'battle_ready_check' "
+                "AND target_agent_id IN (CAST(:a AS UUID), CAST(:b AS UUID))"
+            ),
+            {"a": agents[0], "b": agents[1]},
+        )
+        return [dict(r) for r in rows.mappings()]
+
+
+async def _turn_events(session_maker, agents: tuple[str, str]) -> list[dict]:
+    async with session_maker() as session:
+        rows = await session.execute(
+            text(
+                "SELECT * FROM agent_events WHERE type = 'battle_turn' "
+                "AND target_agent_id IN (CAST(:a AS UUID), CAST(:b AS UUID))"
+            ),
+            {"a": agents[0], "b": agents[1]},
+        )
+        return [dict(r) for r in rows.mappings()]
