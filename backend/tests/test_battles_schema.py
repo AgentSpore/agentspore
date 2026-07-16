@@ -153,7 +153,7 @@ async def accepted_battle(db_session, task_id, agent_ids, owner_id) -> str:
     """A battle whose owner consented — the state just before reservation."""
     agent_a, agent_b, _ = agent_ids
     repo = BattleRepository(db_session)
-    battle_id = await repo.create_battle(
+    battle_id = await repo._create_battle(
         task_id=task_id,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
@@ -161,7 +161,7 @@ async def accepted_battle(db_session, task_id, agent_ids, owner_id) -> str:
         agent_b_id=agent_b,
         agent_b_owner_snapshot=owner_id,
     )
-    assert await repo.mark_accepted(battle_id) is not None
+    assert await repo._mark_accepted(battle_id) is not None
     await db_session.commit()
     return battle_id
 
@@ -195,7 +195,7 @@ async def queue_in_own_session(session_maker, battle_id: str, generation: int):
     """
     async with session_maker() as session:
         repo = BattleRepository(session)
-        row = await repo.mark_queued(battle_id, generation)
+        row = await repo._mark_queued(battle_id, generation)
         await session.commit()
         return row
 
@@ -225,7 +225,7 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     # --- drive to terminal ------------------------------------------------
     repo = BattleRepository(db_session)
     token = str(uuid.uuid4())
-    running = await repo.mark_running(battle_id, token, 30)
+    running = await repo._mark_running(battle_id, token, 30)
     assert running is not None
     # deadline_at is derived in the database from the frozen snapshot, so both
     # sides share one wall clock regardless of any worker's own clock.
@@ -249,10 +249,10 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     # Every transition out of a completed battle must return zero rows. A
     # second finalizer must not be able to apply Elo twice.
     assert await repo.finalize(battle_id, token, "b", "second finalizer") is None
-    assert await repo.mark_accepted(battle_id) is None
+    assert await repo._mark_accepted(battle_id) is None
     assert await repo.mark_declined(battle_id) is None
-    assert await repo.mark_queued(battle_id, generation) is None
-    assert await repo.mark_running(battle_id, str(uuid.uuid4()), 30) is None
+    assert await repo._mark_queued(battle_id, generation) is None
+    assert await repo._mark_running(battle_id, str(uuid.uuid4()), 30) is None
     assert await repo.mark_judging(battle_id, token) is None
     assert await repo.mark_expired(battle_id) is None
     assert await repo.mark_aborted(battle_id, "too late") is None
@@ -283,7 +283,7 @@ async def test_partial_reservation_cannot_be_committed(
     agent_a, _, agent_c = agent_ids
     repo = BattleRepository(db_session)
 
-    second = await repo.create_battle(
+    second = await repo._create_battle(
         task_id=task_id,
         agent_a_id=agent_c,
         agent_a_owner_snapshot=owner_id,
@@ -325,7 +325,7 @@ async def test_lapsed_reservation_is_reclaimed_without_waiting_for_a_reaper(
         ),
         {"id": agent_a},
     )
-    second = await repo.create_battle(
+    second = await repo._create_battle(
         task_id=task_id,
         agent_a_id=agent_c,
         agent_a_owner_snapshot=owner_id,
@@ -370,8 +370,8 @@ async def test_stale_readiness_generation_never_queues(
     new_generation = rearmed["readiness_generation"]
     assert new_generation > old_generation
 
-    assert await repo.mark_queued(battle_id, old_generation) is None
-    assert await repo.mark_queued(battle_id, new_generation) is not None
+    assert await repo._mark_queued(battle_id, old_generation) is None
+    assert await repo._mark_queued(battle_id, new_generation) is not None
 
 
 async def test_open_challenge_claim_has_exactly_one_winner(
@@ -380,7 +380,7 @@ async def test_open_challenge_claim_has_exactly_one_winner(
     """Two candidates race for the empty B slot of an open challenge."""
     agent_a, agent_b, agent_c = agent_ids
     repo = BattleRepository(db_session)
-    battle_id = await repo.create_battle(
+    battle_id = await repo._create_battle(
         task_id=task_id,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
@@ -393,7 +393,7 @@ async def test_open_challenge_claim_has_exactly_one_winner(
 
     async def claim(candidate: str):
         async with session_maker() as session:
-            row = await BattleRepository(session).claim_open_challenge(
+            row = await BattleRepository(session)._claim_open_challenge(
                 battle_id, candidate, owner_id
             )
             await session.commit()
@@ -706,12 +706,12 @@ async def test_task_snapshot_comes_from_the_task_row_not_the_caller(
 
     Freezing early is worthless if the frozen values are whatever the caller
     passed: a battle could name a benign task while the judges score an
-    attacker-supplied prompt. create_battle takes no snapshot arguments at all,
+    attacker-supplied prompt. _create_battle takes no snapshot arguments at all,
     so the forgery is not expressible.
     """
     agent_a, agent_b, _ = agent_ids
     repo = BattleRepository(db_session)
-    battle_id = await repo.create_battle(
+    battle_id = await repo._create_battle(
         task_id=task_id,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
@@ -756,7 +756,7 @@ async def test_battle_cannot_be_created_against_a_retired_task(
         time_limit_seconds=600,
         status=TaskStatus.RETIRED,
     )
-    assert await repo.create_battle(
+    assert await repo._create_battle(
         task_id=retired,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
@@ -821,7 +821,7 @@ async def test_consent_is_required_past_acceptance(db_session, task_id, agent_id
     """No state past 'accepted' may exist without the owner's consent."""
     agent_a, agent_b, _ = agent_ids
     repo = BattleRepository(db_session)
-    battle_id = await repo.create_battle(
+    battle_id = await repo._create_battle(
         task_id=task_id,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
@@ -849,7 +849,7 @@ async def test_an_expired_challenge_cannot_be_armed_or_left_hanging(
     agent_a, agent_b, _ = agent_ids
     repo = BattleRepository(db_session)
     events = AgentEventRepository(db_session)
-    battle_id = await repo.create_battle(
+    battle_id = await repo._create_battle(
         task_id=task_id,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
@@ -857,7 +857,7 @@ async def test_an_expired_challenge_cannot_be_armed_or_left_hanging(
         agent_b_id=agent_b,
         agent_b_owner_snapshot=owner_id,
     )
-    assert await repo.mark_accepted(battle_id) is not None
+    assert await repo._mark_accepted(battle_id) is not None
     await db_session.execute(
         text(
             "UPDATE battles SET challenge_expires_at = NOW() - INTERVAL '1 second' "

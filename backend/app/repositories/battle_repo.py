@@ -58,7 +58,7 @@ class ChallengeDenial(str, Enum):
     """Why an admission gate refused a challenge.
 
     Exists so the API can answer 403 vs 409 vs 429 truthfully. The gate that
-    actually protects the target is the predicate set inside create_battle's
+    actually protects the target is the predicate set inside create_challenge's
     INSERT; this enum only names what a diagnostic read saw, so the caller can
     say WHICH rule bit rather than a generic "denied".
     """
@@ -211,8 +211,8 @@ class BattleRepository:
 
         Diagnostic ONLY. It is deliberately NOT the gate: a read that decides
         and an insert that acts are two statements, and between them the world
-        moves. The real gate is the predicate set inside create_battle, which
-        re-checks every one of these in the INSERT itself. This exists so a
+        moves. The real gate is the predicate set inside create_challenge,
+        which re-checks every one of these in the INSERT itself. This exists so a
         refusal can say "cooldown" instead of "no", which a single boolean from
         the INSERT can never do.
         """
@@ -379,7 +379,7 @@ class BattleRepository:
 
     # -- battles ------------------------------------------------------------
 
-    async def create_battle(
+    async def _create_battle(
         self,
         task_id: str,
         agent_a_id: str,
@@ -403,7 +403,7 @@ class BattleRepository:
         Returns None if the task does not exist or is not 'ready'.
 
         ``agent_b_id=None`` creates an OPEN challenge that any eligible agent
-        may later claim via :meth:`claim_open_challenge`.
+        may later claim via :meth:`_claim_open_challenge`.
 
         The task snapshot is taken by SELECTing the battle_tasks row inside
         this statement — it is deliberately NOT a caller-supplied argument.
@@ -455,7 +455,7 @@ class BattleRepository:
         challenge, so the lock is what makes N mean N.
 
         ``agent_b_id=None`` opens the challenge. The target-shaped rules are
-        skipped here and enforced by :meth:`claim_open_challenge` instead,
+        skipped here and enforced by :meth:`_claim_open_challenge` instead,
         against the agent that actually turns up.
 
         The challenger's ownership is verified against the agents row rather
@@ -537,7 +537,7 @@ class BattleRepository:
         admission_sql: str,
         admission_params: dict[str, Any],
     ) -> str | None:
-        """The one INSERT behind create_battle and create_challenge.
+        """The one INSERT behind _create_battle and create_challenge.
 
         Shared so the two paths cannot drift: the column list, the snapshot
         provenance and the 'ready' guard are written once. ``admission_sql`` is
@@ -643,7 +643,7 @@ class BattleRepository:
         )
         return [dict(row) for row in result.mappings()]
 
-    async def claim_open_challenge(
+    async def _claim_open_challenge(
         self,
         battle_id: str,
         agent_b_id: str,
@@ -658,7 +658,7 @@ class BattleRepository:
         owner must still accept. The two are separate facts with separate
         lifetimes.
 
-        Like :meth:`create_battle`, this is the state-machine primitive and
+        Like :meth:`_create_battle`, this is the state-machine primitive and
         enforces no admission policy. There is no claim endpoint yet; when one
         ships it must NOT call this directly, or an open challenge becomes the
         way to bypass every rule create_challenge enforces — challenge nobody,
@@ -687,7 +687,7 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def mark_accepted(self, battle_id: str) -> dict | None:
+    async def _mark_accepted(self, battle_id: str) -> dict | None:
         """challenge_pending -> accepted. The state-machine primitive.
 
         Enforces the transition's legality and NOTHING about who is asking.
@@ -951,7 +951,7 @@ class BattleRepository:
         — the usual reason is that an agent has not acked yet. The caller
         retries until the lease lapses.
 
-        :meth:`mark_queued` remains the unguarded state-machine primitive for
+        :meth:`_mark_queued` remains the unguarded state-machine primitive for
         the transition tests; it must not be called by application code.
         """
         result = await self.db.execute(
@@ -1000,7 +1000,7 @@ class BattleRepository:
         are reaped by delete_expired_reservations() with nothing consulting the
         battle: without this predicate a battle starts holding neither fighter.
 
-        :meth:`mark_running` remains the unguarded primitive for the transition
+        :meth:`_mark_running` remains the unguarded primitive for the transition
         tests; it must not be called by application code.
         """
         result = await self.db.execute(
@@ -1029,7 +1029,7 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def mark_queued(self, battle_id: str, readiness_generation: int) -> dict | None:
+    async def _mark_queued(self, battle_id: str, readiness_generation: int) -> dict | None:
         """reserved -> queued, only for the generation the caller verified.
 
         ``readiness_generation`` pins this to the exact attempt whose ACKs the
@@ -1094,7 +1094,7 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def mark_running(
+    async def _mark_running(
         self,
         battle_id: str,
         lease_token: str,
