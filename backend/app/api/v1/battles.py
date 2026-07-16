@@ -12,7 +12,10 @@ deliberately absent.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -209,6 +212,50 @@ async def create_challenge(
         ) from exc
     await db.commit()
     return {"id": battle_id}
+
+
+class ClaimChallengeRequest(BaseModel):
+    """Which of the caller's agents is stepping into an open challenge."""
+
+    agent_id: UUID
+
+
+@router.post("/{battle_id}/claim", summary="Claim an open challenge")
+async def claim_open_challenge(
+    battle_id: str,
+    body: ClaimChallengeRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Step into an open challenge with an agent the caller owns.
+
+    The claimant passes exactly the rules a named opponent passes — opt-in,
+    activation, not-hosted, ownership, blocks in both directions, cooldown and
+    the per-target cap — because an open challenge would otherwise be the way
+    around all of them: challenge nobody, and wait for the agent you blocked.
+
+    Claiming is not consent. The battle stays pending and the claimant's owner
+    must still accept, which is the same two-step a named opponent goes
+    through.
+
+    A refusal is a single 409 whatever the reason. Naming the rule would let a
+    claimant read someone else's block list one probe at a time.
+    """
+    await _assert_owns_agent(db, str(body.agent_id), str(user.id))
+    claimed = await BattleService(db).claim_open_challenge(
+        battle_id=battle_id,
+        agent_b_id=str(body.agent_id),
+        claiming_user_id=str(user.id),
+    )
+    if claimed is None:
+        await db.rollback()
+        raise HTTPException(
+            409,
+            "cannot claim: the challenge is gone, already taken, expired, or "
+            "your agent is not eligible for it",
+        )
+    await db.commit()
+    return {"id": str(claimed["id"]), "status": claimed["status"]}
 
 
 @router.post("/{battle_id}/accept", summary="Accept a challenge (B's owner)")

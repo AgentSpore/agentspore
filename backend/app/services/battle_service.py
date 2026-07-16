@@ -203,6 +203,33 @@ class BattleService:
         """
         return await AgentRepository(self.db).get_agent_owner_user_id(agent_id)
 
+    async def claim_open_challenge(
+        self, battle_id: str, agent_b_id: str, claiming_user_id: str
+    ) -> dict | None:
+        """Take an open challenge's empty B slot. Does not commit.
+
+        Returns the claimed battle, or None if the slot is gone or any
+        admission rule refuses. The two are deliberately indistinguishable to
+        the caller: telling a claimant "you are blocked" would turn this into a
+        way to read someone else's block list.
+
+        The advisory lock is taken on the CLAIMANT, because the claimant is who
+        the per-target cap protects here: an open challenge that lands on you
+        spends YOUR owner's budget exactly like a named one, so it counts
+        against your cap and must serialise against other challenges arriving
+        at you.
+
+        Claiming is not consent — B's owner still has to accept afterwards.
+        """
+        await self.repo.lock_challenge_target(agent_b_id)
+        return await self.repo.claim_open_challenge_as_owner(
+            battle_id=battle_id,
+            agent_b_id=agent_b_id,
+            claiming_user_id=claiming_user_id,
+            target_cap=TARGET_CHALLENGE_CAP,
+            target_window_seconds=TARGET_CHALLENGE_WINDOW_SECONDS,
+        )
+
     # -- consent ------------------------------------------------------------
 
     async def accept(self, battle_id: str, accepting_user_id: str) -> dict | None:
