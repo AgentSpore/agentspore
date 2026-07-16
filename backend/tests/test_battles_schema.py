@@ -414,8 +414,15 @@ async def test_only_one_final_submission_per_side(db_session, reserved_battle):
     fighter takes this same slot, which is what stops a straggler from
     overwriting the record of their own timeout.
     """
-    battle_id, _ = reserved_battle
+    battle_id, generation = reserved_battle
     repo = BattleRepository(db_session)
+
+    # add_submission now requires a 'running' battle before its deadline (review
+    # fix F6: the router's status/deadline checks are TOCTOU, so the guard moved
+    # into the INSERT). Drive the reserved battle to running before exercising the
+    # submission-table constraints this test is about.
+    assert await repo._mark_queued(battle_id, generation) is not None
+    assert await repo._mark_running(battle_id, str(uuid.uuid4()), 30) is not None
 
     assert await repo.add_submission(battle_id, Side.A, 0, "checkpoint", is_final=False)
     assert await repo.add_submission(battle_id, Side.A, 1, "answer", is_final=True)
