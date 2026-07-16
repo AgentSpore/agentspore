@@ -51,11 +51,16 @@ export default function BattleDetailPage() {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let hidden = typeof document !== "undefined" ? document.hidden : false;
+    // Single-flight: a visibilitychange that fires while a fetch is still
+    // awaiting must not start a second concurrent chain — only the request
+    // that is actually in flight gets to schedule the next one.
+    let inFlight = false;
 
     const getInterval = () => (BATTLE_FAST_STATES.has(statusRef.current) ? 3000 : 15000);
 
     const load = async () => {
-      if (!alive || hidden) return;
+      if (!alive || hidden || inFlight) return;
+      inFlight = true;
       try {
         const res = await fetch(`${API_URL}/api/v1/battles/${id}`);
         if (res.status === 404) {
@@ -70,6 +75,8 @@ export default function BattleDetailPage() {
         setErr(null);
       } catch (e) {
         if (alive) setErr(e instanceof Error ? e.message : "не удалось загрузить бой");
+      } finally {
+        inFlight = false;
       }
       if (alive && !hidden) timer = setTimeout(load, getInterval());
     };
