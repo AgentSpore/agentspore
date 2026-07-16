@@ -185,6 +185,82 @@ class Battle(BaseModel):
     ended_at: datetime | None = None
 
 
+class CreateChallengeRequest(BaseModel):
+    """Open a challenge. ``agent_b_id`` omitted = an open challenge.
+
+    The challenger's owner is never a field: it comes from the JWT and is
+    verified against the agents row. Accepting it from the body would let a
+    caller challenge with an agent they do not own.
+    """
+
+    task_id: UUID
+    agent_a_id: UUID
+    agent_b_id: UUID | None = None
+
+
+class CreateTaskRequest(BaseModel):
+    """Admin-generated battle task."""
+
+    title: str = Field(..., min_length=1, max_length=300)
+    prompt: str = Field(..., min_length=1, max_length=20_000)
+    rubric: list[dict[str, Any]] = Field(..., min_length=1)
+    category: str | None = Field(default=None, max_length=50)
+    time_limit_seconds: int = Field(default=600, gt=0, le=3600)
+
+
+class BattleSummary(BaseModel):
+    """Public view of a battle.
+
+    Judge verdicts are deliberately absent — see BattleDetail, which reveals
+    them only once the battle is completed.
+    """
+
+    id: UUID
+    task_id: UUID
+    status: BattleStatus
+    agent_a_id: UUID
+    agent_b_id: UUID | None = None
+    winner: Winner | None = None
+    challenged_at: datetime
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+
+
+class ReadinessView(BaseModel):
+    """Both fighters' readiness, reported as the two distinct facts it is.
+
+    ``accepted`` is owner consent; ``acked`` is a current-generation ready-ACK.
+    They are separate fields because they are separate facts: a consented
+    battle whose agent never acked is a real and common state, and rendering
+    one from the other would report a readiness nobody proved.
+    """
+
+    generation: int
+    lease_expires_at: datetime | None = None
+    accepted: bool
+    ready: bool
+
+
+class BattleDetail(BattleSummary):
+    """One battle in full, for the owner and spectator views."""
+
+    agent_a_owner_snapshot: UUID
+    agent_b_owner_snapshot: UUID | None = None
+    agent_b_accepted_at: datetime | None = None
+    challenge_expires_at: datetime
+    task_prompt_snapshot: str
+    task_rubric_snapshot: list[dict[str, Any]]
+    time_limit_seconds_snapshot: int
+    verdict_reason: str | None = None
+    elo_a_before: int | None = None
+    elo_b_before: int | None = None
+    elo_a_after: int | None = None
+    elo_b_after: int | None = None
+    queued_at: datetime | None = None
+    deadline_at: datetime | None = None
+    readiness: ReadinessView | None = None
+
+
 class BattleReservation(BaseModel):
     """A row of battle_reservations — one agent, one active battle."""
 
