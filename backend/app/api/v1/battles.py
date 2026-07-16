@@ -262,8 +262,11 @@ async def decline_challenge(
         raise HTTPException(409, "open challenge has no opponent yet")
     await _assert_owns_agent(db, str(battle["agent_b_id"]), str(user.id))
 
-    declined = await BattleService(db).decline(battle_id)
+    declined = await BattleService(db).decline(battle_id, str(user.id))
     if declined is None:
-        raise HTTPException(409, "challenge is no longer pending")
+        raise HTTPException(
+            409,
+            "challenge is no longer pending, or the agent's ownership changed",
+        )
     await db.commit()
     return {"status": declined["status"]}

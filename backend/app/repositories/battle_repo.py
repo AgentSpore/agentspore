@@ -772,8 +772,12 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def mark_declined(self, battle_id: str) -> dict | None:
-        """challenge_pending -> declined (terminal). B's owner refused."""
+    async def _mark_declined(self, battle_id: str) -> dict | None:
+        """challenge_pending -> declined (terminal). The primitive.
+
+        Enforces the transition's legality and nothing about who is asking.
+        Application code must call :meth:`decline_as_owner` instead.
+        """
         result = await self.db.execute(
             text(
                 """
@@ -787,6 +791,57 @@ class BattleRepository:
                 """
             ),
             {"battle_id": str(battle_id)},
+        )
+        return self._one_or_none(result.mappings().first())
+
+    async def decline_as_owner(
+        self, battle_id: str, declining_user_id: str
+    ) -> dict | None:
+        """challenge_pending -> declined, iff ``declining_user_id`` owns B NOW.
+
+        The only refusal path application code may use. Symmetrical to
+        :meth:`accept_as_owner`, and for the same reason: the router's
+        ownership read and this write are separate statements under READ
+        COMMITTED, so link_agent_to_user (ownership_repo.py:38) can commit a
+        new owner in between and the refusal lands on a stale read.
+
+        A decline is not harmless just because it spends nobody's inference. It
+        kills a battle its real owner may have wanted, and it stamps a 24h
+        cooldown on the challenger — so an unauthorised decline is also a way
+        to damage a third party's standing. Ownership belongs in the write.
+
+        Eligibility is deliberately NOT re-checked here, unlike accept. Refusing
+        a challenge must stay possible for an agent that has since been
+        deactivated or opted out: the alternative is a challenge that can be
+        neither accepted nor declined, sitting until it expires. Saying no is
+        always allowed; only saying yes requires being eligible to fight.
+
+        The snapshot must still match, though: agent_b_owner_snapshot names who
+        the challenge was actually issued against, and a new owner declining a
+        battle aimed at the previous one is a decision that was never theirs.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battles
+                SET status = 'declined',
+                    ended_at = NOW()
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND status = 'challenge_pending'
+                  AND agent_b_id IS NOT NULL
+                  AND agent_b_owner_snapshot = CAST(:declining_user_id AS UUID)
+                  AND EXISTS (
+                      SELECT 1 FROM agents a
+                      WHERE a.id = battles.agent_b_id
+                        AND a.owner_user_id = CAST(:declining_user_id AS UUID)
+                  )
+                RETURNING *
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "declining_user_id": str(declining_user_id),
+            },
         )
         return self._one_or_none(result.mappings().first())
 
