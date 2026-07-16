@@ -322,7 +322,7 @@ async def test_decline_starts_cooldown_that_blocks_the_next_challenge(
     )
     await db.commit()
 
-    assert await svc.decline(battle_id) is not None
+    assert await svc.decline(battle_id, owner_id) is not None
     await db.commit()
 
     with pytest.raises(ChallengeDeniedError) as denied:
@@ -528,6 +528,81 @@ async def test_accept_by_a_user_who_no_longer_owns_the_agent_is_refused(
     battle = await BattleRepository(db).get(battle_id)
     assert battle["agent_b_accepted_at"] is None
     assert battle["status"] == BattleStatus.CHALLENGE_PENDING.value
+
+
+async def test_decline_by_a_user_who_does_not_own_the_agent_is_refused(
+    db, owner_id, task_id, make_agent
+):
+    """A decline is not harmless just because it spends nobody's inference.
+
+    It kills a battle the real owner may have wanted AND stamps a 24h cooldown
+    on the challenger — so an unauthorised decline damages a third party's
+    standing too. Same read-then-write race as accept had; same fix.
+    """
+    target = await make_agent()
+    challenger = await make_agent()
+    svc = BattleService(db)
+    battle_id = await svc.create_challenge(
+        task_id=task_id,
+        agent_a_id=challenger,
+        challenger_owner_user_id=owner_id,
+        agent_b_id=target,
+    )
+    await db.commit()
+
+    stranger = str(uuid.uuid4())
+    assert await svc.decline(battle_id, stranger) is None
+    await db.rollback()
+
+    battle = await BattleRepository(db).get(battle_id)
+    assert battle["status"] == BattleStatus.CHALLENGE_PENDING.value
+    # ...and no cooldown was stamped on the challenger by the stranger.
+    cooldowns = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM battle_challenge_cooldowns "
+                "WHERE challenger_agent_id = CAST(:c AS UUID)"
+            ),
+            {"c": challenger},
+        )
+    ).scalar()
+    assert cooldowns == 0
+
+
+async def test_decline_still_works_for_an_ineligible_agent(
+    db, owner_id, task_id, make_agent
+):
+    """Saying no must never require being eligible to fight.
+
+    Unlike accept, decline deliberately does not re-check eligibility: if it
+    did, an agent deactivated or opted out after being challenged could neither
+    accept nor decline, and the challenge would sit until it expired. Only
+    saying YES requires eligibility.
+    """
+    target = await make_agent()
+    challenger = await make_agent()
+    svc = BattleService(db)
+    battle_id = await svc.create_challenge(
+        task_id=task_id,
+        agent_a_id=challenger,
+        challenger_owner_user_id=owner_id,
+        agent_b_id=target,
+    )
+    await db.commit()
+
+    await db.execute(
+        text(
+            "UPDATE agents SET is_active = FALSE, available_for_battles = FALSE "
+            "WHERE id = CAST(:a AS UUID)"
+        ),
+        {"a": target},
+    )
+    await db.commit()
+
+    declined = await svc.decline(battle_id, owner_id)
+    await db.commit()
+    assert declined is not None
+    assert declined["status"] == BattleStatus.DECLINED.value
 
 
 async def test_accept_by_a_stranger_is_refused(db, owner_id, task_id, make_agent):

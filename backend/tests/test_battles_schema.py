@@ -250,7 +250,7 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     # second finalizer must not be able to apply Elo twice.
     assert await repo.finalize(battle_id, token, "b", "second finalizer") is None
     assert await repo._mark_accepted(battle_id) is None
-    assert await repo.mark_declined(battle_id) is None
+    assert await repo._mark_declined(battle_id) is None
     assert await repo._mark_queued(battle_id, generation) is None
     assert await repo._mark_running(battle_id, str(uuid.uuid4()), 30) is None
     assert await repo.mark_judging(battle_id, token) is None
