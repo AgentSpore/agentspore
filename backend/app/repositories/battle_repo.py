@@ -687,6 +687,105 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
+    async def claim_open_challenge_as_owner(
+        self,
+        battle_id: str,
+        agent_b_id: str,
+        claiming_user_id: str,
+        target_cap: int,
+        target_window_seconds: int,
+    ) -> dict | None:
+        """Take the empty B slot of an open challenge, enforcing every rule.
+
+        The only claim path application code may use. Returns None when the
+        claimant lost the race OR any admission rule refuses — the caller
+        cannot tell which, and deliberately so: "the slot is gone" and "you are
+        blocked" must look identical from outside, or the endpoint becomes a
+        way to probe someone else's block list.
+
+        An open challenge is the one shape where the rules could be skipped
+        entirely. A challenger naming a target passes eligibility, blocks,
+        cooldown and the cap at create_challenge; a challenger naming NOBODY
+        passes none of them, because there is no pair yet. If this UPDATE did
+        not re-impose them, "challenge nobody and wait" would be the documented
+        way to reach an agent that blocked you. So every predicate from
+        create_challenge appears here, evaluated against the agent that
+        actually turned up.
+
+        Blocks are checked in BOTH directions on purpose: the challenger must
+        not be able to lure someone they blocked, and someone who blocked the
+        challenger must not be able to walk into their battle.
+
+        Claiming is still NOT consent: the battle stays 'challenge_pending' and
+        B's owner must accept afterwards. Filling the slot and agreeing to
+        fight are separate facts with separate lifetimes.
+        """
+        result = await self.db.execute(
+            text(
+                f"""
+                UPDATE battles
+                SET agent_b_id = CAST(:agent_b_id AS UUID),
+                    agent_b_owner_snapshot = CAST(:claiming_user_id AS UUID)
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND agent_b_id IS NULL
+                  AND status = 'challenge_pending'
+                  AND challenge_expires_at > NOW()
+                  AND agent_a_id <> CAST(:agent_b_id AS UUID)
+                  AND EXISTS (
+                      SELECT 1 FROM agents a
+                      WHERE a.id = CAST(:agent_b_id AS UUID)
+                        AND a.owner_user_id = CAST(:claiming_user_id AS UUID)
+                        AND {_AGENT_ELIGIBLE_SQL}
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM agents a
+                      WHERE a.id = battles.agent_a_id
+                        AND a.owner_user_id = battles.agent_a_owner_snapshot
+                        AND {_AGENT_ELIGIBLE_SQL}
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM battle_blocks bl
+                      WHERE (bl.blocker_agent_id = CAST(:agent_b_id AS UUID)
+                             AND bl.blocked_agent_id = battles.agent_a_id)
+                         OR (bl.blocker_agent_id = battles.agent_a_id
+                             AND bl.blocked_agent_id = CAST(:agent_b_id AS UUID))
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM battle_challenge_cooldowns c
+                      WHERE c.challenger_agent_id = battles.agent_a_id
+                        AND c.target_agent_id = CAST(:agent_b_id AS UUID)
+                        AND c.cooldown_until > NOW()
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM battles b
+                      WHERE b.id <> battles.id
+                        AND b.status IN {_ENGAGED_STATUSES_SQL}
+                        AND (
+                            (b.agent_a_id = battles.agent_a_id
+                             AND b.agent_b_id = CAST(:agent_b_id AS UUID))
+                            OR (b.agent_a_id = CAST(:agent_b_id AS UUID)
+                                AND b.agent_b_id = battles.agent_a_id)
+                        )
+                  )
+                  AND (
+                      SELECT COUNT(*) FROM battles b
+                      WHERE b.agent_b_id = CAST(:agent_b_id AS UUID)
+                        AND b.challenged_at
+                            > NOW() - make_interval(secs => :target_window)
+                  ) < :target_cap
+                RETURNING *
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "agent_b_id": str(agent_b_id),
+                "claiming_user_id": str(claiming_user_id),
+                "target_cap": target_cap,
+                "target_window": target_window_seconds,
+            },
+        )
+        return self._one_or_none(result.mappings().first())
+
     async def _mark_accepted(self, battle_id: str) -> dict | None:
         """challenge_pending -> accepted. The state-machine primitive.
 

@@ -735,6 +735,143 @@ async def test_accept_by_a_stranger_is_refused(db, owner_id, task_id, make_agent
     assert (await BattleRepository(db).get(battle_id))["agent_b_accepted_at"] is None
 
 
+# ── open challenge: the claimant passes the same rules as a named one ───────
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def open_challenge(db, owner_id, task_id, make_agent):
+    """An open challenge (agent_b_id NULL) plus the agent that issued it."""
+
+    async def _open() -> tuple[str, str]:
+        challenger = await make_agent()
+        battle_id = await BattleService(db).create_challenge(
+            task_id=task_id,
+            agent_a_id=challenger,
+            challenger_owner_user_id=owner_id,
+            agent_b_id=None,
+        )
+        await db.commit()
+        return battle_id, challenger
+
+    return _open
+
+
+async def test_claiming_an_open_challenge_fills_the_slot_without_consenting(
+    db, owner_id, open_challenge, make_agent
+):
+    """The happy path — and claiming is still not consent."""
+    battle_id, challenger = await open_challenge()
+    claimant = await make_agent()
+
+    claimed = await BattleService(db).claim_open_challenge(
+        battle_id, claimant, owner_id
+    )
+    await db.commit()
+    assert claimed is not None
+    assert str(claimed["agent_b_id"]) == claimant
+    # Still pending, still unaccepted: filling the slot is not agreeing to fight.
+    assert claimed["status"] == BattleStatus.CHALLENGE_PENDING.value
+    assert claimed["agent_b_accepted_at"] is None
+
+
+async def test_a_blocked_agent_cannot_claim_an_open_challenge(
+    db, owner_id, open_challenge, make_agent
+):
+    """The bypass this guard exists for: challenge nobody, wait for the blocked.
+
+    Blocks are checked in BOTH directions, so this must hold whichever side
+    did the blocking.
+    """
+    for blocker_is_claimant in (True, False):
+        battle_id, challenger = await open_challenge()
+        claimant = await make_agent()
+        blocker, blocked = (
+            (claimant, challenger) if blocker_is_claimant else (challenger, claimant)
+        )
+        await db.execute(
+            text(
+                "INSERT INTO battle_blocks (blocker_agent_id, blocked_agent_id) "
+                "VALUES (CAST(:x AS UUID), CAST(:y AS UUID))"
+            ),
+            {"x": blocker, "y": blocked},
+        )
+        await db.commit()
+
+        assert (
+            await BattleService(db).claim_open_challenge(battle_id, claimant, owner_id)
+            is None
+        ), f"blocked claim succeeded (blocker_is_claimant={blocker_is_claimant})"
+        await db.rollback()
+
+        battle = await BattleRepository(db).get(battle_id)
+        assert battle["agent_b_id"] is None  # slot still empty
+
+
+async def test_an_opted_out_agent_cannot_claim_an_open_challenge(
+    db, owner_id, open_challenge, make_agent
+):
+    """An open challenge is not a way around the opt-in."""
+    battle_id, _ = await open_challenge()
+    claimant = await make_agent(available=False)
+
+    assert await BattleService(db).claim_open_challenge(battle_id, claimant, owner_id) is None
+    await db.rollback()
+    assert (await BattleRepository(db).get(battle_id))["agent_b_id"] is None
+
+
+async def test_a_stranger_cannot_claim_with_an_agent_they_do_not_own(
+    db, owner_id, open_challenge, make_agent
+):
+    """Ownership of the claiming agent is proven by the write."""
+    battle_id, _ = await open_challenge()
+    claimant = await make_agent()
+
+    assert (
+        await BattleService(db).claim_open_challenge(
+            battle_id, claimant, str(uuid.uuid4())
+        )
+        is None
+    )
+    await db.rollback()
+    assert (await BattleRepository(db).get(battle_id))["agent_b_id"] is None
+
+
+async def test_an_agent_cannot_claim_its_own_open_challenge(
+    db, owner_id, open_challenge
+):
+    """Self-claim is refused at the gate, not left to the CHECK constraint.
+
+    battle_distinct_agents would catch it, but as an IntegrityError — a 500
+    dressed as a bug. A 409 is the honest answer to "you cannot fight yourself".
+    """
+    battle_id, challenger = await open_challenge()
+
+    assert (
+        await BattleService(db).claim_open_challenge(battle_id, challenger, owner_id)
+        is None
+    )
+    await db.rollback()
+    assert (await BattleRepository(db).get(battle_id))["agent_b_id"] is None
+
+
+async def test_only_one_claimant_wins_an_open_challenge(
+    db, owner_id, open_challenge, make_agent
+):
+    """The slot is filled once: a second claimant finds it gone."""
+    battle_id, _ = await open_challenge()
+    first = await make_agent()
+    second = await make_agent()
+    svc = BattleService(db)
+
+    assert await svc.claim_open_challenge(battle_id, first, owner_id) is not None
+    await db.commit()
+    assert await svc.claim_open_challenge(battle_id, second, owner_id) is None
+    await db.rollback()
+
+    battle = await BattleRepository(db).get(battle_id)
+    assert str(battle["agent_b_id"]) == first
+
+
 # ── readiness subcases ──────────────────────────────────────────────────────
 
 
