@@ -20,6 +20,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+# Hard ceiling on ONE submission, enforced at the API edge before the body is
+# stored or judged. Mirrors battle_judges.MAX_SUBMISSION_CHARS: a submission the
+# judge would truncate anyway is not worth persisting in full, and without a cap
+# a fighter can deny judging by submitting a novel.
+MAX_SUBMISSION_BYTES = 12_000
+
 
 class BattleStatus(str, Enum):
     """Lifecycle of a battle. See the V66 header for the full narrative."""
@@ -283,6 +289,25 @@ class BattleSubmission(BaseModel):
     finished_at: datetime | None = None
     truncated: bool = False
     error: str | None = None
+
+
+class SubmitTurnRequest(BaseModel):
+    """One checkpoint from a fighter, posted to /battles/{id}/turns.
+
+    Notice what is NOT here: any timestamp. A fighter must never be able to
+    state when it finished — the deadline is wall-clock and server-owned (V66
+    derives deadline_at inside the transition statement), so accepting a
+    client's clock would let a late agent claim it answered on time. The server
+    times the arrival, and the request cannot even express an opinion.
+
+    ``tokens_used`` is self-reported and is therefore telemetry, not currency:
+    nothing rests on it. It is stored as the fighter's claim about its own cost.
+    """
+
+    content: str = Field(..., max_length=MAX_SUBMISSION_BYTES)
+    seq_no: int = Field(..., ge=1, description="Monotonic per side; a taken slot is a conflict.")
+    is_final: bool = Field(default=False, description="One-way: the last word for this side.")
+    tokens_used: int | None = Field(default=None, ge=0)
 
 
 class BattleJudgeRun(BaseModel):
