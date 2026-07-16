@@ -23,10 +23,23 @@ Why a leased semaphore and not the obvious alternatives:
 Therefore: one Redis sorted set per account, shared by every process.
 
 **The rule that makes the number true.** EVERY backend call on the platform
-z.ai account must pass through this gate — judges AND task generation AND any
-adapter added later. The cap is a property of the ACCOUNT, not of the judge: if
-one call site skips the gate, "at most 3 concurrent" is simply false, and no
-amount of correctness inside this module recovers it.
+z.ai account must pass through this gate. The cap is a property of the ACCOUNT,
+not of the judge: if one call site skips it, "at most 3 concurrent" is simply
+false, and no amount of correctness inside this module recovers it.
+
+As of this commit that rule HOLDS, verified rather than assumed. The only
+``chat/completions`` POSTs in the backend are ``battle_judges.py`` (gated) and
+``council_adapters.py:45``, and the latter targets ``openrouter.ai`` on the
+OpenRouter account — a different account, not this one.
+``openrouter_service.py`` never sends inference at all: it resolves provider
+config (``resolve_provider``/``resolve_model``/``get_models``), and for z.ai
+specifically it serves a ``static_models`` list, so it does not even call
+``/models`` there. Hosted-agent inference leaves from agent-runner with the
+OWNER's key, which is why the gate does not belong on that path.
+
+So the judge is currently the sole backend consumer of this account. Any future
+one — a task generator, a summariser, an eval — must acquire a slot here, or
+this module's guarantee silently becomes a comment.
 
 The sorted set holds one member per in-flight call, scored by its lease expiry.
 Expiry is what makes the gate self-healing: a worker that is SIGKILLed mid-call
