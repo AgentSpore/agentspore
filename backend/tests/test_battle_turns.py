@@ -33,7 +33,7 @@ from app.core.database import get_db
 from app.main import app
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository
-from app.schemas.battles import MAX_SUBMISSION_BYTES, TaskSource
+from app.schemas.battles import MAX_SUBMISSION_CHARS, TaskSource
 from app.services.agent_service import AgentService
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
@@ -460,7 +460,7 @@ class TestBodyLimits:
 
         response = await client.post(
             f"/api/v1/battles/{battle['id']}/turns",
-            json={"content": "x" * (MAX_SUBMISSION_BYTES + 1), "seq_no": 1},
+            json={"content": "x" * (MAX_SUBMISSION_CHARS + 1), "seq_no": 1},
             headers={"X-API-Key": battle["key_a"]},
         )
 
@@ -476,13 +476,13 @@ class TestBodyLimits:
         battle = await _running_battle(db, task_id)
         response = await client.post(
             f"/api/v1/battles/{battle['id']}/turns",
-            json={"content": "x" * MAX_SUBMISSION_BYTES, "seq_no": 1},
+            json={"content": "x" * MAX_SUBMISSION_CHARS, "seq_no": 1},
             headers={"X-API-Key": battle["key_a"]},
         )
         assert response.status_code == 200, response.text
 
         rows = await _submissions(session_maker, battle["id"])
-        assert len(rows[0]["content"]) == MAX_SUBMISSION_BYTES
+        assert len(rows[0]["content"]) == MAX_SUBMISSION_CHARS
 
     async def test_a_negative_seq_no_is_rejected(self, client, db, task_id) -> None:
         battle = await _running_battle(db, task_id)

@@ -29,14 +29,17 @@ from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from app.api.v1.battles import _DENIAL_STATUS
+from app.core.database import get_db
+from app.main import app
 from app.repositories.agent_repo import AgentRepository
 from app.repositories.battle_repo import BattleRepository, ChallengeDenial
-from app.schemas.battles import BattleStatus, TaskSource
+from app.schemas.battles import BattleStatus, JudgeKind, PresentedOrder, Side, TaskSource, Vote
 from app.services import battle_service as battle_service_module
 from app.services import connection_manager as cm
 from app.services.battle_service import (
@@ -1239,3 +1242,236 @@ async def test_both_current_acks_queue_the_battle(db, armed_battle):
     assert queued is not None
     assert queued["status"] == BattleStatus.QUEUED.value
     assert queued["queued_at"] is not None
+
+
+# ── Public read routes (step 9): submissions and the verdict ──────────
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def client(session_maker):
+    """The real app with only the DB swapped. No auth override: these are public."""
+
+    async def override_get_db():
+        async with session_maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+    app.dependency_overrides.clear()
+
+
+async def _running_battle(db, task_id: str, make_agent) -> str:
+    """Drive a battle to 'running' through the real state machine."""
+    repo = BattleRepository(db)
+    svc = BattleService(db)
+    agent_a, agent_b = await make_agent(), await make_agent()
+
+    battle_id = await repo._create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=str(uuid.uuid4()),
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=str(uuid.uuid4()),
+    )
+    await repo._mark_accepted(battle_id)
+    await repo.reserve_both(battle_id, agent_a, agent_b, 600)
+    ev_a = await svc.events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    ev_b = await svc.events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    row = await repo.arm_readiness(battle_id, ev_a, ev_b, 60)
+    await repo._mark_queued(battle_id, row["readiness_generation"])
+    await repo._mark_running(battle_id, str(uuid.uuid4()), 600)
+    await db.commit()
+    return battle_id
+
+
+async def _drive_to_completed(db, battle_id: str) -> None:
+    """running -> judging -> completed, with one full replicate pair recorded."""
+    repo = BattleRepository(db)
+    token = str(uuid.uuid4())
+    await db.execute(
+        text(
+            "UPDATE battles SET lease_token = CAST(:t AS UUID), "
+            "lease_expires_at = NOW() + INTERVAL '10 minutes', "
+            "deadline_at = NOW() - INTERVAL '1 second', "
+            "started_at = NOW() - INTERVAL '10 minutes', "
+            "queued_at = NOW() - INTERVAL '20 minutes', "
+            "challenged_at = NOW() - INTERVAL '30 minutes' WHERE id = CAST(:b AS UUID)"
+        ),
+        {"t": token, "b": battle_id},
+    )
+    assert await repo.mark_judging(battle_id, token) is not None
+
+    # Both raw halves of one replicate, then its collapsed vote — the pairing
+    # the verdict route must expose as evidence.
+    for order in (PresentedOrder.AB, PresentedOrder.BA):
+        run_id = await repo.create_judge_run(
+            battle_id, JudgeKind.LLM.value, "zai/glm-4.5-flash", "seed0001", order.value
+        )
+        claimed = await repo.claim_judge_run(run_id, str(uuid.uuid4()), 60)
+        await repo.complete_judge_run(
+            run_id, str(claimed["lease_token"]), Vote.A.value, 0.8, "a is better",
+            {"correctness": 0.9},
+        )
+    await repo.upsert_judgement(
+        battle_id=battle_id,
+        judge_kind=JudgeKind.LLM.value,
+        judge_ref="zai/glm-4.5-flash",
+        replicate_seed="seed0001",
+        vote=Vote.A.value,
+        confidence=0.8,
+        reasoning="a is better",
+        scores={"correctness": 0.9},
+    )
+    assert await repo.finalize(battle_id, token, "a", "1 for alpha-side", 1200, 1200, 1216, 1184)
+    await db.commit()
+
+
+async def test_submissions_route_is_empty_before_anyone_answers(client, db, task_id, make_agent):
+    battle_id = await _running_battle(db, task_id, make_agent)
+    response = await client.get(f"/api/v1/battles/{battle_id}/submissions")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_submissions_expose_metadata_but_withhold_content_while_running(
+    client, db, task_id, make_agent
+):
+    """The copy attack: B must not read A's checkpoint while B is still writing."""
+    battle_id = await _running_battle(db, task_id, make_agent)
+    await BattleRepository(db).add_submission(
+        battle_id, Side.A, 1, "MY SECRET ANSWER", is_final=False, tokens_used=7
+    )
+    await db.commit()
+
+    body = (await client.get(f"/api/v1/battles/{battle_id}/submissions")).json()
+
+    assert len(body) == 1
+    assert "MY SECRET ANSWER" not in str(body)  # nowhere in the payload, not just the field
+    assert body[0]["content"] is None
+    assert body[0]["content_withheld"] is True
+    # But the live screen still learns what it is entitled to.
+    assert body[0]["side"] == "a"
+    assert body[0]["seq_no"] == 1
+    assert body[0]["is_final"] is False
+    assert body[0]["tokens_used"] == 7
+
+
+async def test_submissions_reveal_content_once_the_battle_is_completed(
+    client, db, task_id, make_agent
+):
+    battle_id = await _running_battle(db, task_id, make_agent)
+    repo = BattleRepository(db)
+    await repo.add_submission(battle_id, Side.A, 1, "A's answer", is_final=True)
+    await repo.add_submission(
+        battle_id, Side.B, 1, None, is_final=True, truncated=True,
+        error="no submission before deadline",
+    )
+    await db.commit()
+    await _drive_to_completed(db, battle_id)
+
+    body = (await client.get(f"/api/v1/battles/{battle_id}/submissions")).json()
+
+    by_side = {row["side"]: row for row in body}
+    assert by_side["a"]["content"] == "A's answer"
+    assert by_side["a"]["content_withheld"] is False
+    # The silent fighter reads as timed-out, and its error is a TYPE not a value.
+    assert by_side["b"]["content"] is None
+    assert by_side["b"]["truncated"] is True
+    assert by_side["b"]["error"] == "no submission before deadline"
+
+
+async def test_the_verdict_is_withheld_until_the_battle_completes(
+    client, db, task_id, make_agent
+):
+    """THE gate. A fighter must never watch itself being scored mid-battle."""
+    battle_id = await _running_battle(db, task_id, make_agent)
+    repo = BattleRepository(db)
+    # A real, complete judgement exists — the gate is the ONLY thing hiding it.
+    await repo.upsert_judgement(
+        battle_id=battle_id,
+        judge_kind=JudgeKind.LLM.value,
+        judge_ref="zai/glm-4.5-flash",
+        replicate_seed="seed0001",
+        vote=Vote.A.value,
+        confidence=0.9,
+        reasoning="LEAKED REASONING",
+        scores={"correctness": 1.0},
+    )
+    run_id = await repo.create_judge_run(
+        battle_id, JudgeKind.LLM.value, "zai/glm-4.5-flash", "seed0001", PresentedOrder.AB.value
+    )
+    claimed = await repo.claim_judge_run(run_id, str(uuid.uuid4()), 60)
+    await repo.complete_judge_run(
+        run_id, str(claimed["lease_token"]), Vote.A.value, 0.9, "LEAKED REASONING"
+    )
+    await db.commit()
+
+    response = await client.get(f"/api/v1/battles/{battle_id}/judgements")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"judgements": [], "runs": [], "tallies": {}}
+    # The strongest form: no fragment of the verdict escapes anywhere.
+    assert "LEAKED REASONING" not in response.text
+    assert "seed0001" not in response.text
+
+
+async def test_a_completed_battle_publishes_its_votes_and_the_raw_pair(
+    client, db, task_id, make_agent
+):
+    battle_id = await _running_battle(db, task_id, make_agent)
+    await _drive_to_completed(db, battle_id)
+
+    body = (await client.get(f"/api/v1/battles/{battle_id}/judgements")).json()
+
+    assert len(body["judgements"]) == 1
+    assert body["judgements"][0]["vote"] == "a"
+    assert body["judgements"][0]["scores"] == {"correctness": 0.9}
+    assert body["judgements"][0]["position_sensitive"] is False
+
+    # The evidence: two raw runs, one per presentation order, same seed. This is
+    # what lets a spectator CHECK the position-bias control.
+    assert len(body["runs"]) == 2
+    assert {run["presented_order"] for run in body["runs"]} == {"ab", "ba"}
+    assert {run["replicate_seed"] for run in body["runs"]} == {"seed0001"}
+
+    # Quorum arithmetic, split per kind and shown rather than asserted.
+    assert body["tallies"] == {
+        "llm": {
+            "votes_for_a": 1, "votes_for_b": 0, "ties": 0, "abstained": 0,
+            "errored": 0, "valid": 1, "position_sensitive": 0,
+        }
+    }
+
+
+async def test_abstentions_and_errors_stay_out_of_the_quorum_denominator(
+    client, db, task_id, make_agent
+):
+    battle_id = await _running_battle(db, task_id, make_agent)
+    await _drive_to_completed(db, battle_id)
+    repo = BattleRepository(db)
+    for seed, vote in (("seed0002", Vote.ABSTAIN), ("seed0003", Vote.ERROR)):
+        await repo.upsert_judgement(
+            battle_id=battle_id,
+            judge_kind=JudgeKind.LLM.value,
+            judge_ref="zai/glm-4.5-flash",
+            replicate_seed=seed,
+            vote=vote.value,
+        )
+    await db.commit()
+
+    tally = (await client.get(f"/api/v1/battles/{battle_id}/judgements")).json()["tallies"]["llm"]
+
+    # Three collapsed votes, but only ONE counts — a panel of errors is not
+    # unanimous, and `valid` is the number the quorum is measured against.
+    assert tally["valid"] == 1
+    assert tally["abstained"] == 1
+    assert tally["errored"] == 1
+
+
+async def test_read_routes_404_on_an_unknown_battle(client):
+    missing = uuid.uuid4()
+    assert (await client.get(f"/api/v1/battles/{missing}/submissions")).status_code == 404
+    assert (await client.get(f"/api/v1/battles/{missing}/judgements")).status_code == 404

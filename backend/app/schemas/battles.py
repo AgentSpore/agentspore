@@ -24,7 +24,14 @@ from pydantic import BaseModel, Field
 # stored or judged. Mirrors battle_judges.MAX_SUBMISSION_CHARS: a submission the
 # judge would truncate anyway is not worth persisting in full, and without a cap
 # a fighter can deny judging by submitting a novel.
-MAX_SUBMISSION_BYTES = 12_000
+#
+# CHARS, not bytes, and the name now says so. pydantic's max_length counts
+# characters, so the previous name (MAX_SUBMISSION_BYTES) promised a byte cap
+# this never enforced: 12k characters of multi-byte UTF-8 is up to ~48kB. The
+# limit is deliberately left in characters — it exists to bound what the judge
+# must read, and a judge reads characters — but a name that lies about its unit
+# is how someone later "fixes" the wrong end of it.
+MAX_SUBMISSION_CHARS = 12_000
 
 
 class BattleStatus(str, Enum):
@@ -267,6 +274,96 @@ class BattleDetail(BattleSummary):
     readiness: ReadinessView | None = None
 
 
+class BattleSubmissionView(BaseModel):
+    """One submission, as a spectator may see it.
+
+    ``content`` is Optional here for a reason that is a rule, not a nullable
+    column: while a battle is RUNNING it is withheld from everyone. Showing A's
+    checkpoint to B mid-battle would let B read the answer it is competing
+    against and copy it — the endpoint would become the cheating tool. The
+    metadata around it (which side, how many checkpoints, is_final, truncated)
+    is safe throughout and is what "submitted / timed out / never answered" is
+    rendered from, so the live view loses nothing it is entitled to.
+
+    ``error`` is safe to expose because the column holds an exception TYPE only,
+    never a value (V66:349) — a provider message can carry the fighter's prompt
+    or key material, so it never reaches the table in the first place.
+    """
+
+    side: Side
+    seq_no: int
+    is_final: bool
+    truncated: bool
+    error: str | None = None
+    received_at: datetime
+    tokens_used: int | None = None
+    content: str | None = None
+    content_withheld: bool = False
+
+
+class BattleJudgeRunView(BaseModel):
+    """One RAW half of a replicate pair — the evidence, not the claim.
+
+    Exposed on purpose, and only after 'completed'. ``presented_order`` and
+    ``replicate_seed`` are internals, but they are precisely what lets a viewer
+    CHECK the position-bias control instead of taking our word for it: two rows
+    per seed, one 'ab' and one 'ba', is the pairing made auditable. A verdict a
+    spectator can only believe is worth less than one they can recompute.
+
+    ``replicate_seed`` leaks nothing: it is hash(battle_id, replicate_no).
+    """
+
+    judge_kind: JudgeKind
+    judge_ref: str
+    replicate_seed: str
+    presented_order: PresentedOrder
+    status: JudgeRunStatus
+    vote: Vote | None = None
+    confidence: float | None = None
+    reasoning: str | None = None
+    scores: dict[str, Any] | None = None
+
+
+class BattleJudgementView(BaseModel):
+    """One COLLAPSED vote — one replicate, one voice."""
+
+    judge_kind: JudgeKind
+    judge_ref: str
+    replicate_seed: str
+    vote: Vote
+    confidence: float | None = None
+    reasoning: str | None = None
+    scores: dict[str, Any] | None = None
+    position_sensitive: bool = False
+
+
+class JudgeTally(BaseModel):
+    """Quorum arithmetic for ONE judge kind, shown rather than asserted.
+
+    Kept per-kind because LLM replicates and human votes do not share a quorum:
+    three correlated samples of one model are not three judges, and averaging
+    them together with people would launder that distinction. ``abstained`` and
+    ``errored`` are reported next to ``valid`` because they are excluded from the
+    denominator — a reader must be able to see what was thrown away.
+    """
+
+    votes_for_a: int = 0
+    votes_for_b: int = 0
+    ties: int = 0
+    abstained: int = 0
+    errored: int = 0
+    valid: int = 0
+    position_sensitive: int = 0
+
+
+class BattleVerdictView(BaseModel):
+    """Everything needed to audit a completed battle's verdict."""
+
+    judgements: list[BattleJudgementView]
+    runs: list[BattleJudgeRunView]
+    tallies: dict[str, JudgeTally]
+
+
 class BattleReservation(BaseModel):
     """A row of battle_reservations — one agent, one active battle."""
 
@@ -304,7 +401,7 @@ class SubmitTurnRequest(BaseModel):
     nothing rests on it. It is stored as the fighter's claim about its own cost.
     """
 
-    content: str = Field(..., max_length=MAX_SUBMISSION_BYTES)
+    content: str = Field(..., max_length=MAX_SUBMISSION_CHARS)
     seq_no: int = Field(..., ge=1, description="Monotonic per side; a taken slot is a conflict.")
     is_final: bool = Field(default=False, description="One-way: the last word for this side.")
     tokens_used: int | None = Field(default=None, ge=0)
