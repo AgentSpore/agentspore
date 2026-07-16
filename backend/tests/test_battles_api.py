@@ -442,6 +442,39 @@ async def test_challenger_rate_limit_names_the_challenger_not_the_target(
     assert _DENIAL_STATUS[ChallengeDenial.CHALLENGER_RATE_LIMITED] == 429
 
 
+async def test_list_battles_filters_by_status_and_lists_unfiltered(
+    db, owner_id, task_id, make_agent
+):
+    """Both branches of the split status filter return the right rows.
+
+    list_battles emits two different statements now — the sargable rewrite that
+    lets a status index be usable at all — so both need exercising. A one-liner
+    OR-predicate could never take a wrong branch; two statements can.
+    """
+    repo = BattleRepository(db)
+    target = await make_agent()
+    challenger = await make_agent()
+    battle_id = await BattleService(db).create_challenge(
+        task_id=task_id,
+        agent_a_id=challenger,
+        challenger_owner_user_id=owner_id,
+        agent_b_id=target,
+    )
+    await db.commit()
+
+    pending = await repo.list_battles(status=BattleStatus.CHALLENGE_PENDING, limit=100)
+    assert battle_id in {str(b["id"]) for b in pending}
+    assert {b["status"] for b in pending} == {BattleStatus.CHALLENGE_PENDING.value}
+
+    # The other branch: no WHERE clause at all.
+    unfiltered = await repo.list_battles(limit=100)
+    assert battle_id in {str(b["id"]) for b in unfiltered}
+
+    # A status this battle is not in must not return it.
+    completed = await repo.list_battles(status=BattleStatus.COMPLETED, limit=100)
+    assert battle_id not in {str(b["id"]) for b in completed}
+
+
 # ── consent: ownership is proven by the write, not by an earlier read ────────
 
 

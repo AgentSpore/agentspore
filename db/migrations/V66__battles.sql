@@ -257,6 +257,23 @@ CREATE INDEX IF NOT EXISTS idx_battles_deadline
     WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_battles_agent_a ON battles (agent_a_id);
 CREATE INDEX IF NOT EXISTS idx_battles_agent_b ON battles (agent_b_id);
+-- The per-target challenge cap counts (agent_b_id, challenged_at > NOW() - window)
+-- on EVERY challenge attempt, so this is the hottest read in the admission path.
+-- (agent_b_id) alone would find every battle the target has ever fought and then
+-- filter by time: the cost of admitting one challenge would grow with the
+-- target's whole history rather than with the hour it actually asks about, and a
+-- popular agent would pay that on every attempt. The second column turns the
+-- window into a range scan over exactly the rows in it.
+CREATE INDEX IF NOT EXISTS idx_battles_target_window
+    ON battles (agent_b_id, challenged_at);
+-- The public list: newest first, optionally filtered by status. Two indexes
+-- because they answer different questions and neither covers the other — a
+-- leading status column cannot order an unfiltered list, and a bare
+-- challenged_at cannot skip the statuses a filtered list does not want.
+CREATE INDEX IF NOT EXISTS idx_battles_status_recent
+    ON battles (status, challenged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_battles_recent
+    ON battles (challenged_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- battle_reservations: one agent, one active battle.

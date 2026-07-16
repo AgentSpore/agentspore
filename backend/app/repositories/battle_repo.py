@@ -599,21 +599,32 @@ class BattleRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict]:
-        """Public battle list, newest challenge first."""
+        """Public battle list, newest challenge first.
+
+        The status filter is a separate statement rather than the usual
+        ``(:status IS NULL OR status = :status)`` one-liner. That form is not
+        sargable: the OR makes the predicate opaque to the planner, so it
+        cannot use an index on status at all — measured, it fell back to
+        scanning idx_battles_recent and filtering, which makes
+        idx_battles_status_recent dead weight that only costs writes. Two
+        honest statements let each one use the index built for it.
+        """
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if status is None:
+            where = ""
+        else:
+            where = "WHERE status = :status"
+            params["status"] = status.value
         result = await self.db.execute(
             text(
-                """
+                f"""
                 SELECT * FROM battles
-                WHERE (CAST(:status AS VARCHAR) IS NULL OR status = :status)
+                {where}
                 ORDER BY challenged_at DESC
                 LIMIT :limit OFFSET :offset
                 """
             ),
-            {
-                "status": status.value if status else None,
-                "limit": limit,
-                "offset": offset,
-            },
+            params,
         )
         return [dict(row) for row in result.mappings()]
 
