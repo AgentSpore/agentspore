@@ -1,0 +1,582 @@
+"""Tests for phase-1 step 7 — battle schema and atomic state machine (V66).
+
+The invariant under test, stated so it can be falsified:
+
+    Legal transitions are atomic, and terminal battles cannot restart.
+
+Concretely: every transition is one compare-and-set naming its expected old
+state, so at most ONE concurrent caller can move a battle out of a given
+state, no terminal row can move at all, and reserving both fighters inserts
+two rows or none.
+
+These run the REAL V66 migration file against testcontainers Postgres, never
+a re-declared inline schema — a typo or a missing CHECK in the migration must
+fail these tests, which is the entire point of testing a migration. V65 is
+applied too, because battles.ready_check_event_id_a/b are FKs into
+agent_events: readiness is bound to exact event ids, and the database is what
+enforces those ids exist.
+
+Every test here needs Docker (@pytest.mark.integration). A mock cannot prove
+atomicity: the race is arbitrated by real row locks in a real transaction, so
+mocking it would only prove that a mock returns what it was told to.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from pathlib import Path
+
+import pytest
+import pytest_asyncio
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from testcontainers.postgres import PostgresContainer
+
+from app.repositories.agent_event_repo import AgentEventRepository
+from app.repositories.battle_repo import BattleRepository
+from app.schemas.battles import BattleStatus, Side, TaskSource
+
+MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
+V65_PATH = MIGRATIONS / "V65__agent_events.sql"
+V66_PATH = MIGRATIONS / "V66__battles.sql"
+
+# Minimal FK targets only. Every battle table's DDL comes from the real V66.
+BASE_SCHEMA = """
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    handle TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+"""
+
+RUBRIC = [{"criterion": "correctness", "weight": 1.0}]
+
+# Every test needs Docker, and all of them share the module-scoped engine,
+# so they must also share its event loop.
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
+
+
+@pytest.fixture(scope="module")
+def pg_container():
+    with PostgresContainer("postgres:16-alpine") as pg:
+        yield pg
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def engine(pg_container):
+    """Engine with the FK targets + the REAL V65 and V66 migrations applied.
+
+    Module-scoped because a versioned migration runs exactly once — that is
+    what Flyway does, and re-applying V66 per test would demand an idempotency
+    the real migration neither has nor needs. Tests stay independent by using
+    fresh UUIDs rather than a fresh schema.
+    """
+    async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
+    eng = create_async_engine(async_url, future=True)
+    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()}"
+    # One transaction for the whole migration, mirroring Flyway's V__ handling.
+    # Statements are applied one at a time because asyncpg refuses multiple
+    # commands in a single prepared statement.
+    async with eng.begin() as conn:
+        for stmt in sql.split(";"):
+            if stmt.strip():
+                await conn.execute(text(stmt))
+    yield eng
+    await eng.dispose()
+
+
+@pytest.fixture(scope="module")
+def session_maker(engine):
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def db_session(session_maker):
+    async with session_maker() as session:
+        yield session
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def owner_id(db_session) -> str:
+    uid = str(uuid.uuid4())
+    await db_session.execute(
+        text("INSERT INTO users (id, email) VALUES (CAST(:id AS UUID), :e)"),
+        {"id": uid, "e": f"owner-{uid[:8]}@example.test"},
+    )
+    await db_session.commit()
+    return uid
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def agent_ids(db_session) -> tuple[str, str, str]:
+    """Three fighters: A and B duel, C is the bystander for the cross-role race."""
+    ids = [str(uuid.uuid4()) for _ in range(3)]
+    for aid in ids:
+        await db_session.execute(
+            text(
+                "INSERT INTO agents (id, handle, name) "
+                "VALUES (CAST(:id AS UUID), :h, :n)"
+            ),
+            {"id": aid, "h": f"fighter-{aid[:8]}", "n": "Fighter"},
+        )
+    await db_session.commit()
+    return ids[0], ids[1], ids[2]
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def task_id(db_session, owner_id) -> str:
+    repo = BattleRepository(db_session)
+    tid = await repo.create_task(
+        source=TaskSource.GENERATED,
+        title="Write a parser",
+        prompt="Parse this log format.",
+        rubric=RUBRIC,
+        time_limit_seconds=600,
+        created_by_user_id=owner_id,
+    )
+    await db_session.commit()
+    return tid
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def accepted_battle(db_session, task_id, agent_ids, owner_id) -> str:
+    """A battle whose owner consented — the state just before reservation."""
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    battle_id = await repo.create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_id,
+        task_prompt_snapshot="Parse this log format.",
+        task_rubric_snapshot=RUBRIC,
+        time_limit_seconds_snapshot=600,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_id,
+    )
+    assert await repo.mark_accepted(battle_id) is not None
+    await db_session.commit()
+    return battle_id
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def reserved_battle(db_session, accepted_battle, agent_ids) -> tuple[str, int]:
+    """A reserved battle with a live readiness generation. Returns (id, gen)."""
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    events = AgentEventRepository(db_session)
+
+    won = await repo.reserve_both(accepted_battle, agent_a, agent_b, 60)
+    assert len(won) == 2
+
+    # Domain TTL, never the 32400s default: a ready check that stays ACK-able
+    # for nine hours is not a readiness check.
+    event_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    event_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    row = await repo.arm_readiness(accepted_battle, event_a, event_b, 60)
+    assert row is not None
+    await db_session.commit()
+    return accepted_battle, row["readiness_generation"]
+
+
+async def queue_in_own_session(session_maker, battle_id: str, generation: int):
+    """Attempt reserved -> queued in an independent transaction.
+
+    Each caller gets its own session, hence its own connection: the race has
+    to be arbitrated by real Postgres row locks, not by two coroutines sharing
+    one transaction (which would prove nothing).
+    """
+    async with session_maker() as session:
+        repo = BattleRepository(session)
+        row = await repo.mark_queued(battle_id, generation)
+        await session.commit()
+        return row
+
+
+async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_immutable(
+    session_maker, db_session, reserved_battle
+):
+    """THE invariant: one winner per transition, and terminal means terminal."""
+    battle_id, generation = reserved_battle
+
+    # --- one winner -------------------------------------------------------
+    # Two workers race the same reserved -> queued transition against the same
+    # old state. Exactly one may win; the loser must be told it lost.
+    results = await asyncio.gather(
+        queue_in_own_session(session_maker, battle_id, generation),
+        queue_in_own_session(session_maker, battle_id, generation),
+    )
+    winners = [r for r in results if r is not None]
+    assert len(winners) == 1, f"expected exactly one winner, got {len(winners)}"
+    assert winners[0]["status"] == BattleStatus.QUEUED.value
+    assert winners[0]["queued_at"] is not None
+
+    # A third attempt after the fact is not a winner either: the CAS compares
+    # against 'reserved', which no longer holds.
+    assert await queue_in_own_session(session_maker, battle_id, generation) is None
+
+    # --- drive to terminal ------------------------------------------------
+    repo = BattleRepository(db_session)
+    token = str(uuid.uuid4())
+    running = await repo.mark_running(battle_id, token, 30)
+    assert running is not None
+    # deadline_at is derived in the database from the frozen snapshot, so both
+    # sides share one wall clock regardless of any worker's own clock.
+    assert running["deadline_at"] > running["started_at"]
+
+    assert await repo.mark_judging(battle_id) is not None
+    completed = await repo.finalize(battle_id, "a", "majority: a=3")
+    assert completed is not None
+    assert completed["status"] == BattleStatus.COMPLETED.value
+    assert completed["finalized_at"] is not None
+    await db_session.commit()
+
+    # --- terminal is immutable -------------------------------------------
+    # Every transition out of a completed battle must return zero rows. A
+    # second finalizer must not be able to apply Elo twice.
+    assert await repo.finalize(battle_id, "b", "second finalizer") is None
+    assert await repo.mark_accepted(battle_id) is None
+    assert await repo.mark_declined(battle_id) is None
+    assert await repo.mark_queued(battle_id, generation) is None
+    assert await repo.mark_running(battle_id, str(uuid.uuid4()), 30) is None
+    assert await repo.mark_judging(battle_id) is None
+    assert await repo.mark_expired(battle_id) is None
+    assert await repo.mark_aborted(battle_id, "too late") is None
+    assert await repo.release_readiness(battle_id) is None
+    await db_session.commit()
+
+    final = await repo.get(battle_id)
+    assert final["status"] == BattleStatus.COMPLETED.value
+    assert final["winner"] == "a", "a losing finalizer must not overwrite the verdict"
+
+
+async def test_reserving_both_fighters_is_all_or_nothing_across_roles(
+    db_session, session_maker, task_id, agent_ids, owner_id, reserved_battle
+):
+    """One agent, one active battle — regardless of which side they take.
+
+    This is the case two partial unique indexes on agent_a_id/agent_b_id
+    would miss entirely: agent A is already side A in battle 1, and battle 2
+    tries to take them as side B. Different column, different index, no
+    conflict — but the same LLM key, spent twice.
+    """
+    agent_a, _, agent_c = agent_ids
+    repo = BattleRepository(db_session)
+
+    second = await repo.create_battle(
+        task_id=task_id,
+        agent_a_id=agent_c,
+        agent_a_owner_snapshot=owner_id,
+        task_prompt_snapshot="Parse this log format.",
+        task_rubric_snapshot=RUBRIC,
+        time_limit_seconds_snapshot=600,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_a,
+        agent_b_owner_snapshot=owner_id,
+    )
+    await db_session.commit()
+
+    # agent_a is already reserved by the first battle; agent_c is free.
+    won = await repo.reserve_both(second, agent_c, agent_a, 60)
+    assert won == [agent_c], "the busy fighter must not be reservable"
+    # The caller's contract: exactly two rows or roll back. One row means the
+    # transaction never happened.
+    await db_session.rollback()
+
+    held = await db_session.execute(
+        text(
+            "SELECT battle_id FROM battle_reservations "
+            "WHERE agent_id = CAST(:id AS UUID)"
+        ),
+        {"id": agent_c},
+    )
+    assert held.first() is None, "a partial reservation must not survive"
+
+
+async def test_stale_readiness_generation_never_queues(
+    db_session, reserved_battle, agent_ids
+):
+    """A re-armed battle ignores evidence from the previous attempt.
+
+    The ready lease lapsing and being re-armed is the ordinary path, not an
+    edge case. An ACK that belongs to the abandoned generation must never
+    queue the battle: that is exactly how a stale event would drag an absent
+    fighter into a battle they never confirmed.
+    """
+    battle_id, old_generation = reserved_battle
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    events = AgentEventRepository(db_session)
+
+    assert await repo.release_readiness(battle_id) is not None
+    event_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    event_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    rearmed = await repo.arm_readiness(battle_id, event_a, event_b, 60)
+    assert rearmed is not None
+    new_generation = rearmed["readiness_generation"]
+    assert new_generation > old_generation
+
+    assert await repo.mark_queued(battle_id, old_generation) is None
+    assert await repo.mark_queued(battle_id, new_generation) is not None
+
+
+async def test_open_challenge_claim_has_exactly_one_winner(
+    db_session, session_maker, task_id, agent_ids, owner_id
+):
+    """Two candidates race for the empty B slot of an open challenge."""
+    agent_a, agent_b, agent_c = agent_ids
+    repo = BattleRepository(db_session)
+    battle_id = await repo.create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_id,
+        task_prompt_snapshot="Parse this log format.",
+        task_rubric_snapshot=RUBRIC,
+        time_limit_seconds_snapshot=600,
+        challenge_ttl_seconds=3600,
+    )
+    await db_session.commit()
+
+    opened = await repo.get(battle_id)
+    assert opened["agent_b_id"] is None, "an open challenge starts with no opponent"
+
+    async def claim(candidate: str):
+        async with session_maker() as session:
+            row = await BattleRepository(session).claim_open_challenge(
+                battle_id, candidate, owner_id
+            )
+            await session.commit()
+            return row
+
+    results = await asyncio.gather(claim(agent_b), claim(agent_c))
+    winners = [r for r in results if r is not None]
+    assert len(winners) == 1
+    # Claiming is not consent: the battle waits for B's owner to accept.
+    assert winners[0]["status"] == BattleStatus.CHALLENGE_PENDING.value
+    assert winners[0]["agent_b_accepted_at"] is None
+
+
+async def test_only_one_final_submission_per_side(db_session, reserved_battle):
+    """A late final answer cannot displace the one already recorded.
+
+    The truncated synthetic submission a reconciler writes for a silent
+    fighter takes this same slot, which is what stops a straggler from
+    overwriting the record of their own timeout.
+    """
+    battle_id, _ = reserved_battle
+    repo = BattleRepository(db_session)
+
+    assert await repo.add_submission(battle_id, Side.A, 0, "checkpoint", is_final=False)
+    assert await repo.add_submission(battle_id, Side.A, 1, "answer", is_final=True)
+    # Same seq_no: primary key collision.
+    assert not await repo.add_submission(battle_id, Side.A, 1, "dup", is_final=False)
+    # Different seq_no, but a second final for the same side.
+    assert not await repo.add_submission(battle_id, Side.A, 2, "late", is_final=True)
+    await db_session.commit()
+
+    rows = await repo.list_submissions(battle_id)
+    assert [r["seq_no"] for r in rows] == [0, 1]
+    assert sum(1 for r in rows if r["is_final"]) == 1
+
+
+async def test_replicate_pair_stores_both_halves_but_collapses_to_one_vote(
+    db_session, reserved_battle
+):
+    """The ab/ba pair is two raw runs and exactly one collapsed vote.
+
+    Both halves of a replicate must be storable — the raw key includes
+    presented_order — while the collapsed key without it caps three paired
+    replicates at three votes, so a pair can never be counted as two.
+    """
+    battle_id, _ = reserved_battle
+    repo = BattleRepository(db_session)
+
+    ab = await repo.create_judge_run(battle_id, "llm", "glm-4.5-flash", "seed1", "ab")
+    ba = await repo.create_judge_run(battle_id, "llm", "glm-4.5-flash", "seed1", "ba")
+    assert ab is not None and ba is not None, "a replicate is two runs, not one"
+    # The same half twice is the same slot.
+    assert await repo.create_judge_run(battle_id, "llm", "glm-4.5-flash", "seed1", "ab") is None
+
+    first = await repo.upsert_judgement(
+        battle_id, "llm", "glm-4.5-flash", "seed1", "a", confidence=0.8
+    )
+    assert first is not None
+    second = await repo.upsert_judgement(
+        battle_id, "llm", "glm-4.5-flash", "seed1", "b", confidence=0.9
+    )
+    assert second is None, "one replicate may not cast two collapsed votes"
+    await db_session.commit()
+
+    assert len(await repo.list_judge_runs(battle_id)) == 2
+    assert len(await repo.list_judgements(battle_id)) == 1
+
+
+async def test_stale_worker_cannot_write_a_judge_run_it_no_longer_owns(
+    db_session, reserved_battle
+):
+    """A former owner's answer is discarded, not merged.
+
+    The scheduler lease cannot prevent this: losing leadership does not stop
+    an in-flight run_once(), so the old worker really does arrive with a real
+    verdict. The row token is what rejects it.
+    """
+    battle_id, _ = reserved_battle
+    repo = BattleRepository(db_session)
+    run_id = await repo.create_judge_run(
+        battle_id, "llm", "glm-4.5-flash", "seed1", "ab"
+    )
+    stale_token = str(uuid.uuid4())
+    assert await repo.claim_judge_run(run_id, stale_token, 30) is not None
+
+    # A second worker cannot steal a live lease.
+    fresh_token = str(uuid.uuid4())
+    assert await repo.claim_judge_run(run_id, fresh_token, 30) is None
+
+    # The rightful owner writes; an impostor's identical write returns nothing.
+    assert await repo.complete_judge_run(run_id, str(uuid.uuid4()), "b") is None
+    done = await repo.complete_judge_run(run_id, stale_token, "a", confidence=0.7)
+    assert done is not None and done["vote"] == "a"
+    # And the write is not repeatable — status is no longer 'running'.
+    assert await repo.complete_judge_run(run_id, stale_token, "b") is None
+    await db_session.commit()
+
+
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        # A broken judge must never be able to mint tie-Elo, and a confidence
+        # outside [0,1] must not be storable at all.
+        ("vote", "'maybe'"),
+        ("confidence", "1.5"),
+        ("confidence", "-0.1"),
+        # Fits VARCHAR(3), so the CHECK is what rejects it, not the length.
+        ("presented_order", "'aba'"),
+        ("judge_kind", "'oracle'"),
+    ],
+)
+async def test_judge_run_rejects_illegal_values(db_session, reserved_battle, column, value):
+    """CHECK constraints, not application code, make these unrepresentable."""
+    battle_id, _ = reserved_battle
+    columns = {
+        "battle_id": f"CAST('{battle_id}' AS UUID)",
+        "judge_kind": "'llm'",
+        "judge_ref": "'glm-4.5-flash'",
+        "replicate_seed": "'seed1'",
+        "presented_order": "'ab'",
+        "vote": "'a'",
+        "confidence": "0.5",
+    }
+    columns[column] = value
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text(
+                f"INSERT INTO battle_judge_runs ({', '.join(columns)}) "
+                f"VALUES ({', '.join(columns.values())})"
+            )
+        )
+    await db_session.rollback()
+
+
+async def test_abstain_is_storable_and_distinct_from_tie(db_session, reserved_battle):
+    """Malformed judge output has an honest place to land.
+
+    Without 'abstain' in the enum, a broken judge's output would have to be
+    mapped onto 'tie' — which moves both fighters' Elo on the strength of a
+    parse failure.
+    """
+    battle_id, _ = reserved_battle
+    repo = BattleRepository(db_session)
+    for seed, vote in (("seed1", "abstain"), ("seed2", "error"), ("seed3", "tie")):
+        assert (
+            await repo.upsert_judgement(battle_id, "llm", "glm-4.5-flash", seed, vote)
+            is not None
+        )
+    await db_session.commit()
+    votes = {j["vote"] for j in await repo.list_judgements(battle_id)}
+    assert votes == {"abstain", "error", "tie"}
+
+
+async def test_position_sensitive_flag_only_describes_a_tie(db_session, reserved_battle):
+    """position_sensitive marks an A/B split that collapsed to a tie."""
+    battle_id, _ = reserved_battle
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text(
+                """
+                INSERT INTO battle_judgements
+                    (battle_id, judge_kind, judge_ref, replicate_seed, vote,
+                     position_sensitive)
+                VALUES (CAST(:bid AS UUID), 'llm', 'glm-4.5-flash', 's1', 'a', TRUE)
+                """
+            ),
+            {"bid": battle_id},
+        )
+    await db_session.rollback()
+
+
+async def test_a_winner_requires_a_completed_battle(db_session, reserved_battle):
+    """A verdict cannot exist on a battle that has not been judged."""
+    battle_id, _ = reserved_battle
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text(
+                "UPDATE battles SET winner = 'a' WHERE id = CAST(:bid AS UUID)"
+            ),
+            {"bid": battle_id},
+        )
+    await db_session.rollback()
+
+
+async def test_battle_task_rubric_must_be_a_list_of_criteria(db_session, owner_id):
+    """A non-array rubric would silently produce vibes-based judging."""
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text(
+                """
+                INSERT INTO battle_tasks (source, title, prompt, rubric)
+                VALUES ('generated', 'T', 'P', CAST('{"criterion": "x"}' AS JSONB))
+                """
+            )
+        )
+    await db_session.rollback()
+
+
+async def test_reservation_must_expire_in_the_future(db_session, reserved_battle, agent_ids):
+    """A reservation that is already expired at insert is not a reservation."""
+    battle_id, _ = reserved_battle
+    _, _, agent_c = agent_ids
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text(
+                """
+                INSERT INTO battle_reservations (agent_id, battle_id, reserved_until)
+                VALUES (CAST(:aid AS UUID), CAST(:bid AS UUID), NOW() - INTERVAL '1 hour')
+                """
+            ),
+            {"aid": agent_c, "bid": battle_id},
+        )
+    await db_session.rollback()
+
+
+async def test_deleting_a_fighter_mid_battle_is_blocked(db_session, reserved_battle, agent_ids):
+    """ON DELETE RESTRICT: a battle keeps referring to real fighters.
+
+    The alternative — cascade or NULL the agent away — would silently rewrite
+    the history of a battle that already spent someone's inference.
+    """
+    agent_a, _, _ = agent_ids
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text("DELETE FROM agents WHERE id = CAST(:id AS UUID)"), {"id": agent_a}
+        )
+    await db_session.rollback()
