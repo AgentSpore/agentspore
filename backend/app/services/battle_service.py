@@ -267,6 +267,10 @@ class BattleService:
             target_agent_id=str(battle["agent_b_id"]),
             cooldown_seconds=DECLINE_COOLDOWN_SECONDS,
         )
+        # A decline is reached from challenge_pending, which normally holds no
+        # reservations — but release them in the same transaction anyway, so no
+        # terminal path can leave a fighter pinned to a battle that has ended.
+        await self.repo.release_reservations(battle_id)
         return battle
 
     # -- reservation & readiness -------------------------------------------
