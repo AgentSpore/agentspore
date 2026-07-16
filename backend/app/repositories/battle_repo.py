@@ -1015,6 +1015,37 @@ class BattleRepository:
         )
         return [str(row[0]) for row in result.fetchall()]
 
+    async def extend_reservations(self, battle_id: str, margin_seconds: int) -> list[str]:
+        """Push both fighters' reservations out to this battle's deadline + margin.
+
+        Called in the same transaction that starts the battle. RESERVATION_SECONDS
+        (90) is sized for the readiness wait, not for a battle that can run for up
+        to an hour: without this, a fighter's reservation lapses mid-fight,
+        delete_expired_reservations() reaps it, and a second battle double-books
+        the fighter while the first is still running — the exact double-spend of
+        the owner's key reservations exist to stop. Extending to deadline_at plus
+        a small margin keeps the hold alive for the whole battle, so finalize is
+        the only thing that frees it.
+
+        Scoped to battle_id, so it can only move THIS battle's own reservation
+        rows. Returns the agent ids whose hold was extended.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battle_reservations r
+                SET reserved_until = b.deadline_at + make_interval(secs => :margin)
+                FROM battles b
+                WHERE r.battle_id = CAST(:battle_id AS UUID)
+                  AND b.id = r.battle_id
+                  AND b.deadline_at IS NOT NULL
+                RETURNING r.agent_id
+                """
+            ),
+            {"battle_id": str(battle_id), "margin": margin_seconds},
+        )
+        return [str(row[0]) for row in result.fetchall()]
+
     async def delete_expired_reservations(self) -> list[str]:
         """Reap lapsed reservations. Returns the freed agent ids."""
         result = await self.db.execute(
@@ -1513,6 +1544,78 @@ class BattleRepository:
         )
         return result.first() is not None
 
+    async def release_reconcile_claim(self, battle_id: str, lease_token: str) -> bool:
+        """Free a claim taken to poll a running battle that is not yet due.
+
+        The reconciler's running phase claims a battle to check whether its wall
+        clock has run out. When it has NOT — the battle is legitimately still
+        running with real work in flight — the claim must be released so the
+        battle stays claimable, AND the attempt increment the claim made must be
+        undone: lease_attempt_count is the money phase's crash-loop budget (only
+        four attempts, because judging spends money), and a battle that merely
+        waited out its deadline over several polls must not arrive at judging with
+        that budget already spent. This is the mirror of start_if_still_eligible
+        RESETting the counter — a not-yet-due poll is not a processing attempt.
+
+        Guarded by the token and 'running' so only the current holder releases,
+        and only while the battle is still running. False = we no longer own it.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battles
+                SET lease_token = NULL,
+                    lease_expires_at = NULL,
+                    lease_attempt_count = GREATEST(lease_attempt_count - 1, 0)
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND status = 'running'
+                  AND lease_token = CAST(:lease_token AS UUID)
+                RETURNING id
+                """
+            ),
+            {"battle_id": str(battle_id), "lease_token": str(lease_token)},
+        )
+        return result.first() is not None
+
+    async def find_expired_battle_ids(self) -> list[str]:
+        """Pre-start battles whose challenge deadline has passed. For the reaper.
+
+        Covers challenge_pending, accepted and reserved — every state before a
+        shared start. mark_expired is the per-row CAS the reaper runs against each
+        id; this is only the finder, so the terminal write stays a guarded CAS.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT id FROM battles
+                WHERE status IN ('challenge_pending', 'accepted', 'reserved')
+                  AND challenge_expires_at <= NOW()
+                """
+            )
+        )
+        return [str(row[0]) for row in result.fetchall()]
+
+    async def find_attempt_exhausted_battle_ids(self, max_attempts: int) -> list[str]:
+        """Pre-start battles that spent their whole claim budget. For the reaper.
+
+        claim_battles_for_reconcile's docstring promises this routing: once a
+        battle's handler has failed max_attempts times it stops being claimed,
+        and the reconciler routes it to mark_aborted rather than leaving it stuck.
+        Scoped to the pre-'running' states, because a battle that reached 'running'
+        owes its fighters a verdict and must never be aborted.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT id FROM battles
+                WHERE status IN ('challenge_pending', 'accepted', 'reserved', 'queued')
+                  AND lease_attempt_count >= :max_attempts
+                """
+            ),
+            {"max_attempts": max_attempts},
+        )
+        return [str(row[0]) for row in result.fetchall()]
+
     # -- submissions --------------------------------------------------------
 
     async def add_submission(
@@ -1525,36 +1628,48 @@ class BattleRepository:
         tokens_used: int | None = None,
         truncated: bool = False,
         error: str | None = None,
+        enforce_deadline: bool = True,
     ) -> bool:
-        """Record a checkpoint. False = this slot is taken, or seq_no went back.
+        """Record a checkpoint. False = this slot is taken, or the battle is closed.
 
-        Three rules, all enforced here rather than by a prior read:
+        Five rules, all enforced HERE inside the INSERT rather than by a prior
+        read — the router's status/deadline checks are a separate statement under
+        READ COMMITTED, so between them and this write a battle can transition to
+        judging or its deadline can pass:
 
         * (battle_id, side, seq_no) as the primary key — one row per slot;
         * one final row per side via the partial unique index. A synthetic
           truncated submission for a silent fighter takes that same slot, so a
           late arrival cannot also claim it;
-        * seq_no only ever moves FORWARD, via the NOT EXISTS below.
+        * seq_no only ever moves FORWARD, via the NOT EXISTS below;
+        * the battle must still be 'running' (and, for fighter submissions, still
+          before its wall clock) — a turn against a judging battle is scored on a
+          frozen answer, and one past the deadline is a backdated one;
+        * NOT EXISTS a prior final row for this side (ANY seq). Without it a
+          fighter can post a non-final checkpoint AFTER its own final — a lower
+          seq_no than the final slips past the monotonicity guard — and the panel
+          reads a mutation to an answer it was told was the last word.
 
-        Monotonicity is not a property the primary key gives us, and it was
-        missing until an endpoint test caught it: seq_no 5 followed by seq_no 3
-        is two distinct keys, so both inserted happily. That let a fighter write
-        its own history out of order behind the judge's back — list_submissions
-        orders by seq_no, so the later, lower-numbered row would be presented to
-        the panel as though it had come first.
+        ``enforce_deadline=False`` is for the reconciler's synthetic final only:
+        the silent fighter's truncated submission is inserted precisely BECAUSE
+        the deadline has passed, while the battle is still 'running' and about to
+        be marked judging. It still requires 'running' and the no-prior-final
+        rule; it drops only the ``deadline_at > NOW()`` clause a real fighter must
+        satisfy.
 
-        The check is a NOT EXISTS inside the INSERT rather than a SELECT then an
-        INSERT: a read-then-write would let two concurrent submissions both see
-        a clear field and both land. Under real concurrency the primary key
-        still backstops the equal case, so the worst a race can do is admit a
-        gap, never a duplicate or a rewrite.
+        The checks are predicates of the INSERT, not a SELECT then an INSERT: a
+        read-then-write would let two concurrent submissions both see a clear
+        field and both land. Under real concurrency the primary key still
+        backstops the equal case, so the worst a race can do is admit a gap,
+        never a duplicate or a rewrite.
 
         ``>=`` rather than ``>`` so the duplicate case is answered by the same
         predicate as the out-of-order one, and both report False identically.
         """
+        deadline_clause = "AND b.deadline_at > NOW()" if enforce_deadline else ""
         result = await self.db.execute(
             text(
-                """
+                f"""
                 INSERT INTO battle_submissions
                     (battle_id, side, seq_no, content, tokens_used,
                      is_final, truncated, error)
@@ -1566,6 +1681,18 @@ class BattleRepository:
                      WHERE s.battle_id = CAST(:battle_id AS UUID)
                        AND s.side = CAST(:side AS VARCHAR(1))
                        AND s.seq_no >= CAST(:seq_no AS INT)
+                )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM battle_submissions s
+                     WHERE s.battle_id = CAST(:battle_id AS UUID)
+                       AND s.side = CAST(:side AS VARCHAR(1))
+                       AND s.is_final
+                )
+                  AND EXISTS (
+                    SELECT 1 FROM battles b
+                     WHERE b.id = CAST(:battle_id AS UUID)
+                       AND b.status = 'running'
+                       {deadline_clause}
                 )
                 ON CONFLICT DO NOTHING
                 RETURNING seq_no
