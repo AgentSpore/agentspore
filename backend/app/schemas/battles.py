@@ -402,7 +402,17 @@ class SubmitTurnRequest(BaseModel):
     """
 
     content: str = Field(..., max_length=MAX_SUBMISSION_CHARS)
-    seq_no: int = Field(..., ge=1, description="Monotonic per side; a taken slot is a conflict.")
+    # Upper-bounded well below the reconciler's SILENT_FIGHTER_SEQ_NO (9999): the
+    # silent fighter's synthetic final lands at that sequence, and the partial
+    # unique index makes exactly one final per side possible. A client allowed to
+    # post seq_no >= 9999 could take that slot first and permanently block the
+    # deadline synthesis, turning silence into a battle that can never be judged.
+    seq_no: int = Field(
+        ...,
+        ge=1,
+        le=9000,
+        description="Monotonic per side; a taken slot is a conflict.",
+    )
     is_final: bool = Field(default=False, description="One-way: the last word for this side.")
     tokens_used: int | None = Field(default=None, ge=0)
 
