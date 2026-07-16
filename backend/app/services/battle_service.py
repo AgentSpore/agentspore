@@ -45,7 +45,7 @@ from app.repositories.battle_repo import (
     ChallengeDenial,
     ReservationConflictError,
 )
-from app.services.connection_manager import DeliveryResult, deliver_event
+from app.services.connection_manager import DeliveryResult, dispatch_existing
 
 # How long a challenge waits for B's owner to answer. Consent is a human
 # decision, so this is generous — hours, not seconds.
@@ -324,21 +324,26 @@ class BattleService:
         QUEUED does not mean failed. Readiness is decided exclusively by
         try_queue(), against the ACKs.
         """
-        ttl = READY_LEASE_SECONDS
         results: dict[str, str] = {}
         for side, agent_key, event_key in (
             ("a", "agent_a_id", "ready_check_event_id_a"),
             ("b", "agent_b_id", "ready_check_event_id_b"),
         ):
-            result = await deliver_event(
-                str(battle[agent_key]),
-                {
-                    "type": "battle_ready_check",
-                    "battle_id": str(battle["id"]),
-                    "side": side,
-                    "event_id": str(battle[event_key]),
-                },
-                ttl_seconds=ttl,
+            # dispatch_existing, not deliver_event: the rows were armed inside
+            # the readiness transaction and readiness is bound to those exact
+            # ids. deliver_event would insert a SECOND row for this durable
+            # type, and a fighter acking the duplicate would never become ready.
+            #
+            # No ttl argument, because there is no second TTL to compute. The
+            # row's expires_at was set from READY_LEASE_SECONDS by
+            # _create_ready_check in the SAME transaction that set
+            # ready_lease_expires_at from the same constant, and NOW() is the
+            # transaction timestamp — so the event expires at the instant the
+            # lease does, by construction rather than by arithmetic. The drift
+            # only ever existed because the duplicate was stamped with a fresh
+            # TTL at dispatch time, which is later than the arming.
+            result = await dispatch_existing(
+                str(battle[agent_key]), str(battle[event_key])
             )
             results[side] = result.value
             if result is DeliveryResult.FAILED:

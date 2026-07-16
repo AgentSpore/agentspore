@@ -423,6 +423,68 @@ async def deliver_event(
     return DeliveryResult.FAILED
 
 
+async def dispatch_existing(agent_id: str, event_id: str) -> DeliveryResult:
+    """Deliver an outbox row that ALREADY exists. Never inserts.
+
+    The companion to deliver_event, not a replacement: deliver_event owns
+    "create this event and send it", which is right for every caller that has
+    only a payload. It is wrong for a caller that already persisted the row
+    itself — for a durable type it would insert a SECOND row, and the caller
+    would be left with two events where it armed one.
+
+    That is not hypothetical. A battle arms two battle_ready_check rows inside
+    its transaction, because readiness is bound to those exact event ids;
+    dispatching them through deliver_event minted duplicates, so each fighter
+    saw the same ready check twice in its heartbeat and acking the duplicate
+    proved nothing — the battle stalled until its lease lapsed.
+
+    The row is re-read through list_unacked, so this cannot dispatch an event
+    that is expired, already acked, or belongs to a different agent: those are
+    exactly the rows that query refuses to return. Passing agent_id is what
+    makes the target check real rather than a formality — an event_id alone
+    would be a caller's word for whose event it is.
+
+    The event sent is rebuilt from the stored payload, so the wire format is
+    whatever was persisted, not whatever the dispatching caller reconstructs.
+
+    Returns the same honest DeliveryResult as deliver_event:
+      DELIVERED — a live receiver was confirmed
+      QUEUED    — nobody live; the row stands and the heartbeat drain owns it
+      FAILED    — the row is gone, expired, acked, or not this agent's
+    """
+    async with async_session_maker() as db:
+        live = await AgentEventRepository(db).list_unacked(agent_id)
+
+    row = next((r for r in live if str(r["event_id"]) == str(event_id)), None)
+    if row is None:
+        # Not live for THIS agent: expired, already acked, or never theirs.
+        # Say so rather than sending an event we cannot stand behind.
+        logger.warning(
+            "dispatch_existing: event {} is not live for agent {}", event_id, agent_id
+        )
+        return DeliveryResult.FAILED
+
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    event: dict[str, Any] = dict(payload or {})
+    event["type"] = row["type"]
+    event["event_id"] = str(row["event_id"])
+
+    delivered = await get_connection_manager().send(agent_id, event)
+    if not delivered:
+        try:
+            delivered = await AgentWebhookService.deliver(agent_id, event)
+        except Exception as exc:
+            logger.warning("Webhook fallback failed for {}: {}", agent_id, exc)
+
+    # Recorded on the SAME row — the point of the exercise.
+    await _record_dispatch(
+        str(event_id), "delivered" if delivered else "queued"
+    )
+    return DeliveryResult.DELIVERED if delivered else DeliveryResult.QUEUED
+
+
 async def _auto_wake_hosted(agent_id: str, event: dict[str, Any]) -> None:
     """Background task: find the hosted agent for ``agent_id`` and ensure it is running.
 
