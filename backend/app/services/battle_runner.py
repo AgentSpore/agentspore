@@ -643,6 +643,31 @@ class BattleRunner:
 
         return collapsed
 
+    async def collapse_open_replicates_to_error(self, battle_id: str) -> int:
+        """Freeze every not-yet-decided replicate as a terminal 'error' vote.
+
+        The escape-hatch counterpart to run_judge_panel's per-replicate collapse,
+        called ONLY when the battle's attempt budget is spent — so a replicate
+        with no judgement will never get one, and its silence is now a definitive
+        error rather than a transient throttle. upsert_judgement is
+        ON CONFLICT DO NOTHING, so a replicate that DID reach a real vote keeps it;
+        only the genuinely open ones become 'error'. Error votes leave the quorum
+        denominator (resolve_verdict), so the settle that follows resolves to
+        no-quorum and rates nothing instead of inventing a side or a tie.
+
+        Does not commit — the caller owns the transaction boundary.
+        """
+        for replicate_no in range(REPLICATE_COUNT):
+            await self.repo.upsert_judgement(
+                battle_id=battle_id,
+                judge_kind=JUDGE_KIND_LLM,
+                judge_ref=JUDGE_MODEL,
+                replicate_seed=replicate_seed(battle_id, replicate_no),
+                vote=Vote.ERROR.value,
+                reasoning="attempt budget exhausted before a verdict",
+            )
+        return REPLICATE_COUNT
+
     @staticmethod
     def _half_is_terminal(run: dict | None) -> bool:
         """Can this replicate half produce no further result?
@@ -812,29 +837,99 @@ async def reap_once(session_factory) -> dict[str, int]:
     battle that burned its whole claim budget, and reservations left behind by any
     path all lived forever. This is their one driver, run once per reconcile pass:
 
-    * expired  — challenge_pending/accepted/reserved past challenge_expires_at;
-    * aborted  — pre-'running' rows whose claim attempts are spent (the routing
-      claim_battles_for_reconcile's own docstring promises);
-    * reaped   — reservations whose wall clock passed.
+    * expired          — challenge_pending/accepted/reserved past
+      challenge_expires_at;
+    * aborted          — pre-'running' rows whose claim attempts are spent (the
+      routing claim_battles_for_reconcile's own docstring promises);
+    * stranded_settled — judging battles whose attempt budget is spent (the escape
+      hatch below);
+    * reaped           — reservations whose wall clock passed AND whose battle is
+      not still live (delete_expired_reservations skips running/judging rows).
 
-    Reservations are released in the same transaction as each terminal write, so a
+    Each terminal write commits in ITS OWN transaction, not one pass-wide one: a
+    finder returns a bounded batch (LIMIT RECONCILE_BATCH), and per-item commits
+    mean one row that raises does not roll back the rows already reaped this pass.
+    Reservations are released in the SAME transaction as each terminal write, so a
     reaped battle never leaves a fighter pinned. A row already terminal is skipped
-    by the CAS inside mark_expired/mark_aborted, which makes the reaper idempotent.
+    by the CAS inside mark_expired/mark_aborted/claim_stranded_judging, which keeps
+    the reaper idempotent — a re-run over the same backlog is a no-op.
     """
-    counts = {"expired": 0, "aborted": 0, "reservations_reaped": 0}
+    counts = {"expired": 0, "aborted": 0, "reservations_reaped": 0, "stranded_settled": 0}
+
     async with session_factory() as session:
         repo = BattleRepository(session)
-        for battle_id in await repo.find_expired_battle_ids():
-            if await repo.mark_expired(battle_id) is not None:
-                await repo.release_reservations(battle_id)
-                counts["expired"] += 1
-        for battle_id in await repo.find_attempt_exhausted_battle_ids(POLL_MAX_ATTEMPTS):
-            aborted = await repo.mark_aborted(battle_id, "reconciler: claim attempts exhausted")
-            if aborted is not None:
-                await repo.release_reservations(battle_id)
-                counts["aborted"] += 1
-        counts["reservations_reaped"] = len(await repo.delete_expired_reservations())
-        await session.commit()
+        expired_ids = await repo.find_expired_battle_ids(RECONCILE_BATCH)
+        exhausted_ids = await repo.find_attempt_exhausted_battle_ids(
+            POLL_MAX_ATTEMPTS, RECONCILE_BATCH
+        )
+        stranded_ids = await repo.find_stranded_judging_battle_ids(
+            RUNNING_MAX_ATTEMPTS, RECONCILE_BATCH
+        )
+
+    for battle_id in expired_ids:
+        async with session_factory() as session:
+            repo = BattleRepository(session)
+            try:
+                if await repo.mark_expired(battle_id) is not None:
+                    await repo.release_reservations(battle_id)
+                    counts["expired"] += 1
+                await session.commit()
+            except Exception as exc:
+                logger.exception("reaper: expiring battle {} failed: {}", battle_id, exc)
+                await session.rollback()
+
+    for battle_id in exhausted_ids:
+        async with session_factory() as session:
+            repo = BattleRepository(session)
+            try:
+                aborted = await repo.mark_aborted(
+                    battle_id, "reconciler: claim attempts exhausted"
+                )
+                if aborted is not None:
+                    await repo.release_reservations(battle_id)
+                    counts["aborted"] += 1
+                await session.commit()
+            except Exception as exc:
+                logger.exception("reaper: aborting battle {} failed: {}", battle_id, exc)
+                await session.rollback()
+
+    # Escape hatch: a judging battle whose attempt budget is spent must reach a
+    # terminal state, never sit unclaimable in 'judging' forever with its fighters
+    # pinned. Re-lease it, collapse the still-open replicates to error votes (the
+    # budget is genuinely exhausted — the panel will never answer), then settle:
+    # error votes leave the quorum denominator, so this finalizes to no-quorum,
+    # completed and UNRATED. That is the honest outcome — a broken judge must not
+    # mint tie-Elo. settle_battle never calls the gate, so gate=None is correct.
+    for battle_id in stranded_ids:
+        async with session_factory() as session:
+            runner = BattleRunner(session, gate=None)
+            try:
+                token = str(uuid.uuid4())
+                claimed = await runner.repo.claim_stranded_judging(
+                    battle_id, token, BATTLE_LEASE_SECONDS, RUNNING_MAX_ATTEMPTS
+                )
+                if claimed is None:
+                    await session.rollback()
+                    continue
+                await runner.collapse_open_replicates_to_error(battle_id)
+                await session.commit()
+                if await runner.settle_battle(battle_id, token) is not None:
+                    counts["stranded_settled"] += 1
+            except Exception as exc:
+                logger.exception("reaper: settling stranded battle {} failed: {}", battle_id, exc)
+                await session.rollback()
+
+    async with session_factory() as session:
+        repo = BattleRepository(session)
+        try:
+            counts["reservations_reaped"] = len(
+                await repo.delete_expired_reservations(RECONCILE_BATCH)
+            )
+            await session.commit()
+        except Exception as exc:
+            logger.exception("reaper: reaping reservations failed: {}", exc)
+            await session.rollback()
+
     return counts
 
 

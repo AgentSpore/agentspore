@@ -51,6 +51,8 @@ from app.services.battle_judges import (
 from app.services.battle_runner import (
     JUDGE_RUN_MAX_ATTEMPTS,
     POLL_MAX_ATTEMPTS,
+    RECONCILE_BATCH,
+    RUNNING_MAX_ATTEMPTS,
     BattleRunner,
     reap_once,
     reconcile_once,
@@ -1425,3 +1427,196 @@ class TestReaper:
         await reap_once(session_maker)
         async with session_maker() as session:
             assert (await BattleRepository(session).get(battle_id))["status"] == "completed"
+
+
+async def _reservation_count(session_maker, battle_id: str) -> int:
+    async with session_maker() as session:
+        row = await session.execute(
+            text(
+                "SELECT COUNT(*) FROM battle_reservations WHERE battle_id = CAST(:b AS UUID)"
+            ),
+            {"b": battle_id},
+        )
+        return int(row.scalar_one())
+
+
+class TestStrandedJudgingEscapeHatch:
+    """NEW-1: a judging battle whose attempt budget is spent must reach terminal.
+
+    The judging-resume phase stops claiming a battle once lease_attempt_count hits
+    RUNNING_MAX_ATTEMPTS, so a battle whose panel keeps throttling would otherwise
+    sit in 'judging' forever, unclaimable, with both fighters pinned. The reaper's
+    escape hatch collapses its still-open replicates to error votes and settles to
+    a no-quorum verdict — completed and UNRATED, never a minted tie.
+
+    MUTATION: delete the ``stranded_ids`` loop in reap_once and this test FAILS —
+    the battle stays 'judging' and the reservations stay held.
+    """
+
+    async def test_a_spent_budget_judging_battle_is_settled_to_no_quorum(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        # No judgements yet: every replicate is still open when the budget dies.
+        battle_id, agent_a, agent_b, _ = await _battle_in_judging(
+            db_session, task_id, votes=[]
+        )
+        # Spend the judging budget and lapse the lease — the exact stranded shape.
+        await db_session.execute(
+            text(
+                "UPDATE battles SET lease_attempt_count = :c, "
+                "lease_expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"c": RUNNING_MAX_ATTEMPTS, "b": battle_id},
+        )
+        await db_session.commit()
+
+        assert await _reservation_count(session_maker, battle_id) == 2
+        elo_a_before = await _elo(session_maker, agent_a)
+        elo_b_before = await _elo(session_maker, agent_b)
+
+        counts = await reap_once(session_maker)
+
+        assert counts["stranded_settled"] == 1
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "completed"
+        # No quorum: winner is NULL and no Elo moved — a broken judge mints nothing.
+        assert battle["winner"] is None
+        assert await _elo(session_maker, agent_a) == elo_a_before
+        assert await _elo(session_maker, agent_b) == elo_b_before
+        # Fighters are freed once the battle finalized.
+        assert await _reservation_count(session_maker, battle_id) == 0
+
+    async def test_escape_hatch_is_idempotent(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, _ = await _battle_in_judging(db_session, task_id, votes=[])
+        await db_session.execute(
+            text(
+                "UPDATE battles SET lease_attempt_count = :c, "
+                "lease_expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"c": RUNNING_MAX_ATTEMPTS, "b": battle_id},
+        )
+        await db_session.commit()
+
+        assert (await reap_once(session_maker))["stranded_settled"] == 1
+        # Second pass: the row is 'completed' now, so the finder skips it.
+        assert (await reap_once(session_maker))["stranded_settled"] == 0
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "completed"
+
+
+class TestReaperSparesLiveBattleReservations:
+    """NEW-2: delete_expired_reservations must not free a fighter mid-fight."""
+
+    async def test_a_lapsed_reservation_of_a_judging_battle_survives_reap(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        # A live (judging) battle, NOT stranded — budget was reset by mark_judging.
+        battle_id, _, _, _ = await _battle_in_judging(db_session, task_id, votes=[])
+        # Its holds have lapsed by wall clock, but the battle is still being
+        # judged. created_at is pushed back too, so reserved_until still satisfies
+        # the battle_reservation_future check (reserved_until > created_at).
+        await db_session.execute(
+            text(
+                "UPDATE battle_reservations "
+                "SET reserved_until = NOW() - INTERVAL '1 second', "
+                "    created_at = NOW() - INTERVAL '2 minutes' "
+                "WHERE battle_id = CAST(:b AS UUID)"
+            ),
+            {"b": battle_id},
+        )
+        await db_session.commit()
+
+        await reap_once(session_maker)
+
+        # MUTATION: revert the NOT EXISTS (running/judging) guard in
+        # delete_expired_reservations and this assertion FAILS — the fighters get
+        # freed mid-fight and can be double-booked.
+        assert await _reservation_count(session_maker, battle_id) == 2
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "judging"
+
+    async def test_a_lapsed_reservation_of_a_terminal_battle_is_reaped(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        # Same shape, but the battle is already completed — the hold is dead weight.
+        battle_id, _, _, token = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.A]
+        )
+        assert await _settle_in_own_session(session_maker, battle_id, token) is not None
+        # finalize already releases reservations, so re-add a stray lapsed one to
+        # prove the reaper deletes it once the battle is no longer live.
+        await db_session.execute(
+            text(
+                "INSERT INTO battle_reservations (agent_id, battle_id, reserved_until, created_at) "
+                "SELECT agent_a_id, id, NOW() - INTERVAL '1 second', NOW() - INTERVAL '2 minutes' "
+                "FROM battles WHERE id = CAST(:b AS UUID)"
+            ),
+            {"b": battle_id},
+        )
+        await db_session.commit()
+        assert await _reservation_count(session_maker, battle_id) == 1
+
+        await reap_once(session_maker)
+
+        assert await _reservation_count(session_maker, battle_id) == 0
+
+    async def test_finalize_releases_the_reservations(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, token = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.A]
+        )
+        assert await _reservation_count(session_maker, battle_id) == 2
+
+        assert await _settle_in_own_session(session_maker, battle_id, token) is not None
+
+        assert await _reservation_count(session_maker, battle_id) == 0
+
+
+class TestReaperRespectsTheBatchBound:
+    """NEW-5: each finder is bounded by RECONCILE_BATCH; a backlog drains over passes."""
+
+    async def test_one_pass_expires_at_most_a_batch_then_drains_the_rest(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        overflow = 2
+        owner = await _new_owner(db_session)
+        repo = BattleRepository(db_session)
+        battle_ids: list[str] = []
+        for _ in range(RECONCILE_BATCH + overflow):
+            agent_a, agent_b = await _new_agent(db_session), await _new_agent(db_session)
+            bid = await repo._create_battle(
+                task_id=task_id,
+                agent_a_id=agent_a,
+                agent_a_owner_snapshot=owner,
+                challenge_ttl_seconds=3600,
+                agent_b_id=agent_b,
+                agent_b_owner_snapshot=owner,
+            )
+            await db_session.execute(
+                text(
+                    "UPDATE battles SET challenge_expires_at = NOW() - INTERVAL '1 second' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": bid},
+            )
+            battle_ids.append(bid)
+        await db_session.commit()
+
+        # One pass reaps exactly a batch, never the whole backlog.
+        first = await reap_once(session_maker)
+        assert first["expired"] == RECONCILE_BATCH
+
+        # The remainder drains on the next pass — nothing is stranded by the bound.
+        second = await reap_once(session_maker)
+        assert second["expired"] == overflow
+
+        async with session_maker() as session:
+            get_repo = BattleRepository(session)
+            statuses = [(await get_repo.get(b))["status"] for b in battle_ids]
+        assert all(s == "expired" for s in statuses)
