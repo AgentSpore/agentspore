@@ -1046,16 +1046,38 @@ class BattleRepository:
         )
         return [str(row[0]) for row in result.fetchall()]
 
-    async def delete_expired_reservations(self) -> list[str]:
-        """Reap lapsed reservations. Returns the freed agent ids."""
+    async def delete_expired_reservations(self, limit: int) -> list[str]:
+        """Reap lapsed reservations, EXCEPT those of a live battle. Freed ids.
+
+        A reservation whose wall clock has passed is normally dead — but NOT while
+        its battle is still 'running' or 'judging'. Judging routinely outlasts the
+        deadline+margin the hold was extended to, and reaping on wall-clock alone
+        would free a fighter mid-fight and let a second battle double-book it,
+        which is the exact double-spend reservations exist to stop. So a live
+        battle's reservation survives here and is released only by finalize; every
+        other lapsed reservation (terminal, expired, or orphaned battle) is reaped.
+
+        Bounded by ``limit`` so one reap pass over a backlog stays a short
+        statement rather than an unbounded delete.
+        """
         result = await self.db.execute(
             text(
                 """
                 DELETE FROM battle_reservations
-                WHERE reserved_until <= NOW()
+                WHERE ctid IN (
+                    SELECT r.ctid FROM battle_reservations r
+                    WHERE r.reserved_until <= NOW()
+                      AND NOT EXISTS (
+                          SELECT 1 FROM battles b
+                          WHERE b.id = r.battle_id
+                            AND b.status IN ('running', 'judging')
+                      )
+                    LIMIT :limit
+                )
                 RETURNING agent_id
                 """
-            )
+            ),
+            {"limit": limit},
         )
         return [str(row[0]) for row in result.fetchall()]
 
@@ -1333,12 +1355,22 @@ class BattleRepository:
         fighter yields a truncated submission at the deadline, never a
         retroactive abort, because both fighters were provably present at the
         shared start.
+
+        ``lease_attempt_count`` RESETS to 0 here, the same reasoning as
+        start_if_still_eligible: judging is a NEW kind of work with its own
+        crash-loop budget. Carried over, the count would arrive already near the
+        money-phase ceiling (start=1, the running-phase close_deadline claim=2),
+        leaving the judging phase only one or two claims — too few for a raw judge
+        run to reach its own attempt ceiling, so a battle whose panel keeps
+        throttling could exhaust the battle budget while every replicate is still
+        reclaimable and strand itself in judging forever.
         """
         result = await self.db.execute(
             text(
                 """
                 UPDATE battles
-                SET status = 'judging'
+                SET status = 'judging',
+                    lease_attempt_count = 0
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'running'
                   AND lease_token = CAST(:lease_token AS UUID)
@@ -1577,12 +1609,14 @@ class BattleRepository:
         )
         return result.first() is not None
 
-    async def find_expired_battle_ids(self) -> list[str]:
+    async def find_expired_battle_ids(self, limit: int) -> list[str]:
         """Pre-start battles whose challenge deadline has passed. For the reaper.
 
         Covers challenge_pending, accepted and reserved — every state before a
         shared start. mark_expired is the per-row CAS the reaper runs against each
         id; this is only the finder, so the terminal write stays a guarded CAS.
+        Bounded by ``limit`` so a backlog is drained over several passes rather
+        than in one long transaction.
         """
         result = await self.db.execute(
             text(
@@ -1590,19 +1624,24 @@ class BattleRepository:
                 SELECT id FROM battles
                 WHERE status IN ('challenge_pending', 'accepted', 'reserved')
                   AND challenge_expires_at <= NOW()
+                LIMIT :limit
                 """
-            )
+            ),
+            {"limit": limit},
         )
         return [str(row[0]) for row in result.fetchall()]
 
-    async def find_attempt_exhausted_battle_ids(self, max_attempts: int) -> list[str]:
+    async def find_attempt_exhausted_battle_ids(
+        self, max_attempts: int, limit: int
+    ) -> list[str]:
         """Pre-start battles that spent their whole claim budget. For the reaper.
 
         claim_battles_for_reconcile's docstring promises this routing: once a
         battle's handler has failed max_attempts times it stops being claimed,
         and the reconciler routes it to mark_aborted rather than leaving it stuck.
         Scoped to the pre-'running' states, because a battle that reached 'running'
-        owes its fighters a verdict and must never be aborted.
+        owes its fighters a verdict and must never be aborted. Bounded by
+        ``limit`` for the same reason as find_expired_battle_ids.
         """
         result = await self.db.execute(
             text(
@@ -1610,11 +1649,84 @@ class BattleRepository:
                 SELECT id FROM battles
                 WHERE status IN ('challenge_pending', 'accepted', 'reserved', 'queued')
                   AND lease_attempt_count >= :max_attempts
+                LIMIT :limit
                 """
             ),
-            {"max_attempts": max_attempts},
+            {"max_attempts": max_attempts, "limit": limit},
         )
         return [str(row[0]) for row in result.fetchall()]
+
+    async def find_stranded_judging_battle_ids(
+        self, max_attempts: int, limit: int
+    ) -> list[str]:
+        """Judging battles whose attempt budget is spent AND lease has lapsed.
+
+        The escape-hatch finder. The judging-resume phase claims JUDGING only
+        while lease_attempt_count < max_attempts; a battle whose judge panel keeps
+        throttling burns that budget without ever completing a panel, and then
+        claim_battles_for_reconcile stops claiming it — leaving it stranded in
+        'judging' forever, unclaimable, with live reservations pinning both
+        fighters. This finds exactly those rows so the reaper can settle them
+        honestly (collapse the open replicates to error votes, then finalize to a
+        no-quorum verdict that rates nothing — a broken judge must not mint Elo).
+
+        The lease-lapsed guard is what keeps this off a battle a live worker is
+        still panelling: a fresh claim holds a future lease_expires_at, so only a
+        genuinely abandoned row (NULL or past lease) is picked up. Bounded by
+        ``limit`` like the other finders.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT id FROM battles
+                WHERE status = 'judging'
+                  AND lease_attempt_count >= :max_attempts
+                  AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
+                LIMIT :limit
+                """
+            ),
+            {"max_attempts": max_attempts, "limit": limit},
+        )
+        return [str(row[0]) for row in result.fetchall()]
+
+    async def claim_stranded_judging(
+        self, battle_id: str, lease_token: str, lease_seconds: int, max_attempts: int
+    ) -> dict | None:
+        """Take a fresh lease on a stranded judging battle so it can be settled.
+
+        finalize demands the claim token AND a live lease, so a stranded battle
+        (expired lease, spent budget) cannot be settled until a worker re-leases
+        it. This is that re-lease, guarded in SQL to exactly the stranded shape:
+        status 'judging', budget already spent (``>= max_attempts``, so it can
+        never collide with the normal judging-resume claim, which requires
+        ``< max_attempts``), and a lapsed lease. None = another worker re-leased
+        it first (its UPDATE moved lease_expires_at into the future, so this row's
+        predicate no longer holds), which is a normal race, not an error.
+
+        The attempt count is left as-is: the budget is spent on purpose here, and
+        incrementing it past the ceiling would change nothing.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battles
+                SET lease_token = CAST(:lease_token AS UUID),
+                    lease_expires_at = NOW() + make_interval(secs => :lease_seconds)
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND status = 'judging'
+                  AND lease_attempt_count >= :max_attempts
+                  AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
+                RETURNING *
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "lease_token": str(lease_token),
+                "lease_seconds": lease_seconds,
+                "max_attempts": max_attempts,
+            },
+        )
+        return self._one_or_none(result.mappings().first())
 
     # -- submissions --------------------------------------------------------
 
