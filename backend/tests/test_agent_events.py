@@ -293,6 +293,112 @@ async def test_caller_can_shorten_ttl_for_a_deadline_bound_event():
     assert persist.await_args.args[2] == 600
 
 
+# ── dispatch_existing: send an already-persisted row, never insert ────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_existing_never_inserts_a_second_row():
+    """The whole point: dispatch a row that exists, do not mint another.
+
+    deliver_event creates-then-sends, which is right for a caller holding only
+    a payload and wrong for one that already armed the row itself. A caller
+    that persisted two ready-checks and dispatched them through deliver_event
+    got four rows and two useless duplicates.
+    """
+    live = [{"event_id": "evt-1", "type": "battle_ready_check",
+             "payload": {"type": "battle_ready_check", "battle_id": "b1", "side": "a"}}]
+    with (
+        patch.object(cm, "async_session_maker"),
+        patch.object(cm.AgentEventRepository, "list_unacked", AsyncMock(return_value=live)),
+        patch.object(cm, "_persist_durable_event", AsyncMock()) as persist,
+        patch.object(cm, "_record_dispatch", AsyncMock()) as record,
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=False)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        get_mgr.return_value.send = AsyncMock(return_value=True)
+        result = await cm.dispatch_existing("agent-1", "evt-1")
+
+    assert result == DeliveryResult.DELIVERED
+    persist.assert_not_awaited()  # no second row, ever
+    record.assert_awaited_once_with("evt-1", "delivered")  # same row marked
+
+
+@pytest.mark.asyncio
+async def test_dispatch_existing_sends_the_stored_payload_with_its_own_id():
+    """The wire event is rebuilt from the row, not from the caller's memory."""
+    live = [{"event_id": "evt-9", "type": "battle_ready_check",
+             "payload": {"type": "battle_ready_check", "battle_id": "b1", "side": "b"}}]
+    with (
+        patch.object(cm, "async_session_maker"),
+        patch.object(cm.AgentEventRepository, "list_unacked", AsyncMock(return_value=live)),
+        patch.object(cm, "_record_dispatch", AsyncMock()),
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=False)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        send = AsyncMock(return_value=True)
+        get_mgr.return_value.send = send
+        await cm.dispatch_existing("agent-1", "evt-9")
+
+    sent = send.await_args.args[1]
+    assert sent["event_id"] == "evt-9"
+    assert sent["type"] == "battle_ready_check"
+    assert sent["side"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_existing_refuses_an_event_that_is_not_live():
+    """Expired, already acked, or another agent's — all the same answer.
+
+    list_unacked returns only rows that are live, unexpired and belong to this
+    agent, so an event missing from it is one we must not send. Dispatching it
+    anyway would resurrect a dead event and invite an ack that proves nothing.
+    """
+    with (
+        patch.object(cm, "async_session_maker"),
+        patch.object(cm.AgentEventRepository, "list_unacked", AsyncMock(return_value=[])),
+        patch.object(cm, "_record_dispatch", AsyncMock()) as record,
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        send = AsyncMock(return_value=True)  # transport WOULD have worked
+        get_mgr.return_value.send = send
+        result = await cm.dispatch_existing("agent-1", "evt-expired")
+
+    assert result == DeliveryResult.FAILED
+    send.assert_not_awaited()
+    record.assert_not_awaited()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_dispatch_existing_refuses_a_truly_expired_row(db_session, agent_id, session_maker):
+    """Same rule, against the real V65 expiry guard rather than a stub."""
+    repo = AgentEventRepository(db_session)
+    event_id = await repo.create(
+        target_agent_id=agent_id,
+        event_type="battle_ready_check",
+        payload={"type": "battle_ready_check", "battle_id": "b1", "side": "a"},
+        ttl_seconds=60,
+    )
+    await db_session.commit()
+    await db_session.execute(
+        text(
+            "UPDATE agent_events SET expires_at = NOW() - interval '1 second' "
+            "WHERE event_id = CAST(:e AS UUID)"
+        ),
+        {"e": event_id},
+    )
+    await db_session.commit()
+
+    with (
+        patch.object(cm, "async_session_maker", session_maker),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        get_mgr.return_value.send = AsyncMock(return_value=True)
+        result = await cm.dispatch_existing(agent_id, event_id)
+
+    assert result == DeliveryResult.FAILED
+
+
 # ── Step 4: ACK ownership invariant ───────────────────────────────────
 
 
