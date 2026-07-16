@@ -37,6 +37,7 @@ exactly-once billing needs it from the provider, not from this file.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 from loguru import logger
@@ -45,7 +46,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.rating import RatingChange, apply_battle_result
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository, ReservationConflictError
-from app.schemas.battles import BattleStatus, PresentedOrder, Side, Vote, Winner
+from app.schemas.battles import (
+    BattleStatus,
+    JudgeRunStatus,
+    PresentedOrder,
+    Side,
+    Vote,
+    Winner,
+)
 from app.services.battle_judges import (
     JUDGE_KIND_LLM,
     JUDGE_MODEL,
@@ -77,6 +85,18 @@ BATTLE_LEASE_SECONDS = 300
 # the gate wait, or a live call's row is reclaimed under it and two workers
 # publish for one slot.
 JUDGE_RUN_LEASE_SECONDS = 180
+
+# Attempt ceiling for ONE raw judge run, matching claim_judge_run's default. A
+# replicate half that keeps failing transport is reclaimed up to this many times;
+# once spent, it collapses to a terminal 'error' vote so the panel can conclude
+# rather than waiting on a slot that will never answer.
+JUDGE_RUN_MAX_ATTEMPTS = 4
+
+# How far past a battle's deadline both fighters stay reserved after it starts.
+# Small: the reservation must outlast the whole battle so a fighter cannot be
+# double-booked mid-fight, but finalize frees it, so the margin only has to cover
+# the reconciler's own settling latency.
+RESERVATION_START_MARGIN_SECONDS = 60
 
 # Battles claimed per reconciler pass. A ceiling, not a target: a pass must
 # stay short, because the scheduler tick is the only thing bounding it.
@@ -401,6 +421,13 @@ class BattleRunner:
             await self.db.rollback()
             return False
 
+        # Extend both reservations through the deadline, in THIS transaction. The
+        # 90s readiness reservation is far shorter than a battle that can run for
+        # an hour; without this the hold lapses mid-fight and a second battle can
+        # double-book the fighter. Frozen alongside the start so the hold and the
+        # deadline are set from one snapshot.
+        await self.repo.extend_reservations(battle_id, RESERVATION_START_MARGIN_SECONDS)
+
         events = AgentEventRepository(self.db)
         ttl = int(started["time_limit_seconds_snapshot"])
         dispatch: list[tuple[str, str]] = []
@@ -448,27 +475,47 @@ class BattleRunner:
     # -- deadline reconciliation --------------------------------------------
 
     async def close_deadline(self, battle_id: str, lease_token: str) -> bool:
-        """Fill in any missing final submission, then running -> judging.
+        """Synthesize silence at the deadline, then running -> judging.
 
-        The synthetic submission goes in FIRST and in the same transaction as
-        the transition: ``mark_judging`` only fires once the wall clock ran out
-        or both sides finalised, so a battle judged with a missing side must
-        have that side's silence recorded as a real, truncated answer.
+        The synthesis is GATED on the wall clock, and that gate is the whole
+        point of this method. It fires only when the battle is actually finished:
 
-        ``add_submission`` returning False means the fighter's real answer beat
-        us to the slot by a hair. That is not an error — the partial unique
-        index arbitrated it, and their answer wins.
+        * the deadline has passed — a silent side gets a truncated synthetic
+          final so the battle is judged on what it had, never aborted; or
+        * both sides already submitted a real final — an early, legitimate finish.
+
+        A running battle that is still BEFORE its deadline with fewer than two
+        real finals is NOT finished. Synthesizing finals for it would satisfy
+        ``mark_judging``'s "both sides final" branch and close a live battle the
+        instant its 300s row-lease lapsed — minutes of real answering time thrown
+        away. So this releases the claim and leaves it running: the release also
+        undoes the poll's attempt increment, because waiting out a deadline is not
+        a money-phase processing attempt (see release_reconcile_claim).
+
+        ``add_submission`` returning False means the fighter's real answer beat us
+        to the slot by a hair — the partial unique index arbitrated it and their
+        answer wins. The synthetic insert passes ``enforce_deadline=False``: it is
+        added precisely because the deadline has passed, while the battle is still
+        'running'.
         """
         battle = await self.repo.get(battle_id)
         if battle is None or battle["status"] != BattleStatus.RUNNING.value:
             await self.db.rollback()
             return False
 
-        submitted = {
-            (str(s["side"]), bool(s["is_final"]))
-            for s in await self.repo.list_submissions(battle_id)
+        finalised_sides = {
+            str(s["side"]) for s in await self.repo.list_submissions(battle_id) if s["is_final"]
         }
-        finalised_sides = {side for side, is_final in submitted if is_final}
+        both_final = finalised_sides >= {Side.A.value, Side.B.value}
+        deadline = battle["deadline_at"]
+        deadline_passed = deadline is not None and deadline <= datetime.now(UTC)
+
+        if not both_final and not deadline_passed:
+            # Still running, real work in flight, deadline in the future. Do not
+            # synthesize and do not transition — just let go of the claim.
+            await self.repo.release_reconcile_claim(battle_id, lease_token)
+            await self.db.commit()
+            return False
 
         for side in (Side.A, Side.B):
             if side.value not in finalised_sides:
@@ -480,6 +527,7 @@ class BattleRunner:
                     is_final=True,
                     truncated=True,
                     error=SILENT_FIGHTER_ERROR,
+                    enforce_deadline=False,
                 )
 
         judging = await self.repo.mark_judging(battle_id, lease_token)
@@ -493,14 +541,32 @@ class BattleRunner:
     # -- judging ------------------------------------------------------------
 
     async def run_judge_panel(
-        self, battle_id: str, api_key: str, base_url: str
+        self, battle_id: str, api_key: str, base_url: str, lease_token: str
     ) -> list[CollapsedVote]:
-        """Run three paired replicates and persist their collapsed votes.
+        """Run three paired replicates and persist the collapsed votes.
 
         Each raw run is its own claimed row, so a restart resumes rather than
         restarting: slots already completed are skipped by the unique key, and
         only the missing halves are re-called. This is what makes
         "reconciliation after restart produces the same state" true.
+
+        Two things this method does NOT do naively:
+
+        * It RENEWS the battle lease after every completed half. Six judge calls
+          at up to four attempts of 60s each can outrun the 300s battle lease, and
+          a lapsed lease makes finalize's CAS reject the verdict this panel
+          computed honestly — silently discarding a real result. If a renewal
+          fails we no longer own the battle, so the panel aborts and lets the new
+          owner run it.
+
+        * It persists a replicate's collapsed vote ONLY when both halves are
+          terminal — completed with a real vote, or with their own attempt budget
+          spent. A half that hit a transient transport throttle stays 'running'
+          with attempts left and is left for a later pass, because upsert_judgement
+          is ON CONFLICT DO NOTHING: collapsing a transient error to a frozen
+          'error' vote now would block the correct re-run from ever recording, and
+          settle would then complete the battle with no quorum. Only an exhausted
+          budget produces the terminal error vote that lets the panel conclude.
 
         Judging is idempotent at the SLOT level, not the call level — see the
         module docstring on billing.
@@ -534,10 +600,30 @@ class BattleRunner:
                         base_url=base_url,
                     )
                 )
+                renewed = await self.repo.renew_battle_lease(
+                    battle_id, lease_token, BATTLE_LEASE_SECONDS
+                )
+                await self.db.commit()
+                if not renewed:
+                    logger.warning(
+                        "battle {} judge panel aborted: lease lost mid-panel", battle_id
+                    )
+                    return collapsed
+
+            runs_by_order = {
+                str(r["presented_order"]): r
+                for r in await self.repo.list_judge_runs(battle_id)
+                if str(r["replicate_seed"]) == seed
+            }
+            if not all(
+                self._half_is_terminal(runs_by_order.get(order.value))
+                for order in PRESENTED_ORDERS
+            ):
+                # A half is still reclaimable — leave this replicate for a later
+                # pass rather than freezing a transient failure into an error vote.
+                continue
 
             vote = collapse_pair(halves[0], halves[1], seed)
-            collapsed.append(vote)
-
             # One collapsed vote per replicate — the unique key without
             # presented_order makes a second attempt a no-op rather than a
             # second vote.
@@ -553,8 +639,26 @@ class BattleRunner:
                 position_sensitive=vote.position_sensitive,
             )
             await self.db.commit()
+            collapsed.append(vote)
 
         return collapsed
+
+    @staticmethod
+    def _half_is_terminal(run: dict | None) -> bool:
+        """Can this replicate half produce no further result?
+
+        Terminal when the run completed (it has a real vote to collapse) or its
+        own attempt budget is spent (it will never be reclaimed, so its silence is
+        a definitive error). A run still pending/running with attempts left is
+        reclaimable — a transient throttle, not a verdict — and must not be
+        collapsed yet. A missing row is treated as terminal so the panel cannot
+        loop forever on a slot that no longer exists.
+        """
+        if run is None:
+            return True
+        if str(run["status"]) == JudgeRunStatus.COMPLETED.value:
+            return True
+        return int(run["attempt_count"]) >= JUDGE_RUN_MAX_ATTEMPTS
 
     async def _run_one_half(
         self,
@@ -668,6 +772,72 @@ class BattleRunner:
         return result
 
 
+async def _judge_and_settle(
+    session_factory,
+    gate: LLMGate,
+    battle_id: str,
+    token: str,
+    api_key: str,
+    base_url: str,
+    counts: dict[str, int],
+) -> None:
+    """Run the panel, then settle IFF every replicate reached a terminal vote.
+
+    Shared by the running phase (after close_deadline) and the judging resume
+    phase. settle fires only once all REPLICATE_COUNT collapsed votes exist: a
+    replicate still waiting on a reclaimable half persists nothing and leaves the
+    battle 'judging' for a later pass, rather than settling a partial panel into a
+    no-quorum verdict that would complete the battle unrated. run_judge_panel
+    already committed whatever it persisted, so the not-yet-complete branch simply
+    leaves the (renewed) lease in place for the next reclaim.
+    """
+    async with session_factory() as session:
+        runner = BattleRunner(session, gate)
+        try:
+            await runner.run_judge_panel(battle_id, api_key, base_url, token)
+            judgements = await runner.repo.list_judgements(battle_id)
+            if len(judgements) >= REPLICATE_COUNT:
+                if await runner.settle_battle(battle_id, token) is not None:
+                    counts["settled"] += 1
+        except Exception as exc:
+            logger.exception("judging failed for battle {}: {}", battle_id, exc)
+            await session.rollback()
+
+
+async def reap_once(session_factory) -> dict[str, int]:
+    """Route abandoned battles and stale reservations to terminal states.
+
+    mark_expired, mark_aborted and delete_expired_reservations each shipped with
+    zero callers, so a challenge nobody answered before its deadline, a pre-start
+    battle that burned its whole claim budget, and reservations left behind by any
+    path all lived forever. This is their one driver, run once per reconcile pass:
+
+    * expired  — challenge_pending/accepted/reserved past challenge_expires_at;
+    * aborted  — pre-'running' rows whose claim attempts are spent (the routing
+      claim_battles_for_reconcile's own docstring promises);
+    * reaped   — reservations whose wall clock passed.
+
+    Reservations are released in the same transaction as each terminal write, so a
+    reaped battle never leaves a fighter pinned. A row already terminal is skipped
+    by the CAS inside mark_expired/mark_aborted, which makes the reaper idempotent.
+    """
+    counts = {"expired": 0, "aborted": 0, "reservations_reaped": 0}
+    async with session_factory() as session:
+        repo = BattleRepository(session)
+        for battle_id in await repo.find_expired_battle_ids():
+            if await repo.mark_expired(battle_id) is not None:
+                await repo.release_reservations(battle_id)
+                counts["expired"] += 1
+        for battle_id in await repo.find_attempt_exhausted_battle_ids(POLL_MAX_ATTEMPTS):
+            aborted = await repo.mark_aborted(battle_id, "reconciler: claim attempts exhausted")
+            if aborted is not None:
+                await repo.release_reservations(battle_id)
+                counts["aborted"] += 1
+        counts["reservations_reaped"] = len(await repo.delete_expired_reservations())
+        await session.commit()
+    return counts
+
+
 async def reconcile_once(
     session_factory,
     gate: LLMGate,
@@ -737,22 +907,26 @@ async def reconcile_once(
         if await step(battle, "start", lambda r, b: r.start_queued(b, token)):
             counts["started"] += 1
 
-    # 4. running -> judging -> completed. The ONLY phase that spends money, so
-    #    it keeps claim_battles_for_reconcile's strict default attempt ceiling.
+    # 4. running -> judging. The ONLY phases that spend money (this and the
+    #    judging resume below), so both keep claim_battles_for_reconcile's strict
+    #    default attempt ceiling.
     for battle in await claim(BattleStatus.RUNNING, RUNNING_MAX_ATTEMPTS, BATTLE_LEASE_SECONDS):
         battle_id = str(battle["id"])
         if not await step(battle, "reconcile", lambda r, b: r.close_deadline(str(b["id"]), token)):
             continue
         counts["judged"] += 1
+        await _judge_and_settle(session_factory, gate, battle_id, token, api_key, base_url, counts)
 
-        async with session_factory() as session:
-            runner = BattleRunner(session, gate)
-            try:
-                await runner.run_judge_panel(battle_id, api_key, base_url)
-                if await runner.settle_battle(battle_id, token) is not None:
-                    counts["settled"] += 1
-            except Exception as exc:
-                logger.exception("judging failed for battle {}: {}", battle_id, exc)
-                await session.rollback()
+    # 5. judging -> completed. Resume battles stranded in judging by a crash
+    #    between mark_judging's commit and settle: run_judge_panel and
+    #    settle_battle are both idempotent (slot unique keys and the finalize
+    #    CAS), so re-running them completes the battle exactly once. Without this
+    #    phase such a battle sits in 'judging' forever — the running phase above
+    #    already transitioned it, so nothing would ever claim it again.
+    for battle in await claim(BattleStatus.JUDGING, RUNNING_MAX_ATTEMPTS, BATTLE_LEASE_SECONDS):
+        await _judge_and_settle(
+            session_factory, gate, str(battle["id"]), token, api_key, base_url, counts
+        )
 
+    counts.update(await reap_once(session_factory))
     return counts
