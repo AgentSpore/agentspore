@@ -43,7 +43,8 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.rating import RatingChange, apply_battle_result
-from app.repositories.battle_repo import BattleRepository
+from app.repositories.agent_event_repo import AgentEventRepository
+from app.repositories.battle_repo import BattleRepository, ReservationConflictError
 from app.schemas.battles import BattleStatus, PresentedOrder, Side, Vote, Winner
 from app.services.battle_judges import (
     JUDGE_KIND_LLM,
@@ -62,6 +63,8 @@ from app.services.battle_judges import (
     resolve_verdict,
     rubric_keys,
 )
+from app.services.battle_service import BattleService
+from app.services.connection_manager import dispatch_existing
 from app.services.llm_gate import LLMGate
 
 # Row-lease length for a battle claimed by the reconciler. Long enough to
@@ -78,6 +81,43 @@ JUDGE_RUN_LEASE_SECONDS = 180
 # Battles claimed per reconciler pass. A ceiling, not a target: a pass must
 # stay short, because the scheduler tick is the only thing bounding it.
 RECONCILE_BATCH = 20
+
+# Attempt ceiling for the CHEAP compare-and-set phases (reserved -> queued,
+# queued -> running). Deliberately far above claim_battles_for_reconcile's
+# default of 4.
+#
+# That default is sized for work that SPENDS money: a battle whose judge pass
+# keeps crashing must stop being retried. These two phases spend nothing — they
+# are one guarded UPDATE — and a reserved battle is polled once per tick while
+# it legitimately waits for two agents to ack. At a 30s tick, a ceiling of 4
+# would abandon a battle after two minutes of ordinary waiting and strand it in
+# 'reserved' forever. The real bound on waiting is the readiness lease
+# (ready_lease_expires_at), which release_expired_readiness enforces; the ceiling
+# here is only a crash-loop guard.
+POLL_MAX_ATTEMPTS = 500
+
+# The money phase keeps claim_battles_for_reconcile's strict default: a battle
+# whose judge pass keeps crashing must stop being retried.
+RUNNING_MAX_ATTEMPTS = 4
+
+# The cheap phases claim WITHOUT holding a lease, and that is deliberate.
+#
+# BATTLE_LEASE_SECONDS (300) is sized for the money phase: six judge calls
+# queued behind a 3-slot gate need the row held that long. Applying it to a poll
+# phase is actively wrong — it would make a reserved battle re-checkable only
+# once every five minutes, while the readiness lease it is waiting on is 60s. The
+# battle would be released for "not acking" without ever having been asked twice.
+#
+# Zero is safe because these phases do not need a lease for correctness. Decision
+# #1: the fence is the per-row compare-and-set, not the lease. arm_readiness,
+# admit_to_queue and start_if_still_eligible each re-prove every precondition in
+# one guarded statement and none of them reads lease_token. Two workers racing a
+# cheap CAS costs one wasted statement; exactly one still wins. The lease exists
+# to stop duplicate EXPENSIVE work, and there is none here.
+#
+# lease_attempt_count still increments, so POLL_MAX_ATTEMPTS remains the
+# crash-loop guard.
+POLL_LEASE_SECONDS = 0
 
 # The synthetic final submission a silent fighter receives at the deadline.
 # A battle that reached 'running' is owed a verdict — both fighters were provably
@@ -235,6 +275,175 @@ class BattleRunner:
         if is_tie:
             return Winner.TIE
         return None
+
+    # -- admission ----------------------------------------------------------
+
+    async def arm_accepted(self, battle: dict) -> bool:
+        """accepted -> reserved, then PUSH the ready-checks. False = not now.
+
+        Why the reconciler owns this and not the accept route. Accepting is a
+        human decision — fact 1 of the four this design keeps apart — and it must
+        not be able to fail for a reason that has nothing to do with consent.
+        Arming can fail: reserve_both raises when either fighter is already
+        reserved in another battle, which is ordinary and temporary. If accept
+        armed inline, an owner clicking "accept" while their agent finished
+        another battle would get a 409 for a consent that was perfectly valid,
+        and the battle would need a second click that the UI never asks for.
+        Here it simply waits and the next pass arms it.
+
+        The same split keeps accept off the transport path: dispatch happens
+        AFTER the commit, so a slow or dead WebSocket cannot make accept hang or
+        roll back. The rows are durable before anything is sent — a dispatch
+        failure costs latency, not the event, because the heartbeat drain still
+        carries it.
+        """
+        battle_id = str(battle["id"])
+        service = BattleService(self.db)
+
+        try:
+            armed = await service.arm_readiness(battle_id)
+        except ReservationConflictError:
+            # A fighter is busy in another battle. Not an error — try next pass.
+            await self.db.rollback()
+            return False
+        if armed is None:
+            await self.db.rollback()
+            return False
+
+        await self.db.commit()
+
+        # Outbox discipline: persisted first, sent second, and via
+        # dispatch_existing so the armed ids are the ones that travel. Readiness
+        # is bound to those exact ids, so a duplicate row would be un-ackable.
+        #
+        # A transport failure is swallowed DELIBERATELY, and this is the one
+        # place that is correct: the arming is already committed, so raising
+        # here would report failure for work that durably succeeded — the caller
+        # would log "arm failed" and not count a battle that is, in fact,
+        # reserved. The events are durable rows; the heartbeat drain delivers
+        # them regardless, and an agent that acks via heartbeat inside the lease
+        # is perfectly ready. Latency is the only cost.
+        try:
+            await service.dispatch_ready_checks(armed)
+        except Exception as exc:
+            logger.warning(
+                "battle {} armed, but ready-check dispatch failed ({}); "
+                "heartbeat drain will carry them",
+                battle_id,
+                exc,
+            )
+        logger.info("battle {} reserved: ready-checks dispatched", battle_id)
+        return True
+
+    async def admit_reserved(self, battle: dict) -> bool:
+        """reserved -> queued once both ready-ACKs are in. False = not yet.
+
+        Delegates the decision to BattleService.try_queue -> admit_to_queue,
+        which re-proves consent, eligibility, ownership, both live reservations
+        and both exact current-generation ACK ids in ONE statement. Nothing is
+        re-checked here, because a second opinion computed in Python would be a
+        different, weaker predicate evaluated at a different instant.
+
+        False is the ordinary case, not an error: agents have not acked yet. The
+        battle stays claimable and the next pass asks again, until the readiness
+        lease lapses and the battle is released back to 'accepted' — freeing both
+        fighters rather than pinning them to a battle nobody is answering.
+        """
+        battle_id = str(battle["id"])
+        service = BattleService(self.db)
+
+        queued = await service.try_queue(battle_id, battle["readiness_generation"])
+        if queued is not None:
+            await self.db.commit()
+            logger.info("battle {} queued: both fighters acked", battle_id)
+            return True
+
+        # Not admissible. If the lease has lapsed, stop waiting and let both
+        # fighters go — in the SAME transaction as the state change.
+        released = await service.release_expired_readiness(battle_id)
+        await self.db.commit()
+        if released is not None:
+            logger.info("battle {} readiness lapsed: reservations released", battle_id)
+        return False
+
+    async def start_queued(self, battle: dict, lease_token: str) -> bool:
+        """queued -> running, with BOTH battle_turn rows, in one transaction.
+
+        This is the moment the money starts being spent, and the two failure
+        windows it closes are the reason the outbox exists:
+
+        * commit 'running' first, crash before the events -> a battle runs with
+          no task and both fighters are scored on silence they never saw;
+        * send the events first, crash before 'running' -> fighters burn their
+          owners' budget on a battle that never started.
+
+        So the rows are INSERTed in the transaction that flips the status, and
+        transport happens after the commit. dispatch_existing, never
+        deliver_event: the rows are already persisted, and deliver_event would
+        insert a SECOND row for a durable type — a fighter acking the duplicate
+        would ack an event no battle is bound to.
+
+        The turn TTL is the battle's own time limit, so the event expires exactly
+        when deadline_at does, by construction: both derive from NOW() and
+        time_limit_seconds_snapshot inside this one statement. Never the 32400s
+        default — a turn that stays live for nine hours outlives its battle.
+        """
+        battle_id = str(battle["id"])
+        started = await self.repo.start_if_still_eligible(
+            battle_id=battle_id,
+            lease_token=lease_token,
+            lease_seconds=BATTLE_LEASE_SECONDS,
+        )
+        if started is None:
+            # Lost the CAS, or a fighter stopped being eligible between queueing
+            # and starting — an owner change or a reaped reservation. Not an
+            # error: the battle simply does not start.
+            await self.db.rollback()
+            return False
+
+        events = AgentEventRepository(self.db)
+        ttl = int(started["time_limit_seconds_snapshot"])
+        dispatch: list[tuple[str, str]] = []
+        for side, agent_key in (("a", "agent_a_id"), ("b", "agent_b_id")):
+            agent_id = str(started[agent_key])
+            event_id = await events.create(
+                target_agent_id=agent_id,
+                event_type="battle_turn",
+                payload={
+                    "type": "battle_turn",
+                    "battle_id": battle_id,
+                    "side": side,
+                    "prompt": started["task_prompt_snapshot"],
+                    "rubric": started["task_rubric_snapshot"],
+                    "deadline_at": str(started["deadline_at"]),
+                    "time_limit_seconds": ttl,
+                },
+                ttl_seconds=ttl,
+            )
+            dispatch.append((agent_id, event_id))
+
+        await self.db.commit()
+
+        # After the commit, and best-effort by design: the rows are durable, so
+        # a transport failure costs latency, not the task — the heartbeat drain
+        # still carries it. Swallowed for the same reason as in arm_accepted:
+        # the battle is ALREADY running and its deadline is already ticking, so
+        # raising here would report a failure for a start that really happened
+        # and leave the caller's count disagreeing with the database.
+        for agent_id, event_id in dispatch:
+            try:
+                await dispatch_existing(agent_id, event_id)
+            except Exception as exc:
+                logger.warning(
+                    "battle {} started, but turn dispatch to {} failed ({}); "
+                    "heartbeat drain will carry it",
+                    battle_id,
+                    agent_id,
+                    exc,
+                )
+
+        logger.info("battle {} running until {}", battle_id, started["deadline_at"])
+        return True
 
     # -- deadline reconciliation --------------------------------------------
 
@@ -465,37 +674,76 @@ async def reconcile_once(
     api_key: str,
     base_url: str,
 ) -> dict[str, int]:
-    """One short reconciler pass. This is what BattleRunTask.run_once calls.
+    """One short reconciler pass over the WHOLE chain. BattleRunTask calls this.
 
-    Deliberately a function of claimed ROWS, not of a global lock: it claims a
-    bounded batch, does one step each, and returns. Nothing here holds a battle
-    across passes, so losing the scheduler lease mid-pass costs at most the
-    in-flight steps — which the row tokens then reject.
+    Drives accepted -> reserved -> queued -> running -> judging -> completed. It
+    is the only driver: every one of those transitions was written, tested and
+    left with no caller, so a battle could be created, accepted and acked and
+    then sit forever. Details without a shaft.
+
+    Deliberately a function of claimed ROWS, not of a global lock: each phase
+    claims a bounded batch, takes ONE step per battle, and returns. Nothing here
+    holds a battle across passes, so losing the scheduler lease mid-pass costs at
+    most the in-flight steps — which the row tokens then reject.
+
+    Phases run oldest-first and independently, so a battle stuck waiting for an
+    ACK cannot delay one that is ready to start.
     """
-    counts = {"started": 0, "judged": 0, "settled": 0}
+    counts = {"armed": 0, "queued": 0, "started": 0, "judged": 0, "settled": 0}
     token = str(uuid.uuid4())
 
-    async with session_factory() as session:
-        repo = BattleRepository(session)
-        due = await repo.claim_battles_for_reconcile(
-            status=BattleStatus.RUNNING,
-            lease_token=token,
-            lease_seconds=BATTLE_LEASE_SECONDS,
-            limit=RECONCILE_BATCH,
-        )
-        await session.commit()
+    async def claim(status: BattleStatus, max_attempts: int, lease_seconds: int) -> list[dict]:
+        """Claim a bounded batch of one status. Oldest first, skipping held rows.
 
-    for battle in due:
-        battle_id = str(battle["id"])
+        FOR UPDATE SKIP LOCKED inside claim_battles_for_reconcile is what stops
+        one slow battle from blocking the rest: a row another worker holds is
+        stepped over, not waited on. The ordering (queued_at NULLS FIRST, then
+        challenged_at) is the anti-starvation rule and is what V66:246 indexes.
+        """
+        async with session_factory() as session:
+            claimed = await BattleRepository(session).claim_battles_for_reconcile(
+                status=status,
+                lease_token=token,
+                lease_seconds=lease_seconds,
+                limit=RECONCILE_BATCH,
+                max_attempts=max_attempts,
+            )
+            await session.commit()
+            return claimed
+
+    async def step(battle: dict, what: str, fn) -> bool:
+        """Run one battle's step in its own session; never let it kill the pass."""
         async with session_factory() as session:
             runner = BattleRunner(session, gate)
             try:
-                if await runner.close_deadline(battle_id, token):
-                    counts["judged"] += 1
+                return await fn(runner, battle)
             except Exception as exc:
-                logger.exception("reconcile failed for battle {}: {}", battle_id, exc)
+                logger.exception("{} failed for battle {}: {}", what, battle["id"], exc)
                 await session.rollback()
-                continue
+                return False
+
+    # 1. accepted -> reserved, and push the ready-checks. Cheap CAS + transport.
+    for battle in await claim(BattleStatus.ACCEPTED, POLL_MAX_ATTEMPTS, POLL_LEASE_SECONDS):
+        if await step(battle, "arm", lambda r, b: r.arm_accepted(b)):
+            counts["armed"] += 1
+
+    # 2. reserved -> queued, once both fighters have acked. Cheap CAS, polled.
+    for battle in await claim(BattleStatus.RESERVED, POLL_MAX_ATTEMPTS, POLL_LEASE_SECONDS):
+        if await step(battle, "admit", lambda r, b: r.admit_reserved(b)):
+            counts["queued"] += 1
+
+    # 3. queued -> running, with both battle_turn rows. Cheap CAS + transport.
+    for battle in await claim(BattleStatus.QUEUED, POLL_MAX_ATTEMPTS, POLL_LEASE_SECONDS):
+        if await step(battle, "start", lambda r, b: r.start_queued(b, token)):
+            counts["started"] += 1
+
+    # 4. running -> judging -> completed. The ONLY phase that spends money, so
+    #    it keeps claim_battles_for_reconcile's strict default attempt ceiling.
+    for battle in await claim(BattleStatus.RUNNING, RUNNING_MAX_ATTEMPTS, BATTLE_LEASE_SECONDS):
+        battle_id = str(battle["id"])
+        if not await step(battle, "reconcile", lambda r, b: r.close_deadline(str(b["id"]), token)):
+            continue
+        counts["judged"] += 1
 
         async with session_factory() as session:
             runner = BattleRunner(session, gate)

@@ -1143,6 +1143,16 @@ class BattleRepository:
         are reaped by delete_expired_reservations() with nothing consulting the
         battle: without this predicate a battle starts holding neither fighter.
 
+        ``lease_attempt_count`` RESETS to 1 here, rather than incrementing: this
+        is the first attempt of a NEW kind of work. The column is one counter
+        shared by every phase, and the cheap admission phases poll a battle once
+        per tick while it waits for two agents to ack. Incrementing here would
+        carry that polling total into the judging phase, whose ceiling is
+        deliberately tiny (4) because judging spends money — so a battle that
+        waited a few ticks to be acked would arrive at 'running' with its budget
+        already spent and could never be judged at all. Found by the chain test:
+        the battle reached 'running' and then sat there forever.
+
         :meth:`_mark_running` remains the unguarded primitive for the transition
         tests; it must not be called by application code.
         """
@@ -1156,7 +1166,7 @@ class BattleRepository:
                         + make_interval(secs => time_limit_seconds_snapshot),
                     lease_token = CAST(:lease_token AS UUID),
                     lease_expires_at = NOW() + make_interval(secs => :lease_seconds),
-                    lease_attempt_count = lease_attempt_count + 1
+                    lease_attempt_count = 1
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'queued'
                   AND {_BOTH_FIGHTERS_ELIGIBLE_SQL}
