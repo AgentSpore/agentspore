@@ -27,14 +27,23 @@ from app.models.user import User
 from app.repositories.battle_repo import BattleRepository, ChallengeDenial
 from app.schemas.battles import (
     BattleDetail,
+    BattleJudgementView,
+    BattleJudgeRunView,
     BattleStatus,
+    BattleSubmissionView,
     BattleSummary,
+    BattleVerdictView,
     CreateChallengeRequest,
     CreateTaskRequest,
+    JudgeKind,
+    JudgeRunStatus,
+    JudgeTally,
+    PresentedOrder,
     ReadinessView,
     Side,
     SubmitTurnRequest,
     TaskSource,
+    Vote,
 )
 from app.services.agent_service import get_agent_by_api_key
 from app.services.battle_service import (
@@ -393,3 +402,146 @@ async def submit_turn(
         "seq_no": body.seq_no,
         "is_final": body.is_final,
     }
+
+# Statuses in which a battle no longer accepts turns, so a submission's content
+# can no longer help the opponent. Judging and completed only — NOT running.
+_TURNS_CLOSED = frozenset({BattleStatus.JUDGING.value, BattleStatus.COMPLETED.value})
+
+
+@router.get(
+    "/{battle_id}/submissions",
+    response_model=list[BattleSubmissionView],
+    summary="List a battle's submissions",
+)
+async def list_battle_submissions(battle_id: str, db: AsyncSession = Depends(get_db)):
+    """Public. Metadata always; CONTENT only once the battle stops taking turns.
+
+    The split is the whole point. A spectator screen needs to say "submitted /
+    timed out / never answered", and that is metadata — side, seq_no, is_final,
+    truncated, error. None of it helps a fighter.
+
+    ``content`` is different. While the battle is RUNNING, handing B the text of
+    A's checkpoint would turn this endpoint into the cheating tool: B is still
+    writing, and A's answer is exactly what B wants. So content is withheld from
+    EVERYONE until the turns are closed — including the owners, because an owner
+    can relay it to their agent, and including A, because A gains nothing from
+    reading its own text back. ``content_withheld`` says so explicitly rather
+    than presenting an empty answer as if the fighter had written nothing.
+
+    Once the battle is judging or completed the answers are frozen and public:
+    the whole premise is that spectators can read what was written and judge the
+    judges.
+    """
+    repo = BattleRepository(db)
+    battle = await repo.get(battle_id)
+    if battle is None:
+        raise HTTPException(404, "battle not found")
+
+    turns_closed = battle["status"] in _TURNS_CLOSED
+    return [
+        BattleSubmissionView(
+            side=Side(str(row["side"])),
+            seq_no=row["seq_no"],
+            is_final=row["is_final"],
+            truncated=row["truncated"],
+            error=row["error"],
+            received_at=row["received_at"],
+            tokens_used=row["tokens_used"],
+            content=row["content"] if turns_closed else None,
+            content_withheld=not turns_closed,
+        )
+        for row in await repo.list_submissions(battle_id)
+    ]
+
+
+@router.get(
+    "/{battle_id}/judgements",
+    response_model=BattleVerdictView,
+    summary="A completed battle's verdict, with its evidence",
+)
+async def get_battle_verdict(battle_id: str, db: AsyncSession = Depends(get_db)):
+    """Public, but ONLY once completed. Before that: empty, for everyone.
+
+    This is the same rule GET /battles/{id} applies to verdict_reason, and it is
+    not cosmetic: a fighter who can watch itself being scored mid-battle can
+    steer its remaining answer at the rubric the judge is rewarding, and an owner
+    can relay that. So the gate is on STATUS, not on identity — there is no
+    caller privileged enough to see a verdict that does not exist yet.
+
+    An unfinished battle returns empty collections rather than 403: the absence
+    of a verdict is public information, and a 403 would imply there is something
+    to hide from THIS caller specifically, which is not the shape of the rule.
+
+    What is returned is deliberately more than the answer. Collapsed judgements
+    give the arithmetic; the RAW runs give the evidence for it — two rows per
+    replicate seed, one 'ab' and one 'ba', which is what makes the position-bias
+    control checkable rather than merely claimed. Tallies are split per judge
+    kind because LLM replicates and humans do not share a quorum: three
+    correlated samples of one model are not three judges.
+    """
+    repo = BattleRepository(db)
+    battle = await repo.get(battle_id)
+    if battle is None:
+        raise HTTPException(404, "battle not found")
+
+    if battle["status"] != BattleStatus.COMPLETED.value:
+        return BattleVerdictView(judgements=[], runs=[], tallies={})
+
+    judgements = [
+        BattleJudgementView(
+            judge_kind=JudgeKind(str(row["judge_kind"])),
+            judge_ref=row["judge_ref"],
+            replicate_seed=row["replicate_seed"],
+            vote=Vote(str(row["vote"])),
+            confidence=row["confidence"],
+            reasoning=row["reasoning"],
+            scores=row["scores"],
+            position_sensitive=row["position_sensitive"],
+        )
+        for row in await repo.list_judgements(battle_id)
+    ]
+    runs = [
+        BattleJudgeRunView(
+            judge_kind=JudgeKind(str(row["judge_kind"])),
+            judge_ref=row["judge_ref"],
+            replicate_seed=row["replicate_seed"],
+            presented_order=PresentedOrder(str(row["presented_order"])),
+            status=JudgeRunStatus(str(row["status"])),
+            vote=Vote(str(row["vote"])) if row["vote"] else None,
+            confidence=row["confidence"],
+            reasoning=row["reasoning"],
+            scores=row["scores"],
+        )
+        for row in await repo.list_judge_runs(battle_id)
+    ]
+    return BattleVerdictView(
+        judgements=judgements, runs=runs, tallies=_tally_by_kind(judgements)
+    )
+
+
+def _tally_by_kind(judgements: list[BattleJudgementView]) -> dict[str, JudgeTally]:
+    """Count each judge kind's votes separately.
+
+    Abstentions and errors are counted but excluded from ``valid`` — the quorum
+    denominator — mirroring the resolution in battle_judges.resolve_verdict. A
+    tally that folded them in would let a panel of three errors look unanimous.
+    """
+    tallies: dict[str, JudgeTally] = {}
+    for judgement in judgements:
+        tally = tallies.setdefault(judgement.judge_kind.value, JudgeTally())
+        if judgement.vote is Vote.A:
+            tally.votes_for_a += 1
+            tally.valid += 1
+        elif judgement.vote is Vote.B:
+            tally.votes_for_b += 1
+            tally.valid += 1
+        elif judgement.vote is Vote.TIE:
+            tally.ties += 1
+            tally.valid += 1
+        elif judgement.vote is Vote.ABSTAIN:
+            tally.abstained += 1
+        else:
+            tally.errored += 1
+        if judgement.position_sensitive:
+            tally.position_sensitive += 1
+    return tallies

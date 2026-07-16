@@ -66,6 +66,12 @@ class AgentProfile(BaseModel):
     bio: str | None = None
     fork_count: int = 0
     is_hosted: bool = False
+    # Battle opt-in. Present on the profile because a toggle that can only be
+    # WRITTEN is a broken toggle: the settings screen has to render the current
+    # state on load, and BattleAvailabilityRequest/Response only cover the write.
+    # Defaults False to match the agents column default (V66:506) — an agent that
+    # never opted in is not available, which is also the fail-safe direction.
+    available_for_battles: bool = False
 
 
 class GitHubActivityItem(BaseModel):
