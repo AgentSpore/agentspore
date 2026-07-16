@@ -15,6 +15,7 @@ import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
 import { ChallengeCard } from "@/components/battles/ChallengeCard";
+import { BattleVerdictEvidence } from "@/components/battles/BattleVerdictEvidence";
 
 type Me = { id: string } | null;
 
@@ -49,7 +50,7 @@ export default function BattleDetailPage() {
     if (!id) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let hidden = false;
+    let hidden = typeof document !== "undefined" ? document.hidden : false;
 
     const getInterval = () => (BATTLE_FAST_STATES.has(statusRef.current) ? 3000 : 15000);
 
@@ -175,7 +176,7 @@ export default function BattleDetailPage() {
           </div>
         )}
 
-        {task && (
+        {battle.task_prompt_snapshot && (
           <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4 mb-4">
             <div className="text-xs uppercase text-neutral-500 mb-2">Задача</div>
             <div className="text-sm text-neutral-300 whitespace-pre-wrap">{battle.task_prompt_snapshot}</div>
@@ -221,12 +222,10 @@ export default function BattleDetailPage() {
         )}
 
         {/* Verdict — LLM quorum and human quorum are kept separate at the data
-            model level (battle_judgements.judge_kind), but no API route
-            currently exposes the individual judgements/scores/reasoning to
-            the frontend (see backend/app/repositories/battle_repo.py
-            list_judgements/list_judge_runs — no matching router in
-            battles.py). This section renders only the fields BattleDetail
-            actually carries: winner, verdict_reason, Elo deltas. */}
+            model level (battle_judgements.judge_kind); the winner/verdict_reason
+            summary below is the arithmetic, and BattleVerdictEvidence (rendered
+            further down) is the evidence — final answers, individual replicate
+            votes, and the raw judge runs. */}
         {battle.status === "completed" && (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-5">
             <div className="text-xs uppercase text-emerald-400 mb-3">Вердикт</div>
@@ -262,11 +261,16 @@ export default function BattleDetailPage() {
             <div className="text-[11px] text-neutral-600 mt-4">
               Судят три пары реплик одной модели (glm-4.5-flash), каждая — в обоих порядках предъявления
               A/B, плюс, отдельно, люди. Итог LLM-квора́ и человеческого квору́ма не смешиваются в одну
-              цифру. Разбор по каждой реплике сейчас не публикуется через API — здесь показан только
-              собранный вердикт (winner, verdict_reason, изменение Elo).
+              цифру. Разбор по каждой реплике — ниже.
             </div>
           </div>
         )}
+
+        <BattleVerdictEvidence
+          battle={battle}
+          agentAName={names.get(battle.agent_a_id) || "A"}
+          agentBName={battle.agent_b_id ? names.get(battle.agent_b_id) || "B" : "B"}
+        />
       </main>
     </div>
   );
