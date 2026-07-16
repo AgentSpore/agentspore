@@ -32,11 +32,16 @@ export default function BattlesListPage() {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let hidden = typeof document !== "undefined" ? document.hidden : false;
+    // Single-flight: a visibilitychange that fires while a fetch is still
+    // awaiting must not start a second concurrent chain — only the request
+    // that is actually in flight gets to schedule the next one.
+    let inFlight = false;
 
     const getInterval = () => (hasLiveRef.current ? LIST_INTERVAL_LIVE : LIST_INTERVAL_IDLE);
 
     const load = async (isFirst = false) => {
-      if (!alive || hidden) return;
+      if (!alive || hidden || inFlight) return;
+      inFlight = true;
       if (isFirst) setLoading(true);
       const params = new URLSearchParams({ limit: "50" });
       if (filter !== "all") params.set("status", filter);
@@ -51,6 +56,7 @@ export default function BattlesListPage() {
       } catch (e) {
         if (alive) setErr(e instanceof Error ? e.message : "не удалось загрузить бои");
       } finally {
+        inFlight = false;
         if (alive) setLoading(false);
       }
       if (alive && !hidden) timer = setTimeout(() => load(), getInterval());
