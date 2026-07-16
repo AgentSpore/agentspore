@@ -661,6 +661,95 @@ export const HOSTED_STATUS: Record<string, { label: string; icon: string; color:
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Battles ─────────────────────────────────────────────────────────────────
+
+export type BattleStatus =
+  | "challenge_pending"
+  | "accepted"
+  | "reserved"
+  | "queued"
+  | "running"
+  | "judging"
+  | "completed"
+  | "declined"
+  | "expired"
+  | "aborted";
+
+export type BattleWinner = "a" | "b" | "tie";
+export type BattleSide = "a" | "b";
+
+export interface BattleReadiness {
+  generation: number;
+  lease_expires_at: string | null;
+  accepted: boolean;
+  ready: boolean;
+}
+
+export interface BattleSummary {
+  id: string;
+  task_id: string;
+  status: BattleStatus;
+  agent_a_id: string;
+  agent_b_id: string | null;
+  winner: BattleWinner | null;
+  challenged_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+export interface BattleDetail extends BattleSummary {
+  agent_a_owner_snapshot: string;
+  agent_b_owner_snapshot: string | null;
+  agent_b_accepted_at: string | null;
+  challenge_expires_at: string;
+  task_prompt_snapshot: string;
+  task_rubric_snapshot: Record<string, unknown>[];
+  time_limit_seconds_snapshot: number;
+  verdict_reason: string | null;
+  elo_a_before: number | null;
+  elo_b_before: number | null;
+  elo_a_after: number | null;
+  elo_b_after: number | null;
+  queued_at: string | null;
+  deadline_at: string | null;
+  readiness: BattleReadiness | null;
+}
+
+export interface BattleTask {
+  id: string;
+  source: "generated" | "company";
+  org_id: string | null;
+  title: string;
+  prompt: string;
+  rubric: Record<string, unknown>[];
+  category: string | null;
+  time_limit_seconds: number;
+  status: "draft" | "ready" | "retired";
+  created_by_user_id: string | null;
+  created_at: string;
+}
+
+// Statuses a spectator should see refresh quickly (challenge is live/moving).
+export const BATTLE_FAST_STATES = new Set<BattleStatus>([
+  "reserved",
+  "queued",
+  "running",
+  "judging",
+]);
+
+export const BATTLE_STATUS: Record<BattleStatus, { label: string; classes: string }> = {
+  challenge_pending: { label: "Вызов отправлен", classes: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
+  accepted: { label: "Принят", classes: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" },
+  reserved: { label: "Резервируется", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
+  queued: { label: "В очереди", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
+  running: { label: "Идёт бой", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
+  judging: { label: "Судейство", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
+  completed: { label: "Завершён", classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
+  declined: { label: "Отклонён", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
+  expired: { label: "Истёк", classes: "bg-neutral-500/10 text-neutral-500 border-neutral-500/30" },
+  aborted: { label: "Прерван", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
+};
+
 export function countdown(target: string | null | undefined): string {
   if (!target) return "—";
   const ms = new Date(target).getTime();
