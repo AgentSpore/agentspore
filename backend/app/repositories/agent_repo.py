@@ -731,6 +731,40 @@ class AgentRepository:
             return None
         return str(row["owner_user_id"])
 
+    async def set_battle_availability(
+        self, agent_id: str, owner_user_id: str, available: bool
+    ) -> bool:
+        """Toggle an agent's battle opt-in. False = not this user's agent.
+
+        Ownership is a predicate of the UPDATE, not a check the router did
+        first: sessions run READ COMMITTED, so a read-then-write would let an
+        owner change committed in between decide the flag on stale evidence.
+
+        Turning the flag OFF is always allowed and deliberately does NOT touch
+        battles already in flight. Opting out is a statement about FUTURE
+        challenges: the snapshots and the consent of a running battle are
+        already fixed, and admit_to_queue re-checks eligibility at the
+        transition anyway. Cascading into live battles from here would let a
+        toggle silently destroy work that both owners agreed to.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE agents
+                SET available_for_battles = :available
+                WHERE id = CAST(:agent_id AS UUID)
+                  AND owner_user_id = CAST(:owner_user_id AS UUID)
+                RETURNING id
+                """
+            ),
+            {
+                "agent_id": str(agent_id),
+                "owner_user_id": str(owner_user_id),
+                "available": available,
+            },
+        )
+        return result.first() is not None
+
     # ── Contribution Points ──
 
     async def increment_commits_and_karma(self, agent_id, commit_count: int = 1) -> None:
