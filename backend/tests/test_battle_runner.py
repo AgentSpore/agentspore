@@ -39,10 +39,22 @@ from testcontainers.postgres import PostgresContainer
 
 from app.core.rating import DEFAULT_ELO, K_FACTOR
 from app.repositories.agent_event_repo import AgentEventRepository
-from app.repositories.battle_repo import BattleRepository
+from app.repositories.battle_repo import BattleRepository, ReservationConflictError
 from app.schemas.battles import Side, TaskSource, Vote
-from app.services.battle_judges import JUDGE_KIND_LLM, JUDGE_MODEL, replicate_seed
-from app.services.battle_runner import BattleRunner, reconcile_once
+from app.services.battle_judges import (
+    JUDGE_KIND_LLM,
+    JUDGE_MODEL,
+    JudgeRunResult,
+    JudgeTransportError,
+    replicate_seed,
+)
+from app.services.battle_runner import (
+    JUDGE_RUN_MAX_ATTEMPTS,
+    POLL_MAX_ATTEMPTS,
+    BattleRunner,
+    reap_once,
+    reconcile_once,
+)
 from app.services.connection_manager import DeliveryResult
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
@@ -839,3 +851,577 @@ async def _turn_events(session_maker, agents: tuple[str, str]) -> list[dict]:
             {"a": agents[0], "b": agents[1]},
         )
         return [dict(r) for r in rows.mappings()]
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regression suites (F1–F7). Each asserts a rejection/behaviour that
+# a revert of the fix would flip, so the test dies with the fix.
+# ---------------------------------------------------------------------------
+
+
+async def _battle_running(session, task_id: str) -> tuple[str, str, str, str]:
+    """Drive a battle to 'running' via the real machine. Returns ids + token.
+
+    Stops at 'running' (not 'judging'), holding ``token`` as its row lease — the
+    shape a reconciler claim produces, which close_deadline's release path needs.
+    deadline_at is NOW()+600, i.e. genuinely in the future.
+    """
+    repo = BattleRepository(session)
+    events = AgentEventRepository(session)
+    owner_a, owner_b = await _new_owner(session), await _new_owner(session)
+    agent_a, agent_b = await _new_agent(session), await _new_agent(session)
+    battle_id = await repo._create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_a,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_b,
+    )
+    await repo._mark_accepted(battle_id)
+    await repo.reserve_both(battle_id, agent_a, agent_b, 600)
+    ev_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    ev_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    row = await repo.arm_readiness(battle_id, ev_a, ev_b, 60)
+    await repo._mark_queued(battle_id, row["readiness_generation"])
+    token = str(uuid.uuid4())
+    await repo._mark_running(battle_id, token, 600)
+    await session.commit()
+    return battle_id, agent_a, agent_b, token
+
+
+async def _build_queued_battle(
+    session, task_id: str, reserve_ttl: int = 90
+) -> tuple[str, str, str]:
+    """Drive to 'queued' with ELIGIBLE, reserved fighters. Returns ids.
+
+    Fighters are opted in and owned so start_if_still_eligible's re-check passes.
+    The reservation ttl is short (90s, the real RESERVATION_SECONDS) so that a
+    started battle whose reservations were NOT extended would leave a hold that
+    lapses before its deadline — which is exactly what F5 fixes.
+    """
+    repo = BattleRepository(session)
+    events = AgentEventRepository(session)
+    owner_a, owner_b = await _new_owner(session), await _new_owner(session)
+    agent_a, agent_b = await _new_agent(session), await _new_agent(session)
+    for agent, owner in ((agent_a, owner_a), (agent_b, owner_b)):
+        await session.execute(
+            text(
+                "UPDATE agents SET available_for_battles = TRUE, is_active = TRUE, "
+                "owner_user_id = CAST(:o AS UUID) WHERE id = CAST(:a AS UUID)"
+            ),
+            {"o": owner, "a": agent},
+        )
+    battle_id = await repo._create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_a,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_b,
+    )
+    await repo._mark_accepted(battle_id)
+    await repo.reserve_both(battle_id, agent_a, agent_b, reserve_ttl)
+    ev_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    ev_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    row = await repo.arm_readiness(battle_id, ev_a, ev_b, 60)
+    await repo._mark_queued(battle_id, row["readiness_generation"])
+    await session.commit()
+    return battle_id, agent_a, agent_b
+
+
+async def _fake_half(**kwargs) -> JudgeRunResult:
+    """A stand-in for _run_one_half that answers without any HTTP call."""
+    return JudgeRunResult(presented_order=kwargs["order"], vote=Vote.A, confidence=0.9)
+
+
+class TestDeadlineGate:
+    """F1: a running battle is closed only when it is actually finished."""
+
+    async def test_running_battle_before_deadline_is_not_closed_early(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, token = await _battle_running(db_session, task_id)
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            assert await runner.close_deadline(battle_id, token) is False
+
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            battle = await repo.get(battle_id)
+            submissions = await repo.list_submissions(battle_id)
+
+        # The battle keeps running, NOTHING synthetic was written, and the claim
+        # was released (with its attempt undone) rather than burned.
+        assert battle["status"] == "running"
+        assert submissions == []
+        assert battle["lease_token"] is None
+        assert battle["lease_attempt_count"] == 0
+
+    async def test_running_battle_past_deadline_closes_with_two_silent_finals(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, token = await _battle_running(db_session, task_id)
+
+        # Age the whole timestamp chain and re-arm the lease (a fresh claim).
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET challenged_at = NOW() - INTERVAL '30 minutes', "
+                    "queued_at = NOW() - INTERVAL '20 minutes', "
+                    "started_at = NOW() - INTERVAL '10 minutes', "
+                    "deadline_at = NOW() - INTERVAL '1 second', "
+                    "lease_token = CAST(:t AS UUID), "
+                    "lease_expires_at = NOW() + INTERVAL '5 minutes' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"t": token, "b": battle_id},
+            )
+            await session.commit()
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            assert await runner.close_deadline(battle_id, token) is True
+
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            battle = await repo.get(battle_id)
+            finals = [s for s in await repo.list_submissions(battle_id) if s["is_final"]]
+
+        assert battle["status"] == "judging"
+        assert len(finals) == 2
+        assert all(s["truncated"] for s in finals)
+
+
+class TestJudgingResume:
+    """F2: a battle stranded in 'judging' by a crash is completed by reconcile."""
+
+    async def test_reconcile_completes_a_battle_stranded_in_judging(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, _ = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.B]
+        )
+        # Simulate the crash: the lease has lapsed, the votes are all recorded,
+        # and nothing has settled the battle.
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_expires_at = NOW() - INTERVAL '1 second' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None,
+            api_key="unused", base_url="http://unused",
+        )
+        with _no_transport(), patch(
+            "app.services.battle_runner.BattleRunner.run_judge_panel",
+            AsyncMock(return_value=[]),
+        ):
+            counts = await drive()
+
+        assert counts["settled"] >= 1, counts
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        # Without the judging-resume phase this stays 'judging' forever.
+        assert battle["status"] == "completed"
+        assert battle["winner"] == "a"
+
+
+class TestJudgePanelLeaseRenewal:
+    """F3: run_judge_panel renews the battle lease and aborts if it is lost."""
+
+    async def test_panel_renews_the_lease_after_every_half(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+        renew_spy = AsyncMock(return_value=True)
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch.object(runner, "_run_one_half", side_effect=_fake_half), patch.object(
+                runner.repo, "renew_battle_lease", renew_spy
+            ):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        # Three replicates x two halves = six renewals.
+        assert renew_spy.await_count == 6
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == 3
+
+    async def test_panel_aborts_when_a_renewal_reports_the_lease_lost(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch.object(runner, "_run_one_half", side_effect=_fake_half), patch.object(
+                runner.repo, "renew_battle_lease", AsyncMock(return_value=False)
+            ):
+                result = await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        # Aborted after the first half, before any vote was persisted.
+        assert result == []
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert judgements == []
+
+
+class TestTransientJudgeErrorNotFrozen:
+    """F4: a transient transport error is not frozen as an error vote."""
+
+    async def test_a_transient_error_leaves_the_replicate_reclaimable(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.call_judge_model",
+                AsyncMock(side_effect=JudgeTransportError("throttled 1302")),
+            ):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            judgements = await repo.list_judgements(battle_id)
+            runs = await repo.list_judge_runs(battle_id)
+
+        # No collapsed vote was written — the old ON CONFLICT DO NOTHING would have
+        # frozen an 'error' here and blocked every correct re-run.
+        assert judgements == []
+        # The raw runs remain 'running' with attempts left, i.e. reclaimable.
+        assert runs and all(
+            r["status"] == "running" and r["attempt_count"] == 1 for r in runs
+        )
+
+    async def test_a_later_pass_records_the_real_vote(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.call_judge_model",
+                AsyncMock(side_effect=JudgeTransportError("1302")),
+            ):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        # The run leases lapse (a real later pass is > JUDGE_RUN_LEASE_SECONDS on).
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battle_judge_runs SET lease_expires_at = NOW() - INTERVAL '1 second' "
+                    "WHERE battle_id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+
+        valid = (
+            '{"vote": "submission_alpha", "confidence": 0.9, "reasoning": "ok", '
+            '"scores": {"correctness": 1.0}}'
+        )
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.call_judge_model", AsyncMock(return_value=valid)
+            ):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == 3
+        # Real votes, never the frozen 'error' the first pass would otherwise leave.
+        assert all(j["vote"] != "error" for j in judgements)
+
+    async def test_an_exhausted_budget_collapses_to_error_and_settle_proceeds(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, agent_a, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+
+        # Drive the panel until every run's attempt budget is spent, aging leases
+        # between passes so the next pass can reclaim.
+        for _ in range(JUDGE_RUN_MAX_ATTEMPTS):
+            async with session_maker() as session:
+                runner = BattleRunner(session, gate=None)
+                with patch(
+                    "app.services.battle_runner.call_judge_model",
+                    AsyncMock(side_effect=JudgeTransportError("1302")),
+                ):
+                    await runner.run_judge_panel(battle_id, "k", "http://u", token)
+            async with session_maker() as session:
+                await session.execute(
+                    text(
+                        "UPDATE battle_judge_runs "
+                        "SET lease_expires_at = NOW() - INTERVAL '1 second' "
+                        "WHERE battle_id = CAST(:b AS UUID) AND status <> 'completed'"
+                    ),
+                    {"b": battle_id},
+                )
+                await session.commit()
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == 3
+        assert all(j["vote"] == "error" for j in judgements)
+
+        # An exhausted panel has a terminal (no-quorum) verdict, so settle fires.
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_token = CAST(:t AS UUID), "
+                    "lease_expires_at = NOW() + INTERVAL '5 minutes' WHERE id = CAST(:b AS UUID)"
+                ),
+                {"t": token, "b": battle_id},
+            )
+            await session.commit()
+        change = await _settle_in_own_session(session_maker, battle_id, token)
+        assert change is not None and change.applied is False
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "completed"
+        assert battle["winner"] is None
+        assert await _elo(session_maker, agent_a) == DEFAULT_ELO
+
+
+class TestReservationHeldThroughDeadline:
+    """F5: a started fighter's reservation covers the whole battle."""
+
+    async def test_start_extends_reservations_past_the_deadline(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _ = await _build_queued_battle(db_session, task_id, reserve_ttl=90)
+        token = str(uuid.uuid4())
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with _no_transport():
+                assert await runner.start_queued({"id": battle_id}, token) is True
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+            rows = await session.execute(
+                text(
+                    "SELECT reserved_until FROM battle_reservations "
+                    "WHERE battle_id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            held = [r[0] for r in rows.fetchall()]
+
+        assert len(held) == 2
+        # Without F5 the reservation stays at 90s, well short of the 600s deadline.
+        assert all(until >= battle["deadline_at"] for until in held)
+
+    async def test_a_started_fighter_cannot_be_double_booked(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, agent_a, agent_b = await _build_queued_battle(
+            db_session, task_id, reserve_ttl=90
+        )
+        token = str(uuid.uuid4())
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with _no_transport():
+                assert await runner.start_queued({"id": battle_id}, token) is True
+
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            other = await repo._create_battle(
+                task_id=task_id,
+                agent_a_id=agent_a,
+                agent_a_owner_snapshot=await _new_owner(session),
+                challenge_ttl_seconds=3600,
+                agent_b_id=agent_b,
+                agent_b_owner_snapshot=await _new_owner(session),
+            )
+            with pytest.raises(ReservationConflictError):
+                await repo.reserve_both(other, agent_a, agent_b, 90)
+
+
+class TestAddSubmissionAtomicity:
+    """F6: the running + deadline + no-prior-final guards live inside the INSERT."""
+
+    async def test_a_turn_against_a_judging_battle_is_rejected(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, _ = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.A]
+        )
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            accepted = await repo.add_submission(battle_id, Side.A, 5, "late", is_final=False)
+            await session.commit()
+        assert accepted is False
+
+    async def test_a_turn_against_a_non_running_battle_is_rejected(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        # A queued battle has no submissions, so only the status guard can reject.
+        battle_id, agent_a, _ = await _build_queued_battle(db_session, task_id)
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            accepted = await repo.add_submission(battle_id, Side.A, 1, "early", is_final=False)
+            await session.commit()
+        assert accepted is False
+
+    async def test_a_non_final_turn_after_a_final_is_rejected(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, _ = await _battle_running(db_session, task_id)
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            assert await repo.add_submission(battle_id, Side.A, 1, "final", is_final=True) is True
+            # seq_no 2 > 1 slips past monotonicity; the no-prior-final rule stops it.
+            assert (
+                await repo.add_submission(battle_id, Side.A, 2, "more", is_final=False) is False
+            )
+            await session.commit()
+
+    async def test_the_deadline_binds_fighters_but_not_the_synthetic_final(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, _ = await _battle_running(db_session, task_id)
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET challenged_at = NOW() - INTERVAL '30 minutes', "
+                    "queued_at = NOW() - INTERVAL '20 minutes', "
+                    "started_at = NOW() - INTERVAL '10 minutes', "
+                    "deadline_at = NOW() - INTERVAL '1 second' WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            # A fighter cannot land a turn past the wall clock.
+            assert await repo.add_submission(battle_id, Side.A, 1, "late", is_final=True) is False
+            # The reconciler's synthetic final still lands (enforce_deadline=False).
+            assert (
+                await repo.add_submission(
+                    battle_id, Side.B, 9999, None, is_final=True, truncated=True,
+                    error="no submission before deadline", enforce_deadline=False,
+                )
+                is True
+            )
+            await session.commit()
+
+
+class TestReaper:
+    """F7: mark_expired / mark_aborted / reservation reaping finally have a caller."""
+
+    async def test_reaper_expires_a_challenge_past_its_deadline(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        repo = BattleRepository(db_session)
+        owner_a, owner_b = await _new_owner(db_session), await _new_owner(db_session)
+        agent_a, agent_b = await _new_agent(db_session), await _new_agent(db_session)
+        battle_id = await repo._create_battle(
+            task_id=task_id,
+            agent_a_id=agent_a,
+            agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600,
+            agent_b_id=agent_b,
+            agent_b_owner_snapshot=owner_b,
+        )
+        await db_session.execute(
+            text(
+                "UPDATE battles SET challenge_expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"b": battle_id},
+        )
+        await db_session.commit()
+
+        await reap_once(session_maker)
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "expired"
+
+        # Idempotent: a terminal row is skipped by mark_expired's CAS.
+        await reap_once(session_maker)
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "expired"
+
+    async def test_reaper_aborts_a_battle_that_exhausted_its_claim_budget(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        repo = BattleRepository(db_session)
+        owner_a, owner_b = await _new_owner(db_session), await _new_owner(db_session)
+        agent_a, agent_b = await _new_agent(db_session), await _new_agent(db_session)
+        battle_id = await repo._create_battle(
+            task_id=task_id,
+            agent_a_id=agent_a,
+            agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600,
+            agent_b_id=agent_b,
+            agent_b_owner_snapshot=owner_b,
+        )
+        await repo._mark_accepted(battle_id)
+        await db_session.execute(
+            text(
+                "UPDATE battles SET lease_attempt_count = :c WHERE id = CAST(:b AS UUID)"
+            ),
+            {"c": POLL_MAX_ATTEMPTS, "b": battle_id},
+        )
+        await db_session.commit()
+
+        await reap_once(session_maker)
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "aborted"
+
+    async def test_reaper_deletes_an_expired_reservation(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        repo = BattleRepository(db_session)
+        owner_a, owner_b = await _new_owner(db_session), await _new_owner(db_session)
+        agent_a, agent_b = await _new_agent(db_session), await _new_agent(db_session)
+        battle_id = await repo._create_battle(
+            task_id=task_id,
+            agent_a_id=agent_a,
+            agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600,
+            agent_b_id=agent_b,
+            agent_b_owner_snapshot=owner_b,
+        )
+        await db_session.execute(
+            text(
+                "INSERT INTO battle_reservations (agent_id, battle_id, reserved_until, created_at) "
+                "VALUES (CAST(:a AS UUID), CAST(:b AS UUID), NOW() - INTERVAL '1 second', "
+                "NOW() - INTERVAL '2 minutes')"
+            ),
+            {"a": agent_a, "b": battle_id},
+        )
+        await db_session.commit()
+
+        await reap_once(session_maker)
+        async with session_maker() as session:
+            held = await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM battle_reservations WHERE agent_id = CAST(:a AS UUID)"
+                ),
+                {"a": agent_a},
+            )
+        assert held.scalar_one() == 0
+
+    async def test_reaper_leaves_a_terminal_battle_untouched(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, token = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.A]
+        )
+        assert await _settle_in_own_session(session_maker, battle_id, token) is not None
+
+        await reap_once(session_maker)
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "completed"
