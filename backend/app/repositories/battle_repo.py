@@ -65,6 +65,11 @@ class ChallengeDenial(str, Enum):
 
     TASK_UNAVAILABLE = "task_unavailable"
     CHALLENGER_INELIGIBLE = "challenger_ineligible"
+    # The CALLER exhausted its own hourly quota. Distinct from TARGET_CAPPED:
+    # reporting "the target is full" to a challenger that is itself the problem
+    # is a lie about someone else's state, and sends the owner to look at a
+    # target that may be nowhere near its limit.
+    CHALLENGER_RATE_LIMITED = "challenger_rate_limited"
     TARGET_INELIGIBLE = "target_ineligible"
     BLOCKED = "blocked"
     COOLING_DOWN = "cooling_down"
@@ -92,6 +97,75 @@ _AGENT_ELIGIBLE_SQL = """
 _ENGAGED_STATUSES_SQL = (
     "('challenge_pending', 'accepted', 'reserved', 'queued', 'running', 'judging')"
 )
+
+# Both fighters still pass eligibility AND their current owner still equals the
+# snapshot frozen into the battle. Re-checked at every consequential transition,
+# never inherited from the challenge: owner_user_id is mutable
+# (ownership.py:186 links an agent to a new user) and is_active goes FALSE as a
+# SIDE EFFECT of revoke_github_oauth (agent_repo.py:140) — an agent drops out of
+# eligibility silently, with nothing pointing at battles.
+#
+# Owner-equals-snapshot is the load-bearing half: the snapshots decide rating and
+# reward, so a battle whose fighter changed hands mid-flight is a battle between
+# parties who never both agreed. It must not start.
+_BOTH_FIGHTERS_ELIGIBLE_SQL = f"""
+    EXISTS (
+        SELECT 1 FROM agents a
+        WHERE a.id = battles.agent_a_id
+          AND a.owner_user_id = battles.agent_a_owner_snapshot
+          AND {_AGENT_ELIGIBLE_SQL}
+    )
+    AND EXISTS (
+        SELECT 1 FROM agents a
+        WHERE a.id = battles.agent_b_id
+          AND a.owner_user_id = battles.agent_b_owner_snapshot
+          AND {_AGENT_ELIGIBLE_SQL}
+    )
+"""
+
+# Both fighters are STILL held by THIS battle's reservations, unexpired.
+#
+# Without this a battle can run holding nothing. delete_expired_reservations()
+# reaps on wall-clock time alone and frees both rows the moment reserved_until
+# passes; nothing re-checks afterwards. A battle queued at t=59 (lease alive) has
+# its reservations reaped at t=90 and, unguarded, still starts at t=200 with zero
+# rows held — both fighters simultaneously free to be reserved by another battle.
+# That is the exact double-spend of the owners' keys reservations exist to stop.
+_BOTH_FIGHTERS_RESERVED_SQL = """
+    EXISTS (
+        SELECT 1 FROM battle_reservations r
+        WHERE r.agent_id = battles.agent_a_id
+          AND r.battle_id = battles.id
+          AND r.reserved_until > NOW()
+    )
+    AND EXISTS (
+        SELECT 1 FROM battle_reservations r
+        WHERE r.agent_id = battles.agent_b_id
+          AND r.battle_id = battles.id
+          AND r.reserved_until > NOW()
+    )
+"""
+
+# Exactly the two armed ready-check events, acked by the agent each was armed
+# for, inside both the event's own expiry and the readiness lease.
+#
+# The ids come from the battle row, never from a caller. Requiring COUNT = 2 over
+# an IN of the two armed ids means one event acked twice cannot stand in for two.
+_BOTH_SIDES_ACKED_SQL = """
+    (
+        SELECT COUNT(*) FROM agent_events e
+        WHERE e.event_id IN (battles.ready_check_event_id_a,
+                             battles.ready_check_event_id_b)
+          AND e.type = 'battle_ready_check'
+          AND e.acked_at IS NOT NULL
+          AND e.acked_at < e.expires_at
+          AND e.acked_at < battles.ready_lease_expires_at
+          AND e.target_agent_id = CASE
+                  WHEN e.event_id = battles.ready_check_event_id_a
+                  THEN battles.agent_a_id ELSE battles.agent_b_id
+              END
+    ) = 2
+"""
 
 
 class BattleRepository:
@@ -603,7 +677,13 @@ class BattleRepository:
         return self._one_or_none(result.mappings().first())
 
     async def mark_accepted(self, battle_id: str) -> dict | None:
-        """challenge_pending -> accepted. B's owner consented.
+        """challenge_pending -> accepted. The state-machine primitive.
+
+        Enforces the transition's legality and NOTHING about who is asking.
+        Application code must call :meth:`accept_as_owner` instead — consent is
+        the fact that authorises spending an owner's money, so the writer's
+        identity has to be part of the write. This exists for the transition
+        tests, which have no user to be.
 
         Deliberately does not require live transport: the owner may accept
         while their agent is offline, and readiness is proven separately,
@@ -623,6 +703,61 @@ class BattleRepository:
                 """
             ),
             {"battle_id": str(battle_id)},
+        )
+        return self._one_or_none(result.mappings().first())
+
+    async def accept_as_owner(
+        self, battle_id: str, accepting_user_id: str
+    ) -> dict | None:
+        """challenge_pending -> accepted, iff ``accepting_user_id`` owns B NOW.
+
+        The only consent path application code may use.
+
+        Ownership is a predicate of THIS statement, not something the router
+        checked a moment ago. The sessions run READ COMMITTED (no
+        isolation_level is set), so every statement takes a fresh snapshot: a
+        router that reads owner_user_id, and link_agent_to_user
+        (ownership_repo.py:38) that commits a NEW owner in between, produce a
+        consent row written by a user who no longer owns the agent — and
+        consent is precisely the fact that authorises spending that owner's
+        money. The read cannot be trusted, so the write does the checking.
+
+        Both the CURRENT owner and the frozen agent_b_owner_snapshot must equal
+        the accepting user. Current owner alone would let a new owner consent
+        to a challenge issued against the previous one; snapshot alone would
+        let the previous owner consent after handing the agent over. Rating and
+        rewards are decided by the snapshot, so the two must agree at the
+        moment consent is given, or the battle is between parties who never
+        both agreed.
+
+        Full eligibility is re-checked too: revoke_github_oauth
+        (agent_repo.py:140) sets is_active = FALSE as a side effect, so an
+        agent can silently lose eligibility between challenge and consent.
+        """
+        result = await self.db.execute(
+            text(
+                f"""
+                UPDATE battles
+                SET status = 'accepted',
+                    agent_b_accepted_at = NOW()
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND status = 'challenge_pending'
+                  AND agent_b_id IS NOT NULL
+                  AND challenge_expires_at > NOW()
+                  AND agent_b_owner_snapshot = CAST(:accepting_user_id AS UUID)
+                  AND EXISTS (
+                      SELECT 1 FROM agents a
+                      WHERE a.id = battles.agent_b_id
+                        AND a.owner_user_id = CAST(:accepting_user_id AS UUID)
+                        AND {_AGENT_ELIGIBLE_SQL}
+                  )
+                RETURNING *
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "accepting_user_id": str(accepting_user_id),
+            },
         )
         return self._one_or_none(result.mappings().first())
 
@@ -784,52 +919,46 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def both_sides_ready(self, battle_id: str, readiness_generation: int) -> bool:
-        """Are BOTH current-generation ready-ACKs in, from the right agents?
+    async def admit_to_queue(
+        self, battle_id: str, readiness_generation: int
+    ) -> dict | None:
+        """reserved -> queued, iff EVERY admission condition holds. No commit.
 
-        This is the ACK evidence :meth:`mark_queued` deliberately refuses to
-        gather. It must run in the same transaction as that call — which is
-        also what makes the read honest rather than a read-then-write race:
-        NOW() is the transaction timestamp, so this query and the CAS that
-        follows evaluate every deadline against the SAME instant. Nothing can
-        expire between them.
+        The only queueing path application code may use. One statement, because
+        this is the decision that lets two agents start spending their owners'
+        money: consent, eligibility, ownership, reservations and readiness are
+        all predicates HERE, evaluated against one snapshot, rather than facts
+        a caller gathered and hopes are still true.
 
-        The event ids come from the battle row, never from the caller. A
-        caller-supplied pair would let anyone nominate two events they know are
-        acked and queue a battle nobody agreed to — the same provenance hole
-        create_battle closes for the task snapshot.
+        A previous version of this split the ACK check into a separate SELECT
+        and relied on NOW() being the transaction timestamp to keep the two
+        consistent. That reasoning was sound about TIME and silent about
+        everything else: it never re-checked eligibility, ownership or the
+        reservations at all. Folding it into the CAS closes both.
 
-        Every clause is load-bearing:
-        - the generation pins this to the CURRENT attempt, so a late ACK from a
-          previous arming can never satisfy this one;
-        - target_agent_id must match the SIDE the event was armed for, so B's
-          ACK cannot stand in for A's;
-        - type = 'battle_ready_check' means a generic ACK for some unrelated
-          event is not readiness — mark_acked() never looks at event type, so
-          if this did not check it, nothing would;
-        - acked_at < ready_lease_expires_at keeps an ACK that arrived after the
-          lease lapsed out of the count, rather than relying on the lease check
-          in mark_queued to imply it.
+        Returns None when readiness is not (yet) proven, which is not an error
+        — the usual reason is that an agent has not acked yet. The caller
+        retries until the lease lapses.
+
+        :meth:`mark_queued` remains the unguarded state-machine primitive for
+        the transition tests; it must not be called by application code.
         """
         result = await self.db.execute(
             text(
-                """
-                SELECT COUNT(*) = 2
-                FROM battles b
-                JOIN agent_events e
-                  ON e.event_id IN (b.ready_check_event_id_a,
-                                    b.ready_check_event_id_b)
-                WHERE b.id = CAST(:battle_id AS UUID)
-                  AND b.status = 'reserved'
-                  AND b.readiness_generation = :readiness_generation
-                  AND b.ready_lease_expires_at > NOW()
-                  AND e.type = 'battle_ready_check'
-                  AND e.acked_at IS NOT NULL
-                  AND e.acked_at < b.ready_lease_expires_at
-                  AND e.target_agent_id = CASE
-                          WHEN e.event_id = b.ready_check_event_id_a
-                          THEN b.agent_a_id ELSE b.agent_b_id
-                      END
+                f"""
+                UPDATE battles
+                SET status = 'queued',
+                    queued_at = NOW()
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND status = 'reserved'
+                  AND readiness_generation = :readiness_generation
+                  AND ready_lease_expires_at > NOW()
+                  AND challenge_expires_at > NOW()
+                  AND agent_b_accepted_at IS NOT NULL
+                  AND {_BOTH_FIGHTERS_ELIGIBLE_SQL}
+                  AND {_BOTH_FIGHTERS_RESERVED_SQL}
+                  AND {_BOTH_SIDES_ACKED_SQL}
+                RETURNING *
                 """
             ),
             {
@@ -837,7 +966,57 @@ class BattleRepository:
                 "readiness_generation": readiness_generation,
             },
         )
-        return bool(result.scalar())
+        return self._one_or_none(result.mappings().first())
+
+    async def start_if_still_eligible(
+        self,
+        battle_id: str,
+        lease_token: str,
+        lease_seconds: int,
+    ) -> dict | None:
+        """queued -> running, re-proving eligibility and the holds. No commit.
+
+        The start is the moment the money is actually spent, so it re-checks
+        rather than trusting the queue: an arbitrary interval passes between
+        queueing and starting, and in it an owner can change (ownership.py:186)
+        or an agent can be deactivated as a side effect of revoking OAuth
+        (agent_repo.py:140). Re-checking here is what keeps
+        "both fighters were provably eligible at the shared start" true — the
+        claim the rest of the lifecycle rests on when it refuses to abort a
+        running battle.
+
+        Reservations are re-checked because they expire on wall-clock time and
+        are reaped by delete_expired_reservations() with nothing consulting the
+        battle: without this predicate a battle starts holding neither fighter.
+
+        :meth:`mark_running` remains the unguarded primitive for the transition
+        tests; it must not be called by application code.
+        """
+        result = await self.db.execute(
+            text(
+                f"""
+                UPDATE battles
+                SET status = 'running',
+                    started_at = NOW(),
+                    deadline_at = NOW()
+                        + make_interval(secs => time_limit_seconds_snapshot),
+                    lease_token = CAST(:lease_token AS UUID),
+                    lease_expires_at = NOW() + make_interval(secs => :lease_seconds),
+                    lease_attempt_count = lease_attempt_count + 1
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND status = 'queued'
+                  AND {_BOTH_FIGHTERS_ELIGIBLE_SQL}
+                  AND {_BOTH_FIGHTERS_RESERVED_SQL}
+                RETURNING *
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "lease_token": str(lease_token),
+                "lease_seconds": lease_seconds,
+            },
+        )
+        return self._one_or_none(result.mappings().first())
 
     async def mark_queued(self, battle_id: str, readiness_generation: int) -> dict | None:
         """reserved -> queued, only for the generation the caller verified.
