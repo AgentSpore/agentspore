@@ -220,15 +220,19 @@ class BattleService:
         """
         return await self.repo.accept_as_owner(battle_id, accepting_user_id)
 
-    async def decline(self, battle_id: str) -> dict | None:
+    async def decline(self, battle_id: str, declining_user_id: str) -> dict | None:
         """Record B's owner refusal and start the cooldown. Does not commit.
+
+        ``declining_user_id`` is carried into the CAS for the same reason accept
+        carries it: a decline kills someone's battle and stamps a cooldown on
+        the challenger, so the write must prove who asked for it.
 
         The cooldown is written in the same transaction as the decline, so
         "refused" and "may not immediately re-ask" become true together. Two
         statements across two transactions would leave a window in which the
         challenger can re-send against a target that has just said no.
         """
-        battle = await self.repo.mark_declined(battle_id)
+        battle = await self.repo.decline_as_owner(battle_id, declining_user_id)
         if battle is None:
             return None
         await self.repo.upsert_cooldown(
