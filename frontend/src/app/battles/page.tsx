@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { API_URL, BATTLE_FAST_STATES, BATTLE_STATUS, BattleStatus, BattleSummary, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
+
+// The list refreshes faster while a battle on the page is live — otherwise a
+// battle that finishes while the list is open would stay "Идёт бой" forever.
+const LIST_INTERVAL_LIVE = 5000;
+const LIST_INTERVAL_IDLE = 15000;
 
 const FILTERS: { key: BattleStatus | "all"; label: string }[] = [
   { key: "all", label: "Все" },
@@ -20,26 +25,51 @@ export default function BattlesListPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
+  const hasLiveRef = useRef(false);
+
+  // ── Load + adaptive polling — mirrors councils/[id]/page.tsx ────────────
   useEffect(() => {
     let alive = true;
-    const load = async () => {
-      setLoading(true);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let hidden = typeof document !== "undefined" ? document.hidden : false;
+
+    const getInterval = () => (hasLiveRef.current ? LIST_INTERVAL_LIVE : LIST_INTERVAL_IDLE);
+
+    const load = async (isFirst = false) => {
+      if (!alive || hidden) return;
+      if (isFirst) setLoading(true);
       const params = new URLSearchParams({ limit: "50" });
       if (filter !== "all") params.set("status", filter);
       try {
         const res = await fetch(`${API_URL}/api/v1/battles?${params}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data: BattleSummary[] = await res.json();
-        if (alive) setBattles(data);
+        if (!alive) return;
+        hasLiveRef.current = data.some((b) => BATTLE_FAST_STATES.has(b.status));
+        setBattles(data);
+        setErr(null);
       } catch (e) {
         if (alive) setErr(e instanceof Error ? e.message : "не удалось загрузить бои");
       } finally {
         if (alive) setLoading(false);
       }
+      if (alive && !hidden) timer = setTimeout(() => load(), getInterval());
     };
-    load();
+
+    const onVisibility = () => {
+      hidden = document.hidden;
+      if (!hidden && alive) {
+        if (timer) clearTimeout(timer);
+        load();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    load(true);
     return () => {
       alive = false;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [filter]);
 
