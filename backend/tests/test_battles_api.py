@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -36,6 +37,7 @@ from app.api.v1.battles import _DENIAL_STATUS
 from app.repositories.battle_repo import BattleRepository, ChallengeDenial
 from app.schemas.battles import BattleStatus, TaskSource
 from app.services import battle_service as battle_service_module
+from app.services import connection_manager as cm
 from app.services.battle_service import (
     CHALLENGER_RATE_LIMIT,
     TARGET_CHALLENGE_CAP,
@@ -572,6 +574,54 @@ async def armed_battle(db, owner_id, task_id, make_agent):
     assert armed is not None
     assert armed["status"] == BattleStatus.RESERVED.value
     return armed
+
+
+async def test_dispatching_ready_checks_leaves_exactly_one_event_per_fighter(
+    db, armed_battle, session_maker
+):
+    """Arming persists the rows; dispatch must send them, not mint more.
+
+    deliver_event inserts unconditionally for a durable type, so dispatching
+    through it gave each fighter TWO battle_ready_check rows: the armed one
+    readiness is bound to, and a duplicate. The duplicate is worse than noise —
+    an agent that acks it never becomes ready, because both_sides_ready joins
+    the exact armed ids, so the battle stalls until its lease lapses.
+    """
+    sent: list[tuple[str, str]] = []
+
+    async def _record_send(agent_id, event):
+        sent.append((str(agent_id), event["event_id"]))
+        return True
+
+    # The REAL dispatch_existing runs — stubbing it would prove nothing about
+    # whether it inserts. Only its transport and its session are replaced.
+    with (
+        patch.object(cm, "async_session_maker", session_maker),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        get_mgr.return_value.send = _record_send
+        results = await BattleService(db).dispatch_ready_checks(armed_battle)
+    await db.commit()
+
+    assert set(results) == {"a", "b"}
+    for agent_key in ("agent_a_id", "agent_b_id"):
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT event_id FROM agent_events "
+                    "WHERE target_agent_id = CAST(:a AS UUID) "
+                    "AND type = 'battle_ready_check'"
+                ),
+                {"a": str(armed_battle[agent_key])},
+            )
+        ).fetchall()
+        assert len(rows) == 1, f"{agent_key} got {len(rows)} rows, expected exactly 1"
+
+    # And the one row per side is the ARMED id — the one readiness is bound to.
+    assert {e for _, e in sent} == {
+        str(armed_battle["ready_check_event_id_a"]),
+        str(armed_battle["ready_check_event_id_b"]),
+    }
 
 
 async def test_consent_alone_never_queues_a_battle(db, armed_battle):
