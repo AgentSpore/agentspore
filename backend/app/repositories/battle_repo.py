@@ -1516,13 +1516,31 @@ class BattleRepository:
         truncated: bool = False,
         error: str | None = None,
     ) -> bool:
-        """Record a checkpoint. False = this slot is already taken.
+        """Record a checkpoint. False = this slot is taken, or seq_no went back.
 
-        Two slots are contested and both are guarded by the database, not by
-        a prior read: (battle_id, side, seq_no) as the primary key, and one
-        final row per side via the partial unique index. A synthetic truncated
-        submission for a silent fighter takes the same final slot, so a late
-        arrival cannot also claim it.
+        Three rules, all enforced here rather than by a prior read:
+
+        * (battle_id, side, seq_no) as the primary key — one row per slot;
+        * one final row per side via the partial unique index. A synthetic
+          truncated submission for a silent fighter takes that same slot, so a
+          late arrival cannot also claim it;
+        * seq_no only ever moves FORWARD, via the NOT EXISTS below.
+
+        Monotonicity is not a property the primary key gives us, and it was
+        missing until an endpoint test caught it: seq_no 5 followed by seq_no 3
+        is two distinct keys, so both inserted happily. That let a fighter write
+        its own history out of order behind the judge's back — list_submissions
+        orders by seq_no, so the later, lower-numbered row would be presented to
+        the panel as though it had come first.
+
+        The check is a NOT EXISTS inside the INSERT rather than a SELECT then an
+        INSERT: a read-then-write would let two concurrent submissions both see
+        a clear field and both land. Under real concurrency the primary key
+        still backstops the equal case, so the worst a race can do is admit a
+        gap, never a duplicate or a rewrite.
+
+        ``>=`` rather than ``>`` so the duplicate case is answered by the same
+        predicate as the out-of-order one, and both report False identically.
         """
         result = await self.db.execute(
             text(
@@ -1530,9 +1548,15 @@ class BattleRepository:
                 INSERT INTO battle_submissions
                     (battle_id, side, seq_no, content, tokens_used,
                      is_final, truncated, error)
-                VALUES
-                    (CAST(:battle_id AS UUID), :side, :seq_no, :content,
-                     :tokens_used, :is_final, :truncated, :error)
+                SELECT CAST(:battle_id AS UUID), CAST(:side AS VARCHAR(1)),
+                       CAST(:seq_no AS INT), :content,
+                       :tokens_used, :is_final, :truncated, :error
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM battle_submissions s
+                     WHERE s.battle_id = CAST(:battle_id AS UUID)
+                       AND s.side = CAST(:side AS VARCHAR(1))
+                       AND s.seq_no >= CAST(:seq_no AS INT)
+                )
                 ON CONFLICT DO NOTHING
                 RETURNING seq_no
                 """
