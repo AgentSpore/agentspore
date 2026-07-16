@@ -256,7 +256,11 @@ CREATE INDEX IF NOT EXISTS idx_battles_deadline
     ON battles (deadline_at)
     WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_battles_agent_a ON battles (agent_a_id);
-CREATE INDEX IF NOT EXISTS idx_battles_agent_b ON battles (agent_b_id);
+-- No single-column (agent_b_id) index: idx_battles_target_window below leads
+-- with agent_b_id, and a B-tree serves any lookup on a leading prefix of its
+-- columns. A separate one-column index would answer nothing the composite
+-- cannot, while costing an extra write on every battle insert and update.
+-- (agent_a_id has no such composite, so it keeps its own index.)
 -- The per-target challenge cap counts (agent_b_id, challenged_at > NOW() - window)
 -- on EVERY challenge attempt, so this is the hottest read in the admission path.
 -- (agent_b_id) alone would find every battle the target has ever fought and then
