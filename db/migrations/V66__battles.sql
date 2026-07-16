@@ -186,26 +186,67 @@ CREATE TABLE IF NOT EXISTS battles (
                AND (elo_a_after IS NULL OR elo_a_after > 0)
                AND (elo_b_after IS NULL OR elo_b_after > 0)),
 
-    -- deadline_at is THE wall clock, and it only exists once a shared start
-    -- exists. Comparisons against NULL yield NULL, which a CHECK accepts --
-    -- so each of these only bites once both sides are set.
-    CONSTRAINT battle_deadline_requires_start
-        CHECK (deadline_at IS NULL OR started_at IS NOT NULL),
+    -- Status and lifecycle timestamps must agree. Without these, a direct
+    -- INSERT can forge a 'judging' battle with no consent, no queue, no
+    -- start and no deadline -- proven by INSERT against a real Postgres.
+    -- Application code cannot reach that state (battle_repo hardcodes the
+    -- literal 'challenge_pending' and status is not even a parameter), but
+    -- "unreachable through the code we wrote today" is not an invariant, and
+    -- battle_finalized_iff_completed already binds status to a timestamp for
+    -- the terminal states. This closes the same idiom over the middle of the
+    -- lifecycle.
+    --
+    -- started_at is an equality: only a battle that ran has one, and 'aborted'
+    -- is reachable only from the pre-running states, so nothing else can carry
+    -- it. queued_at is a one-way requirement instead: a battle aborted out of
+    -- 'queued' legitimately keeps the queued_at it earned.
+    CONSTRAINT battle_started_iff_ran
+        CHECK ((status IN ('running', 'judging', 'completed'))
+               = (started_at IS NOT NULL)),
+    CONSTRAINT battle_queued_at_required_past_queue
+        CHECK (queued_at IS NOT NULL
+               OR status NOT IN ('queued', 'running', 'judging', 'completed')),
+    -- deadline_at is THE wall clock: it exists exactly when the battle ran.
+    CONSTRAINT battle_deadline_iff_started
+        CHECK ((deadline_at IS NOT NULL) = (started_at IS NOT NULL)),
+    -- Owner consent is a precondition of every state past acceptance.
+    CONSTRAINT battle_consent_required_past_accept
+        CHECK (agent_b_accepted_at IS NOT NULL
+               OR status NOT IN ('accepted', 'reserved', 'queued', 'running',
+                                 'judging', 'completed')),
+    -- A reserved battle always has an armed readiness generation. (That both
+    -- reservation rows exist is a cross-table fact a CHECK cannot see -- it is
+    -- enforced by battle_reservations' primary key and reserve_both.)
+    CONSTRAINT battle_reserved_has_armed_readiness
+        CHECK (status <> 'reserved'
+               OR (ready_lease_expires_at IS NOT NULL
+                   AND ready_check_event_id_a IS NOT NULL
+                   AND ready_check_event_id_b IS NOT NULL)),
+
+    -- Ordering. Every one of these carries the explicit IS NULL OR form: a
+    -- bare a > b relies on NULL-yields-NULL to stay silent, which reads as an
+    -- oversight next to its neighbours.
     CONSTRAINT battle_deadline_after_start
-        CHECK (deadline_at > started_at),
+        CHECK (deadline_at IS NULL OR started_at IS NULL
+               OR deadline_at > started_at),
     CONSTRAINT battle_queued_after_challenged
-        CHECK (queued_at >= challenged_at),
+        CHECK (queued_at IS NULL OR queued_at >= challenged_at),
     CONSTRAINT battle_started_after_queued
-        CHECK (started_at >= queued_at),
+        CHECK (started_at IS NULL OR queued_at IS NULL
+               OR started_at >= queued_at),
     CONSTRAINT battle_ended_after_challenged
-        CHECK (ended_at >= challenged_at)
+        CHECK (ended_at IS NULL OR ended_at >= challenged_at)
 );
 
-CREATE INDEX IF NOT EXISTS idx_battles_status_queued
-    ON battles (status, queued_at);
+-- Reconciler claim: status + a free-or-lapsed lease, ordered by queue age.
+-- claim_battles_for_reconcile filters on (status, lease_expires_at) and orders
+-- by (queued_at, challenged_at) -- a (status, queued_at) index would leave the
+-- lease check as a filter, which is the row it most needs to skip.
+CREATE INDEX IF NOT EXISTS idx_battles_reconcile_claim
+    ON battles (status, lease_expires_at, queued_at, challenged_at);
 CREATE INDEX IF NOT EXISTS idx_battles_challenge_expiry
     ON battles (status, challenge_expires_at)
-    WHERE status = 'challenge_pending';
+    WHERE status IN ('challenge_pending', 'accepted', 'reserved');
 -- Readiness reaper: reserved battles whose ready lease lapsed.
 CREATE INDEX IF NOT EXISTS idx_battles_ready_lease_expiry
     ON battles (ready_lease_expires_at)

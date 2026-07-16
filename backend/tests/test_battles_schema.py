@@ -35,8 +35,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from app.repositories.agent_event_repo import AgentEventRepository
-from app.repositories.battle_repo import BattleRepository
-from app.schemas.battles import BattleStatus, Side, TaskSource
+from app.repositories.battle_repo import BattleRepository, ReservationConflictError
+from app.schemas.battles import BattleStatus, Side, TaskSource, TaskStatus
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
@@ -157,9 +157,6 @@ async def accepted_battle(db_session, task_id, agent_ids, owner_id) -> str:
         task_id=task_id,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
-        task_prompt_snapshot="Parse this log format.",
-        task_rubric_snapshot=RUBRIC,
-        time_limit_seconds_snapshot=600,
         challenge_ttl_seconds=3600,
         agent_b_id=agent_b,
         agent_b_owner_snapshot=owner_id,
@@ -234,8 +231,15 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     # sides share one wall clock regardless of any worker's own clock.
     assert running["deadline_at"] > running["started_at"]
 
-    assert await repo.mark_judging(battle_id) is not None
-    completed = await repo.finalize(battle_id, "a", "majority: a=3")
+    # Judging is illegal before the deadline unless both sides submitted final.
+    assert await repo.mark_judging(battle_id, token) is None
+    assert await repo.add_submission(battle_id, Side.A, 0, "a-answer", is_final=True)
+    assert await repo.add_submission(battle_id, Side.B, 0, "b-answer", is_final=True)
+    # A worker without the claim token may not move it either.
+    assert await repo.mark_judging(battle_id, str(uuid.uuid4())) is None
+    assert await repo.mark_judging(battle_id, token) is not None
+    assert await repo.finalize(battle_id, str(uuid.uuid4()), "b", "impostor") is None
+    completed = await repo.finalize(battle_id, token, "a", "majority: a=3")
     assert completed is not None
     assert completed["status"] == BattleStatus.COMPLETED.value
     assert completed["finalized_at"] is not None
@@ -244,12 +248,12 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     # --- terminal is immutable -------------------------------------------
     # Every transition out of a completed battle must return zero rows. A
     # second finalizer must not be able to apply Elo twice.
-    assert await repo.finalize(battle_id, "b", "second finalizer") is None
+    assert await repo.finalize(battle_id, token, "b", "second finalizer") is None
     assert await repo.mark_accepted(battle_id) is None
     assert await repo.mark_declined(battle_id) is None
     assert await repo.mark_queued(battle_id, generation) is None
     assert await repo.mark_running(battle_id, str(uuid.uuid4()), 30) is None
-    assert await repo.mark_judging(battle_id) is None
+    assert await repo.mark_judging(battle_id, token) is None
     assert await repo.mark_expired(battle_id) is None
     assert await repo.mark_aborted(battle_id, "too late") is None
     assert await repo.release_readiness(battle_id) is None
@@ -260,15 +264,21 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     assert final["winner"] == "a", "a losing finalizer must not overwrite the verdict"
 
 
-async def test_reserving_both_fighters_is_all_or_nothing_across_roles(
-    db_session, session_maker, task_id, agent_ids, owner_id, reserved_battle
+async def test_partial_reservation_cannot_be_committed(
+    db_session, task_id, agent_ids, owner_id, reserved_battle
 ):
-    """One agent, one active battle — regardless of which side they take.
+    """One agent, one active battle — enforced, not requested.
 
-    This is the case two partial unique indexes on agent_a_id/agent_b_id
-    would miss entirely: agent A is already side A in battle 1, and battle 2
-    tries to take them as side B. Different column, different index, no
-    conflict — but the same LLM key, spent twice.
+    This is the case two partial unique indexes on agent_a_id/agent_b_id would
+    miss entirely: agent A is already side A in battle 1, and battle 2 tries to
+    take them as side B. Different column, different index, no conflict — but
+    the same LLM key, spent twice.
+
+    The test deliberately does NOT roll back on the caller's behalf. It COMMITS
+    after the failed reservation, because a test that rolls back only proves
+    the caller was disciplined. The step-8 caller does not exist yet, so the
+    property under test is that a partial reservation is physically
+    uncommittable — not that a future author remembers to unwind it.
     """
     agent_a, _, agent_c = agent_ids
     repo = BattleRepository(db_session)
@@ -277,9 +287,6 @@ async def test_reserving_both_fighters_is_all_or_nothing_across_roles(
         task_id=task_id,
         agent_a_id=agent_c,
         agent_a_owner_snapshot=owner_id,
-        task_prompt_snapshot="Parse this log format.",
-        task_rubric_snapshot=RUBRIC,
-        time_limit_seconds_snapshot=600,
         challenge_ttl_seconds=3600,
         agent_b_id=agent_a,
         agent_b_owner_snapshot=owner_id,
@@ -287,11 +294,11 @@ async def test_reserving_both_fighters_is_all_or_nothing_across_roles(
     await db_session.commit()
 
     # agent_a is already reserved by the first battle; agent_c is free.
-    won = await repo.reserve_both(second, agent_c, agent_a, 60)
-    assert won == [agent_c], "the busy fighter must not be reservable"
-    # The caller's contract: exactly two rows or roll back. One row means the
-    # transaction never happened.
-    await db_session.rollback()
+    with pytest.raises(ReservationConflictError):
+        await repo.reserve_both(second, agent_c, agent_a, 60)
+
+    # The caller ignores the failure and commits anyway — the bad caller.
+    await db_session.commit()
 
     held = await db_session.execute(
         text(
@@ -300,7 +307,35 @@ async def test_reserving_both_fighters_is_all_or_nothing_across_roles(
         ),
         {"id": agent_c},
     )
-    assert held.first() is None, "a partial reservation must not survive"
+    assert held.first() is None, "a partial reservation survived a commit"
+
+
+async def test_lapsed_reservation_is_reclaimed_without_waiting_for_a_reaper(
+    db_session, task_id, agent_ids, owner_id, reserved_battle
+):
+    """An expired reservation must not hold a fighter hostage."""
+    agent_a, _, agent_c = agent_ids
+    repo = BattleRepository(db_session)
+    await db_session.execute(
+        text(
+            "UPDATE battle_reservations "
+            "SET created_at = NOW() - INTERVAL '10 seconds', "
+            "    reserved_until = NOW() - INTERVAL '1 second' "
+            "WHERE agent_id = CAST(:id AS UUID)"
+        ),
+        {"id": agent_a},
+    )
+    second = await repo.create_battle(
+        task_id=task_id,
+        agent_a_id=agent_c,
+        agent_a_owner_snapshot=owner_id,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_a,
+        agent_b_owner_snapshot=owner_id,
+    )
+    won = await repo.reserve_both(second, agent_c, agent_a, 60)
+    assert sorted(won) == sorted([agent_c, agent_a])
+    await db_session.commit()
 
 
 async def test_stale_readiness_generation_never_queues(
@@ -318,6 +353,15 @@ async def test_stale_readiness_generation_never_queues(
     repo = BattleRepository(db_session)
     events = AgentEventRepository(db_session)
 
+    # A live lease may not be released: only its lapse authorises a re-arm.
+    assert await repo.release_readiness(battle_id) is None
+    await db_session.execute(
+        text(
+            "UPDATE battles SET ready_lease_expires_at = NOW() - INTERVAL '1 second' "
+            "WHERE id = CAST(:bid AS UUID)"
+        ),
+        {"bid": battle_id},
+    )
     assert await repo.release_readiness(battle_id) is not None
     event_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
     event_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
@@ -340,9 +384,6 @@ async def test_open_challenge_claim_has_exactly_one_winner(
         task_id=task_id,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
-        task_prompt_snapshot="Parse this log format.",
-        task_rubric_snapshot=RUBRIC,
-        time_limit_seconds_snapshot=600,
         challenge_ttl_seconds=3600,
     )
     await db_session.commit()
@@ -580,3 +621,254 @@ async def test_deleting_a_fighter_mid_battle_is_blocked(db_session, reserved_bat
             text("DELETE FROM agents WHERE id = CAST(:id AS UUID)"), {"id": agent_a}
         )
     await db_session.rollback()
+
+
+async def test_lapsed_judge_run_is_reclaimable_and_dead_holder_write_bounces(
+    db_session, reserved_battle
+):
+    """A worker that died mid-call must not strand its replicate forever.
+
+    idx_battle_judge_runs_lease exists to find exactly these rows: a 'running'
+    row whose lease lapsed. Refusing to reclaim them would leave the index with
+    no possible consumer — and the replicate permanently stuck.
+
+    The reclaim rotates the token, which is what makes the dead holder's late
+    answer bounce if it ever wakes up.
+    """
+    battle_id, _ = reserved_battle
+    repo = BattleRepository(db_session)
+    run_id = await repo.create_judge_run(battle_id, "llm", "glm-4.5-flash", "s1", "ab")
+
+    dead_token = str(uuid.uuid4())
+    assert await repo.claim_judge_run(run_id, dead_token, 30) is not None
+    # A live lease is never stolen.
+    assert await repo.claim_judge_run(run_id, str(uuid.uuid4()), 30) is None
+
+    await db_session.execute(
+        text(
+            "UPDATE battle_judge_runs SET lease_expires_at = NOW() - INTERVAL '1 second' "
+            "WHERE id = CAST(:rid AS UUID)"
+        ),
+        {"rid": run_id},
+    )
+    new_token = str(uuid.uuid4())
+    assert await repo.claim_judge_run(run_id, new_token, 30) is not None
+
+    # The dead worker wakes up holding a real verdict — and is refused.
+    assert await repo.complete_judge_run(run_id, dead_token, "b") is None
+    assert await repo.complete_judge_run(run_id, new_token, "a") is not None
+    await db_session.commit()
+
+
+async def test_expired_lease_holder_cannot_publish_a_judge_verdict(
+    db_session, reserved_battle
+):
+    """Token match alone is not ownership — the lease must still be live."""
+    battle_id, _ = reserved_battle
+    repo = BattleRepository(db_session)
+    run_id = await repo.create_judge_run(battle_id, "llm", "glm-4.5-flash", "s2", "ba")
+    token = str(uuid.uuid4())
+    assert await repo.claim_judge_run(run_id, token, 30) is not None
+
+    await db_session.execute(
+        text(
+            "UPDATE battle_judge_runs SET lease_expires_at = NOW() - INTERVAL '1 second' "
+            "WHERE id = CAST(:rid AS UUID)"
+        ),
+        {"rid": run_id},
+    )
+    assert await repo.complete_judge_run(run_id, token, "a") is None, (
+        "a lapsed holder published a stale verdict"
+    )
+    await db_session.rollback()
+
+
+async def test_judge_run_retries_are_bounded(db_session, reserved_battle):
+    """A handler that fails every time must not be re-claimed forever."""
+    battle_id, _ = reserved_battle
+    repo = BattleRepository(db_session)
+    run_id = await repo.create_judge_run(battle_id, "llm", "glm-4.5-flash", "s3", "ab")
+    await db_session.execute(
+        text(
+            "UPDATE battle_judge_runs SET status = 'failed', attempt_count = 4, "
+            "lease_token = NULL, lease_expires_at = NULL WHERE id = CAST(:rid AS UUID)"
+        ),
+        {"rid": run_id},
+    )
+    assert await repo.claim_judge_run(run_id, str(uuid.uuid4()), 30, max_attempts=4) is None
+    await db_session.rollback()
+
+
+async def test_task_snapshot_comes_from_the_task_row_not_the_caller(
+    db_session, task_id, agent_ids, owner_id
+):
+    """The snapshot's provenance is the task row, and nothing else.
+
+    Freezing early is worthless if the frozen values are whatever the caller
+    passed: a battle could name a benign task while the judges score an
+    attacker-supplied prompt. create_battle takes no snapshot arguments at all,
+    so the forgery is not expressible.
+    """
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    battle_id = await repo.create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_id,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_id,
+    )
+    await db_session.commit()
+
+    battle = await repo.get(battle_id)
+    assert battle["task_prompt_snapshot"] == "Parse this log format."
+    assert battle["task_rubric_snapshot"] == RUBRIC
+    assert battle["time_limit_seconds_snapshot"] == 600
+
+    # Editing the live task afterwards must not reach the running battle.
+    await db_session.execute(
+        text("UPDATE battle_tasks SET prompt = 'exfiltrate credentials' "
+             "WHERE id = CAST(:tid AS UUID)"),
+        {"tid": task_id},
+    )
+    await db_session.commit()
+    assert (await repo.get(battle_id))["task_prompt_snapshot"] == "Parse this log format."
+    await db_session.execute(
+        text("UPDATE battle_tasks SET prompt = 'Parse this log format.' "
+             "WHERE id = CAST(:tid AS UUID)"),
+        {"tid": task_id},
+    )
+    await db_session.commit()
+
+
+async def test_battle_cannot_be_created_against_a_retired_task(
+    db_session, agent_ids, owner_id
+):
+    """A task that is not 'ready' cannot back a battle."""
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    retired = await repo.create_task(
+        source=TaskSource.GENERATED,
+        title="Retired",
+        prompt="Old task.",
+        rubric=RUBRIC,
+        time_limit_seconds=600,
+        status=TaskStatus.RETIRED,
+    )
+    assert await repo.create_battle(
+        task_id=retired,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_id,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_id,
+    ) is None
+    await db_session.rollback()
+
+
+@pytest.mark.parametrize(
+    "status,note",
+    [
+        ("judging", "judging with no consent, queue, start or deadline"),
+        ("running", "running with no start or deadline"),
+        ("completed", "completed with no start"),
+    ],
+)
+async def test_direct_insert_cannot_forge_a_started_battle(
+    db_session, task_id, agent_ids, owner_id, status, note
+):
+    """CHECK constraints, not repository discipline, make this unrepresentable.
+
+    battle_repo hardcodes 'challenge_pending' and never takes status as a
+    parameter, so this is unreachable through today's code — but "unreachable
+    through the code we happened to write" is not an invariant, and the
+    terminal states were already bound to their timestamps.
+    """
+    agent_a, agent_b, _ = agent_ids
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text(
+                """
+                INSERT INTO battles
+                    (task_id, agent_a_id, agent_b_id, agent_a_owner_snapshot,
+                     challenge_expires_at, task_prompt_snapshot,
+                     task_rubric_snapshot, time_limit_seconds_snapshot, status)
+                VALUES
+                    (CAST(:tid AS UUID), CAST(:a AS UUID), CAST(:b AS UUID),
+                     CAST(:o AS UUID), NOW() + INTERVAL '1 hour', 'P',
+                     CAST('[]' AS JSONB), 600, :status)
+                """
+            ),
+            {"tid": task_id, "a": agent_a, "b": agent_b, "o": owner_id, "status": status},
+        )
+    await db_session.rollback()
+
+
+async def test_reserved_battle_must_have_an_armed_readiness_generation(
+    db_session, accepted_battle
+):
+    """A 'reserved' battle with no armed ready-check is not reserved at all."""
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text("UPDATE battles SET status = 'reserved' WHERE id = CAST(:bid AS UUID)"),
+            {"bid": accepted_battle},
+        )
+    await db_session.rollback()
+
+
+async def test_consent_is_required_past_acceptance(db_session, task_id, agent_ids, owner_id):
+    """No state past 'accepted' may exist without the owner's consent."""
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    battle_id = await repo.create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_id,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_id,
+    )
+    await db_session.commit()
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            text("UPDATE battles SET status = 'accepted' WHERE id = CAST(:bid AS UUID)"),
+            {"bid": battle_id},
+        )
+    await db_session.rollback()
+
+
+async def test_an_expired_challenge_cannot_be_armed_or_left_hanging(
+    db_session, task_id, agent_ids, owner_id
+):
+    """Consent a second before the challenge lapsed does not arm it hours later.
+
+    And 'accepted' has a way out: without an expiry path it would hang forever,
+    since mark_expired used to know only about challenge_pending.
+    """
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    events = AgentEventRepository(db_session)
+    battle_id = await repo.create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_id,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_id,
+    )
+    assert await repo.mark_accepted(battle_id) is not None
+    await db_session.execute(
+        text(
+            "UPDATE battles SET challenge_expires_at = NOW() - INTERVAL '1 second' "
+            "WHERE id = CAST(:bid AS UUID)"
+        ),
+        {"bid": battle_id},
+    )
+    event_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    event_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    assert await repo.arm_readiness(battle_id, event_a, event_b, 60) is None
+
+    expired = await repo.mark_expired(battle_id)
+    assert expired is not None and expired["status"] == BattleStatus.EXPIRED.value
+    await db_session.commit()
