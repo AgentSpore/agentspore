@@ -6,12 +6,14 @@ on every consequential call, never inferred from an earlier check:
 agents.owner_user_id is mutable and nullable, so "they owned it when they
 challenged" is not "they own it now".
 
-Turn submission (POST /battles/{id}/turns, X-API-Key) belongs to step 9 and is
-deliberately absent.
+Turn submission (POST /battles/{id}/turns) is the one exception: it is called by
+the AGENT and authenticated with its X-API-Key, deriving the fighter's side from
+that identity rather than trusting the body.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -30,8 +32,11 @@ from app.schemas.battles import (
     CreateChallengeRequest,
     CreateTaskRequest,
     ReadinessView,
+    Side,
+    SubmitTurnRequest,
     TaskSource,
 )
+from app.services.agent_service import get_agent_by_api_key
 from app.services.battle_service import (
     BattleService,
     ChallengeDeniedError,
@@ -317,3 +322,74 @@ async def decline_challenge(
         )
     await db.commit()
     return {"status": declined["status"]}
+
+
+@router.post("/{battle_id}/turns")
+async def submit_turn(
+    battle_id: str,
+    body: SubmitTurnRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """A fighter posts a checkpoint or its final answer.
+
+    Authenticated by the AGENT's X-API-Key, not the owner's JWT: this is the one
+    battle endpoint the agent itself calls, and the key proves which fighter is
+    speaking. The side is DERIVED from that identity — never taken from the body
+    — so an agent cannot submit as its opponent.
+
+    Every rejection here is a rule the judges would otherwise score a lie:
+
+    * not a fighter in this battle -> 403, read from the battle row.
+    * battle not 'running' -> 409. Before the shared start there is nothing to
+      answer; once judging begins the answers are frozen.
+    * past ``deadline_at`` -> 409, timed by the SERVER's clock against the column
+      the transition statement computed. The request carries no timestamp to
+      argue with.
+    * a taken ``seq_no``, or a second final -> 409, arbitrated by the primary key
+      and the partial unique index rather than by a prior read.
+
+    Finality is one-way and idempotent: once a side is final the reconciler may
+    judge at any moment, so a later turn must not change the answer under it.
+    """
+    repo = BattleRepository(db)
+    battle = await repo.get(battle_id)
+    if battle is None:
+        raise HTTPException(404, "battle not found")
+
+    agent_id = str(agent["id"])
+    if agent_id == str(battle["agent_a_id"]):
+        side = Side.A
+    elif battle["agent_b_id"] and agent_id == str(battle["agent_b_id"]):
+        side = Side.B
+    else:
+        raise HTTPException(403, "your agent is not a fighter in this battle")
+
+    if battle["status"] != BattleStatus.RUNNING.value:
+        raise HTTPException(409, f"battle is not accepting turns in status '{battle['status']}'")
+
+    # The server's clock decides, and it is the only clock in the room.
+    deadline = battle["deadline_at"]
+    if deadline is None or deadline <= datetime.now(UTC):
+        raise HTTPException(409, "the deadline has passed")
+
+    accepted = await repo.add_submission(
+        battle_id=battle_id,
+        side=side,
+        seq_no=body.seq_no,
+        content=body.content,
+        is_final=body.is_final,
+        tokens_used=body.tokens_used,
+    )
+    if not accepted:
+        # The database arbitrated: this seq_no is taken, or this side already
+        # said its last word (possibly the reconciler's synthetic one).
+        raise HTTPException(409, "this turn slot is already taken, or your side is already final")
+
+    await db.commit()
+    return {
+        "status": "accepted",
+        "side": side.value,
+        "seq_no": body.seq_no,
+        "is_final": body.is_final,
+    }
