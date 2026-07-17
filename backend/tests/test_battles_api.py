@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -34,7 +35,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
-from app.api.v1.battles import _DENIAL_STATUS
+from app.api.deps import get_current_user, get_optional_user
+from app.api.v1.battles import _DENIAL_STATUS, _optional_fighter
 from app.core.database import get_db
 from app.main import app
 from app.repositories.agent_repo import AgentRepository
@@ -1335,27 +1337,74 @@ async def test_submissions_route_is_empty_before_anyone_answers(client, db, task
     assert response.json() == []
 
 
-async def test_submissions_expose_metadata_but_withhold_content_while_running(
+async def test_public_sees_no_live_metadata_while_running(
     client, db, task_id, make_agent
 ):
-    """The copy attack: B must not read A's checkpoint while B is still writing."""
+    """The timing leak: an anonymous poller must not read either side's live rows.
+
+    Per-turn metadata (seq_no, is_final, tokens_used, received_at) reveals that a
+    fighter already went final and how much it spent — enough for a last-mover
+    advantage. So while the battle is RUNNING the public / non-fighter caller
+    sees an empty list, not the opponent's progress.
+    """
     battle_id = await _running_battle(db, task_id, make_agent)
     await BattleRepository(db).add_submission(
-        battle_id, Side.A, 1, "MY SECRET ANSWER", is_final=False, tokens_used=7
+        battle_id, Side.A, 1, "MY SECRET ANSWER", is_final=True, tokens_used=7
     )
     await db.commit()
 
     body = (await client.get(f"/api/v1/battles/{battle_id}/submissions")).json()
 
-    assert len(body) == 1
-    assert "MY SECRET ANSWER" not in str(body)  # nowhere in the payload, not just the field
-    assert body[0]["content"] is None
-    assert body[0]["content_withheld"] is True
-    # But the live screen still learns what it is entitled to.
-    assert body[0]["side"] == "a"
-    assert body[0]["seq_no"] == 1
-    assert body[0]["is_final"] is False
-    assert body[0]["tokens_used"] == 7
+    assert body == []
+    assert "MY SECRET ANSWER" not in str(body)
+
+
+async def test_a_fighter_sees_only_its_own_side_while_running(
+    client, db, task_id, make_agent
+):
+    """A fighter may watch its OWN turns live, never the opponent's.
+
+    Mutation proof: drop the per-fighter filter and B's rows appear in A's view,
+    handing A the exact finality/token signal the leak is about.
+    """
+    repo = BattleRepository(db)
+    agent_a, agent_b = await make_agent(), await make_agent()
+    battle_id = await repo._create_battle(
+        task_id=task_id, agent_a_id=agent_a, agent_a_owner_snapshot=str(uuid.uuid4()),
+        challenge_ttl_seconds=3600, agent_b_id=agent_b, agent_b_owner_snapshot=str(uuid.uuid4()),
+    )
+    await repo._mark_accepted(battle_id)
+    await repo.reserve_both(battle_id, agent_a, agent_b, 600)
+    svc = BattleService(db)
+    ev_a = await svc.events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    ev_b = await svc.events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    row = await repo.arm_readiness(battle_id, ev_a, ev_b, 60)
+    await repo._mark_queued(battle_id, row["readiness_generation"])
+    await repo._mark_running(battle_id, str(uuid.uuid4()), 600)
+    await repo.add_submission(battle_id, Side.A, 1, "A's draft", is_final=False, tokens_used=3)
+    await repo.add_submission(battle_id, Side.B, 1, "B is DONE", is_final=True, tokens_used=99)
+    await db.commit()
+
+    # Fighter A: sees only its own side, content still withheld.
+    app.dependency_overrides[_optional_fighter] = lambda: {"id": agent_a}
+    try:
+        body = (await client.get(f"/api/v1/battles/{battle_id}/submissions")).json()
+    finally:
+        app.dependency_overrides.pop(_optional_fighter, None)
+
+    assert {row["side"] for row in body} == {"a"}
+    assert all(row["content"] is None and row["content_withheld"] for row in body)
+    # B's finality and token count never reach A.
+    assert "B is DONE" not in str(body)
+    assert 99 not in [row["tokens_used"] for row in body]
+
+    # Fighter B: symmetric — only its own side.
+    app.dependency_overrides[_optional_fighter] = lambda: {"id": agent_b}
+    try:
+        body_b = (await client.get(f"/api/v1/battles/{battle_id}/submissions")).json()
+    finally:
+        app.dependency_overrides.pop(_optional_fighter, None)
+    assert {row["side"] for row in body_b} == {"b"}
 
 
 async def test_submissions_reveal_content_once_the_battle_is_completed(
@@ -1475,3 +1524,145 @@ async def test_read_routes_404_on_an_unknown_battle(client):
     missing = uuid.uuid4()
     assert (await client.get(f"/api/v1/battles/{missing}/submissions")).status_code == 404
     assert (await client.get(f"/api/v1/battles/{missing}/judgements")).status_code == 404
+
+
+# ── D: the public battle DTO must not leak the ownership graph ─────────────
+
+
+async def _pending_challenge(db, owner_id, task_id, make_agent) -> tuple[str, str]:
+    """A named, still-pending challenge. Returns (battle_id, target_owner_id)."""
+    challenger = await make_agent()
+    target = await make_agent()  # owned by owner_id
+    battle_id = await BattleService(db).create_challenge(
+        task_id=task_id,
+        agent_a_id=challenger,
+        challenger_owner_user_id=owner_id,
+        agent_b_id=target,
+    )
+    await db.commit()
+    return battle_id, owner_id
+
+
+async def test_public_battle_detail_never_ships_owner_uuids(
+    client, db, owner_id, task_id, make_agent
+):
+    """Anyone reading a battle must not be able to enumerate shared owners."""
+    battle_id, _ = await _pending_challenge(db, owner_id, task_id, make_agent)
+
+    resp = await client.get(f"/api/v1/battles/{battle_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # The two owner-snapshot fields are gone entirely — not null, absent.
+    assert "agent_a_owner_snapshot" not in body
+    assert "agent_b_owner_snapshot" not in body
+    # And the owner id itself appears nowhere in the payload.
+    assert owner_id not in resp.text
+    # An anonymous reader has no accept capability.
+    assert body["viewer_can_accept"] is False
+
+
+async def test_viewer_can_accept_is_true_only_for_the_opponent_owner(
+    client, db, owner_id, task_id, make_agent
+):
+    """The capability flag replaces the raw owner id the client used to read."""
+    battle_id, target_owner = await _pending_challenge(db, owner_id, task_id, make_agent)
+
+    # The opponent's owner: may accept.
+    app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(id=target_owner)
+    try:
+        owner_body = (await client.get(f"/api/v1/battles/{battle_id}")).json()
+    finally:
+        app.dependency_overrides.pop(get_optional_user, None)
+    assert owner_body["viewer_can_accept"] is True
+
+    # A stranger with a valid session: may not.
+    app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(id=str(uuid.uuid4()))
+    try:
+        stranger_body = (await client.get(f"/api/v1/battles/{battle_id}")).json()
+    finally:
+        app.dependency_overrides.pop(get_optional_user, None)
+    assert stranger_body["viewer_can_accept"] is False
+
+
+# ── B: a directly-challenged owner is notified at creation, not by browsing ──
+
+
+async def test_named_challenge_notifies_the_target_owner(
+    client, db, owner_id, task_id, make_agent
+):
+    """The first touch: creating a named challenge notifies the target's owner."""
+    challenger = await make_agent()
+    target = await make_agent()
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=owner_id)
+    notify = AsyncMock()
+    try:
+        with patch("app.api.v1.battles._notify_battle_owners", notify):
+            resp = await client.post(
+                "/api/v1/battles",
+                json={"task_id": task_id, "agent_a_id": challenger, "agent_b_id": target},
+            )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 201
+    notify.assert_awaited_once()
+    recipients = notify.await_args.args[2]
+    assert len(recipients) == 1
+    assert recipients[0][0] == target
+    assert recipients[0][1] == "battle_challenge_received"
+
+
+async def test_claiming_an_open_challenge_notifies_the_challenger(
+    client, db, owner_id, task_id, make_agent
+):
+    """Claiming an OPEN challenge notifies the waiting challenger, not the claimer."""
+    challenger = await make_agent()
+    battle_id = await BattleService(db).create_challenge(
+        task_id=task_id, agent_a_id=challenger, challenger_owner_user_id=owner_id, agent_b_id=None
+    )
+    await db.commit()
+
+    claimant = await make_agent()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=owner_id)
+    notify = AsyncMock()
+    try:
+        with patch("app.api.v1.battles._notify_battle_owners", notify):
+            resp = await client.post(
+                f"/api/v1/battles/{battle_id}/claim", json={"agent_id": claimant}
+            )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200
+    notify.assert_awaited_once()
+    recipients = notify.await_args.args[2]
+    assert recipients[0][0] == challenger  # the challenger, not the claimant
+    assert recipients[0][1] == "battle_challenge_received"
+
+
+async def test_a_notify_failure_does_not_roll_back_the_challenge(
+    client, db, owner_id, task_id, make_agent
+):
+    """Best-effort: the challenge is durable even when the notification blows up.
+
+    No mock here — the test schema has no notifications table, so the REAL
+    create_notification_task raises, and _notify_battle_owners must swallow it.
+    The battle row must still be committed.
+    """
+    challenger = await make_agent()
+    target = await make_agent()
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=owner_id)
+    try:
+        resp = await client.post(
+            "/api/v1/battles",
+            json={"task_id": task_id, "agent_a_id": challenger, "agent_b_id": target},
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 201
+    # The challenge survived the notification failure.
+    assert await _count_battles(db, target) == 1

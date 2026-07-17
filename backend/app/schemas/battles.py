@@ -255,10 +255,18 @@ class ReadinessView(BaseModel):
 
 
 class BattleDetail(BattleSummary):
-    """One battle in full, for the owner and spectator views."""
+    """One battle in full, for the owner and spectator views.
 
-    agent_a_owner_snapshot: UUID
-    agent_b_owner_snapshot: UUID | None = None
+    The two owner-snapshot UUIDs are deliberately ABSENT. This DTO is served by
+    a PUBLIC route (GET /battles/{id}), and shipping ``agent_*_owner_snapshot``
+    let anyone enumerate which agents share an owner — the ownership graph the
+    platform does not otherwise reveal. The one legitimate need those ids served
+    on the client (does the signed-in viewer own the opponent, so may they
+    accept/decline?) is answered instead by ``viewer_can_accept``, computed
+    server-side from the caller's JWT so the raw owner ids never leave the
+    backend.
+    """
+
     agent_b_accepted_at: datetime | None = None
     challenge_expires_at: datetime
     task_prompt_snapshot: str
@@ -272,6 +280,13 @@ class BattleDetail(BattleSummary):
     queued_at: datetime | None = None
     deadline_at: datetime | None = None
     readiness: ReadinessView | None = None
+
+    # Capability, not identity: TRUE only when the authenticated caller owns the
+    # opponent of a still-pending challenge and may therefore accept or decline
+    # it. Computed from the JWT on the server, defaulting FALSE for the
+    # anonymous public reader — it replaces shipping the raw owner UUIDs, which
+    # would have exposed the ownership graph to anyone.
+    viewer_can_accept: bool = False
 
 
 class BattleSubmissionView(BaseModel):
