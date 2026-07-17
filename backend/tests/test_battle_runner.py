@@ -1955,7 +1955,9 @@ class TestStrandedJudgingEscapeHatch:
         elo_a_before = await _elo(session_maker, agent_a)
         elo_b_before = await _elo(session_maker, agent_b)
 
-        counts = await reap_once(session_maker)
+        # A provider is present, so the escape hatch is allowed to fire (it makes
+        # no network call — collapse-to-error + settle are DB-only).
+        counts = await reap_once(session_maker, {"api_key": "unused", "base_url": "http://unused"})
 
         assert counts["stranded_settled"] == 1
         async with session_maker() as session:
@@ -1982,11 +1984,67 @@ class TestStrandedJudgingEscapeHatch:
         )
         await db_session.commit()
 
-        assert (await reap_once(session_maker))["stranded_settled"] == 1
+        stub = {"api_key": "unused", "base_url": "http://unused"}
+        assert (await reap_once(session_maker, stub))["stranded_settled"] == 1
         # Second pass: the row is 'completed' now, so the finder skips it.
-        assert (await reap_once(session_maker))["stranded_settled"] == 0
+        assert (await reap_once(session_maker, stub))["stranded_settled"] == 0
         async with session_maker() as session:
             assert (await BattleRepository(session).get(battle_id))["status"] == "completed"
+
+    async def test_the_escape_hatch_waits_for_a_provider_during_an_outage(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """A spent-budget judging battle must NOT be no-quorum-settled mid-outage.
+
+        The escape hatch mints an honest no-quorum only for a panel that genuinely
+        exhausted its budget WITH a working provider. During a provider outage the
+        SAME battle must WAIT — a later provider-backed pass could still judge it.
+        Finalizing it unrated while the model is merely unreachable throws away a
+        battle that could still get a real verdict.
+
+        MUTATION: drop the provider gate on the stranded-judging loop in reap_once
+        and the outage-waits assertion below fails — the battle gets settled to
+        no-quorum during the outage.
+        """
+        # Exactly the stranded shape: no votes, budget spent, lease lapsed.
+        battle_id, agent_a, agent_b, _ = await _battle_in_judging(
+            db_session, task_id, votes=[]
+        )
+        await db_session.execute(
+            text(
+                "UPDATE battles SET lease_attempt_count = :c, "
+                "lease_expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"c": RUNNING_MAX_ATTEMPTS, "b": battle_id},
+        )
+        await db_session.commit()
+
+        elo_a_before = await _elo(session_maker, agent_a)
+        elo_b_before = await _elo(session_maker, agent_b)
+
+        # -- OUTAGE: provider=None -> the escape hatch must NOT fire -----------
+        counts = await reap_once(session_maker, None)
+        assert counts["stranded_settled"] == 0, counts
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "judging"
+        # It waits: not completed, not settled, no Elo moved, fighters still held.
+        assert await _elo(session_maker, agent_a) == elo_a_before
+        assert await _elo(session_maker, agent_b) == elo_b_before
+        assert await _reservation_count(session_maker, battle_id) == 2
+
+        # -- RECOVERY: provider present -> the escape hatch finalizes it -------
+        counts = await reap_once(
+            session_maker, {"api_key": "unused", "base_url": "http://unused"}
+        )
+        assert counts["stranded_settled"] == 1, counts
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "completed"
+        assert battle["winner"] is None  # no-quorum, unrated
+        assert await _elo(session_maker, agent_a) == elo_a_before
+        assert await _elo(session_maker, agent_b) == elo_b_before
+        assert await _reservation_count(session_maker, battle_id) == 0
 
 
 class TestReaperSparesLiveBattleReservations:
