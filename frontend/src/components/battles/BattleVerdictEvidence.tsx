@@ -99,17 +99,21 @@ function VoteChip({ vote, agentAName, agentBName }: { vote: Vote | null; agentAN
   );
 }
 
+// Pundit-desk numeral: the confidence reads as a big broadcast stat, with a
+// thin meter underneath instead of the number living inside a progress bar.
 function ConfidenceBar({ confidence, vote }: { confidence: number | null; vote: Vote }) {
-  if (confidence === null) return null;
+  if (confidence === null) {
+    return <div className="mt-3 text-lg font-bold text-neutral-600">— · —</div>;
+  }
   const pct = Math.round(Math.min(1, Math.max(0, confidence)) * 100);
   const fill = vote === "a" ? "bg-violet-400" : vote === "b" ? "bg-cyan-400" : "bg-neutral-500";
+  const numeral = vote === "abstain" ? "text-neutral-500" : "text-neutral-50";
   return (
-    <div className="mt-3 pt-3 border-t border-neutral-800">
-      <div className="flex items-center justify-between text-[11px] text-neutral-500 mb-1.5">
-        <span className="font-mono uppercase tracking-[0.1em]">Уверенность</span>
-        <span className="font-mono tabular-nums text-neutral-400">{pct}%</span>
+    <div className="mt-2">
+      <div className={`font-mono tabular-nums leading-none ${vote === "abstain" ? "text-2xl" : "text-4xl sm:text-[40px]"} font-extrabold ${numeral}`}>
+        {pct}%
       </div>
-      <div className="h-1 w-full rounded-full bg-neutral-800 overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+      <div className="mt-2.5 h-1 w-full rounded-full bg-neutral-800 overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Уверенность">
         <div className={`h-full rounded-full ${fill}`} style={{ width: `${pct}%` }} />
       </div>
     </div>
@@ -406,7 +410,7 @@ export function BattleVerdictEvidence({ battle, agentAName, agentBName }: Props)
                     return (
                       <div
                         key={side}
-                        className={`rounded-lg border p-4 ${side === "a" ? "border-violet-500/30" : "border-cyan-500/30"}`}
+                        className={`rounded-lg border p-4 ${side === "a" ? "border-violet-500/30 bg-violet-950/20" : "border-cyan-500/30 bg-cyan-950/20"}`}
                       >
                         <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
                           <AgentIdentity side={side} agentId={side === "a" ? battle.agent_a_id : battle.agent_b_id} name={sideName(side, agentAName, agentBName)} size="sm" />
@@ -455,25 +459,28 @@ export function BattleVerdictEvidence({ battle, agentAName, agentBName }: Props)
                     Три независимых прогона одной модели; порядок A/B проверяется отдельно.
                   </p>
                   <div className="grid md:grid-cols-3 gap-3">
-                    {llmJudgements.map((j, i) => (
-                      <div key={j.replicate_seed} className="rounded-lg border border-neutral-800 bg-neutral-900/30 p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-neutral-300">Реплика {i + 1}</span>
-                          <VoteChip vote={j.vote} agentAName={agentAName} agentBName={agentBName} />
-                        </div>
-                        <ConfidenceBar confidence={j.confidence} vote={j.vote} />
-                        {j.reasoning && (
-                          <div className="mt-3 border-t border-neutral-800 pt-3 text-sm leading-6 text-neutral-300">
-                            {j.reasoning}
+                    {llmJudgements.map((j, i) => {
+                      const accent = j.vote === "a" ? "border-t-violet-500" : j.vote === "b" ? "border-t-cyan-500" : "border-t-neutral-700";
+                      return (
+                        <div key={j.replicate_seed} className={`rounded-lg border border-neutral-800 border-t-[3px] ${accent} bg-neutral-900/30 p-3`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-medium text-neutral-500 font-mono">Реплика {i + 1}</span>
+                            <VoteChip vote={j.vote} agentAName={agentAName} agentBName={agentBName} />
                           </div>
-                        )}
-                        {j.position_sensitive && (
-                          <span className="inline-flex items-center mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-300">
-                            Зависит от порядка A/B
-                          </span>
-                        )}
-                      </div>
-                    ))}
+                          <ConfidenceBar confidence={j.confidence} vote={j.vote} />
+                          {j.reasoning && (
+                            <div className="mt-3 border-t border-neutral-800 pt-3 text-sm leading-6 text-neutral-300">
+                              {j.reasoning}
+                            </div>
+                          )}
+                          {j.position_sensitive && (
+                            <span className="inline-flex items-center mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-300">
+                              Зависит от порядка A/B
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                   {llmTally && <TallyLine tally={llmTally} agentAName={agentAName} agentBName={agentBName} />}
                 </div>
