@@ -8,7 +8,6 @@ import {
   BattleDetail,
   BattleStatus,
   BattleTask,
-  countdown,
 } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
@@ -23,6 +22,20 @@ import { BattleStepper } from "@/components/battles/BattleStepper";
 type Me = { id: string } | null;
 
 const PROMPT_PREVIEW_LEN = 420;
+
+// Compact mono countdown for the arena seam — "mm:ss", or "h:mm:ss" once an
+// hour or more remains. Battle deadlines are short (task time limits), so
+// the verbose "0h 3m 23s" format from lib/api.ts (shared with the hackathon
+// countdowns) reads clunky here; this stays local to the battles detail page.
+function formatArenaCountdown(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
 
 export default function BattleDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -158,6 +171,10 @@ export default function BattleDetailPage() {
 
   const acceptedByOwner = battle.agent_b_accepted_at !== null;
   const readyToRun = battle.readiness?.ready === true;
+  // Consent/readiness is only informative before or during a fight — once a
+  // battle is completed/expired/aborted it is history noise under the gold
+  // winner banner.
+  const showReadinessRow = !["completed", "expired", "aborted"].includes(battle.status);
 
   // Broadcast arena center content varies by status: live badge+countdown
   // while running, an Elo scoreboard once completed, a plain VS otherwise.
@@ -216,13 +233,13 @@ export default function BattleDetailPage() {
                 {isArenaRunning ? (
                   <>
                     <StatusBadge status={battle.status} />
-                    {battle.deadline_at && (
+                    {battle.deadline_at && deadlineMs !== null && (
                       <span
                         className={`font-mono tabular-nums text-lg ${
                           deadlinePassed || urgent ? "text-red-300" : "text-white"
                         }`}
                       >
-                        {deadlinePassed ? "00:00" : countdown(battle.deadline_at)}
+                        {formatArenaCountdown(deadlineMs)}
                       </span>
                     )}
                   </>
@@ -266,17 +283,19 @@ export default function BattleDetailPage() {
             )}
           </div>
 
-          <div className="relative border-t border-neutral-800/70 px-5 sm:px-8 py-3 flex flex-wrap items-center justify-center gap-3 text-xs text-neutral-500">
-            <span className="flex items-center gap-1.5">
-              <span className={acceptedByOwner ? "text-emerald-400" : "text-neutral-600"}>{acceptedByOwner ? "●" : "○"}</span>
-              Согласие {acceptedByOwner ? "получено" : "ожидается"}
-            </span>
-            <span className="text-neutral-700">·</span>
-            <span className="flex items-center gap-1.5">
-              <span className={readyToRun ? "text-emerald-400" : "text-neutral-600"}>{readyToRun ? "●" : "○"}</span>
-              {readyToRun ? "Готов к запуску" : "Готовность не подтверждена"}
-            </span>
-          </div>
+          {showReadinessRow && (
+            <div className="relative border-t border-neutral-800/70 px-5 sm:px-8 py-3 flex flex-wrap items-center justify-center gap-3 text-xs text-neutral-500">
+              <span className="flex items-center gap-1.5">
+                <span className={acceptedByOwner ? "text-emerald-400" : "text-neutral-600"}>{acceptedByOwner ? "●" : "○"}</span>
+                Согласие {acceptedByOwner ? "получено" : "ожидается"}
+              </span>
+              <span className="text-neutral-700">·</span>
+              <span className="flex items-center gap-1.5">
+                <span className={readyToRun ? "text-emerald-400" : "text-neutral-600"}>{readyToRun ? "●" : "○"}</span>
+                {readyToRun ? "Готов к запуску" : "Готовность не подтверждена"}
+              </span>
+            </div>
+          )}
 
           {task && (
             <div className="relative border-t border-neutral-800/70 px-5 sm:px-8 py-3 flex items-center justify-center gap-2 text-xs text-neutral-500">
@@ -340,16 +359,11 @@ export default function BattleDetailPage() {
                 <div className="text-sm font-medium text-orange-300">Идёт бой</div>
                 <div className="text-xs text-neutral-500 mt-0.5">Ответы скрыты до завершения</div>
               </div>
-              {battle.deadline_at && (
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-xs text-neutral-500">До конца</span>
-                  <span className={`text-lg font-mono tabular-nums ${deadlinePassed || urgent ? "text-red-300" : "text-neutral-100"}`}>
-                    {deadlinePassed ? "00:00" : countdown(battle.deadline_at)}
-                  </span>
-                  {urgent && !deadlinePassed && (
-                    <span className="battle-urgent h-1.5 w-1.5 rounded-full bg-red-400 shrink-0" />
-                  )}
-                </div>
+              {/* The countdown lives once, in the arena seam above — this strip
+                  only carries the urgency signal (dot + border color), not a
+                  second timer. */}
+              {urgent && !deadlinePassed && (
+                <span className="battle-urgent h-1.5 w-1.5 rounded-full bg-red-400 shrink-0" />
               )}
             </div>
           </div>
