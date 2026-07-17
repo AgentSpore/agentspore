@@ -33,8 +33,13 @@ from app.core.database import get_db
 from app.main import app
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository
-from app.schemas.battles import MAX_SUBMISSION_CHARS, TaskSource
+from app.schemas.battles import MAX_SUBMISSION_CHARS, BattleStatus, TaskSource
 from app.services.agent_service import AgentService
+from app.services.battle_runner import (
+    BATTLE_LEASE_SECONDS,
+    RECONCILE_BATCH,
+    RUNNING_MAX_ATTEMPTS,
+)
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
@@ -541,3 +546,98 @@ class TestStatusGate:
             headers={"X-API-Key": battle["key_a"]},
         )
         assert response.status_code == 404
+
+
+async def _running_phase_would_claim(session_maker, battle_id: str) -> bool:
+    """Does the reconciler's running phase claim this battle right now?
+
+    Runs the REAL claim_battles_for_reconcile(RUNNING) predicate and rolls back,
+    so the probe never mutates the lease it is inspecting. True means the row's
+    lease has lapsed and judging happens on the next tick; False means it is
+    still fenced by a live lease and would wait out the window.
+    """
+    async with session_maker() as session:
+        claimed = await BattleRepository(session).claim_battles_for_reconcile(
+            status=BattleStatus.RUNNING,
+            lease_token=str(uuid.uuid4()),
+            lease_seconds=BATTLE_LEASE_SECONDS,
+            limit=RECONCILE_BATCH,
+            max_attempts=RUNNING_MAX_ATTEMPTS,
+        )
+        await session.rollback()
+    return battle_id in {str(b["id"]) for b in claimed}
+
+
+class TestEarlyFinishThroughTheRoute:
+    """The integration point for the early-finish speed-up: POST /turns.
+
+    These are the tests that die if the route stops calling
+    expire_running_lease_if_both_final — a repo-level unit test cannot see that
+    the route is wired at all.
+    """
+
+    async def test_both_finals_via_route_make_the_battle_immediately_claimable(
+        self, client, db, session_maker, task_id
+    ) -> None:
+        battle = await _running_battle(db, task_id)
+        # A live lease is in place (deadline_at NOW()+600), so nothing has
+        # lapsed on its own — only the route call can make this claimable.
+        assert await _running_phase_would_claim(session_maker, battle["id"]) is False
+
+        a_final = await client.post(
+            f"/api/v1/battles/{battle['id']}/turns",
+            json={"content": "A answer", "seq_no": 1, "is_final": True},
+            headers={"X-API-Key": battle["key_a"]},
+        )
+        assert a_final.status_code == 200, a_final.text
+        # Only one side final yet — still fenced.
+        assert await _running_phase_would_claim(session_maker, battle["id"]) is False
+
+        b_final = await client.post(
+            f"/api/v1/battles/{battle['id']}/turns",
+            json={"content": "B answer", "seq_no": 1, "is_final": True},
+            headers={"X-API-Key": battle["key_b"]},
+        )
+        assert b_final.status_code == 200, b_final.text
+        # Both finals in: the route retired the lease, so the running phase
+        # claims it now instead of waiting out BATTLE_LEASE_SECONDS. Removing the
+        # route's expire call flips this to False.
+        assert await _running_phase_would_claim(session_maker, battle["id"]) is True
+
+    async def test_finals_via_route_survive_a_released_null_lease_without_500(
+        self, client, db, session_maker, task_id
+    ) -> None:
+        # Reproduce finding 1: a normal pre-deadline reconcile poll releases the
+        # running row to lease_token=NULL / lease_expires_at=NULL. Writing
+        # expires_at=NOW() onto that row would violate battle_lease_token_has_expiry
+        # and 500 the fighter's final. The lease_token IS NOT NULL guard skips it.
+        battle = await _running_battle(db, task_id)
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_token = NULL, lease_expires_at = NULL "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle["id"]},
+            )
+            await session.commit()
+
+        a_final = await client.post(
+            f"/api/v1/battles/{battle['id']}/turns",
+            json={"content": "A answer", "seq_no": 1, "is_final": True},
+            headers={"X-API-Key": battle["key_a"]},
+        )
+        b_final = await client.post(
+            f"/api/v1/battles/{battle['id']}/turns",
+            json={"content": "B answer", "seq_no": 1, "is_final": True},
+            headers={"X-API-Key": battle["key_b"]},
+        )
+        assert a_final.status_code == 200, a_final.text
+        assert b_final.status_code == 200, b_final.text
+
+        # Both finals actually persisted — no rollback from a CHECK violation.
+        subs = await _submissions(session_maker, battle["id"])
+        finals = [s for s in subs if s["is_final"]]
+        assert {s["side"] for s in finals} == {"a", "b"}
+        # A NULL/NULL running row is already claimable; the guard left it valid.
+        assert await _running_phase_would_claim(session_maker, battle["id"]) is True

@@ -1758,6 +1758,43 @@ class TestEarlyFinishLeaseRelease:
             await session.rollback()
         assert battle_id not in {str(b["id"]) for b in claimed}
 
+    async def test_a_released_null_lease_is_skipped_without_violating_the_check(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        # A normal pre-deadline reconcile poll releases the running row to
+        # lease_token=NULL / lease_expires_at=NULL (release_reconcile_claim).
+        # Writing expires_at=NOW() onto that row would violate V66's
+        # battle_lease_token_has_expiry CHECK; the `lease_token IS NOT NULL`
+        # guard must skip it and return False instead of raising. (Removing the
+        # guard turns this into a CheckViolationError.)
+        async with session_maker() as session:
+            battle_id, _agent_a, _agent_b, _token = await _battle_running(session, task_id)
+            repo = BattleRepository(session)
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_token = NULL, lease_expires_at = NULL "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            assert await repo.add_submission(battle_id, Side.A, 1, "A", is_final=True)
+            assert await repo.add_submission(battle_id, Side.B, 1, "B", is_final=True)
+            # Must not raise, and must report "nothing to nudge".
+            assert await repo.expire_running_lease_if_both_final(battle_id) is False
+            await session.commit()
+
+        # The NULL/NULL running row is already claimable on its own.
+        async with session_maker() as session:
+            claimed = await BattleRepository(session).claim_battles_for_reconcile(
+                status=BattleStatus.RUNNING,
+                lease_token=str(uuid.uuid4()),
+                lease_seconds=BATTLE_LEASE_SECONDS,
+                limit=RECONCILE_BATCH,
+                max_attempts=RUNNING_MAX_ATTEMPTS,
+            )
+            await session.rollback()
+        assert battle_id in {str(b["id"]) for b in claimed}
+
 
 class TestOwnerNotifications:
     """FIX 2: terminal transitions notify owners through the platform's task
@@ -1770,9 +1807,13 @@ class TestOwnerNotifications:
         bid = "b1"
         assert "победа" in _battle_result_title(bid, Side.A, Winner.A.value)
         assert "поражение" in _battle_result_title(bid, Side.B, Winner.A.value)
+        # A real tie (quorum reached on a draw) is "ничья".
         assert "ничья" in _battle_result_title(bid, Side.A, Winner.TIE.value)
-        # No quorum is a "ничья" from an owner's viewpoint, not a win/loss.
-        assert "ничья" in _battle_result_title(bid, Side.A, None)
+        # No quorum is NOT a draw — a failed panel is not evidence of equality.
+        no_quorum = _battle_result_title(bid, Side.A, None)
+        assert "не определён" in no_quorum
+        assert "кворум" in no_quorum
+        assert "ничья" not in no_quorum
         assert bid in _battle_result_title(bid, Side.A, Winner.A.value)
 
     async def test_completed_battle_notifies_both_owners(
@@ -1797,18 +1838,33 @@ class TestOwnerNotifications:
         assert "победа" in by_agent[agent_a]
         assert "поражение" in by_agent[agent_b]
 
-    async def test_notify_failure_does_not_roll_back_completion(
+    async def test_notify_failure_on_second_recipient_leaves_the_first_and_transition_intact(
         self, session_maker, db_session, task_id
     ) -> None:
-        battle_id, agent_a, _agent_b, token = await _battle_in_judging(
+        battle_id, agent_a, agent_b, token = await _battle_in_judging(
             db_session, task_id, votes=[Vote.A, Vote.A, Vote.A]
         )
-        boom = AsyncMock(side_effect=RuntimeError("notification backend down"))
-        with patch("app.services.agent_service.AgentService.create_notification_task", boom):
-            # The verdict is the business decision; a notify blowup must not
-            # undo it or surface as an error to the caller.
+
+        # Fail delivery to the SECOND recipient only. Per-recipient isolation
+        # means the first must already be committed and the terminal transition
+        # untouched — a notify blowup must not surface to the caller either.
+        calls: list[str] = []
+
+        async def flaky(**kwargs):
+            calls.append(kwargs["assigned_to_agent_id"])
+            if len(calls) == 2:
+                raise RuntimeError("notification backend down for recipient two")
+
+        with patch(
+            "app.services.agent_service.AgentService.create_notification_task",
+            AsyncMock(side_effect=flaky),
+        ):
             change = await _settle_in_own_session(session_maker, battle_id, token)
         assert change is not None
+
+        # Both recipients were attempted; the first one landed.
+        assert len(calls) == 2
+        assert set(calls) == {agent_a, agent_b}
 
         async with session_maker() as session:
             battle = await BattleRepository(session).get(battle_id)
