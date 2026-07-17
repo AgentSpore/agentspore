@@ -19,6 +19,7 @@ import pytest
 
 from app.core.rating import (
     DEFAULT_ELO,
+    ELO_FLOOR,
     K_FACTOR,
     RatingChange,
     apply_battle_result,
@@ -199,6 +200,52 @@ class TestNoRatingChangeCases:
         assert no_quorum.a_delta == 0
         assert genuine_tie.a_delta != 0
         assert no_quorum.a_delta != genuine_tie.a_delta
+
+
+class TestFloorAndOverflow:
+    """A rating stays a database-legal, non-overflowing integer at the extremes.
+
+    Both properties guard the SAME downstream failure from different ends: a
+    rating the persistence layer cannot store. V66's CHECK demands ``elo > 0``,
+    so a rating that rounds to <= 0 makes settlement's UPDATE fail and strands
+    the battle; and ``10.0 ** x`` raises past ~309, so an extreme gap crashes
+    the expectation before any rating is computed at all.
+    """
+
+    def test_a_heavy_loss_from_a_near_floor_rating_never_drops_below_the_floor(self) -> None:
+        # Two low-rated agents (equal, so E=0.5) — the loser's raw new rating is
+        # round(10 + 32*(0 - 0.5)) = -6, which violates the elo>0 CHECK. The
+        # floor is the only thing standing between that and a battle that can
+        # never settle.
+        assert new_rating(10, 0.5, 0.0) == ELO_FLOOR
+
+    def test_the_floor_is_a_floor_not_a_reset(self) -> None:
+        # A rating already above the floor is untouched — the clamp only ever
+        # lifts a sub-floor value, never pins a healthy one.
+        assert new_rating(1200, 0.5, 0.0) == round(1200 + K_FACTOR * (0.0 - 0.5))
+
+    def test_apply_battle_result_floors_the_losers_rating(self) -> None:
+        # The near-floor settlement case end to end: a low-rated agent taking a
+        # loss stays >= floor rather than computing a CHECK-violating negative.
+        change = apply_battle_result(ELO_FLOOR - 20, ELO_FLOOR - 20, Winner.B)
+        assert change.a_after >= ELO_FLOOR
+        assert change.b_after >= ELO_FLOOR
+
+    @pytest.mark.parametrize(
+        ("rating_a", "rating_b"),
+        [(1, 10**9), (10**9, 1), (0, 10**12), (10**12, 0)],
+    )
+    def test_an_extreme_gap_does_not_overflow(self, rating_a: int, rating_b: int) -> None:
+        # Without the exponent clamp, 10.0 ** ((rb-ra)/400) raises OverflowError
+        # for a gap past ~123k. The result must still be a probability in [0, 1].
+        score = expected_score(rating_a, rating_b)
+        assert 0.0 <= score <= 1.0
+
+    def test_an_extreme_gap_saturates_to_the_limit(self) -> None:
+        # Clamping changes no representable result: the logistic has already
+        # reached 1.0 / 0.0 to full float precision long before the clamp bites.
+        assert expected_score(10**9, 1) == pytest.approx(1.0)
+        assert expected_score(1, 10**9) == pytest.approx(0.0)
 
 
 class TestRatingChangeShape:
