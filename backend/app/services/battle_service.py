@@ -34,6 +34,8 @@ and may call connection_manager; battle_repo imports nothing from here.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +47,7 @@ from app.repositories.battle_repo import (
     ChallengeDenial,
     ReservationConflictError,
 )
+from app.schemas.battles import BattleStatus
 from app.services.connection_manager import DeliveryResult, dispatch_existing
 
 # How long a challenge waits for B's owner to answer. Consent is a human
@@ -79,6 +82,16 @@ READY_LEASE_SECONDS = 60
 # lapse while readiness is still legitimately in flight, but it must not
 # outlive it by much either.
 RESERVATION_SECONDS = READY_LEASE_SECONDS + 30
+
+# How many readiness re-arm attempts (accepted -> reserved) a battle may burn
+# before it is aborted rather than re-armed again. Each arm bumps
+# readiness_generation, so the generation IS the attempt count. Without a bound,
+# an opponent that accepts and then never ACKs re-reserves the challenger every
+# READY_LEASE_SECONDS for the whole CHALLENGE_TTL_SECONDS (24h) — making the
+# challenger unavailable for other battles with no Elo consequence. Three
+# attempts is enough for an agent that briefly missed a ready-check to catch the
+# next one, and short enough that a silent opponent cannot grief for a day.
+READY_MAX_GENERATIONS = 3
 
 
 class ChallengeDeniedError(Exception):
@@ -416,6 +429,67 @@ class BattleService:
             return None
         await self.repo.release_reservations(battle_id)
         return released
+
+    async def expire_or_abort_readiness(
+        self, battle_id: str, max_generations: int = READY_MAX_GENERATIONS
+    ) -> dict | None:
+        """On a lapsed ready lease: re-arm-able -> accepted, else -> aborted.
+
+        The grief-bounded successor to release_expired_readiness for the
+        reconciler's reserved-poll path. When the ready lease has lapsed:
+
+        * if the battle has NOT spent its re-arm budget
+          (readiness_generation < max_generations), release it back to
+          'accepted' exactly as before, freeing both fighters for the next arm;
+        * once the budget is spent, ABORT it instead of re-arming, naming the
+          silent side(s), and release both reservations — otherwise a never-ACK
+          opponent keeps the challenger reserved for the whole challenge TTL.
+
+        Returns a small outcome dict (``{"outcome": "released"|"aborted",
+        "battle": <row>, "silent_sides": (...)}``) or None when the battle is
+        not in a state to act on (not reserved, or the lease is still live). Does
+        not commit — the caller owns the boundary and, on an abort, also fires
+        the terminal owner notification after committing.
+        """
+        battle = await self.repo.get(battle_id)
+        if battle is None or battle["status"] != BattleStatus.RESERVED.value:
+            return None
+        lease = battle["ready_lease_expires_at"]
+        if lease is None or lease > datetime.now(UTC):
+            # Readiness is still legitimately in flight — nothing to release yet.
+            return None
+
+        if battle["readiness_generation"] >= max_generations:
+            silent = await self.repo.unacked_ready_sides(battle_id)
+            aborted = await self.repo.abort_unready_readiness(
+                battle_id, max_generations, _unready_abort_reason(silent, max_generations)
+            )
+            if aborted is None:
+                return None
+            await self.repo.release_reservations(battle_id)
+            return {"outcome": "aborted", "battle": aborted, "silent_sides": silent}
+
+        released = await self.repo.release_readiness(battle_id)
+        if released is None:
+            return None
+        await self.repo.release_reservations(battle_id)
+        return {"outcome": "released", "battle": released, "silent_sides": ()}
+
+
+def _unready_abort_reason(silent_sides: tuple[str, ...], max_generations: int) -> str:
+    """Name the side(s) that never confirmed readiness, for the abort record."""
+    if len(silent_sides) >= 2:
+        who = "both fighters"
+    elif silent_sides:
+        who = f"fighter {silent_sides[0]}"
+    else:
+        # Defensive: an abort with nobody silent should not happen, but the
+        # record must still be truthful rather than name an innocent side.
+        who = "readiness"
+    return (
+        f"readiness never confirmed after {max_generations} attempts: "
+        f"{who} did not ACK the ready-check"
+    )
 
 
 def get_battle_service(db: AsyncSession) -> BattleService:

@@ -397,11 +397,28 @@ class BattleRunner:
             logger.info("battle {} queued: both fighters acked", battle_id)
             return True
 
-        # Not admissible. If the lease has lapsed, stop waiting and let both
-        # fighters go — in the SAME transaction as the state change.
-        released = await service.release_expired_readiness(battle_id)
+        # Not admissible. If the lease has lapsed, either release it back to
+        # 'accepted' for another arm, or — once the re-arm budget is spent —
+        # abort it so a never-ACK opponent cannot pin the challenger for the
+        # whole challenge TTL. Both happen in the SAME transaction as the state
+        # change; the abort notification fires after the commit.
+        outcome = await service.expire_or_abort_readiness(battle_id)
         await self.db.commit()
-        if released is not None:
+        if outcome is None:
+            return False
+        if outcome["outcome"] == "aborted":
+            aborted = outcome["battle"]
+            logger.info(
+                "battle {} readiness cap reached ({} silent): aborted, reservations released",
+                battle_id,
+                outcome["silent_sides"] or "none",
+            )
+            title = f"Бой прерван (бой {battle_id})"
+            recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
+            if aborted["agent_b_id"]:
+                recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
+            await _notify_battle_owners(self.db, battle_id, recipients)
+        else:
             logger.info("battle {} readiness lapsed: reservations released", battle_id)
         return False
 

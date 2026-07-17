@@ -1300,6 +1300,98 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
+    async def unacked_ready_sides(self, battle_id: str) -> tuple[str, ...]:
+        """Which sides have NOT validly acked the CURRENT readiness generation.
+
+        Returns a subset of ``('a', 'b')``. A side counts as acked only under the
+        same predicate :data:`_BOTH_SIDES_ACKED_SQL` uses to admit a queue — the
+        armed event, acked by the right agent, inside both the event's expiry and
+        the readiness lease — so 'silent' here means exactly 'did not satisfy the
+        gate'. A missing armed id, or no ACK, reads as silent (NULL -> not True).
+
+        Read BEFORE aborting so the abort reason can name who went quiet; it does
+        not mutate anything.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT
+                    COALESCE((
+                        SELECT e.acked_at IS NOT NULL
+                               AND e.acked_at < e.expires_at
+                               AND e.acked_at < b.ready_lease_expires_at
+                          FROM agent_events e
+                         WHERE e.event_id = b.ready_check_event_id_a
+                           AND e.type = 'battle_ready_check'
+                           AND e.target_agent_id = b.agent_a_id
+                    ), FALSE) AS a_acked,
+                    COALESCE((
+                        SELECT e.acked_at IS NOT NULL
+                               AND e.acked_at < e.expires_at
+                               AND e.acked_at < b.ready_lease_expires_at
+                          FROM agent_events e
+                         WHERE e.event_id = b.ready_check_event_id_b
+                           AND e.type = 'battle_ready_check'
+                           AND e.target_agent_id = b.agent_b_id
+                    ), FALSE) AS b_acked
+                  FROM battles b
+                 WHERE b.id = CAST(:battle_id AS UUID)
+                """
+            ),
+            {"battle_id": str(battle_id)},
+        )
+        row = result.mappings().first()
+        if row is None:
+            return ()
+        silent: list[str] = []
+        if not row["a_acked"]:
+            silent.append("a")
+        if not row["b_acked"]:
+            silent.append("b")
+        return tuple(silent)
+
+    async def abort_unready_readiness(
+        self, battle_id: str, max_generations: int, verdict_reason: str
+    ) -> dict | None:
+        """reserved -> aborted once the readiness re-arm budget is spent.
+
+        The grief bound. A 'reserved' battle whose ready lease lapsed drops back
+        to 'accepted' and is re-armed next pass; an opponent that accepts and
+        then never ACKs keeps the challenger re-reserved ~every lease for the
+        whole 24h challenge TTL, with no Elo consequence. This is the terminal
+        exit: once ``readiness_generation`` has reached ``max_generations`` and
+        the current lease has lapsed, the battle is aborted instead of re-armed,
+        and the caller releases both reservations in the same transaction.
+
+        Every condition is a predicate of THIS statement, not a prior read: still
+        'reserved', budget genuinely spent, and the lease genuinely lapsed — so a
+        battle whose fighters acked a moment ago (lease still live) can never be
+        aborted by a racing worker. None = it was not in the abortable shape.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battles
+                SET status = 'aborted',
+                    verdict_reason = :verdict_reason,
+                    ended_at = NOW(),
+                    lease_token = NULL,
+                    lease_expires_at = NULL
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND status = 'reserved'
+                  AND readiness_generation >= :max_generations
+                  AND ready_lease_expires_at <= NOW()
+                RETURNING *
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "max_generations": max_generations,
+                "verdict_reason": verdict_reason,
+            },
+        )
+        return self._one_or_none(result.mappings().first())
+
     async def _mark_running(
         self,
         battle_id: str,
