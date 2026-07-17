@@ -864,6 +864,44 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
+    async def can_accept(self, battle_id: str, user_id: str) -> bool:
+        """Would :meth:`accept_as_owner` succeed for this user, right now?
+
+        A capability probe for the public battle DTO, and it MUST use the exact
+        predicate the accept CAS uses — otherwise the advertised
+        ``viewer_can_accept`` lies. Checking only the frozen snapshot (as a naive
+        version did) tells Alice she may accept a challenge whose agent B has
+        since been transferred to Bob: the button shows, the accept fails.
+
+        So this mirrors accept_as_owner one-for-one: still challenge_pending,
+        agent B present, challenge unexpired, the frozen snapshot equals the
+        user AND agent B's CURRENT owner is the user AND agent B is still
+        eligible. All of it, or the capability is a promise the accept cannot
+        keep.
+        """
+        result = await self.db.execute(
+            text(
+                f"""
+                SELECT EXISTS (
+                    SELECT 1 FROM battles b
+                    WHERE b.id = CAST(:battle_id AS UUID)
+                      AND b.status = 'challenge_pending'
+                      AND b.agent_b_id IS NOT NULL
+                      AND b.challenge_expires_at > NOW()
+                      AND b.agent_b_owner_snapshot = CAST(:user_id AS UUID)
+                      AND EXISTS (
+                          SELECT 1 FROM agents a
+                          WHERE a.id = b.agent_b_id
+                            AND a.owner_user_id = CAST(:user_id AS UUID)
+                            AND {_AGENT_ELIGIBLE_SQL}
+                      )
+                )
+                """
+            ),
+            {"battle_id": str(battle_id), "user_id": str(user_id)},
+        )
+        return bool(result.scalar_one())
+
     async def _mark_declined(self, battle_id: str) -> dict | None:
         """challenge_pending -> declined (terminal). The primitive.
 
@@ -1143,6 +1181,19 @@ class BattleRepository:
         everything else: it never re-checked eligibility, ownership or the
         reservations at all. Folding it into the CAS closes both.
 
+        Admission is gated on the ACKs being VALID, not on the lease still being
+        live at poll time. Deliberately NO ``ready_lease_expires_at > NOW()``
+        clause: readiness is a claim about when the ACK landed, and
+        ``_BOTH_SIDES_ACKED_SQL`` already requires ``acked_at <
+        ready_lease_expires_at``, so a fighter that ACKed a millisecond before
+        the lease expired is ready even if the reconciler polls a millisecond
+        after. Requiring the lease still be live HERE would abort — via the
+        reserved-poll fallback — a fighter that ACKed in time, purely on poll
+        latency; the whole point of the readiness bound is to punish silence,
+        never a valid-but-late-observed ACK. The lease still bounds waiting: a
+        battle nobody ACKs never satisfies the ACK predicate and is released /
+        aborted by the reserved-poll path.
+
         Returns None when readiness is not (yet) proven, which is not an error
         — the usual reason is that an agent has not acked yet. The caller
         retries until the lease lapses.
@@ -1159,7 +1210,6 @@ class BattleRepository:
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'reserved'
                   AND readiness_generation = :readiness_generation
-                  AND ready_lease_expires_at > NOW()
                   AND challenge_expires_at > NOW()
                   AND agent_b_accepted_at IS NOT NULL
                   AND {_BOTH_FIGHTERS_ELIGIBLE_SQL}
@@ -1364,13 +1414,19 @@ class BattleRepository:
         and the caller releases both reservations in the same transaction.
 
         Every condition is a predicate of THIS statement, not a prior read: still
-        'reserved', budget genuinely spent, and the lease genuinely lapsed — so a
-        battle whose fighters acked a moment ago (lease still live) can never be
-        aborted by a racing worker. None = it was not in the abortable shape.
+        'reserved', budget genuinely spent, the lease lapsed, AND — the guard
+        that makes this safe for legitimate agents — the current generation's
+        ready events are NOT both validly ACKed. A fighter that ACKed in time
+        (``acked_at < ready_lease_expires_at``, per ``_BOTH_SIDES_ACKED_SQL``)
+        makes this WHERE fail even if the lease clock has since passed and the
+        reconciler polls late; that battle queues instead. Without the NOT-acked
+        clause the abort would fire on a valid-but-late-observed ACK — the exact
+        legitimate direction the bound must never punish. None = it was not in
+        the abortable shape (which now includes "actually ready").
         """
         result = await self.db.execute(
             text(
-                """
+                f"""
                 UPDATE battles
                 SET status = 'aborted',
                     verdict_reason = :verdict_reason,
@@ -1381,6 +1437,7 @@ class BattleRepository:
                   AND status = 'reserved'
                   AND readiness_generation >= :max_generations
                   AND ready_lease_expires_at <= NOW()
+                  AND NOT ({_BOTH_SIDES_ACKED_SQL})
                 RETURNING *
                 """
             ),

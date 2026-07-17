@@ -384,6 +384,61 @@ class TestNearFloorSettlementDoesNotStrand:
         assert await _elo(session_maker, agent_a) >= ELO_FLOOR
 
 
+async def _lapse_ready_lease(db_session, battle_id: str) -> None:
+    """Force a reserved battle's ready lease into the past. Commits."""
+    await db_session.execute(
+        text(
+            "UPDATE battles SET ready_lease_expires_at = NOW() - INTERVAL '1 second' "
+            "WHERE id = CAST(:b AS UUID)"
+        ),
+        {"b": battle_id},
+    )
+    await db_session.commit()
+
+
+async def _ack_both_before_lease(db_session, battle_id: str) -> None:
+    """ACK both current ready events, then backdate to BEFORE the lapsed lease.
+
+    Reproduces the finding-1 shape with a timeline that satisfies every V65
+    CHECK: dispatched(-20s) <= acked(-15s) < lease(-10s) < NOW() < expires. The
+    ACK lands in time (acked_at < ready_lease_expires_at) while the lease has
+    since expired and the reconciler polls late. Uses the real mark_acked
+    statement first (so status/dispatched_at/acked_at are set legally), then
+    shifts the timestamps into that ordering.
+    """
+    repo = BattleRepository(db_session)
+    svc = BattleService(db_session)
+    battle = await repo.get(battle_id)
+    await svc.events.mark_acked(
+        str(battle["agent_a_id"]), [str(battle["ready_check_event_id_a"])]
+    )
+    await svc.events.mark_acked(
+        str(battle["agent_b_id"]), [str(battle["ready_check_event_id_b"])]
+    )
+    await db_session.commit()
+    await db_session.execute(
+        text(
+            """
+            UPDATE agent_events e
+            SET dispatched_at = NOW() - INTERVAL '20 seconds',
+                acked_at = NOW() - INTERVAL '15 seconds'
+            FROM battles b
+            WHERE b.id = CAST(:bid AS UUID)
+              AND e.event_id IN (b.ready_check_event_id_a, b.ready_check_event_id_b)
+            """
+        ),
+        {"bid": battle_id},
+    )
+    await db_session.execute(
+        text(
+            "UPDATE battles SET ready_lease_expires_at = NOW() - INTERVAL '10 seconds' "
+            "WHERE id = CAST(:bid AS UUID)"
+        ),
+        {"bid": battle_id},
+    )
+    await db_session.commit()
+
+
 class TestReadinessGriefIsBounded:
     """A never-ACK opponent cannot pin the challenger for the whole 24h TTL.
 
@@ -391,50 +446,12 @@ class TestReadinessGriefIsBounded:
     reconcile re-arms it, so accept-then-never-ACK re-reserves the challenger
     every ~lease for the full challenge TTL with no Elo consequence. The fix
     bounds the re-arm attempts: after READY_MAX_GENERATIONS the battle is aborted
-    (naming the silent side) and both reservations are released.
+    (naming the silent side) and both reservations are released — but a fighter
+    that ACKed in time is NEVER aborted, even if the reconciler polls late.
     """
 
-    async def _reserved_at_cap(self, db_session, task_id) -> tuple[str, str, str]:
-        """Build a 'reserved' battle at the re-arm cap with a lapsed ready lease."""
+    async def _accepted_battle(self, db_session, task_id) -> tuple[str, str, str]:
         repo = BattleRepository(db_session)
-        svc = BattleService(db_session)
-        owner_a = await _new_owner(db_session)
-        owner_b = await _new_owner(db_session)
-        agent_a = await _new_eligible_agent(db_session, owner_a)
-        agent_b = await _new_eligible_agent(db_session, owner_b)
-
-        battle_id = await repo._create_battle(
-            task_id=task_id,
-            agent_a_id=agent_a,
-            agent_a_owner_snapshot=owner_a,
-            challenge_ttl_seconds=3600,
-            agent_b_id=agent_b,
-            agent_b_owner_snapshot=owner_b,
-        )
-        assert await repo._mark_accepted(battle_id) is not None
-        armed = await svc.arm_readiness(battle_id)  # accepted -> reserved, gen 1
-        assert armed is not None
-        await db_session.commit()
-
-        # Force it to the cap with a lapsed lease — the shape reached after
-        # READY_MAX_GENERATIONS un-ACKed re-arms — without looping the machine.
-        await db_session.execute(
-            text(
-                "UPDATE battles SET readiness_generation = :gen, "
-                "ready_lease_expires_at = NOW() - INTERVAL '1 second' "
-                "WHERE id = CAST(:b AS UUID)"
-            ),
-            {"gen": READY_MAX_GENERATIONS, "b": battle_id},
-        )
-        await db_session.commit()
-        return battle_id, agent_a, agent_b
-
-    async def test_under_the_cap_it_releases_rather_than_aborts(
-        self, session_maker, db_session, task_id
-    ) -> None:
-        """The re-arm loop still works below the cap: a lapsed lease -> accepted."""
-        repo = BattleRepository(db_session)
-        svc = BattleService(db_session)
         owner_a = await _new_owner(db_session)
         owner_b = await _new_owner(db_session)
         agent_a = await _new_eligible_agent(db_session, owner_a)
@@ -444,43 +461,44 @@ class TestReadinessGriefIsBounded:
             challenge_ttl_seconds=3600, agent_b_id=agent_b, agent_b_owner_snapshot=owner_b,
         )
         assert await repo._mark_accepted(battle_id) is not None
-        assert await svc.arm_readiness(battle_id) is not None  # gen 1, under cap
         await db_session.commit()
-        await db_session.execute(
-            text(
-                "UPDATE battles SET ready_lease_expires_at = NOW() - INTERVAL '1 second' "
-                "WHERE id = CAST(:b AS UUID)"
-            ),
-            {"b": battle_id},
-        )
-        await db_session.commit()
+        return battle_id, agent_a, agent_b
 
-        outcome = await svc.expire_or_abort_readiness(battle_id)
-        await db_session.commit()
-        assert outcome is not None
-        assert outcome["outcome"] == "released"
-        async with session_maker() as session:
-            battle = await BattleRepository(session).get(battle_id)
-        assert battle["status"] == "accepted"
+    async def _rearm_to_cap_unacked(self, session_maker, db_session, task_id):
+        """Drive REAL accepted<->reserved re-arms to the cap, never ACKing.
 
-        # Retire it terminally so this released-but-still-claimable 'accepted'
-        # battle cannot be armed by the module-shared reconciler in a later test
-        # (the whole-chain test counts armings globally).
-        await repo.mark_aborted(battle_id, "test cleanup")
-        await repo.release_reservations(battle_id)
-        await db_session.commit()
+        Proves the generation counter increments per real re-arm and the
+        reserved->accepted->reserved lifecycle survives — not a hand-set
+        generation. Ends 'reserved' at generation == cap, lease lapsed, no ACKs.
+        """
+        svc = BattleService(db_session)
+        battle_id, agent_a, agent_b = await self._accepted_battle(db_session, task_id)
+        for expected_gen in range(1, READY_MAX_GENERATIONS + 1):
+            armed = await svc.arm_readiness(battle_id)
+            assert armed is not None
+            assert armed["readiness_generation"] == expected_gen  # per real re-arm
+            await db_session.commit()
+            await _lapse_ready_lease(db_session, battle_id)
+            if expected_gen < READY_MAX_GENERATIONS:
+                outcome = await svc.expire_or_abort_readiness(battle_id)
+                await db_session.commit()
+                assert outcome is not None and outcome["outcome"] == "released"
+                async with session_maker() as s:
+                    assert (await BattleRepository(s).get(battle_id))["status"] == "accepted"
+        return battle_id, agent_a, agent_b
 
-    async def test_admit_reserved_aborts_at_the_cap_frees_fighters_and_notifies(
+    async def test_rearm_lifecycle_increments_then_aborts_at_the_cap(
         self, session_maker, db_session, task_id
     ) -> None:
-        """At the cap: aborts (not loops), releases reservations, notifies owners.
+        """Real re-arms to the cap, then abort: freed fighters + owner notice.
 
-        Mutation proof: replace expire_or_abort_readiness with the old
-        release-only path and this battle returns to 'accepted' instead of
-        'aborted', the reservations survive, and no abort notification fires —
-        every assertion below flips.
+        Mutation proof: swap expire_or_abort_readiness back to the old
+        release-only path and the battle returns to 'accepted' not 'aborted', the
+        reservations survive, and no notification fires.
         """
-        battle_id, agent_a, agent_b = await self._reserved_at_cap(db_session, task_id)
+        battle_id, agent_a, agent_b = await self._rearm_to_cap_unacked(
+            session_maker, db_session, task_id
+        )
         assert await _reservation_count(session_maker, battle_id) == 2
 
         async with session_maker() as session:
@@ -490,9 +508,7 @@ class TestReadinessGriefIsBounded:
                 "app.services.battle_runner._notify_battle_owners", new=AsyncMock()
             ) as notify:
                 result = await runner.admit_reserved(battle)
-            # admit_reserved returns False (battle did not queue) — but it did NOT
-            # loop: it took the terminal exit.
-            assert result is False
+            assert result is False  # did not queue — took the terminal exit
             recipients = notify.await_args.args[2]
             assert {r[0] for r in recipients} == {agent_a, agent_b}
             assert all(r[1] == "battle_aborted" for r in recipients)
@@ -500,12 +516,90 @@ class TestReadinessGriefIsBounded:
         async with session_maker() as session:
             battle = await BattleRepository(session).get(battle_id)
         assert battle["status"] == "aborted"
-        # The reason names the silent side(s): neither fighter ACKed here.
         assert "did not ACK" in battle["verdict_reason"]
         assert "both fighters" in battle["verdict_reason"]
-
-        # The challenger is freed — no reservation pins it to the dead battle.
         assert await _reservation_count(session_maker, battle_id) == 0
+
+    async def test_two_misses_then_a_third_ack_queues(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """The legitimate path: miss two windows, ACK the third -> queued.
+
+        The bound must not punish an agent that eventually shows up while the
+        challenge is live. Drives the full re-arm lifecycle, then ACKs on gen 3.
+        """
+        svc = BattleService(db_session)
+        battle_id, agent_a, agent_b = await self._accepted_battle(db_session, task_id)
+
+        for expected_gen in (1, 2):
+            armed = await svc.arm_readiness(battle_id)
+            assert armed["readiness_generation"] == expected_gen
+            await db_session.commit()
+            await _lapse_ready_lease(db_session, battle_id)
+            outcome = await svc.expire_or_abort_readiness(battle_id)
+            await db_session.commit()
+            assert outcome["outcome"] == "released"
+
+        armed = await svc.arm_readiness(battle_id)
+        assert armed["readiness_generation"] == READY_MAX_GENERATIONS
+        await db_session.commit()
+        for side, agent in (("a", agent_a), ("b", agent_b)):
+            await svc.events.mark_acked(agent, [str(armed[f"ready_check_event_id_{side}"])])
+        await db_session.commit()
+
+        queued = await svc.try_queue(battle_id, armed["readiness_generation"])
+        await db_session.commit()
+        assert queued is not None
+        assert queued["status"] == "queued"
+
+        # Cleanup: terminal, so the whole-chain test's global counts stay clean.
+        repo = BattleRepository(db_session)
+        await repo.mark_aborted(battle_id, "test cleanup")
+        await repo.release_reservations(battle_id)
+        await db_session.commit()
+
+    async def test_a_valid_ack_at_the_lease_boundary_is_not_aborted(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """Finding 1: an ACK that landed BEFORE the lease expired must not abort.
+
+        Both fighters ACK validly (acked_at < ready_lease_expires_at), the lease
+        then lapses, and the reconciler polls a moment later while the battle is
+        AT the cap. The naive bound would abort a fighter that ACKed in time.
+
+        Two mutation directions, both covered:
+        * abort guard (repo.abort_unready_readiness NOT-acked clause): without it
+          expire_or_abort_readiness aborts despite valid ACKs -> assertion 1 flips.
+        * admission grace (admit_to_queue dropping ready_lease_expires_at > NOW()):
+          without it admit_reserved cannot queue a lapsed-lease battle even with
+          valid ACKs -> assertion 2 flips.
+        """
+        battle_id, agent_a, agent_b = await self._rearm_to_cap_unacked(
+            session_maker, db_session, task_id
+        )
+        await _ack_both_before_lease(db_session, battle_id)
+
+        # Assertion 1 — the abort guard: a validly-ACKed battle is NOT aborted.
+        outcome = await BattleService(db_session).expire_or_abort_readiness(battle_id)
+        await db_session.commit()
+        assert outcome is None, f"a validly-ACKed battle was aborted: {outcome}"
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "reserved"
+
+        # Assertion 2 — the admission grace: admit_reserved QUEUES it.
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            battle = await runner.repo.get(battle_id)
+            assert await runner.admit_reserved(battle) is True
+        async with session_maker() as session:
+            queued = await BattleRepository(session).get(battle_id)
+        assert queued["status"] == "queued"
+
+        # Cleanup: terminal, so the whole-chain test's global counts stay clean.
+        repo = BattleRepository(db_session)
+        await repo.mark_aborted(battle_id, "test cleanup")
+        await repo.release_reservations(battle_id)
+        await db_session.commit()
 
 
 class TestSharedFighterLostUpdate:
