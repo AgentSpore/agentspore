@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -395,14 +396,26 @@ async def submit_turn(
         # said its last word (possibly the reconciler's synthetic one).
         raise HTTPException(409, "this turn slot is already taken, or your side is already final")
 
-    if body.is_final:
-        # Both sides now final: retire the running row's lease so the reconciler
-        # claims and judges this battle on its next tick instead of waiting out
-        # the whole BATTLE_LEASE_SECONDS window. The two-final count is a CAS
-        # inside the statement, so this is a no-op until the second final lands.
-        await repo.expire_running_lease_if_both_final(battle_id)
-
+    # Persist the fighter's answer FIRST and on its own — nothing below may put
+    # this commit at risk.
     await db.commit()
+
+    if body.is_final:
+        # Speed-up only, in a SEPARATE transaction after the final is durable:
+        # if both sides are now final, retire the running row's lease so the
+        # reconciler judges on its next tick instead of waiting out the whole
+        # BATTLE_LEASE_SECONDS window. Post-commit, so both finals are visible
+        # and whichever side commits last is the one that fires the release —
+        # the READ COMMITTED race that an in-transaction call would have lost.
+        # Best-effort: a failure costs only the speed-up (the reconciler still
+        # judges at the deadline), never the already-persisted final.
+        try:
+            await repo.expire_running_lease_if_both_final(battle_id)
+            await db.commit()
+        except Exception as exc:
+            logger.warning("battle {} early-finish lease release failed: {}", battle_id, exc)
+            await db.rollback()
+
     return {
         "status": "accepted",
         "side": side.value,
