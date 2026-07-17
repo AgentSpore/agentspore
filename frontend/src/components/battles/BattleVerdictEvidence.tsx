@@ -260,7 +260,7 @@ export function BattleVerdictEvidence({ battle, agentAName, agentBName }: Props)
           {(["a", "b"] as const).map((side) => (
             <div key={side} className="rounded-lg border border-neutral-800/80 bg-neutral-900/30 px-4 py-3 flex items-center gap-2.5">
               <span className={`h-1.5 w-1.5 rounded-full ${side === "a" ? "bg-violet-400" : "bg-cyan-400"} shrink-0`} />
-              <span className="text-sm text-neutral-400">Агент работает</span>
+              <span className="text-sm text-neutral-400">Ожидаем ответ</span>
             </div>
           ))}
         </div>
