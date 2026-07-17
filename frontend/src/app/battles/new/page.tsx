@@ -2,7 +2,15 @@
 
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import { API_URL, Agent, BattleTask, ExternalAgentItem } from "@/lib/api";
+import {
+  API_URL,
+  Agent,
+  BATTLE_DIFFICULTY,
+  BattleTaskDifficulty,
+  BattleTaskPool,
+  BattleTaskPoolsResponse,
+  ExternalAgentItem,
+} from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import { BattleAvailabilityToggle } from "@/components/battles/BattleAvailabilityToggle";
@@ -35,16 +43,20 @@ function SectionHeading({ n, label, badge }: { n: number; label: string; badge?:
  * hosted, and opted in") — so the picker sources /users/me/external-agents,
  * not /hosted-agents.
  */
+const DIFFICULTIES: BattleTaskDifficulty[] = ["easy", "medium", "hard"];
+
 export default function NewBattlePage() {
   const router = useRouter();
   const [myAgents, setMyAgents] = useState<ExternalAgentItem[]>([]);
-  const [tasks, setTasks] = useState<BattleTask[]>([]);
-  const [tasksLoading, setTasksLoading] = useState(true);
+  const [poolsResponse, setPoolsResponse] = useState<BattleTaskPoolsResponse | null>(null);
+  const [poolsLoading, setPoolsLoading] = useState(true);
   const [opponentQuery, setOpponentQuery] = useState("");
   const [opponentResults, setOpponentResults] = useState<Agent[]>([]);
 
   const [agentAId, setAgentAId] = useState("");
-  const [taskId, setTaskId] = useState("");
+  // null = "Любая" (any) — the wire never carries the string "any", only JSON null.
+  const [category, setCategory] = useState<string | null>(null);
+  const [difficulty, setDifficulty] = useState<BattleTaskDifficulty | null>(null);
   const [agentBId, setAgentBId] = useState<string | null>(null);
   const [agentBName, setAgentBName] = useState("");
 
@@ -63,11 +75,11 @@ export default function NewBattlePage() {
       .then((r) => (r.ok ? r.json() : []))
       .then((data: ExternalAgentItem[]) => setMyAgents(data))
       .catch(() => {});
-    fetch(`${API_URL}/api/v1/battles/tasks?limit=100`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: BattleTask[]) => setTasks(data))
+    fetch(`${API_URL}/api/v1/battles/tasks`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: BattleTaskPoolsResponse | null) => setPoolsResponse(data))
       .catch(() => {})
-      .finally(() => setTasksLoading(false));
+      .finally(() => setPoolsLoading(false));
   }, [router]);
 
   // Opponent search — reuses the public leaderboard (no dedicated battle-eligible
@@ -101,15 +113,21 @@ export default function NewBattlePage() {
   }, [opponentQuery, agentAId]);
 
   const selectedAgentA = myAgents.find((a) => a.id === agentAId);
-  const selectedTask = tasks.find((t) => t.id === taskId);
+  const pools = poolsResponse?.pools ?? [];
+  const categories = Array.from(new Set(pools.map((p) => p.category))).sort();
+  // Only a fully-concrete (category + difficulty) selection maps to one pool
+  // row — "Любая" on either axis cannot be checked against a single bucket,
+  // so availability is only ever shown (and gated) for a concrete combo.
+  const selectedPool: BattleTaskPool | undefined =
+    category && difficulty ? pools.find((p) => p.category === category && p.difficulty === difficulty) : undefined;
+  const selectedComboUnavailable = !!category && !!difficulty && (!selectedPool || !selectedPool.challenge_available);
 
   const agentInvalid = touched && !agentAId;
-  const taskInvalid = touched && !taskId;
-  const noTasksAvailable = !tasksLoading && tasks.length === 0;
+  const noPoolsAvailable = !poolsLoading && pools.length === 0;
 
   const submit = async () => {
     setTouched(true);
-    if (!agentAId || !taskId) {
+    if (!agentAId || selectedComboUnavailable) {
       return;
     }
     setSubmitting(true);
@@ -119,12 +137,16 @@ export default function NewBattlePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          task_id: taskId,
+          task_category: category,
+          task_difficulty: difficulty,
           agent_a_id: agentAId,
           agent_b_id: agentBId || undefined,
         }),
       });
       if (!res.ok) {
+        if (res.status === 409) {
+          throw new Error("Недостаточно свежих задач в этой категории — выбери другую комбинацию.");
+        }
         const body = await res.json().catch(() => null);
         throw new Error(body?.detail || `HTTP ${res.status}`);
       }
@@ -150,7 +172,7 @@ export default function NewBattlePage() {
           Новый вызов
         </h1>
         <p className="text-neutral-400 text-sm leading-6 mb-8 max-w-lg">
-          Выберите своего агента, задачу и, при желании, конкретного соперника — иначе вызов останется
+          Выберите своего агента, тему боя и, при желании, конкретного соперника — иначе вызов останется
           открытым, и его сможет принять любой подходящий агент.
         </p>
 
@@ -209,54 +231,112 @@ export default function NewBattlePage() {
               )}
             </div>
 
-            {/* Section 2 — task */}
+            {/* Section 2 — task theme (category + difficulty, never a concrete task) */}
             <div className="p-5 sm:p-6">
-              <SectionHeading n={2} label="Задача" />
-              <div
-                role="radiogroup"
-                aria-invalid={taskInvalid || undefined}
-                className={`max-h-[360px] sm:max-h-[360px] overflow-y-auto rounded-xl border divide-y divide-neutral-800/70 ${
-                  taskInvalid ? "border-red-500/40" : "border-neutral-800"
-                }`}
-              >
-                {tasksLoading && tasks.length === 0 && (
-                  <div className="px-4 py-3 flex items-center gap-2 text-sm text-neutral-500">
-                    <span className="h-3 w-3 rounded-full border-[1.5px] border-current/30 border-t-current animate-spin" />
-                    Загружаем задачи…
+              <SectionHeading n={2} label="Тема боя" />
+              <p className="text-xs text-neutral-500 mb-3">
+                Вы выбираете категорию и сложность, а не саму задачу — конкретная задача откроется обоим
+                агентам только после того, как оба подтвердят готовность. Заранее подготовиться нельзя.
+              </p>
+
+              {poolsLoading && (
+                <div className="px-1 py-3 flex items-center gap-2 text-sm text-neutral-500">
+                  <span className="h-3 w-3 rounded-full border-[1.5px] border-current/30 border-t-current animate-spin" />
+                  Загружаем доступные темы…
+                </div>
+              )}
+              {!poolsLoading && noPoolsAvailable && (
+                <div className="rounded-xl border border-neutral-800 px-4 py-5 text-center">
+                  <div className="text-sm text-neutral-300 font-medium mb-1">Пока нет доступных задач для боя</div>
+                  <div className="text-xs text-neutral-500">
+                    Задачи для арены отбираются вручную — загляните позже.
                   </div>
-                )}
-                {!tasksLoading && tasks.length === 0 && (
-                  <div className="px-4 py-5 text-center">
-                    <div className="text-sm text-neutral-300 font-medium mb-1">Пока нет доступных задач для боя</div>
-                    <div className="text-xs text-neutral-500">
-                      Задачи для арены отбираются вручную — загляните позже.
-                    </div>
-                  </div>
-                )}
-                {tasks.map((t) => {
-                  const selected = t.id === taskId;
-                  return (
+                </div>
+              )}
+
+              {!poolsLoading && !noPoolsAvailable && (
+                <>
+                  <div className="mb-1.5 text-xs font-medium text-neutral-400">Категория</div>
+                  <div role="radiogroup" aria-label="Категория" className="flex flex-wrap gap-2 mb-4">
                     <button
-                      key={t.id}
                       type="button"
                       role="radio"
-                      aria-checked={selected}
-                      onClick={() => setTaskId(t.id)}
-                      className={`battle-press min-h-[76px] w-full px-4 py-3 text-left transition-colors duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-inset ${
-                        selected ? "bg-violet-500/[0.07] ring-1 ring-inset ring-violet-500/35" : "hover:bg-white/[0.025]"
+                      aria-checked={category === null}
+                      onClick={() => setCategory(null)}
+                      className={`battle-press min-h-9 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                        category === null
+                          ? "border-violet-500/50 bg-violet-500/[0.08] text-violet-300"
+                          : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
                       }`}
                     >
-                      <div className="text-sm font-medium text-neutral-100">{t.title}</div>
-                      <div className="text-xs text-neutral-400 mt-0.5">
-                        {t.category && <>{t.category} · </>}
-                        {Math.round(t.time_limit_seconds / 60)} мин
-                      </div>
-                      <p className="text-xs leading-5 text-neutral-400 mt-1 line-clamp-2">{t.prompt}</p>
+                      Любая
                     </button>
-                  );
-                })}
-              </div>
-              <div className="min-h-5 mt-1.5 text-xs text-red-400">{taskInvalid && "Выберите задачу"}</div>
+                    {categories.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        role="radio"
+                        aria-checked={category === c}
+                        onClick={() => setCategory(c)}
+                        className={`battle-press min-h-9 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                          category === c
+                            ? "border-violet-500/50 bg-violet-500/[0.08] text-violet-300"
+                            : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
+                        }`}
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mb-1.5 text-xs font-medium text-neutral-400">Сложность</div>
+                  <div role="radiogroup" aria-label="Сложность" className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={difficulty === null}
+                      onClick={() => setDifficulty(null)}
+                      className={`battle-press min-h-9 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                        difficulty === null
+                          ? "border-cyan-500/50 bg-cyan-500/[0.08] text-cyan-300"
+                          : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
+                      }`}
+                    >
+                      Любая
+                    </button>
+                    {DIFFICULTIES.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        role="radio"
+                        aria-checked={difficulty === d}
+                        onClick={() => setDifficulty(d)}
+                        className={`battle-press min-h-9 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                          difficulty === d
+                            ? "border-cyan-500/50 bg-cyan-500/[0.08] text-cyan-300"
+                            : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
+                        }`}
+                      >
+                        {BATTLE_DIFFICULTY[d]}
+                      </button>
+                    ))}
+                  </div>
+
+                  {category && difficulty && (
+                    <div
+                      className={`mt-4 rounded-lg border px-3 py-2.5 text-xs ${
+                        selectedComboUnavailable
+                          ? "border-amber-500/30 bg-amber-500/5 text-amber-300"
+                          : "border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
+                      }`}
+                    >
+                      {selectedComboUnavailable
+                        ? "Недостаточно свежих задач в этой категории — выбери другую комбинацию категории и сложности, или оставь «Любая»."
+                        : `Доступно свежих задач: ${selectedPool?.fresh_count ?? 0}.`}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Section 3 — opponent (optional, cyan side identity) */}
@@ -344,28 +424,26 @@ export default function NewBattlePage() {
               </div>
 
               <div className="mt-4 pt-4 border-t border-neutral-800/70 text-sm">
-                {selectedTask ? (
-                  <>
-                    <div className="text-neutral-200 font-medium">{selectedTask.title}</div>
-                    <div className="text-neutral-500 text-xs mt-0.5">
-                      {Math.round(selectedTask.time_limit_seconds / 60)} мин
-                    </div>
-                  </>
-                ) : (
-                  <span className="text-neutral-500">Задача не выбрана</span>
-                )}
+                <div className="text-neutral-200 font-medium">
+                  {category ?? "Любая категория"} · {difficulty ? BATTLE_DIFFICULTY[difficulty] : "любая сложность"}
+                </div>
+                <div className="text-neutral-500 text-xs mt-0.5">
+                  Сама задача откроется, когда оба агента подтвердят готовность
+                </div>
               </div>
 
               <p className="text-xs text-neutral-500 mt-4">
-                {noTasksAvailable
+                {noPoolsAvailable
                   ? "Пока нет задач для боя — вызов бросить нельзя."
-                  : "После отправки вызов появится на арене."}
+                  : selectedComboUnavailable
+                    ? "Недостаточно свежих задач для этой комбинации."
+                    : "После отправки вызов появится на арене."}
               </p>
 
               <div aria-live="polite" className="hidden lg:block">
                 <button
                   onClick={submit}
-                  disabled={submitting || noTasksAvailable}
+                  disabled={submitting || noPoolsAvailable || selectedComboUnavailable}
                   className="battle-press mt-5 w-full min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
                 >
                   {submitting ? (
@@ -389,7 +467,7 @@ export default function NewBattlePage() {
         >
           <button
             onClick={submit}
-            disabled={submitting || noTasksAvailable}
+            disabled={submitting || noPoolsAvailable || selectedComboUnavailable}
             className="battle-press w-full min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
           >
             {submitting ? (
