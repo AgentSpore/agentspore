@@ -277,6 +277,25 @@ class BattleRunner:
             change.b_after,
             change.applied,
         )
+
+        # Best-effort: tell both owners how it ended. The battle is already
+        # completed and durable above; this must not be able to undo it.
+        await _notify_battle_owners(
+            self.db,
+            str(battle_id),
+            [
+                (
+                    str(completed["agent_a_id"]),
+                    "battle_result",
+                    _battle_result_title(str(battle_id), Side.A, completed["winner"]),
+                ),
+                (
+                    str(completed["agent_b_id"]),
+                    "battle_result",
+                    _battle_result_title(str(battle_id), Side.B, completed["winner"]),
+                ),
+            ],
+        )
         return change
 
     @staticmethod
@@ -797,6 +816,79 @@ class BattleRunner:
         return result
 
 
+# --- owner notifications for terminal transitions --------------------------
+# The notification is best-effort: the state transition is the business
+# decision and is already durable by the time these run, so a delivery failure
+# is logged and swallowed here (and ONLY here) rather than rolling back a
+# completed / expired / aborted battle.
+
+_BATTLE_NOTIFY_SOURCE_TYPE = "battle_notification"
+
+
+def _battle_result_title(battle_id: str, side: Side, winner: str | None) -> str:
+    """Owner-facing title for a finished battle, from ONE fighter's viewpoint.
+
+    winner is the battle row's ``winner`` column ("a"/"b"/"tie") or None for a
+    no-quorum panel. Both no-quorum and an explicit tie read as "ничья": from an
+    owner's side neither is a win or a loss.
+    """
+    if winner is None or winner == Winner.TIE.value:
+        outcome = "ничья"
+    elif winner == side.value:
+        outcome = "победа"
+    else:
+        outcome = "поражение"
+    return f"Бой завершён — {outcome} (бой {battle_id})"
+
+
+async def _notify_battle_owners(
+    session: AsyncSession,
+    battle_id: str,
+    recipients: list[tuple[str, str, str]],
+) -> None:
+    """Best-effort owner notifications AFTER a terminal transition committed.
+
+    ``recipients`` is a list of ``(agent_id, task_type, title)``. Delivery goes
+    through the platform's existing notification-task mechanism
+    (AgentService.create_notification_task -> tasks row + heartbeat/realtime
+    push), so battle results surface exactly where owners already read GitHub
+    and DM notifications. A per-(agent, task_type) source_key dedups a re-run.
+
+    Runs in its OWN transaction on an already-clean session. Any failure is
+    logged and swallowed: the transition is durable and the notification is
+    best-effort, so a notify error must never undo the state change. Never
+    re-raises.
+    """
+    if not recipients:
+        return
+    try:
+        # Local import: AgentService is a heavy service and pulls a wide import
+        # graph; importing it lazily keeps battle_runner's module load cheap and
+        # sidesteps any import cycle.
+        from app.services.agent_service import AgentService  # noqa: PLC0415
+
+        svc = AgentService(session)
+        for agent_id, task_type, title in recipients:
+            await svc.create_notification_task(
+                assigned_to_agent_id=agent_id,
+                task_type=task_type,
+                title=title,
+                project_id=None,
+                source_ref=f"/battles/{battle_id}",
+                source_key=f"battle:{battle_id}:{task_type}",
+                priority="medium",
+                source_type=_BATTLE_NOTIFY_SOURCE_TYPE,
+            )
+        await session.commit()
+    except Exception as exc:
+        logger.warning(
+            "battle {} owner notification failed (transition already durable): {}",
+            battle_id,
+            exc,
+        )
+        await session.rollback()
+
+
 async def _judge_and_settle(
     session_factory,
     gate: LLMGate,
@@ -869,18 +961,31 @@ async def reap_once(session_factory) -> dict[str, int]:
     for battle_id in expired_ids:
         async with session_factory() as session:
             repo = BattleRepository(session)
+            expired = None
             try:
-                if await repo.mark_expired(battle_id) is not None:
+                expired = await repo.mark_expired(battle_id)
+                if expired is not None:
                     await repo.release_reservations(battle_id)
                     counts["expired"] += 1
                 await session.commit()
             except Exception as exc:
                 logger.exception("reaper: expiring battle {} failed: {}", battle_id, exc)
                 await session.rollback()
+                expired = None
+            if expired is not None:
+                # Only the challenger's owner is notified: an expired challenge
+                # was never answered, so there may be no opponent at all.
+                title = f"Вызов истёк (бой {battle_id})"
+                await _notify_battle_owners(
+                    session,
+                    battle_id,
+                    [(str(expired["agent_a_id"]), "battle_expired", title)],
+                )
 
     for battle_id in exhausted_ids:
         async with session_factory() as session:
             repo = BattleRepository(session)
+            aborted = None
             try:
                 aborted = await repo.mark_aborted(
                     battle_id, "reconciler: claim attempts exhausted"
@@ -892,6 +997,13 @@ async def reap_once(session_factory) -> dict[str, int]:
             except Exception as exc:
                 logger.exception("reaper: aborting battle {} failed: {}", battle_id, exc)
                 await session.rollback()
+                aborted = None
+            if aborted is not None:
+                title = f"Бой прерван (бой {battle_id})"
+                recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
+                if aborted["agent_b_id"]:
+                    recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
+                await _notify_battle_owners(session, battle_id, recipients)
 
     # Escape hatch: a judging battle whose attempt budget is spent must reach a
     # terminal state, never sit unclaimable in 'judging' forever with its fighters
