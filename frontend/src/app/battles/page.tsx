@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { API_URL, BATTLE_FAST_STATES, BATTLE_STATUS, BattleStatus, BattleSummary, timeAgo } from "@/lib/api";
+import { API_URL, BATTLE_FAST_STATES, BattleStatus, BattleSummary, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
+import { StatusBadge } from "@/components/battles/StatusBadge";
+import { AgentIdentity } from "@/components/battles/AgentIdentity";
 
 // The list refreshes faster while a battle on the page is live — otherwise a
 // battle that finishes while the list is open would stay "Идёт бой" forever.
@@ -15,9 +17,72 @@ const FILTERS: { key: BattleStatus | "all"; label: string }[] = [
   { key: "all", label: "Все" },
   { key: "running", label: "Идут сейчас" },
   { key: "queued", label: "В очереди" },
-  { key: "challenge_pending", label: "Ожидают вызова" },
+  { key: "challenge_pending", label: "Ожидают ответа" },
   { key: "completed", label: "Завершённые" },
 ];
+
+const TERMINAL_STATES = new Set<BattleStatus>(["declined", "expired", "aborted"]);
+
+function outcomeLabel(status: BattleStatus): string | null {
+  switch (status) {
+    case "declined":
+      return "Вызов отклонён";
+    case "expired":
+      return "Вызов истёк";
+    case "aborted":
+      return "Бой прерван";
+    default:
+      return null;
+  }
+}
+
+function Bar({ w, h = "12px", rounded = "rounded-md" }: { w: string; h?: string; rounded?: string }) {
+  return <div className={`animate-pulse bg-neutral-800/50 ${rounded}`} style={{ width: w, height: h }} />;
+}
+
+function SkeletonCard() {
+  return (
+    <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/35 p-4 sm:p-5">
+      <div className="flex items-center justify-between">
+        <Bar w="96px" h="20px" rounded="rounded-md" />
+        <Bar w="60px" h="12px" />
+      </div>
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] items-center gap-2">
+        <div className="flex items-center gap-2">
+          <Bar w="24px" h="24px" rounded="rounded-lg" />
+          <Bar w="100px" />
+        </div>
+        <Bar w="20px" h="10px" />
+        <div className="flex items-center justify-end gap-2">
+          <Bar w="100px" />
+          <Bar w="24px" h="24px" rounded="rounded-lg" />
+        </div>
+      </div>
+      <div className="mt-4 border-t border-neutral-800/70 pt-3">
+        <Bar w="160px" h="10px" />
+      </div>
+      <div className="mt-3 flex items-center justify-between">
+        <Bar w="120px" h="12px" />
+      </div>
+    </div>
+  );
+}
+
+function cardStateClasses(status: BattleStatus): string {
+  if (BATTLE_FAST_STATES.has(status) && (status === "running" || status === "judging")) {
+    return "border-orange-500/30 bg-orange-500/[0.035] hover:border-orange-500/50";
+  }
+  if (status === "completed") {
+    return "border-emerald-500/20 hover:border-emerald-500/40";
+  }
+  if (status === "challenge_pending") {
+    return "border-violet-500/20 hover:border-violet-500/40";
+  }
+  if (TERMINAL_STATES.has(status)) {
+    return "border-neutral-800/80 opacity-75 hover:border-neutral-700";
+  }
+  return "border-neutral-800/80 hover:border-neutral-700";
+}
 
 export default function BattlesListPage() {
   const [battles, setBattles] = useState<BattleSummary[]>([]);
@@ -96,78 +161,172 @@ export default function BattlesListPage() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
-      <main className="mx-auto max-w-5xl px-4 py-10">
-        <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
+      <main className="mx-auto max-w-5xl px-4 py-6 sm:py-10">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5 mb-8">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Битвы агентов</h1>
-            <p className="text-neutral-400 mt-1">
+            <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
+              Арена
+            </div>
+            <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
+              Битвы агентов
+            </h1>
+            <p className="text-neutral-400 mt-2 text-sm leading-6 max-w-xl">
               Два агента решают одну задачу под таймер, а исход оценивают реплики одной LLM и, отдельно, люди.
             </p>
           </div>
           <Link
             href="/battles/new"
-            className="rounded-md bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium transition"
+            className="battle-press w-full sm:w-auto shrink-0 min-h-11 flex items-center justify-center rounded-lg bg-violet-600 hover:bg-violet-500 px-4 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
           >
             Вызвать на бой
           </Link>
         </div>
 
-        <div className="flex gap-2 mb-6 flex-wrap">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={`text-xs px-3 py-1.5 rounded-lg border transition ${
-                filter === f.key
-                  ? "border-violet-500 bg-violet-500/10 text-violet-300"
-                  : "border-neutral-800 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+        <div className="mb-6 -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div className="inline-flex min-w-full sm:min-w-0 overflow-x-auto overscroll-x-contain rounded-xl border border-neutral-800 bg-neutral-900/40 p-1">
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                className={`battle-press min-h-9 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${
+                  filter === f.key
+                    ? "bg-neutral-800 text-violet-300 shadow-sm"
+                    : "text-neutral-500 hover:text-neutral-300 hover:bg-white/[0.03]"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {loading && <div className="text-neutral-500">Загрузка…</div>}
-        {err && <div className="text-red-400">{err}</div>}
-        {!loading && !err && sorted.length === 0 && (
-          <div className="text-neutral-500">
-            Боёв ещё нет. <Link href="/battles/new" className="text-violet-400">Бросьте первый вызов</Link>.
+        {loading && (
+          <div className="space-y-3">
+            {[0, 1, 2, 3].map((i) => (
+              <SkeletonCard key={i} />
+            ))}
           </div>
         )}
 
-        <div className="space-y-3">
-          {sorted.map((b) => {
-            const status = BATTLE_STATUS[b.status];
-            const isQueue = b.status === "queued" || b.status === "reserved";
-            return (
-              <Link
-                key={b.id}
-                href={`/battles/${b.id}`}
-                className="block rounded-lg border border-neutral-800 bg-neutral-900/40 hover:border-violet-500/50 p-4 transition"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium text-neutral-100 truncate">
-                      <span className="text-violet-300">{names.get(b.agent_a_id) || "…"}</span>
-                      {" vs "}
-                      <span className="text-cyan-300">{b.agent_b_id ? names.get(b.agent_b_id) || "…" : "открытый вызов"}</span>
-                    </div>
-                    <div className="text-xs text-neutral-500 mt-1">
+        {!loading && err && (
+          <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/35 p-5">
+            <div className="text-sm font-medium text-neutral-200">Не удалось обновить арену</div>
+            <div className="text-sm text-neutral-400 mt-1">
+              Проверяем соединение и попробуем снова автоматически.
+            </div>
+            <details className="mt-3 text-xs text-neutral-500">
+              <summary className="cursor-pointer battle-press select-none">Техническая информация</summary>
+              <div className="mt-1 font-mono text-neutral-600">{err}</div>
+            </details>
+          </div>
+        )}
+
+        {!loading && !err && sorted.length === 0 && filter === "all" && (
+          <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
+            <div className="text-neutral-200 text-sm font-medium mb-1.5">На арене пока тихо</div>
+            <div className="text-neutral-400 text-sm mb-4">
+              Создайте первый вызов и выберите задачу для двух агентов.
+            </div>
+            <Link
+              href="/battles/new"
+              className="battle-press inline-flex min-h-11 items-center rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 px-4 text-sm font-medium transition-colors"
+            >
+              Бросить вызов
+            </Link>
+          </div>
+        )}
+
+        {!loading && !err && sorted.length === 0 && filter !== "all" && (
+          <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
+            <div className="text-neutral-200 text-sm font-medium mb-4">В этой категории боёв нет</div>
+            <button
+              onClick={() => setFilter("all")}
+              className="battle-press inline-flex min-h-11 items-center rounded-lg border border-neutral-700 text-neutral-300 hover:bg-white/[0.03] px-4 text-sm font-medium transition-colors"
+            >
+              Показать все
+            </button>
+          </div>
+        )}
+
+        {!loading && !err && sorted.length > 0 && (
+          <div className="space-y-3">
+            {sorted.map((b) => {
+              const isRunningLike = b.status === "running" || b.status === "judging";
+              const isQueueLike = b.status === "queued" || b.status === "reserved";
+              const winnerName =
+                b.winner === "tie" ? null : b.winner === "a" ? names.get(b.agent_a_id) : names.get(b.agent_b_id ?? "");
+              const terminalText = outcomeLabel(b.status);
+
+              return (
+                <Link
+                  key={b.id}
+                  href={`/battles/${b.id}`}
+                  className={`group block rounded-xl border bg-neutral-900/35 p-4 sm:p-5 hover:bg-neutral-900/55 transition-[transform,border-color,background-color,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 ${cardStateClasses(b.status)}`}
+                >
+                  {/* Slot 1 — status + time */}
+                  <div className="flex items-center justify-between gap-2">
+                    <StatusBadge status={b.status} />
+                    <span className="text-xs text-neutral-400 shrink-0">
+                      {isRunningLike && <span className="text-orange-300 mr-1.5">Сейчас ·</span>}
                       {timeAgo(b.challenged_at)}
-                      {b.winner && b.status === "completed" && (
-                        <> · победитель: {b.winner === "tie" ? "ничья" : b.winner === "a" ? names.get(b.agent_a_id) : names.get(b.agent_b_id ?? "")}</>
-                      )}
-                      {b.status === "completed" && !b.winner && <> · без вердикта</>}
-                      {isQueue && <> · в очереди на исполнение</>}
-                    </div>
+                    </span>
                   </div>
-                  <span className={`shrink-0 text-xs px-2 py-0.5 rounded border ${status.classes}`}>{status.label}</span>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
+
+                  {/* Slot 2 — fighters */}
+                  <div className="mt-4 grid grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] items-center gap-2">
+                    <AgentIdentity side="a" agentId={b.agent_a_id} name={names.get(b.agent_a_id)} size="sm" />
+                    <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500 text-center">VS</span>
+                    <AgentIdentity
+                      side="b"
+                      agentId={b.agent_b_id}
+                      name={b.agent_b_id ? names.get(b.agent_b_id) : null}
+                      size="sm"
+                      className="sm:justify-end sm:text-right sm:flex-row-reverse"
+                    />
+                  </div>
+
+                  {/* Slot 3 — task */}
+                  <div className="mt-4 border-t border-neutral-800/70 pt-3">
+                    <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 mr-2">
+                      Задача
+                    </span>
+                    <span className="text-xs font-mono text-neutral-400">#{b.task_id.slice(0, 8)}</span>
+                  </div>
+
+                  {/* Slot 4 — outcome / action */}
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    {isRunningLike && (
+                      <span className="text-sm text-orange-300">
+                        {b.status === "judging" ? "Идёт проверка реплик" : "Открыть трансляцию →"}
+                      </span>
+                    )}
+                    {isQueueLike && <span className="text-sm text-neutral-400">Ожидает запуска</span>}
+                    {b.status === "challenge_pending" && (
+                      <span className="text-sm text-violet-300">Открыть вызов →</span>
+                    )}
+                    {b.status === "accepted" && <span className="text-sm text-neutral-400">Принят, готовится</span>}
+                    {b.status === "completed" && b.winner && (
+                      <span className="text-sm font-semibold text-neutral-100">
+                        {b.winner === "tie" ? "Ничья" : (
+                          <>
+                            Победитель:{" "}
+                            <span className={b.winner === "a" ? "text-violet-300" : "text-cyan-300"}>
+                              {winnerName ?? "…"}
+                            </span>
+                          </>
+                        )}
+                      </span>
+                    )}
+                    {b.status === "completed" && !b.winner && (
+                      <span className="text-sm text-neutral-400">Без вердикта</span>
+                    )}
+                    {terminalText && <span className="text-sm text-neutral-500">{terminalText}</span>}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </main>
     </div>
   );
