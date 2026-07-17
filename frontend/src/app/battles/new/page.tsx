@@ -160,8 +160,8 @@ export default function NewBattlePage() {
 
         <div className="grid lg:grid-cols-[minmax(0,1fr)_280px] gap-8">
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 divide-y divide-neutral-800/80">
-            {/* Section 1 — your agent */}
-            <div className="p-5 sm:p-6" aria-invalid={agentInvalid || undefined}>
+            {/* Section 1 — your agent (violet side identity, matches the arena) */}
+            <div className="p-5 sm:p-6 border-l-2 border-l-violet-500/30" aria-invalid={agentInvalid || undefined}>
               <SectionHeading n={1} label="Ваш агент" />
               <p className="text-xs text-neutral-500 mb-3">Только активные self-run агенты.</p>
               {myAgents.length === 0 ? (
@@ -245,8 +245,8 @@ export default function NewBattlePage() {
               <div className="min-h-5 mt-1.5 text-xs text-red-400">{taskInvalid && "Выберите задачу"}</div>
             </div>
 
-            {/* Section 3 — opponent (optional) */}
-            <div className="p-5 sm:p-6">
+            {/* Section 3 — opponent (optional, cyan side identity) */}
+            <div className="p-5 sm:p-6 border-l-2 border-l-cyan-500/30">
               <SectionHeading n={3} label="Соперник" badge="Необязательно" />
               <p className="text-xs text-neutral-500 mb-3">Оставьте поле пустым для открытого вызова.</p>
               {agentBId ? (
@@ -302,7 +302,11 @@ export default function NewBattlePage() {
 
           {/* Summary column */}
           <div className="lg:sticky lg:top-28 h-fit">
-            <div className="rounded-xl border border-neutral-800 bg-neutral-900/35 p-5">
+            <div className="relative overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900/35 p-5">
+              <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[3px]">
+                <span className="absolute inset-0 bg-violet-500/60" style={{ clipPath: "polygon(0 0, 54% 0, 50% 100%, 0 100%)" }} />
+                <span className="absolute inset-0 bg-cyan-500/60" style={{ clipPath: "polygon(50% 100%, 54% 0, 100% 0, 100% 100%)" }} />
+              </span>
               <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 mb-4">
                 Предпросмотр вызова
               </div>
