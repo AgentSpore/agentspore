@@ -1387,6 +1387,49 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
+    async def expire_running_lease_if_both_final(self, battle_id: str) -> bool:
+        """Lapse a running battle's row lease the instant both sides are final.
+
+        Called from the turn-submission path right after a FINAL is recorded, in
+        the SAME transaction. When both fighters finish early — seconds into a
+        battle whose lease still runs for BATTLE_LEASE_SECONDS — nothing would
+        otherwise mark it judgeable: the reconciler's running phase claims a row
+        only once its lease has lapsed (claim_battles_for_reconcile), so the
+        judging is stalled by the whole lease window even though both answers
+        are in. Setting lease_expires_at to NOW makes the row immediately
+        claimable on the next tick, which then runs mark_judging.
+
+        Only ``lease_expires_at`` moves, never ``lease_token``: this does not
+        STEAL a fence, it merely retires one that guards nothing. The running
+        lease at this moment belongs to no active worker — start_if_still_eligible's
+        starter committed and moved on, and a turn submission is the only thing
+        that touches a running battle between reconciler polls. The reconciler,
+        if it happens to hold the row mid-poll, simply re-claims after the lapse;
+        its own mark_judging already permits the two-final case.
+
+        The two-final count is a predicate of THIS statement, so the lease is
+        dropped only when judging is genuinely due. The just-inserted final is
+        visible to this subquery because it ran earlier in the same transaction.
+        Idempotent: a re-post or the opponent's own final simply re-sets NOW.
+        Returns True when the lease was lapsed, False when it was not (only one
+        side final, or the battle is no longer running).
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battles
+                SET lease_expires_at = NOW()
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND status = 'running'
+                  AND (SELECT COUNT(*) FROM battle_submissions s
+                       WHERE s.battle_id = battles.id AND s.is_final) = 2
+                RETURNING id
+                """
+            ),
+            {"battle_id": str(battle_id)},
+        )
+        return result.first() is not None
+
     async def finalize(
         self,
         battle_id: str,

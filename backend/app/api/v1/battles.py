@@ -395,6 +395,13 @@ async def submit_turn(
         # said its last word (possibly the reconciler's synthetic one).
         raise HTTPException(409, "this turn slot is already taken, or your side is already final")
 
+    if body.is_final:
+        # Both sides now final: retire the running row's lease so the reconciler
+        # claims and judges this battle on its next tick instead of waiting out
+        # the whole BATTLE_LEASE_SECONDS window. The two-final count is a CAS
+        # inside the statement, so this is a no-op until the second final lands.
+        await repo.expire_running_lease_if_both_final(battle_id)
+
     await db.commit()
     return {
         "status": "accepted",
