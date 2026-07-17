@@ -17,14 +17,20 @@ interface BattleAvailabilityToggleProps {
  * the state it starts in; it can only set a new one and confirm the write.
  * Without this opt-in nothing can ever challenge this agent — accept/claim
  * both require it server-side.
+ *
+ * The segmented control deliberately has NO pre-selected/highlighted option
+ * before the first successful write — a sliding "current state" indicator
+ * would be a fabricated default (the exact honesty rule this component's
+ * comment above has always called out). The slide-in highlight only appears
+ * once `result` is known, then genuinely tracks it.
  */
 export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabilityToggleProps) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<boolean | null>(null);
   const [result, setResult] = useState<boolean | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const setAvailability = async (available: boolean) => {
-    setBusy(true);
+    setBusy(available);
     setErr(null);
     try {
       const res = await fetchWithAuth(`${API_URL}/api/v1/agents/${agentId}/battle-availability`, {
@@ -41,36 +47,47 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
     } catch (e) {
       setErr(e instanceof Error ? e.message : "не удалось изменить настройку");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
-      <div className="text-xs uppercase text-neutral-500 mb-1">Участие в боях — {agentName}</div>
-      <p className="text-xs text-neutral-500 mb-2">
+      <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Участие в боях — {agentName}</div>
+      <p className="text-xs text-neutral-500 mb-3">
         Без этого переключателя агента нельзя вызвать на бой и он не сможет принимать чужие вызовы.
       </p>
+      {result === null && <p className="text-xs text-amber-300/80 mb-2">Участие не проверено</p>}
       {err && <div className="text-xs text-red-400 mb-2">{err}</div>}
-      {result !== null && !err && (
-        <div className="text-xs text-emerald-400 mb-2">
-          {result ? "Агент участвует в боях" : "Агент выведен из боёв"}
-        </div>
-      )}
-      <div className="flex gap-2">
+
+      <div className="relative flex w-full sm:inline-flex sm:w-auto rounded-full border border-neutral-800 bg-neutral-950/60 p-1">
+        {result !== null && (
+          <span
+            className={`battle-toggle-thumb absolute inset-y-1 w-[calc(50%-4px)] rounded-full ${
+              result ? "bg-emerald-500/15" : "bg-red-500/10"
+            }`}
+            style={{ transform: result ? "translateX(0)" : "translateX(calc(100% + 8px))" }}
+          />
+        )}
         <button
           onClick={() => setAvailability(true)}
-          disabled={busy}
-          className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition"
+          disabled={busy !== null}
+          className={`battle-press relative z-10 flex flex-1 sm:flex-none min-h-9 items-center justify-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+            result === true ? "text-emerald-300" : "text-neutral-400 hover:text-neutral-200"
+          }`}
         >
-          Включить
+          {busy === true && <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-current/40 border-t-current animate-spin" />}
+          Участвует в боях
         </button>
         <button
           onClick={() => setAvailability(false)}
-          disabled={busy}
-          className="text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-50 transition"
+          disabled={busy !== null}
+          className={`battle-press relative z-10 flex flex-1 sm:flex-none min-h-9 items-center justify-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+            result === false ? "text-red-300" : "text-neutral-400 hover:text-neutral-200"
+          }`}
         >
-          Выключить
+          {busy === false && <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-current/40 border-t-current animate-spin" />}
+          Выведен из боёв
         </button>
       </div>
     </div>
