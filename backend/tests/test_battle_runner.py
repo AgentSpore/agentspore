@@ -37,7 +37,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
-from app.core.rating import DEFAULT_ELO, K_FACTOR
+from app.core.rating import DEFAULT_ELO, ELO_FLOOR, K_FACTOR
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository, ReservationConflictError
 from app.schemas.battles import BattleStatus, Side, TaskSource, Vote, Winner
@@ -61,7 +61,7 @@ from app.services.battle_runner import (
     reap_once,
     reconcile_once,
 )
-from app.services.battle_service import BattleService
+from app.services.battle_service import READY_MAX_GENERATIONS, BattleService
 from app.services.connection_manager import DeliveryResult
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
@@ -347,6 +347,165 @@ class TestSettlementIsExactlyOnce:
         # authoritative, so this result must be discarded.
         assert await _settle_in_own_session(session_maker, battle_id, str(uuid.uuid4())) is None
         assert await _elo(session_maker, agent_a) == DEFAULT_ELO
+
+
+class TestNearFloorSettlementDoesNotStrand:
+    """A heavy loss from a near-floor rating must SETTLE, not violate the CHECK.
+
+    The bug: rating.new_rating had no floor, so a low-rated agent losing to a
+    comparably-low one computes a rating that rounds to <= 0. V66's
+    battle_elo_positive CHECK requires elo>0, so finalize's UPDATE raises a
+    CheckViolation, the battle can never reach 'completed', and it strands in
+    'judging' until the attempt cap aborts it — the true result lost. The floor
+    keeps every computed rating clear of the CHECK, so settlement succeeds.
+    """
+
+    async def test_a_near_floor_loser_settles_above_the_floor(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        # Both agents at elo 10: equal, so E=0.5, and the loser's raw new rating
+        # is round(10 + 32*(0 - 0.5)) = -6 — a direct CHECK violation without the
+        # clamp. Mutation proof: drop the floor in new_rating and this raises a
+        # CheckViolation inside settle_battle, so the test errors.
+        battle_id, agent_a, agent_b, token = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.B, Vote.B, Vote.B], elo_a=10, elo_b=10
+        )
+
+        change = await _settle_in_own_session(session_maker, battle_id, token)
+        assert change is not None, "settlement must succeed, not raise a CheckViolation"
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "completed"
+        assert battle["winner"] == "b"
+        # The loser's persisted rating sits at the floor, never at or below zero.
+        assert battle["elo_a_after"] >= ELO_FLOOR
+        assert battle["elo_a_after"] == ELO_FLOOR
+        assert await _elo(session_maker, agent_a) >= ELO_FLOOR
+
+
+class TestReadinessGriefIsBounded:
+    """A never-ACK opponent cannot pin the challenger for the whole 24h TTL.
+
+    The bug: a missed readiness lease returns a battle to 'accepted' and the next
+    reconcile re-arms it, so accept-then-never-ACK re-reserves the challenger
+    every ~lease for the full challenge TTL with no Elo consequence. The fix
+    bounds the re-arm attempts: after READY_MAX_GENERATIONS the battle is aborted
+    (naming the silent side) and both reservations are released.
+    """
+
+    async def _reserved_at_cap(self, db_session, task_id) -> tuple[str, str, str]:
+        """Build a 'reserved' battle at the re-arm cap with a lapsed ready lease."""
+        repo = BattleRepository(db_session)
+        svc = BattleService(db_session)
+        owner_a = await _new_owner(db_session)
+        owner_b = await _new_owner(db_session)
+        agent_a = await _new_eligible_agent(db_session, owner_a)
+        agent_b = await _new_eligible_agent(db_session, owner_b)
+
+        battle_id = await repo._create_battle(
+            task_id=task_id,
+            agent_a_id=agent_a,
+            agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600,
+            agent_b_id=agent_b,
+            agent_b_owner_snapshot=owner_b,
+        )
+        assert await repo._mark_accepted(battle_id) is not None
+        armed = await svc.arm_readiness(battle_id)  # accepted -> reserved, gen 1
+        assert armed is not None
+        await db_session.commit()
+
+        # Force it to the cap with a lapsed lease — the shape reached after
+        # READY_MAX_GENERATIONS un-ACKed re-arms — without looping the machine.
+        await db_session.execute(
+            text(
+                "UPDATE battles SET readiness_generation = :gen, "
+                "ready_lease_expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"gen": READY_MAX_GENERATIONS, "b": battle_id},
+        )
+        await db_session.commit()
+        return battle_id, agent_a, agent_b
+
+    async def test_under_the_cap_it_releases_rather_than_aborts(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """The re-arm loop still works below the cap: a lapsed lease -> accepted."""
+        repo = BattleRepository(db_session)
+        svc = BattleService(db_session)
+        owner_a = await _new_owner(db_session)
+        owner_b = await _new_owner(db_session)
+        agent_a = await _new_eligible_agent(db_session, owner_a)
+        agent_b = await _new_eligible_agent(db_session, owner_b)
+        battle_id = await repo._create_battle(
+            task_id=task_id, agent_a_id=agent_a, agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600, agent_b_id=agent_b, agent_b_owner_snapshot=owner_b,
+        )
+        assert await repo._mark_accepted(battle_id) is not None
+        assert await svc.arm_readiness(battle_id) is not None  # gen 1, under cap
+        await db_session.commit()
+        await db_session.execute(
+            text(
+                "UPDATE battles SET ready_lease_expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"b": battle_id},
+        )
+        await db_session.commit()
+
+        outcome = await svc.expire_or_abort_readiness(battle_id)
+        await db_session.commit()
+        assert outcome is not None
+        assert outcome["outcome"] == "released"
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "accepted"
+
+        # Retire it terminally so this released-but-still-claimable 'accepted'
+        # battle cannot be armed by the module-shared reconciler in a later test
+        # (the whole-chain test counts armings globally).
+        await repo.mark_aborted(battle_id, "test cleanup")
+        await repo.release_reservations(battle_id)
+        await db_session.commit()
+
+    async def test_admit_reserved_aborts_at_the_cap_frees_fighters_and_notifies(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """At the cap: aborts (not loops), releases reservations, notifies owners.
+
+        Mutation proof: replace expire_or_abort_readiness with the old
+        release-only path and this battle returns to 'accepted' instead of
+        'aborted', the reservations survive, and no abort notification fires —
+        every assertion below flips.
+        """
+        battle_id, agent_a, agent_b = await self._reserved_at_cap(db_session, task_id)
+        assert await _reservation_count(session_maker, battle_id) == 2
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            battle = await runner.repo.get(battle_id)
+            with patch(
+                "app.services.battle_runner._notify_battle_owners", new=AsyncMock()
+            ) as notify:
+                result = await runner.admit_reserved(battle)
+            # admit_reserved returns False (battle did not queue) — but it did NOT
+            # loop: it took the terminal exit.
+            assert result is False
+            recipients = notify.await_args.args[2]
+            assert {r[0] for r in recipients} == {agent_a, agent_b}
+            assert all(r[1] == "battle_aborted" for r in recipients)
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "aborted"
+        # The reason names the silent side(s): neither fighter ACKed here.
+        assert "did not ACK" in battle["verdict_reason"]
+        assert "both fighters" in battle["verdict_reason"]
+
+        # The challenger is freed — no reservation pins it to the dead battle.
+        assert await _reservation_count(session_maker, battle_id) == 0
 
 
 class TestSharedFighterLostUpdate:
