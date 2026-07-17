@@ -57,6 +57,7 @@ from app.services.battle_runner import (
     SILENT_FIGHTER_SEQ_NO,
     BattleRunner,
     _battle_result_title,
+    _notify_battle_owners,
     reap_once,
     reconcile_once,
 )
@@ -1838,16 +1839,110 @@ class TestOwnerNotifications:
         assert "победа" in by_agent[agent_a]
         assert "поражение" in by_agent[agent_b]
 
-    async def test_notify_failure_on_second_recipient_leaves_the_first_and_transition_intact(
+    async def test_first_recipients_write_survives_a_rollback_of_the_second(
         self, session_maker, db_session, task_id
     ) -> None:
+        """Per-recipient isolation is REAL, proven against Postgres.
+
+        The settle-level test below mocks create_notification_task and so can
+        only prove both recipients were attempted — not that A's row outlived
+        B's failure. This drives _notify_battle_owners directly with a real
+        session: the create_notification_task stand-in performs a REAL durable
+        write for recipient A (a battle_challenge_cooldowns row on the same
+        session, since the battle testcontainer schema has no `tasks` table) and
+        RAISES for recipient B. A's row must be found afterwards — committed by
+        A's own per-recipient transaction and untouched by B's rollback.
+        """
+        agent_a = await _new_agent(db_session)
+        agent_b = await _new_agent(db_session)
+        await db_session.commit()
+
+        battle_id = str(uuid.uuid4())
+        attempted: list[str] = []
+
+        async with session_maker() as work_session:
+
+            async def real_write_then_fail(**kwargs):
+                aid = kwargs["assigned_to_agent_id"]
+                attempted.append(aid)
+                if aid == agent_b:
+                    raise RuntimeError("notification backend down for recipient two")
+                # Recipient A: a genuine INSERT on the SAME session that
+                # _notify_battle_owners will commit for this recipient.
+                await work_session.execute(
+                    text(
+                        "INSERT INTO battle_challenge_cooldowns "
+                        "(challenger_agent_id, target_agent_id, cooldown_until) "
+                        "VALUES (CAST(:a AS UUID), CAST(:b AS UUID), NOW() + INTERVAL '1 hour')"
+                    ),
+                    {"a": agent_a, "b": agent_b},
+                )
+
+            with patch(
+                "app.services.agent_service.AgentService.create_notification_task",
+                AsyncMock(side_effect=real_write_then_fail),
+            ):
+                # Must not re-raise even though recipient B blows up.
+                await _notify_battle_owners(
+                    work_session,
+                    battle_id,
+                    [
+                        (agent_a, "battle_result", "A"),
+                        (agent_b, "battle_result", "B"),
+                    ],
+                )
+
+        assert attempted == [agent_a, agent_b]  # both tried, A first
+
+        # A's write is durable in a FRESH connection — committed by its own
+        # transaction and NOT rolled back when B failed.
+        async with session_maker() as verify_session:
+            row = await verify_session.execute(
+                text(
+                    "SELECT COUNT(*) FROM battle_challenge_cooldowns "
+                    "WHERE challenger_agent_id = CAST(:a AS UUID)"
+                ),
+                {"a": agent_a},
+            )
+            assert row.scalar_one() == 1
+
+    async def test_notify_owners_swallows_an_agentservice_construction_failure(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """The whole body — import + construction included — is inside the guard.
+
+        If AgentService construction fails, _notify_battle_owners must swallow it
+        and return; letting it escape would abort the caller's reaper pass AFTER
+        a durable terminal transition. (Moving the construction out of the try
+        makes this raise.)
+        """
+        agent_a = await _new_agent(db_session)
+        await db_session.commit()
+
+        async with session_maker() as work_session:
+            with patch(
+                "app.services.agent_service.AgentService",
+                side_effect=RuntimeError("AgentService could not be built"),
+            ):
+                # No exception may cross this call.
+                await _notify_battle_owners(
+                    work_session, str(uuid.uuid4()), [(agent_a, "battle_result", "A")]
+                )
+
+    async def test_notify_failure_on_second_recipient_leaves_the_transition_intact(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """Integration: settle -> notify both, second fails, verdict stands.
+
+        Honest scope: create_notification_task is MOCKED here (no `tasks` table
+        in the battle schema), so this proves the terminal transition survives a
+        notify blowup and both recipients are attempted — NOT that A's row
+        outlived B's rollback. That durability claim is proven separately, real,
+        in test_first_recipients_write_survives_a_rollback_of_the_second.
+        """
         battle_id, agent_a, agent_b, token = await _battle_in_judging(
             db_session, task_id, votes=[Vote.A, Vote.A, Vote.A]
         )
-
-        # Fail delivery to the SECOND recipient only. Per-recipient isolation
-        # means the first must already be committed and the terminal transition
-        # untouched — a notify blowup must not surface to the caller either.
         calls: list[str] = []
 
         async def flaky(**kwargs):
@@ -1861,8 +1956,6 @@ class TestOwnerNotifications:
         ):
             change = await _settle_in_own_session(session_maker, battle_id, token)
         assert change is not None
-
-        # Both recipients were attempted; the first one landed.
         assert len(calls) == 2
         assert set(calls) == {agent_a, agent_b}
 
