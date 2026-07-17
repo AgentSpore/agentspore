@@ -40,7 +40,7 @@ from testcontainers.postgres import PostgresContainer
 from app.core.rating import DEFAULT_ELO, K_FACTOR
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository, ReservationConflictError
-from app.schemas.battles import Side, TaskSource, Vote
+from app.schemas.battles import BattleStatus, Side, TaskSource, Vote, Winner
 from app.services.battle_judges import (
     JUDGE_KIND_LLM,
     JUDGE_MODEL,
@@ -49,14 +49,18 @@ from app.services.battle_judges import (
     replicate_seed,
 )
 from app.services.battle_runner import (
+    BATTLE_LEASE_SECONDS,
     JUDGE_RUN_MAX_ATTEMPTS,
     POLL_MAX_ATTEMPTS,
     RECONCILE_BATCH,
     RUNNING_MAX_ATTEMPTS,
+    SILENT_FIGHTER_SEQ_NO,
     BattleRunner,
+    _battle_result_title,
     reap_once,
     reconcile_once,
 )
+from app.services.battle_service import BattleService
 from app.services.connection_manager import DeliveryResult
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
@@ -1620,3 +1624,430 @@ class TestReaperRespectsTheBatchBound:
             get_repo = BattleRepository(session)
             statuses = [(await get_repo.get(b))["status"] for b in battle_ids]
         assert all(s == "expired" for s in statuses)
+
+
+# ---------------------------------------------------------------------------
+# DX round: early-finish lease release (FIX 1), owner notifications (FIX 2)
+# and the untested lifecycle branches (FIX 3). Helpers below are additive so
+# the suites above are untouched.
+# ---------------------------------------------------------------------------
+
+
+async def _new_eligible_agent(session, owner: str, elo: int = DEFAULT_ELO) -> str:
+    """A fighter that satisfies _AGENT_ELIGIBLE_SQL: active, not hosted, owned,
+    opted in. Needed by the open-challenge claim path, which re-imposes every
+    admission rule against the agent that turns up."""
+    aid = await _new_agent(session, elo)
+    await session.execute(
+        text(
+            "UPDATE agents SET available_for_battles = TRUE, is_active = TRUE, "
+            "is_hosted = FALSE, owner_user_id = CAST(:o AS UUID) "
+            "WHERE id = CAST(:a AS UUID)"
+        ),
+        {"o": owner, "a": aid},
+    )
+    return aid
+
+
+async def _reservation_count(session_maker, battle_id: str) -> int:
+    async with session_maker() as session:
+        row = await session.execute(
+            text("SELECT COUNT(*) FROM battle_reservations WHERE battle_id = CAST(:b AS UUID)"),
+            {"b": battle_id},
+        )
+        return int(row.scalar_one())
+
+
+async def _live_event_count(session_maker, agents: tuple[str, ...]) -> int:
+    """Agent-events still in flight (not past their TTL) for these agents.
+
+    A terminal battle must leave no LIVE obligation behind — a ready-check or
+    turn event whose expires_at is still in the future would tell a fighter to
+    act on a battle that has ended.
+    """
+    ids = ", ".join(f"CAST(:a{i} AS UUID)" for i in range(len(agents)))
+    params = {f"a{i}": a for i, a in enumerate(agents)}
+    async with session_maker() as session:
+        row = await session.execute(
+            text(
+                f"SELECT COUNT(*) FROM agent_events "
+                f"WHERE target_agent_id IN ({ids}) AND expires_at > NOW()"
+            ),
+            params,
+        )
+        return int(row.scalar_one())
+
+
+class TestEarlyFinishLeaseRelease:
+    """FIX 1: both fighters final -> the running row is claimable AT ONCE.
+
+    Without the release the row keeps a lease running for BATTLE_LEASE_SECONDS
+    and the reconciler's running phase (claim_battles_for_reconcile) will not
+    touch it until that lapses, so a battle both sides finished in seconds still
+    waits out the whole window before it can be judged.
+    """
+
+    async def test_both_finals_make_a_running_battle_immediately_claimable(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        async with session_maker() as session:
+            battle_id, agent_a, agent_b, _token = await _battle_running(session, task_id)
+            repo = BattleRepository(session)
+            # The lease is genuinely in the future: _battle_running set it to
+            # NOW()+600 via _mark_running, so nothing has lapsed on its own.
+            live = await session.execute(
+                text(
+                    "SELECT lease_expires_at > NOW() FROM battles WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            assert live.scalar_one() is True
+
+            assert await repo.add_submission(battle_id, Side.A, 1, "A", is_final=True)
+            assert await repo.add_submission(battle_id, Side.B, 1, "B", is_final=True)
+            assert await repo.expire_running_lease_if_both_final(battle_id) is True
+            await session.commit()
+
+        # Directly: the row's lease has been retired.
+        async with session_maker() as session:
+            lapsed = await session.execute(
+                text("SELECT lease_expires_at <= NOW() FROM battles WHERE id = CAST(:b AS UUID)"),
+                {"b": battle_id},
+            )
+            assert lapsed.scalar_one() is True
+
+        # End to end: the running phase claims it on the very next tick.
+        async with session_maker() as session:
+            claimed = await BattleRepository(session).claim_battles_for_reconcile(
+                status=BattleStatus.RUNNING,
+                lease_token=str(uuid.uuid4()),
+                lease_seconds=BATTLE_LEASE_SECONDS,
+                limit=RECONCILE_BATCH,
+                max_attempts=RUNNING_MAX_ATTEMPTS,
+            )
+            await session.rollback()
+        assert battle_id in {str(b["id"]) for b in claimed}
+
+    async def test_one_final_leaves_the_running_lease_untouched(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        async with session_maker() as session:
+            battle_id, agent_a, agent_b, _token = await _battle_running(session, task_id)
+            repo = BattleRepository(session)
+            assert await repo.add_submission(battle_id, Side.A, 1, "A", is_final=True)
+            # Only one side is final: the CAS must not fire.
+            assert await repo.expire_running_lease_if_both_final(battle_id) is False
+            await session.commit()
+
+        async with session_maker() as session:
+            still_live = await session.execute(
+                text("SELECT lease_expires_at > NOW() FROM battles WHERE id = CAST(:b AS UUID)"),
+                {"b": battle_id},
+            )
+            assert still_live.scalar_one() is True
+
+        # And the running phase will NOT claim it — the lease has not lapsed.
+        async with session_maker() as session:
+            claimed = await BattleRepository(session).claim_battles_for_reconcile(
+                status=BattleStatus.RUNNING,
+                lease_token=str(uuid.uuid4()),
+                lease_seconds=BATTLE_LEASE_SECONDS,
+                limit=RECONCILE_BATCH,
+                max_attempts=RUNNING_MAX_ATTEMPTS,
+            )
+            await session.rollback()
+        assert battle_id not in {str(b["id"]) for b in claimed}
+
+
+class TestOwnerNotifications:
+    """FIX 2: terminal transitions notify owners through the platform's task
+    mechanism, best-effort. create_notification_task is the real mechanism (it
+    writes a tasks row + pushes on heartbeat); here it is mocked because the
+    testcontainers schema carries only the battle tables, and what is under test
+    is the wiring and the best-effort contract, not the tasks insert itself."""
+
+    async def test_result_title_reads_from_each_side(self) -> None:
+        bid = "b1"
+        assert "победа" in _battle_result_title(bid, Side.A, Winner.A.value)
+        assert "поражение" in _battle_result_title(bid, Side.B, Winner.A.value)
+        assert "ничья" in _battle_result_title(bid, Side.A, Winner.TIE.value)
+        # No quorum is a "ничья" from an owner's viewpoint, not a win/loss.
+        assert "ничья" in _battle_result_title(bid, Side.A, None)
+        assert bid in _battle_result_title(bid, Side.A, Winner.A.value)
+
+    async def test_completed_battle_notifies_both_owners(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, agent_a, agent_b, token = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.B]
+        )
+        spy = AsyncMock()
+        with patch("app.services.agent_service.AgentService.create_notification_task", spy):
+            assert await _settle_in_own_session(session_maker, battle_id, token) is not None
+
+        notified = {call.kwargs["assigned_to_agent_id"] for call in spy.await_args_list}
+        assert notified == {agent_a, agent_b}
+        for call in spy.await_args_list:
+            assert call.kwargs["task_type"] == "battle_result"
+            assert call.kwargs["source_key"] == f"battle:{battle_id}:battle_result"
+        # A won 2-1: the win/loss framing reaches the right owner.
+        by_agent = {
+            c.kwargs["assigned_to_agent_id"]: c.kwargs["title"] for c in spy.await_args_list
+        }
+        assert "победа" in by_agent[agent_a]
+        assert "поражение" in by_agent[agent_b]
+
+    async def test_notify_failure_does_not_roll_back_completion(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, agent_a, _agent_b, token = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.A]
+        )
+        boom = AsyncMock(side_effect=RuntimeError("notification backend down"))
+        with patch("app.services.agent_service.AgentService.create_notification_task", boom):
+            # The verdict is the business decision; a notify blowup must not
+            # undo it or surface as an error to the caller.
+            change = await _settle_in_own_session(session_maker, battle_id, token)
+        assert change is not None
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "completed"
+        assert battle["winner"] == "a"
+        assert battle["finalized_at"] is not None
+        # The Elo change actually landed — the transition is fully durable.
+        assert await _elo(session_maker, agent_a) != DEFAULT_ELO
+
+    async def test_expired_challenge_notifies_the_challenger_owner(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        owner_a = await _new_owner(db_session)
+        agent_a = await _new_agent(db_session)
+        repo = BattleRepository(db_session)
+        battle_id = await repo._create_battle(
+            task_id=task_id,
+            agent_a_id=agent_a,
+            agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600,
+        )  # open challenge, no B
+        await db_session.execute(
+            text(
+                "UPDATE battles SET challenge_expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"b": battle_id},
+        )
+        await db_session.commit()
+
+        spy = AsyncMock()
+        with patch("app.services.agent_service.AgentService.create_notification_task", spy):
+            counts = await reap_once(session_maker)
+        assert counts["expired"] >= 1
+
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "expired"
+        prefix = f"battle:{battle_id}:"
+        mine = [c for c in spy.await_args_list if c.kwargs["source_key"].startswith(prefix)]
+        assert len(mine) == 1
+        assert mine[0].kwargs["assigned_to_agent_id"] == agent_a
+        assert mine[0].kwargs["task_type"] == "battle_expired"
+
+    async def test_aborted_battle_notifies_both_owners(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        # A queued battle whose whole claim budget is spent is aborted by the
+        # reaper's exhausted-attempts path — a pre-'running' terminal.
+        battle_id, agent_a, agent_b = await _build_queued_battle(db_session, task_id)
+        async with session_maker() as session:
+            # Spend the whole claim budget so the reaper's exhausted-attempts
+            # path aborts it. Only the counter matters; the lease stays NULL/NULL
+            # (touching lease_expires_at alone would break the token/expiry pair).
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_attempt_count = :m WHERE id = CAST(:b AS UUID)"
+                ),
+                {"m": POLL_MAX_ATTEMPTS, "b": battle_id},
+            )
+            await session.commit()
+
+        spy = AsyncMock()
+        with patch("app.services.agent_service.AgentService.create_notification_task", spy):
+            counts = await reap_once(session_maker)
+        assert counts["aborted"] >= 1
+
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "aborted"
+        notified = {
+            c.kwargs["assigned_to_agent_id"]
+            for c in spy.await_args_list
+            if c.kwargs["source_key"] == f"battle:{battle_id}:battle_aborted"
+        }
+        assert notified == {agent_a, agent_b}
+
+
+class TestLifecycleBranches:
+    """FIX 3: the four untested lifecycle branches, each asserting the terminal
+    state AND that no fighter is left pinned by a reservation."""
+
+    async def test_deadline_timeout_synthesizes_a_silent_final_and_completes(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        # Running, side A answered, side B silent; the wall clock runs out.
+        async with session_maker() as session:
+            battle_id, agent_a, agent_b, _token = await _battle_running(session, task_id)
+            repo = BattleRepository(session)
+            assert await repo.add_submission(battle_id, Side.A, 1, "A answer", is_final=True)
+            # Age every wall clock consistently so the timeline stays legal
+            # (challenged < queued < started < deadline) while the deadline sits
+            # in the past; free the row so the reconciler's running phase claims it.
+            await session.execute(
+                text(
+                    "UPDATE battles SET challenged_at = NOW() - INTERVAL '30 minutes', "
+                    "queued_at = NOW() - INTERVAL '20 minutes', "
+                    "started_at = NOW() - INTERVAL '10 minutes', "
+                    "deadline_at = NOW() - INTERVAL '1 second', "
+                    "lease_token = NULL, lease_expires_at = NULL WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+
+        with _no_transport(), patch(
+            "app.services.battle_runner.BattleRunner._run_one_half", side_effect=_fake_half
+        ), patch("app.services.agent_service.AgentService.create_notification_task", AsyncMock()):
+            await reconcile_once(
+                session_factory=session_maker, gate=None, api_key="k", base_url="http://u"
+            )
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+            submissions = await BattleRepository(session).list_submissions(battle_id)
+        assert battle["status"] == "completed"
+        assert battle["winner"] == "a"
+        b_final = [s for s in submissions if s["side"] == "b" and s["is_final"]]
+        assert len(b_final) == 1
+        assert b_final[0]["truncated"] is True
+        assert b_final[0]["seq_no"] == SILENT_FIGHTER_SEQ_NO
+        # No fighter left pinned by a reservation once the battle completes.
+        assert await _reservation_count(session_maker, battle_id) == 0
+
+    async def test_owner_decline_writes_cooldown_and_leaves_no_reservations(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        owner_a, owner_b = await _new_owner(db_session), await _new_owner(db_session)
+        agent_a = await _new_eligible_agent(db_session, owner_a)
+        agent_b = await _new_eligible_agent(db_session, owner_b)
+        repo = BattleRepository(db_session)
+        battle_id = await repo._create_battle(
+            task_id=task_id,
+            agent_a_id=agent_a,
+            agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600,
+            agent_b_id=agent_b,
+            agent_b_owner_snapshot=owner_b,
+        )
+        await db_session.commit()
+
+        async with session_maker() as session:
+            svc = BattleService(session)
+            declined = await svc.decline(battle_id, owner_b)
+            await session.commit()
+        assert declined is not None
+        assert declined["status"] == "declined"
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+            cooldown = await session.execute(
+                text(
+                    "SELECT cooldown_until > NOW() FROM battle_challenge_cooldowns "
+                    "WHERE challenger_agent_id = CAST(:a AS UUID) "
+                    "AND target_agent_id = CAST(:b AS UUID)"
+                ),
+                {"a": agent_a, "b": agent_b},
+            )
+        assert battle["status"] == "declined"
+        assert cooldown.scalar_one() is True  # a live 24h cooldown was stamped
+        assert await _reservation_count(session_maker, battle_id) == 0
+
+    async def test_open_challenge_is_claimed_then_accepted(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        owner_a, owner_b = await _new_owner(db_session), await _new_owner(db_session)
+        agent_a = await _new_eligible_agent(db_session, owner_a)
+        agent_b = await _new_eligible_agent(db_session, owner_b)
+        repo = BattleRepository(db_session)
+        battle_id = await repo._create_battle(
+            task_id=task_id,
+            agent_a_id=agent_a,
+            agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600,
+        )  # open: no target
+        await db_session.commit()
+
+        async with session_maker() as session:
+            claimed = await BattleRepository(session).claim_open_challenge_as_owner(
+                battle_id=battle_id,
+                agent_b_id=agent_b,
+                claiming_user_id=owner_b,
+                target_cap=100,
+                target_window_seconds=3600,
+            )
+            await session.commit()
+        assert claimed is not None
+        # Claiming is not consent: still pending, but the slot is filled.
+        assert claimed["status"] == "challenge_pending"
+        assert str(claimed["agent_b_id"]) == agent_b
+
+        async with session_maker() as session:
+            accepted = await BattleRepository(session).accept_as_owner(battle_id, owner_b)
+            await session.commit()
+        assert accepted is not None
+        assert accepted["status"] == "accepted"
+
+    async def test_no_ack_reservation_lapses_and_the_reaper_expires_the_battle(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        # A battle that reserved both fighters and armed ready-checks, but which
+        # nobody ever ACKed: the reservations and readiness lease lapse, the
+        # challenge deadline passes, and the reaper routes it to 'expired'.
+        battle_id, agent_a, agent_b = await _build_queued_battle(db_session, task_id)
+        # Undo the queue admission so the battle sits in 'reserved' (the no-ACK
+        # shape) and force every wall clock into the past.
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET status = 'reserved', queued_at = NULL, "
+                    "challenge_expires_at = NOW() - INTERVAL '1 second', "
+                    "ready_lease_expires_at = NOW() - INTERVAL '1 second' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            # The unacked ready-checks lapse by TTL (no future-check on
+            # agent_events). The reservations stay future-valid — mark_expired
+            # releases them on the terminal transition regardless of their TTL.
+            await session.execute(
+                text(
+                    "UPDATE agent_events SET expires_at = NOW() - INTERVAL '1 second' "
+                    "WHERE target_agent_id IN (CAST(:a AS UUID), CAST(:b AS UUID))"
+                ),
+                {"a": agent_a, "b": agent_b},
+            )
+            await session.commit()
+
+        spy = AsyncMock()
+        with patch("app.services.agent_service.AgentService.create_notification_task", spy):
+            counts = await reap_once(session_maker)
+        assert counts["expired"] >= 1
+
+        async with session_maker() as session:
+            assert (await BattleRepository(session).get(battle_id))["status"] == "expired"
+        # No pinned fighter, no live obligation, and the challenger's owner was told.
+        assert await _reservation_count(session_maker, battle_id) == 0
+        assert await _live_event_count(session_maker, (agent_a, agent_b)) == 0
+        expired_notif = [
+            c for c in spy.await_args_list
+            if c.kwargs["source_key"] == f"battle:{battle_id}:battle_expired"
+        ]
+        assert len(expired_notif) == 1
+        assert expired_notif[0].kwargs["assigned_to_agent_id"] == agent_a
