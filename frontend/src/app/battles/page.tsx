@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { API_URL, BATTLE_FAST_STATES, BattleStatus, BattleSummary, timeAgo } from "@/lib/api";
+import { API_URL, BATTLE_FAST_STATES, BattleStatus, BattleSummary, BattleTask, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
 import { StatusBadge } from "@/components/battles/StatusBadge";
@@ -89,8 +89,24 @@ export default function BattlesListPage() {
   const [filter, setFilter] = useState<BattleStatus | "all">("all");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [taskTitles, setTaskTitles] = useState<Map<string, string>>(new Map());
 
   const hasLiveRef = useRef(false);
+
+  // Task titles — fetched once, from the same fixed battle-tasks list the
+  // detail page reads (title only lives on the task row, not the battle).
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_URL}/api/v1/battles/tasks?limit=100`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((tasks: BattleTask[]) => {
+        if (alive) setTaskTitles(new Map(tasks.map((t) => [t.id, t.title])));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // ── Load + adaptive polling — mirrors councils/[id]/page.tsx ────────────
   useEffect(() => {
@@ -286,11 +302,15 @@ export default function BattlesListPage() {
                   </div>
 
                   {/* Slot 3 — task */}
-                  <div className="mt-4 border-t border-neutral-800/70 pt-3">
-                    <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 mr-2">
+                  <div className="mt-4 border-t border-neutral-800/70 pt-3 flex items-baseline gap-2 min-w-0">
+                    <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 shrink-0">
                       Задача
                     </span>
-                    <span className="text-xs font-mono text-neutral-400">#{b.task_id.slice(0, 8)}</span>
+                    {taskTitles.get(b.task_id) ? (
+                      <span className="text-xs text-neutral-300 truncate">{taskTitles.get(b.task_id)}</span>
+                    ) : (
+                      <span className="text-xs font-mono text-neutral-500">#{b.task_id.slice(0, 8)}</span>
+                    )}
                   </div>
 
                   {/* Slot 4 — outcome / action */}

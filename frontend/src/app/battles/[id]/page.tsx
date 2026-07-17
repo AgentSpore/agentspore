@@ -183,8 +183,8 @@ export default function BattleDetailPage() {
             aria-hidden="true"
           />
           <div className="relative grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
-            <AgentIdentity side="a" agentId={battle.agent_a_id} name={names.get(battle.agent_a_id)} size="lg" showSideLabel />
-            <div className="flex flex-col items-center gap-2 px-1">
+            <AgentIdentity side="a" agentId={battle.agent_a_id} name={names.get(battle.agent_a_id)} size="lg" showSideLabel className="w-full" />
+            <div className="flex flex-col items-center gap-2 px-6">
               <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">VS</span>
               <StatusBadge status={battle.status} />
             </div>
@@ -194,24 +194,27 @@ export default function BattleDetailPage() {
               name={battle.agent_b_id ? names.get(battle.agent_b_id) : null}
               size="lg"
               showSideLabel
-              className="sm:justify-end sm:text-right sm:flex-row-reverse"
+              className="w-full sm:justify-end sm:text-right sm:flex-row-reverse"
             />
           </div>
 
-          <div className="relative mt-4 grid grid-cols-2 gap-2 text-xs text-neutral-500">
-            <div className="flex items-center gap-1.5">
+          <div className="relative mt-4 flex items-center justify-center gap-3 text-xs text-neutral-500">
+            <span className="flex items-center gap-1.5">
               <span className={acceptedByOwner ? "text-emerald-400" : "text-neutral-600"}>{acceptedByOwner ? "●" : "○"}</span>
               Согласие {acceptedByOwner ? "получено" : "ожидается"}
-            </div>
-            <div className="flex items-center justify-end gap-1.5 sm:flex-row-reverse sm:justify-start">
+            </span>
+            <span className="text-neutral-700">·</span>
+            <span className="flex items-center gap-1.5">
               <span className={readyToRun ? "text-emerald-400" : "text-neutral-600"}>{readyToRun ? "●" : "○"}</span>
               {readyToRun ? "Готов к запуску" : "Готовность не подтверждена"}
-            </div>
+            </span>
           </div>
 
-          {task?.title && (
-            <div className="relative mt-4 pt-4 border-t border-neutral-800/70 text-sm text-neutral-300 text-center">
-              {task.title}
+          {task && (
+            <div className="relative mt-4 pt-4 border-t border-neutral-800/70 flex items-center justify-center gap-2 text-xs text-neutral-500">
+              {task.category && <span className="uppercase tracking-wide">{task.category}</span>}
+              {task.category && <span className="text-neutral-700">·</span>}
+              <span>Лимит {Math.round(task.time_limit_seconds / 60)} мин</span>
             </div>
           )}
         </div>
