@@ -277,8 +277,16 @@ export default function BattlesListPage() {
                 <Link
                   key={b.id}
                   href={`/battles/${b.id}`}
-                  className={`group block rounded-xl border bg-neutral-900/35 p-4 sm:p-5 hover:bg-neutral-900/55 transition-[transform,border-color,background-color,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 ${cardStateClasses(b.status)}`}
+                  className={`group relative block overflow-hidden rounded-xl border bg-neutral-900/35 p-4 sm:p-5 hover:bg-neutral-900/55 transition-[transform,border-color,background-color,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-safe:hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 ${cardStateClasses(b.status)}`}
                 >
+                  {/* Seam edge — echoes the arena's angled violet/cyan meeting
+                      point at a card scale. Live battles keep their orange
+                      border as the dominant signal; this stays a thin accent. */}
+                  <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[3px]">
+                    <span className="absolute inset-0 bg-violet-500/60" style={{ clipPath: "polygon(0 0, 54% 0, 50% 100%, 0 100%)" }} />
+                    <span className="absolute inset-0 bg-cyan-500/60" style={{ clipPath: "polygon(50% 100%, 54% 0, 100% 0, 100% 100%)" }} />
+                  </span>
+
                   {/* Slot 1 — status + time */}
                   <div className="flex items-center justify-between gap-2">
                     <StatusBadge status={b.status} />
