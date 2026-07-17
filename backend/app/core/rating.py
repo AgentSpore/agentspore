@@ -47,6 +47,26 @@ K_FACTOR = 32
 # stronger side is expected to score 10:1. Baked into the formula below.
 _ELO_SCALE = 400.0
 
+# Floor a stored rating may never fall below. It exists to keep every computed
+# rating comfortably above the database's own guard: V66's
+# ``agents_battle_elo_positive`` (and ``battle_elo_positive`` on the snapshot
+# columns) require ``elo > 0``, so a rating that computes to <= 0 makes
+# finalize's UPDATE violate the CHECK and the battle can never settle — it
+# strands in 'judging' until the attempt cap aborts it and the true result is
+# lost. A near-floor agent taking a heavy loss is exactly the case that reaches
+# there: from a low rating the max K-swing can cross zero. 100 (not 1) is
+# chosen so the floor sits well clear of the CHECK rather than one loss away
+# from it, and so the leaderboard never shows a rating a rounding error from
+# negative.
+ELO_FLOOR = 100
+
+# Largest magnitude the logistic exponent is allowed to take. ``10.0 ** 309``
+# already exceeds the maximum double and raises OverflowError, so an extreme
+# rating gap (a mis-seeded or adversarial rating) would crash expected_score
+# outright. Past ~+-30 the logistic is 0.0 or 1.0 to full float precision, so
+# clamping here removes the crash without changing any representable result.
+_MAX_ELO_EXPONENT = 30.0
+
 # Score awarded to the side under consideration, by outcome.
 _SCORE_WIN = 1.0
 _SCORE_DRAW = 0.5
@@ -59,8 +79,19 @@ def expected_score(rating_a: int, rating_b: int) -> float:
     Symmetric by construction: ``expected_score(a, b) + expected_score(b, a)``
     is exactly 1.0, which is what makes the zero-sum property of
     :func:`apply_battle_result` hold rather than merely nearly hold.
+
+    The exponent is clamped to ``+-_MAX_ELO_EXPONENT`` so an extreme rating gap
+    cannot overflow ``10.0 ** x`` (which raises past ~309). The clamp only ever
+    engages far beyond where the logistic has already saturated to 0 or 1, so
+    it changes no result a real rating pair can produce — it only trades a
+    crash for the 0.0/1.0 the maths was already heading to.
     """
-    return 1.0 / (1.0 + 10.0 ** ((rating_b - rating_a) / _ELO_SCALE))
+    exponent = (rating_b - rating_a) / _ELO_SCALE
+    if exponent > _MAX_ELO_EXPONENT:
+        exponent = _MAX_ELO_EXPONENT
+    elif exponent < -_MAX_ELO_EXPONENT:
+        exponent = -_MAX_ELO_EXPONENT
+    return 1.0 / (1.0 + 10.0**exponent)
 
 
 def new_rating(rating: int, expected: float, score: float, k: int = K_FACTOR) -> int:
@@ -70,8 +101,18 @@ def new_rating(rating: int, expected: float, score: float, k: int = K_FACTOR) ->
     persists what this returns, so the rounded value IS the rating. Rounding
     later — or twice — is how a stored rating drifts from the one the maths
     justified.
+
+    Clamped to :data:`ELO_FLOOR`: the value returned is written straight into
+    ``agents.battle_elo`` and the battle's ``elo_*_after`` snapshot, both under
+    a CHECK that demands ``> 0``. From a near-floor rating a heavy loss can
+    round to <= 0, and the resulting CHECK violation makes the settling UPDATE
+    fail so the battle can never complete. Flooring keeps every persisted
+    rating a wide margin clear of that guard. The clamp only ever raises a
+    value, so it can move a rating no further than the honest maths already
+    would in the ELO_FLOOR..K band and never past K in the common case.
     """
-    return round(rating + k * (score - expected))
+    raw = round(rating + k * (score - expected))
+    return raw if raw >= ELO_FLOOR else ELO_FLOOR
 
 
 @dataclass(frozen=True)
