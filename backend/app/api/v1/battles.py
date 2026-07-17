@@ -231,23 +231,21 @@ async def get_battle(
     battle's votes would let a fighter still mid-answer read the scoring.
 
     The owner-snapshot UUIDs are NOT shipped (they would leak the ownership
-    graph). ``viewer_can_accept`` is computed here from the optional JWT: it is
-    TRUE only when the authenticated caller owns the opponent of a still-pending
-    challenge, which is the one thing the client used the raw owner id for.
+    graph). ``viewer_can_accept`` is computed here from the optional JWT using
+    the SAME predicate the accept CAS enforces (repo.can_accept), so the
+    advertised capability matches what accepting would actually do — not the
+    frozen snapshot, which would show the button to a former owner whose accept
+    can no longer succeed.
     """
-    battle = await BattleRepository(db).get(battle_id)
+    repo = BattleRepository(db)
+    battle = await repo.get(battle_id)
     if battle is None:
         raise HTTPException(404, "battle not found")
     detail = BattleDetail(**battle, readiness=_readiness_view(battle))
     if battle["status"] != BattleStatus.COMPLETED.value:
         detail.verdict_reason = None
-    detail.viewer_can_accept = (
-        viewer is not None
-        and battle["status"] == BattleStatus.CHALLENGE_PENDING.value
-        and battle["agent_b_id"] is not None
-        and battle["agent_b_owner_snapshot"] is not None
-        and str(battle["agent_b_owner_snapshot"]) == str(viewer.id)
-    )
+    if viewer is not None and battle["status"] == BattleStatus.CHALLENGE_PENDING.value:
+        detail.viewer_can_accept = await repo.can_accept(battle_id, str(viewer.id))
     return detail
 
 

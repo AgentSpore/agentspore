@@ -1529,10 +1529,26 @@ async def test_read_routes_404_on_an_unknown_battle(client):
 # ── D: the public battle DTO must not leak the ownership graph ─────────────
 
 
-async def _pending_challenge(db, owner_id, task_id, make_agent) -> tuple[str, str]:
-    """A named, still-pending challenge. Returns (battle_id, target_owner_id)."""
-    challenger = await make_agent()
-    target = await make_agent()  # owned by owner_id
+async def _new_user(db) -> str:
+    uid = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO users (id, email) VALUES (CAST(:id AS UUID), :e)"),
+        {"id": uid, "e": f"u-{uid[:8]}@example.test"},
+    )
+    await db.commit()
+    return uid
+
+
+async def _pending_challenge(db, owner_id, task_id, make_agent) -> tuple[str, str, str]:
+    """A named, still-pending challenge whose agent B has a DIFFERENT owner.
+
+    Returns (battle_id, challenger_owner, target_owner). The distinct owner is
+    the point: it lets the accept-capability test prove the challenger's owner
+    (agent A) canNOT see the accept button, only agent B's owner can.
+    """
+    target_owner = await _new_user(db)
+    challenger = await make_agent()  # owned by owner_id
+    target = await make_agent(owner=target_owner)
     battle_id = await BattleService(db).create_challenge(
         task_id=task_id,
         agent_a_id=challenger,
@@ -1540,14 +1556,16 @@ async def _pending_challenge(db, owner_id, task_id, make_agent) -> tuple[str, st
         agent_b_id=target,
     )
     await db.commit()
-    return battle_id, owner_id
+    return battle_id, owner_id, target_owner
 
 
 async def test_public_battle_detail_never_ships_owner_uuids(
     client, db, owner_id, task_id, make_agent
 ):
     """Anyone reading a battle must not be able to enumerate shared owners."""
-    battle_id, _ = await _pending_challenge(db, owner_id, task_id, make_agent)
+    battle_id, challenger_owner, target_owner = await _pending_challenge(
+        db, owner_id, task_id, make_agent
+    )
 
     resp = await client.get(f"/api/v1/battles/{battle_id}")
     assert resp.status_code == 200
@@ -1556,8 +1574,9 @@ async def test_public_battle_detail_never_ships_owner_uuids(
     # The two owner-snapshot fields are gone entirely — not null, absent.
     assert "agent_a_owner_snapshot" not in body
     assert "agent_b_owner_snapshot" not in body
-    # And the owner id itself appears nowhere in the payload.
-    assert owner_id not in resp.text
+    # Neither owner id appears anywhere in the payload.
+    assert challenger_owner not in resp.text
+    assert target_owner not in resp.text
     # An anonymous reader has no accept capability.
     assert body["viewer_can_accept"] is False
 
@@ -1565,24 +1584,26 @@ async def test_public_battle_detail_never_ships_owner_uuids(
 async def test_viewer_can_accept_is_true_only_for_the_opponent_owner(
     client, db, owner_id, task_id, make_agent
 ):
-    """The capability flag replaces the raw owner id the client used to read."""
-    battle_id, target_owner = await _pending_challenge(db, owner_id, task_id, make_agent)
+    """Capability matches the accept CAS: only agent B's current owner sees True."""
+    battle_id, challenger_owner, target_owner = await _pending_challenge(
+        db, owner_id, task_id, make_agent
+    )
 
-    # The opponent's owner: may accept.
-    app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(id=target_owner)
-    try:
-        owner_body = (await client.get(f"/api/v1/battles/{battle_id}")).json()
-    finally:
-        app.dependency_overrides.pop(get_optional_user, None)
-    assert owner_body["viewer_can_accept"] is True
+    async def _flag_for(user_id: str) -> bool:
+        app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(id=user_id)
+        try:
+            return (await client.get(f"/api/v1/battles/{battle_id}")).json()["viewer_can_accept"]
+        finally:
+            app.dependency_overrides.pop(get_optional_user, None)
 
-    # A stranger with a valid session: may not.
-    app.dependency_overrides[get_optional_user] = lambda: SimpleNamespace(id=str(uuid.uuid4()))
-    try:
-        stranger_body = (await client.get(f"/api/v1/battles/{battle_id}")).json()
-    finally:
-        app.dependency_overrides.pop(get_optional_user, None)
-    assert stranger_body["viewer_can_accept"] is False
+    # Only agent B's owner may accept.
+    assert await _flag_for(target_owner) is True
+    # The challenger's owner (agent A) may NOT — proves it is not just "am I a
+    # party to this battle". A frozen-snapshot check that ignored which side
+    # would still (wrongly) let agent A's owner through here.
+    assert await _flag_for(challenger_owner) is False
+    # A stranger with a valid session may not.
+    assert await _flag_for(str(uuid.uuid4())) is False
 
 
 # ── B: a directly-challenged owner is notified at creation, not by browsing ──
