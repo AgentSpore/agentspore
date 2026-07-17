@@ -967,7 +967,7 @@ async def _judge_and_settle(
             await session.rollback()
 
 
-async def reap_once(session_factory) -> dict[str, int]:
+async def reap_once(session_factory, provider: dict | None = None) -> dict[str, int]:
     """Route abandoned battles and stale reservations to terminal states.
 
     mark_expired, mark_aborted and delete_expired_reservations each shipped with
@@ -983,6 +983,17 @@ async def reap_once(session_factory) -> dict[str, int]:
       hatch below);
     * reaped           — reservations whose wall clock passed AND whose battle is
       not still live (delete_expired_reservations skips running/judging rows).
+
+    ``provider`` gates ONLY the stranded-judging escape hatch. Every other reap
+    (expire, abort, release reservations) is free/DB-only and runs regardless.
+    The escape hatch mints an honest no-quorum for a panel that genuinely
+    exhausted its budget WITH a working provider; during a provider outage
+    (``provider is None``) the same battle must WAIT, not be settled unrated —
+    a later provider-backed pass could still judge it once the outage clears.
+    (When the provider returns: attempt >= RUNNING_MAX_ATTEMPTS -> escape hatch
+    fires -> no-quorum; attempt < ceiling -> the judging-resume phase judges it.)
+    Default ``None`` = do not run the escape hatch; callers that want it must
+    pass a provider explicitly.
 
     Each terminal write commits in ITS OWN transaction, not one pass-wide one: a
     finder returns a bounded batch (LIMIT RECONCILE_BATCH), and per-item commits
@@ -1000,8 +1011,12 @@ async def reap_once(session_factory) -> dict[str, int]:
         exhausted_ids = await repo.find_attempt_exhausted_battle_ids(
             POLL_MAX_ATTEMPTS, RECONCILE_BATCH
         )
-        stranded_ids = await repo.find_stranded_judging_battle_ids(
-            RUNNING_MAX_ATTEMPTS, RECONCILE_BATCH
+        # Escape hatch is provider-gated: during an outage a stranded judging
+        # battle must wait for the provider, not be finalized no-quorum now.
+        stranded_ids = (
+            await repo.find_stranded_judging_battle_ids(RUNNING_MAX_ATTEMPTS, RECONCILE_BATCH)
+            if provider is not None
+            else []
         )
 
     for battle_id in expired_ids:
@@ -1203,5 +1218,5 @@ async def reconcile_once(
                 session_factory, gate, str(battle["id"]), token, api_key, base_url, counts
             )
 
-    counts.update(await reap_once(session_factory))
+    counts.update(await reap_once(session_factory, provider))
     return counts
