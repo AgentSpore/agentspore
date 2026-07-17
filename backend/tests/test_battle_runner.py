@@ -601,6 +601,69 @@ class TestReadinessGriefIsBounded:
         await repo.release_reservations(battle_id)
         await db_session.commit()
 
+    async def test_a_concurrent_committing_ack_blocks_and_defeats_the_abort(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """Real two-connection race: FOR UPDATE serializes ACK-vs-abort.
+
+        What this PROVES: session A holds the two ready-check event rows locked
+        with a VALID (pre-lease) ACK not yet committed; session B's abort BLOCKS
+        on those rows (rather than reading them unacked under READ COMMITTED);
+        once A commits the ACK, B's abort re-evaluates, sees it, and SKIPS. So an
+        ACK committing before the abort finishes can never abort the fighter.
+
+        What it does NOT prove: the reverse lock order (abort acquiring the rows
+        first legitimately wins — the fighter's ACK was genuinely not yet
+        recorded). That is not a defect: it is the abort winning a real race, not
+        a lost read. This test pins only the lost-read direction the FOR UPDATE
+        closes; mutation-revert of the FOR UPDATE makes B read the rows unacked
+        without blocking and abort despite the valid ACK.
+        """
+        battle_id, agent_a, agent_b = await self._rearm_to_cap_unacked(
+            session_maker, db_session, task_id
+        )
+        battle = await BattleRepository(db_session).get(battle_id)
+        ev_a = str(battle["ready_check_event_id_a"])
+        ev_b = str(battle["ready_check_event_id_b"])
+
+        async with session_maker() as s_ack, session_maker() as s_abort:
+            # session A: a VALID ACK (dispatched<=acked<lease), applied but NOT
+            # committed — so it holds the event rows' write locks.
+            await s_ack.execute(
+                text(
+                    """
+                    UPDATE agent_events
+                    SET status = 'acked',
+                        dispatched_at = NOW() - INTERVAL '20 seconds',
+                        acked_at = NOW() - INTERVAL '15 seconds'
+                    WHERE event_id IN (CAST(:a AS UUID), CAST(:b AS UUID))
+                    """
+                ),
+                {"a": ev_a, "b": ev_b},
+            )
+
+            # session B: the abort must BLOCK on the FOR UPDATE of those rows.
+            contender = asyncio.create_task(
+                BattleService(s_abort).expire_or_abort_readiness(battle_id)
+            )
+            await asyncio.sleep(0.4)
+            assert not contender.done(), "abort did not block on the locked ready-event rows"
+
+            await s_ack.commit()  # the valid ACK lands
+            outcome = await asyncio.wait_for(contender, timeout=5.0)
+            await s_abort.commit()
+            assert outcome is None, "abort fired despite an ACK that committed first"
+
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "reserved", "a validly-ACKed battle was aborted"
+
+        # Cleanup: terminal, so the whole-chain test's global counts stay clean.
+        repo = BattleRepository(db_session)
+        await repo.mark_aborted(battle_id, "test cleanup")
+        await repo.release_reservations(battle_id)
+        await db_session.commit()
+
 
 class TestSharedFighterLostUpdate:
     """The FOR UPDATE in lock_fighter_ratings — the guard, with its proof.

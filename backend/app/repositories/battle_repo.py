@@ -1423,7 +1423,37 @@ class BattleRepository:
         clause the abort would fire on a valid-but-late-observed ACK — the exact
         legitimate direction the bound must never punish. None = it was not in
         the abortable shape (which now includes "actually ready").
+
+        Concurrency: the NOT-acked predicate READS agent_events while
+        mark_acked WRITES agent_events and this WRITES battles — three rows with
+        no shared lock, so under READ COMMITTED the abort's subquery could miss a
+        valid ACK committing microseconds later and abort a fighter that ACKed in
+        time. So this LOCKS the two ready-check event rows FOR UPDATE first: a
+        concurrent mark_acked on those exact rows (``_ACK_STMT`` UPDATEs
+        agent_events by event_id) either already committed — the re-evaluated
+        predicate then sees the ACK and skips — or is in flight and blocks on the
+        lock until this abort commits, or holds the lock itself and makes this
+        abort wait until the ACK commits, after which the predicate sees it and
+        skips. The two paths are serialized on those event rows, so an ACK
+        committed before this abort finishes can never be aborted.
         """
+        await self.db.execute(
+            text(
+                """
+                SELECT e.event_id
+                FROM agent_events e
+                WHERE e.event_id IN (
+                    SELECT b.ready_check_event_id_a
+                        FROM battles b WHERE b.id = CAST(:battle_id AS UUID)
+                    UNION ALL
+                    SELECT b.ready_check_event_id_b
+                        FROM battles b WHERE b.id = CAST(:battle_id AS UUID)
+                )
+                FOR UPDATE
+                """
+            ),
+            {"battle_id": str(battle_id)},
+        )
         result = await self.db.execute(
             text(
                 f"""
