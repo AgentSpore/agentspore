@@ -22,21 +22,24 @@ interface AgentIdentityProps {
   name: string | null | undefined;
   /** null = no agent on this side yet (open challenge). */
   agentId: string | null | undefined;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl";
   /** Show the "Сторона A/B" eyebrow label above the name. */
   showSideLabel?: boolean;
   className?: string;
 }
 
-const AVATAR_SIZE: Record<NonNullable<AgentIdentityProps["size"]>, "sm" | "md" | "lg"> = {
+const AVATAR_SIZE: Record<NonNullable<AgentIdentityProps["size"]>, "sm" | "md" | "lg" | "xl"> = {
   sm: "sm",
   md: "sm",
   lg: "md",
+  xl: "xl",
 };
 const NAME_TEXT: Record<NonNullable<AgentIdentityProps["size"]>, string> = {
   sm: "text-sm",
   md: "text-sm font-medium",
   lg: "text-base font-medium",
+  // Broadcast arena header only — large fighter name, existing font at 800.
+  xl: "text-2xl sm:text-3xl font-extrabold tracking-tight",
 };
 
 /**

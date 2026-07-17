@@ -159,6 +159,21 @@ export default function BattleDetailPage() {
   const acceptedByOwner = battle.agent_b_accepted_at !== null;
   const readyToRun = battle.readiness?.ready === true;
 
+  // Broadcast arena center content varies by status: live badge+countdown
+  // while running, an Elo scoreboard once completed, a plain VS otherwise.
+  const isArenaRunning = battle.status === "running";
+  const isArenaCompleted = battle.status === "completed";
+  const hasWinnerSide = isArenaCompleted && (battle.winner === "a" || battle.winner === "b");
+  const eloAFinal = battle.elo_a_after ?? battle.elo_a_before;
+  const eloBFinal = battle.elo_b_after ?? battle.elo_b_before;
+  const arenaWinnerName = hasWinnerSide
+    ? battle.winner === "a"
+      ? names.get(battle.agent_a_id)
+      : battle.agent_b_id
+        ? names.get(battle.agent_b_id)
+        : null
+    : null;
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 pb-16">
       <Header />
@@ -171,34 +186,87 @@ export default function BattleDetailPage() {
 
         <BattleStepper battle={battle} />
 
-        {/* Fighter header — single arena panel */}
-        <div className="relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900/35 p-5 sm:p-6 mb-6">
-          <div
-            className="pointer-events-none absolute inset-0 opacity-[0.4]"
-            style={{
-              backgroundImage:
-                "radial-gradient(circle at center, rgba(255,255,255,0.045) 1px, transparent 1px)",
-              backgroundSize: "24px 24px",
-            }}
-            aria-hidden="true"
-          />
-          <div className="relative grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
-            <AgentIdentity side="a" agentId={battle.agent_a_id} name={names.get(battle.agent_a_id)} size="lg" showSideLabel className="w-full" />
-            <div className="flex flex-col items-center gap-2 px-6">
-              <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">VS</span>
-              <StatusBadge status={battle.status} />
+        {/* Fighter header — broadcast arena: side A on a violet field, side B on
+            a cyan field, meeting at an angled seam (desktop). On mobile the
+            seam becomes a horizontal stack — two solid fields, top and bottom. */}
+        <div className="relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950 mb-6">
+          <div className="relative">
+            {/* Desktop field backgrounds — angled seam via clip-path. */}
+            <div className="hidden sm:block absolute inset-0" aria-hidden="true">
+              <div
+                className="absolute inset-0 bg-gradient-to-br from-violet-600/75 via-violet-900/45 to-neutral-950/10"
+                style={{ clipPath: "polygon(0 0, 54% 0, 50% 100%, 0 100%)" }}
+              />
+              <div
+                className="absolute inset-0 bg-gradient-to-bl from-cyan-600/70 via-cyan-900/40 to-neutral-950/10"
+                style={{ clipPath: "polygon(50% 100%, 54% 0, 100% 0, 100% 100%)" }}
+              />
             </div>
-            <AgentIdentity
-              side="b"
-              agentId={battle.agent_b_id}
-              name={battle.agent_b_id ? names.get(battle.agent_b_id) : null}
-              size="lg"
-              showSideLabel
-              className="w-full sm:justify-start sm:text-right sm:flex-row-reverse"
-            />
+            {/* Mobile field backgrounds — stacked, seam is horizontal. */}
+            <div className="sm:hidden absolute inset-0 flex flex-col" aria-hidden="true">
+              <div className="flex-1 bg-gradient-to-b from-violet-600/55 to-neutral-950/10" />
+              <div className="flex-1 bg-gradient-to-t from-cyan-600/50 to-neutral-950/10" />
+            </div>
+
+            <div className="relative grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center gap-4 sm:gap-3 px-5 sm:px-8 py-6 sm:py-10">
+              <AgentIdentity side="a" agentId={battle.agent_a_id} name={names.get(battle.agent_a_id)} size="xl" showSideLabel />
+
+              {/* Seam content — live countdown, Elo scoreboard, or plain VS. */}
+              <div className="flex flex-col items-center gap-2 sm:px-6 py-1">
+                {isArenaRunning ? (
+                  <>
+                    <StatusBadge status={battle.status} />
+                    {battle.deadline_at && (
+                      <span
+                        className={`font-mono tabular-nums text-lg ${
+                          deadlinePassed || urgent ? "text-red-300" : "text-white"
+                        }`}
+                      >
+                        {deadlinePassed ? "00:00" : countdown(battle.deadline_at)}
+                      </span>
+                    )}
+                  </>
+                ) : isArenaCompleted ? (
+                  <>
+                    <div className="rounded-lg border border-white/10 bg-black/50 px-4 py-2 flex items-center gap-3 shadow-[0_16px_40px_rgba(0,0,0,0.5)]">
+                      <span className="font-mono tabular-nums text-xl sm:text-2xl font-bold text-white">{eloAFinal ?? "—"}</span>
+                      <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">VS</span>
+                      <span className="font-mono tabular-nums text-xl sm:text-2xl font-bold text-white">{eloBFinal ?? "—"}</span>
+                    </div>
+                    <span className="text-[10px] font-mono uppercase tracking-[0.1em] text-neutral-500">Elo · после боя</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">VS</span>
+                    <StatusBadge status={battle.status} />
+                  </>
+                )}
+              </div>
+
+              <AgentIdentity
+                side="b"
+                agentId={battle.agent_b_id}
+                name={battle.agent_b_id ? names.get(battle.agent_b_id) : null}
+                size="xl"
+                showSideLabel
+                className="sm:justify-self-end sm:flex-row-reverse sm:text-right"
+              />
+            </div>
+
+            {/* Winner lower-third — gold chip, completed with a decisive side only. */}
+            {hasWinnerSide && (
+              <div
+                className="relative flex items-center gap-2 bg-gradient-to-r from-amber-300 to-amber-300/0 px-5 sm:px-8 py-2"
+                style={{ clipPath: "polygon(0 0, 82% 0, calc(82% - 24px) 100%, 0 100%)" }}
+              >
+                <span className="text-sm font-extrabold tracking-wide text-violet-950" aria-hidden="true">🏆</span>
+                <span className="text-xs font-bold uppercase tracking-[0.08em] text-violet-950">Победитель</span>
+                <span className="font-mono text-xs text-violet-950/80">{arenaWinnerName ?? "…"}</span>
+              </div>
+            )}
           </div>
 
-          <div className="relative mt-4 flex items-center justify-center gap-3 text-xs text-neutral-500">
+          <div className="relative border-t border-neutral-800/70 px-5 sm:px-8 py-3 flex flex-wrap items-center justify-center gap-3 text-xs text-neutral-500">
             <span className="flex items-center gap-1.5">
               <span className={acceptedByOwner ? "text-emerald-400" : "text-neutral-600"}>{acceptedByOwner ? "●" : "○"}</span>
               Согласие {acceptedByOwner ? "получено" : "ожидается"}
@@ -211,7 +279,7 @@ export default function BattleDetailPage() {
           </div>
 
           {task && (
-            <div className="relative mt-4 pt-4 border-t border-neutral-800/70 flex items-center justify-center gap-2 text-xs text-neutral-500">
+            <div className="relative border-t border-neutral-800/70 px-5 sm:px-8 py-3 flex items-center justify-center gap-2 text-xs text-neutral-500">
               {task.category && <span className="uppercase tracking-wide">{task.category}</span>}
               {task.category && <span className="text-neutral-700">·</span>}
               <span>Лимит {Math.round(task.time_limit_seconds / 60)} мин</span>
