@@ -39,6 +39,7 @@ export default function NewBattlePage() {
   const router = useRouter();
   const [myAgents, setMyAgents] = useState<ExternalAgentItem[]>([]);
   const [tasks, setTasks] = useState<BattleTask[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
   const [opponentQuery, setOpponentQuery] = useState("");
   const [opponentResults, setOpponentResults] = useState<Agent[]>([]);
 
@@ -65,7 +66,8 @@ export default function NewBattlePage() {
     fetch(`${API_URL}/api/v1/battles/tasks?limit=100`)
       .then((r) => (r.ok ? r.json() : []))
       .then((data: BattleTask[]) => setTasks(data))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setTasksLoading(false));
   }, [router]);
 
   // Opponent search — reuses the public leaderboard (no dedicated battle-eligible
@@ -103,6 +105,7 @@ export default function NewBattlePage() {
 
   const agentInvalid = touched && !agentAId;
   const taskInvalid = touched && !taskId;
+  const noTasksAvailable = !tasksLoading && tasks.length === 0;
 
   const submit = async () => {
     setTouched(true);
@@ -201,7 +204,7 @@ export default function NewBattlePage() {
                     <AgentAvatar name={selectedAgentA.name} id={selectedAgentA.id} size="sm" />
                     <span className="text-violet-300 font-medium">{selectedAgentA.name}</span>
                   </div>
-                  <BattleAvailabilityToggle agentId={selectedAgentA.id} agentName={selectedAgentA.name} />
+                  <BattleAvailabilityToggle key={selectedAgentA.id} agentId={selectedAgentA.id} agentName={selectedAgentA.name} />
                 </div>
               )}
             </div>
@@ -216,8 +219,19 @@ export default function NewBattlePage() {
                   taskInvalid ? "border-red-500/40" : "border-neutral-800"
                 }`}
               >
-                {tasks.length === 0 && (
-                  <div className="px-4 py-3 text-sm text-neutral-500">Загружаем задачи…</div>
+                {tasksLoading && tasks.length === 0 && (
+                  <div className="px-4 py-3 flex items-center gap-2 text-sm text-neutral-500">
+                    <span className="h-3 w-3 rounded-full border-[1.5px] border-current/30 border-t-current animate-spin" />
+                    Загружаем задачи…
+                  </div>
+                )}
+                {!tasksLoading && tasks.length === 0 && (
+                  <div className="px-4 py-5 text-center">
+                    <div className="text-sm text-neutral-300 font-medium mb-1">Пока нет доступных задач для боя</div>
+                    <div className="text-xs text-neutral-500">
+                      Задачи для арены отбираются вручную — загляните позже.
+                    </div>
+                  </div>
                 )}
                 {tasks.map((t) => {
                   const selected = t.id === taskId;
@@ -342,12 +356,16 @@ export default function NewBattlePage() {
                 )}
               </div>
 
-              <p className="text-xs text-neutral-500 mt-4">После отправки вызов появится на арене.</p>
+              <p className="text-xs text-neutral-500 mt-4">
+                {noTasksAvailable
+                  ? "Пока нет задач для боя — вызов бросить нельзя."
+                  : "После отправки вызов появится на арене."}
+              </p>
 
               <div aria-live="polite" className="hidden lg:block">
                 <button
                   onClick={submit}
-                  disabled={submitting}
+                  disabled={submitting || noTasksAvailable}
                   className="battle-press mt-5 w-full min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
                 >
                   {submitting ? (
@@ -371,7 +389,7 @@ export default function NewBattlePage() {
         >
           <button
             onClick={submit}
-            disabled={submitting}
+            disabled={submitting || noTasksAvailable}
             className="battle-press w-full min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
           >
             {submitting ? (
