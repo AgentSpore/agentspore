@@ -4,10 +4,10 @@ import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   API_URL,
+  BATTLE_DIFFICULTY,
   BATTLE_FAST_STATES,
   BattleDetail,
   BattleStatus,
-  BattleTask,
 } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
@@ -38,7 +38,6 @@ function formatArenaCountdown(ms: number): string {
 export default function BattleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [battle, setBattle] = useState<BattleDetail | null>(null);
-  const [task, setTask] = useState<BattleTask | undefined>(undefined);
   const [err, setErr] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -97,23 +96,6 @@ export default function BattleDetailPage() {
     };
   }, [id]);
 
-  // Task lookup (public, from the fixed battle-tasks list; snapshot fields on
-  // the battle itself already carry title-independent content, but the title
-  // only lives on the task row).
-  useEffect(() => {
-    if (!battle) return;
-    let alive = true;
-    fetch(`${API_URL}/api/v1/battles/tasks?limit=100`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((tasks: BattleTask[]) => {
-        if (alive) setTask(tasks.find((t) => t.id === battle.task_id));
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [battle?.task_id]);
-
   // 1s tick for the deadline countdown.
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -153,7 +135,10 @@ export default function BattleDetailPage() {
   const deadlinePassed = deadlineMs !== null && deadlineMs <= 0;
   const urgent = deadlineMs !== null && deadlineMs > 0 && deadlineMs < 60000;
 
-  const showPrompt = !!battle.task_prompt_snapshot;
+  // Withheld until the battle is running (V67) — task_prompt_snapshot is null
+  // on every pre-running row even if content_withheld were somehow missed, so
+  // both are checked; every read below goes through a null guard.
+  const showPrompt = !battle.task_content_withheld && !!battle.task_prompt_snapshot;
   const promptIsLong = (battle.task_prompt_snapshot?.length ?? 0) > PROMPT_PREVIEW_LEN;
 
   const acceptedByOwner = battle.agent_b_accepted_at !== null;
@@ -284,20 +269,25 @@ export default function BattleDetailPage() {
             </div>
           )}
 
-          {task && (
-            <div className="relative border-t border-neutral-800/70 px-5 sm:px-8 py-3 flex items-center justify-center gap-2 text-xs text-neutral-500">
-              {task.category && <span className="uppercase tracking-wide">{task.category}</span>}
-              {task.category && <span className="text-neutral-700">·</span>}
-              <span>Лимит {Math.round(task.time_limit_seconds / 60)} мин</span>
-            </div>
-          )}
+          <div className="relative border-t border-neutral-800/70 px-5 sm:px-8 py-3 flex items-center justify-center gap-2 text-xs text-neutral-500">
+            {showPrompt && battle.time_limit_seconds_snapshot ? (
+              <span>Лимит {Math.round(battle.time_limit_seconds_snapshot / 60)} мин</span>
+            ) : (
+              <>
+                {battle.task_category_filter && <span className="uppercase tracking-wide">{battle.task_category_filter}</span>}
+                {battle.task_category_filter && <span className="text-neutral-700">·</span>}
+                <span>
+                  {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "любая сложность"}
+                </span>
+              </>
+            )}
+          </div>
         </div>
 
         {isPendingForMe && (
           <div className="mb-6">
             <ChallengeCard
               battle={battle}
-              task={task}
               agentAName={names.get(battle.agent_a_id) || "…"}
               agentBName={battle.agent_b_id ? names.get(battle.agent_b_id) || "…" : null}
               challengeExpiresAt={battle.challenge_expires_at}
@@ -306,23 +296,38 @@ export default function BattleDetailPage() {
           </div>
         )}
 
-        {/* Task prompt */}
-        {showPrompt && (
+        {/* Task — sealed until the battle is running (V67), then revealed in full. */}
+        {showPrompt ? (
           <div className="border-y border-neutral-800 py-5 mb-6">
             <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 mb-2">Задача</div>
-            {task?.title && <div className="text-sm font-medium text-neutral-200 mb-2">{task.title}</div>}
+            {battle.task_title_snapshot && (
+              <div className="text-sm font-medium text-neutral-200 mb-2">{battle.task_title_snapshot}</div>
+            )}
             <div className="text-sm text-neutral-400 whitespace-pre-wrap leading-6">
-              {battle.task_prompt_snapshot.slice(0, PROMPT_PREVIEW_LEN)}
+              {(battle.task_prompt_snapshot ?? "").slice(0, PROMPT_PREVIEW_LEN)}
               {promptIsLong && "…"}
             </div>
             {promptIsLong && (
               <Disclosure label="Показать полностью" openLabel="Свернуть" className="mt-2">
                 <div className="text-sm text-neutral-300 whitespace-pre-wrap leading-6 mt-2 pt-2 border-t border-neutral-800">
-                  {battle.task_prompt_snapshot.slice(PROMPT_PREVIEW_LEN)}
+                  {(battle.task_prompt_snapshot ?? "").slice(PROMPT_PREVIEW_LEN)}
                 </div>
               </Disclosure>
             )}
           </div>
+        ) : (
+          !["completed", "declined", "expired", "aborted"].includes(battle.status) && (
+            <div className="border-y border-neutral-800 py-5 mb-6 text-center">
+              <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 mb-2">Задача</div>
+              <div className="text-sm text-neutral-300 font-medium">
+                Задача скрыта до готовности обеих сторон
+              </div>
+              <div className="text-xs text-neutral-500 mt-1">
+                {battle.task_category_filter ?? "Любая категория"} ·{" "}
+                {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "любая сложность"}
+              </div>
+            </div>
+          )
         )}
 
         {/* Live treatment — status-specific strip */}

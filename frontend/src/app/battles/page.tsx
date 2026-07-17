@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { API_URL, BATTLE_FAST_STATES, BattleStatus, BattleSummary, BattleTask, timeAgo } from "@/lib/api";
+import { API_URL, BATTLE_DIFFICULTY, BATTLE_FAST_STATES, BattleStatus, BattleSummary, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
 import { StatusBadge } from "@/components/battles/StatusBadge";
@@ -89,24 +89,8 @@ export default function BattlesListPage() {
   const [filter, setFilter] = useState<BattleStatus | "all">("all");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [taskTitles, setTaskTitles] = useState<Map<string, string>>(new Map());
 
   const hasLiveRef = useRef(false);
-
-  // Task titles — fetched once, from the same fixed battle-tasks list the
-  // detail page reads (title only lives on the task row, not the battle).
-  useEffect(() => {
-    let alive = true;
-    fetch(`${API_URL}/api/v1/battles/tasks?limit=100`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((tasks: BattleTask[]) => {
-        if (alive) setTaskTitles(new Map(tasks.map((t) => [t.id, t.title])));
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   // ── Load + adaptive polling — mirrors councils/[id]/page.tsx ────────────
   useEffect(() => {
@@ -309,15 +293,21 @@ export default function BattlesListPage() {
                     />
                   </div>
 
-                  {/* Slot 3 — task */}
+                  {/* Slot 3 — task theme. Content is withheld pre-running (V67): show
+                      the requested category/difficulty filter, or the real title
+                      once the battle has run and revealed it. */}
                   <div className="mt-4 border-t border-neutral-800/70 pt-3 flex items-baseline gap-2 min-w-0">
                     <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 shrink-0">
-                      Задача
+                      Тема
                     </span>
-                    {taskTitles.get(b.task_id) ? (
-                      <span className="text-xs text-neutral-300 truncate">{taskTitles.get(b.task_id)}</span>
+                    {!b.task_content_withheld && b.task_title_snapshot ? (
+                      <span className="text-xs text-neutral-300 truncate">{b.task_title_snapshot}</span>
                     ) : (
-                      <span className="text-xs font-mono text-neutral-500">#{b.task_id.slice(0, 8)}</span>
+                      <span className="text-xs text-neutral-500 truncate">
+                        {b.task_category_filter ?? "Любая категория"} ·{" "}
+                        {b.task_difficulty_filter ? BATTLE_DIFFICULTY[b.task_difficulty_filter] : "любая сложность"}
+                        {b.task_content_withheld && <span className="text-neutral-600"> · скрыта</span>}
+                      </span>
                     )}
                   </div>
 
