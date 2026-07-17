@@ -19,6 +19,7 @@ import pytest
 
 from app.core.rating import (
     DEFAULT_ELO,
+    ELO_CEILING,
     ELO_FLOOR,
     K_FACTOR,
     RatingChange,
@@ -246,6 +247,54 @@ class TestFloorAndOverflow:
         # reached 1.0 / 0.0 to full float precision long before the clamp bites.
         assert expected_score(10**9, 1) == pytest.approx(1.0)
         assert expected_score(1, 10**9) == pytest.approx(0.0)
+
+    def test_new_rating_clamps_at_the_ceiling(self) -> None:
+        # A winner at the ceiling cannot grow past it — the INT column would
+        # overflow and strand settlement from the top end, mirroring the floor.
+        assert new_rating(ELO_CEILING, 0.5, 1.0) == ELO_CEILING
+
+
+class TestFloorAndCeilingConservePoints:
+    """The floor/ceiling must not mint or destroy rating (zero-sum holds).
+
+    Clamping the two ratings INDEPENDENTLY mints points: two floor-rated agents,
+    B wins, A stays at the floor (delta 0) while B still gains +16 — 16 points
+    created from nothing. apply_battle_result clamps the pair TOGETHER, so the
+    winner gains only what the loser actually loses after the clamp.
+    """
+
+    @pytest.mark.parametrize(("rating_a", "rating_b"), RATING_PAIRS)
+    @pytest.mark.parametrize("winner", [Winner.A, Winner.B, Winner.TIE])
+    def test_zero_sum_is_exact_everywhere(
+        self, rating_a: int, rating_b: int, winner: Winner
+    ) -> None:
+        # Stronger than the <=1 rounding-slack property: with the single-delta
+        # coupling the pair conserves EXACTLY, in bounds and at the bounds.
+        change = apply_battle_result(rating_a, rating_b, winner)
+        assert change.a_delta + change.b_delta == 0
+
+    def test_two_floor_agents_conserve_when_one_loses(self) -> None:
+        # THE finding-3 case. Independent flooring mints +16 for the winner;
+        # coupling makes the winner gain only the loser's actual (zero) loss.
+        change = apply_battle_result(ELO_FLOOR, ELO_FLOOR, Winner.B)
+        assert change.a_after == ELO_FLOOR
+        assert change.b_after == ELO_FLOOR
+        assert change.a_delta + change.b_delta == 0
+
+    def test_a_loss_that_partly_crosses_the_floor_conserves(self) -> None:
+        # Loser 10 above the floor: a 16-point loss would cross it, so the loser
+        # loses only 10 (clamped) and the winner gains exactly 10 — not 16.
+        change = apply_battle_result(ELO_FLOOR + 10, ELO_FLOOR + 10, Winner.B)
+        assert change.a_after == ELO_FLOOR
+        assert change.a_delta == -10
+        assert change.b_delta == 10
+        assert change.a_delta + change.b_delta == 0
+
+    def test_a_near_ceiling_winner_stays_storable_and_conserves(self) -> None:
+        change = apply_battle_result(ELO_CEILING, ELO_CEILING, Winner.A)
+        assert change.a_after <= ELO_CEILING
+        assert change.b_after <= ELO_CEILING
+        assert change.a_delta + change.b_delta == 0
 
 
 class TestRatingChangeShape:
