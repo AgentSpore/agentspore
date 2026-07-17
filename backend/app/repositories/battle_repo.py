@@ -438,8 +438,17 @@ class BattleRepository:
         agent_b_owner_snapshot: str | None = None,
         task_category: str | None = None,
         task_difficulty: str | None = None,
+        task_id: str | None = None,
     ) -> str | None:
         """Insert an UNBOUND challenge row and return its id. Does not commit.
+
+        ``task_id`` is a TEST convenience only (V67): a challenge no longer names
+        a task, but the transition tests were written against a specific seeded
+        task, so passing its id resolves that row's category/difficulty into the
+        battle's FILTER. The later _mark_queued/admit_to_queue binding then draws
+        a matching task from the pool (that same seeded row, when it is the only
+        ready match). It never binds a task at challenge time — the challenge
+        stays unbound, as the constraints require.
 
         The STATE-MACHINE primitive. Post-V67 a challenge carries only a
         category/difficulty FILTER — no task id, no snapshot — so this method no
@@ -458,6 +467,19 @@ class BattleRepository:
         :meth:`admit_to_queue`), so this row starts with task_id and every task
         snapshot NULL — the shape the V67 unbound-before-queue CHECK requires.
         """
+        if task_id is not None and task_category is None and task_difficulty is None:
+            row = (
+                await self.db.execute(
+                    text(
+                        "SELECT category, difficulty FROM battle_tasks "
+                        "WHERE id = CAST(:t AS UUID)"
+                    ),
+                    {"t": str(task_id)},
+                )
+            ).mappings().first()
+            if row is not None:
+                task_category = row["category"]
+                task_difficulty = row["difficulty"]
         return await self._insert_challenge(
             task_category=task_category,
             task_difficulty=task_difficulty,
@@ -1398,7 +1420,14 @@ class BattleRepository:
                     task_title_snapshot = mt.title,
                     task_prompt_snapshot = mt.prompt,
                     task_rubric_snapshot = mt.rubric,
-                    time_limit_seconds_snapshot = mt.time_limit_seconds
+                    time_limit_seconds_snapshot = mt.time_limit_seconds,
+                    -- Release the bind lease on success: its only job was to fence
+                    -- the binding, and a held lease would stop the queued -> running
+                    -- phase from claiming the row (potentially for the whole lease
+                    -- window). Cleared to NULL/NULL so the start phase claims freely
+                    -- on the same pass; the CHECK requires both null together.
+                    lease_token = NULL,
+                    lease_expires_at = NULL
                 FROM eligible_battle eb
                 JOIN marked_task mt ON TRUE
                 WHERE b.id = eb.id
