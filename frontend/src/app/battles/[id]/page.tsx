@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   API_URL,
   BATTLE_FAST_STATES,
-  BATTLE_STATUS,
   BattleDetail,
   BattleStatus,
   BattleTask,
@@ -16,14 +15,14 @@ import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
 import { ChallengeCard } from "@/components/battles/ChallengeCard";
 import { BattleVerdictEvidence } from "@/components/battles/BattleVerdictEvidence";
+import { StatusBadge } from "@/components/battles/StatusBadge";
+import { AgentIdentity } from "@/components/battles/AgentIdentity";
+import { Disclosure } from "@/components/battles/Disclosure";
+import { BattleStepper } from "@/components/battles/BattleStepper";
 
 type Me = { id: string } | null;
 
-function eloDelta(before: number | null, after: number | null): string {
-  if (before === null || after === null) return "—";
-  const d = after - before;
-  return `${d > 0 ? "+" : ""}${d}`;
-}
+const PROMPT_PREVIEW_LEN = 420;
 
 export default function BattleDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -127,7 +126,9 @@ export default function BattleDetailPage() {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <Header />
-        <main className="mx-auto max-w-4xl px-4 py-8 text-red-400">{err}</main>
+        <main className="mx-auto max-w-5xl px-4 py-8">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-5 text-sm text-red-300">{err}</div>
+        </main>
       </div>
     );
   }
@@ -135,43 +136,88 @@ export default function BattleDetailPage() {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <Header />
-        <main className="mx-auto max-w-4xl px-4 py-8 text-neutral-500">Загрузка…</main>
+        <main className="mx-auto max-w-5xl px-4 py-8">
+          <div className="animate-pulse space-y-4">
+            <div className="h-8 w-2/3 rounded-md bg-neutral-900" />
+            <div className="h-24 rounded-lg bg-neutral-900/60" />
+            <div className="h-32 rounded-lg bg-neutral-900/60" />
+          </div>
+        </main>
       </div>
     );
   }
 
-  const status = BATTLE_STATUS[battle.status];
   const isPendingForMe = battle.status === "challenge_pending" && !!me && !!battle.agent_b_id
     && battle.agent_b_owner_snapshot === me.id;
-  const deadlinePassed = battle.deadline_at ? new Date(battle.deadline_at).getTime() <= now : false;
+  const deadlineMs = battle.deadline_at ? new Date(battle.deadline_at).getTime() - now : null;
+  const deadlinePassed = deadlineMs !== null && deadlineMs <= 0;
+  const urgent = deadlineMs !== null && deadlineMs > 0 && deadlineMs < 60000;
+
+  const showPrompt = !!battle.task_prompt_snapshot;
+  const promptIsLong = (battle.task_prompt_snapshot?.length ?? 0) > PROMPT_PREVIEW_LEN;
+
+  const acceptedByOwner = battle.agent_b_accepted_at !== null;
+  const readyToRun = battle.readiness?.ready === true;
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 pb-16">
       <Header />
-      <main className="mx-auto max-w-4xl px-4 py-8">
-        {err && <div className="text-amber-400 mb-4 text-sm">{err}</div>}
-
-        <div className="flex items-start justify-between gap-4 mb-6">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              <span className="text-violet-300">{names.get(battle.agent_a_id) || "…"}</span>
-              {" vs "}
-              <span className="text-cyan-300">{battle.agent_b_id ? names.get(battle.agent_b_id) || "…" : "открытый вызов"}</span>
-            </h1>
-            <div className="text-sm text-neutral-500 mt-1">{task?.title || "задача…"}</div>
-          </div>
-          <span className={`shrink-0 text-xs px-2 py-0.5 rounded border ${status.classes}`}>{status.label}</span>
-        </div>
-
-        {battle.status === "queued" && (
-          <div className="mb-4 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3 text-xs text-violet-300">
-            Бой в очереди на исполнение — воркер ещё не взял его в работу. Точная позиция в очереди не
-            публикуется backend-API; статус обновится сам, как только бой начнётся.
-          </div>
+      <main className="mx-auto max-w-5xl px-4 py-8">
+        {err && (
+          <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">{err}</div>
         )}
 
+        <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-4">Бой</div>
+
+        <BattleStepper battle={battle} />
+
+        {/* Fighter header — single arena panel */}
+        <div className="relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900/35 p-5 sm:p-6 mb-6">
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.4]"
+            style={{
+              backgroundImage:
+                "radial-gradient(circle at center, rgba(255,255,255,0.045) 1px, transparent 1px)",
+              backgroundSize: "24px 24px",
+            }}
+            aria-hidden="true"
+          />
+          <div className="relative grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+            <AgentIdentity side="a" agentId={battle.agent_a_id} name={names.get(battle.agent_a_id)} size="lg" showSideLabel />
+            <div className="flex flex-col items-center gap-2 px-1">
+              <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">VS</span>
+              <StatusBadge status={battle.status} />
+            </div>
+            <AgentIdentity
+              side="b"
+              agentId={battle.agent_b_id}
+              name={battle.agent_b_id ? names.get(battle.agent_b_id) : null}
+              size="lg"
+              showSideLabel
+              className="sm:justify-end sm:text-right sm:flex-row-reverse"
+            />
+          </div>
+
+          <div className="relative mt-4 grid grid-cols-2 gap-2 text-xs text-neutral-500">
+            <div className="flex items-center gap-1.5">
+              <span className={acceptedByOwner ? "text-emerald-400" : "text-neutral-600"}>{acceptedByOwner ? "●" : "○"}</span>
+              Согласие {acceptedByOwner ? "получено" : "ожидается"}
+            </div>
+            <div className="flex items-center justify-end gap-1.5 sm:flex-row-reverse sm:justify-start">
+              <span className={readyToRun ? "text-emerald-400" : "text-neutral-600"}>{readyToRun ? "●" : "○"}</span>
+              {readyToRun ? "Готов к запуску" : "Готовность не подтверждена"}
+            </div>
+          </div>
+
+          {task?.title && (
+            <div className="relative mt-4 pt-4 border-t border-neutral-800/70 text-sm text-neutral-300 text-center">
+              {task.title}
+            </div>
+          )}
+        </div>
+
         {isPendingForMe && (
-          <div className="mb-4">
+          <div className="mb-6">
             <ChallengeCard
               battle={battle}
               task={task}
@@ -183,93 +229,64 @@ export default function BattleDetailPage() {
           </div>
         )}
 
-        {battle.task_prompt_snapshot && (
-          <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4 mb-4">
-            <div className="text-xs uppercase text-neutral-500 mb-2">Задача</div>
-            <div className="text-sm text-neutral-300 whitespace-pre-wrap">{battle.task_prompt_snapshot}</div>
+        {/* Task prompt */}
+        {showPrompt && (
+          <div className="border-y border-neutral-800 py-5 mb-6">
+            <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 mb-2">Задача</div>
+            {task?.title && <div className="text-sm font-medium text-neutral-200 mb-2">{task.title}</div>}
+            <div className="text-sm text-neutral-400 whitespace-pre-wrap leading-6">
+              {battle.task_prompt_snapshot.slice(0, PROMPT_PREVIEW_LEN)}
+              {promptIsLong && "…"}
+            </div>
+            {promptIsLong && (
+              <Disclosure label="Показать полностью" openLabel="Свернуть" className="mt-2">
+                <div className="text-sm text-neutral-300 whitespace-pre-wrap leading-6 mt-2 pt-2 border-t border-neutral-800">
+                  {battle.task_prompt_snapshot.slice(PROMPT_PREVIEW_LEN)}
+                </div>
+              </Disclosure>
+            )}
           </div>
         )}
 
-        {/* Two columns — the two fighters */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          {(["a", "b"] as const).map((side) => {
-            const agentId = side === "a" ? battle.agent_a_id : battle.agent_b_id;
-            const owned = side === "a" ? true : battle.agent_b_id !== null;
-            const acceptedByOwner = side === "b" ? battle.agent_b_accepted_at !== null : true;
-            return (
-              <div key={side} className="rounded-lg border border-neutral-800 bg-neutral-900/30 p-4">
-                <div className={`text-xs uppercase mb-2 ${side === "a" ? "text-violet-400" : "text-cyan-400"}`}>
-                  Сторона {side.toUpperCase()}
-                </div>
-                <div className="font-medium text-neutral-100">
-                  {agentId ? names.get(agentId) || "…" : "нет соперника — открытый вызов"}
-                </div>
-                {owned && agentId && (
-                  <div className="text-xs text-neutral-500 mt-2 space-y-0.5">
-                    <div>Согласие владельца: {acceptedByOwner ? "получено" : "ожидается"}</div>
-                    {battle.readiness && (
-                      <div>Готовность к запуску: {battle.readiness.ready ? "подтверждена" : "не подтверждена"}</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Deadline */}
-        {battle.deadline_at && (battle.status === "running" || battle.status === "judging") && (
-          <div className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-4 mb-4 text-center">
-            <div className="text-xs uppercase text-orange-400 mb-1">До дедлайна</div>
-            <div className="text-2xl font-mono">{deadlinePassed ? "время вышло" : countdown(battle.deadline_at)}</div>
-            <div className="text-[11px] text-neutral-600 mt-1">
-              Время ответов фиксирует сервер — отправленные после дедлайна ходы бой не принимает.
+        {/* Live treatment — status-specific strip */}
+        {battle.status === "queued" && (
+          <div className="mb-6 rounded-lg border border-violet-500/30 bg-violet-500/5 p-4 text-sm">
+            <div className="text-violet-300 font-medium">Бой готовится к запуску</div>
+            <div className="text-xs text-neutral-500 mt-1">
+              Позиция в очереди не публикуется. Страница обновится автоматически.
             </div>
           </div>
         )}
 
-        {/* Verdict — LLM quorum and human quorum are kept separate at the data
-            model level (battle_judgements.judge_kind); the winner/verdict_reason
-            summary below is the arithmetic, and BattleVerdictEvidence (rendered
-            further down) is the evidence — final answers, individual replicate
-            votes, and the raw judge runs. */}
-        {battle.status === "completed" && (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-5">
-            <div className="text-xs uppercase text-emerald-400 mb-3">Вердикт</div>
-            {battle.winner ? (
-              <div className="text-lg text-neutral-100 mb-1">
-                Победитель:{" "}
-                <span className="font-semibold">
-                  {battle.winner === "tie" ? "ничья" : names.get(battle.winner === "a" ? battle.agent_a_id : battle.agent_b_id ?? "")}
-                </span>
-              </div>
-            ) : (
-              <div className="text-sm text-amber-300 mb-1">Вердикт не вынесен — кворум судей не набран.</div>
-            )}
-            {battle.verdict_reason && (
-              <div className="text-xs text-neutral-500 mb-3">{battle.verdict_reason}</div>
-            )}
-            <div className="grid grid-cols-2 gap-4 mt-3 text-sm">
+        {battle.status === "running" && (
+          <div
+            className={`mb-6 rounded-lg border p-4 ${
+              deadlinePassed || urgent ? "border-red-500/40 bg-red-500/5" : "border-orange-500/30 bg-orange-500/[0.05]"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <div className="text-neutral-500 text-xs">{names.get(battle.agent_a_id) || "A"} · Elo</div>
-                <div className="font-mono">
-                  {battle.elo_a_before ?? "—"} → {battle.elo_a_after ?? "—"}{" "}
-                  <span className="text-neutral-600">({eloDelta(battle.elo_a_before, battle.elo_a_after)})</span>
-                </div>
+                <div className="text-sm font-medium text-orange-300">Идёт бой</div>
+                <div className="text-xs text-neutral-500 mt-0.5">Ответы скрыты до завершения</div>
               </div>
-              <div>
-                <div className="text-neutral-500 text-xs">{battle.agent_b_id ? names.get(battle.agent_b_id) || "B" : "B"} · Elo</div>
-                <div className="font-mono">
-                  {battle.elo_b_before ?? "—"} → {battle.elo_b_after ?? "—"}{" "}
-                  <span className="text-neutral-600">({eloDelta(battle.elo_b_before, battle.elo_b_after)})</span>
+              {battle.deadline_at && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-xs text-neutral-500">До конца</span>
+                  <span className={`text-lg font-mono tabular-nums ${deadlinePassed || urgent ? "text-red-300" : "text-neutral-100"}`}>
+                    {deadlinePassed ? "00:00" : countdown(battle.deadline_at)}
+                  </span>
+                  {urgent && !deadlinePassed && (
+                    <span className="battle-urgent h-1.5 w-1.5 rounded-full bg-red-400 shrink-0" />
+                  )}
                 </div>
-              </div>
+              )}
             </div>
-            <div className="text-[11px] text-neutral-600 mt-4">
-              Судят три пары реплик одной модели (glm-4.5-flash), каждая — в обоих порядках предъявления
-              A/B, плюс, отдельно, люди. Итог LLM-квора́ и человеческого квору́ма не смешиваются в одну
-              цифру. Разбор по каждой реплике — ниже.
-            </div>
+          </div>
+        )}
+
+        {battle.status === "judging" && (
+          <div className="mb-6 rounded-lg border border-orange-500/30 bg-orange-500/[0.05] p-4 text-sm text-orange-300">
+            Ответы зафиксированы. Идёт проверка реплик.
           </div>
         )}
 
