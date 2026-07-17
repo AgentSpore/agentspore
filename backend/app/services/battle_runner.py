@@ -1094,8 +1094,7 @@ async def reap_once(session_factory) -> dict[str, int]:
 async def reconcile_once(
     session_factory,
     gate: LLMGate,
-    api_key: str,
-    base_url: str,
+    provider: dict | None,
 ) -> dict[str, int]:
     """One short reconciler pass over the WHOLE chain. BattleRunTask calls this.
 
@@ -1111,9 +1110,22 @@ async def reconcile_once(
 
     Phases run oldest-first and independently, so a battle stuck waiting for an
     ACK cannot delay one that is ready to start.
+
+    ``provider`` (``{"api_key", "base_url"}`` or ``None``) is the ONLY paid
+    dependency, and it gates ONLY the judge panel. Every other phase — arm,
+    admit, start, close_deadline (running -> judging is FREE), and the whole
+    reaper — is DB-only and MUST run every pass regardless. So a provider outage
+    (key unset/rotated/geo-blocked) does NOT freeze the lifecycle or stop
+    cleanup: battles still advance up to 'judging' and expired challenges /
+    stranded reservations are still reaped. When ``provider is None`` the two
+    money phases (the panel after close_deadline, and the judging resume) are
+    skipped and NOT claimed — a battle that reached 'judging' simply waits for
+    the provider to return rather than burning its attempt budget toward abort.
     """
     counts = {"armed": 0, "queued": 0, "started": 0, "judged": 0, "settled": 0}
     token = str(uuid.uuid4())
+    api_key = provider["api_key"] if provider is not None else None
+    base_url = provider["base_url"] if provider is not None else None
 
     async def claim(status: BattleStatus, max_attempts: int, lease_seconds: int) -> list[dict]:
         """Claim a bounded batch of one status. Oldest first, skipping held rows.
@@ -1163,12 +1175,19 @@ async def reconcile_once(
     # 4. running -> judging. The ONLY phases that spend money (this and the
     #    judging resume below), so both keep claim_battles_for_reconcile's strict
     #    default attempt ceiling.
+    #    close_deadline itself is FREE and always runs; only the panel that
+    #    follows spends money, so it is gated on the provider. A battle whose
+    #    deadline passed still transitions running -> judging without a provider
+    #    and waits there for one.
     for battle in await claim(BattleStatus.RUNNING, RUNNING_MAX_ATTEMPTS, BATTLE_LEASE_SECONDS):
         battle_id = str(battle["id"])
         if not await step(battle, "reconcile", lambda r, b: r.close_deadline(str(b["id"]), token)):
             continue
         counts["judged"] += 1
-        await _judge_and_settle(session_factory, gate, battle_id, token, api_key, base_url, counts)
+        if provider is not None:
+            await _judge_and_settle(
+                session_factory, gate, battle_id, token, api_key, base_url, counts
+            )
 
     # 5. judging -> completed. Resume battles stranded in judging by a crash
     #    between mark_judging's commit and settle: run_judge_panel and
@@ -1176,10 +1195,13 @@ async def reconcile_once(
     #    CAS), so re-running them completes the battle exactly once. Without this
     #    phase such a battle sits in 'judging' forever — the running phase above
     #    already transitioned it, so nothing would ever claim it again.
-    for battle in await claim(BattleStatus.JUDGING, RUNNING_MAX_ATTEMPTS, BATTLE_LEASE_SECONDS):
-        await _judge_and_settle(
-            session_factory, gate, str(battle["id"]), token, api_key, base_url, counts
-        )
+    #    Money phase: skipped entirely (not even claimed, so no attempt is burnt
+    #    toward the stranded-abort ceiling) when no provider is available.
+    if provider is not None:
+        for battle in await claim(BattleStatus.JUDGING, RUNNING_MAX_ATTEMPTS, BATTLE_LEASE_SECONDS):
+            await _judge_and_settle(
+                session_factory, gate, str(battle["id"]), token, api_key, base_url, counts
+            )
 
     counts.update(await reap_once(session_factory))
     return counts
