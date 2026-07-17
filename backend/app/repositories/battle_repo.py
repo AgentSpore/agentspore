@@ -1390,29 +1390,44 @@ class BattleRepository:
     async def expire_running_lease_if_both_final(self, battle_id: str) -> bool:
         """Lapse a running battle's row lease the instant both sides are final.
 
-        Called from the turn-submission path right after a FINAL is recorded, in
-        the SAME transaction. When both fighters finish early — seconds into a
+        Called from the turn-submission ROUTE in its OWN transaction, AFTER the
+        fighter's final has already been committed — never inside the final's
+        transaction, so a failure here (or the constraint below) can never roll
+        back a persisted answer. When both fighters finish early — seconds into a
         battle whose lease still runs for BATTLE_LEASE_SECONDS — nothing would
         otherwise mark it judgeable: the reconciler's running phase claims a row
-        only once its lease has lapsed (claim_battles_for_reconcile), so the
-        judging is stalled by the whole lease window even though both answers
-        are in. Setting lease_expires_at to NOW makes the row immediately
-        claimable on the next tick, which then runs mark_judging.
+        only once its lease has lapsed (claim_battles_for_reconcile), so judging
+        is stalled by the whole lease window even though both answers are in.
+        Setting lease_expires_at to NOW makes the row claimable on the next tick,
+        which then runs mark_judging.
 
-        Only ``lease_expires_at`` moves, never ``lease_token``: this does not
-        STEAL a fence, it merely retires one that guards nothing. The running
-        lease at this moment belongs to no active worker — start_if_still_eligible's
-        starter committed and moved on, and a turn submission is the only thing
-        that touches a running battle between reconciler polls. The reconciler,
-        if it happens to hold the row mid-poll, simply re-claims after the lapse;
-        its own mark_judging already permits the two-final case.
+        ``AND lease_token IS NOT NULL`` is load-bearing, not decorative: V66's
+        battle_lease_token_has_expiry CHECK requires (token IS NULL) =
+        (expires_at IS NULL). After a normal pre-deadline reconcile poll the
+        running row is released to NULL/NULL (release_reconcile_claim); writing
+        expires_at=NOW() onto that row would set expiry-non-null with a NULL
+        token and violate the CHECK. That row is ALSO already claimable (the
+        claim predicate accepts lease_expires_at IS NULL), so there is nothing to
+        do — the guard both preserves the invariant and skips a pointless write.
+
+        Honest note on the safety of retiring the lease: this CAN retire a
+        lease a live close_deadline worker is still holding unexpired (the
+        reconciler claimed the row a moment ago and is mid-poll). That is NOT
+        corruption: the lease TOKEN is untouched, and every downstream state
+        transition is fenced by that token (mark_judging, finalize, settle all
+        require ``lease_token = :token AND lease_expires_at > NOW()``). A worker
+        whose lease we just lapsed simply fails its next CAS and its pass is
+        wasted — one idle round trip, never a double judgement or a lost verdict.
+        The common case is an idle lease held by nobody, and skipping the wait
+        for it is the entire point.
 
         The two-final count is a predicate of THIS statement, so the lease is
-        dropped only when judging is genuinely due. The just-inserted final is
-        visible to this subquery because it ran earlier in the same transaction.
+        dropped only when judging is genuinely due. Both finals are visible to
+        this subquery because the route committed the final before this call.
         Idempotent: a re-post or the opponent's own final simply re-sets NOW.
         Returns True when the lease was lapsed, False when it was not (only one
-        side final, or the battle is no longer running).
+        side final, the battle is no longer running, or the lease is already
+        NULL and the row needs no nudge).
         """
         result = await self.db.execute(
             text(
@@ -1421,6 +1436,7 @@ class BattleRepository:
                 SET lease_expires_at = NOW()
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'running'
+                  AND lease_token IS NOT NULL
                   AND (SELECT COUNT(*) FROM battle_submissions s
                        WHERE s.battle_id = battles.id AND s.is_final) = 2
                 RETURNING id
