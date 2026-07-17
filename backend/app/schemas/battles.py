@@ -133,8 +133,28 @@ class TaskStatus(str, Enum):
     RETIRED = "retired"
 
 
+class TaskDifficulty(str, Enum):
+    """The rated-track difficulty vocabulary (V67).
+
+    Mirrors the ``battle_task_difficulty_enum`` CHECK one for one. A closed set,
+    never a free string: a battle's difficulty FILTER is matched against a
+    task's concrete difficulty at binding time, and a typo'd filter would
+    silently match nothing and abort every rated challenge for that combination.
+    NULL on a battle filter means "any"; a task row always has a concrete value.
+    """
+
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
 class BattleTask(BaseModel):
-    """A row of battle_tasks."""
+    """A row of battle_tasks.
+
+    Internal only after V67 — the public catalog route no longer returns task
+    rows, only pool aggregates (:class:`BattleTaskPool`). Kept for the admin
+    creation path and internal callers.
+    """
 
     id: UUID
     source: TaskSource
@@ -142,9 +162,12 @@ class BattleTask(BaseModel):
     title: str
     prompt: str
     rubric: list[dict[str, Any]]
-    category: str | None = None
+    category: str
+    difficulty: TaskDifficulty = TaskDifficulty.MEDIUM
     time_limit_seconds: int
     status: TaskStatus
+    last_used_at: datetime | None = None
+    use_count: int = 0
     created_by_user_id: UUID | None = None
     created_at: datetime
 
@@ -159,7 +182,9 @@ class Battle(BaseModel):
     """
 
     id: UUID
-    task_id: UUID
+    # Unbound until reserved -> queued (V67): a challenge carries a filter, not
+    # a task. NULL through every pre-queue state, set only at binding.
+    task_id: UUID | None = None
     status: BattleStatus
 
     agent_a_id: UUID
@@ -175,9 +200,16 @@ class Battle(BaseModel):
     ready_check_event_id_a: UUID | None = None
     ready_check_event_id_b: UUID | None = None
 
-    task_prompt_snapshot: str
-    task_rubric_snapshot: list[dict[str, Any]]
-    time_limit_seconds_snapshot: int
+    # The requested filter, frozen at challenge time. NULL means "any".
+    task_category_filter: str | None = None
+    task_difficulty_filter: TaskDifficulty | None = None
+
+    # The bound task's snapshot. All NULL until binding, all set after — the
+    # all-or-nothing shape the V67 CHECK enforces.
+    task_title_snapshot: str | None = None
+    task_prompt_snapshot: str | None = None
+    task_rubric_snapshot: list[dict[str, Any]] | None = None
+    time_limit_seconds_snapshot: int | None = None
 
     winner: Winner | None = None
     verdict_reason: str | None = None
@@ -201,24 +233,59 @@ class Battle(BaseModel):
 class CreateChallengeRequest(BaseModel):
     """Open a challenge. ``agent_b_id`` omitted = an open challenge.
 
+    The challenger names a task CATEGORY and DIFFICULTY, never a task id (V67):
+    the concrete task is chosen and snapshotted only after both fighters prove
+    readiness, so no side can precompute an answer to a task it picked. Both
+    filters are nullable; NULL means "any". The wire never carries the string
+    ``"any"`` — the UI translates its "Любая" selection to JSON ``null``.
+
     The challenger's owner is never a field: it comes from the JWT and is
     verified against the agents row. Accepting it from the body would let a
     caller challenge with an agent they do not own.
     """
 
-    task_id: UUID
+    task_category: str | None = Field(default=None, min_length=1, max_length=50)
+    task_difficulty: TaskDifficulty | None = None
     agent_a_id: UUID
     agent_b_id: UUID | None = None
 
 
 class CreateTaskRequest(BaseModel):
-    """Admin-generated battle task."""
+    """Admin-generated battle task.
+
+    Category and difficulty are REQUIRED (V67): a task with no category or an
+    arbitrary difficulty could never be reached by a filtered rated challenge,
+    and the binding pool is bucketed by exactly these two fields.
+    """
 
     title: str = Field(..., min_length=1, max_length=300)
     prompt: str = Field(..., min_length=1, max_length=20_000)
     rubric: list[dict[str, Any]] = Field(..., min_length=1)
-    category: str | None = Field(default=None, max_length=50)
+    category: str = Field(..., min_length=1, max_length=50)
+    difficulty: TaskDifficulty
     time_limit_seconds: int = Field(default=600, gt=0, le=3600)
+
+
+class BattleTaskPool(BaseModel):
+    """One (category, difficulty) bucket of the fresh task pool (V67).
+
+    The public catalog replacement: it carries COUNTS, never task content. A
+    caller learns which filter combinations can currently accept a rated
+    challenge without ever seeing a task id, title, prompt or rubric.
+    """
+
+    category: str
+    difficulty: TaskDifficulty
+    fresh_count: int
+    challenge_available: bool
+
+
+class BattleTaskPoolsResponse(BaseModel):
+    """The public ``GET /battles/tasks`` response — pool aggregates only."""
+
+    minimum_pool_size: int
+    cooldown_days: int
+    pools: list[BattleTaskPool]
 
 
 class BattleSummary(BaseModel):
@@ -226,10 +293,16 @@ class BattleSummary(BaseModel):
 
     Judge verdicts are deliberately absent — see BattleDetail, which reveals
     them only once the battle is completed.
+
+    The bound task is WITHHELD until the battle is running (V67): ``task_id``
+    and ``task_title_snapshot`` are nulled by the route for every pre-running
+    row, and ``task_content_withheld`` says so explicitly rather than letting a
+    null read as "no task". The requested filter (category/difficulty) is always
+    safe to show — it reveals nothing about which concrete task was picked.
     """
 
     id: UUID
-    task_id: UUID
+    task_id: UUID | None = None
     status: BattleStatus
     agent_a_id: UUID
     agent_b_id: UUID | None = None
@@ -237,6 +310,11 @@ class BattleSummary(BaseModel):
     challenged_at: datetime
     started_at: datetime | None = None
     ended_at: datetime | None = None
+
+    task_category_filter: str | None = None
+    task_difficulty_filter: TaskDifficulty | None = None
+    task_title_snapshot: str | None = None
+    task_content_withheld: bool = False
 
 
 class ReadinessView(BaseModel):
@@ -269,9 +347,13 @@ class BattleDetail(BattleSummary):
 
     agent_b_accepted_at: datetime | None = None
     challenge_expires_at: datetime
-    task_prompt_snapshot: str
-    task_rubric_snapshot: list[dict[str, Any]]
-    time_limit_seconds_snapshot: int
+    # Withheld (nulled by the route) until the battle is running — see
+    # ``task_content_withheld`` below and the status gate in the get_battle
+    # route. Nullable in the schema too, because a still-unbound battle simply
+    # has no snapshot yet.
+    task_prompt_snapshot: str | None = None
+    task_rubric_snapshot: list[dict[str, Any]] | None = None
+    time_limit_seconds_snapshot: int | None = None
     verdict_reason: str | None = None
     elo_a_before: int | None = None
     elo_b_before: int | None = None
