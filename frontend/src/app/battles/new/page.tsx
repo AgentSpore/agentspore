@@ -1,11 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_URL, Agent, BattleTask, ExternalAgentItem } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import { BattleAvailabilityToggle } from "@/components/battles/BattleAvailabilityToggle";
+import AgentAvatar from "@/components/AgentAvatar";
+
+const selectClasses =
+  "w-full min-h-11 rounded-lg bg-neutral-950/70 border border-neutral-700 px-3 text-sm text-neutral-100 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500/30 transition-colors";
+
+function SectionHeading({ n, label, badge }: { n: number; label: string; badge?: string }) {
+  return (
+    <div className="flex items-center gap-2.5 mb-4">
+      <span className="text-base font-semibold text-neutral-100">
+        {n}. {label}
+      </span>
+      {badge && (
+        <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 border border-neutral-700 rounded-md px-1.5 py-0.5">
+          {badge}
+        </span>
+      )}
+    </div>
+  );
+}
 
 /**
  * Challenge creation: pick your agent, a task, and either a named opponent
@@ -30,6 +49,9 @@ export default function NewBattlePage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [touched, setTouched] = useState(false);
+
+  const agentSelectId = useId();
 
   useEffect(() => {
     if (typeof window !== "undefined" && !localStorage.getItem("access_token")) {
@@ -77,10 +99,14 @@ export default function NewBattlePage() {
   }, [opponentQuery, agentAId]);
 
   const selectedAgentA = myAgents.find((a) => a.id === agentAId);
+  const selectedTask = tasks.find((t) => t.id === taskId);
+
+  const agentInvalid = touched && !agentAId;
+  const taskInvalid = touched && !taskId;
 
   const submit = async () => {
+    setTouched(true);
     if (!agentAId || !taskId) {
-      setErr("выберите своего агента и задачу");
       return;
     }
     setSubmitting(true);
@@ -102,135 +128,258 @@ export default function NewBattlePage() {
       const data = await res.json();
       router.push(`/battles/${data.id}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "не удалось создать вызов");
+      setErr(e instanceof Error ? e.message : "Не удалось создать вызов");
     } finally {
       setSubmitting(false);
     }
   };
 
+  const ctaLabel = agentBId ? `Вызвать ${agentBName}` : "Бросить открытый вызов";
+
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
-      <main className="mx-auto max-w-2xl px-4 py-10">
-        <h1 className="text-2xl font-semibold tracking-tight mb-1">Новый вызов</h1>
-        <p className="text-neutral-400 text-sm mb-6">
+      <main className="mx-auto max-w-5xl px-4 py-8 pb-28 lg:pb-8">
+        <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
+          Арена
+        </div>
+        <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">
+          Новый вызов
+        </h1>
+        <p className="text-neutral-400 text-sm leading-6 mb-8 max-w-lg">
           Выберите своего агента, задачу и, при желании, конкретного соперника — иначе вызов останется
           открытым, и его сможет принять любой подходящий агент.
         </p>
 
-        {err && <div className="mb-4 text-sm text-red-400">{err}</div>}
+        {err && (
+          <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
+            <div className="font-medium">Не удалось создать вызов</div>
+            <div className="text-red-400/80 mt-0.5">{err}</div>
+          </div>
+        )}
 
-        {/* Step 1 — your agent */}
-        <div className="mb-6">
-          <label className="text-xs uppercase text-neutral-500 mb-2 block">Ваш агент</label>
-          {myAgents.length === 0 ? (
-            <div className="text-sm text-neutral-500">
-              Нет подключённых собственных агентов. Боевой вызов доступен только не-хостинговым
-              (self-run) агентам — заведите такого в разделе «Мои агенты».
-            </div>
-          ) : (
-            <select
-              value={agentAId}
-              onChange={(e) => setAgentAId(e.target.value)}
-              className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
-            >
-              <option value="">— выберите агента —</option>
-              {myAgents.map((a) => (
-                <option key={a.id} value={a.id} disabled={!a.is_active}>
-                  {a.name} {a.is_active ? "" : "(неактивен)"}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {selectedAgentA && (
-            <div className="mt-3">
-              <BattleAvailabilityToggle agentId={selectedAgentA.id} agentName={selectedAgentA.name} />
-            </div>
-          )}
-        </div>
-
-        {/* Step 2 — task */}
-        <div className="mb-6">
-          <label className="text-xs uppercase text-neutral-500 mb-2 block">Задача</label>
-          <select
-            value={taskId}
-            onChange={(e) => setTaskId(e.target.value)}
-            className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
-          >
-            <option value="">— выберите задачу —</option>
-            {tasks.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.title} · {Math.round(t.time_limit_seconds / 60)} мин
-              </option>
-            ))}
-          </select>
-          {taskId && (
-            <p className="text-xs text-neutral-500 mt-2 whitespace-pre-wrap">
-              {tasks.find((t) => t.id === taskId)?.prompt.slice(0, 300)}
-              {(tasks.find((t) => t.id === taskId)?.prompt.length ?? 0) > 300 && "…"}
-            </p>
-          )}
-        </div>
-
-        {/* Step 3 — opponent (optional) */}
-        <div className="mb-8">
-          <label className="text-xs uppercase text-neutral-500 mb-2 block">Соперник (необязательно)</label>
-          {agentBId ? (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-cyan-300">{agentBName}</span>
-              <button
-                onClick={() => {
-                  setAgentBId(null);
-                  setAgentBName("");
-                }}
-                className="text-xs text-neutral-500 hover:text-red-400"
-              >
-                убрать — сделать открытым вызовом
-              </button>
-            </div>
-          ) : (
-            <>
-              <input
-                value={opponentQuery}
-                onChange={(e) => setOpponentQuery(e.target.value)}
-                placeholder="Искать агента по имени…"
-                className="w-full rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
-              />
-              {opponentResults.length > 0 && (
-                <ul className="mt-2 rounded-lg border border-neutral-800 divide-y divide-neutral-800 overflow-hidden">
-                  {opponentResults.map((a) => (
-                    <li key={a.id}>
-                      <button
-                        onClick={() => {
-                          setAgentBId(a.id);
-                          setAgentBName(a.name);
-                          setOpponentQuery("");
-                          setOpponentResults([]);
-                        }}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-800/60 transition"
-                      >
-                        {a.name} <span className="text-neutral-600 text-xs">@{a.handle}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_280px] gap-8">
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 divide-y divide-neutral-800/80">
+            {/* Section 1 — your agent */}
+            <div className="p-5 sm:p-6" aria-invalid={agentInvalid || undefined}>
+              <SectionHeading n={1} label="Ваш агент" />
+              <p className="text-xs text-neutral-500 mb-3">Только активные self-run агенты.</p>
+              {myAgents.length === 0 ? (
+                <div className="text-sm text-neutral-500">
+                  Нет подключённых собственных агентов. Боевой вызов доступен только не-хостинговым
+                  (self-run) агентам — заведите такого в разделе «Мои агенты».
+                </div>
+              ) : (
+                <>
+                  <label htmlFor={agentSelectId} className="sr-only">
+                    Ваш агент
+                  </label>
+                  <select
+                    id={agentSelectId}
+                    value={agentAId}
+                    onChange={(e) => setAgentAId(e.target.value)}
+                    aria-invalid={agentInvalid || undefined}
+                    aria-describedby={agentInvalid ? `${agentSelectId}-error` : undefined}
+                    className={`${selectClasses} ${agentInvalid ? "border-red-500/40" : ""}`}
+                  >
+                    <option value="">— выберите агента —</option>
+                    {myAgents.map((a) => (
+                      <option key={a.id} value={a.id} disabled={!a.is_active}>
+                        {a.name} {a.is_active ? "" : "(неактивен)"}
+                      </option>
+                    ))}
+                  </select>
+                </>
               )}
-              <p className="text-xs text-neutral-600 mt-1">
-                Без выбора соперника вызов останется открытым — его сможет принять любой подходящий
-                агент.
-              </p>
-            </>
-          )}
+              <div id={`${agentSelectId}-error`} className="min-h-5 mt-1.5 text-xs text-red-400">
+                {agentInvalid && "Выберите своего агента"}
+              </div>
+
+              {selectedAgentA && (
+                <div className="mt-2">
+                  <div className="flex items-center gap-2 text-sm mb-3">
+                    <AgentAvatar name={selectedAgentA.name} id={selectedAgentA.id} size="sm" />
+                    <span className="text-violet-300 font-medium">{selectedAgentA.name}</span>
+                  </div>
+                  <BattleAvailabilityToggle agentId={selectedAgentA.id} agentName={selectedAgentA.name} />
+                </div>
+              )}
+            </div>
+
+            {/* Section 2 — task */}
+            <div className="p-5 sm:p-6">
+              <SectionHeading n={2} label="Задача" />
+              <div
+                role="radiogroup"
+                aria-invalid={taskInvalid || undefined}
+                className={`max-h-[360px] sm:max-h-[360px] overflow-y-auto rounded-xl border divide-y divide-neutral-800/70 ${
+                  taskInvalid ? "border-red-500/40" : "border-neutral-800"
+                }`}
+              >
+                {tasks.length === 0 && (
+                  <div className="px-4 py-3 text-sm text-neutral-500">Загружаем задачи…</div>
+                )}
+                {tasks.map((t) => {
+                  const selected = t.id === taskId;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setTaskId(t.id)}
+                      className={`battle-press min-h-[76px] w-full px-4 py-3 text-left transition-colors duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-inset ${
+                        selected ? "bg-violet-500/[0.07] ring-1 ring-inset ring-violet-500/35" : "hover:bg-white/[0.025]"
+                      }`}
+                    >
+                      <div className="text-sm font-medium text-neutral-100">{t.title}</div>
+                      <div className="text-xs text-neutral-400 mt-0.5">
+                        {t.category && <>{t.category} · </>}
+                        {Math.round(t.time_limit_seconds / 60)} мин
+                      </div>
+                      <p className="text-xs leading-5 text-neutral-400 mt-1 line-clamp-2">{t.prompt}</p>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="min-h-5 mt-1.5 text-xs text-red-400">{taskInvalid && "Выберите задачу"}</div>
+            </div>
+
+            {/* Section 3 — opponent (optional) */}
+            <div className="p-5 sm:p-6">
+              <SectionHeading n={3} label="Соперник" badge="Необязательно" />
+              <p className="text-xs text-neutral-500 mb-3">Оставьте поле пустым для открытого вызова.</p>
+              {agentBId ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 min-h-11">
+                  <div className="flex items-center gap-2 text-sm">
+                    <AgentAvatar name={agentBName} id={agentBId} size="sm" />
+                    <span className="text-cyan-300 font-medium">{agentBName}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setAgentBId(null);
+                      setAgentBName("");
+                    }}
+                    className="battle-press min-h-11 px-3 text-xs text-neutral-500 hover:text-red-400 transition-colors"
+                  >
+                    Убрать
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input
+                    value={opponentQuery}
+                    onChange={(e) => setOpponentQuery(e.target.value)}
+                    placeholder="Искать агента по имени…"
+                    className={selectClasses}
+                  />
+                  {opponentResults.length > 0 && (
+                    <ul className="battle-opponent-results mt-2 rounded-lg border border-neutral-800 divide-y divide-neutral-800 overflow-hidden">
+                      {opponentResults.map((a) => (
+                        <li key={a.id}>
+                          <button
+                            onClick={() => {
+                              setAgentBId(a.id);
+                              setAgentBName(a.name);
+                              setOpponentQuery("");
+                              setOpponentResults([]);
+                            }}
+                            className="battle-press w-full min-h-12 flex items-center gap-2.5 text-left px-3 text-sm bg-neutral-900/60 hover:bg-neutral-800/60 active:scale-[.99] transition-colors duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]"
+                          >
+                            <AgentAvatar name={a.name} id={a.id} size="sm" />
+                            <span>
+                              {a.name} <span className="text-neutral-600 text-xs">@{a.handle}</span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Summary column */}
+          <div className="lg:sticky lg:top-28 h-fit">
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/35 p-5">
+              <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 mb-4">
+                Предпросмотр вызова
+              </div>
+
+              <div className="grid grid-cols-[minmax(0,1fr)_28px_minmax(0,1fr)] items-center gap-1.5">
+                <div className="min-w-0 text-sm">
+                  {selectedAgentA ? (
+                    <span className="text-violet-300 font-medium truncate block">{selectedAgentA.name}</span>
+                  ) : (
+                    <span className="text-neutral-500">Агент не выбран</span>
+                  )}
+                </div>
+                <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500 text-center">VS</span>
+                <div className="min-w-0 text-sm text-right">
+                  {agentBId ? (
+                    <span className="text-cyan-300 font-medium truncate block">{agentBName}</span>
+                  ) : (
+                    <span className="text-neutral-500">Открытый вызов</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-neutral-800/70 text-sm">
+                {selectedTask ? (
+                  <>
+                    <div className="text-neutral-200 font-medium">{selectedTask.title}</div>
+                    <div className="text-neutral-500 text-xs mt-0.5">
+                      {Math.round(selectedTask.time_limit_seconds / 60)} мин
+                    </div>
+                  </>
+                ) : (
+                  <span className="text-neutral-500">Задача не выбрана</span>
+                )}
+              </div>
+
+              <p className="text-xs text-neutral-500 mt-4">После отправки вызов появится на арене.</p>
+
+              <div aria-live="polite" className="hidden lg:block">
+                <button
+                  onClick={submit}
+                  disabled={submitting}
+                  className="battle-press mt-5 w-full min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
+                >
+                  {submitting ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
+                      Создаём вызов…
+                    </span>
+                  ) : (
+                    ctaLabel
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <button
-          onClick={submit}
-          disabled={submitting || !agentAId || !taskId}
-          className="rounded-md bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 px-4 py-2 text-sm font-medium transition"
+        {/* Mobile sticky CTA */}
+        <div
+          aria-live="polite"
+          className="lg:hidden fixed bottom-0 left-0 right-0 -mx-0 mt-6 border-t border-neutral-800 bg-neutral-950/95 px-4 py-3"
         >
-          {submitting ? "Отправка…" : "Бросить вызов"}
-        </button>
+          <button
+            onClick={submit}
+            disabled={submitting}
+            className="battle-press w-full min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
+          >
+            {submitting ? (
+              <span className="inline-flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
+                Создаём вызов…
+              </span>
+            ) : (
+              ctaLabel
+            )}
+          </button>
+        </div>
       </main>
     </div>
   );
