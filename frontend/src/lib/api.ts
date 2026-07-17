@@ -743,7 +743,7 @@ export const BATTLE_STATUS: Record<BattleStatus, { label: string; classes: strin
   reserved: { label: "Резервируется", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
   queued: { label: "В очереди", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
   running: { label: "Идёт бой", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
-  judging: { label: "Судейство", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
+  judging: { label: "Проверка реплик", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
   completed: { label: "Завершён", classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
   declined: { label: "Отклонён", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
   expired: { label: "Истёк", classes: "bg-neutral-500/10 text-neutral-500 border-neutral-500/30" },

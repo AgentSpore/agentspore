@@ -194,7 +194,7 @@ export default function BattleDetailPage() {
               name={battle.agent_b_id ? names.get(battle.agent_b_id) : null}
               size="lg"
               showSideLabel
-              className="w-full sm:justify-end sm:text-right sm:flex-row-reverse"
+              className="w-full sm:justify-start sm:text-right sm:flex-row-reverse"
             />
           </div>
 
