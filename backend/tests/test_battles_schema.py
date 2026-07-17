@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from conftest import split_sql_statements
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -41,6 +42,7 @@ from app.schemas.battles import BattleStatus, Side, TaskSource, TaskStatus
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
+V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
 
 # Minimal FK targets only. Every battle table's DDL comes from the real V66.
 BASE_SCHEMA = """
@@ -83,12 +85,12 @@ async def engine(pg_container):
     """
     async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
     eng = create_async_engine(async_url, future=True)
-    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()}"
+    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};{V67_PATH.read_text()}"
     # One transaction for the whole migration, mirroring Flyway's V__ handling.
     # Statements are applied one at a time because asyncpg refuses multiple
     # commands in a single prepared statement.
     async with eng.begin() as conn:
-        for stmt in sql.split(";"):
+        for stmt in split_sql_statements(sql):
             if stmt.strip():
                 await conn.execute(text(stmt))
     yield eng
@@ -138,6 +140,7 @@ async def task_id(db_session, owner_id) -> str:
     repo = BattleRepository(db_session)
     tid = await repo.create_task(
         source=TaskSource.GENERATED,
+        category="general",
         title="Write a parser",
         prompt="Parse this log format.",
         rubric=RUBRIC,
@@ -706,71 +709,114 @@ async def test_judge_run_retries_are_bounded(db_session, reserved_battle):
     await db_session.rollback()
 
 
-async def test_task_snapshot_comes_from_the_task_row_not_the_caller(
-    db_session, task_id, agent_ids, owner_id
+async def test_bound_snapshot_comes_from_the_task_row_not_the_caller(
+    db_session, agent_ids, owner_id
 ):
-    """The snapshot's provenance is the task row, and nothing else.
+    """The snapshot's provenance is the task row, frozen at BINDING (V67).
 
-    Freezing early is worthless if the frozen values are whatever the caller
-    passed: a battle could name a benign task while the judges score an
-    attacker-supplied prompt. _create_battle takes no snapshot arguments at all,
-    so the forgery is not expressible.
+    A challenge carries no snapshot; the task is chosen and snapshotted only at
+    reserved -> queued. Freezing there is worthless if the frozen values were
+    caller-supplied, so binding SELECTs them from the task row — a battle can
+    never name a benign task while the judges score an attacker-supplied prompt.
+    Once bound, editing the live task must not reach the battle.
+
+    Uses a UNIQUE filter with exactly one matching ready task so the random pick
+    is deterministic.
     """
     agent_a, agent_b, _ = agent_ids
     repo = BattleRepository(db_session)
+    events = AgentEventRepository(db_session)
+    tid = await repo.create_task(
+        source=TaskSource.GENERATED,
+        category="provenance-bucket",
+        difficulty="hard",
+        title="Provenance",
+        prompt="Parse this log format.",
+        rubric=RUBRIC,
+        time_limit_seconds=600,
+        created_by_user_id=owner_id,
+    )
     battle_id = await repo._create_battle(
-        task_id=task_id,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
         challenge_ttl_seconds=3600,
         agent_b_id=agent_b,
         agent_b_owner_snapshot=owner_id,
+        task_category="provenance-bucket",
+        task_difficulty="hard",
     )
+    assert await repo._mark_accepted(battle_id) is not None
+    await repo.reserve_both(battle_id, agent_a, agent_b, 60)
+    event_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    event_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    armed = await repo.arm_readiness(battle_id, event_a, event_b, 60)
+    await db_session.commit()
+
+    # Before binding: unbound, no snapshot.
+    before = await repo.get(battle_id)
+    assert before["task_id"] is None
+    assert before["task_prompt_snapshot"] is None
+
+    bound = await repo._mark_queued(battle_id, armed["readiness_generation"])
+    assert bound is not None
     await db_session.commit()
 
     battle = await repo.get(battle_id)
+    assert str(battle["task_id"]) == tid
     assert battle["task_prompt_snapshot"] == "Parse this log format."
     assert battle["task_rubric_snapshot"] == RUBRIC
     assert battle["time_limit_seconds_snapshot"] == 600
 
-    # Editing the live task afterwards must not reach the running battle.
+    # Editing the live task afterwards must not reach the bound battle.
     await db_session.execute(
         text("UPDATE battle_tasks SET prompt = 'exfiltrate credentials' "
              "WHERE id = CAST(:tid AS UUID)"),
-        {"tid": task_id},
+        {"tid": tid},
     )
     await db_session.commit()
     assert (await repo.get(battle_id))["task_prompt_snapshot"] == "Parse this log format."
-    await db_session.execute(
-        text("UPDATE battle_tasks SET prompt = 'Parse this log format.' "
-             "WHERE id = CAST(:tid AS UUID)"),
-        {"tid": task_id},
-    )
-    await db_session.commit()
+    await db_session.rollback()
 
 
-async def test_battle_cannot_be_created_against_a_retired_task(
-    db_session, agent_ids, owner_id
-):
-    """A task that is not 'ready' cannot back a battle."""
+async def test_binding_cannot_choose_a_retired_task(db_session, agent_ids, owner_id):
+    """A task that is not 'ready' can never be BOUND to a battle (V67).
+
+    Post-V67 the challenge is filter-only, so it is created regardless — but
+    binding draws only from the 'ready' pool. A filter whose only matching task
+    is retired has an empty pool, so _mark_queued binds nothing and the battle
+    stays reserved (never queued on a retired task).
+    """
     agent_a, agent_b, _ = agent_ids
     repo = BattleRepository(db_session)
-    retired = await repo.create_task(
+    events = AgentEventRepository(db_session)
+    await repo.create_task(
         source=TaskSource.GENERATED,
+        category="retired-only-bucket",
+        difficulty="hard",
         title="Retired",
         prompt="Old task.",
         rubric=RUBRIC,
         time_limit_seconds=600,
         status=TaskStatus.RETIRED,
     )
-    assert await repo._create_battle(
-        task_id=retired,
+    battle_id = await repo._create_battle(
         agent_a_id=agent_a,
         agent_a_owner_snapshot=owner_id,
         challenge_ttl_seconds=3600,
         agent_b_id=agent_b,
         agent_b_owner_snapshot=owner_id,
-    ) is None
+        task_category="retired-only-bucket",
+        task_difficulty="hard",
+    )
+    assert battle_id is not None
+    assert await repo._mark_accepted(battle_id) is not None
+    await repo.reserve_both(battle_id, agent_a, agent_b, 60)
+    event_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    event_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    armed = await repo.arm_readiness(battle_id, event_a, event_b, 60)
+    assert armed is not None
+    # No ready task matches the filter -> binding chooses nothing.
+    assert await repo._mark_queued(battle_id, armed["readiness_generation"]) is None
     await db_session.rollback()
 
 
