@@ -297,7 +297,7 @@ export default function BattlesListPage() {
                       agentId={b.agent_b_id}
                       name={b.agent_b_id ? names.get(b.agent_b_id) : null}
                       size="sm"
-                      className="sm:justify-end sm:text-right sm:flex-row-reverse"
+                      className="w-full sm:justify-start sm:text-right sm:flex-row-reverse"
                     />
                   </div>
 

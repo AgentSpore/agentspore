@@ -141,6 +141,49 @@ function sideName(side: Side, agentAName: string, agentBName: string): string {
   return side === "a" ? agentAName : agentBName;
 }
 
+function pluralReplicas(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "реплика";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return "реплики";
+  return "реплик";
+}
+
+/**
+ * The backend's verdict_reason is a machine string for engineers (see
+ * backend/app/services/battle_judges.py — "2 for side_a, 1 abstain (3
+ * replicates)"), never shown to users as-is. This composes the honest
+ * Russian sentence client-side from the same tally the raw string
+ * summarizes, so the human-readable line and the tallies below it can never
+ * drift out of sync with each other.
+ */
+function composeQuorumSummary(tally: JudgeTally, agentAName: string, agentBName: string): string {
+  const { votes_for_a, votes_for_b, ties, abstained, errored, valid } = tally;
+  const clauses: string[] = [];
+
+  if (valid === 0) {
+    clauses.push("LLM-кворум: действительных голосов нет");
+  } else if (votes_for_a > votes_for_b) {
+    clauses.push(`LLM-кворум: большинство ${votes_for_a} из ${valid} действительных голосов за ${agentAName}`);
+  } else if (votes_for_b > votes_for_a) {
+    clauses.push(`LLM-кворум: большинство ${votes_for_b} из ${valid} действительных голосов за ${agentBName}`);
+  } else {
+    clauses.push(`LLM-кворум: голоса разделились поровну (${votes_for_a} к ${votes_for_b} из ${valid})`);
+  }
+
+  if (ties > 0) {
+    clauses.push(`${ties} ${pluralReplicas(ties)} присудили ничью`);
+  }
+  if (abstained > 0) {
+    clauses.push(`${abstained === 1 ? "одна" : abstained} ${pluralReplicas(abstained)} воздержал${abstained === 1 ? "ась" : "ись"}`);
+  }
+  if (errored > 0) {
+    clauses.push(`${errored === 1 ? "одна" : errored} ${pluralReplicas(errored)} завершил${errored === 1 ? "ась" : "ись"} с ошибкой`);
+  }
+
+  return clauses.join("; ") + ".";
+}
+
 function eloDelta(before: number | null, after: number | null): { text: string; tone: string } {
   if (before === null || after === null) return { text: "—", tone: "text-neutral-600" };
   const d = after - before;
@@ -321,8 +364,16 @@ export function BattleVerdictEvidence({ battle, agentAName, agentBName }: Props)
                     <div className="text-sm text-neutral-400 mt-0.5">Кворум реплик не набран</div>
                   </div>
                 )}
+                {llmTally && (
+                  <p className="text-sm text-neutral-300 leading-6 max-w-[70ch] mt-3">
+                    {composeQuorumSummary(llmTally, agentAName, agentBName)}
+                  </p>
+                )}
                 {battle.verdict_reason && (
-                  <p className="text-sm text-neutral-300 leading-6 max-w-[70ch] mt-3">{battle.verdict_reason}</p>
+                  <p className="mt-2 max-w-[70ch] font-mono text-xs text-neutral-600">
+                    <span className="mr-1.5 uppercase tracking-wide text-neutral-700">Технический вердикт:</span>
+                    {battle.verdict_reason}
+                  </p>
                 )}
               </div>
 
