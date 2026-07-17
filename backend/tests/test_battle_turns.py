@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from conftest import split_sql_statements
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -44,6 +45,7 @@ from app.services.battle_runner import (
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
+V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
 
 RUBRIC = [{"key": "correctness", "description": "Does it work?", "weight": 1.0}]
 
@@ -82,9 +84,9 @@ def pg_container():
 async def engine(pg_container):
     async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
     eng = create_async_engine(async_url, future=True)
-    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()}"
+    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};{V67_PATH.read_text()}"
     async with eng.begin() as conn:
-        for stmt in sql.split(";"):
+        for stmt in split_sql_statements(sql):
             if stmt.strip():
                 await conn.execute(text(stmt))
     yield eng
@@ -151,6 +153,7 @@ async def task_id(db) -> str:
     owner = await _new_owner(db)
     tid = await BattleRepository(db).create_task(
         source=TaskSource.GENERATED,
+        category="general",
         title="Write a parser",
         prompt="Parse this log format.",
         rubric=RUBRIC,

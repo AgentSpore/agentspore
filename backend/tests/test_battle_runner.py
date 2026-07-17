@@ -33,6 +33,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
+from conftest import split_sql_statements
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
@@ -67,6 +68,7 @@ from app.services.connection_manager import DeliveryResult
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
+V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
 
 RUBRIC = [{"key": "correctness", "description": "Does it work?", "weight": 1.0}]
 
@@ -105,9 +107,9 @@ def pg_container():
 async def engine(pg_container):
     async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
     eng = create_async_engine(async_url, future=True)
-    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()}"
+    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};{V67_PATH.read_text()}"
     async with eng.begin() as conn:
-        for stmt in sql.split(";"):
+        for stmt in split_sql_statements(sql):
             if stmt.strip():
                 await conn.execute(text(stmt))
     yield eng
@@ -133,16 +135,53 @@ async def task_id(db_session) -> str:
         {"id": uid, "e": f"o-{uid[:8]}@example.test"},
     )
     repo = BattleRepository(db_session)
+    # V67 binding requires a fresh pool of at least MINIMUM_TASK_POOL (20)
+    # matching tasks, so seed a full pool of IDENTICAL general/medium tasks: any
+    # one the binder randomly picks yields the same snapshot, keeping the
+    # prompt/rubric assertions below deterministic.
     tid = await repo.create_task(
         source=TaskSource.GENERATED,
+        category="general",
         title="Write a parser",
         prompt="Parse this log format.",
         rubric=RUBRIC,
         time_limit_seconds=600,
         created_by_user_id=uid,
     )
+    for _ in range(24):
+        await repo.create_task(
+            source=TaskSource.GENERATED,
+            category="general",
+            title="Write a parser",
+            prompt="Parse this log format.",
+            rubric=RUBRIC,
+            time_limit_seconds=600,
+            created_by_user_id=uid,
+        )
     await db_session.commit()
     return tid
+
+
+async def _stamp_bind_lease(session_maker, battle_id: str, seconds: int = 15) -> str:
+    """Stamp a live processing lease on a battle (V67 binding is lease-fenced).
+
+    admit_to_queue now requires the row's lease_token + a live lease, so a test
+    that binds a reserved battle directly must first claim it the way the
+    reconciler's reserved phase does. Committed in its own session so any caller
+    session sees it under READ COMMITTED.
+    """
+    token = str(uuid.uuid4())
+    async with session_maker() as s:
+        await s.execute(
+            text(
+                "UPDATE battles SET lease_token = CAST(:t AS UUID), "
+                "lease_expires_at = NOW() + make_interval(secs => :s) "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"t": token, "s": seconds, "b": battle_id},
+        )
+        await s.commit()
+    return token
 
 
 async def _new_owner(session) -> str:
@@ -501,13 +540,14 @@ class TestReadinessGriefIsBounded:
         )
         assert await _reservation_count(session_maker, battle_id) == 2
 
+        bind_token = await _stamp_bind_lease(session_maker, battle_id)
         async with session_maker() as session:
             runner = BattleRunner(session, gate=None)
             battle = await runner.repo.get(battle_id)
             with patch(
                 "app.services.battle_runner._notify_battle_owners", new=AsyncMock()
             ) as notify:
-                result = await runner.admit_reserved(battle)
+                result = await runner.admit_reserved(battle, bind_token)
             assert result is False  # did not queue — took the terminal exit
             recipients = notify.await_args.args[2]
             assert {r[0] for r in recipients} == {agent_a, agent_b}
@@ -547,7 +587,8 @@ class TestReadinessGriefIsBounded:
             await svc.events.mark_acked(agent, [str(armed[f"ready_check_event_id_{side}"])])
         await db_session.commit()
 
-        queued = await svc.try_queue(battle_id, armed["readiness_generation"])
+        bind_token = await _stamp_bind_lease(session_maker, battle_id)
+        queued = await svc.try_queue(battle_id, armed["readiness_generation"], bind_token)
         await db_session.commit()
         assert queued is not None
         assert queued["status"] == "queued"
@@ -587,10 +628,11 @@ class TestReadinessGriefIsBounded:
             assert (await BattleRepository(session).get(battle_id))["status"] == "reserved"
 
         # Assertion 2 — the admission grace: admit_reserved QUEUES it.
+        bind_token = await _stamp_bind_lease(session_maker, battle_id)
         async with session_maker() as session:
             runner = BattleRunner(session, gate=None)
             battle = await runner.repo.get(battle_id)
-            assert await runner.admit_reserved(battle) is True
+            assert await runner.admit_reserved(battle, bind_token) is True
         async with session_maker() as session:
             queued = await BattleRepository(session).get(battle_id)
         assert queued["status"] == "queued"
@@ -1077,6 +1119,20 @@ class TestTheWholeChain:
             ):
                 acked = await event_repo.mark_acked(agent_id, [str(battle[event_key])])
                 assert len(acked) == 1
+            await session.commit()
+
+        # V67: pass 2's reserved claim now holds a real 15s task-bind lease, so
+        # lapse it before pass 3 — in production the 30s tick already outlasts
+        # it; the back-to-back test passes must do so explicitly, else pass 3
+        # cannot re-claim the reserved row to bind it.
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_expires_at = NOW() - INTERVAL '1 second' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
             await session.commit()
 
         # -- pass 3: reserved -> queued -> running, in ONE pass ----------------
@@ -2700,6 +2756,12 @@ class TestLifecycleBranches:
             await session.execute(
                 text(
                     "UPDATE battles SET status = 'reserved', queued_at = NULL, "
+                    # V67: a reserved battle must be unbound — drop the task the
+                    # queue admission snapshotted, or battle_task_unbound_before_queue
+                    # rejects the revert.
+                    "task_id = NULL, task_title_snapshot = NULL, "
+                    "task_prompt_snapshot = NULL, task_rubric_snapshot = NULL, "
+                    "time_limit_seconds_snapshot = NULL, "
                     "challenge_expires_at = NOW() - INTERVAL '1 second', "
                     "ready_lease_expires_at = NOW() - INTERVAL '1 second' "
                     "WHERE id = CAST(:b AS UUID)"

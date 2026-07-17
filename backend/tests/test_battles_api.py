@@ -30,6 +30,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
+from conftest import split_sql_statements
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -56,6 +57,7 @@ from app.services.battle_service import (
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
+V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
 
 RUBRIC = [{"criterion": "correctness", "weight": 1.0}]
 
@@ -120,9 +122,9 @@ async def engine(pg_container):
     """FK targets + the REAL V65 and V66 migrations, applied exactly once."""
     async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
     eng = create_async_engine(async_url, future=True)
-    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()}"
+    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};{V67_PATH.read_text()}"
     async with eng.begin() as conn:
-        for stmt in sql.split(";"):
+        for stmt in split_sql_statements(sql):
             if stmt.strip():
                 await conn.execute(text(stmt))
     yield eng
@@ -190,16 +192,52 @@ async def make_agent(db, owner_id):
 
 @pytest_asyncio.fixture(loop_scope="module")
 async def task_id(db, owner_id) -> str:
-    tid = await BattleRepository(db).create_task(
+    # V67: a challenge over an "any" filter needs a fresh pool of at least
+    # MINIMUM_TASK_POOL (20). Seed a full pool of IDENTICAL general/medium tasks
+    # so admission passes and any bound task yields the same snapshot; return one
+    # representative id for the transition-test helpers.
+    repo = BattleRepository(db)
+    tid = await repo.create_task(
         source=TaskSource.GENERATED,
+        category="general",
         title="Write a parser",
         prompt="Parse this log format.",
         rubric=RUBRIC,
         time_limit_seconds=600,
         created_by_user_id=owner_id,
     )
+    for _ in range(24):
+        await repo.create_task(
+            source=TaskSource.GENERATED,
+            category="general",
+            title="Write a parser",
+            prompt="Parse this log format.",
+            rubric=RUBRIC,
+            time_limit_seconds=600,
+            created_by_user_id=owner_id,
+        )
     await db.commit()
     return tid
+
+
+async def _try_queue(svc, db, battle_id, generation):
+    """try_queue with a freshly stamped bind lease (V67 binding is lease-fenced).
+
+    admit_to_queue now requires the row's lease_token + a live lease, so a test
+    that queues a reserved battle must first claim it the way the reconciler's
+    reserved phase does. Stamped in the SAME session so it is visible to the
+    binding transaction without a commit; the binding clears it on success.
+    """
+    token = str(uuid.uuid4())
+    await db.execute(
+        text(
+            "UPDATE battles SET lease_token = CAST(:t AS UUID), "
+            "lease_expires_at = NOW() + make_interval(secs => 15) "
+            "WHERE id = CAST(:b AS UUID)"
+        ),
+        {"t": token, "b": str(battle_id)},
+    )
+    return await svc.try_queue(str(battle_id), generation, token)
 
 
 async def _count_battles(db, agent_b_id: str) -> int:
@@ -236,7 +274,8 @@ async def test_battle_admission_and_ready_gate_fail_closed(
     for _ in range(TARGET_CHALLENGE_CAP):
         challenger = await make_agent()
         await svc.create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=challenger,
             challenger_owner_user_id=owner_id,
             agent_b_id=target,
@@ -249,7 +288,8 @@ async def test_battle_admission_and_ready_gate_fail_closed(
     over_cap = await make_agent()
     with pytest.raises(ChallengeDeniedError) as denied:
         await svc.create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=over_cap,
             challenger_owner_user_id=owner_id,
             agent_b_id=target,
@@ -268,7 +308,8 @@ async def test_battle_admission_and_ready_gate_fail_closed(
     # the path taken by any caller that skips diagnose_challenge, and the only
     # thing standing between a capped target and a battle row.
     direct = await svc.repo.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=over_cap,
         agent_a_owner_snapshot=owner_id,
         challenge_ttl_seconds=60,
@@ -302,7 +343,8 @@ async def test_ineligible_target_is_denied_and_creates_no_row(
 
     with pytest.raises(ChallengeDeniedError) as denied:
         await BattleService(db).create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=challenger,
             challenger_owner_user_id=owner_id,
             agent_b_id=target,
@@ -321,7 +363,8 @@ async def test_decline_starts_cooldown_that_blocks_the_next_challenge(
     svc = BattleService(db)
 
     battle_id = await svc.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=challenger,
         challenger_owner_user_id=owner_id,
         agent_b_id=target,
@@ -333,7 +376,8 @@ async def test_decline_starts_cooldown_that_blocks_the_next_challenge(
 
     with pytest.raises(ChallengeDeniedError) as denied:
         await svc.create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=challenger,
             challenger_owner_user_id=owner_id,
             agent_b_id=target,
@@ -360,7 +404,8 @@ async def test_block_list_denies_and_creates_no_row(
 
     with pytest.raises(ChallengeDeniedError) as denied:
         await BattleService(db).create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=challenger,
             challenger_owner_user_id=owner_id,
             agent_b_id=target,
@@ -389,7 +434,8 @@ async def test_limiter_outage_creates_no_battle_row(
 
     with pytest.raises(LimiterUnavailableError):
         await BattleService(db).create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=challenger,
             challenger_owner_user_id=owner_id,
             agent_b_id=target,
@@ -405,7 +451,8 @@ async def test_one_pending_challenge_per_pair(db, owner_id, task_id, make_agent)
     svc = BattleService(db)
 
     await svc.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=challenger,
         challenger_owner_user_id=owner_id,
         agent_b_id=target,
@@ -414,7 +461,8 @@ async def test_one_pending_challenge_per_pair(db, owner_id, task_id, make_agent)
 
     with pytest.raises(ChallengeDeniedError) as denied:
         await svc.create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=challenger,
             challenger_owner_user_id=owner_id,
             agent_b_id=target,
@@ -440,7 +488,8 @@ async def test_challenger_rate_limit_names_the_challenger_not_the_target(
 
     with pytest.raises(ChallengeDeniedError) as denied:
         await BattleService(db).create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=challenger,
             challenger_owner_user_id=owner_id,
             agent_b_id=await make_agent(),
@@ -463,7 +512,8 @@ async def test_list_battles_filters_by_status_and_lists_unfiltered(
     target = await make_agent()
     challenger = await make_agent()
     battle_id = await BattleService(db).create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=challenger,
         challenger_owner_user_id=owner_id,
         agent_b_id=target,
@@ -504,7 +554,8 @@ async def test_owner_can_opt_in_and_out_and_the_gate_follows(
     # Opted out (the DEFAULT state of every agent): challenge is refused.
     with pytest.raises(ChallengeDeniedError) as denied:
         await svc.create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=challenger,
             challenger_owner_user_id=owner_id,
             agent_b_id=target,
@@ -516,7 +567,8 @@ async def test_owner_can_opt_in_and_out_and_the_gate_follows(
     assert await repo.set_battle_availability(target, owner_id, True) is True
     await db.commit()
     battle_id = await svc.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=challenger,
         challenger_owner_user_id=owner_id,
         agent_b_id=target,
@@ -530,7 +582,8 @@ async def test_owner_can_opt_in_and_out_and_the_gate_follows(
     other = await make_agent()
     with pytest.raises(ChallengeDeniedError) as denied_again:
         await svc.create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=other,
             challenger_owner_user_id=owner_id,
             agent_b_id=target,
@@ -554,7 +607,8 @@ async def test_opting_out_does_not_disturb_a_battle_already_under_way(
     challenger = await make_agent()
     svc = BattleService(db)
     battle_id = await svc.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=challenger,
         challenger_owner_user_id=owner_id,
         agent_b_id=target,
@@ -611,7 +665,8 @@ async def test_accept_by_a_user_who_no_longer_owns_the_agent_is_refused(
     svc = BattleService(db)
 
     battle_id = await svc.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=agent_a,
         challenger_owner_user_id=owner_id,
         agent_b_id=agent_b,
@@ -659,7 +714,8 @@ async def test_decline_by_a_user_who_does_not_own_the_agent_is_refused(
     challenger = await make_agent()
     svc = BattleService(db)
     battle_id = await svc.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=challenger,
         challenger_owner_user_id=owner_id,
         agent_b_id=target,
@@ -699,7 +755,8 @@ async def test_decline_still_works_for_an_ineligible_agent(
     challenger = await make_agent()
     svc = BattleService(db)
     battle_id = await svc.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=challenger,
         challenger_owner_user_id=owner_id,
         agent_b_id=target,
@@ -727,7 +784,8 @@ async def test_accept_by_a_stranger_is_refused(db, owner_id, task_id, make_agent
     agent_b = await make_agent()
     svc = BattleService(db)
     battle_id = await svc.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=agent_a,
         challenger_owner_user_id=owner_id,
         agent_b_id=agent_b,
@@ -750,7 +808,8 @@ async def open_challenge(db, owner_id, task_id, make_agent):
     async def _open() -> tuple[str, str]:
         challenger = await make_agent()
         battle_id = await BattleService(db).create_challenge(
-            task_id=task_id,
+            task_category=None,
+        task_difficulty=None,
             agent_a_id=challenger,
             challenger_owner_user_id=owner_id,
             agent_b_id=None,
@@ -888,7 +947,8 @@ async def armed_battle(db, owner_id, task_id, make_agent):
     svc = BattleService(db)
 
     battle_id = await svc.create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=agent_a,
         challenger_owner_user_id=owner_id,
         agent_b_id=agent_b,
@@ -956,7 +1016,7 @@ async def test_consent_alone_never_queues_a_battle(db, armed_battle):
     """Owner consent is fact 1. It is not readiness, and it never queues."""
     svc = BattleService(db)
     assert armed_battle["agent_b_accepted_at"] is not None
-    queued = await svc.try_queue(
+    queued = await _try_queue(svc, db,
         str(armed_battle["id"]), armed_battle["readiness_generation"]
     )
     assert queued is None
@@ -972,7 +1032,7 @@ async def test_one_missing_ack_never_queues(db, armed_battle):
     await db.commit()
 
     assert (
-        await svc.try_queue(
+        await _try_queue(svc, db,
             str(armed_battle["id"]), armed_battle["readiness_generation"]
         )
         is None
@@ -989,7 +1049,7 @@ async def test_wrong_agent_ack_never_queues(db, armed_battle):
     await db.commit()
     assert acked == []
     assert (
-        await svc.try_queue(
+        await _try_queue(svc, db,
             str(armed_battle["id"]), armed_battle["readiness_generation"]
         )
         is None
@@ -1018,7 +1078,7 @@ async def test_expired_lease_never_queues_and_releases_both(db, armed_battle):
     )
     await db.commit()
 
-    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"]) is None
+    assert await _try_queue(svc, db, battle_id, armed_battle["readiness_generation"]) is None
 
     released = await svc.release_expired_readiness(battle_id)
     await db.commit()
@@ -1069,9 +1129,9 @@ async def test_stale_generation_ack_never_queues(db, armed_battle):
     assert rearmed["readiness_generation"] > old_generation
 
     # The old generation is gone.
-    assert await svc.try_queue(battle_id, old_generation) is None
+    assert await _try_queue(svc, db, battle_id, old_generation) is None
     # And the new one is not satisfied by the ACKs of the old events.
-    assert await svc.try_queue(battle_id, rearmed["readiness_generation"]) is None
+    assert await _try_queue(svc, db, battle_id, rearmed["readiness_generation"]) is None
 
 
 async def _ack_both(svc, armed_battle) -> None:
@@ -1102,7 +1162,7 @@ async def test_reaped_reservations_never_queue_the_battle(db, armed_battle):
     await db.commit()
     assert len(freed) == 2
 
-    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"]) is None
+    assert await _try_queue(svc, db, battle_id, armed_battle["readiness_generation"]) is None
 
 
 async def test_owner_change_after_ack_never_queues(db, armed_battle):
@@ -1129,7 +1189,7 @@ async def test_owner_change_after_ack_never_queues(db, armed_battle):
     )
     await db.commit()
 
-    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"]) is None
+    assert await _try_queue(svc, db, battle_id, armed_battle["readiness_generation"]) is None
 
 
 async def test_deactivated_fighter_after_ack_never_queues(db, armed_battle):
@@ -1150,7 +1210,7 @@ async def test_deactivated_fighter_after_ack_never_queues(db, armed_battle):
     )
     await db.commit()
 
-    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"]) is None
+    assert await _try_queue(svc, db, battle_id, armed_battle["readiness_generation"]) is None
 
 
 async def test_start_refuses_a_battle_holding_no_reservations(db, armed_battle):
@@ -1165,7 +1225,7 @@ async def test_start_refuses_a_battle_holding_no_reservations(db, armed_battle):
     await _ack_both(svc, armed_battle)
     await db.commit()
 
-    queued = await svc.try_queue(battle_id, armed_battle["readiness_generation"])
+    queued = await _try_queue(svc, db, battle_id, armed_battle["readiness_generation"])
     await db.commit()
     assert queued is not None
 
@@ -1189,7 +1249,7 @@ async def test_start_refuses_a_deactivated_fighter(db, armed_battle):
     await _ack_both(svc, armed_battle)
     await db.commit()
 
-    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"])
+    assert await _try_queue(svc, db, battle_id, armed_battle["readiness_generation"])
     await db.commit()
 
     await db.execute(
@@ -1215,7 +1275,7 @@ async def test_start_succeeds_when_everything_still_holds(db, armed_battle):
     await _ack_both(svc, armed_battle)
     await db.commit()
 
-    assert await svc.try_queue(battle_id, armed_battle["readiness_generation"])
+    assert await _try_queue(svc, db, battle_id, armed_battle["readiness_generation"])
     await db.commit()
 
     started = await repo.start_if_still_eligible(
@@ -1239,7 +1299,7 @@ async def test_both_current_acks_queue_the_battle(db, armed_battle):
         assert len(acked) == 1
     await db.commit()
 
-    queued = await svc.try_queue(battle_id, armed_battle["readiness_generation"])
+    queued = await _try_queue(svc, db, battle_id, armed_battle["readiness_generation"])
     await db.commit()
     assert queued is not None
     assert queued["status"] == BattleStatus.QUEUED.value
@@ -1270,7 +1330,8 @@ async def _running_battle(db, task_id: str, make_agent) -> str:
     agent_a, agent_b = await make_agent(), await make_agent()
 
     battle_id = await repo._create_battle(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=agent_a,
         agent_a_owner_snapshot=str(uuid.uuid4()),
         challenge_ttl_seconds=3600,
@@ -1370,7 +1431,8 @@ async def test_a_fighter_sees_only_its_own_side_while_running(
     repo = BattleRepository(db)
     agent_a, agent_b = await make_agent(), await make_agent()
     battle_id = await repo._create_battle(
-        task_id=task_id, agent_a_id=agent_a, agent_a_owner_snapshot=str(uuid.uuid4()),
+        task_category=None,
+        task_difficulty=None, agent_a_id=agent_a, agent_a_owner_snapshot=str(uuid.uuid4()),
         challenge_ttl_seconds=3600, agent_b_id=agent_b, agent_b_owner_snapshot=str(uuid.uuid4()),
     )
     await repo._mark_accepted(battle_id)
@@ -1550,7 +1612,8 @@ async def _pending_challenge(db, owner_id, task_id, make_agent) -> tuple[str, st
     challenger = await make_agent()  # owned by owner_id
     target = await make_agent(owner=target_owner)
     battle_id = await BattleService(db).create_challenge(
-        task_id=task_id,
+        task_category=None,
+        task_difficulty=None,
         agent_a_id=challenger,
         challenger_owner_user_id=owner_id,
         agent_b_id=target,
@@ -1641,7 +1704,11 @@ async def test_claiming_an_open_challenge_notifies_the_challenger(
     """Claiming an OPEN challenge notifies the waiting challenger, not the claimer."""
     challenger = await make_agent()
     battle_id = await BattleService(db).create_challenge(
-        task_id=task_id, agent_a_id=challenger, challenger_owner_user_id=owner_id, agent_b_id=None
+        task_category=None,
+        task_difficulty=None,
+        agent_a_id=challenger,
+        challenger_owner_user_id=owner_id,
+        agent_b_id=None,
     )
     await db.commit()
 
