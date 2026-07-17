@@ -1043,7 +1043,7 @@ class TestTheWholeChain:
         # test would hit real Redis/webhooks and prove only that CI has no network.
         drive = partial(
             reconcile_once, session_factory=session_maker, gate=None,
-            api_key="unused", base_url="http://unused",
+            provider={"api_key": "unused", "base_url": "http://unused"},
         )
 
         # -- pass 1: accepted -> reserved, and the ready-checks GO OUT ---------
@@ -1258,6 +1258,165 @@ async def _fake_half(**kwargs) -> JudgeRunResult:
     return JudgeRunResult(presented_order=kwargs["order"], vote=Vote.A, confidence=0.9)
 
 
+class TestProviderOutageDoesNotFreezeLifecycle:
+    """The blocker: a judge-provider outage must not freeze the WHOLE lifecycle.
+
+    reconcile_once drives BOTH the free DB-only phases (arm accepted->reserved,
+    admit reserved->queued, start queued->running, close_deadline
+    running->judging) AND the reaper (expire challenges, release stranded
+    reservations) — none of which need the judge provider. Only the judging
+    phase spends provider calls. Before the fix, run_once resolved the provider
+    FIRST and returned the entire pass when it was None, so a z.ai key that was
+    unset/rotated/geo-blocked (this platform's active failure mode) silently
+    stalled every battle at every stage and stopped all cleanup, not just
+    scoring.
+
+    This drives ONE reconcile pass with provider=None and asserts every free
+    phase still advances and the reaper still runs. A battle already in 'judging'
+    stays there (judging genuinely needs the model) — it waits, it does not error
+    or abort.
+
+    MUTATION: restore `if provider is None: return` at the top of reconcile_once
+    (equivalently run_once's early return) and this test fails — nothing advances
+    and nothing is reaped.
+    """
+
+    async def test_free_phases_and_reaper_run_without_a_provider(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        repo = BattleRepository(db_session)
+        events = AgentEventRepository(db_session)
+
+        async def _opt_in(agent: str, owner: str) -> None:
+            await db_session.execute(
+                text(
+                    "UPDATE agents SET available_for_battles = TRUE, is_active = TRUE, "
+                    "owner_user_id = CAST(:o AS UUID) WHERE id = CAST(:a AS UUID)"
+                ),
+                {"o": owner, "a": agent},
+            )
+
+        # -- 1. an ACCEPTED battle, ready to arm (accepted -> reserved) --------
+        owner_a, owner_b = await _new_owner(db_session), await _new_owner(db_session)
+        agent_a, agent_b = await _new_agent(db_session), await _new_agent(db_session)
+        await _opt_in(agent_a, owner_a)
+        await _opt_in(agent_b, owner_b)
+        accepted_id = await repo._create_battle(
+            task_id=task_id, agent_a_id=agent_a, agent_a_owner_snapshot=owner_a,
+            challenge_ttl_seconds=3600, agent_b_id=agent_b, agent_b_owner_snapshot=owner_b,
+        )
+        assert await repo._mark_accepted(accepted_id) is not None
+
+        # -- 2. a RESERVED battle with both fighters acked (reserved -> queued) -
+        r_owner_a, r_owner_b = await _new_owner(db_session), await _new_owner(db_session)
+        r_agent_a, r_agent_b = await _new_agent(db_session), await _new_agent(db_session)
+        await _opt_in(r_agent_a, r_owner_a)
+        await _opt_in(r_agent_b, r_owner_b)
+        reserved_id = await repo._create_battle(
+            task_id=task_id, agent_a_id=r_agent_a, agent_a_owner_snapshot=r_owner_a,
+            challenge_ttl_seconds=3600, agent_b_id=r_agent_b, agent_b_owner_snapshot=r_owner_b,
+        )
+        assert await repo._mark_accepted(reserved_id) is not None
+        assert len(await repo.reserve_both(reserved_id, r_agent_a, r_agent_b, 600)) == 2
+        ev_a = await events.create(r_agent_a, "battle_ready_check", {}, ttl_seconds=60)
+        ev_b = await events.create(r_agent_b, "battle_ready_check", {}, ttl_seconds=60)
+        assert await repo.arm_readiness(reserved_id, ev_a, ev_b, 60) is not None
+        # Both fighters ack, so admit_to_queue's precondition holds this pass.
+        assert len(await events.mark_acked(r_agent_a, [str(ev_a)])) == 1
+        assert len(await events.mark_acked(r_agent_b, [str(ev_b)])) == 1
+        await db_session.commit()
+        async with session_maker() as s:
+            assert (await BattleRepository(s).get(reserved_id))["status"] == "reserved"
+
+        # -- 3. a QUEUED battle, eligible (queued -> running) ------------------
+        queued_id, _, _ = await _build_queued_battle(db_session, task_id)
+
+        # -- 4. a RUNNING battle past its deadline (running -> judging, FREE) ---
+        running_id, _, _, _ = await _battle_running(db_session, task_id)
+        async with session_maker() as s:
+            await s.execute(
+                text(
+                    "UPDATE battles SET challenged_at = NOW() - INTERVAL '30 minutes', "
+                    "queued_at = NOW() - INTERVAL '20 minutes', "
+                    "started_at = NOW() - INTERVAL '10 minutes', "
+                    "deadline_at = NOW() - INTERVAL '1 second', "
+                    "lease_token = NULL, lease_expires_at = NULL "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": running_id},
+            )
+            await s.commit()
+
+        # -- 5. a battle already in JUDGING — must WAIT, not error/abort -------
+        judging_id, _, _, _ = await _battle_in_judging(db_session, task_id, votes=[Vote.A])
+
+        # -- 6. an expired challenge (reaper -> expired) -----------------------
+        exp_owner = await _new_owner(db_session)
+        exp_a, exp_b = await _new_agent(db_session), await _new_agent(db_session)
+        expired_id = await repo._create_battle(
+            task_id=task_id, agent_a_id=exp_a, agent_a_owner_snapshot=exp_owner,
+            challenge_ttl_seconds=3600, agent_b_id=exp_b, agent_b_owner_snapshot=exp_owner,
+        )
+        await db_session.execute(
+            text(
+                "UPDATE battles SET challenge_expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"b": expired_id},
+        )
+
+        # -- 7. a stranded reservation on a non-live battle (reaper releases) --
+        res_owner = await _new_owner(db_session)
+        res_a, res_b = await _new_agent(db_session), await _new_agent(db_session)
+        stranded_res_id = await repo._create_battle(
+            task_id=task_id, agent_a_id=res_a, agent_a_owner_snapshot=res_owner,
+            challenge_ttl_seconds=3600, agent_b_id=res_b, agent_b_owner_snapshot=res_owner,
+        )
+        await db_session.execute(
+            text(
+                "INSERT INTO battle_reservations (agent_id, battle_id, reserved_until, created_at) "
+                "VALUES (CAST(:a AS UUID), CAST(:b AS UUID), NOW() - INTERVAL '1 second', "
+                "NOW() - INTERVAL '2 minutes')"
+            ),
+            {"a": res_a, "b": stranded_res_id},
+        )
+        await db_session.commit()
+
+        # -- ONE reconcile pass, with NO provider ------------------------------
+        # gate=None is safe: only run_judge_panel touches the gate, and the
+        # judging phase is exactly what a None provider skips. _no_transport
+        # silences the arm/start ready-check + turn dispatch.
+        with _no_transport():
+            counts = await reconcile_once(
+                session_factory=session_maker, gate=None, provider=None
+            )
+
+        # Free lifecycle advanced at every stage, with NO provider:
+        assert counts["armed"] >= 1, counts
+        assert counts["queued"] >= 1, counts
+        assert counts["started"] >= 2, counts  # the reserved AND the queued battle
+        assert counts["judged"] >= 1, counts  # close_deadline: running -> judging
+        # Reaper ran:
+        assert counts["expired"] >= 1, counts
+        assert counts["reservations_reaped"] >= 1, counts
+        # Judging phase was skipped, so nothing settled this pass:
+        assert counts["settled"] == 0, counts
+
+        async with session_maker() as s:
+            get = BattleRepository(s).get
+            assert (await get(accepted_id))["status"] == "reserved"
+            assert (await get(reserved_id))["status"] == "running"  # admitted then started
+            assert (await get(queued_id))["status"] == "running"
+            assert (await get(running_id))["status"] == "judging"  # closed, awaiting a judge
+            assert (await get(expired_id))["status"] == "expired"
+            # The battle already in judging simply waits for a provider — it is
+            # neither errored nor aborted.
+            assert (await get(judging_id))["status"] == "judging"
+
+        # The stranded reservation was released.
+        assert await _reservation_count(session_maker, stranded_res_id) == 0
+
+
 class TestDeadlineGate:
     """F1: a running battle is closed only when it is actually finished."""
 
@@ -1340,7 +1499,7 @@ class TestJudgingResume:
 
         drive = partial(
             reconcile_once, session_factory=session_maker, gate=None,
-            api_key="unused", base_url="http://unused",
+            provider={"api_key": "unused", "base_url": "http://unused"},
         )
         with _no_transport(), patch(
             "app.services.battle_runner.BattleRunner.run_judge_panel",
@@ -2381,7 +2540,8 @@ class TestLifecycleBranches:
             "app.services.battle_runner.BattleRunner._run_one_half", side_effect=_fake_half
         ), patch("app.services.agent_service.AgentService.create_notification_task", AsyncMock()):
             await reconcile_once(
-                session_factory=session_maker, gate=None, api_key="k", base_url="http://u"
+                session_factory=session_maker, gate=None,
+                provider={"api_key": "k", "base_url": "http://u"},
             )
 
         async with session_maker() as session:

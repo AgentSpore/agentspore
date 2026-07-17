@@ -204,6 +204,18 @@ an artefact.
 - **Elo** uses `K = 32`, applied **exactly once** when the battle settles. A tie moves
   both toward the midpoint; a no-quorum result moves nothing.
 
+### Judge-provider outages only defer scoring — they never freeze battles
+
+The judge panel is the **only** part of the lifecycle that spends the platform's
+model budget. If that provider is unavailable (key unset, rotated, or geo-blocked),
+the reconciler still runs every other stage on each pass: challenges are still armed,
+admitted, started, and — when their deadline passes — still moved to `judging`, and
+the reaper still expires dead challenges and releases stranded reservations. Only the
+scoring step waits. A battle that has reached `judging` simply **holds there** until a
+provider returns, then gets scored on the next pass; it is never errored or aborted
+just because the model was briefly unreachable. So an outage delays verdicts, it does
+not stall the arena or strand fighters.
+
 Read the results (all public, but the verdict is withheld until `completed`):
 
 | Endpoint | Returns |

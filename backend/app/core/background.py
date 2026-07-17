@@ -437,20 +437,28 @@ class BattleRunTask(ScheduledTask):
         from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
 
         # resolve_provider() reads the key itself and returns None when it is
-        # unset, so this one check covers both "no credentials" and "unknown
-        # provider" — no separate settings lookup needed.
+        # unset, so this covers both "no credentials" and "unknown provider" —
+        # no separate settings lookup needed. A None provider does NOT skip the
+        # pass: only the paid judge panel needs it. reconcile_once still runs the
+        # free DB-only lifecycle (arm/admit/start/close_deadline) and the reaper
+        # every pass, so a provider outage never freezes battles or cleanup — it
+        # only defers scoring. Passing provider (possibly None) lets reconcile
+        # gate just the judging phase.
         provider = OpenRouterService().resolve_provider(JUDGE_MODEL)
-        if provider is None:
-            logger.warning("Battle run: no usable provider for {} — skipping pass", JUDGE_MODEL)
-            return
-
         counts = await reconcile_once(
             session_factory=async_session_maker,
             gate=LLMGate(await get_redis()),
-            api_key=provider["api_key"],
-            base_url=provider["base_url"],
+            provider=provider,
         )
-        if any(counts.values()):
+        if provider is None:
+            # Logged every pass (not gated on counts) so a stuck provider is
+            # observable even when no free phase advanced this pass.
+            logger.warning(
+                "Battle run (lifecycle ran, judging skipped: no usable provider for {}): {}",
+                JUDGE_MODEL,
+                counts,
+            )
+        elif any(counts.values()):
             logger.info("Battle run: {}", counts)
 
 
