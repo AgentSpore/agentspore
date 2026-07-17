@@ -93,6 +93,29 @@ RESERVATION_SECONDS = READY_LEASE_SECONDS + 30
 # next one, and short enough that a silent opponent cannot grief for a day.
 READY_MAX_GENERATIONS = 3
 
+# The abort reason recorded when both fighters proved readiness but no fresh
+# task matched the requested category/difficulty at binding time (V67). Honest
+# and specific: the battle did not fail for lack of an opponent or a missed
+# ACK, it failed because the pool the challenger asked for was exhausted.
+POOL_EXHAUSTED_REASON = (
+    "task pool exhausted for requested category/difficulty"
+)
+
+
+def normalize_task_category(category: str | None) -> str | None:
+    """Trim and lowercase a task category, or pass None through unchanged.
+
+    The ONE normalisation both the challenge filter and task creation use, so
+    "Backend", " backend " and "backend" bucket together. None ("any") stays
+    None. A value that is blank after trimming also becomes None: an all-space
+    category is not a category, and the Pydantic ``min_length=1`` on the request
+    only rejects an empty string, not "   ".
+    """
+    if category is None:
+        return None
+    trimmed = category.strip().lower()
+    return trimmed or None
+
 
 class ChallengeDeniedError(Exception):
     """An admission gate refused. ``reason`` names which one."""
@@ -149,12 +172,20 @@ class BattleService:
 
     async def create_challenge(
         self,
-        task_id: str,
+        task_category: str | None,
+        task_difficulty: str | None,
         agent_a_id: str,
         challenger_owner_user_id: str,
         agent_b_id: str | None = None,
     ) -> str:
-        """Create a challenge. Returns the battle id. Does not commit.
+        """Create a challenge over a task FILTER. Returns the battle id. No commit.
+
+        The challenger names a category and difficulty (either may be None =
+        "any"), never a task id (V67): the concrete task is chosen only at
+        binding, after both sides prove readiness, so nothing can be
+        precomputed. The category is normalised (trimmed + lowercased) so
+        "Backend", " backend " and "backend" bucket together with the tasks,
+        which are created through the same normalisation.
 
         ``agent_b_id=None`` opens the challenge to any eligible claimant.
 
@@ -163,12 +194,15 @@ class BattleService:
         before the insert too, so the per-target cap counts against a target
         nobody else is concurrently challenging.
 
-        Raises ChallengeDeniedError (a rule refused) or LimiterUnavailableError (we could
-        not tell). Both leave no battle row — the caller's transaction is
-        rolled back on the exception path and, more fundamentally, the insert
-        itself re-checks every rule and simply matches no rows.
+        Raises ChallengeDeniedError (a rule refused, incl. an exhausted task
+        pool) or LimiterUnavailableError (we could not tell). Both leave no
+        battle row — the caller's transaction is rolled back on the exception
+        path and, more fundamentally, the insert itself re-checks every rule and
+        simply matches no rows.
         """
         await self._check_challenger_rate_limit(agent_a_id)
+
+        category = normalize_task_category(task_category)
 
         target_owner: str | None = None
         if agent_b_id:
@@ -176,7 +210,8 @@ class BattleService:
             target_owner = await self._require_owner_snapshot(agent_b_id)
 
         denial = await self.repo.diagnose_challenge(
-            task_id=task_id,
+            task_category=category,
+            task_difficulty=task_difficulty,
             agent_a_id=agent_a_id,
             challenger_owner_user_id=challenger_owner_user_id,
             agent_b_id=agent_b_id,
@@ -187,7 +222,8 @@ class BattleService:
             raise ChallengeDeniedError(denial)
 
         battle_id = await self.repo.create_challenge(
-            task_id=task_id,
+            task_category=category,
+            task_difficulty=task_difficulty,
             agent_a_id=agent_a_id,
             agent_a_owner_snapshot=challenger_owner_user_id,
             challenge_ttl_seconds=CHALLENGE_TTL_SECONDS,
@@ -204,7 +240,7 @@ class BattleService:
                 "Challenge insert refused after clean diagnosis: a={} b={}",
                 agent_a_id, agent_b_id,
             )
-            raise ChallengeDeniedError(ChallengeDenial.TARGET_CAPPED)
+            raise ChallengeDeniedError(ChallengeDenial.INSUFFICIENT_TASK_POOL)
         return battle_id
 
     async def _require_owner_snapshot(self, agent_id: str) -> str | None:
@@ -401,20 +437,57 @@ class BattleService:
                 )
         return results
 
-    async def try_queue(self, battle_id: str, readiness_generation: int) -> dict | None:
-        """reserved -> queued, iff every admission condition holds. No commit.
+    async def try_queue(
+        self, battle_id: str, readiness_generation: int, lease_token: str
+    ) -> dict | None:
+        """reserved -> queued AND bind a task, iff every condition holds. No commit.
 
-        Returns the queued battle, or None when it is not (yet) admissible.
-        None is not an error: the usual reason is that an agent simply has not
-        acked yet, and the caller retries until the lease lapses.
+        Returns the queued+bound battle, or None when it is not (yet)
+        admissible — including the pool-exhausted case, which the caller
+        distinguishes via :meth:`abort_pool_exhausted`. None is not an error:
+        the usual reason is that an agent simply has not acked yet, and the
+        caller retries until the lease lapses.
 
         One statement does all of it — consent, eligibility, ownership, live
-        reservations and both exact ready-ACKs. Readiness alone was never the
-        whole question: an agent can change owner or be deactivated after
-        acking, and the reservations can be reaped out from under a battle that
-        is still holding a live lease.
+        reservations, both exact ready-ACKs, the processing lease, AND the task
+        binding (random fresh task matching the filter, snapshotted). Readiness
+        alone was never the whole question: an agent can change owner or be
+        deactivated after acking, and the reservations can be reaped out from
+        under a battle that is still holding a live lease. The ``lease_token`` is
+        the reconciler claim token, so only the worker that claimed the reserved
+        row may bind it (V67).
         """
-        return await self.repo.admit_to_queue(battle_id, readiness_generation)
+        return await self.repo.admit_to_queue(
+            battle_id, readiness_generation, lease_token
+        )
+
+    async def abort_pool_exhausted(
+        self, battle_id: str, readiness_generation: int, lease_token: str
+    ) -> dict | None:
+        """reserved -> aborted when readiness holds but the task pool is empty.
+
+        The terminal for a rated challenge whose filter has fewer than the
+        minimum fresh tasks at binding time (V67). Distinct from a readiness
+        lapse: here BOTH sides ACKed, so the abort CAS re-proves the full
+        readiness/lease/eligibility/ACK predicate set and asserts the pool
+        really is below the minimum before firing — a battle merely still
+        waiting for an ACK falls through as None and is retried, never aborted.
+
+        Releases both reservations in the same transaction; Elo is untouched (no
+        shared start happened). Returns the aborted row, or None when the battle
+        was not in the exhausted shape. Does not commit — the caller owns the
+        boundary and fires the terminal owner notification after committing.
+        """
+        aborted = await self.repo.abort_pool_exhausted(
+            battle_id=battle_id,
+            readiness_generation=readiness_generation,
+            lease_token=lease_token,
+            verdict_reason=POOL_EXHAUSTED_REASON,
+        )
+        if aborted is None:
+            return None
+        await self.repo.release_reservations(battle_id)
+        return aborted
 
     async def release_expired_readiness(self, battle_id: str) -> dict | None:
         """reserved -> accepted once the lease lapsed. Frees BOTH. No commit.

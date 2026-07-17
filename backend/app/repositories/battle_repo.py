@@ -63,7 +63,10 @@ class ChallengeDenial(str, Enum):
     say WHICH rule bit rather than a generic "denied".
     """
 
-    TASK_UNAVAILABLE = "task_unavailable"
+    # Fewer than MINIMUM_TASK_POOL fresh, ready tasks match the requested
+    # category/difficulty (V67). Advisory at challenge time — binding re-checks
+    # it, because tasks can be retired or cool down between here and readiness.
+    INSUFFICIENT_TASK_POOL = "insufficient_task_pool"
     CHALLENGER_INELIGIBLE = "challenger_ineligible"
     # The CALLER exhausted its own hourly quota. Distinct from TARGET_CAPPED:
     # reporting "the target is full" to a challenger that is itself the problem
@@ -80,6 +83,24 @@ class ChallengeDenial(str, Enum):
 # Namespace for pg_advisory_xact_lock, so battle challenge locks cannot collide
 # with any other advisory-lock user in this database. Arbitrary but fixed.
 CHALLENGE_LOCK_NAMESPACE = 0x62_74_6C_31  # "btl1"
+
+# A SECOND, GLOBAL advisory namespace for the reserved -> queued task binding
+# (V67). Global, not per-filter, on purpose: an "any" filter overlaps every
+# category-specific pool, so serialising only identical filter strings would
+# still let an "any" bind and a "backend/hard" bind select and count the same
+# pool concurrently — and both could pick the same task. Binding is DB-only and
+# short, so one global lock is the pragmatic phase-1 answer. A single fixed key
+# (not the two-arg hashtext form) means every binder waits on the same lock.
+TASK_POOL_LOCK_NAMESPACE = 0x62_74_6C_32  # "btl2"
+
+# The anti-precompute policy (V67), all three cheap mitigations:
+#   * random selection from the matching ready pool,
+#   * a global reuse cooldown, and
+#   * a minimum anonymity set — a filter with fewer than this many fresh tasks
+#     cannot accept a rated challenge, so no binding ever chooses from a pool
+#     small enough to guess.
+MINIMUM_TASK_POOL = 20
+TASK_REUSE_COOLDOWN_DAYS = 30
 
 # An agent is eligible to fight only while all four hold. Hosted agents are
 # excluded because their inference is paid by the platform, not by an owner who
@@ -200,12 +221,15 @@ class BattleRepository:
 
     async def diagnose_challenge(
         self,
-        task_id: str,
+        task_category: str | None,
+        task_difficulty: str | None,
         agent_a_id: str,
         challenger_owner_user_id: str,
         agent_b_id: str | None,
         target_cap: int,
         target_window_seconds: int,
+        minimum_pool_size: int = MINIMUM_TASK_POOL,
+        cooldown_days: int = TASK_REUSE_COOLDOWN_DAYS,
     ) -> ChallengeDenial | None:
         """Name the first rule that refuses this challenge. None = admissible.
 
@@ -215,15 +239,31 @@ class BattleRepository:
         which re-checks every one of these in the INSERT itself. This exists so a
         refusal can say "cooldown" instead of "no", which a single boolean from
         the INSERT can never do.
+
+        The task check is no longer "does this id exist" but "does the requested
+        category/difficulty filter currently have at least ``minimum_pool_size``
+        fresh, ready tasks" (V67). It counts the same pool binding will draw
+        from, so a challenge is refused up front when its combination is
+        exhausted — but the count is advisory, because tasks can be retired or
+        cool down before readiness, which is why binding re-checks it.
         """
         result = await self.db.execute(
             text(
                 f"""
                 SELECT
-                    EXISTS (
-                        SELECT 1 FROM battle_tasks t
-                        WHERE t.id = CAST(:task_id AS UUID) AND t.status = 'ready'
-                    ) AS task_ok,
+                    (
+                        SELECT COUNT(*) FROM battle_tasks t
+                        WHERE t.status = 'ready'
+                          AND (CAST(:task_category AS TEXT) IS NULL
+                               OR t.category = CAST(:task_category AS TEXT))
+                          AND (CAST(:task_difficulty AS TEXT) IS NULL
+                               OR t.difficulty = CAST(:task_difficulty AS TEXT))
+                          AND (
+                              t.last_used_at IS NULL
+                              OR t.last_used_at
+                                 < NOW() - make_interval(days => :cooldown_days)
+                          )
+                    ) >= :minimum_pool_size AS task_ok,
                     EXISTS (
                         SELECT 1 FROM agents a
                         WHERE a.id = CAST(:agent_a_id AS UUID)
@@ -273,19 +313,22 @@ class BattleRepository:
                 """
             ),
             {
-                "task_id": str(task_id),
+                "task_category": task_category,
+                "task_difficulty": task_difficulty,
                 "agent_a_id": str(agent_a_id),
                 "challenger_owner": str(challenger_owner_user_id),
                 "agent_b_id": str(agent_b_id) if agent_b_id else None,
                 "target_cap": target_cap,
                 "target_window": target_window_seconds,
+                "minimum_pool_size": minimum_pool_size,
+                "cooldown_days": cooldown_days,
             },
         )
         row = result.mappings().one()
         # Ordered most-specific-last so the message names the interesting rule:
         # a blocked pair is more informative than "target ineligible".
         if not row["task_ok"]:
-            return ChallengeDenial.TASK_UNAVAILABLE
+            return ChallengeDenial.INSUFFICIENT_TASK_POOL
         if not row["challenger_ok"]:
             return ChallengeDenial.CHALLENGER_INELIGIBLE
         if not row["target_ok"]:
@@ -344,20 +387,28 @@ class BattleRepository:
         prompt: str,
         rubric: list[dict[str, Any]],
         time_limit_seconds: int,
-        category: str | None = None,
+        category: str,
+        difficulty: str = "medium",
         created_by_user_id: str | None = None,
         status: TaskStatus = TaskStatus.READY,
     ) -> str:
-        """Insert a battle task and return its id. Does not commit."""
+        """Insert a battle task and return its id. Does not commit.
+
+        ``category`` is required and ``difficulty`` is a closed vocabulary
+        (V67): both are how the binding pool is bucketed, so a task with a blank
+        category or an off-vocabulary difficulty could never be reached by a
+        filtered rated challenge. The database CHECKs reject those anyway; this
+        signature just stops the caller reaching for a NULL.
+        """
         result = await self.db.execute(
             text(
                 """
                 INSERT INTO battle_tasks
-                    (source, title, prompt, rubric, category,
+                    (source, title, prompt, rubric, category, difficulty,
                      time_limit_seconds, status, created_by_user_id)
                 VALUES
                     (:source, :title, :prompt, CAST(:rubric AS JSONB), :category,
-                     :time_limit_seconds, :status,
+                     :difficulty, :time_limit_seconds, :status,
                      CAST(:created_by_user_id AS UUID))
                 RETURNING id
                 """
@@ -368,6 +419,7 @@ class BattleRepository:
                 "prompt": prompt,
                 "rubric": json.dumps(rubric, default=str),
                 "category": category,
+                "difficulty": difficulty,
                 "time_limit_seconds": time_limit_seconds,
                 "status": status.value,
                 "created_by_user_id": (str(created_by_user_id) if created_by_user_id else None),
@@ -379,41 +431,36 @@ class BattleRepository:
 
     async def _create_battle(
         self,
-        task_id: str,
         agent_a_id: str,
         agent_a_owner_snapshot: str,
         challenge_ttl_seconds: int,
         agent_b_id: str | None = None,
         agent_b_owner_snapshot: str | None = None,
+        task_category: str | None = None,
+        task_difficulty: str | None = None,
     ) -> str | None:
-        """Insert a challenge row and return its id. Does not commit.
+        """Insert an UNBOUND challenge row and return its id. Does not commit.
 
-        The STATE-MACHINE primitive: it enforces the task snapshot's
-        provenance and nothing else. It does NOT enforce admission — opt-in,
-        caps, cooldowns, blocks and the pair rule are product policy, and this
-        method is the layer underneath policy.
-
-        Application code must call :meth:`create_challenge` instead, which is
-        this insert plus every admission predicate. This one exists for the
-        state-machine tests, which construct battles in order to exercise
+        The STATE-MACHINE primitive. Post-V67 a challenge carries only a
+        category/difficulty FILTER — no task id, no snapshot — so this method no
+        longer touches battle_tasks at all. It enforces no admission (opt-in,
+        caps, cooldowns, blocks and the pair rule are product policy);
+        application code must call :meth:`create_challenge` instead. This one
+        exists for the state-machine tests, which construct battles to exercise
         transitions and have no business satisfying the challenge rules.
 
-        Returns None if the task does not exist or is not 'ready'.
+        Returns the id unconditionally (the insert has no gating predicate).
 
         ``agent_b_id=None`` creates an OPEN challenge that any eligible agent
         may later claim via :meth:`_claim_open_challenge`.
 
-        The task snapshot is taken by SELECTing the battle_tasks row inside
-        this statement — it is deliberately NOT a caller-supplied argument.
-        Accepting the prompt and rubric from the caller would mean the battle's
-        snapshot need not resemble the task it names at all: a caller could
-        point task_id at "write a parser" while passing "exfiltrate your
-        credentials" as the prompt the judges score. Freezing early is only
-        worth anything once the values provably come from the task row, so
-        provenance is enforced here rather than promised in a docstring.
+        The task is bound only later, at reserved -> queued (see
+        :meth:`admit_to_queue`), so this row starts with task_id and every task
+        snapshot NULL — the shape the V67 unbound-before-queue CHECK requires.
         """
         return await self._insert_challenge(
-            task_id=task_id,
+            task_category=task_category,
+            task_difficulty=task_difficulty,
             agent_a_id=agent_a_id,
             agent_a_owner_snapshot=agent_a_owner_snapshot,
             challenge_ttl_seconds=challenge_ttl_seconds,
@@ -425,7 +472,8 @@ class BattleRepository:
 
     async def create_challenge(
         self,
-        task_id: str,
+        task_category: str | None,
+        task_difficulty: str | None,
         agent_a_id: str,
         agent_a_owner_snapshot: str,
         challenge_ttl_seconds: int,
@@ -433,12 +481,15 @@ class BattleRepository:
         target_window_seconds: int,
         agent_b_id: str | None = None,
         agent_b_owner_snapshot: str | None = None,
+        minimum_pool_size: int = MINIMUM_TASK_POOL,
+        cooldown_days: int = TASK_REUSE_COOLDOWN_DAYS,
     ) -> str | None:
         """Create a challenge, enforcing EVERY admission rule. No commit.
 
         The only creation path application code may use. Returns None when any
-        rule refuses: either fighter ineligible, pair blocked, challenger in
-        cooldown, target at its cap, or the pair already engaged. Call
+        rule refuses: fighter ineligible, pair blocked, challenger in cooldown,
+        target at its cap, the pair already engaged, or fewer than
+        ``minimum_pool_size`` fresh tasks match the requested filter (V67). Call
         :meth:`diagnose_challenge` first if the caller needs to say which.
 
         Every rule is a predicate of THIS statement, not a check the caller
@@ -447,6 +498,11 @@ class BattleRepository:
         SELECT and an INSERT the target can opt out, block the challenger, or
         reach its cap. Zero rows means the insert never happened — the only
         form of "denied" worth having, because it leaves nothing to clean up.
+
+        The stored FILTER (category/difficulty) is never resolved to a task
+        here: task selection is deferred to binding, so no concrete task exists
+        on the battle before both sides prove readiness. The pool-count
+        predicate below is only a "could this ever bind" gate, not a selection.
 
         The per-target cap additionally requires :meth:`lock_challenge_target`
         in this transaction: the COUNT cannot see a concurrent uncommitted
@@ -462,7 +518,8 @@ class BattleRepository:
         caller snapshot an owner that never owned the agent.
         """
         return await self._insert_challenge(
-            task_id=task_id,
+            task_category=task_category,
+            task_difficulty=task_difficulty,
             agent_a_id=agent_a_id,
             agent_a_owner_snapshot=agent_a_owner_snapshot,
             challenge_ttl_seconds=challenge_ttl_seconds,
@@ -517,16 +574,32 @@ class BattleRepository:
                                 > NOW() - make_interval(secs => :target_window)
                       ) < :target_cap
                   )
+                  AND (
+                      SELECT COUNT(*) FROM battle_tasks t
+                      WHERE t.status = 'ready'
+                        AND (CAST(:task_category AS TEXT) IS NULL
+                             OR t.category = CAST(:task_category AS TEXT))
+                        AND (CAST(:task_difficulty AS TEXT) IS NULL
+                             OR t.difficulty = CAST(:task_difficulty AS TEXT))
+                        AND (
+                            t.last_used_at IS NULL
+                            OR t.last_used_at
+                               < NOW() - make_interval(days => :cooldown_days)
+                        )
+                  ) >= :minimum_pool_size
             """,
             admission_params={
                 "target_cap": target_cap,
                 "target_window": target_window_seconds,
+                "minimum_pool_size": minimum_pool_size,
+                "cooldown_days": cooldown_days,
             },
         )
 
     async def _insert_challenge(
         self,
-        task_id: str,
+        task_category: str | None,
+        task_difficulty: str | None,
         agent_a_id: str,
         agent_a_owner_snapshot: str,
         challenge_ttl_seconds: int,
@@ -537,35 +610,41 @@ class BattleRepository:
     ) -> str | None:
         """The one INSERT behind _create_battle and create_challenge.
 
-        Shared so the two paths cannot drift: the column list, the snapshot
-        provenance and the 'ready' guard are written once. ``admission_sql`` is
-        a fragment built from module constants in this file — never from
-        caller input, and never interpolated with a parameter value.
+        Shared so the two paths cannot drift: the column list and the filter
+        columns are written once. Post-V67 the insert stores only the FILTER —
+        task_id and every task snapshot column are omitted, so they default
+        NULL, which is the unbound shape the CHECK constraints require of a
+        pre-queue battle. No task_tasks row is read here; task binding happens
+        later, at reserved -> queued.
+
+        ``admission_sql`` is a fragment built from module constants in this file
+        — never from caller input, and never interpolated with a parameter
+        value. It is appended after ``WHERE TRUE`` so the empty (test-primitive)
+        case inserts unconditionally and the create_challenge case gates on its
+        predicates.
         """
         result = await self.db.execute(
             text(
                 f"""
                 INSERT INTO battles
-                    (task_id, agent_a_id, agent_b_id,
+                    (task_category_filter, task_difficulty_filter,
+                     agent_a_id, agent_b_id,
                      agent_a_owner_snapshot, agent_b_owner_snapshot,
-                     challenge_expires_at,
-                     task_prompt_snapshot, task_rubric_snapshot,
-                     time_limit_seconds_snapshot, status)
-                SELECT t.id, CAST(:agent_a_id AS UUID), CAST(:agent_b_id AS UUID),
+                     challenge_expires_at, status)
+                SELECT CAST(:task_category AS TEXT), CAST(:task_difficulty AS TEXT),
+                       CAST(:agent_a_id AS UUID), CAST(:agent_b_id AS UUID),
                        CAST(:agent_a_owner_snapshot AS UUID),
                        CAST(:agent_b_owner_snapshot AS UUID),
                        NOW() + make_interval(secs => :challenge_ttl),
-                       t.prompt, t.rubric, t.time_limit_seconds,
                        'challenge_pending'
-                FROM battle_tasks t
-                WHERE t.id = CAST(:task_id AS UUID)
-                  AND t.status = 'ready'
+                WHERE TRUE
                   {admission_sql}
                 RETURNING id
                 """
             ),
             {
-                "task_id": str(task_id),
+                "task_category": task_category,
+                "task_difficulty": task_difficulty,
                 "agent_a_id": str(agent_a_id),
                 "agent_b_id": str(agent_b_id) if agent_b_id else None,
                 "agent_a_owner_snapshot": str(agent_a_owner_snapshot),
@@ -623,20 +702,52 @@ class BattleRepository:
         )
         return [dict(row) for row in result.mappings()]
 
-    async def list_tasks(self, limit: int = 50, offset: int = 0) -> list[dict]:
-        """Public task list — only what a new battle may actually use."""
+    async def list_task_pools(
+        self,
+        minimum_pool_size: int = MINIMUM_TASK_POOL,
+        cooldown_days: int = TASK_REUSE_COOLDOWN_DAYS,
+    ) -> list[dict]:
+        """Public pool aggregates — COUNTS per (category, difficulty), no content.
+
+        Renamed from list_tasks on purpose (V67): the old method returned whole
+        task rows — id, title, prompt, rubric — which is the entire catalog a
+        rated challenger must not see before binding. This returns only how many
+        FRESH (ready and off-cooldown) tasks each filter bucket holds, plus
+        whether that bucket currently clears the minimum-pool gate. Counts reveal
+        nothing usable: a caller learns which combinations can accept a challenge
+        and which are exhausted, and never a single task's text. The rename is
+        the guardrail — a future caller cannot mistake this for a safe row list.
+        """
         result = await self.db.execute(
             text(
                 """
-                SELECT * FROM battle_tasks
+                SELECT category,
+                       difficulty,
+                       COUNT(*) FILTER (
+                           WHERE last_used_at IS NULL
+                              OR last_used_at
+                                 < NOW() - make_interval(days => :cooldown_days)
+                       ) AS fresh_count
+                FROM battle_tasks
                 WHERE status = 'ready'
-                ORDER BY created_at DESC
-                LIMIT :limit OFFSET :offset
+                GROUP BY category, difficulty
+                ORDER BY category, difficulty
                 """
             ),
-            {"limit": limit, "offset": offset},
+            {"cooldown_days": cooldown_days},
         )
-        return [dict(row) for row in result.mappings()]
+        pools: list[dict] = []
+        for row in result.mappings():
+            fresh = int(row["fresh_count"])
+            pools.append(
+                {
+                    "category": row["category"],
+                    "difficulty": row["difficulty"],
+                    "fresh_count": fresh,
+                    "challenge_available": fresh >= minimum_pool_size,
+                }
+            )
+        return pools
 
     async def _claim_open_challenge(
         self,
@@ -1166,61 +1277,214 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def admit_to_queue(self, battle_id: str, readiness_generation: int) -> dict | None:
-        """reserved -> queued, iff EVERY admission condition holds. No commit.
+    async def admit_to_queue(
+        self,
+        battle_id: str,
+        readiness_generation: int,
+        lease_token: str,
+        minimum_pool_size: int = MINIMUM_TASK_POOL,
+        cooldown_days: int = TASK_REUSE_COOLDOWN_DAYS,
+    ) -> dict | None:
+        """reserved -> queued AND bind a task, iff every condition holds (V67).
 
-        The only queueing path application code may use. One statement, because
-        this is the decision that lets two agents start spending their owners'
-        money: consent, eligibility, ownership, reservations and readiness are
-        all predicates HERE, evaluated against one snapshot, rather than facts
-        a caller gathered and hopes are still true.
+        The only queueing path application code may use, and the single moment a
+        concrete task is chosen for a battle. This is the decision that lets two
+        agents start spending their owners' money, so consent, eligibility,
+        ownership, reservations, exact-generation ACKs AND the lease are all
+        predicates HERE, evaluated against one snapshot, rather than facts a
+        caller gathered and hopes are still true.
 
-        A previous version of this split the ACK check into a separate SELECT
-        and relied on NOW() being the transaction timestamp to keep the two
-        consistent. That reasoning was sound about TIME and silent about
-        everything else: it never re-checked eligibility, ownership or the
-        reservations at all. Folding it into the CAS closes both.
+        Task binding (V67): after those predicates prove readiness, one random
+        FRESH task matching the battle's category/difficulty filter is chosen,
+        marked used (last_used_at = NOW, use_count + 1), and its title, prompt,
+        rubric and time limit are snapshotted onto the battle in the SAME
+        statement. Before this the battle carried no task; the snapshot exists
+        only from 'queued' onward, and the API still withholds it until running.
 
-        Admission is gated on the ACKs being VALID, not on the lease still being
-        live at poll time. Deliberately NO ``ready_lease_expires_at > NOW()``
-        clause: readiness is a claim about when the ACK landed, and
-        ``_BOTH_SIDES_ACKED_SQL`` already requires ``acked_at <
-        ready_lease_expires_at``, so a fighter that ACKed a millisecond before
-        the lease expired is ready even if the reconciler polls a millisecond
-        after. Requiring the lease still be live HERE would abort — via the
-        reserved-poll fallback — a fighter that ACKed in time, purely on poll
-        latency; the whole point of the readiness bound is to punish silence,
-        never a valid-but-late-observed ACK. The lease still bounds waiting: a
-        battle nobody ACKs never satisfies the ACK predicate and is released /
-        aborted by the reserved-poll path.
+        Concurrency: the caller MUST hold the global task-pool advisory lock
+        (:data:`TASK_POOL_LOCK_NAMESPACE`) taken here first, so overlapping
+        "any" and category-specific binds are serialised and can never select
+        or cool down the same task twice. Within the statement the chosen task
+        row is also row-locked by the data-modifying CTE.
 
-        Returns None when readiness is not (yet) proven, which is not an error
-        — the usual reason is that an agent has not acked yet. The caller
-        retries until the lease lapses.
+        The ``eligible_battle`` CTE is load-bearing: the pool and the
+        task-cooldown UPDATE both hang off it, so if any readiness/lease/ACK
+        predicate fails the pool is empty, no candidate is chosen, and no task
+        is cooled down. Without that dependency a data-modifying CTE could burn
+        a task's cooldown even when the battle was not actually admissible.
+
+        This is lease-FENCED, unlike the V66 version: the reserved-phase claim
+        now holds a real (15s) lease, and binding requires
+        ``lease_token = :lease_token AND lease_expires_at > NOW()`` so only the
+        worker that claimed the row may bind it. The ACK predicate still does
+        NOT require the readiness lease be live (``_BOTH_SIDES_ACKED_SQL`` gates
+        on ``acked_at < ready_lease_expires_at`` instead) — a fighter that ACKed
+        in time is ready even if the reconciler polls a moment late.
+
+        Returns None when readiness is not (yet) proven, the processing lease was
+        lost, OR the fresh matching pool is below ``minimum_pool_size`` — the
+        caller distinguishes the pool-exhausted case via
+        :meth:`abort_pool_exhausted`, which re-proves readiness and asserts the
+        pool really is too small before aborting. None is not an error; the
+        usual reason is that an agent has not acked yet.
 
         :meth:`_mark_queued` remains the unguarded state-machine primitive for
         the transition tests; it must not be called by application code.
+        """
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns)"),
+            {"ns": TASK_POOL_LOCK_NAMESPACE},
+        )
+        result = await self.db.execute(
+            text(
+                f"""
+                WITH eligible_battle AS MATERIALIZED (
+                    SELECT battles.id,
+                           battles.task_category_filter,
+                           battles.task_difficulty_filter
+                    FROM battles
+                    WHERE battles.id = CAST(:battle_id AS UUID)
+                      AND battles.status = 'reserved'
+                      AND battles.readiness_generation = :readiness_generation
+                      AND battles.lease_token = CAST(:lease_token AS UUID)
+                      AND battles.lease_expires_at > NOW()
+                      AND battles.challenge_expires_at > NOW()
+                      AND battles.agent_b_accepted_at IS NOT NULL
+                      AND {_BOTH_FIGHTERS_ELIGIBLE_SQL}
+                      AND {_BOTH_FIGHTERS_RESERVED_SQL}
+                      AND {_BOTH_SIDES_ACKED_SQL}
+                    FOR UPDATE
+                ),
+                pool AS MATERIALIZED (
+                    SELECT t.id, t.title, t.prompt, t.rubric,
+                           t.time_limit_seconds
+                    FROM battle_tasks t
+                    CROSS JOIN eligible_battle eb
+                    WHERE t.status = 'ready'
+                      AND (
+                          eb.task_category_filter IS NULL
+                          OR t.category = eb.task_category_filter
+                      )
+                      AND (
+                          eb.task_difficulty_filter IS NULL
+                          OR t.difficulty = eb.task_difficulty_filter
+                      )
+                      AND (
+                          t.last_used_at IS NULL
+                          OR t.last_used_at
+                             < NOW() - make_interval(days => :cooldown_days)
+                      )
+                ),
+                candidate AS MATERIALIZED (
+                    SELECT id, title, prompt, rubric, time_limit_seconds
+                    FROM pool
+                    WHERE (SELECT COUNT(*) FROM pool) >= :minimum_pool_size
+                    ORDER BY random()
+                    LIMIT 1
+                ),
+                marked_task AS (
+                    UPDATE battle_tasks t
+                    SET last_used_at = NOW(),
+                        use_count = use_count + 1
+                    FROM candidate c
+                    WHERE t.id = c.id
+                    RETURNING t.id, t.title, t.prompt, t.rubric,
+                              t.time_limit_seconds
+                )
+                UPDATE battles b
+                SET status = 'queued',
+                    queued_at = NOW(),
+                    task_id = mt.id,
+                    task_title_snapshot = mt.title,
+                    task_prompt_snapshot = mt.prompt,
+                    task_rubric_snapshot = mt.rubric,
+                    time_limit_seconds_snapshot = mt.time_limit_seconds
+                FROM eligible_battle eb
+                JOIN marked_task mt ON TRUE
+                WHERE b.id = eb.id
+                  AND b.status = 'reserved'
+                  AND b.lease_token = CAST(:lease_token AS UUID)
+                RETURNING b.*
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "readiness_generation": readiness_generation,
+                "lease_token": str(lease_token),
+                "minimum_pool_size": minimum_pool_size,
+                "cooldown_days": cooldown_days,
+            },
+        )
+        return self._one_or_none(result.mappings().first())
+
+    async def abort_pool_exhausted(
+        self,
+        battle_id: str,
+        readiness_generation: int,
+        lease_token: str,
+        verdict_reason: str,
+        minimum_pool_size: int = MINIMUM_TASK_POOL,
+        cooldown_days: int = TASK_REUSE_COOLDOWN_DAYS,
+    ) -> dict | None:
+        """reserved -> aborted when readiness is proven but the pool is exhausted.
+
+        The honest terminal for the "both sides ACKed, but fewer than
+        ``minimum_pool_size`` fresh tasks match the requested filter" edge case
+        (V67). It must be distinguishable from "not ready yet": both make
+        :meth:`admit_to_queue` return None, so this CAS re-proves the FULL
+        readiness/lease/eligibility/ACK predicate set AND asserts the fresh pool
+        really is below the minimum. Only then does it abort — never on an
+        inferred-empty pool from a prior Python read, and never on a battle that
+        is simply still waiting for an ACK (that shape fails the ACK predicate
+        here and returns None, so the caller leaves it reserved to retry).
+
+        The caller releases both reservations and notifies both owners after the
+        transaction; Elo is untouched — no shared start ever happened. Returns
+        the aborted row, or None when the battle was not in the exhausted-shape
+        (still ready-able, lease lost, or the pool is actually adequate).
         """
         result = await self.db.execute(
             text(
                 f"""
                 UPDATE battles
-                SET status = 'queued',
-                    queued_at = NOW()
+                SET status = 'aborted',
+                    verdict_reason = :verdict_reason,
+                    ended_at = NOW(),
+                    lease_token = NULL,
+                    lease_expires_at = NULL
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'reserved'
                   AND readiness_generation = :readiness_generation
+                  AND lease_token = CAST(:lease_token AS UUID)
+                  AND lease_expires_at > NOW()
                   AND challenge_expires_at > NOW()
                   AND agent_b_accepted_at IS NOT NULL
                   AND {_BOTH_FIGHTERS_ELIGIBLE_SQL}
                   AND {_BOTH_FIGHTERS_RESERVED_SQL}
                   AND {_BOTH_SIDES_ACKED_SQL}
+                  AND (
+                      SELECT COUNT(*) FROM battle_tasks t
+                      WHERE t.status = 'ready'
+                        AND (battles.task_category_filter IS NULL
+                             OR t.category = battles.task_category_filter)
+                        AND (battles.task_difficulty_filter IS NULL
+                             OR t.difficulty = battles.task_difficulty_filter)
+                        AND (
+                            t.last_used_at IS NULL
+                            OR t.last_used_at
+                               < NOW() - make_interval(days => :cooldown_days)
+                        )
+                  ) < :minimum_pool_size
                 RETURNING *
                 """
             ),
             {
                 "battle_id": str(battle_id),
                 "readiness_generation": readiness_generation,
+                "lease_token": str(lease_token),
+                "verdict_reason": verdict_reason,
+                "minimum_pool_size": minimum_pool_size,
+                "cooldown_days": cooldown_days,
             },
         )
         return self._one_or_none(result.mappings().first())
@@ -1286,7 +1550,7 @@ class BattleRepository:
         return self._one_or_none(result.mappings().first())
 
     async def _mark_queued(self, battle_id: str, readiness_generation: int) -> dict | None:
-        """reserved -> queued, only for the generation the caller verified.
+        """reserved -> queued, binding a matching task. The test primitive.
 
         ``readiness_generation`` pins this to the exact attempt whose ACKs the
         caller checked. If the battle was re-armed in between, the generation
@@ -1296,21 +1560,60 @@ class BattleRepository:
         The ready lease must still be live: an ACK that arrived before the
         lease lapsed but is consumed after it is stale evidence.
 
-        This method does NOT check the ACKs themselves — that is
-        battle_service's decision, made against agent_events, and it must
-        happen in the same transaction as this call.
+        Post-V67 a queued battle MUST carry a bound task (the
+        ``battle_task_bound_from_queue`` CHECK), so even this unguarded primitive
+        snapshots a random FRESH task matching the battle's filter — otherwise it
+        would produce an unsatisfiable row. It deliberately does NOT check the
+        ACKs, eligibility or the minimum-pool gate — that is
+        :meth:`admit_to_queue`'s job. Returns None when no matching ready task
+        exists (the test must seed one) or the battle is not in the pinned
+        reserved shape.
         """
         result = await self.db.execute(
             text(
                 """
-                UPDATE battles
+                WITH eligible_battle AS MATERIALIZED (
+                    SELECT battles.id,
+                           battles.task_category_filter,
+                           battles.task_difficulty_filter
+                    FROM battles
+                    WHERE battles.id = CAST(:battle_id AS UUID)
+                      AND battles.status = 'reserved'
+                      AND battles.readiness_generation = :readiness_generation
+                      AND battles.ready_lease_expires_at > NOW()
+                    FOR UPDATE
+                ),
+                candidate AS MATERIALIZED (
+                    SELECT t.id, t.title, t.prompt, t.rubric, t.time_limit_seconds
+                    FROM battle_tasks t
+                    CROSS JOIN eligible_battle eb
+                    WHERE t.status = 'ready'
+                      AND (eb.task_category_filter IS NULL
+                           OR t.category = eb.task_category_filter)
+                      AND (eb.task_difficulty_filter IS NULL
+                           OR t.difficulty = eb.task_difficulty_filter)
+                    ORDER BY random()
+                    LIMIT 1
+                ),
+                marked_task AS (
+                    UPDATE battle_tasks t
+                    SET last_used_at = NOW(), use_count = use_count + 1
+                    FROM candidate c
+                    WHERE t.id = c.id
+                    RETURNING t.id, t.title, t.prompt, t.rubric, t.time_limit_seconds
+                )
+                UPDATE battles b
                 SET status = 'queued',
-                    queued_at = NOW()
-                WHERE id = CAST(:battle_id AS UUID)
-                  AND status = 'reserved'
-                  AND readiness_generation = :readiness_generation
-                  AND ready_lease_expires_at > NOW()
-                RETURNING *
+                    queued_at = NOW(),
+                    task_id = mt.id,
+                    task_title_snapshot = mt.title,
+                    task_prompt_snapshot = mt.prompt,
+                    task_rubric_snapshot = mt.rubric,
+                    time_limit_seconds_snapshot = mt.time_limit_seconds
+                FROM eligible_battle eb
+                JOIN marked_task mt ON TRUE
+                WHERE b.id = eb.id
+                RETURNING b.*
                 """
             ),
             {

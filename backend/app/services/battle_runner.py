@@ -139,6 +139,17 @@ RUNNING_MAX_ATTEMPTS = 4
 # crash-loop guard.
 POLL_LEASE_SECONDS = 0
 
+# The reserved -> queued binding is the ONE cheap phase that IS lease-fenced
+# (V67). Binding chooses and cools down a concrete task, and admit_to_queue
+# requires the row's lease_token AND a live lease_expires_at, so the reserved
+# phase must claim with a REAL, short lease rather than the zero above — long
+# enough for the single binding statement (which also takes the global
+# task-pool advisory lock), far shorter than BATTLE_LEASE_SECONDS so a crashed
+# binder frees the row within seconds. The fence stops two workers from binding
+# (and double-cooling a task on) the same battle; the global advisory lock
+# inside the statement stops two DIFFERENT battles from selecting the same task.
+TASK_BIND_LEASE_SECONDS = 15
+
 # The synthetic final submission a silent fighter receives at the deadline.
 # A battle that reached 'running' is owed a verdict — both fighters were provably
 # eligible at the shared start — so silence becomes an empty truncated answer to
@@ -374,34 +385,64 @@ class BattleRunner:
         logger.info("battle {} reserved: ready-checks dispatched", battle_id)
         return True
 
-    async def admit_reserved(self, battle: dict) -> bool:
-        """reserved -> queued once both ready-ACKs are in. False = not yet.
+    async def admit_reserved(self, battle: dict, lease_token: str) -> bool:
+        """reserved -> queued (and bind a task) once both ACKs are in (V67).
 
         Delegates the decision to BattleService.try_queue -> admit_to_queue,
-        which re-proves consent, eligibility, ownership, both live reservations
-        and both exact current-generation ACK ids in ONE statement. Nothing is
-        re-checked here, because a second opinion computed in Python would be a
-        different, weaker predicate evaluated at a different instant.
+        which re-proves consent, eligibility, ownership, both live reservations,
+        both exact current-generation ACK ids AND the processing lease in ONE
+        statement, then binds a random fresh task matching the battle's filter.
+        Nothing is re-checked here, because a second opinion computed in Python
+        would be a different, weaker predicate evaluated at a different instant.
 
-        False is the ordinary case, not an error: agents have not acked yet. The
-        battle stays claimable and the next pass asks again, until the readiness
-        lease lapses and the battle is released back to 'accepted' — freeing both
-        fighters rather than pinning them to a battle nobody is answering.
+        ``lease_token`` is the reconciler claim token this battle was claimed
+        with (the reserved phase now claims WITH a real lease — see
+        TASK_BIND_LEASE_SECONDS), so only this worker may bind it.
+
+        Three outcomes when try_queue returns None, distinguished in SQL, never
+        inferred:
+
+        * both sides ACKed but no fresh task matches the filter -> abort the
+          battle honestly (pool exhausted), release both reservations, notify;
+        * the readiness lease lapsed -> release back to 'accepted' for another
+          arm, or abort once the re-arm budget is spent (a never-ACK opponent
+          must not pin the challenger for the whole challenge TTL);
+        * still simply waiting for an ACK -> leave reserved and retry next pass.
+
+        False is the ordinary case, not an error.
         """
         battle_id = str(battle["id"])
+        generation = battle["readiness_generation"]
         service = BattleService(self.db)
 
-        queued = await service.try_queue(battle_id, battle["readiness_generation"])
+        queued = await service.try_queue(battle_id, generation, lease_token)
         if queued is not None:
             await self.db.commit()
-            logger.info("battle {} queued: both fighters acked", battle_id)
+            logger.info("battle {} queued: both fighters acked, task bound", battle_id)
             return True
 
-        # Not admissible. If the lease has lapsed, either release it back to
-        # 'accepted' for another arm, or — once the re-arm budget is spent —
-        # abort it so a never-ACK opponent cannot pin the challenger for the
-        # whole challenge TTL. Both happen in the SAME transaction as the state
-        # change; the abort notification fires after the commit.
+        # try_queue said no. Before treating this as "not ready yet", check the
+        # one case where readiness IS proven but binding still cannot happen: the
+        # requested filter has fewer than the minimum fresh tasks. abort_pool_
+        # exhausted re-proves the full ACK/lease predicate set in its own CAS, so
+        # a battle merely still waiting for an ACK does not match and falls
+        # through to the readiness path below.
+        exhausted = await service.abort_pool_exhausted(battle_id, generation, lease_token)
+        if exhausted is not None:
+            await self.db.commit()
+            logger.info(
+                "battle {} aborted: task pool exhausted for its filter, "
+                "reservations released",
+                battle_id,
+            )
+            await self._notify_aborted(battle_id, exhausted)
+            return False
+
+        # Not exhausted and not queued. If the lease has lapsed, either release
+        # it back to 'accepted' for another arm, or — once the re-arm budget is
+        # spent — abort it so a never-ACK opponent cannot pin the challenger for
+        # the whole challenge TTL. Both happen in the SAME transaction as the
+        # state change; the abort notification fires after the commit.
         outcome = await service.expire_or_abort_readiness(battle_id)
         await self.db.commit()
         if outcome is None:
@@ -413,14 +454,18 @@ class BattleRunner:
                 battle_id,
                 outcome["silent_sides"] or "none",
             )
-            title = f"Бой прерван (бой {battle_id})"
-            recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
-            if aborted["agent_b_id"]:
-                recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
-            await _notify_battle_owners(self.db, battle_id, recipients)
+            await self._notify_aborted(battle_id, aborted)
         else:
             logger.info("battle {} readiness lapsed: reservations released", battle_id)
         return False
+
+    async def _notify_aborted(self, battle_id: str, aborted: dict) -> None:
+        """Tell both owners a pre-start battle was aborted. After the commit."""
+        title = f"Бой прерван (бой {battle_id})"
+        recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
+        if aborted["agent_b_id"]:
+            recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
+        await _notify_battle_owners(self.db, battle_id, recipients)
 
     async def start_queued(self, battle: dict, lease_token: str) -> bool:
         """queued -> running, with BOTH battle_turn rows, in one transaction.
@@ -456,6 +501,26 @@ class BattleRunner:
             # error: the battle simply does not start.
             await self.db.rollback()
             return False
+
+        # The snapshots are nullable since V67 (bound only at reserved -> queued),
+        # but a battle that reached 'queued' is bound by the
+        # battle_task_bound_from_queue CHECK, so a NULL here is a corruption, not
+        # a normal state. Fail before dispatching rather than ship a battle_turn
+        # carrying a null prompt. The values themselves are NEVER logged — a
+        # prompt or rubric in a log is exactly the leak this track exists to
+        # prevent; the error names only WHICH field was null.
+        missing = [
+            name
+            for name in ("task_prompt_snapshot", "task_rubric_snapshot",
+                         "time_limit_seconds_snapshot")
+            if started[name] is None
+        ]
+        if missing:
+            await self.db.rollback()
+            raise RuntimeError(
+                f"battle {battle_id} reached 'queued' with unbound task "
+                f"snapshot(s): {', '.join(missing)}"
+            )
 
         # Extend both reservations through the deadline, in THIS transaction. The
         # 90s readiness reservation is far shorter than a battle that can run for
@@ -1177,9 +1242,13 @@ async def reconcile_once(
         if await step(battle, "arm", lambda r, b: r.arm_accepted(b)):
             counts["armed"] += 1
 
-    # 2. reserved -> queued, once both fighters have acked. Cheap CAS, polled.
-    for battle in await claim(BattleStatus.RESERVED, POLL_MAX_ATTEMPTS, POLL_LEASE_SECONDS):
-        if await step(battle, "admit", lambda r, b: r.admit_reserved(b)):
+    # 2. reserved -> queued AND bind a task, once both fighters have acked.
+    #    Lease-FENCED (V67): binding chooses and cools down a concrete task, so
+    #    unlike the other cheap phases the reserved claim holds a real short
+    #    lease and the claim token is passed into admit_reserved — only the
+    #    worker holding it may bind the row.
+    for battle in await claim(BattleStatus.RESERVED, POLL_MAX_ATTEMPTS, TASK_BIND_LEASE_SECONDS):
+        if await step(battle, "admit", lambda r, b: r.admit_reserved(b, token)):
             counts["queued"] += 1
 
     # 3. queued -> running, with both battle_turn rows. Cheap CAS + transport.
