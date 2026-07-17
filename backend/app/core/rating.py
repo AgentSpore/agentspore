@@ -207,6 +207,17 @@ def apply_battle_result(
     else:
         score_a = _SCORE_DRAW
 
+    # Clamp the BEFORE ratings into band first. The DB only guards elo > 0
+    # (V66), so a legacy/out-of-band stored rating (e.g. a sub-floor 80) is
+    # DB-legal. If BOTH sides breach the SAME bound it is impossible to keep
+    # both in band AND conserve — the transfer below handles only one clamped
+    # side, so two floored ratings would mint points. Clamping the inputs up
+    # front guarantees at most ONE side breaches after the delta, so the pair
+    # conserves EXACTLY for every DB-legal input. In-band inputs (all reachable
+    # play — default 1200, and new writes are already clamped) are unchanged.
+    rating_a = _clamp_rating(rating_a)
+    rating_b = _clamp_rating(rating_b)
+
     expected_a = expected_score(rating_a, rating_b)
     # One rounded delta, applied as +/- so the pair conserves EXACTLY (integer
     # zero-sum) before any bound is considered. |delta| <= k, so neither the

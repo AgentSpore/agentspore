@@ -296,6 +296,22 @@ class TestFloorAndCeilingConservePoints:
         assert change.b_after <= ELO_CEILING
         assert change.a_delta + change.b_delta == 0
 
+    def test_both_below_floor_inputs_still_conserve(self) -> None:
+        # BOTH ratings out of band on the SAME side (DB-legal as elo>0, e.g. a
+        # legacy 80). It is impossible to floor both AND keep the raw sum, so the
+        # inputs are clamped into band first — after which the pair conserves
+        # exactly. Independent flooring (or handling only one clamped side) mints.
+        change = apply_battle_result(80, 80, Winner.B)
+        assert change.a_after >= ELO_FLOOR
+        assert change.b_after >= ELO_FLOOR
+        assert change.a_delta + change.b_delta == 0
+
+    def test_both_above_ceiling_inputs_still_conserve(self) -> None:
+        change = apply_battle_result(ELO_CEILING + 5000, ELO_CEILING + 5000, Winner.A)
+        assert change.a_after <= ELO_CEILING
+        assert change.b_after <= ELO_CEILING
+        assert change.a_delta + change.b_delta == 0
+
 
 class TestRatingChangeShape:
     """The record handed to the persistence layer."""
