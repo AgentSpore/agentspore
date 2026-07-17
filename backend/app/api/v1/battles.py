@@ -26,7 +26,12 @@ from app.api.deps import CurrentUser, OptionalUser, get_admin_user
 from app.core.database import get_db
 from app.models.user import User
 from app.repositories.agent_repo import AgentRepository
-from app.repositories.battle_repo import BattleRepository, ChallengeDenial
+from app.repositories.battle_repo import (
+    MINIMUM_TASK_POOL,
+    TASK_REUSE_COOLDOWN_DAYS,
+    BattleRepository,
+    ChallengeDenial,
+)
 from app.schemas.battles import (
     BattleDetail,
     BattleJudgementView,
@@ -34,6 +39,7 @@ from app.schemas.battles import (
     BattleStatus,
     BattleSubmissionView,
     BattleSummary,
+    BattleTaskPoolsResponse,
     BattleVerdictView,
     CreateChallengeRequest,
     CreateTaskRequest,
@@ -53,6 +59,7 @@ from app.services.battle_service import (
     BattleService,
     ChallengeDeniedError,
     LimiterUnavailableError,
+    normalize_task_category,
 )
 
 # Notification task type raised on the opponent/challenger when a challenge is
@@ -68,7 +75,7 @@ router = APIRouter(prefix="/battles", tags=["battles"])
 # both "not now" (429); a block or an opt-out is "not ever, by policy" (403);
 # an existing engagement is a conflict with current state (409).
 _DENIAL_STATUS: dict[ChallengeDenial, int] = {
-    ChallengeDenial.TASK_UNAVAILABLE: 404,
+    ChallengeDenial.INSUFFICIENT_TASK_POOL: 409,
     ChallengeDenial.CHALLENGER_INELIGIBLE: 403,
     ChallengeDenial.CHALLENGER_RATE_LIMITED: 429,
     ChallengeDenial.TARGET_INELIGIBLE: 403,
@@ -79,7 +86,9 @@ _DENIAL_STATUS: dict[ChallengeDenial, int] = {
 }
 
 _DENIAL_DETAIL: dict[ChallengeDenial, str] = {
-    ChallengeDenial.TASK_UNAVAILABLE: "task not found or not ready",
+    ChallengeDenial.INSUFFICIENT_TASK_POOL: (
+        "not enough fresh tasks match the requested category and difficulty"
+    ),
     ChallengeDenial.CHALLENGER_INELIGIBLE: (
         "your agent is not eligible to battle: it must be active, not hosted, "
         "and opted in via available_for_battles"
@@ -156,6 +165,49 @@ async def _notify_challenge_recipient(
     )
 
 
+# The task snapshot is PUBLIC only once a battle is actually running — the same
+# gate the reveal follows everywhere (V67). Before this, the bound task (id,
+# title, prompt, rubric, time limit) is withheld from every reader, so scheduler
+# latency between binding at 'queued' and starting at 'running' can never be
+# turned into extra preparation time. A queued battle is internally bound but
+# still withheld; an aborted battle that never ran stays withheld forever.
+_TASK_REVEALED = frozenset(
+    {
+        BattleStatus.RUNNING.value,
+        BattleStatus.JUDGING.value,
+        BattleStatus.COMPLETED.value,
+    }
+)
+
+# The bound-task columns nulled out of a public row while the task is withheld.
+# Explicitly listed, not derived: the whole point is that a reader gets a null,
+# not the snapshot, before the battle runs — Pydantic dropping unknown fields is
+# not a substitute for deleting the value here.
+_WITHHELD_TASK_FIELDS = (
+    "task_id",
+    "task_title_snapshot",
+    "task_prompt_snapshot",
+    "task_rubric_snapshot",
+    "time_limit_seconds_snapshot",
+)
+
+
+def _sanitize_task(battle: dict) -> tuple[dict, bool]:
+    """Return a copy of ``battle`` with the task withheld unless it is running.
+
+    Mirrors the explicit ``content_withheld`` sanitisation the submissions route
+    uses: the caller builds its DTO from the returned dict and stamps
+    ``task_content_withheld`` from the returned flag, so a withheld task is a
+    null the reader can see is deliberately withheld, never an accidental leak.
+    """
+    revealed = battle["status"] in _TASK_REVEALED
+    public = dict(battle)
+    if not revealed:
+        for field in _WITHHELD_TASK_FIELDS:
+            public[field] = None
+    return public, not revealed
+
+
 def _readiness_view(battle: dict) -> ReadinessView:
     """Render the two readiness facts separately, never one from the other."""
     return ReadinessView(
@@ -182,21 +234,42 @@ async def list_battles(
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
-    """Public battle list, newest first."""
+    """Public battle list, newest first.
+
+    Every row is sanitised through the same reveal-status gate the detail route
+    uses (V67): a bound-but-queued battle must not leak its task id or title
+    before it runs, so the list cannot become a pre-fetch side channel either.
+    """
     rows = await BattleRepository(db).list_battles(
         status=status, limit=limit, offset=offset
     )
-    return [BattleSummary(**row) for row in rows]
+    summaries: list[BattleSummary] = []
+    for row in rows:
+        public, withheld = _sanitize_task(row)
+        summaries.append(BattleSummary(**public, task_content_withheld=withheld))
+    return summaries
 
 
-@router.get("/tasks", summary="List battle tasks available for new challenges")
-async def list_tasks(
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
-):
-    """Public list of 'ready' tasks."""
-    return await BattleRepository(db).list_tasks(limit=limit, offset=offset)
+@router.get(
+    "/tasks",
+    response_model=BattleTaskPoolsResponse,
+    summary="Task pool availability for new challenges",
+)
+async def list_task_pools(db: AsyncSession = Depends(get_db)):
+    """Public pool aggregates — counts per (category, difficulty), no content.
+
+    Replaces the V66 catalog, which returned whole task rows (id, title, prompt,
+    rubric) and so let a rated challenger read the exact tasks before binding.
+    This returns only how many FRESH tasks each filter bucket holds and whether
+    it clears the minimum-pool gate, which is all the UI needs to offer and
+    disable filter choices — and reveals no task a challenger could precompute.
+    """
+    pools = await BattleRepository(db).list_task_pools()
+    return BattleTaskPoolsResponse(
+        minimum_pool_size=MINIMUM_TASK_POOL,
+        cooldown_days=TASK_REUSE_COOLDOWN_DAYS,
+        pools=pools,
+    )
 
 
 @router.post("/tasks/generate", status_code=201, summary="Create a battle task")
@@ -205,14 +278,22 @@ async def generate_task(
     admin: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Admin-only: mint a task fighters can be challenged over."""
+    """Admin-only: mint a task fighters can be challenged over.
+
+    Category is normalised the same way the challenge filter is, so a task
+    created as "Backend" buckets with a challenge filtered on "backend".
+    """
+    category = normalize_task_category(body.category)
+    if category is None:
+        raise HTTPException(422, "category must not be blank")
     task_id = await BattleRepository(db).create_task(
         source=TaskSource.GENERATED,
         title=body.title,
         prompt=body.prompt,
         rubric=body.rubric,
         time_limit_seconds=body.time_limit_seconds,
-        category=body.category,
+        category=category,
+        difficulty=body.difficulty.value,
         created_by_user_id=str(admin.id),
     )
     await db.commit()
@@ -241,7 +322,16 @@ async def get_battle(
     battle = await repo.get(battle_id)
     if battle is None:
         raise HTTPException(404, "battle not found")
-    detail = BattleDetail(**battle, readiness=_readiness_view(battle))
+    # Withhold the bound task until the battle is running (V67). The nulling is
+    # explicit here, before the DTO is built — not left to Pydantic — so a
+    # queued battle that is already internally bound still returns a null task
+    # and prompt, and ``task_content_withheld`` says so.
+    public, withheld = _sanitize_task(battle)
+    detail = BattleDetail(
+        **public,
+        task_content_withheld=withheld,
+        readiness=_readiness_view(battle),
+    )
     if battle["status"] != BattleStatus.COMPLETED.value:
         detail.verdict_reason = None
     if viewer is not None and battle["status"] == BattleStatus.CHALLENGE_PENDING.value:
@@ -265,7 +355,8 @@ async def create_challenge(
     svc = BattleService(db)
     try:
         battle_id = await svc.create_challenge(
-            task_id=str(body.task_id),
+            task_category=body.task_category,
+            task_difficulty=body.task_difficulty.value if body.task_difficulty else None,
             agent_a_id=str(body.agent_a_id),
             challenger_owner_user_id=str(user.id),
             agent_b_id=str(body.agent_b_id) if body.agent_b_id else None,
