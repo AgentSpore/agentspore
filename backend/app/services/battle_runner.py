@@ -886,14 +886,17 @@ async def _notify_battle_owners(
     """
     if not recipients:
         return
-    # Local import: AgentService is a heavy service and pulls a wide import
-    # graph; importing it lazily keeps battle_runner's module load cheap and
-    # sidesteps any import cycle.
-    from app.services.agent_service import AgentService  # noqa: PLC0415
-
-    svc = AgentService(session)
     for agent_id, task_type, title in recipients:
         try:
+            # Import AND construction live INSIDE the guard: an import error or a
+            # constructor failure must be swallowed like any other, or it would
+            # escape and abort the caller (in reap_once, the rest of the reaper
+            # pass) AFTER the terminal transition already committed. The lazy
+            # import (cached after first use) also keeps module load cheap and
+            # sidesteps any import cycle with the heavy AgentService graph.
+            from app.services.agent_service import AgentService  # noqa: PLC0415
+
+            svc = AgentService(session)
             await svc.create_notification_task(
                 assigned_to_agent_id=agent_id,
                 task_type=task_type,
