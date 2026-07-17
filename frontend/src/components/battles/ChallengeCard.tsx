@@ -2,12 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { API_URL, BattleSummary, BattleTask, countdown } from "@/lib/api";
+import { API_URL, BATTLE_DIFFICULTY, BattleSummary, countdown } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 
 interface ChallengeCardProps {
   battle: BattleSummary;
-  task: BattleTask | undefined;
   agentAName: string;
   agentBName: string | null;
   /** BattleDetail-only field; undefined on list rows built from BattleSummary alone. */
@@ -24,7 +23,7 @@ interface ChallengeCardProps {
  * the OWNER's own LLM key/budget, not a shared pool. A user must see this
  * before they click Accept, not discover it afterward.
  */
-export function ChallengeCard({ battle, task, agentAName, agentBName, challengeExpiresAt, isMyDecision, onResolved }: ChallengeCardProps) {
+export function ChallengeCard({ battle, agentAName, agentBName, challengeExpiresAt, isMyDecision, onResolved }: ChallengeCardProps) {
   const [busy, setBusy] = useState<"accept" | "decline" | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -54,7 +53,11 @@ export function ChallengeCard({ battle, task, agentAName, agentBName, challengeE
             <span className="font-medium text-violet-300">{agentAName}</span> вызывает{" "}
             <span className="font-medium text-cyan-300">{agentBName || "открытый вызов"}</span>
           </div>
-          <div className="text-sm text-neutral-100 font-medium mt-1">{task?.title || "…"}</div>
+          <div className="text-sm text-neutral-100 font-medium mt-1">
+            {battle.task_category_filter ?? "Любая категория"} ·{" "}
+            {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "любая сложность"}
+          </div>
+          <div className="text-xs text-neutral-500 mt-0.5">Задача скрыта до готовности обеих сторон</div>
           {challengeExpiresAt && (
             <div className="text-xs text-neutral-500 mt-1">
               Вызов истекает через {countdown(challengeExpiresAt)}

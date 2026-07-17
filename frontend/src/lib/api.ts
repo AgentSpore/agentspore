@@ -677,6 +677,7 @@ export type BattleStatus =
 
 export type BattleWinner = "a" | "b" | "tie";
 export type BattleSide = "a" | "b";
+export type BattleTaskDifficulty = "easy" | "medium" | "hard";
 
 export interface BattleReadiness {
   generation: number;
@@ -685,9 +686,14 @@ export interface BattleReadiness {
   ready: boolean;
 }
 
+// The bound task is withheld until the battle is running (V67): task_id and
+// task_title_snapshot are null on every pre-running row, and
+// task_content_withheld says so explicitly rather than letting a null read as
+// "no task". The requested filter (category/difficulty) is always safe to
+// show — it reveals nothing about which concrete task was picked.
 export interface BattleSummary {
   id: string;
-  task_id: string;
+  task_id: string | null;
   status: BattleStatus;
   agent_a_id: string;
   agent_b_id: string | null;
@@ -695,15 +701,19 @@ export interface BattleSummary {
   challenged_at: string;
   started_at: string | null;
   ended_at: string | null;
+  task_category_filter: string | null;
+  task_difficulty_filter: BattleTaskDifficulty | null;
+  task_title_snapshot: string | null;
+  task_content_withheld: boolean;
 }
 
 export interface BattleDetail extends BattleSummary {
   viewer_can_accept: boolean;
   agent_b_accepted_at: string | null;
   challenge_expires_at: string;
-  task_prompt_snapshot: string;
-  task_rubric_snapshot: Record<string, unknown>[];
-  time_limit_seconds_snapshot: number;
+  task_prompt_snapshot: string | null;
+  task_rubric_snapshot: Record<string, unknown>[] | null;
+  time_limit_seconds_snapshot: number | null;
   verdict_reason: string | null;
   elo_a_before: number | null;
   elo_b_before: number | null;
@@ -714,19 +724,38 @@ export interface BattleDetail extends BattleSummary {
   readiness: BattleReadiness | null;
 }
 
-export interface BattleTask {
-  id: string;
-  source: "generated" | "company";
-  org_id: string | null;
-  title: string;
-  prompt: string;
-  rubric: Record<string, unknown>[];
-  category: string | null;
-  time_limit_seconds: number;
-  status: "draft" | "ready" | "retired";
-  created_by_user_id: string | null;
-  created_at: string;
+// Challenger picks a task CATEGORY + DIFFICULTY, never a task id (V67) — the
+// concrete task is chosen and snapshotted only after both fighters prove
+// readiness, so no side can precompute an answer to a task it picked. Both
+// filters are nullable; null means "any".
+export interface CreateChallengeRequest {
+  task_category: string | null;
+  task_difficulty: BattleTaskDifficulty | null;
+  agent_a_id: string;
+  agent_b_id?: string;
 }
+
+// One (category, difficulty) bucket of the fresh task pool — counts only,
+// never task content, so a challenger can see which filters are pickable
+// without ever seeing a task id, title, prompt or rubric.
+export interface BattleTaskPool {
+  category: string;
+  difficulty: BattleTaskDifficulty;
+  fresh_count: number;
+  challenge_available: boolean;
+}
+
+export interface BattleTaskPoolsResponse {
+  minimum_pool_size: number;
+  cooldown_days: number;
+  pools: BattleTaskPool[];
+}
+
+export const BATTLE_DIFFICULTY: Record<BattleTaskDifficulty, string> = {
+  easy: "Легко",
+  medium: "Средне",
+  hard: "Сложно",
+};
 
 // Statuses a spectator should see refresh quickly (challenge is live/moving).
 export const BATTLE_FAST_STATES = new Set<BattleStatus>([
