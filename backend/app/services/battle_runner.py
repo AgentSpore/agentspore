@@ -828,12 +828,17 @@ _BATTLE_NOTIFY_SOURCE_TYPE = "battle_notification"
 def _battle_result_title(battle_id: str, side: Side, winner: str | None) -> str:
     """Owner-facing title for a finished battle, from ONE fighter's viewpoint.
 
-    winner is the battle row's ``winner`` column ("a"/"b"/"tie") or None for a
-    no-quorum panel. Both no-quorum and an explicit tie read as "ничья": from an
-    owner's side neither is a win or a loss.
+    winner is the battle row's ``winner`` column ("a"/"b"/"tie") or None. The
+    two None-shaped outcomes are kept DISTINCT, exactly as the machine keeps
+    them (see BattleRunner._verdict_to_winner): an explicit "tie" means the panel
+    reached quorum ON a draw and is a real "ничья"; None means the panel reached
+    NO quorum at all, which is not evidence of equality — it is "результат не
+    определён", so it must never be reported as a draw.
     """
-    if winner is None or winner == Winner.TIE.value:
+    if winner == Winner.TIE.value:
         outcome = "ничья"
+    elif winner is None:
+        outcome = "результат не определён: жюри не набрало кворум"
     elif winner == side.value:
         outcome = "победа"
     else:
@@ -854,21 +859,41 @@ async def _notify_battle_owners(
     push), so battle results surface exactly where owners already read GitHub
     and DM notifications. A per-(agent, task_type) source_key dedups a re-run.
 
-    Runs in its OWN transaction on an already-clean session. Any failure is
-    logged and swallowed: the transition is durable and the notification is
-    best-effort, so a notify error must never undo the state change. Never
-    re-raises.
+    Each recipient is delivered in its OWN transaction on an already-clean
+    session. This is deliberate: a failure delivering to B must be able to
+    neither roll back A's already-committed notification nor the terminal
+    transition (which committed before this call). Every failure is logged and
+    swallowed — the transition is durable and the notification is best-effort,
+    so a notify error must never undo the state change. Never re-raises.
+
+    Honest accounting of what is NOT guaranteed. create_notification_task
+    couples the durable insert with the realtime deliver_event, and this module
+    may not edit that service, so per-recipient isolation is the strongest fix
+    available here. The accepted residual risks are:
+
+    * Phantom realtime push on rollback — deliver_event fires INSIDE
+      create_notification_task, before this per-recipient commit. If that commit
+      fails, a websocket push went out with no durable tasks row behind it. It
+      self-heals: the agent re-reads its notifications from the tasks table on
+      the next heartbeat, so a push with no row simply shows nothing.
+    * No durable dedup CONSTRAINT — dedup is a pending-task lookup, not a unique
+      index, so two terminal passes racing on one battle could double-insert.
+      Not reachable today: the reconciler is single-writer per battle via the
+      row lease, and this runs after that write.
+    * No retry after a crash between the transition commit and this call — the
+      notification is simply lost. Battle state stays correct and the owner can
+      still read the outcome from the battle row / verdict endpoint.
     """
     if not recipients:
         return
-    try:
-        # Local import: AgentService is a heavy service and pulls a wide import
-        # graph; importing it lazily keeps battle_runner's module load cheap and
-        # sidesteps any import cycle.
-        from app.services.agent_service import AgentService  # noqa: PLC0415
+    # Local import: AgentService is a heavy service and pulls a wide import
+    # graph; importing it lazily keeps battle_runner's module load cheap and
+    # sidesteps any import cycle.
+    from app.services.agent_service import AgentService  # noqa: PLC0415
 
-        svc = AgentService(session)
-        for agent_id, task_type, title in recipients:
+    svc = AgentService(session)
+    for agent_id, task_type, title in recipients:
+        try:
             await svc.create_notification_task(
                 assigned_to_agent_id=agent_id,
                 task_type=task_type,
@@ -879,14 +904,15 @@ async def _notify_battle_owners(
                 priority="medium",
                 source_type=_BATTLE_NOTIFY_SOURCE_TYPE,
             )
-        await session.commit()
-    except Exception as exc:
-        logger.warning(
-            "battle {} owner notification failed (transition already durable): {}",
-            battle_id,
-            exc,
-        )
-        await session.rollback()
+            await session.commit()
+        except Exception as exc:
+            logger.warning(
+                "battle {} owner notification to {} failed (transition durable): {}",
+                battle_id,
+                agent_id,
+                exc,
+            )
+            await session.rollback()
 
 
 async def _judge_and_settle(
