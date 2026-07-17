@@ -16,15 +16,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentUser, get_admin_user
+from app.api.deps import CurrentUser, OptionalUser, get_admin_user
 from app.core.database import get_db
 from app.models.user import User
+from app.repositories.agent_repo import AgentRepository
 from app.repositories.battle_repo import BattleRepository, ChallengeDenial
 from app.schemas.battles import (
     BattleDetail,
@@ -46,12 +47,20 @@ from app.schemas.battles import (
     TaskSource,
     Vote,
 )
-from app.services.agent_service import get_agent_by_api_key
+from app.services.agent_service import AgentService, get_agent_by_api_key
+from app.services.battle_runner import _notify_battle_owners
 from app.services.battle_service import (
     BattleService,
     ChallengeDeniedError,
     LimiterUnavailableError,
 )
+
+# Notification task type raised on the opponent/challenger when a challenge is
+# directly created or an open challenge is claimed. Terminal outcomes
+# (battle_result/expired/aborted) already notify via _notify_battle_owners; this
+# is the missing FIRST touch — without it a directly-challenged owner learns of
+# the challenge only by browsing the arena before it expires.
+_CHALLENGE_RECEIVED_TYPE = "battle_challenge_received"
 
 router = APIRouter(prefix="/battles", tags=["battles"])
 
@@ -111,6 +120,40 @@ async def _assert_owns_agent(db: AsyncSession, agent_id: str, user_id: str) -> N
         raise HTTPException(404, "agent not found")
     if not row["owner_user_id"] or str(row["owner_user_id"]) != str(user_id):
         raise HTTPException(403, "not your agent")
+
+
+async def _optional_fighter(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    db: AsyncSession = Depends(get_db),
+) -> dict | None:
+    """Identify the calling agent from its X-API-Key, or None if unauthenticated.
+
+    Optional by design: the submissions read route is public, but a fighter that
+    proves who it is may see its OWN turns while a battle runs, whereas the
+    anonymous public sees no live per-turn metadata at all. A missing or unknown
+    key is simply 'not a fighter here' (None), never a 401 — the route is still
+    readable without one.
+    """
+    if not x_api_key:
+        return None
+    key_hash = AgentService.hash_api_key(x_api_key)
+    return await AgentRepository(db).get_agent_by_api_key_hash(key_hash)
+
+
+async def _notify_challenge_recipient(
+    db: AsyncSession, battle_id: str, recipient_agent_id: str, title: str
+) -> None:
+    """Best-effort 'challenge touched you' notification, AFTER the commit.
+
+    Reuses the exact mechanism terminal battle notifications use
+    (_notify_battle_owners -> AgentService.create_notification_task), including
+    its per-recipient own-transaction isolation and log-and-swallow discipline:
+    the challenge is already durable by the time this runs, so a notify failure
+    must never roll it back. source_key dedups on the battle id + type.
+    """
+    await _notify_battle_owners(
+        db, battle_id, [(recipient_agent_id, _CHALLENGE_RECEIVED_TYPE, title)]
+    )
 
 
 def _readiness_view(battle: dict) -> ReadinessView:
@@ -177,11 +220,20 @@ async def generate_task(
 
 
 @router.get("/{battle_id}", response_model=BattleDetail, summary="Get one battle")
-async def get_battle(battle_id: str, db: AsyncSession = Depends(get_db)):
+async def get_battle(
+    battle_id: str,
+    viewer: OptionalUser,
+    db: AsyncSession = Depends(get_db),
+):
     """Public battle detail.
 
     Judge verdicts are withheld until 'completed': revealing a running
     battle's votes would let a fighter still mid-answer read the scoring.
+
+    The owner-snapshot UUIDs are NOT shipped (they would leak the ownership
+    graph). ``viewer_can_accept`` is computed here from the optional JWT: it is
+    TRUE only when the authenticated caller owns the opponent of a still-pending
+    challenge, which is the one thing the client used the raw owner id for.
     """
     battle = await BattleRepository(db).get(battle_id)
     if battle is None:
@@ -189,6 +241,13 @@ async def get_battle(battle_id: str, db: AsyncSession = Depends(get_db)):
     detail = BattleDetail(**battle, readiness=_readiness_view(battle))
     if battle["status"] != BattleStatus.COMPLETED.value:
         detail.verdict_reason = None
+    detail.viewer_can_accept = (
+        viewer is not None
+        and battle["status"] == BattleStatus.CHALLENGE_PENDING.value
+        and battle["agent_b_id"] is not None
+        and battle["agent_b_owner_snapshot"] is not None
+        and str(battle["agent_b_owner_snapshot"]) == str(viewer.id)
+    )
     return detail
 
 
@@ -226,6 +285,19 @@ async def create_challenge(
             503, "challenge limiter unavailable; try again shortly"
         ) from exc
     await db.commit()
+
+    # A NAMED challenge touches a specific opponent — notify its owner now, so a
+    # directly-challenged owner does not have to browse the arena to discover it.
+    # Best-effort, strictly AFTER the commit: the challenge is durable and must
+    # not be rolled back by a notify failure. An OPEN challenge (no agent_b_id)
+    # has no opponent yet, so there is nobody to notify until it is claimed.
+    if body.agent_b_id:
+        await _notify_challenge_recipient(
+            db,
+            battle_id,
+            str(body.agent_b_id),
+            f"Новый вызов на бой (бой {battle_id})",
+        )
     return {"id": battle_id}
 
 
@@ -270,6 +342,17 @@ async def claim_open_challenge(
             "your agent is not eligible for it",
         )
     await db.commit()
+
+    # The open challenge now has a taker — tell the CHALLENGER (agent_a), whose
+    # open challenge was silently waiting, that an opponent stepped in. The
+    # claimant is the caller and needs no notice. Best-effort, after the commit,
+    # for the same reason as the named-challenge notification above.
+    await _notify_challenge_recipient(
+        db,
+        str(claimed["id"]),
+        str(claimed["agent_a_id"]),
+        f"Твой открытый вызов принят (бой {claimed['id']})",
+    )
     return {"id": str(claimed["id"]), "status": claimed["status"]}
 
 
@@ -433,24 +516,35 @@ _TURNS_CLOSED = frozenset({BattleStatus.JUDGING.value, BattleStatus.COMPLETED.va
     response_model=list[BattleSubmissionView],
     summary="List a battle's submissions",
 )
-async def list_battle_submissions(battle_id: str, db: AsyncSession = Depends(get_db)):
-    """Public. Metadata always; CONTENT only once the battle stops taking turns.
+async def list_battle_submissions(
+    battle_id: str,
+    fighter: dict | None = Depends(_optional_fighter),
+    db: AsyncSession = Depends(get_db),
+):
+    """Metadata once turns close; while RUNNING, only your OWN side's metadata.
 
-    The split is the whole point. A spectator screen needs to say "submitted /
-    timed out / never answered", and that is metadata — side, seq_no, is_final,
-    truncated, error. None of it helps a fighter.
+    Two different leaks are closed here, and they need different rules:
 
-    ``content`` is different. While the battle is RUNNING, handing B the text of
-    A's checkpoint would turn this endpoint into the cheating tool: B is still
-    writing, and A's answer is exactly what B wants. So content is withheld from
-    EVERYONE until the turns are closed — including the owners, because an owner
-    can relay it to their agent, and including A, because A gains nothing from
-    reading its own text back. ``content_withheld`` says so explicitly rather
-    than presenting an empty answer as if the fighter had written nothing.
+    ``content`` is withheld from EVERYONE until the turns are closed — handing B
+    the text of A's checkpoint mid-battle would turn this endpoint into the
+    cheating tool. That includes the owners (who can relay it) and A itself
+    (which gains nothing from reading its own text back). ``content_withheld``
+    says so rather than presenting an empty answer as if nothing was written.
 
-    Once the battle is judging or completed the answers are frozen and public:
-    the whole premise is that spectators can read what was written and judge the
-    judges.
+    Per-turn METADATA — side, seq_no, is_final, truncated, error, received_at,
+    tokens_used — is a subtler leak while the battle is still RUNNING. Showing a
+    fighter the OPPONENT's rows reveals that the opponent already went final and
+    how many checkpoints/tokens it spent, so a fighter can poll, see the other
+    side commit, and safely hold its own final for a last-mover advantage. So
+    while running:
+
+    * an authenticated fighter (X-API-Key) sees ONLY its own side's turns;
+    * the anonymous public / a non-fighter sees NEITHER side's live metadata —
+      an empty list, which leaks nothing exploitable.
+
+    Once the battle is judging or completed the answers are frozen and every
+    submission (metadata AND content) is public: the whole premise is that
+    spectators can read what was written and judge the judges.
     """
     repo = BattleRepository(db)
     battle = await repo.get(battle_id)
@@ -458,6 +552,18 @@ async def list_battle_submissions(battle_id: str, db: AsyncSession = Depends(get
         raise HTTPException(404, "battle not found")
 
     turns_closed = battle["status"] in _TURNS_CLOSED
+
+    # While turns are still open, restrict per-turn metadata to the requesting
+    # fighter's own side. A non-fighter viewer (fighter is None, or its id is
+    # neither side) sees nothing live — no row's metadata escapes.
+    viewer_side: Side | None = None
+    if not turns_closed and fighter is not None:
+        fighter_id = str(fighter["id"])
+        if fighter_id == str(battle["agent_a_id"]):
+            viewer_side = Side.A
+        elif battle["agent_b_id"] and fighter_id == str(battle["agent_b_id"]):
+            viewer_side = Side.B
+
     return [
         BattleSubmissionView(
             side=Side(str(row["side"])),
@@ -471,6 +577,7 @@ async def list_battle_submissions(battle_id: str, db: AsyncSession = Depends(get
             content_withheld=not turns_closed,
         )
         for row in await repo.list_submissions(battle_id)
+        if turns_closed or (viewer_side is not None and str(row["side"]) == viewer_side.value)
     ]
 
 
