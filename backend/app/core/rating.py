@@ -60,6 +60,15 @@ _ELO_SCALE = 400.0
 # negative.
 ELO_FLOOR = 100
 
+# Ceiling a stored rating may never exceed. The battles.elo_* snapshots and
+# agents.battle_elo are plain INT columns (V66), so a rating that grew past
+# 2^31-1 would overflow the column and fail the settling UPDATE the same way a
+# sub-zero one does — a stranded battle from the other end. 100_000 sits far
+# above any rating real play produces (a lifetime of wins moves a rating by K a
+# time) yet a wide margin below INT_MAX, so the clamp is a guard, never a limit
+# a legitimate agent can reach.
+ELO_CEILING = 100_000
+
 # Largest magnitude the logistic exponent is allowed to take. ``10.0 ** 309``
 # already exceeds the maximum double and raises OverflowError, so an extreme
 # rating gap (a mis-seeded or adversarial rating) would crash expected_score
@@ -71,6 +80,15 @@ _MAX_ELO_EXPONENT = 30.0
 _SCORE_WIN = 1.0
 _SCORE_DRAW = 0.5
 _SCORE_LOSS = 0.0
+
+
+def _clamp_rating(value: int) -> int:
+    """Clamp a rating into the storable, CHECK-legal band [ELO_FLOOR, ELO_CEILING]."""
+    if value < ELO_FLOOR:
+        return ELO_FLOOR
+    if value > ELO_CEILING:
+        return ELO_CEILING
+    return value
 
 
 def expected_score(rating_a: int, rating_b: int) -> float:
@@ -102,17 +120,19 @@ def new_rating(rating: int, expected: float, score: float, k: int = K_FACTOR) ->
     later — or twice — is how a stored rating drifts from the one the maths
     justified.
 
-    Clamped to :data:`ELO_FLOOR`: the value returned is written straight into
-    ``agents.battle_elo`` and the battle's ``elo_*_after`` snapshot, both under
-    a CHECK that demands ``> 0``. From a near-floor rating a heavy loss can
-    round to <= 0, and the resulting CHECK violation makes the settling UPDATE
-    fail so the battle can never complete. Flooring keeps every persisted
-    rating a wide margin clear of that guard. The clamp only ever raises a
-    value, so it can move a rating no further than the honest maths already
-    would in the ELO_FLOOR..K band and never past K in the common case.
+    Clamped into ``[ELO_FLOOR, ELO_CEILING]``: the value returned is written
+    straight into ``agents.battle_elo`` and the battle's ``elo_*_after``
+    snapshot, both under a CHECK that demands ``> 0`` on a plain INT column. A
+    near-floor loss can round to <= 0 and a runaway winner past 2^31-1, and
+    either makes the settling UPDATE fail so the battle can never complete.
+    Clamping both ends keeps every persisted rating storable.
+
+    NOTE: this is the SINGLE-side clamp for direct callers. Pair settlement goes
+    through :func:`apply_battle_result`, which clamps the pair TOGETHER so the
+    floor/ceiling cannot mint or destroy points (zero-sum). Do not floor two
+    ratings independently and expect them to still conserve.
     """
-    raw = round(rating + k * (score - expected))
-    return raw if raw >= ELO_FLOOR else ELO_FLOOR
+    return _clamp_rating(round(rating + k * (score - expected)))
 
 
 @dataclass(frozen=True)
@@ -161,6 +181,15 @@ def apply_battle_result(
     The two sides are computed from the SAME pair of "before" ratings, never
     sequentially — updating A first and feeding A's new rating into B's
     expectation would break the zero-sum property and silently mint rating.
+
+    Zero-sum survives the floor/ceiling. The two ratings are clamped as a PAIR,
+    not independently: the delta is rounded ONCE and applied as ``+delta`` to A
+    and ``-delta`` to B, so the pair conserves exactly before any clamp. If a
+    clamp then moves the bounded side (a near-floor loser, a near-ceiling
+    winner), the SAME adjustment is transferred to the other side, so the winner
+    gains only what the loser actually loses after the floor bites. Flooring the
+    two ratings independently would mint points (both stay at the floor with a
+    non-zero winner delta) — the bug this coupling exists to prevent.
     """
     if winner is None or same_owner:
         return RatingChange(
@@ -179,14 +208,28 @@ def apply_battle_result(
         score_a = _SCORE_DRAW
 
     expected_a = expected_score(rating_a, rating_b)
+    # One rounded delta, applied as +/- so the pair conserves EXACTLY (integer
+    # zero-sum) before any bound is considered. |delta| <= k, so neither the
+    # K-bound nor the complement identity is disturbed.
+    delta = round(k * (score_a - expected_a))
+    raw_a = rating_a + delta
+    raw_b = rating_b - delta
+
+    a_after = _clamp_rating(raw_a)
+    b_after = _clamp_rating(raw_b)
+    # At most one side can breach a bound in a single battle (the deltas are
+    # opposite-signed and |delta| <= k, while the bounds are far apart), so
+    # transferring that one side's clamp adjustment to the other keeps the pair
+    # exactly zero-sum without pushing the other side out of range.
+    if a_after != raw_a:
+        b_after = _clamp_rating(raw_b - (a_after - raw_a))
+    elif b_after != raw_b:
+        a_after = _clamp_rating(raw_a - (b_after - raw_b))
 
     return RatingChange(
         a_before=rating_a,
         b_before=rating_b,
-        a_after=new_rating(rating_a, expected_a, score_a, k=k),
-        # 1.0 - expected_a rather than expected_score(rating_b, rating_a): the
-        # two are equal in exact arithmetic, and using the complement makes the
-        # sum-preservation property exact in floating point too.
-        b_after=new_rating(rating_b, 1.0 - expected_a, 1.0 - score_a, k=k),
+        a_after=a_after,
+        b_after=b_after,
         applied=True,
     )
