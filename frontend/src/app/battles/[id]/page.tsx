@@ -19,8 +19,6 @@ import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { Disclosure } from "@/components/battles/Disclosure";
 import { BattleStepper } from "@/components/battles/BattleStepper";
 
-type Me = { id: string } | null;
-
 const PROMPT_PREVIEW_LEN = 420;
 
 // Compact mono countdown for the arena seam — "mm:ss", or "h:mm:ss" once an
@@ -41,21 +39,10 @@ export default function BattleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [battle, setBattle] = useState<BattleDetail | null>(null);
   const [task, setTask] = useState<BattleTask | undefined>(undefined);
-  const [me, setMe] = useState<Me>(null);
   const [err, setErr] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   const statusRef = useRef<BattleStatus>("challenge_pending");
-
-  // ── Who is signed in (public page — auth is optional, only gates actions) ──
-  useEffect(() => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    if (!token) return;
-    fetchWithAuth(`${API_URL}/api/v1/auth/me`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => setMe(data ? { id: data.id } : null))
-      .catch(() => setMe(null));
-  }, []);
 
   // ── Adaptive polling — mirrors councils/[id]/page.tsx ──────────────────
   useEffect(() => {
@@ -74,7 +61,7 @@ export default function BattleDetailPage() {
       if (!alive || hidden || inFlight) return;
       inFlight = true;
       try {
-        const res = await fetch(`${API_URL}/api/v1/battles/${id}`);
+        const res = await fetchWithAuth(`${API_URL}/api/v1/battles/${id}`);
         if (res.status === 404) {
           setErr("Бой не найден");
           return;
@@ -160,8 +147,8 @@ export default function BattleDetailPage() {
     );
   }
 
-  const isPendingForMe = battle.status === "challenge_pending" && !!me && !!battle.agent_b_id
-    && battle.agent_b_owner_snapshot === me.id;
+  const isPendingForMe = battle.status === "challenge_pending" && !!battle.agent_b_id
+    && battle.viewer_can_accept;
   const deadlineMs = battle.deadline_at ? new Date(battle.deadline_at).getTime() - now : null;
   const deadlinePassed = deadlineMs !== null && deadlineMs <= 0;
   const urgent = deadlineMs !== null && deadlineMs > 0 && deadlineMs < 60000;

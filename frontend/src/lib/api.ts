@@ -698,8 +698,7 @@ export interface BattleSummary {
 }
 
 export interface BattleDetail extends BattleSummary {
-  agent_a_owner_snapshot: string;
-  agent_b_owner_snapshot: string | null;
+  viewer_can_accept: boolean;
   agent_b_accepted_at: string | null;
   challenge_expires_at: string;
   task_prompt_snapshot: string;
