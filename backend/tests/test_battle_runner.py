@@ -136,9 +136,10 @@ async def task_id(db_session) -> str:
     )
     repo = BattleRepository(db_session)
     # V67 binding requires a fresh pool of at least MINIMUM_TASK_POOL (20)
-    # matching tasks, so seed a full pool of IDENTICAL general/medium tasks: any
-    # one the binder randomly picks yields the same snapshot, keeping the
-    # prompt/rubric assertions below deterministic.
+    # DISTINCT matching tasks — the pool gate counts DISTINCT prompts, so
+    # duplicate content cannot inflate it. Seed a full pool of distinct
+    # general/medium tasks; the runner tests do not assert on which prompt binds,
+    # only that a task binds and the lifecycle proceeds.
     tid = await repo.create_task(
         source=TaskSource.GENERATED,
         category="general",
@@ -148,12 +149,12 @@ async def task_id(db_session) -> str:
         time_limit_seconds=600,
         created_by_user_id=uid,
     )
-    for _ in range(24):
+    for i in range(24):
         await repo.create_task(
             source=TaskSource.GENERATED,
             category="general",
             title="Write a parser",
-            prompt="Parse this log format.",
+            prompt=f"Parse this log format. (variant {i})",
             rubric=RUBRIC,
             time_limit_seconds=600,
             created_by_user_id=uid,
