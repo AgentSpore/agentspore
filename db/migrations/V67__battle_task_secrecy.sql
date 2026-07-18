@@ -18,26 +18,33 @@
 -- must stay deterministic, so every change here is additive in V67.
 
 -- ---------------------------------------------------------------------------
--- Guard: this migration cannot silently grandfather a leak. If any pre-running
--- battle already carries a V66 task snapshot, the reserved-before-queue
--- invariant we are about to add would be violated by existing data — fail loud
--- rather than drop the NOT NULLs onto rows that break the new binding model.
--- On the described undeployed branch there are no such rows.
+-- Guard: this migration cannot silently grandfather a leak. If any LIVE
+-- pre-queue battle (challenge_pending / accepted / reserved) already carries a
+-- V66 task snapshot, the unbound-before-queue invariant we are about to add
+-- would be violated by existing data — fail loud rather than drop the NOT NULLs
+-- onto rows that break the new binding model.
+--
+-- TERMINAL states are deliberately NOT checked. Under V66 every battle carried
+-- a non-null task_id, so a single historical declined/expired/aborted row would
+-- otherwise abort the whole migration. Those rows are dead — they can never
+-- start — so keeping their historical snapshot is harmless (the API only
+-- reveals a snapshot once a battle is 'running', which a terminal battle never
+-- reaches). The matching CHECK below (battle_task_unbound_before_queue) is
+-- narrowed to the same LIVE set so the constraint accepts these preserved rows.
+-- On the described undeployed branch there are no rows at all.
 -- ---------------------------------------------------------------------------
 DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM battles
-        WHERE status IN ('challenge_pending', 'accepted', 'reserved',
-                         'declined', 'expired')
+        WHERE status IN ('challenge_pending', 'accepted', 'reserved')
           AND task_id IS NOT NULL
     ) THEN
         RAISE EXCEPTION
-            'V67 precondition failed: % pre-running battle(s) already carry a '
-            'bound task from V66; secrecy binding cannot grandfather them',
+            'V67 precondition failed: % live pre-queue battle(s) already carry '
+            'a bound task from V66; secrecy binding cannot grandfather them',
             (SELECT COUNT(*) FROM battles
-             WHERE status IN ('challenge_pending', 'accepted', 'reserved',
-                              'declined', 'expired')
+             WHERE status IN ('challenge_pending', 'accepted', 'reserved')
                AND task_id IS NOT NULL);
     END IF;
 END $$;
@@ -48,7 +55,21 @@ END $$;
 ALTER TABLE battle_tasks
     ADD COLUMN difficulty   VARCHAR(16) NOT NULL DEFAULT 'medium',
     ADD COLUMN last_used_at TIMESTAMPTZ,
-    ADD COLUMN use_count    INT NOT NULL DEFAULT 0;
+    ADD COLUMN use_count    INT NOT NULL DEFAULT 0,
+    -- Only a SECRET task may be bound to a rated battle. New (V67+) tasks are
+    -- secret by default; the binding pool predicates below all require
+    -- secret = TRUE.
+    ADD COLUMN secret       BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Quarantine EVERY pre-V67 task from the rated pool. Under V66 the public
+-- GET /battles/tasks route returned full prompt + rubric for every 'ready'
+-- task, so an owner could have cached the entire catalog. Reusing those rows as
+-- "fresh secret" tasks (they even keep last_used_at = NULL) would let a rated
+-- challenger precompute the answer to a task it already knows — defeating the
+-- whole track. So burn every legacy row for binding; last_used_at is left
+-- untouched (resetting it would ALSO bypass the reuse cooldown). Existing
+-- deployments must seed a NEW secret pool after this migration.
+UPDATE battle_tasks SET secret = FALSE;
 
 -- category was nullable in V66; the filter/binding model needs a concrete
 -- category on every task, so backfill blanks to 'general' before tightening.
@@ -67,9 +88,11 @@ ALTER TABLE battle_tasks
     ADD CONSTRAINT battle_task_use_count_non_negative
         CHECK (use_count >= 0);
 
--- The binding pool query filters on (status, category, difficulty, cooldown).
+-- The binding pool query filters on (status, secret, category, difficulty,
+-- cooldown) — secret leads the discriminators so the quarantined legacy rows
+-- are skipped by the index rather than filtered out row by row.
 CREATE INDEX idx_battle_tasks_binding_pool
-    ON battle_tasks (status, category, difficulty, last_used_at);
+    ON battle_tasks (status, secret, category, difficulty, last_used_at);
 
 -- ---------------------------------------------------------------------------
 -- battles: a challenge carries FILTERS; the task binds later.
@@ -85,6 +108,22 @@ ALTER TABLE battles
     ALTER COLUMN task_prompt_snapshot DROP NOT NULL,
     ALTER COLUMN task_rubric_snapshot DROP NOT NULL,
     ALTER COLUMN time_limit_seconds_snapshot DROP NOT NULL;
+
+-- Backfill the NEW task_title_snapshot for any battle already BOUND under V66
+-- (queued/running/judging/completed, or aborted-after-bind): it carries
+-- task_id + prompt/rubric/time-limit snapshots but no title, so the
+-- all-or-nothing binding CHECK added below would reject it. Take the title from
+-- the live task row, or a placeholder if that row is gone (ON DELETE RESTRICT
+-- makes that unlikely, but the constraint must still hold). The pre-running
+-- DO-block guard above has already ruled out any bound pre-queue battle, so this
+-- only touches legitimately-bound rows.
+UPDATE battles b
+SET task_title_snapshot = COALESCE(
+        (SELECT t.title FROM battle_tasks t WHERE t.id = b.task_id),
+        '(task removed)'
+    )
+WHERE b.task_id IS NOT NULL
+  AND b.task_title_snapshot IS NULL;
 
 ALTER TABLE battles
     ADD CONSTRAINT battle_task_category_filter_not_blank
@@ -119,14 +158,15 @@ ALTER TABLE battles
             )
         ),
     -- Before the queue, no task may be bound: the secrecy invariant made
-    -- structural. challenge_pending / accepted / reserved / declined / expired
-    -- must all have task_id NULL.
+    -- structural. Only the LIVE pre-queue states (challenge_pending / accepted /
+    -- reserved) are constrained — a live battle must reach the lease-fenced
+    -- binding with task_id NULL. TERMINAL states (declined / expired / aborted)
+    -- are intentionally excluded: they can never start or reveal a task, so a
+    -- migrated V66 row keeps its historical snapshot as dead history rather than
+    -- being force-nulled. This matches the narrowed DO-block guard above.
     ADD CONSTRAINT battle_task_unbound_before_queue
         CHECK (
-            status NOT IN (
-                'challenge_pending', 'accepted', 'reserved',
-                'declined', 'expired'
-            )
+            status NOT IN ('challenge_pending', 'accepted', 'reserved')
             OR task_id IS NULL
         ),
     -- From the queue onward the task IS bound: a queued/running/judging/

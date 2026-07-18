@@ -29,6 +29,7 @@ why no method here touches connection_manager or agent_event_repo.
 from __future__ import annotations
 
 import json
+import sys
 from enum import Enum
 from typing import Any
 from uuid import UUID
@@ -188,6 +189,23 @@ _BOTH_SIDES_ACKED_SQL = """
     ) = 2
 """
 
+# --- Canonical task-content key --------------------------------------------
+# Whitespace/case variants of the SAME task content must count as ONE task and
+# retire together — otherwise revealing one variant leaves its twin bindable and
+# precomputable. So every pool query keys on this NORMALIZED form (trim,
+# lowercase, collapse internal whitespace runs to a single space) instead of the
+# raw prompt, and the count gate, the candidate pick, and the retire predicate
+# all use the SAME expression: if they disagreed the gate and the bind could
+# count/burn different sets. Phase-1 scope only — this does NOT do full Unicode
+# NFC normalization (deliberately out of scope; no generated column / migration).
+# battle_tasks is small, so the seq-scan cost of normalizing on the fly is
+# negligible. `_CONTENT_KEY` keys the bare `prompt` column (pool CTE / plain
+# battle_tasks); `_CONTENT_KEY_T` / `_CONTENT_KEY_C` key the aliased `t.` / `c.`
+# prompt inside the binding CTEs.
+_CONTENT_KEY = r"regexp_replace(btrim(lower(prompt)), '\s+', ' ', 'g')"
+_CONTENT_KEY_T = r"regexp_replace(btrim(lower(t.prompt)), '\s+', ' ', 'g')"
+_CONTENT_KEY_C = r"regexp_replace(btrim(lower(c.prompt)), '\s+', ' ', 'g')"
+
 
 class BattleRepository:
     """All database operations for battles and their satellites."""
@@ -252,8 +270,15 @@ class BattleRepository:
                 f"""
                 SELECT
                     (
-                        SELECT COUNT(*) FROM battle_tasks t
+                        -- DISTINCT normalized content key, not COUNT(*): the
+                        -- gate promises N *different* tasks a challenger cannot
+                        -- pre-study, so duplicate content — including
+                        -- whitespace/case variants — must count as one. secret =
+                        -- TRUE excludes every quarantined pre-V67 row whose
+                        -- prompt/rubric were public under V66's catalog.
+                        SELECT COUNT(DISTINCT {_CONTENT_KEY_T}) FROM battle_tasks t
                         WHERE t.status = 'ready'
+                          AND t.secret = TRUE
                           AND (CAST(:task_category AS TEXT) IS NULL
                                OR t.category = CAST(:task_category AS TEXT))
                           AND (CAST(:task_difficulty AS TEXT) IS NULL
@@ -597,8 +622,15 @@ class BattleRepository:
                       ) < :target_cap
                   )
                   AND (
-                      SELECT COUNT(*) FROM battle_tasks t
+                      -- DISTINCT normalized content key (not COUNT(*)) so 20
+                      -- duplicate rows — incl. whitespace/case variants — cannot
+                      -- satisfy the "N pre-computable tasks" gate; secret = TRUE
+                      -- quarantines every pre-V67 row whose prompt/rubric leaked
+                      -- through V66's public catalog. Must match
+                      -- diagnose_challenge and the binding pool exactly.
+                      SELECT COUNT(DISTINCT {_CONTENT_KEY_T}) FROM battle_tasks t
                       WHERE t.status = 'ready'
+                        AND t.secret = TRUE
                         AND (CAST(:task_category AS TEXT) IS NULL
                              OR t.category = CAST(:task_category AS TEXT))
                         AND (CAST(:task_difficulty AS TEXT) IS NULL
@@ -742,16 +774,23 @@ class BattleRepository:
         """
         result = await self.db.execute(
             text(
-                """
+                f"""
+                -- DISTINCT normalized content key so a bucket padded with
+                -- duplicate content (incl. whitespace/case variants) cannot
+                -- advertise a bindable pool it does not really have; secret =
+                -- TRUE excludes the quarantined pre-V67 catalog. The aggregate
+                -- must mirror the binding gate exactly, else the catalog would
+                -- promise a challenge the bind then refuses.
                 SELECT category,
                        difficulty,
-                       COUNT(*) FILTER (
+                       COUNT(DISTINCT {_CONTENT_KEY}) FILTER (
                            WHERE last_used_at IS NULL
                               OR last_used_at
                                  < NOW() - make_interval(days => :cooldown_days)
                        ) AS fresh_count
                 FROM battle_tasks
                 WHERE status = 'ready'
+                  AND secret = TRUE
                 GROUP BY category, difficulty
                 ORDER BY category, difficulty
                 """
@@ -1383,6 +1422,10 @@ class BattleRepository:
                     FROM battle_tasks t
                     CROSS JOIN eligible_battle eb
                     WHERE t.status = 'ready'
+                      -- Only a SECRET task may bind: a quarantined pre-V67 row
+                      -- whose prompt/rubric were public under V66's catalog is
+                      -- precisely what the rated track must never hand a fighter.
+                      AND t.secret = TRUE
                       AND (
                           eb.task_category_filter IS NULL
                           OR t.category = eb.task_category_filter
@@ -1398,29 +1441,57 @@ class BattleRepository:
                       )
                 ),
                 candidate AS MATERIALIZED (
+                    -- Pick ONE random DISTINCT content key, not a random ROW: the
+                    -- gate counts COUNT(DISTINCT <key>), so the pick must draw
+                    -- from that same distinct set or a heavily-duplicated task
+                    -- would be over-represented. DISTINCT ON (<key>) collapses
+                    -- each normalized content to one row (a random one), then the
+                    -- outer ORDER BY random() picks one task uniformly. The
+                    -- DISTINCT ON key must lead the inner ORDER BY (Postgres
+                    -- rule), so both use the canonical key.
                     SELECT id, title, prompt, rubric, time_limit_seconds
-                    FROM pool
-                    WHERE (SELECT COUNT(*) FROM pool) >= :minimum_pool_size
+                    FROM (
+                        SELECT DISTINCT ON ({_CONTENT_KEY})
+                               id, title, prompt, rubric, time_limit_seconds
+                        FROM pool
+                        WHERE (SELECT COUNT(DISTINCT {_CONTENT_KEY}) FROM pool)
+                              >= :minimum_pool_size
+                        ORDER BY {_CONTENT_KEY}, random()
+                    ) distinct_prompt
                     ORDER BY random()
                     LIMIT 1
                 ),
                 marked_task AS (
+                    -- RETIRE the bound content permanently. Once the battle
+                    -- reaches 'running' the API reveals this prompt/rubric, so a
+                    -- revealed task must never re-enter the rated pool — strict
+                    -- secrecy is incompatible with reuse-after-cooldown. secret =
+                    -- FALSE takes it out of every bindable-pool query for good,
+                    -- and matching on `prompt = c.prompt` (not `id = c.id`) burns
+                    -- EVERY duplicate-content sibling too, so no sibling row can
+                    -- serve the now-public task again. Matching on the canonical
+                    -- content key (not raw `prompt =`) burns whitespace/case
+                    -- variants of the same content too. Retiring at BIND
+                    -- (queued), not at REVEAL (running), is the safe superset: a
+                    -- queued->aborted battle that never revealed still burns the
+                    -- task. Over-retiring wastes a seeded task; under-retiring is
+                    -- a precompute hole, so we err toward burning.
                     UPDATE battle_tasks t
-                    SET last_used_at = NOW(),
+                    SET secret = FALSE,
+                        last_used_at = NOW(),
                         use_count = use_count + 1
                     FROM candidate c
-                    WHERE t.id = c.id
-                    RETURNING t.id, t.title, t.prompt, t.rubric,
-                              t.time_limit_seconds
+                    WHERE {_CONTENT_KEY_T} = {_CONTENT_KEY_C}
+                    RETURNING t.id
                 )
                 UPDATE battles b
                 SET status = 'queued',
                     queued_at = NOW(),
-                    task_id = mt.id,
-                    task_title_snapshot = mt.title,
-                    task_prompt_snapshot = mt.prompt,
-                    task_rubric_snapshot = mt.rubric,
-                    time_limit_seconds_snapshot = mt.time_limit_seconds,
+                    task_id = c.id,
+                    task_title_snapshot = c.title,
+                    task_prompt_snapshot = c.prompt,
+                    task_rubric_snapshot = c.rubric,
+                    time_limit_seconds_snapshot = c.time_limit_seconds,
                     -- Release the bind lease on success: its only job was to fence
                     -- the binding, and a held lease would stop the queued -> running
                     -- phase from claiming the row (potentially for the whole lease
@@ -1429,10 +1500,14 @@ class BattleRepository:
                     lease_token = NULL,
                     lease_expires_at = NULL
                 FROM eligible_battle eb
-                JOIN marked_task mt ON TRUE
+                JOIN candidate c ON TRUE
                 WHERE b.id = eb.id
                   AND b.status = 'reserved'
                   AND b.lease_token = CAST(:lease_token AS UUID)
+                  -- marked_task is a data-modifying CTE (always executes), but
+                  -- this also fences the bind to the case where the retire
+                  -- actually touched rows — i.e. a candidate existed.
+                  AND EXISTS (SELECT 1 FROM marked_task)
                 RETURNING b.*
                 """
             ),
@@ -1492,8 +1567,13 @@ class BattleRepository:
                   AND {_BOTH_FIGHTERS_RESERVED_SQL}
                   AND {_BOTH_SIDES_ACKED_SQL}
                   AND (
-                      SELECT COUNT(*) FROM battle_tasks t
+                      -- Same measure as admit_to_queue's bind gate (DISTINCT
+                      -- normalized content key, secret only): abort iff the
+                      -- bindable pool is genuinely below the minimum, so there is
+                      -- no gap where a battle neither binds nor aborts.
+                      SELECT COUNT(DISTINCT {_CONTENT_KEY_T}) FROM battle_tasks t
                       WHERE t.status = 'ready'
+                        AND t.secret = TRUE
                         AND (battles.task_category_filter IS NULL
                              OR t.category = battles.task_category_filter)
                         AND (battles.task_difficulty_filter IS NULL
@@ -1597,10 +1677,23 @@ class BattleRepository:
         :meth:`admit_to_queue`'s job. Returns None when no matching ready task
         exists (the test must seed one) or the battle is not in the pinned
         reserved shape.
+
+        ENFORCEMENT (not just documentation): this is an ungated binding
+        primitive — it skips the ACK, eligibility, lease-fence and minimum-pool
+        checks that make admit_to_queue safe. A docstring asking application
+        code not to call it is worthless, so the guard is real: it refuses to
+        run unless a test runner is loaded in this process. Production never
+        imports pytest, so the only binding path shippable code can reach is the
+        fully-gated admit_to_queue.
         """
+        if "pytest" not in sys.modules:  # pragma: no cover - guard, not logic
+            raise RuntimeError(
+                "_mark_queued is a test-only state primitive and skips every "
+                "admission gate; application code must bind via admit_to_queue"
+            )
         result = await self.db.execute(
             text(
-                """
+                f"""
                 WITH eligible_battle AS MATERIALIZED (
                     SELECT battles.id,
                            battles.task_category_filter,
@@ -1617,6 +1710,10 @@ class BattleRepository:
                     FROM battle_tasks t
                     CROSS JOIN eligible_battle eb
                     WHERE t.status = 'ready'
+                      -- Even the unguarded test primitive binds only SECRET
+                      -- tasks: the pool predicate is the invariant, not a
+                      -- property of whichever caller happens to reach it.
+                      AND t.secret = TRUE
                       AND (eb.task_category_filter IS NULL
                            OR t.category = eb.task_category_filter)
                       AND (eb.task_difficulty_filter IS NULL
@@ -1625,23 +1722,31 @@ class BattleRepository:
                     LIMIT 1
                 ),
                 marked_task AS (
+                    -- Same retire-on-bind invariant as admit_to_queue: a bound
+                    -- (revealable) task is burned across every duplicate-content
+                    -- row — matching on the canonical content key so
+                    -- whitespace/case variants go too — leaving no rebindable
+                    -- twin behind.
                     UPDATE battle_tasks t
-                    SET last_used_at = NOW(), use_count = use_count + 1
+                    SET secret = FALSE,
+                        last_used_at = NOW(),
+                        use_count = use_count + 1
                     FROM candidate c
-                    WHERE t.id = c.id
-                    RETURNING t.id, t.title, t.prompt, t.rubric, t.time_limit_seconds
+                    WHERE {_CONTENT_KEY_T} = {_CONTENT_KEY_C}
+                    RETURNING t.id
                 )
                 UPDATE battles b
                 SET status = 'queued',
                     queued_at = NOW(),
-                    task_id = mt.id,
-                    task_title_snapshot = mt.title,
-                    task_prompt_snapshot = mt.prompt,
-                    task_rubric_snapshot = mt.rubric,
-                    time_limit_seconds_snapshot = mt.time_limit_seconds
+                    task_id = c.id,
+                    task_title_snapshot = c.title,
+                    task_prompt_snapshot = c.prompt,
+                    task_rubric_snapshot = c.rubric,
+                    time_limit_seconds_snapshot = c.time_limit_seconds
                 FROM eligible_battle eb
-                JOIN marked_task mt ON TRUE
+                JOIN candidate c ON TRUE
                 WHERE b.id = eb.id
+                  AND EXISTS (SELECT 1 FROM marked_task)
                 RETURNING b.*
                 """
             ),
