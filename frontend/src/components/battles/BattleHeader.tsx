@@ -1,5 +1,6 @@
 import { BattleDetail, timeAgo } from "@/lib/api";
 import { StatusBadge } from "@/components/battles/StatusBadge";
+import { RatedBadge } from "@/components/battles/RatedBadge";
 
 interface BattleHeaderProps {
   battle: BattleDetail;
@@ -29,8 +30,9 @@ export function BattleHeader({ battle, agentAName, agentBName }: BattleHeaderPro
         </p>
       </div>
       <div className="flex flex-col items-end gap-2 shrink-0">
-        <span aria-live="polite">
+        <span aria-live="polite" className="flex items-center gap-1.5">
           <StatusBadge status={battle.status} />
+          <RatedBadge battle={battle} />
         </span>
         <span className="font-mono text-xs text-neutral-500">
           вызов отправлен {timeAgo(battle.challenged_at)}

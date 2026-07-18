@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { API_URL, TokenPayout, Flow, FLOW_STATUS, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { BlockedOwnersPanel } from "@/components/battles/BlockedOwnersPanel";
 
 interface RentalSummary {
   id: string;
@@ -458,6 +459,9 @@ export default function ProfilePage() {
             </div>
           </div>
         )}
+
+        {/* Battle blocks */}
+        {user && <BlockedOwnersPanel />}
 
         {/* $ASPORE Payout History */}
         {user && payouts.length > 0 && (
