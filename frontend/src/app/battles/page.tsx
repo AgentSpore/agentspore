@@ -7,6 +7,7 @@ import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
 import { StatusBadge } from "@/components/battles/StatusBadge";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
+import { RatedBadge } from "@/components/battles/RatedBadge";
 
 // The list refreshes faster while a battle on the page is live — otherwise a
 // battle that finishes while the list is open would stay "Идёт бой" forever.
@@ -273,7 +274,10 @@ export default function BattlesListPage() {
 
                   {/* Slot 1 — status + time */}
                   <div className="flex items-center justify-between gap-2">
-                    <StatusBadge status={b.status} />
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <StatusBadge status={b.status} />
+                      <RatedBadge battle={b} />
+                    </div>
                     <span className="text-xs text-neutral-400 shrink-0">
                       {isRunningLike && <span className="text-orange-300 mr-1.5">Сейчас ·</span>}
                       {timeAgo(b.challenged_at)}

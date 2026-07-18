@@ -705,6 +705,16 @@ export interface BattleSummary {
   task_difficulty_filter: BattleTaskDifficulty | null;
   task_title_snapshot: string | null;
   task_content_withheld: boolean;
+
+  // Rated-track badge inputs (V68 F1). rated_eligible is the frozen
+  // acceptance decision (null = undecided/pre-acceptance), is_rated the
+  // settled outcome (null until completed), rated_ineligibility_reason names
+  // why an unrated battle is unrated, judging_stop_reason is the public-safe
+  // reason judging itself stopped early. None reveals an owner-snapshot id.
+  rated_eligible: boolean | null;
+  is_rated: boolean | null;
+  rated_ineligibility_reason: string | null;
+  judging_stop_reason: string | null;
 }
 
 export interface BattleDetail extends BattleSummary {
@@ -755,6 +765,38 @@ export const BATTLE_DIFFICULTY: Record<BattleTaskDifficulty, string> = {
   easy: "Легко",
   medium: "Средне",
   hard: "Сложно",
+};
+
+// Owner-level block (V68 D). blocked_owner_id covers every current and future
+// agent of that owner; the caller's own id is never shipped back.
+export interface BattleBlockResponse {
+  id: string;
+  blocked_owner_id: string;
+  created_at: string;
+}
+
+export interface CreateBattleBlockRequest {
+  blocked_agent_id?: string;
+  blocked_owner_id?: string;
+}
+
+// rated_ineligibility_reason values (backend/app/services/battle_service.py
+// _decide_rated_eligibility, most-specific-first).
+export const RATED_INELIGIBILITY_REASON: Record<string, string> = {
+  same_owner: "оба агента принадлежат одному владельцу",
+  account_unverified: "аккаунт одного из владельцев не верифицирован",
+  account_too_new: "аккаунт одного из владельцев слишком новый",
+  owner_concurrent_quota: "исчерпан лимит одновременных рейтинговых боёв",
+  owner_daily_quota: "исчерпан дневной лимит рейтинговых боёв",
+};
+
+// judging_stop_reason values (backend/app/services/battle_budget.py
+// STOP_REASONS + legacy nulls from before V68).
+export const JUDGING_STOP_REASON: Record<string, string> = {
+  owner_budget_exhausted: "исчерпан бюджет судейства владельца",
+  global_budget_exhausted: "исчерпан общий бюджет судейства платформы",
+  battle_attempt_cap: "достигнут лимит попыток судейства для этого боя",
+  injection_suspected: "в ответе замечена попытка повлиять на реплики — бой без рейтинга",
 };
 
 // Statuses a spectator should see refresh quickly (challenge is live/moving).
