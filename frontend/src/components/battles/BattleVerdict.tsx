@@ -521,9 +521,13 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                     }`}
                   >
                     <div className={`text-xs font-medium truncate ${SIDE_ACCENT[side].text}`}>{name}</div>
-                    <div className="font-mono tabular-nums text-sm mt-1">
-                      {before ?? "—"} → {after ?? "—"} <span className={delta.tone}>({delta.text})</span>
-                    </div>
+                    {battle.is_rated ? (
+                      <div className="font-mono tabular-nums text-sm mt-1">
+                        {before ?? "—"} → {after ?? "—"} <span className={delta.tone}>({delta.text})</span>
+                      </div>
+                    ) : (
+                      <div className="font-mono text-sm mt-1 text-neutral-500">Elo не изменился</div>
+                    )}
                   </div>
                 );
               })}
