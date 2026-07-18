@@ -57,6 +57,7 @@ MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
 V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
+V68_PATH = MIGRATIONS / "V68__battle_anti_abuse.sql"
 
 RUBRIC = [{"criterion": "correctness", "weight": 1.0}]
 SECRET_PROMPT = "SECRET: implement a lock-free ring buffer in Rust."
@@ -67,7 +68,9 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email TEXT NOT NULL
+    email TEXT NOT NULL,
+    is_verified BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -123,7 +126,7 @@ async def engine(pg_container):
     eng = create_async_engine(async_url, future=True)
     sql = (
         f"{BASE_SCHEMA};{V65_PATH.read_text()};"
-        f"{V66_PATH.read_text()};{V67_PATH.read_text()}"
+        f"{V66_PATH.read_text()};{V67_PATH.read_text()};{V68_PATH.read_text()}"
     )
     async with eng.begin() as conn:
         for stmt in split_sql_statements(sql):

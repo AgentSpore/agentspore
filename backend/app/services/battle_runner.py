@@ -54,6 +54,15 @@ from app.schemas.battles import (
     Vote,
     Winner,
 )
+from app.services.battle_budget import (
+    STOP_REASONS,
+    BattleJudgeBudgetService,
+    JudgeBreakerOpen,
+    JudgeBudgetExhausted,
+    breaker_is_open,
+    breaker_record_attempt,
+    breaker_record_failure,
+)
 from app.services.battle_judges import (
     JUDGE_KIND_LLM,
     JUDGE_MODEL,
@@ -236,11 +245,26 @@ class BattleRunner:
         )
 
         winner = self._verdict_to_winner(verdict.winner, verdict.is_tie)
+
+        # Rating gate (V68 Track 3). A battle only affects Elo if it reserved a
+        # rated slot at acceptance (rated_eligible TRUE — the anti-Sybil gate in
+        # BattleService.accept passed: distinct verified owners, both old enough,
+        # within the daily/concurrent rated quota), the panel reached quorum, no
+        # budget/breaker stop cut judging short, and the frozen owners differ.
+        # The V68 battle_rated_requires_eligibility CHECK enforces the first
+        # clause structurally: is_rated=TRUE is illegal unless rated_eligible=TRUE.
+        judging_stopped = fighters["judging_stop_reason"] is not None
+        should_rate = (
+            fighters["rated_eligible"] is True
+            and winner is not None
+            and not same_owner
+            and not judging_stopped
+        )
         change = apply_battle_result(
             fighters["elo_a"],
             fighters["elo_b"],
             winner,
-            same_owner=same_owner,
+            rated=should_rate,
         )
 
         reason = verdict.reason
@@ -255,6 +279,8 @@ class BattleRunner:
             lease_token=lease_token,
             winner=winner.value if winner else None,
             verdict_reason=reason,
+            is_rated=should_rate,
+            judging_stop_reason=fighters["judging_stop_reason"],
             elo_a_before=change.a_before,
             elo_b_before=change.b_before,
             elo_a_after=change.a_after,
@@ -642,7 +668,12 @@ class BattleRunner:
     # -- judging ------------------------------------------------------------
 
     async def run_judge_panel(
-        self, battle_id: str, api_key: str, base_url: str, lease_token: str
+        self,
+        battle_id: str,
+        api_key: str,
+        base_url: str,
+        lease_token: str,
+        budget: BattleJudgeBudgetService | None = None,
     ) -> list[CollapsedVote]:
         """Run three paired replicates and persist the collapsed votes.
 
@@ -699,6 +730,8 @@ class BattleRunner:
                         submission_b=final_by_side.get(Side.B.value),
                         api_key=api_key,
                         base_url=base_url,
+                        battle_lease_token=lease_token,
+                        budget=budget,
                     )
                 )
                 renewed = await self.repo.renew_battle_lease(
@@ -769,6 +802,32 @@ class BattleRunner:
             )
         return REPLICATE_COUNT
 
+    async def settle_budget_exhausted(
+        self, battle_id: str, lease_token: str, reason: str
+    ) -> RatingChange | None:
+        """Terminally settle a battle whose judge budget ran out (V68 B).
+
+        The budget for this period is spent, so the panel can never reach quorum:
+        stamp the public-safe ``judging_stop_reason``, collapse every open
+        replicate to a terminal error, and settle — UNRATED, no-quorum, honest —
+        rather than stranding the battle until midnight. Returns None when this
+        worker no longer owns the battle (lost the lease), in which case another
+        owner will resolve it.
+        """
+        stamped = await self.repo.set_judging_stop_reason(battle_id, reason, lease_token)
+        if stamped is None:
+            await self.db.rollback()
+            logger.info(
+                "battle {} budget-exhausted settle skipped: lease lost", battle_id
+            )
+            return None
+        await self.collapse_open_replicates_to_error(battle_id)
+        await self.db.commit()
+        # settle_battle owns its own transaction; it reads the now-committed
+        # judging_stop_reason, so should_rate is False and finalize writes
+        # is_rated=False + the reason, satisfying battle_is_rated_terminal.
+        return await self.settle_battle(battle_id, lease_token)
+
     @staticmethod
     def _half_is_terminal(run: dict | None) -> bool:
         """Can this replicate half produce no further result?
@@ -798,8 +857,19 @@ class BattleRunner:
         submission_b: str | None,
         api_key: str,
         base_url: str,
+        battle_lease_token: str | None = None,
+        budget: BattleJudgeBudgetService | None = None,
     ) -> JudgeRunResult:
-        """One raw run: claim the slot, call, write back under the token."""
+        """One raw run: claim the slot, reserve a budget unit, call, write back.
+
+        When ``budget`` is supplied (the production path) a call unit is reserved
+        in an independent transaction BEFORE the provider request — refused at the
+        per-battle product cap or a spent daily budget, which raises
+        JudgeBudgetExhausted so the panel settles UNRATED rather than spending a
+        13th call. A lost lease refuses without raising (a stale worker, handled
+        like the existing lost-row path). When ``budget`` is None (unit tests that
+        mock the provider) enforcement is skipped and behaviour is unchanged.
+        """
         run_id = await self.repo.create_judge_run(
             battle_id=battle_id,
             judge_kind=JUDGE_KIND_LLM,
@@ -840,6 +910,35 @@ class BattleRunner:
             # work; report an error half rather than calling anyway.
             return JudgeRunResult(presented_order=order, vote=Vote.ERROR)
 
+        # Reserve a call unit BEFORE transmitting (V68 B). An independent
+        # transaction that commits before the request, so a crash after
+        # reservation still consumes the unit and a terminal budget refusal
+        # settles the panel UNRATED rather than authorizing a 13th call.
+        reservation = None
+        if budget is not None:
+            # Check the breaker immediately before reserving (V68 B5), so an
+            # already-running panel stops BETWEEN halves the moment the breaker
+            # trips. Distinct from budget exhaustion: this is transient, so the
+            # battle stays 'judging' for a later pass rather than settling.
+            if await breaker_is_open():
+                raise JudgeBreakerOpen("judge breaker open")
+            reservation = await budget.reserve_call(
+                battle_id=battle_id,
+                judge_run_id=run_id,
+                battle_lease_token=str(battle_lease_token),
+                run_lease_token=run_token,
+                owner_a_user_id=str(battle["agent_a_owner_snapshot"]),
+                owner_b_user_id=str(battle["agent_b_owner_snapshot"]),
+                provider="zai",
+                model=JUDGE_MODEL,
+            )
+            if not reservation.granted:
+                if reservation.reason in STOP_REASONS:
+                    # Terminal for this budget period — stop the whole panel.
+                    raise JudgeBudgetExhausted(reservation.reason)
+                # Stale lease: no right to spend. Treat as a lost row.
+                return JudgeRunResult(presented_order=order, vote=Vote.ERROR)
+
         payload, label_map = build_judge_payload(
             task_prompt=battle["task_prompt_snapshot"],
             rubric=rubric,
@@ -849,53 +948,90 @@ class BattleRunner:
         )
         messages = build_judge_messages(payload)
 
-        http = self.http or httpx.AsyncClient()
+        # A reserved ledger row must ALWAYS be settled, or it stays 'reserved'
+        # forever and inflates the per-battle attempt count (F7). The outer
+        # finally is the backstop for cancellation / parse / write / aclose
+        # failures that the inner except cannot see; settle_call is idempotent
+        # (WHERE status='reserved'), so a double-settle is harmless.
+        reservation_settled = False
         try:
-            raw = await call_judge_model(
-                client=http,
-                base_url=base_url,
-                api_key=api_key,
-                messages=messages,
-                seed=seed,
-                gate=self.gate,
+            http = self.http or httpx.AsyncClient()
+            try:
+                if budget is not None:
+                    await breaker_record_attempt()
+                raw = await call_judge_model(
+                    client=http,
+                    base_url=base_url,
+                    api_key=api_key,
+                    messages=messages,
+                    seed=seed,
+                    gate=self.gate,
+                )
+            except JudgeTransportError as exc:
+                logger.warning("judge run {} failed: {}", run_id, exc)
+                if budget is not None:
+                    # Feed the breaker: a permanent (balance/auth) failure opens
+                    # it at once, transient failures only on threshold.
+                    await breaker_record_failure(permanent=exc.permanent)
+                if reservation is not None:
+                    await budget.settle_call(
+                        reservation.ledger_id,
+                        succeeded=False,
+                        error_class=type(exc).__name__,
+                    )
+                    reservation_settled = True
+                return JudgeRunResult(presented_order=order, vote=Vote.ERROR)
+            finally:
+                if self.http is None:
+                    await http.aclose()
+
+            # The call returned, so the unit was spent regardless of what happens
+            # to the parsed result below.
+            if reservation is not None:
+                await budget.settle_call(
+                    reservation.ledger_id, succeeded=True, http_status=200
+                )
+                reservation_settled = True
+
+            parsed = parse_judge_response(raw, label_map, allowed)
+            if parsed is None:
+                # Malformed output is an ABSTENTION. Never a tie: a broken judge
+                # must not mint tie-Elo.
+                result = JudgeRunResult(presented_order=order, vote=Vote.ABSTAIN)
+            else:
+                result = JudgeRunResult(
+                    presented_order=order,
+                    vote=parsed.vote,
+                    confidence=parsed.confidence,
+                    reasoning=parsed.reasoning,
+                    scores=parsed.scores,
+                )
+
+            # The token check is the whole point: if our lease lapsed while z.ai
+            # was thinking, someone else owns this slot now and the answer is
+            # discarded.
+            written = await self.repo.complete_judge_run(
+                run_id=run_id,
+                lease_token=run_token,
+                vote=result.vote.value,
+                confidence=result.confidence,
+                reasoning=result.reasoning,
+                scores=result.scores,
             )
-        except JudgeTransportError as exc:
-            logger.warning("judge run {} failed: {}", run_id, exc)
-            return JudgeRunResult(presented_order=order, vote=Vote.ERROR)
+            await self.db.commit()
+            if written is None:
+                logger.info("judge run {} result discarded: lost the row", run_id)
+                return JudgeRunResult(presented_order=order, vote=Vote.ERROR)
+
+            return result
         finally:
-            if self.http is None:
-                await http.aclose()
-
-        parsed = parse_judge_response(raw, label_map, allowed)
-        if parsed is None:
-            # Malformed output is an ABSTENTION. Never a tie: a broken judge
-            # must not mint tie-Elo.
-            result = JudgeRunResult(presented_order=order, vote=Vote.ABSTAIN)
-        else:
-            result = JudgeRunResult(
-                presented_order=order,
-                vote=parsed.vote,
-                confidence=parsed.confidence,
-                reasoning=parsed.reasoning,
-                scores=parsed.scores,
-            )
-
-        # The token check is the whole point: if our lease lapsed while z.ai was
-        # thinking, someone else owns this slot now and our answer is discarded.
-        written = await self.repo.complete_judge_run(
-            run_id=run_id,
-            lease_token=run_token,
-            vote=result.vote.value,
-            confidence=result.confidence,
-            reasoning=result.reasoning,
-            scores=result.scores,
-        )
-        await self.db.commit()
-        if written is None:
-            logger.info("judge run {} result discarded: lost the row", run_id)
-            return JudgeRunResult(presented_order=order, vote=Vote.ERROR)
-
-        return result
+            # Backstop: any exit that did not already settle the reservation
+            # (cancellation, parse/write error, aclose failure) marks the unit
+            # failed so it never lingers 'reserved' and over-counts the cap.
+            if reservation is not None and not reservation_settled:
+                await budget.settle_call(
+                    reservation.ledger_id, succeeded=False, error_class="unsettled"
+                )
 
 
 # --- owner notifications for terminal transitions --------------------------
@@ -1008,6 +1144,7 @@ async def _judge_and_settle(
     api_key: str,
     base_url: str,
     counts: dict[str, int],
+    budget: BattleJudgeBudgetService | None = None,
 ) -> None:
     """Run the panel, then settle IFF every replicate reached a terminal vote.
 
@@ -1022,11 +1159,30 @@ async def _judge_and_settle(
     async with session_factory() as session:
         runner = BattleRunner(session, gate)
         try:
-            await runner.run_judge_panel(battle_id, api_key, base_url, token)
+            await runner.run_judge_panel(battle_id, api_key, base_url, token, budget=budget)
             judgements = await runner.repo.list_judgements(battle_id)
             if len(judgements) >= REPLICATE_COUNT:
                 if await runner.settle_battle(battle_id, token) is not None:
                     counts["settled"] += 1
+        except JudgeBudgetExhausted as exc:
+            # The budget for this period is spent: settle UNRATED now rather than
+            # stranding the battle. Free lifecycle phases keep running regardless.
+            logger.warning(
+                "battle {} judge budget exhausted ({}): settling unrated",
+                battle_id, exc.reason,
+            )
+            await session.rollback()
+            if await runner.settle_budget_exhausted(battle_id, token, exc.reason) is not None:
+                counts["settled"] += 1
+        except JudgeBreakerOpen:
+            # Transient breaker trip: leave the battle in 'judging' for a later
+            # pass (do NOT settle, do NOT strand). The panel can still complete
+            # once the breaker closes. Whatever partial halves already committed
+            # stay, and the renewed lease keeps the row reclaimable.
+            logger.warning(
+                "battle {} judging paused: judge breaker open", battle_id
+            )
+            await session.rollback()
         except Exception as exc:
             logger.exception("judging failed for battle {}: {}", battle_id, exc)
             await session.rollback()
@@ -1206,6 +1362,9 @@ async def reconcile_once(
     token = str(uuid.uuid4())
     api_key = provider["api_key"] if provider is not None else None
     base_url = provider["base_url"] if provider is not None else None
+    # Only the paid judge phases need the budget ledger; it shares the reconciler
+    # session factory but opens its own short transactions per reservation.
+    budget = BattleJudgeBudgetService(session_factory) if provider is not None else None
 
     async def claim(status: BattleStatus, max_attempts: int, lease_seconds: int) -> list[dict]:
         """Claim a bounded batch of one status. Oldest first, skipping held rows.
@@ -1270,7 +1429,7 @@ async def reconcile_once(
         counts["judged"] += 1
         if provider is not None:
             await _judge_and_settle(
-                session_factory, gate, battle_id, token, api_key, base_url, counts
+                session_factory, gate, battle_id, token, api_key, base_url, counts, budget
             )
 
     # 5. judging -> completed. Resume battles stranded in judging by a crash
@@ -1284,7 +1443,7 @@ async def reconcile_once(
     if provider is not None:
         for battle in await claim(BattleStatus.JUDGING, RUNNING_MAX_ATTEMPTS, BATTLE_LEASE_SECONDS):
             await _judge_and_settle(
-                session_factory, gate, str(battle["id"]), token, api_key, base_url, counts
+                session_factory, gate, str(battle["id"]), token, api_key, base_url, counts, budget
             )
 
     counts.update(await reap_once(session_factory, provider))

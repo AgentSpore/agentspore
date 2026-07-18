@@ -24,6 +24,7 @@ delivery would be asserting the very confusion this step exists to prevent.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -38,6 +39,7 @@ from testcontainers.postgres import PostgresContainer
 
 from app.api.deps import get_current_user, get_optional_user
 from app.api.v1.battles import _DENIAL_STATUS, _optional_fighter
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.main import app
 from app.repositories.agent_repo import AgentRepository
@@ -48,7 +50,6 @@ from app.services import connection_manager as cm
 from app.services.battle_service import (
     CHALLENGER_RATE_LIMIT,
     TARGET_CHALLENGE_CAP,
-    TARGET_CHALLENGE_WINDOW_SECONDS,
     BattleService,
     ChallengeDeniedError,
     LimiterUnavailableError,
@@ -58,6 +59,7 @@ MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
 V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
+V68_PATH = MIGRATIONS / "V68__battle_anti_abuse.sql"
 
 RUBRIC = [{"criterion": "correctness", "weight": 1.0}]
 
@@ -68,7 +70,9 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email TEXT NOT NULL
+    email TEXT NOT NULL,
+    is_verified BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -122,7 +126,10 @@ async def engine(pg_container):
     """FK targets + the REAL V65 and V66 migrations, applied exactly once."""
     async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
     eng = create_async_engine(async_url, future=True)
-    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};{V67_PATH.read_text()}"
+    sql = (
+        f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};"
+        f"{V67_PATH.read_text()};{V68_PATH.read_text()}"
+    )
     async with eng.begin() as conn:
         for stmt in split_sql_statements(sql):
             if stmt.strip():
@@ -315,7 +322,6 @@ async def test_battle_admission_and_ready_gate_fail_closed(
         agent_a_owner_snapshot=owner_id,
         challenge_ttl_seconds=60,
         target_cap=TARGET_CHALLENGE_CAP,
-        target_window_seconds=TARGET_CHALLENGE_WINDOW_SECONDS,
         agent_b_id=target,
         agent_b_owner_snapshot=owner_id,
     )
@@ -391,24 +397,32 @@ async def test_decline_starts_cooldown_that_blocks_the_next_challenge(
 async def test_block_list_denies_and_creates_no_row(
     db, owner_id, task_id, make_agent
 ):
-    """A blocked challenger cannot reach the target at all."""
-    target = await make_agent()
-    challenger = await make_agent()
+    """A blocked challenger cannot reach the target at all (owner-level, V68)."""
+    challenger_owner = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO users (id, email) VALUES (CAST(:id AS UUID), :e)"),
+        {"id": challenger_owner, "e": f"co-{challenger_owner[:8]}@example.test"},
+    )
+    target = await make_agent()  # owned by owner_id
+    challenger = await make_agent(owner=challenger_owner)
+    # Target's owner blocks the challenger's owner. The block covers every agent
+    # of either owner, in either direction.
     await db.execute(
         text(
-            "INSERT INTO battle_blocks (blocker_agent_id, blocked_agent_id) "
+            "INSERT INTO battle_blocks "
+            "(blocker_owner_user_id, blocked_owner_user_id) "
             "VALUES (CAST(:t AS UUID), CAST(:c AS UUID))"
         ),
-        {"t": target, "c": challenger},
+        {"t": owner_id, "c": challenger_owner},
     )
     await db.commit()
 
     with pytest.raises(ChallengeDeniedError) as denied:
         await BattleService(db).create_challenge(
             task_category=None,
-        task_difficulty=None,
+            task_difficulty=None,
             agent_a_id=challenger,
-            challenger_owner_user_id=owner_id,
+            challenger_owner_user_id=challenger_owner,
             agent_b_id=target,
         )
     await db.rollback()
@@ -483,7 +497,9 @@ async def test_challenger_rate_limit_names_the_challenger_not_the_target(
     that is theirs. Both answer 429; only one of them is true.
     """
     challenger = await make_agent()
-    redis_up.counters[f"battle:challenge:ratelimit:{challenger}"] = (
+    # V68 C1: the limiter is keyed on the challenger OWNER, not the agent, so all
+    # of an owner's agents share one 20/hour quota.
+    redis_up.counters[f"battle:challenge:owner-ratelimit:{owner_id}"] = (
         CHALLENGER_RATE_LIMIT
     )
 
@@ -848,14 +864,23 @@ async def test_a_blocked_agent_cannot_claim_an_open_challenge(
     did the blocking.
     """
     for blocker_is_claimant in (True, False):
-        battle_id, challenger = await open_challenge()
-        claimant = await make_agent()
+        battle_id, challenger = await open_challenge()  # challenger owned by owner_id
+        claimant_owner = str(uuid.uuid4())
+        await db.execute(
+            text("INSERT INTO users (id, email) VALUES (CAST(:id AS UUID), :e)"),
+            {"id": claimant_owner, "e": f"cl-{claimant_owner[:8]}@example.test"},
+        )
+        claimant = await make_agent(owner=claimant_owner)
+        # Owner-level block (V68), keyed on the two owners, either direction.
         blocker, blocked = (
-            (claimant, challenger) if blocker_is_claimant else (challenger, claimant)
+            (claimant_owner, owner_id)
+            if blocker_is_claimant
+            else (owner_id, claimant_owner)
         )
         await db.execute(
             text(
-                "INSERT INTO battle_blocks (blocker_agent_id, blocked_agent_id) "
+                "INSERT INTO battle_blocks "
+                "(blocker_owner_user_id, blocked_owner_user_id) "
                 "VALUES (CAST(:x AS UUID), CAST(:y AS UUID))"
             ),
             {"x": blocker, "y": blocked},
@@ -863,7 +888,9 @@ async def test_a_blocked_agent_cannot_claim_an_open_challenge(
         await db.commit()
 
         assert (
-            await BattleService(db).claim_open_challenge(battle_id, claimant, owner_id)
+            await BattleService(db).claim_open_challenge(
+                battle_id, claimant, claimant_owner
+            )
             is None
         ), f"blocked claim succeeded (blocker_is_claimant={blocker_is_claimant})"
         await db.rollback()
@@ -1388,7 +1415,10 @@ async def _drive_to_completed(db, battle_id: str) -> None:
         reasoning="a is better",
         scores={"correctness": 0.9},
     )
-    assert await repo.finalize(battle_id, token, "a", "1 for alpha-side", 1200, 1200, 1216, 1184)
+    assert await repo.finalize(
+        battle_id, token, "a", "1 for alpha-side", is_rated=False,
+        elo_a_before=1200, elo_b_before=1200, elo_a_after=1216, elo_b_after=1184
+    )
     await db.commit()
 
 
@@ -1755,3 +1785,288 @@ async def test_a_notify_failure_does_not_roll_back_the_challenge(
     assert resp.status_code == 201
     # The challenge survived the notification failure.
     assert await _count_battles(db, target) == 1
+
+
+# ── V68 Track-3: rated eligibility, owner blocks, active-pending cap ──────────
+
+
+async def _make_owner(db, *, verified: bool = True, age_days: int = 30) -> str:
+    """Insert a user with a chosen verification state and account age."""
+    uid = str(uuid.uuid4())
+    await db.execute(
+        text(
+            "INSERT INTO users (id, email, is_verified, created_at) "
+            "VALUES (CAST(:id AS UUID), :e, :v, "
+            "        NOW() - make_interval(days => :age))"
+        ),
+        {"id": uid, "e": f"o-{uid[:8]}@example.test", "v": verified, "age": age_days},
+    )
+    await db.commit()
+    return uid
+
+
+async def _accept_freezing_eligibility(
+    db, task_id, make_agent, *, challenger_owner: str, target_owner: str
+) -> dict:
+    """Create a named challenge, then accept it as the target owner. Returns the row."""
+    challenger = await make_agent(owner=challenger_owner)
+    target = await make_agent(owner=target_owner)
+    svc = BattleService(db)
+    battle_id = await svc.create_challenge(
+        task_category=None,
+        task_difficulty=None,
+        agent_a_id=challenger,
+        challenger_owner_user_id=challenger_owner,
+        agent_b_id=target,
+    )
+    await db.commit()
+    accepted = await svc.accept(battle_id, target_owner)
+    await db.commit()
+    assert accepted is not None
+    return accepted
+
+
+async def test_accept_freezes_rated_eligible_for_two_aged_verified_owners(
+    db, task_id, make_agent
+):
+    """The happy rated path: distinct, verified, old-enough owners reserve a slot."""
+    a = await _make_owner(db, verified=True, age_days=30)
+    b = await _make_owner(db, verified=True, age_days=30)
+    row = await _accept_freezing_eligibility(
+        db, task_id, make_agent, challenger_owner=a, target_owner=b
+    )
+    assert row["rated_eligible"] is True
+    assert row["rated_ineligibility_reason"] is None
+    assert row["rated_quota_day"] is not None
+
+
+async def test_accept_denies_rated_slot_for_a_fresh_sybil_second_account(
+    db, task_id, make_agent
+):
+    """A second, newly created verified account cannot pull a rated slot.
+
+    This is the Sybil-blunting invariant: an owner who spins up a fresh account
+    to farm rating against their own agent is denied the rated slot with a
+    specific reason, and the battle completes UNRATED even after a valid verdict.
+    """
+    aged = await _make_owner(db, verified=True, age_days=30)
+    fresh = await _make_owner(db, verified=True, age_days=0)
+    row = await _accept_freezing_eligibility(
+        db, task_id, make_agent, challenger_owner=aged, target_owner=fresh
+    )
+    assert row["rated_eligible"] is False
+    assert row["rated_ineligibility_reason"] == "account_too_new"
+
+
+async def test_accept_denies_rated_slot_for_an_unverified_owner(
+    db, task_id, make_agent
+):
+    """An unverified account is unrated with account_unverified."""
+    aged = await _make_owner(db, verified=True, age_days=30)
+    unverified = await _make_owner(db, verified=False, age_days=30)
+    row = await _accept_freezing_eligibility(
+        db, task_id, make_agent, challenger_owner=aged, target_owner=unverified
+    )
+    assert row["rated_eligible"] is False
+    assert row["rated_ineligibility_reason"] == "account_unverified"
+
+
+async def test_accept_denies_rated_slot_for_same_owner_self_play(
+    db, task_id, make_agent, owner_id
+):
+    """Same-owner self-play is never eligible for a rated slot."""
+    row = await _accept_freezing_eligibility(
+        db, task_id, make_agent, challenger_owner=owner_id, target_owner=owner_id
+    )
+    assert row["rated_eligible"] is False
+    assert row["rated_ineligibility_reason"] == "same_owner"
+
+
+async def test_block_api_roundtrip_and_challenge_enforcement(
+    client, db, task_id, make_agent
+):
+    """POST/GET/DELETE blocks, and a block created via the API refuses a challenge."""
+    blocker = await _make_owner(db)
+    blocked = await _make_owner(db)
+    blocked_agent = await make_agent(owner=blocked)
+    blocker_agent = await make_agent(owner=blocker)
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=blocker)
+    try:
+        # Create by agent id — resolved to the agent's owner.
+        resp = await client.post(
+            "/api/v1/battles/blocks", json={"blocked_agent_id": blocked_agent}
+        )
+        assert resp.status_code == 201
+        block_id = resp.json()["id"]
+        assert resp.json()["blocked_owner_id"] == blocked
+
+        # Self-block is a 422.
+        self_agent = await make_agent(owner=blocker)
+        assert (
+            await client.post(
+                "/api/v1/battles/blocks", json={"blocked_agent_id": self_agent}
+            )
+        ).status_code == 422
+
+        # List shows exactly the one block.
+        listed = (await client.get("/api/v1/battles/blocks")).json()
+        assert [b["blocked_owner_id"] for b in listed] == [blocked]
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    # The blocked owner's agent cannot challenge the blocker's agent → 403.
+    with pytest.raises(ChallengeDeniedError) as denied:
+        await BattleService(db).create_challenge(
+            task_category=None,
+            task_difficulty=None,
+            agent_a_id=blocked_agent,
+            challenger_owner_user_id=blocked,
+            agent_b_id=blocker_agent,
+        )
+    await db.rollback()
+    assert denied.value.reason is ChallengeDenial.BLOCKED
+    assert _DENIAL_STATUS[ChallengeDenial.BLOCKED] == 403
+
+    # Another user cannot delete this block (404), the owner can (204), and the
+    # unblock restores admission.
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=blocked)
+    try:
+        assert (
+            await client.delete(f"/api/v1/battles/blocks/{block_id}")
+        ).status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=blocker)
+    try:
+        assert (
+            await client.delete(f"/api/v1/battles/blocks/{block_id}")
+        ).status_code == 204
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    # Admission restored after unblock.
+    ok = await BattleService(db).create_challenge(
+        task_category=None,
+        task_difficulty=None,
+        agent_a_id=blocked_agent,
+        challenger_owner_user_id=blocked,
+        agent_b_id=blocker_agent,
+    )
+    await db.commit()
+    assert ok is not None
+
+
+async def test_active_pending_cap_counts_only_live_pending_and_shares_across_agents(
+    db, task_id, make_agent
+):
+    """The inbound cap counts only live challenge_pending rows for the target OWNER.
+
+    Expired/declined/accepted history does not count, and multiple target agents
+    of one owner share ONE cap — the griefer bypass the old per-agent window cap
+    allowed.
+    """
+    target_owner = await _make_owner(db)
+    t1 = await make_agent(owner=target_owner)
+    t2 = await make_agent(owner=target_owner)
+    svc = BattleService(db)
+
+    # Dead rows that must NOT count: an EXPIRED pending challenge on t1.
+    dead = await make_agent()
+    stale = await svc.create_challenge(
+        task_category=None, task_difficulty=None,
+        agent_a_id=dead, challenger_owner_user_id=await _owner_of(db, dead),
+        agent_b_id=t1,
+    )
+    await db.execute(
+        text("UPDATE battles SET challenge_expires_at = NOW() - make_interval(secs => 1) "
+             "WHERE id = CAST(:id AS UUID)"),
+        {"id": stale},
+    )
+    await db.commit()
+
+    # Fill the cap with live pending challenges spread across BOTH target agents.
+    for i in range(TARGET_CHALLENGE_CAP):
+        ch = await make_agent()
+        made = await svc.create_challenge(
+            task_category=None, task_difficulty=None,
+            agent_a_id=ch, challenger_owner_user_id=await _owner_of(db, ch),
+            agent_b_id=(t1 if i % 2 == 0 else t2),
+        )
+        await db.commit()
+        assert made is not None
+
+    # One more against EITHER agent of the owner is now capped, despite the dead
+    # expired row not counting.
+    over = await make_agent()
+    with pytest.raises(ChallengeDeniedError) as denied:
+        await svc.create_challenge(
+            task_category=None, task_difficulty=None,
+            agent_a_id=over, challenger_owner_user_id=await _owner_of(db, over),
+            agent_b_id=t2,
+        )
+    await db.rollback()
+    assert denied.value.reason is ChallengeDenial.TARGET_CAPPED
+
+
+async def _owner_of(db, agent_id: str) -> str:
+    row = (
+        await db.execute(
+            text("SELECT owner_user_id FROM agents WHERE id = CAST(:id AS UUID)"),
+            {"id": agent_id},
+        )
+    ).mappings().first()
+    return str(row["owner_user_id"])
+
+
+async def test_block_by_nonexistent_owner_id_is_404_not_500(
+    client, db, make_agent
+):
+    """FK: a direct blocked_owner_id that is not a real user is a clean 404."""
+    blocker = await _make_owner(db)
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=blocker)
+    try:
+        resp = await client.post(
+            "/api/v1/battles/blocks",
+            json={"blocked_owner_id": str(uuid.uuid4())},  # no such user
+        )
+        assert resp.status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+async def test_accept_preflight_429_when_rated_budget_exhausted(
+    client, db, task_id, make_agent
+):
+    """B4: accepting a would-be-rated battle is refused 429 when budget is spent."""
+    challenger_owner = await _make_owner(db)  # distinct owners => rated candidate
+    target_owner = await _make_owner(db)
+    challenger = await make_agent(owner=challenger_owner)
+    target = await make_agent(owner=target_owner)
+    battle_id = await BattleService(db).create_challenge(
+        task_category=None, task_difficulty=None,
+        agent_a_id=challenger, challenger_owner_user_id=challenger_owner,
+        agent_b_id=target,
+    )
+    await db.commit()
+
+    # Fill the target owner's daily judge budget to leave < 6 units.
+    limit = get_settings().battle_judge_owner_daily_call_limit
+    await db.execute(
+        text(
+            "INSERT INTO battle_judge_owner_daily_usage "
+            "(budget_day, owner_user_id, reserved_calls) "
+            "VALUES (:d, CAST(:o AS UUID), :c)"
+        ),
+        {"d": date.today(), "o": target_owner, "c": limit - 2},
+    )
+    await db.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=target_owner)
+    try:
+        resp = await client.post(f"/api/v1/battles/{battle_id}/accept")
+        assert resp.status_code == 429
+        assert "budget is exhausted" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)

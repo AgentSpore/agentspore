@@ -168,15 +168,22 @@ def apply_battle_result(
     rating_b: int,
     winner: Winner | None,
     *,
+    rated: bool = True,
     same_owner: bool = False,
     k: int = K_FACTOR,
 ) -> RatingChange:
     """Compute both fighters' new ratings for one finished battle.
 
-    ``winner=None`` (no quorum) and ``same_owner=True`` both yield an unchanged,
+    ``winner=None`` (no quorum), ``rated=False`` (the V68 anti-abuse gate denied
+    a rated slot) and ``same_owner=True`` all yield an unchanged,
     ``applied=False`` result rather than an exception: they are ordinary,
     expected outcomes of a battle that legitimately completed, and the caller
     still writes the snapshot and the 'completed' status for them.
+
+    ``rated`` is the explicit Track-3 rating decision (distinct owners, both
+    verified and old enough, within the daily/concurrent rated quota, and no
+    budget/breaker stop). It is kept separate from ``same_owner`` so the caller
+    can express "eligible but the panel produced no quorum" vs "never eligible".
 
     The two sides are computed from the SAME pair of "before" ratings, never
     sequentially — updating A first and feeding A's new rating into B's
@@ -191,7 +198,7 @@ def apply_battle_result(
     two ratings independently would mint points (both stay at the floor with a
     non-zero winner delta) — the bug this coupling exists to prevent.
     """
-    if winner is None or same_owner:
+    if winner is None or same_owner or not rated:
         return RatingChange(
             a_before=rating_a,
             b_before=rating_b,
