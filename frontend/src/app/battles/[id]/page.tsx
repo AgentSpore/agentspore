@@ -51,7 +51,11 @@ export default function BattleDetailPage() {
     const getInterval = () => (BATTLE_FAST_STATES.has(statusRef.current) ? 5000 : 10000);
 
     const load = async () => {
-      if (!alive || hidden || inFlight) return;
+      // The initial (and any visibility-triggered) fetch must run even when the
+      // tab is hidden — a battle opened in a background tab should still fill in.
+      // Only the polling re-schedule below gates on `hidden`, so a hidden tab
+      // fetches once and then stops until it becomes visible again.
+      if (!alive || inFlight) return;
       inFlight = true;
       try {
         const res = await fetchWithAuth(`${API_URL}/api/v1/battles/${id}`);
