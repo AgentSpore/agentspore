@@ -820,6 +820,56 @@ async def test_binding_cannot_choose_a_retired_task(db_session, agent_ids, owner
     await db_session.rollback()
 
 
+async def test_binding_cannot_choose_a_public_task(db_session, agent_ids, owner_id):
+    """A non-secret (legacy/public) task can never be BOUND to a battle (V67).
+
+    V67 quarantines every pre-V67 row (secret=FALSE) whose prompt+rubric were
+    public under V66's catalog. Binding draws only from the SECRET pool, so a
+    filter whose only matching task is public has an empty pool: _mark_queued
+    binds nothing and the battle stays reserved, never queued on a task an owner
+    could have precomputed.
+
+    MUTATION ANCHOR for the binding CTE's `AND t.secret = TRUE`: without it this
+    public task binds and the assertion below flips green->red.
+    """
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    events = AgentEventRepository(db_session)
+    tid = await repo.create_task(
+        source=TaskSource.GENERATED,
+        category="public-only-bucket",
+        difficulty="hard",
+        title="Public",
+        prompt="Leaked task.",
+        rubric=RUBRIC,
+        time_limit_seconds=600,
+    )
+    # Ready, but public — the quarantined legacy shape.
+    await db_session.execute(
+        text("UPDATE battle_tasks SET secret = FALSE WHERE id = CAST(:t AS UUID)"),
+        {"t": tid},
+    )
+    battle_id = await repo._create_battle(
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_id,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_id,
+        task_category="public-only-bucket",
+        task_difficulty="hard",
+    )
+    assert battle_id is not None
+    assert await repo._mark_accepted(battle_id) is not None
+    await repo.reserve_both(battle_id, agent_a, agent_b, 60)
+    event_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+    event_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+    armed = await repo.arm_readiness(battle_id, event_a, event_b, 60)
+    assert armed is not None
+    # Only a public task matches the filter -> binding chooses nothing.
+    assert await repo._mark_queued(battle_id, armed["readiness_generation"]) is None
+    await db_session.rollback()
+
+
 @pytest.mark.parametrize(
     "status,note",
     [

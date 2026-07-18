@@ -47,7 +47,11 @@ from app.repositories.battle_repo import (
 )
 from app.schemas.battles import BattleStatus, CreateChallengeRequest, TaskSource
 from app.services import battle_service as battle_service_module
-from app.services.battle_service import BattleService
+from app.services.battle_service import (
+    BattleService,
+    ChallengeDenial,
+    ChallengeDeniedError,
+)
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
@@ -695,3 +699,250 @@ async def test_running_battle_reveals_the_snapshot(client, db, owner_id, make_ag
     assert body["task_id"] is not None
     assert body["task_prompt_snapshot"].startswith("SECRET")
     assert body["task_title_snapshot"].startswith(SECRET_TITLE)
+
+
+# ── (g) MUTATION ANCHOR: public (secret=FALSE) tasks are quarantined ─────────
+#
+# Every earlier test seeds FRESH tasks, which default secret=TRUE, so they pass
+# whether or not the pool queries filter `secret = TRUE` — they do not exercise
+# the quarantine invariant at all. These two do: they make a bucket PUBLIC
+# (the shape V67 gives every pre-V67 catalog row) and assert it can neither be
+# challenged nor bound. Drop any `AND secret = TRUE` from the pool queries and
+# one of these goes red.
+
+
+async def _make_pool_public(db, ids: list[str]) -> None:
+    """Flip a seeded bucket to secret=FALSE — the quarantined legacy shape."""
+    await db.execute(
+        text(
+            "UPDATE battle_tasks SET secret = FALSE "
+            "WHERE id = ANY(CAST(:ids AS UUID[]))"
+        ),
+        {"ids": ids},
+    )
+    await db.commit()
+
+
+async def test_public_pool_neither_advertises_nor_admits(db, owner_id, make_agent):
+    """A public-only bucket shows empty in the catalog and refuses a challenge.
+
+    Exercises list_task_pools, diagnose_challenge and create_challenge: all
+    three must count only SECRET tasks. Seeds MORE than the minimum, then makes
+    every row public, so a COUNT that forgot the secret filter would still clear
+    the gate.
+    """
+    cat, diff = "publiconly", "hard"
+    ids = await _seed_pool(db, owner_id, category=cat, difficulty=diff,
+                           count=MINIMUM_TASK_POOL + 3)
+    await _make_pool_public(db, ids)
+
+    # Catalog: the bucket advertises no bindable pool (absent or fresh_count 0).
+    pools = await BattleRepository(db).list_task_pools()
+    mine = [p for p in pools if p["category"] == cat and p["difficulty"] == diff]
+    assert not mine or (
+        mine[0]["fresh_count"] == 0 and mine[0]["challenge_available"] is False
+    ), f"public tasks leaked into the catalog: {mine}"
+
+    # Admission: the fresh SECRET pool is empty, so the challenge is refused.
+    svc = BattleService(db)
+    agent_a = await make_agent()
+    agent_b = await make_agent()
+    with pytest.raises(ChallengeDeniedError) as ei:
+        await svc.create_challenge(
+            task_category=cat, task_difficulty=diff, agent_a_id=agent_a,
+            challenger_owner_user_id=owner_id, agent_b_id=agent_b,
+        )
+    assert ei.value.reason == ChallengeDenial.INSUFFICIENT_TASK_POOL
+    await db.rollback()
+
+
+async def test_task_made_public_after_challenge_never_binds(db, owner_id, make_agent):
+    """MUTATION ANCHOR for admit_to_queue's `AND t.secret = TRUE`.
+
+    Adequate SECRET pool at challenge time, then every matching task is made
+    public before binding — the "catalog leaked between challenge and readiness"
+    case, mirroring the retired-task abort. The bind must see an empty pool:
+    try_queue binds nothing and the pool-exhausted abort fires honestly. Remove
+    the secret predicate from the binding CTE and try_queue would bind a public
+    task, so this test flips green->red.
+    """
+    cat, diff = "flipsecret", "hard"
+    await _seed_pool(db, owner_id, category=cat, difficulty=diff,
+                     count=MINIMUM_TASK_POOL + 2)
+    armed = await _reserved_and_acked(
+        db, owner_id, make_agent, category=cat, difficulty=diff
+    )
+    battle_id = str(armed["id"])
+    # The whole bucket becomes public after the challenge was admitted.
+    await db.execute(
+        text("UPDATE battle_tasks SET secret = FALSE WHERE category = :c"),
+        {"c": cat},
+    )
+    await db.commit()
+    token = await _lease(db, battle_id)
+    svc = BattleService(db)
+
+    assert await svc.try_queue(battle_id, armed["readiness_generation"], token) is None
+    aborted = await svc.abort_pool_exhausted(
+        battle_id, armed["readiness_generation"], token
+    )
+    await db.commit()
+    assert aborted is not None
+    assert aborted["status"] == BattleStatus.ABORTED.value
+    assert aborted["task_id"] is None
+
+
+# ── (h) MUTATION ANCHOR: a bound task is retired, never reused ───────────────
+#
+# A task revealed to fighters (the API publishes the snapshot once 'running') is
+# public forever, so strict secrecy is incompatible with reuse-after-cooldown:
+# binding must RETIRE the content permanently, across every duplicate-content
+# row, not merely cool one row down. These prove that.
+
+
+async def test_bound_task_is_retired_from_the_pool(db, owner_id, make_agent):
+    """F1: the bound task is secret=FALSE afterward — retired, not just cooled.
+
+    MUTATION ANCHOR: drop `secret = FALSE` from the bind's retire CTE and the
+    bound row stays secret=TRUE, so this assertion flips green->red. A retired
+    row is then excluded by every bindable-pool query (proven by the section (g)
+    public-task tests), so it can never bind to a second rated battle — even
+    once its reuse cooldown lapses.
+    """
+    cat, diff = "retirecat", "hard"
+    await _seed_pool(db, owner_id, category=cat, difficulty=diff,
+                     count=MINIMUM_TASK_POOL + 1)
+    armed = await _reserved_and_acked(
+        db, owner_id, make_agent, category=cat, difficulty=diff
+    )
+    battle_id = str(armed["id"])
+    token = await _lease(db, battle_id)
+    queued = await BattleService(db).try_queue(
+        battle_id, armed["readiness_generation"], token
+    )
+    await db.commit()
+    assert queued is not None
+    bound_task = str(queued["task_id"])
+
+    secret = (
+        await db.execute(
+            text("SELECT secret FROM battle_tasks WHERE id = CAST(:t AS UUID)"),
+            {"t": bound_task},
+        )
+    ).scalar_one()
+    assert secret is False, "a revealed (bound) task must be retired from the pool"
+
+
+async def test_binding_retires_every_duplicate_content_sibling(
+    db, owner_id, make_agent
+):
+    """F3: duplicate-content rows are burned together, not just the chosen id.
+
+    Seed each of the minimum-plus distinct prompts TWICE, so whichever prompt the
+    bind picks has a sibling row carrying the same (now-public) content. After a
+    single bind, NO row with the bound prompt may remain secret.
+
+    MUTATION ANCHOR: retire on `id = c.id` instead of `prompt = c.prompt` and the
+    sibling stays secret=TRUE -> the count below is 1, not 0 -> red. (Every prompt
+    is duplicated, so the mutation fails regardless of which prompt was drawn.)
+    """
+    cat, diff = "dupcat", "hard"
+    repo = BattleRepository(db)
+    for i in range(MINIMUM_TASK_POOL + 1):
+        prompt = f"SECRET dup content #{i}"
+        for _ in range(2):  # two ready rows share each prompt
+            await repo.create_task(
+                source=TaskSource.GENERATED,
+                title=f"{SECRET_TITLE} dup {i}",
+                prompt=prompt,
+                rubric=RUBRIC,
+                time_limit_seconds=600,
+                category=cat,
+                difficulty=diff,
+                created_by_user_id=owner_id,
+            )
+    await db.commit()
+
+    armed = await _reserved_and_acked(
+        db, owner_id, make_agent, category=cat, difficulty=diff
+    )
+    battle_id = str(armed["id"])
+    token = await _lease(db, battle_id)
+    queued = await BattleService(db).try_queue(
+        battle_id, armed["readiness_generation"], token
+    )
+    await db.commit()
+    assert queued is not None
+    bound_prompt = queued["task_prompt_snapshot"]
+
+    still_secret = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM battle_tasks "
+                "WHERE prompt = :p AND secret = TRUE"
+            ),
+            {"p": bound_prompt},
+        )
+    ).scalar_one()
+    assert still_secret == 0, "a duplicate-content sibling survived retirement"
+
+
+async def test_binding_retires_semantic_content_variants(db, owner_id, make_agent):
+    """F3 (semantic): whitespace/case variants of the bound content are burned.
+
+    Each content is seeded as TWO rows that differ only by case and whitespace
+    (e.g. `"SECRET solve problem 3"` and `"   SECRET   SOLVE   PROBLEM   3   "`).
+    They normalize to the SAME canonical content key, so after one variant binds
+    and is revealed, its twin must also be secret=FALSE — otherwise the twin is
+    the exact same (now-public) task, still bindable.
+
+    MUTATION ANCHOR: revert the retire predicate to raw `t.prompt = c.prompt` and
+    the case/whitespace twin survives (different raw text) -> the count below is
+    >= 1, not 0 -> red. Every content is variant-paired, so the mutation fails
+    regardless of which content was drawn.
+    """
+    cat, diff = "semdupcat", "hard"
+    repo = BattleRepository(db)
+    for i in range(MINIMUM_TASK_POOL + 1):
+        base = f"SECRET solve problem {i}"
+        # Same content, differing only by case + surrounding/internal whitespace.
+        variant = f"   {base.upper().replace(' ', '   ')}   "
+        for prompt in (base, variant):
+            await repo.create_task(
+                source=TaskSource.GENERATED,
+                title=f"{SECRET_TITLE} sem {i}",
+                prompt=prompt,
+                rubric=RUBRIC,
+                time_limit_seconds=600,
+                category=cat,
+                difficulty=diff,
+                created_by_user_id=owner_id,
+            )
+    await db.commit()
+
+    armed = await _reserved_and_acked(
+        db, owner_id, make_agent, category=cat, difficulty=diff
+    )
+    battle_id = str(armed["id"])
+    token = await _lease(db, battle_id)
+    queued = await BattleService(db).try_queue(
+        battle_id, armed["readiness_generation"], token
+    )
+    await db.commit()
+    assert queued is not None
+    bound_prompt = queued["task_prompt_snapshot"]
+
+    # Count rows whose NORMALIZED content matches the bound task and are still
+    # secret — the case/whitespace twin must have been retired along with it.
+    still_secret = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM battle_tasks "
+                "WHERE regexp_replace(btrim(lower(prompt)), '\\s+', ' ', 'g') "
+                "    = regexp_replace(btrim(lower(:p)), '\\s+', ' ', 'g') "
+                "  AND secret = TRUE"
+            ),
+            {"p": bound_prompt},
+        )
+    ).scalar_one()
+    assert still_secret == 0, "a case/whitespace content variant survived retirement"

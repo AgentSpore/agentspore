@@ -193,8 +193,9 @@ async def make_agent(db, owner_id):
 @pytest_asyncio.fixture(loop_scope="module")
 async def task_id(db, owner_id) -> str:
     # V67: a challenge over an "any" filter needs a fresh pool of at least
-    # MINIMUM_TASK_POOL (20). Seed a full pool of IDENTICAL general/medium tasks
-    # so admission passes and any bound task yields the same snapshot; return one
+    # MINIMUM_TASK_POOL (20) DISTINCT tasks — the pool gate counts DISTINCT
+    # prompts, so duplicate content does not inflate the count. Seed a full pool
+    # of distinct general/medium tasks so admission passes; return one
     # representative id for the transition-test helpers.
     repo = BattleRepository(db)
     tid = await repo.create_task(
@@ -206,12 +207,12 @@ async def task_id(db, owner_id) -> str:
         time_limit_seconds=600,
         created_by_user_id=owner_id,
     )
-    for _ in range(24):
+    for i in range(24):
         await repo.create_task(
             source=TaskSource.GENERATED,
             category="general",
             title="Write a parser",
-            prompt="Parse this log format.",
+            prompt=f"Parse this log format. (variant {i})",
             rubric=RUBRIC,
             time_limit_seconds=600,
             created_by_user_id=owner_id,
