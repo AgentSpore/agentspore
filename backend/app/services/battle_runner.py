@@ -43,6 +43,7 @@ import httpx
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.rating import RatingChange, apply_battle_result
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository, ReservationConflictError
@@ -64,13 +65,18 @@ from app.services.battle_budget import (
     breaker_record_failure,
 )
 from app.services.battle_judges import (
+    INJECTION_STOP_REASON,
     JUDGE_KIND_LLM,
     JUDGE_MODEL,
+    JUDGE_SYSTEM_PROMPTS,
     PRESENTED_ORDERS,
     REPLICATE_COUNT,
     CollapsedVote,
+    JudgeInjectionSuspected,
+    JudgeModel,
     JudgeRunResult,
     JudgeTransportError,
+    PanelVerdict,
     build_judge_messages,
     build_judge_payload,
     call_judge_model,
@@ -79,6 +85,7 @@ from app.services.battle_judges import (
     replicate_seed,
     resolve_verdict,
     rubric_keys,
+    scan_submissions,
 )
 from app.services.battle_service import BattleService
 from app.services.connection_manager import dispatch_existing
@@ -195,7 +202,12 @@ class BattleRunner:
 
     # -- settlement ---------------------------------------------------------
 
-    async def settle_battle(self, battle_id: str, lease_token: str) -> RatingChange | None:
+    async def settle_battle(
+        self,
+        battle_id: str,
+        lease_token: str,
+        override_verdict: PanelVerdict | None = None,
+    ) -> RatingChange | None:
         """judging -> completed, with the verdict and both ratings, atomically.
 
         THE invariant of step 9 lives in this method: winner, Elo snapshots,
@@ -214,21 +226,34 @@ class BattleRunner:
            computed honestly is discarded rather than applied a second time.
         4. Only then write the ratings.
 
+        ``override_verdict`` FORCES the outcome instead of reading the persisted
+        judge votes. It exists for the injection-disqualification path (F3): a
+        battle whose sole injecting fighter is disqualified has no honest panel
+        verdict — the panel never ran — so the outcome is dictated (winner = the
+        clean opponent) rather than derived. Every other clause (owner-lock,
+        same-owner gate, rated gate, finalize CAS, rating write, notify) is
+        identical, so a forced verdict still rates only when the battle was
+        rated-eligible and the owners differ. NEVER pass an override that names
+        the injector as winner — the caller owns that invariant.
+
         Returns None when this worker lost the race, which is a normal outcome
         and not an error. Returns an unapplied RatingChange when the battle
         legitimately rates nothing (no quorum, or same-owner self-play).
         """
-        judgements = await self.repo.list_judgements(battle_id)
-        votes = [
-            CollapsedVote(
-                replicate_seed=str(j["replicate_seed"]),
-                vote=Vote(j["vote"]),
-                confidence=j["confidence"],
-                position_sensitive=bool(j["position_sensitive"]),
-            )
-            for j in judgements
-        ]
-        verdict = resolve_verdict(votes)
+        if override_verdict is not None:
+            verdict = override_verdict
+        else:
+            judgements = await self.repo.list_judgements(battle_id)
+            votes = [
+                CollapsedVote(
+                    replicate_seed=str(j["replicate_seed"]),
+                    vote=Vote(j["vote"]),
+                    confidence=j["confidence"],
+                    position_sensitive=bool(j["position_sensitive"]),
+                )
+                for j in judgements
+            ]
+            verdict = resolve_verdict(votes)
 
         fighters = await self.repo.lock_fighter_ratings(battle_id)
         if fighters is None:
@@ -667,6 +692,57 @@ class BattleRunner:
 
     # -- judging ------------------------------------------------------------
 
+    def _resolve_judge_roster(self, base_url: str, api_key: str) -> list[JudgeModel]:
+        """Build the per-replicate model roster from config (Track 2 diversity).
+
+        The primary entry is always JUDGE_MODEL with the credentials this pass was
+        given (base_url/api_key, resolved upstream). Any ADDITIONAL id in
+        ``settings.battle_judge_models`` is added only if OpenRouterService
+        resolves a usable key for it, so the roster reflects what is actually
+        reachable and never a hardcoded list. In practice only the primary
+        resolves (RU-ASN geo-block), so this returns ``[primary]`` and the panel
+        runs prompt-diversity only — the honest, recorded degraded mode.
+
+        ``wire_model`` is kept equal to ``model_id`` to preserve the exact,
+        live-verified request the primary z.ai model sends today. Provider-
+        specific wire-model normalization is deferred until a second provider is
+        genuinely enabled and live-verified — this extra-model path is dormant
+        until then.
+        """
+        primary = JudgeModel(
+            model_id=JUDGE_MODEL,
+            provider=JUDGE_MODEL.split("/", 1)[0],
+            base_url=base_url,
+            api_key=api_key,
+            wire_model=JUDGE_MODEL,
+        )
+        settings = get_settings()
+        extra_ids = [m for m in settings.battle_judge_models if m != JUDGE_MODEL]
+        if not extra_ids:
+            return [primary]
+
+        # Local import: OpenRouterService pulls in the wider service graph that
+        # imports core.background at its top — the same cycle BattleRunTask
+        # documents. Cached after first use.
+        from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
+
+        svc = OpenRouterService()
+        roster = [primary]
+        for mid in extra_ids:
+            creds = svc.resolve_provider(mid)
+            if creds is None:
+                continue
+            roster.append(
+                JudgeModel(
+                    model_id=mid,
+                    provider=mid.split("/", 1)[0],
+                    base_url=creds["base_url"],
+                    api_key=creds["api_key"],
+                    wire_model=mid,
+                )
+            )
+        return roster
+
     async def run_judge_panel(
         self,
         battle_id: str,
@@ -712,10 +788,57 @@ class BattleRunner:
         rubric = battle["task_rubric_snapshot"] or []
         allowed = rubric_keys(rubric)
 
+        # NOTES — what this defense IS and IS NOT (honest scope; do not overclaim).
+        #
+        # The pre-panel injection scan + per-side disqualification (F3) and the
+        # three fixed paraphrases are DEFENSE-IN-DEPTH: they stop naive/obvious
+        # injections before spend and punish an attributable injector. They are
+        # NOT independent judges and NOT, on their own, a sufficient gate for rated
+        # Elo against a determined adversary:
+        #   * only ONE judge model is reachable (RU-ASN geo-block leaves z.ai), so
+        #     model diversity is DORMANT — the roster degrades to single-model;
+        #   * three fixed paraphrases of ONE public prompt on ONE profileable model
+        #     are correlated samples, not independent verdicts;
+        #   * the detector is a LEXICAL, English-biased filter, bypassable by
+        #     construction (encoded decode-and-follow payloads, non-English or
+        #     Unicode-confusable injections, semantic rubric-gaming with no trigger
+        #     words). See battle_judges._INJECTION_PATTERNS.
+        # A robust rated gate needs a SECOND reachable model or a trained/semantic
+        # classifier. Until then, treat automated injection defense as one layer,
+        # with the judge-as-untrusted-data instruction and quorum behind it.
+        #
+        # Injection scan runs BEFORE any paid call. Raising here lets
+        # _judge_and_settle attribute and settle (disqualify one injector, or UNRATE
+        # if both) instead of spending budget. Deterministic on the stored finals,
+        # so every judging pass re-detects and the settle is idempotent. Only the
+        # matched pattern classes and the offending side are logged — never text.
+        findings = scan_submissions(final_by_side)
+        if findings:
+            logger.warning(
+                "battle {} quarantined: injection shapes in submission(s) [{}]",
+                battle_id,
+                "; ".join(f"{f.side.value}:{','.join(f.patterns)}" for f in findings),
+            )
+            raise JudgeInjectionSuspected(findings)
+
+        # Resolve the per-replicate model roster from config (Track 2 diversity).
+        roster = self._resolve_judge_roster(base_url, api_key)
+        if len(roster) == 1:
+            logger.info(
+                "battle {} judge panel single-model ({}): prompt-diversity only",
+                battle_id,
+                roster[0].model_id,
+            )
+
         collapsed: list[CollapsedVote] = []
         for replicate_no in range(REPLICATE_COUNT):
             seed = replicate_seed(battle_id, replicate_no)
             halves: list[JudgeRunResult] = []
+            # A different model (where >1 reachable) AND a different system-prompt
+            # paraphrase per replicate, so no single injected string can steer all
+            # three identically.
+            model = roster[replicate_no % len(roster)]
+            system_prompt = JUDGE_SYSTEM_PROMPTS[replicate_no % len(JUDGE_SYSTEM_PROMPTS)]
 
             for order in PRESENTED_ORDERS:
                 halves.append(
@@ -728,8 +851,8 @@ class BattleRunner:
                         allowed=allowed,
                         submission_a=final_by_side.get(Side.A.value),
                         submission_b=final_by_side.get(Side.B.value),
-                        api_key=api_key,
-                        base_url=base_url,
+                        model=model,
+                        system_prompt=system_prompt,
                         battle_lease_token=lease_token,
                         budget=budget,
                     )
@@ -760,11 +883,13 @@ class BattleRunner:
             vote = collapse_pair(halves[0], halves[1], seed)
             # One collapsed vote per replicate — the unique key without
             # presented_order makes a second attempt a no-op rather than a
-            # second vote.
+            # second vote. judge_ref is THIS replicate's model, so a diversified
+            # panel records which model cast each vote (and a homogeneous set is
+            # how single-model runs stay auditable).
             await self.repo.upsert_judgement(
                 battle_id=battle_id,
                 judge_kind=JUDGE_KIND_LLM,
-                judge_ref=JUDGE_MODEL,
+                judge_ref=model.model_id,
                 replicate_seed=seed,
                 vote=vote.vote.value,
                 confidence=vote.confidence,
@@ -802,24 +927,22 @@ class BattleRunner:
             )
         return REPLICATE_COUNT
 
-    async def settle_budget_exhausted(
-        self, battle_id: str, lease_token: str, reason: str
+    async def _stamp_and_settle_unrated(
+        self, battle_id: str, lease_token: str, reason: str, log_label: str
     ) -> RatingChange | None:
-        """Terminally settle a battle whose judge budget ran out (V68 B).
+        """Stamp a stop-reason, collapse open replicates to error, settle UNRATED.
 
-        The budget for this period is spent, so the panel can never reach quorum:
-        stamp the public-safe ``judging_stop_reason``, collapse every open
-        replicate to a terminal error, and settle — UNRATED, no-quorum, honest —
-        rather than stranding the battle until midnight. Returns None when this
-        worker no longer owns the battle (lost the lease), in which case another
-        owner will resolve it.
+        The shared terminal path for a battle that must complete without a rated
+        verdict: the panel can never reach quorum, so stamp the public-safe
+        ``judging_stop_reason``, freeze every still-open replicate to a terminal
+        error (which leaves the quorum denominator -> no-quorum), and settle.
+        Returns None when this worker no longer owns the battle (lost the lease),
+        in which case another owner resolves it.
         """
         stamped = await self.repo.set_judging_stop_reason(battle_id, reason, lease_token)
         if stamped is None:
             await self.db.rollback()
-            logger.info(
-                "battle {} budget-exhausted settle skipped: lease lost", battle_id
-            )
+            logger.info("battle {} {} settle skipped: lease lost", battle_id, log_label)
             return None
         await self.collapse_open_replicates_to_error(battle_id)
         await self.db.commit()
@@ -827,6 +950,66 @@ class BattleRunner:
         # judging_stop_reason, so should_rate is False and finalize writes
         # is_rated=False + the reason, satisfying battle_is_rated_terminal.
         return await self.settle_battle(battle_id, lease_token)
+
+    async def settle_budget_exhausted(
+        self, battle_id: str, lease_token: str, reason: str
+    ) -> RatingChange | None:
+        """Terminally settle a battle whose judge budget ran out (V68 B).
+
+        The budget for this period is spent, so the panel can never reach quorum;
+        settle it UNRATED, no-quorum, honest — rather than stranding the battle
+        until midnight.
+        """
+        return await self._stamp_and_settle_unrated(
+            battle_id, lease_token, reason, "budget-exhausted"
+        )
+
+    async def settle_injection_flagged(
+        self, battle_id: str, lease_token: str
+    ) -> RatingChange | None:
+        """Settle UNRATED when injection cannot be pinned to ONE side (F3).
+
+        Used only when BOTH fighters injected (or the attribution is ambiguous):
+        with no clean winner to award, the battle completes UNRATED with
+        ``INJECTION_STOP_REASON`` and no quorum — never silently dropped, and
+        never rewarding either injector with a win. The single-injector case does
+        NOT come here; it goes to :meth:`settle_injection_disqualified`.
+        """
+        return await self._stamp_and_settle_unrated(
+            battle_id, lease_token, INJECTION_STOP_REASON, "injection-flagged"
+        )
+
+    async def settle_injection_disqualified(
+        self, battle_id: str, lease_token: str, injecting_side: Side
+    ) -> RatingChange | None:
+        """Disqualify the ONE injecting side; the clean opponent wins (F3).
+
+        THE anti-grief rule. Auto-UNRATING on any detected injection would be a
+        denial primitive: a fighter about to lose could embed an injection to
+        void the battle and rob the opponent of an earned rated win — rewarding
+        the attacker. Instead, when exactly one side is caught (high-confidence,
+        per the high-precision detector), that side is treated as the LOSER and
+        the clean opponent WINS — rated if the battle was rated-eligible and the
+        owners differ. Injecting is self-harming, never deny-all.
+
+        The winner is FORCED (override_verdict), not derived: the panel never ran,
+        so there is no honest vote to read. ``judging_stop_reason`` is
+        deliberately NOT stamped — stamping it would force the battle UNRATED and
+        re-open the very denial this method closes. The public ``verdict_reason``
+        records the disqualification instead, so the outcome is auditable and the
+        clean win still rates through settle_battle's normal rated gate.
+        """
+        winner_side = Side.B if injecting_side is Side.A else Side.A
+        forced = PanelVerdict(
+            winner=winner_side,
+            is_tie=False,
+            reason=(
+                f"{INJECTION_STOP_REASON}: side {injecting_side.value} disqualified "
+                f"for a judge-directed injection; side {winner_side.value} wins by default"
+            ),
+            votes=[],
+        )
+        return await self.settle_battle(battle_id, lease_token, override_verdict=forced)
 
     @staticmethod
     def _half_is_terminal(run: dict | None) -> bool:
@@ -855,12 +1038,18 @@ class BattleRunner:
         allowed: set[str],
         submission_a: str | None,
         submission_b: str | None,
-        api_key: str,
-        base_url: str,
+        model: JudgeModel,
+        system_prompt: str,
         battle_lease_token: str | None = None,
         budget: BattleJudgeBudgetService | None = None,
     ) -> JudgeRunResult:
         """One raw run: claim the slot, reserve a budget unit, call, write back.
+
+        ``model`` is this replicate's assigned judge model + credentials, and
+        ``system_prompt`` its assigned paraphrase (Track 2 diversity). Both are
+        threaded through so the run row's judge_ref, the budget ledger's
+        provider/model, the system message and the wire model all reflect the
+        model that actually judged this replicate.
 
         When ``budget`` is supplied (the production path) a call unit is reserved
         in an independent transaction BEFORE the provider request — refused at the
@@ -873,7 +1062,7 @@ class BattleRunner:
         run_id = await self.repo.create_judge_run(
             battle_id=battle_id,
             judge_kind=JUDGE_KIND_LLM,
-            judge_ref=JUDGE_MODEL,
+            judge_ref=model.model_id,
             replicate_seed=seed,
             presented_order=order.value,
         )
@@ -929,8 +1118,8 @@ class BattleRunner:
                 run_lease_token=run_token,
                 owner_a_user_id=str(battle["agent_a_owner_snapshot"]),
                 owner_b_user_id=str(battle["agent_b_owner_snapshot"]),
-                provider="zai",
-                model=JUDGE_MODEL,
+                provider=model.provider,
+                model=model.model_id,
             )
             if not reservation.granted:
                 if reservation.reason in STOP_REASONS:
@@ -946,7 +1135,7 @@ class BattleRunner:
             submission_b=submission_b,
             presented_order=order,
         )
-        messages = build_judge_messages(payload)
+        messages = build_judge_messages(payload, system_prompt=system_prompt)
 
         # A reserved ledger row must ALWAYS be settled, or it stays 'reserved'
         # forever and inflates the per-battle attempt count (F7). The outer
@@ -961,11 +1150,12 @@ class BattleRunner:
                     await breaker_record_attempt()
                 raw = await call_judge_model(
                     client=http,
-                    base_url=base_url,
-                    api_key=api_key,
+                    base_url=model.base_url,
+                    api_key=model.api_key,
                     messages=messages,
                     seed=seed,
                     gate=self.gate,
+                    wire_model=model.wire_model,
                 )
             except JudgeTransportError as exc:
                 logger.warning("judge run {} failed: {}", run_id, exc)
@@ -1164,6 +1354,32 @@ async def _judge_and_settle(
             if len(judgements) >= REPLICATE_COUNT:
                 if await runner.settle_battle(battle_id, token) is not None:
                     counts["settled"] += 1
+        except JudgeInjectionSuspected as exc:
+            # A submission carried judge-directed injection shapes. The panel never
+            # ran, so no paid call was spent. Attribution decides the outcome (F3):
+            # if exactly ONE side injected it is disqualified and the clean opponent
+            # wins (rated when eligible) — injecting is self-harming, never a way to
+            # deny the opponent's earned win. Only when BOTH sides injected (or it
+            # cannot be pinned to one) is the battle UNRATED. Pattern detail is on
+            # the exception for the log; never the submission text.
+            injecting_sides = {f.side for f in exc.findings}
+            await session.rollback()
+            if len(injecting_sides) == 1:
+                loser = next(iter(injecting_sides))
+                logger.warning(
+                    "battle {} injection by side {} ({}): disqualifying injector, "
+                    "opponent wins",
+                    battle_id, loser.value, exc,
+                )
+                settled = await runner.settle_injection_disqualified(battle_id, token, loser)
+            else:
+                logger.warning(
+                    "battle {} injection by both/ambiguous ({}): settling unrated",
+                    battle_id, exc,
+                )
+                settled = await runner.settle_injection_flagged(battle_id, token)
+            if settled is not None:
+                counts["settled"] += 1
         except JudgeBudgetExhausted as exc:
             # The budget for this period is spent: settle UNRATED now rather than
             # stranding the battle. Free lifecycle phases keep running regardless.
