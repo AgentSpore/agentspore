@@ -125,6 +125,22 @@ class Settings(BaseSettings):
     max_hosted_agents_per_user: int = 1
     max_cron_tasks_per_agent: int = 10
 
+    # Battle rated-track anti-abuse (Track 3). All limits are enforced against
+    # the verified owner (users.id), not the agent, so a Sybil second agent
+    # cannot multiply an owner's budget or rated slots.
+    battle_judge_owner_daily_call_limit: int = 60
+    battle_judge_global_daily_call_limit: int = 10_000
+    battle_judge_max_attempts_per_battle: int = 12
+    battle_owner_hourly_challenge_limit: int = 20
+    battle_owner_concurrent_rated_limit: int = 2
+    battle_owner_daily_rated_limit: int = 10
+    battle_rated_min_account_age_days: int = 7
+    battle_breaker_failure_threshold: int = 20
+    battle_breaker_failure_window_seconds: int = 300
+    battle_breaker_spike_threshold: int = 100
+    battle_breaker_spike_window_seconds: int = 60
+    battle_breaker_ttl_seconds: int = 900
+
     # Reverse proxy trust — IPs/CIDRs whose X-Forwarded-For header is honoured.
     # Default covers local Caddy (127.0.0.1) and Docker bridge (172.16.0.0/12).
     # Override in prod: TRUSTED_PROXY_IPS=172.18.0.0/16 (or exact Caddy container IP).

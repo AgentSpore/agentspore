@@ -34,11 +34,12 @@ and may call connection_manager; battle_repo imports nothing from here.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.redis_client import get_redis
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository
@@ -54,14 +55,15 @@ from app.services.connection_manager import DeliveryResult, dispatch_existing
 # decision, so this is generous — hours, not seconds.
 CHALLENGE_TTL_SECONDS = 86_400
 
-# Per-target admission cap: at most N challenges against ONE agent per window,
-# counted from every challenger. Deliberately per-TARGET, not per-challenger:
-# the budget a challenge spends belongs to the target's owner, so the limit
-# that protects them must count what lands on them. A per-challenger limit
-# (councils.py:72-89, 10/hour) caps nothing when 10 accounts each challenge the
-# same agent once.
+# Inbound active-pending cap: at most N UNANSWERED challenges may be waiting on
+# ONE target OWNER at a time (V68 E). Deliberately per-TARGET-OWNER, not
+# per-agent or per-challenger: the budget a challenge spends belongs to the
+# target's owner, so the limit that protects them must count everything landing
+# on them across all their agents. It counts only status='challenge_pending'
+# rows still inside challenge_expires_at — not a rolling time window — so a
+# griefer cannot fill the cap with expired/declined history, and answering a
+# challenge (accept/decline/expire) frees a slot immediately.
 TARGET_CHALLENGE_CAP = 5
-TARGET_CHALLENGE_WINDOW_SECONDS = 3_600
 
 # Per-challenger rate limit, enforced fail-closed in Redis. This is the
 # secondary gate — it bounds a single account's fan-out across MANY targets,
@@ -144,8 +146,12 @@ class BattleService:
 
     # -- admission ----------------------------------------------------------
 
-    async def _check_challenger_rate_limit(self, agent_a_id: str) -> None:
-        """Fail-CLOSED per-challenger rate limit. Raises, never returns False.
+    async def _check_challenger_rate_limit(self, challenger_owner_user_id: str) -> None:
+        """Fail-CLOSED per-OWNER rate limit. Raises, never returns False.
+
+        Keyed on the verified challenger OWNER (V68 C1), not the agent: all of an
+        owner's agents share one 20/hour limit, so a Sybil second agent cannot
+        multiply an owner's fan-out across many targets.
 
         The councils limiter (councils.py:72-89) swallows every Redis error and
         continues — acceptable there, because convening a council spends the
@@ -160,12 +166,15 @@ class BattleService:
         """
         try:
             redis = await get_redis()
-            key = f"battle:challenge:ratelimit:{agent_a_id}"
+            key = f"battle:challenge:owner-ratelimit:{challenger_owner_user_id}"
             count = await redis.incr(key)
             if count == 1:
                 await redis.expire(key, CHALLENGER_RATE_WINDOW_SECONDS)
         except Exception as exc:
-            logger.warning("Challenge limiter unavailable for {}: {}", agent_a_id, exc)
+            logger.warning(
+                "Challenge limiter unavailable for owner {}: {}",
+                challenger_owner_user_id, exc,
+            )
             raise LimiterUnavailableError from exc
         if count > CHALLENGER_RATE_LIMIT:
             raise ChallengeDeniedError(ChallengeDenial.CHALLENGER_RATE_LIMITED)
@@ -200,14 +209,20 @@ class BattleService:
         path and, more fundamentally, the insert itself re-checks every rule and
         simply matches no rows.
         """
-        await self._check_challenger_rate_limit(agent_a_id)
+        await self._check_challenger_rate_limit(challenger_owner_user_id)
 
         category = normalize_task_category(task_category)
 
         target_owner: str | None = None
         if agent_b_id:
-            await self.repo.lock_challenge_target(agent_b_id)
+            # Resolve the target owner FIRST, then serialise on it (V68): the
+            # active-pending cap is an owner-level cap, so the lock must be keyed
+            # on the owner every concurrent challenger of this target shares. An
+            # ownerless target is left unlocked — its eligibility predicate
+            # refuses the challenge regardless.
             target_owner = await self._require_owner_snapshot(agent_b_id)
+            if target_owner is not None:
+                await self.repo.lock_challenge_target(target_owner)
 
         denial = await self.repo.diagnose_challenge(
             task_category=category,
@@ -216,7 +231,7 @@ class BattleService:
             challenger_owner_user_id=challenger_owner_user_id,
             agent_b_id=agent_b_id,
             target_cap=TARGET_CHALLENGE_CAP,
-            target_window_seconds=TARGET_CHALLENGE_WINDOW_SECONDS,
+            agent_b_owner_snapshot=target_owner,
         )
         if denial is not None:
             raise ChallengeDeniedError(denial)
@@ -228,7 +243,6 @@ class BattleService:
             agent_a_owner_snapshot=challenger_owner_user_id,
             challenge_ttl_seconds=CHALLENGE_TTL_SECONDS,
             target_cap=TARGET_CHALLENGE_CAP,
-            target_window_seconds=TARGET_CHALLENGE_WINDOW_SECONDS,
             agent_b_id=agent_b_id,
             agent_b_owner_snapshot=target_owner,
         )
@@ -270,13 +284,15 @@ class BattleService:
 
         Claiming is not consent — B's owner still has to accept afterwards.
         """
-        await self.repo.lock_challenge_target(agent_b_id)
+        # Lock on the CLAIMANT'S OWNER (V68): an open challenge lands on the
+        # claimant, so it counts against the claimant owner's active-pending cap
+        # and must serialise against every other challenge arriving at that owner.
+        await self.repo.lock_challenge_target(claiming_user_id)
         return await self.repo.claim_open_challenge_as_owner(
             battle_id=battle_id,
             agent_b_id=agent_b_id,
             claiming_user_id=claiming_user_id,
             target_cap=TARGET_CHALLENGE_CAP,
-            target_window_seconds=TARGET_CHALLENGE_WINDOW_SECONDS,
         )
 
     # -- consent ------------------------------------------------------------
@@ -293,8 +309,76 @@ class BattleService:
         ``accepting_user_id`` is carried into the CAS rather than checked
         before it: consent is the fact that authorises spending an owner's
         money, so the write itself must prove the writer owns the agent.
+
+        Acceptance is also where the rated-eligibility decision is frozen (V68
+        C2): both owner snapshots are now known, so under transaction-scoped
+        advisory locks on both owners this evaluates the anti-Sybil gate
+        (distinct + verified + old-enough + within the concurrent/daily rated
+        quotas) and writes the verdict inside the same acceptance CAS. An
+        ineligible battle still accepts — it simply runs unrated.
         """
-        return await self.repo.accept_as_owner(battle_id, accepting_user_id)
+        battle = await self.repo.get(battle_id)
+        if battle is None or battle.get("agent_b_owner_snapshot") is None:
+            # No opponent yet (open/unclaimed) or no such battle: nothing to
+            # consent to, and no owner pair to decide rating for.
+            return None
+
+        owner_a = str(battle["agent_a_owner_snapshot"])
+        owner_b = str(battle["agent_b_owner_snapshot"])
+
+        # Lock both owners before reading their rated counts, so two concurrent
+        # accepts near a quota cannot both pass.
+        await self.repo.lock_rating_owners([owner_a, owner_b])
+        rated_eligible, quota_day, reason = await self._decide_rated_eligibility(
+            owner_a, owner_b
+        )
+        return await self.repo.accept_as_owner(
+            battle_id,
+            accepting_user_id,
+            rated_eligible=rated_eligible,
+            rated_quota_day=quota_day,
+            rated_ineligibility_reason=reason,
+        )
+
+    async def _decide_rated_eligibility(
+        self, owner_a: str, owner_b: str
+    ) -> tuple[bool, date | None, str | None]:
+        """The phase-1 anti-Sybil rated gate. Returns (eligible, quota_day, reason).
+
+        Rules are evaluated most-specific-first so the recorded reason names the
+        first one that bit. Every FALSE outcome still yields a perfectly valid,
+        judged-for-fun battle; it just cannot move Elo. Call under
+        :meth:`BattleRepository.lock_rating_owners` for the counts to be race-free.
+        """
+        settings = get_settings()
+
+        if owner_a == owner_b:
+            return (False, None, "same_owner")
+
+        verified, aged = await self.repo.owner_accounts_ok(
+            [owner_a, owner_b], settings.battle_rated_min_account_age_days
+        )
+        if not verified:
+            return (False, None, "account_unverified")
+        if not aged:
+            return (False, None, "account_too_new")
+
+        for owner in (owner_a, owner_b):
+            if (
+                await self.repo.count_owner_active_rated(owner)
+                >= settings.battle_owner_concurrent_rated_limit
+            ):
+                return (False, None, "owner_concurrent_quota")
+
+        today = date.today()
+        for owner in (owner_a, owner_b):
+            if (
+                await self.repo.count_owner_rated_for_day(owner, today)
+                >= settings.battle_owner_daily_rated_limit
+            ):
+                return (False, None, "owner_daily_quota")
+
+        return (True, today, None)
 
     async def decline(self, battle_id: str, declining_user_id: str) -> dict | None:
         """Record B's owner refusal and start the cooldown. Does not commit.

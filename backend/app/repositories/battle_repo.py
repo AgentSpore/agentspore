@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import date
 from enum import Enum
 from typing import Any
 from uuid import UUID
@@ -93,6 +94,13 @@ CHALLENGE_LOCK_NAMESPACE = 0x62_74_6C_31  # "btl1"
 # short, so one global lock is the pragmatic phase-1 answer. A single fixed key
 # (not the two-arg hashtext form) means every binder waits on the same lock.
 TASK_POOL_LOCK_NAMESPACE = 0x62_74_6C_32  # "btl2"
+
+# A THIRD advisory namespace for the rated-eligibility decision at acceptance
+# (V68 C2). Both owners are locked (in sorted order) so two concurrent accepts
+# near an owner's tenth daily rated slot serialise on the count instead of both
+# reserving the eleventh. Distinct from the challenge namespace so a rating lock
+# and a challenge lock on the same UUID cannot collide.
+RATING_LOCK_NAMESPACE = 0x62_74_6C_33  # "btl3"
 
 # The anti-precompute policy (V67), all three cheap mitigations:
 #   * random selection from the matching ready pool,
@@ -215,13 +223,18 @@ class BattleRepository:
 
     # -- admission ----------------------------------------------------------
 
-    async def lock_challenge_target(self, target_agent_id: str) -> None:
-        """Serialise challenge creation against ONE target, until commit.
+    async def lock_challenge_target(self, target_owner_id: str) -> None:
+        """Serialise challenge creation against ONE target OWNER, until commit.
 
-        Without this the per-target cap is not a cap: two concurrent
-        challengers both COUNT the committed rows under READ COMMITTED, both
-        see cap-1, and both insert — the boundary leaks by exactly the number
-        of concurrent callers, which is the case a cap exists to stop.
+        Keyed on the target owner, not the target agent (V68): the active-pending
+        cap is now an owner-level cap, so the lock that makes it hold must
+        serialise every concurrent challenge landing on that owner — across all
+        of the owner's agents — not just the ones aimed at a single agent.
+
+        Without this the per-owner cap is not a cap: two concurrent challengers
+        both COUNT the committed rows under READ COMMITTED, both see cap-1, and
+        both insert — the boundary leaks by exactly the number of concurrent
+        callers, which is the case a cap exists to stop.
 
         An advisory lock rather than ``SELECT ... FROM agents FOR UPDATE``:
         row-locking the agent would also block every heartbeat
@@ -234,7 +247,7 @@ class BattleRepository:
         """
         await self.db.execute(
             text("SELECT pg_advisory_xact_lock(:ns, hashtext(:target))"),
-            {"ns": CHALLENGE_LOCK_NAMESPACE, "target": str(target_agent_id)},
+            {"ns": CHALLENGE_LOCK_NAMESPACE, "target": str(target_owner_id)},
         )
 
     async def diagnose_challenge(
@@ -245,7 +258,7 @@ class BattleRepository:
         challenger_owner_user_id: str,
         agent_b_id: str | None,
         target_cap: int,
-        target_window_seconds: int,
+        agent_b_owner_snapshot: str | None = None,
         minimum_pool_size: int = MINIMUM_TASK_POOL,
         cooldown_days: int = TASK_REUSE_COOLDOWN_DAYS,
     ) -> ChallengeDenial | None:
@@ -304,11 +317,19 @@ class BattleRepository:
                         )
                     ) AS target_ok,
                     EXISTS (
+                        -- Owner-level block (V68): a block between the two owners,
+                        -- in EITHER direction, refuses the challenge. Keyed on the
+                        -- frozen challenger owner and the target's owner, so it
+                        -- covers every agent of either owner.
                         SELECT 1 FROM battle_blocks bl
-                        WHERE (bl.blocker_agent_id = CAST(:agent_b_id AS UUID)
-                               AND bl.blocked_agent_id = CAST(:agent_a_id AS UUID))
-                           OR (bl.blocker_agent_id = CAST(:agent_a_id AS UUID)
-                               AND bl.blocked_agent_id = CAST(:agent_b_id AS UUID))
+                        WHERE (bl.blocker_owner_user_id
+                                   = CAST(:agent_b_owner_snapshot AS UUID)
+                               AND bl.blocked_owner_user_id
+                                   = CAST(:challenger_owner AS UUID))
+                           OR (bl.blocker_owner_user_id
+                                   = CAST(:challenger_owner AS UUID)
+                               AND bl.blocked_owner_user_id
+                                   = CAST(:agent_b_owner_snapshot AS UUID))
                     ) AS blocked,
                     EXISTS (
                         SELECT 1 FROM battle_challenge_cooldowns c
@@ -317,12 +338,17 @@ class BattleRepository:
                           AND c.cooldown_until > NOW()
                     ) AS cooling,
                     (
-                        CAST(:agent_b_id AS UUID) IS NOT NULL
+                        CAST(:agent_b_owner_snapshot AS UUID) IS NOT NULL
                         AND (
+                            -- Active-pending inbound cap (V68): count only the
+                            -- target OWNER's unanswered challenges, so a griefer
+                            -- cannot fill the cap with dead history and multiple
+                            -- target agents of one owner share one cap.
                             SELECT COUNT(*) FROM battles b
-                            WHERE b.agent_b_id = CAST(:agent_b_id AS UUID)
-                              AND b.challenged_at
-                                  > NOW() - make_interval(secs => :target_window)
+                            WHERE b.agent_b_owner_snapshot
+                                    = CAST(:agent_b_owner_snapshot AS UUID)
+                              AND b.status = 'challenge_pending'
+                              AND b.challenge_expires_at > NOW()
                         ) >= :target_cap
                     ) AS capped,
                     EXISTS (
@@ -343,8 +369,10 @@ class BattleRepository:
                 "agent_a_id": str(agent_a_id),
                 "challenger_owner": str(challenger_owner_user_id),
                 "agent_b_id": str(agent_b_id) if agent_b_id else None,
+                "agent_b_owner_snapshot": (
+                    str(agent_b_owner_snapshot) if agent_b_owner_snapshot else None
+                ),
                 "target_cap": target_cap,
-                "target_window": target_window_seconds,
                 "minimum_pool_size": minimum_pool_size,
                 "cooldown_days": cooldown_days,
             },
@@ -402,6 +430,210 @@ class BattleRepository:
                 "cooldown": cooldown_seconds,
             },
         )
+
+    # -- rated eligibility (V68 C2) -----------------------------------------
+
+    async def lock_rating_owners(self, owner_ids: list[str]) -> None:
+        """Serialise rated-slot reservation for a set of owners, until commit.
+
+        Locks each DISTINCT owner UUID in sorted order (a deadlock rule: two
+        accepts touching the same two owners in opposite orders would otherwise
+        deadlock). Under these locks the daily/concurrent rated counts a caller
+        reads cannot be raced by another accept for the same owner, so "at most
+        ten rated slots a day" and "at most two active rated battles" actually
+        hold rather than leak by the number of concurrent acceptors.
+        """
+        for owner_id in sorted(set(owner_ids)):
+            await self.db.execute(
+                text("SELECT pg_advisory_xact_lock(:ns, hashtext(:owner))"),
+                {"ns": RATING_LOCK_NAMESPACE, "owner": str(owner_id)},
+            )
+
+    async def owner_accounts_ok(
+        self, owner_ids: list[str], min_account_age_days: int
+    ) -> tuple[bool, bool]:
+        """Are ALL the named owners verified, and ALL old enough? (all_verified, all_aged).
+
+        Anti-Sybil signal for the rated gate: a fresh or unverified account
+        cannot pull a rated slot. Both conditions are aggregated over every owner
+        so one failing owner denies the pair.
+        """
+        ids = [str(o) for o in set(owner_ids)]
+        result = await self.db.execute(
+            text(
+                """
+                SELECT
+                    bool_and(is_verified) AS all_verified,
+                    bool_and(
+                        created_at <= NOW() - make_interval(days => :age)
+                    ) AS all_aged,
+                    COUNT(*) AS n
+                FROM users
+                WHERE id = ANY(CAST(:ids AS UUID[]))
+                """
+            ),
+            {"ids": ids, "age": min_account_age_days},
+        )
+        row = result.mappings().one()
+        # A missing owner row (COUNT < requested) is treated as not-ok: an owner
+        # we cannot read cannot be certified verified or aged.
+        if row["n"] != len(ids):
+            return (False, False)
+        return (bool(row["all_verified"]), bool(row["all_aged"]))
+
+    async def count_owner_active_rated(self, owner_id: str) -> int:
+        """How many rated battles the owner currently has in flight (not terminal)."""
+        result = await self.db.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM battles b
+                WHERE b.rated_eligible = TRUE
+                  AND b.status IN ('accepted','reserved','queued','running','judging')
+                  AND (b.agent_a_owner_snapshot = CAST(:owner AS UUID)
+                       OR b.agent_b_owner_snapshot = CAST(:owner AS UUID))
+                """
+            ),
+            {"owner": str(owner_id)},
+        )
+        return int(result.scalar_one())
+
+    async def count_owner_rated_for_day(self, owner_id: str, day: date) -> int:
+        """How many rated SLOTS the owner has reserved on ``day`` (counts reservations).
+
+        Counts every ``rated_eligible = TRUE`` battle the owner reserved on the
+        day, not just completed ones, so ten concurrent accepts near the limit
+        cannot all pass before any of them settles.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM battles b
+                WHERE b.rated_eligible = TRUE
+                  AND b.rated_quota_day = :day
+                  AND (b.agent_a_owner_snapshot = CAST(:owner AS UUID)
+                       OR b.agent_b_owner_snapshot = CAST(:owner AS UUID))
+                """
+            ),
+            {"owner": str(owner_id), "day": day},
+        )
+        return int(result.scalar_one())
+
+    # -- owner-level blocks (V68 D) -----------------------------------------
+
+    async def create_block(
+        self, blocker_owner_user_id: str, blocked_owner_user_id: str
+    ) -> dict:
+        """Insert (or return the existing) owner-level block. No commit.
+
+        Idempotent: a repeated block keeps the ORIGINAL created_at rather than
+        refreshing it, so calling it twice is a no-op the caller cannot tell from
+        a first create beyond the unchanged timestamp. The distinct-owners CHECK
+        makes a self-block physically impossible; the caller rejects it earlier
+        with a clearer 422.
+
+        Takes the SAME owner admission advisory locks (CHALLENGE_LOCK_NAMESPACE)
+        that named creation and open-claim take on their target owner (F5), in
+        sorted order, so a block cannot commit concurrently with a challenge that
+        snapshotted the pair a moment earlier — block-writes and pair-admission
+        serialise on the owner, closing the TOCTOU where a just-created challenge
+        slips past a fresh block.
+        """
+        for owner in sorted({str(blocker_owner_user_id), str(blocked_owner_user_id)}):
+            await self.db.execute(
+                text("SELECT pg_advisory_xact_lock(:ns, hashtext(:owner))"),
+                {"ns": CHALLENGE_LOCK_NAMESPACE, "owner": owner},
+            )
+        result = await self.db.execute(
+            text(
+                """
+                INSERT INTO battle_blocks
+                    (blocker_owner_user_id, blocked_owner_user_id)
+                VALUES (CAST(:blocker AS UUID), CAST(:blocked AS UUID))
+                ON CONFLICT (blocker_owner_user_id, blocked_owner_user_id)
+                DO UPDATE SET created_at = battle_blocks.created_at
+                RETURNING id, blocked_owner_user_id, created_at
+                """
+            ),
+            {"blocker": str(blocker_owner_user_id), "blocked": str(blocked_owner_user_id)},
+        )
+        return dict(result.mappings().one())
+
+    async def list_blocks(self, blocker_owner_user_id: str) -> list[dict]:
+        """Every block the given owner has created, newest first."""
+        result = await self.db.execute(
+            text(
+                """
+                SELECT id, blocked_owner_user_id, created_at
+                FROM battle_blocks
+                WHERE blocker_owner_user_id = CAST(:blocker AS UUID)
+                ORDER BY created_at DESC
+                """
+            ),
+            {"blocker": str(blocker_owner_user_id)},
+        )
+        return [dict(row) for row in result.mappings()]
+
+    async def delete_block(self, block_id: str, blocker_owner_user_id: str) -> bool:
+        """Remove one block the caller owns. True = deleted, False = absent/not yours.
+
+        The blocker predicate is part of the DELETE, never a prior read: a user
+        may only delete their OWN block, and a 404 for someone else's id must be
+        indistinguishable from a 404 for a non-existent one.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                DELETE FROM battle_blocks
+                WHERE id = CAST(:block_id AS UUID)
+                  AND blocker_owner_user_id = CAST(:blocker AS UUID)
+                RETURNING id
+                """
+            ),
+            {"block_id": str(block_id), "blocker": str(blocker_owner_user_id)},
+        )
+        return result.first() is not None
+
+    async def owner_exists(self, user_id: str) -> bool:
+        """Does this users.id exist? Used to 404 a direct blocked_owner_id (FK)."""
+        result = await self.db.execute(
+            text("SELECT EXISTS (SELECT 1 FROM users WHERE id = CAST(:id AS UUID))"),
+            {"id": str(user_id)},
+        )
+        return bool(result.scalar_one())
+
+    async def judge_budget_usage(self, owner_ids: list[str]) -> tuple[int, int]:
+        """Today's (global reserved calls, max owner reserved calls) — read-only.
+
+        Feeds the advisory accept-preflight (B4). Not authoritative: the per-call
+        reservation transaction still arbitrates races. Returns 0/0 when no
+        counter rows exist yet for the day.
+        """
+        ids = [str(o) for o in set(owner_ids)]
+        global_used = int(
+            (
+                await self.db.execute(
+                    text(
+                        "SELECT COALESCE(MAX(reserved_calls), 0) "
+                        "FROM battle_judge_global_daily_usage "
+                        "WHERE budget_day = CURRENT_DATE"
+                    )
+                )
+            ).scalar_one()
+        )
+        owner_used = int(
+            (
+                await self.db.execute(
+                    text(
+                        "SELECT COALESCE(MAX(reserved_calls), 0) "
+                        "FROM battle_judge_owner_daily_usage "
+                        "WHERE budget_day = CURRENT_DATE "
+                        "  AND owner_user_id = ANY(CAST(:ids AS UUID[]))"
+                    ),
+                    {"ids": ids},
+                )
+            ).scalar_one()
+        )
+        return (global_used, owner_used)
 
     # -- tasks --------------------------------------------------------------
 
@@ -525,7 +757,6 @@ class BattleRepository:
         agent_a_owner_snapshot: str,
         challenge_ttl_seconds: int,
         target_cap: int,
-        target_window_seconds: int,
         agent_b_id: str | None = None,
         agent_b_owner_snapshot: str | None = None,
         minimum_pool_size: int = MINIMUM_TASK_POOL,
@@ -590,11 +821,17 @@ class BattleRepository:
                       )
                   )
                   AND NOT EXISTS (
+                      -- Owner-level block (V68), either direction: covers every
+                      -- agent of either owner.
                       SELECT 1 FROM battle_blocks bl
-                      WHERE (bl.blocker_agent_id = CAST(:agent_b_id AS UUID)
-                             AND bl.blocked_agent_id = CAST(:agent_a_id AS UUID))
-                         OR (bl.blocker_agent_id = CAST(:agent_a_id AS UUID)
-                             AND bl.blocked_agent_id = CAST(:agent_b_id AS UUID))
+                      WHERE (bl.blocker_owner_user_id
+                                 = CAST(:agent_b_owner_snapshot AS UUID)
+                             AND bl.blocked_owner_user_id
+                                 = CAST(:agent_a_owner_snapshot AS UUID))
+                         OR (bl.blocker_owner_user_id
+                                 = CAST(:agent_a_owner_snapshot AS UUID)
+                             AND bl.blocked_owner_user_id
+                                 = CAST(:agent_b_owner_snapshot AS UUID))
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM battle_challenge_cooldowns c
@@ -613,12 +850,14 @@ class BattleRepository:
                         )
                   )
                   AND (
-                      CAST(:agent_b_id AS UUID) IS NULL
+                      CAST(:agent_b_owner_snapshot AS UUID) IS NULL
                       OR (
+                          -- Active-pending inbound cap on the TARGET OWNER (V68).
                           SELECT COUNT(*) FROM battles b
-                          WHERE b.agent_b_id = CAST(:agent_b_id AS UUID)
-                            AND b.challenged_at
-                                > NOW() - make_interval(secs => :target_window)
+                          WHERE b.agent_b_owner_snapshot
+                                  = CAST(:agent_b_owner_snapshot AS UUID)
+                            AND b.status = 'challenge_pending'
+                            AND b.challenge_expires_at > NOW()
                       ) < :target_cap
                   )
                   AND (
@@ -644,7 +883,6 @@ class BattleRepository:
             """,
             admission_params={
                 "target_cap": target_cap,
-                "target_window": target_window_seconds,
                 "minimum_pool_size": minimum_pool_size,
                 "cooldown_days": cooldown_days,
             },
@@ -860,7 +1098,6 @@ class BattleRepository:
         agent_b_id: str,
         claiming_user_id: str,
         target_cap: int,
-        target_window_seconds: int,
     ) -> dict | None:
         """Take the empty B slot of an open challenge, enforcing every rule.
 
@@ -911,11 +1148,13 @@ class BattleRepository:
                         AND {_AGENT_ELIGIBLE_SQL}
                   )
                   AND NOT EXISTS (
+                      -- Owner-level block (V68): the claimant's owner and the
+                      -- challenger's frozen owner, either direction.
                       SELECT 1 FROM battle_blocks bl
-                      WHERE (bl.blocker_agent_id = CAST(:agent_b_id AS UUID)
-                             AND bl.blocked_agent_id = battles.agent_a_id)
-                         OR (bl.blocker_agent_id = battles.agent_a_id
-                             AND bl.blocked_agent_id = CAST(:agent_b_id AS UUID))
+                      WHERE (bl.blocker_owner_user_id = CAST(:claiming_user_id AS UUID)
+                             AND bl.blocked_owner_user_id = battles.agent_a_owner_snapshot)
+                         OR (bl.blocker_owner_user_id = battles.agent_a_owner_snapshot
+                             AND bl.blocked_owner_user_id = CAST(:claiming_user_id AS UUID))
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM battle_challenge_cooldowns c
@@ -935,10 +1174,11 @@ class BattleRepository:
                         )
                   )
                   AND (
+                      -- Active-pending inbound cap on the claimant's OWNER (V68).
                       SELECT COUNT(*) FROM battles b
-                      WHERE b.agent_b_id = CAST(:agent_b_id AS UUID)
-                        AND b.challenged_at
-                            > NOW() - make_interval(secs => :target_window)
+                      WHERE b.agent_b_owner_snapshot = CAST(:claiming_user_id AS UUID)
+                        AND b.status = 'challenge_pending'
+                        AND b.challenge_expires_at > NOW()
                   ) < :target_cap
                 RETURNING *
                 """
@@ -948,7 +1188,6 @@ class BattleRepository:
                 "agent_b_id": str(agent_b_id),
                 "claiming_user_id": str(claiming_user_id),
                 "target_cap": target_cap,
-                "target_window": target_window_seconds,
             },
         )
         return self._one_or_none(result.mappings().first())
@@ -983,8 +1222,22 @@ class BattleRepository:
         )
         return self._one_or_none(result.mappings().first())
 
-    async def accept_as_owner(self, battle_id: str, accepting_user_id: str) -> dict | None:
+    async def accept_as_owner(
+        self,
+        battle_id: str,
+        accepting_user_id: str,
+        rated_eligible: bool | None = None,
+        rated_quota_day: date | None = None,
+        rated_ineligibility_reason: str | None = None,
+    ) -> dict | None:
         """challenge_pending -> accepted, iff ``accepting_user_id`` owns B NOW.
+
+        The rated-eligibility decision (V68 C2) is written INSIDE this CAS, never
+        by a later UPDATE: acceptance is the moment both owner snapshots are
+        known and consent is recorded, so the frozen rating decision must land in
+        the same atomic write that records consent. When the CAS matches no row
+        (not acceptable), the decision the caller computed is simply discarded.
+        The defaults leave the columns NULL for the state-machine primitive path.
 
         The only consent path application code may use.
 
@@ -1014,7 +1267,10 @@ class BattleRepository:
                 f"""
                 UPDATE battles
                 SET status = 'accepted',
-                    agent_b_accepted_at = NOW()
+                    agent_b_accepted_at = NOW(),
+                    rated_eligible = :rated_eligible,
+                    rated_quota_day = :rated_quota_day,
+                    rated_ineligibility_reason = :rated_ineligibility_reason
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'challenge_pending'
                   AND agent_b_id IS NOT NULL
@@ -1032,6 +1288,9 @@ class BattleRepository:
             {
                 "battle_id": str(battle_id),
                 "accepting_user_id": str(accepting_user_id),
+                "rated_eligible": rated_eligible,
+                "rated_quota_day": rated_quota_day,
+                "rated_ineligibility_reason": rated_ineligibility_reason,
             },
         )
         return self._one_or_none(result.mappings().first())
@@ -2068,12 +2327,21 @@ class BattleRepository:
         lease_token: str,
         winner: str | None,
         verdict_reason: str,
+        is_rated: bool,
         elo_a_before: int | None = None,
         elo_b_before: int | None = None,
         elo_a_after: int | None = None,
         elo_b_after: int | None = None,
+        judging_stop_reason: str | None = None,
     ) -> dict | None:
         """judging -> completed. The single place a verdict becomes real.
+
+        ``is_rated`` is written here and nowhere else: it is the terminal rating
+        outcome, and the V68 ``battle_is_rated_terminal`` CHECK requires exactly
+        one non-null value the instant a battle becomes 'completed'. Never infer
+        it from whether Elo moved — a rated tie between equal ratings rates but
+        moves nothing. ``judging_stop_reason`` records why a paid panel was cut
+        short (budget/attempt-cap/same-owner), for the public-safe UI.
 
         Demands the claim token AND a live lease. A worker that lost the row
         minutes ago still holds a real verdict it computed honestly — and must
@@ -2094,6 +2362,8 @@ class BattleRepository:
                 SET status = 'completed',
                     winner = :winner,
                     verdict_reason = :verdict_reason,
+                    is_rated = :is_rated,
+                    judging_stop_reason = :judging_stop_reason,
                     elo_a_before = :elo_a_before,
                     elo_b_before = :elo_b_before,
                     elo_a_after = :elo_a_after,
@@ -2115,10 +2385,44 @@ class BattleRepository:
                 "lease_token": str(lease_token),
                 "winner": winner,
                 "verdict_reason": verdict_reason,
+                "is_rated": is_rated,
+                "judging_stop_reason": judging_stop_reason,
                 "elo_a_before": elo_a_before,
                 "elo_b_before": elo_b_before,
                 "elo_a_after": elo_a_after,
                 "elo_b_after": elo_b_after,
+            },
+        )
+        return self._one_or_none(result.mappings().first())
+
+    async def set_judging_stop_reason(
+        self, battle_id: str, reason: str, lease_token: str
+    ) -> dict | None:
+        """Stamp why a paid panel was cut short, under the battle lease (V68 B).
+
+        Written before the budget-exhausted settle so :meth:`finalize` (via
+        settle_battle reading the row) carries the public-safe reason onto the
+        completed battle. Lease-fenced like every other consequential write: a
+        worker that lost the row cannot stamp a reason on someone else's battle.
+        Only settable while still 'judging' and not already stamped.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battles
+                SET judging_stop_reason = :reason
+                WHERE id = CAST(:battle_id AS UUID)
+                  AND status = 'judging'
+                  AND judging_stop_reason IS NULL
+                  AND lease_token = CAST(:lease_token AS UUID)
+                  AND lease_expires_at > NOW()
+                RETURNING *
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "reason": reason,
+                "lease_token": str(lease_token),
             },
         )
         return self._one_or_none(result.mappings().first())
@@ -2735,7 +3039,8 @@ class BattleRepository:
             text(
                 """
                 SELECT agent_a_id, agent_b_id,
-                       agent_a_owner_snapshot, agent_b_owner_snapshot
+                       agent_a_owner_snapshot, agent_b_owner_snapshot,
+                       rated_eligible, judging_stop_reason
                   FROM battles WHERE id = CAST(:battle_id AS UUID)
                 """
             ),

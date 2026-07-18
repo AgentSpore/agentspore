@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, OptionalUser, get_admin_user
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.user import User
 from app.repositories.agent_repo import AgentRepository
@@ -33,6 +34,7 @@ from app.repositories.battle_repo import (
     ChallengeDenial,
 )
 from app.schemas.battles import (
+    BattleBlockResponse,
     BattleDetail,
     BattleJudgementView,
     BattleJudgeRunView,
@@ -41,6 +43,7 @@ from app.schemas.battles import (
     BattleSummary,
     BattleTaskPoolsResponse,
     BattleVerdictView,
+    CreateBattleBlockRequest,
     CreateChallengeRequest,
     CreateTaskRequest,
     JudgeKind,
@@ -300,6 +303,81 @@ async def generate_task(
     return {"id": task_id}
 
 
+# --- Owner-level blocks (V68 D) --------------------------------------------
+# These STATIC routes MUST be declared before GET /{battle_id}: FastAPI matches
+# in declaration order, so "/blocks" placed after the parametrised route would
+# be swallowed as a battle id.
+
+
+@router.get("/blocks", response_model=list[BattleBlockResponse], summary="List my blocks")
+async def list_battle_blocks(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Every owner this caller has blocked. Private to the caller."""
+    rows = await BattleRepository(db).list_blocks(str(user.id))
+    return [
+        BattleBlockResponse(
+            id=r["id"],
+            blocked_owner_id=r["blocked_owner_user_id"],
+            created_at=r["created_at"],
+        )
+        for r in rows
+    ]
+
+
+@router.post("/blocks", response_model=BattleBlockResponse, status_code=201,
+             summary="Block an owner from battling you")
+async def create_battle_block(
+    body: CreateBattleBlockRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Block another owner. Covers all of their current and future agents.
+
+    ``blocked_agent_id`` is resolved to the agent's current owner; a missing or
+    ownerless agent is a 404. A self-block is a 422. Idempotent: re-blocking the
+    same owner returns the existing row.
+    """
+    if body.blocked_agent_id is not None:
+        target_owner = await AgentRepository(db).get_agent_owner_user_id(
+            str(body.blocked_agent_id)
+        )
+        if target_owner is None:
+            raise HTTPException(404, "agent not found")
+        target_owner = str(target_owner)
+    else:
+        target_owner = str(body.blocked_owner_id)
+        # Validate the owner exists so a bad id is a clean 404, not an unhandled
+        # FK IntegrityError 500 (FK). Mirrors the blocked_agent_id 404 branch.
+        if not await BattleRepository(db).owner_exists(target_owner):
+            raise HTTPException(404, "owner not found")
+
+    if target_owner == str(user.id):
+        raise HTTPException(422, "cannot block yourself")
+
+    row = await BattleRepository(db).create_block(str(user.id), target_owner)
+    await db.commit()
+    return BattleBlockResponse(
+        id=row["id"],
+        blocked_owner_id=row["blocked_owner_user_id"],
+        created_at=row["created_at"],
+    )
+
+
+@router.delete("/blocks/{block_id}", status_code=204, summary="Remove a block")
+async def delete_battle_block(
+    block_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Unblock. 404 for an absent block or one belonging to another owner."""
+    deleted = await BattleRepository(db).delete_block(block_id, str(user.id))
+    if not deleted:
+        raise HTTPException(404, "block not found")
+    await db.commit()
+
+
 @router.get("/{battle_id}", response_model=BattleDetail, summary="Get one battle")
 async def get_battle(
     battle_id: str,
@@ -469,6 +547,28 @@ async def accept_challenge(
     # write would sail straight through it. The check that counts is the
     # owner predicate inside accept_as_owner's CAS.
     await _assert_owns_agent(db, str(battle["agent_b_id"]), str(user.id))
+
+    # Advisory budget preflight (B4): only a distinct-owner battle can become
+    # rated and so consume the judge budget. If the day's budget could not judge
+    # it (fewer than a panel's worth of units left — six per battle — for the
+    # global pool or either owner), refuse acceptance with 429 rather than
+    # accepting a rated battle that would immediately settle unrated at judging.
+    # The per-call reservation transaction remains the authoritative arbiter.
+    owner_a = battle.get("agent_a_owner_snapshot")
+    owner_b = battle.get("agent_b_owner_snapshot")
+    if owner_a is not None and owner_b is not None and str(owner_a) != str(owner_b):
+        settings = get_settings()
+        global_used, owner_used = await repo.judge_budget_usage(
+            [str(owner_a), str(owner_b)]
+        )
+        if (
+            settings.battle_judge_global_daily_call_limit - global_used < 6
+            or settings.battle_judge_owner_daily_call_limit - owner_used < 6
+        ):
+            raise HTTPException(
+                429,
+                "rated judging budget is exhausted; try again after the daily reset",
+            )
 
     accepted = await BattleService(db).accept(battle_id, str(user.id))
     if accepted is None:
