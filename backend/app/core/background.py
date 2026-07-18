@@ -445,6 +445,17 @@ class BattleRunTask(ScheduledTask):
         # only defers scoring. Passing provider (possibly None) lets reconcile
         # gate just the judging phase.
         provider = OpenRouterService().resolve_provider(JUDGE_MODEL)
+        # Circuit breaker (V68 B5): while open, treat the provider as absent so
+        # the paid judge phases are skipped this pass, exactly like a missing
+        # provider — the free lifecycle transitions and the reaper still run, and
+        # the stranded-judging escape hatch stays off (it is provider-gated). A
+        # Redis outage fails the breaker CLOSED, so judging is never frozen by the
+        # breaker itself.
+        from app.services.battle_budget import breaker_is_open  # noqa: PLC0415
+
+        if provider is not None and await breaker_is_open():
+            logger.warning("Battle run: judge breaker open — skipping judging this pass")
+            provider = None
         counts = await reconcile_once(
             session_factory=async_session_maker,
             gate=LLMGate(await get_redis()),

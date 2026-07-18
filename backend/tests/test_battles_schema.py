@@ -43,6 +43,7 @@ MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
 V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
+V68_PATH = MIGRATIONS / "V68__battle_anti_abuse.sql"
 
 # Minimal FK targets only. Every battle table's DDL comes from the real V66.
 BASE_SCHEMA = """
@@ -50,13 +51,16 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    email TEXT NOT NULL
+    email TEXT NOT NULL,
+    is_verified BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS agents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     handle TEXT NOT NULL,
     name TEXT NOT NULL DEFAULT '',
+    owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 """
@@ -85,7 +89,10 @@ async def engine(pg_container):
     """
     async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
     eng = create_async_engine(async_url, future=True)
-    sql = f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};{V67_PATH.read_text()}"
+    sql = (
+        f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};"
+        f"{V67_PATH.read_text()};{V68_PATH.read_text()}"
+    )
     # One transaction for the whole migration, mirroring Flyway's V__ handling.
     # Statements are applied one at a time because asyncpg refuses multiple
     # commands in a single prepared statement.
@@ -241,8 +248,10 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     # A worker without the claim token may not move it either.
     assert await repo.mark_judging(battle_id, str(uuid.uuid4())) is None
     assert await repo.mark_judging(battle_id, token) is not None
-    assert await repo.finalize(battle_id, str(uuid.uuid4()), "b", "impostor") is None
-    completed = await repo.finalize(battle_id, token, "a", "majority: a=3")
+    assert await repo.finalize(
+        battle_id, str(uuid.uuid4()), "b", "impostor", is_rated=False
+    ) is None
+    completed = await repo.finalize(battle_id, token, "a", "majority: a=3", is_rated=False)
     assert completed is not None
     assert completed["status"] == BattleStatus.COMPLETED.value
     assert completed["finalized_at"] is not None
@@ -251,7 +260,9 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     # --- terminal is immutable -------------------------------------------
     # Every transition out of a completed battle must return zero rows. A
     # second finalizer must not be able to apply Elo twice.
-    assert await repo.finalize(battle_id, token, "b", "second finalizer") is None
+    assert await repo.finalize(
+        battle_id, token, "b", "second finalizer", is_rated=False
+    ) is None
     assert await repo._mark_accepted(battle_id) is None
     assert await repo._mark_declined(battle_id) is None
     assert await repo._mark_queued(battle_id, generation) is None

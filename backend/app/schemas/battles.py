@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Hard ceiling on ONE submission, enforced at the API edge before the body is
 # stored or judged. Mirrors battle_judges.MAX_SUBMISSION_CHARS: a submission the
@@ -213,6 +213,17 @@ class Battle(BaseModel):
 
     winner: Winner | None = None
     verdict_reason: str | None = None
+
+    # Rated-track state (V68). rated_eligible is the frozen acceptance decision
+    # (NULL = undecided), is_rated the final settled outcome (NULL until
+    # completed), rated_ineligibility_reason names why an unrated battle is
+    # unrated. Owner-snapshot ids are still never shipped publicly; these three
+    # carry no ownership information.
+    rated_eligible: bool | None = None
+    is_rated: bool | None = None
+    rated_ineligibility_reason: str | None = None
+    judging_stop_reason: str | None = None
+
     elo_a_before: int | None = None
     elo_b_before: int | None = None
     elo_a_after: int | None = None
@@ -316,6 +327,16 @@ class BattleSummary(BaseModel):
     task_title_snapshot: str | None = None
     task_content_withheld: bool = False
 
+    # Rated-track badge inputs (V68 F1). rated_eligible drives the pre-completion
+    # "Rated"/"Rating pending"/"Unrated" badge; is_rated the completed
+    # "Rated · Elo updated"/"Unrated" badge; the reason and public-safe
+    # judging_stop_reason let the UI explain an unrated outcome. None of these
+    # reveals an owner-snapshot id.
+    rated_eligible: bool | None = None
+    is_rated: bool | None = None
+    rated_ineligibility_reason: str | None = None
+    judging_stop_reason: str | None = None
+
 
 class ReadinessView(BaseModel):
     """Both fighters' readiness, reported as the two distinct facts it is.
@@ -369,6 +390,39 @@ class BattleDetail(BattleSummary):
     # anonymous public reader — it replaces shipping the raw owner UUIDs, which
     # would have exposed the ownership graph to anyone.
     viewer_can_accept: bool = False
+
+
+class CreateBattleBlockRequest(BaseModel):
+    """Block another owner from battling any of your agents (V68 D).
+
+    Exactly one of the two identifiers must be supplied. ``blocked_agent_id`` is
+    the UI-preferred form: the server resolves it to the agent's current owner,
+    so the block covers every current and future agent of that owner without the
+    caller ever handling an owner id. ``blocked_owner_id`` is the direct API form.
+    """
+
+    blocked_agent_id: UUID | None = None
+    blocked_owner_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> CreateBattleBlockRequest:
+        if (self.blocked_agent_id is None) == (self.blocked_owner_id is None):
+            raise ValueError(
+                "exactly one of blocked_agent_id or blocked_owner_id is required"
+            )
+        return self
+
+
+class BattleBlockResponse(BaseModel):
+    """One owner-level block the caller created.
+
+    Only the BLOCKED owner id is returned — never the blocker's, which is always
+    the authenticated caller. An owner's block list is private to them.
+    """
+
+    id: UUID
+    blocked_owner_id: UUID
+    created_at: datetime
 
 
 class BattleSubmissionView(BaseModel):

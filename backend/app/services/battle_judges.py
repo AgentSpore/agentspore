@@ -43,17 +43,14 @@ red-team check kept outside the deterministic suite.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import math
-import random
 import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from loguru import logger
 
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.llm_gate import LLMGate, LLMGateTimeoutError
@@ -84,12 +81,6 @@ JUDGE_HTTP_TIMEOUT_SECONDS = 60.0
 # fighter deny judging by submitting a novel. Truncation is recorded and shown
 # to the judge as a fact about the submission.
 MAX_SUBMISSION_CHARS = 12_000
-
-# Retry shape borrowed from agent-runner/routes/chat.py:79 — the only correct
-# backoff in the repo. Equal jitter, because requests rejected by one burst
-# otherwise wake in lockstep and collide again.
-MAX_JUDGE_ATTEMPTS = 4
-RETRY_BASE_DELAY = 1.0
 
 # 429 that means "slow down" (z.ai 1302) vs 429 that means "this account cannot
 # pay" (z.ai 1113). HTTP status alone cannot tell them apart; only the JSON code
@@ -150,7 +141,15 @@ class JudgeTransportError(Exception):
     Distinct from invalid output on purpose: a transport failure says nothing
     about the submissions, whereas a malformed reply is a judge that spoke and
     made no sense. Both leave the quorum, but only one indicates a broken model.
+
+    ``permanent`` marks a balance/auth failure (z.ai 1113) that no backoff can
+    fix: the reclaim loop must not keep retrying it, and the V68 circuit breaker
+    opens immediately on it rather than waiting out a transient-failure threshold.
     """
+
+    def __init__(self, message: str, *, permanent: bool = False) -> None:
+        super().__init__(message)
+        self.permanent = permanent
 
 
 @dataclass(frozen=True)
@@ -561,62 +560,50 @@ async def call_judge_model(
     seed: str,
     gate: LLMGate,
 ) -> str:
-    """One gated, bounded, retried call. Raises JudgeTransportError on failure.
+    """ONE gated, bounded provider HTTP attempt. Raises JudgeTransportError on failure.
 
-    The gate wraps the RETRIES, not each attempt: holding the slot across the
-    backoff would pin the account while sleeping. Each attempt re-enters the
-    gate, so a retrying call queues behind live ones instead of jumping them.
+    Retry is NOT here anymore (V68 B): it moved up to the reclaim loop, where
+    each attempt first reserves a budget call unit against the authoritative
+    ledger, so no backoff can ever exceed the per-battle 12-attempt product cap.
+    This function makes exactly one attempt and either returns the content or
+    raises — transient (retryable via reclaim) or ``permanent`` (never retry).
     """
-    last_error = "unknown"
-    for attempt in range(MAX_JUDGE_ATTEMPTS):
-        try:
-            async with gate.slot() as slot:
-                response = await client.post(
-                    f"{base_url.rstrip('/')}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={
-                        "model": JUDGE_MODEL,
-                        "messages": messages,
-                        "temperature": JUDGE_TEMPERATURE,
-                        # Passed in case the provider honours it; the seed is
-                        # the replicate's identity regardless of whether it does.
-                        "seed": int(seed[:8], 16),
-                        "max_tokens": 1200,
-                    },
-                    timeout=JUDGE_HTTP_TIMEOUT_SECONDS,
+    try:
+        async with gate.slot():
+            response = await client.post(
+                f"{base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": JUDGE_MODEL,
+                    "messages": messages,
+                    "temperature": JUDGE_TEMPERATURE,
+                    # Passed in case the provider honours it; the seed is
+                    # the replicate's identity regardless of whether it does.
+                    "seed": int(seed[:8], 16),
+                    "max_tokens": 1200,
+                },
+                timeout=JUDGE_HTTP_TIMEOUT_SECONDS,
+            )
+
+            if response.status_code == 200:
+                return str(response.json()["choices"][0]["message"]["content"])
+
+            body = response.text[:500]
+            last_error = f"HTTP {response.status_code}: {body}"
+            if _is_permanent_error(body):
+                # Zero balance. No amount of backoff creates money.
+                raise JudgeTransportError(
+                    f"permanent provider error: {last_error}", permanent=True
                 )
+            raise JudgeTransportError(last_error)
 
-                if response.status_code == 200:
-                    return str(response.json()["choices"][0]["message"]["content"])
-
-                body = response.text[:500]
-                last_error = f"HTTP {response.status_code}: {body}"
-
-                if _is_permanent_error(body):
-                    # Zero balance. No amount of backoff creates money.
-                    raise JudgeTransportError(f"permanent provider error: {last_error}")
-                if response.status_code not in _TRANSIENT_STATUSES:
-                    raise JudgeTransportError(last_error)
-
-                # Slot released here, before the sleep — see the docstring.
-                if slot is None:  # pragma: no cover - defensive, slot is always set
-                    raise JudgeTransportError(last_error)
-
-        except LLMGateTimeoutError as exc:
-            # The account is saturated. Not a failure of this judge: the caller
-            # leaves the run row 'pending' and the next reconciler reclaims it.
-            raise JudgeTransportError(f"gate saturated: {exc}") from exc
-        except httpx.TimeoutException as exc:
-            last_error = f"timeout after {JUDGE_HTTP_TIMEOUT_SECONDS}s"
-            logger.warning("judge call timed out (attempt {}): {}", attempt + 1, exc)
-        except httpx.HTTPError as exc:
-            last_error = f"transport: {exc}"
-            logger.warning("judge call transport error (attempt {}): {}", attempt + 1, exc)
-
-        if attempt < MAX_JUDGE_ATTEMPTS - 1:
-            # Equal jitter (AWS): half the window fixed, half random, so calls
-            # rejected by one burst do not wake together and re-collide.
-            window = RETRY_BASE_DELAY * (2**attempt)
-            await asyncio.sleep(window / 2 + random.random() * window / 2)
-
-    raise JudgeTransportError(f"exhausted {MAX_JUDGE_ATTEMPTS} attempts: {last_error}")
+    except LLMGateTimeoutError as exc:
+        # The account is saturated. Not a failure of this judge: the caller
+        # leaves the run row 'pending' and the next reconciler reclaims it.
+        raise JudgeTransportError(f"gate saturated: {exc}") from exc
+    except httpx.TimeoutException as exc:
+        raise JudgeTransportError(
+            f"timeout after {JUDGE_HTTP_TIMEOUT_SECONDS}s"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise JudgeTransportError(f"transport: {exc}") from exc
