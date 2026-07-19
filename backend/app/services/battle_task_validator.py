@@ -171,11 +171,39 @@ def rubric_texts(rubric: list[dict[str, Any]]) -> list[str]:
 # LLM misses this reliably (it reads the *rubric* as checkable and stops), so the
 # check is deterministic: it cannot be argued out of its verdict and costs nothing.
 #
-# Precision over recall, deliberately. Two independent conditions must BOTH hold:
-# a content noun introduced as "the ... below / the following ...", AND no
-# embedded block anywhere in the prompt. Legitimate tasks that do inline their
-# material carry it as a fenced block, a quoted span or its own paragraph, so
-# they never reach the second condition.
+# Precision over recall, deliberately, and the asymmetry that forces it is not
+# symmetric in cost: a FALSE POSITIVE here is terminal — the caller turns it into
+# TaskStatus.REJECTED and the attempt still counts against the submitter's five
+# tasks a day, so a good task wrongly refused costs a real user a fifth of their
+# quota with no appeal. A FALSE NEGATIVE costs one validation call, and the thing
+# it reaches is the LLM's PRESENCE check, which is instructed to catch exactly
+# this. So every ambiguous shape is resolved in favour of letting the prompt
+# through: this filter exists to catch the unambiguous case cheaply, not to be
+# the last line of defence.
+#
+# Two independent conditions must BOTH hold: a content noun introduced as
+# "the ... below / the following ...", AND no embedded material anywhere in the
+# prompt. The second condition is the one that decides the false-positive rate,
+# so it is not a list of blessed formats — it is three families of evidence that
+# a span of the prompt is *material* rather than *instruction*:
+#
+#   DELIMITED  — the author marked material off with delimiters prose never
+#                produces: a fence, an inline backtick span, or a quoted span
+#                long enough that no one is quoting a term.
+#   LAID OUT   — the author set material off by layout: its own paragraph, a
+#                colon-terminated line followed by a block, or list markers.
+#   INTRODUCED — the author announced material with a colon and what follows on
+#                that line carries notation (quotes, digits, operators, arrows)
+#                rather than more prose.
+#
+# The INTRODUCED family is what makes short material work. A 40-character floor
+# on quoted spans cannot be lowered on its own: the live-leaked prompt this check
+# was built for ends "...выбрав «выполнен» или «не выполнен»", so any floor short
+# enough to admit «Сдаётся дом» also reads two answer labels as an inlined
+# review. The discriminator is not length, it is punctuation — inlined material
+# is INTRODUCED ("переведите текст: «...»"), a quoted term is not ("выбрав
+# «выполнен»"). That distinction is typographic convention in both languages,
+# which is why it survives translation instead of being three special cases.
 _ARTIFACT_NOUNS_RU = (
     r"текст\w*|отзыв\w*|стать\w+|код\w*|документ\w*|фрагмент\w*|письм\w+"
     r"|таблиц\w+|данны\w+|диалог\w*|лог\w*|файл\w*|отрывк?\w*|сообщени\w+"
@@ -194,20 +222,59 @@ _ARTIFACT_REFERENCE = re.compile(
     re.IGNORECASE,
 )
 _CODE_FENCE = re.compile(r"```|~~~")
-_QUOTED_SPAN = re.compile(r"[«\"“'](.{40,})[»\"”']", re.DOTALL)
+# An inline backtick span needs no introduction to count: prose does not use
+# backticks for anything, so `sorted(a, key=len)` is material by construction.
+_INLINE_CODE_SPAN = re.compile(r"`[^`\n]+`")
+# Kept at 40 as a STANDALONE signal — see the note above on why this floor cannot
+# simply be lowered. Short quotes are handled by the INTRODUCED family instead.
+_LONG_QUOTED_SPAN = re.compile(r"[«\"“'](.{40,})[»\"”']", re.DOTALL)
 _PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
+# A colon ending a line, with a non-empty line under it: material introduced as a
+# block without a blank line between, which is how most people paste a log.
+_INTRODUCED_BLOCK = re.compile(r":[ \t]*\r?\n[ \t]*\S")
+# List or enumeration markers, whether laid out over lines ("- a\n- b") or run
+# together on one ("1) Иван 2) Пётр"). Two are required: one is a sentence that
+# happens to start with a dash.
+_ENUMERATION_MARKER = re.compile(r"(?:(?:^|\n)[ \t]*[-*•]|(?<![\d.,])\b\d+[.)])[ \t]+\S")
+# key=value / key: value repeated on one line — an inline table or record.
+_FIELD_ASSIGNMENT = re.compile(r"[^\W\d_][\w-]*\s*[=:]\s*[^\s=:;,]")
+# Characters that carry material rather than prose: an opening quote, a digit, an
+# operator, a bracket, an arrow. Prose after a colon ("по трём критериям:
+# ясность, полнота") contains none of them.
+_NOTATION = r"[«\"“„‘`\d=<>+*/\\{}\[\]()|#@$%^~→≥≤±—-]"
+# A colon and then, on the SAME line, notation. This is the discriminator that
+# separates "переведите текст: «Сдаётся дом»" from "выбрав «выполнен»".
+_INTRODUCED_INLINE = re.compile(rf":[^\n]*{_NOTATION}")
+
+
+def _carries_embedded_material(prompt: str) -> bool:
+    """True when some span of the prompt is material rather than instruction.
+
+    Deliberately permissive: every branch here is a reason to LET A SUBMISSION
+    THROUGH, and the cost of a wrong "yes" is one validation call while the cost
+    of a wrong "no" is a user's terminal rejection (see the note above the
+    reference pattern). Grouped by the three families of evidence, not by format.
+    """
+    delimited = (
+        _CODE_FENCE.search(prompt) is not None
+        or _INLINE_CODE_SPAN.search(prompt) is not None
+        or _LONG_QUOTED_SPAN.search(prompt) is not None
+    )
+    laid_out = (
+        _PARAGRAPH_BREAK.search(prompt) is not None
+        or _INTRODUCED_BLOCK.search(prompt) is not None
+        or len(_ENUMERATION_MARKER.findall(prompt)) >= 2
+        or len(_FIELD_ASSIGNMENT.findall(prompt)) >= 2
+    )
+    introduced = _INTRODUCED_INLINE.search(prompt) is not None
+    return delimited or laid_out or introduced
 
 
 def detect_missing_artifact(prompt: str) -> bool:
     """True when the prompt points at material it does not actually include."""
     if not _ARTIFACT_REFERENCE.search(prompt):
         return False
-    embedded = (
-        _CODE_FENCE.search(prompt) is not None
-        or _QUOTED_SPAN.search(prompt) is not None
-        or _PARAGRAPH_BREAK.search(prompt) is not None
-    )
-    return not embedded
+    return not _carries_embedded_material(prompt)
 
 
 def run_cheap_filters(
