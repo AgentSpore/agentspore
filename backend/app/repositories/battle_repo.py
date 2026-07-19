@@ -688,12 +688,20 @@ class BattleRepository:
         )
         return bool(result.scalar_one())
 
-    async def judge_budget_usage(self, owner_ids: list[str]) -> tuple[int, int]:
-        """Today's (global reserved calls, max owner reserved calls) — read-only.
+    async def judge_budget_usage(
+        self, owner_ids: list[str], budget_day: date
+    ) -> tuple[int, int]:
+        """One day's (global reserved calls, max owner reserved calls) — read-only.
 
         Feeds the advisory accept-preflight (B4). Not authoritative: the per-call
         reservation transaction still arbitrates races. Returns 0/0 when no
         counter rows exist yet for the day.
+
+        ``budget_day`` is REQUIRED and must come from
+        :func:`app.services.battle_budget.current_budget_day` — the same value
+        the reservation writers use. This query must never derive the day itself
+        (``CURRENT_DATE`` resolves in the DATABASE timezone, which drifts from
+        the process day and silently made the preflight read an empty day).
         """
         ids = [str(o) for o in set(owner_ids)]
         global_used = int(
@@ -702,8 +710,9 @@ class BattleRepository:
                     text(
                         "SELECT COALESCE(MAX(reserved_calls), 0) "
                         "FROM battle_judge_global_daily_usage "
-                        "WHERE budget_day = CURRENT_DATE"
-                    )
+                        "WHERE budget_day = :day"
+                    ),
+                    {"day": budget_day},
                 )
             ).scalar_one()
         )
@@ -713,10 +722,10 @@ class BattleRepository:
                     text(
                         "SELECT COALESCE(MAX(reserved_calls), 0) "
                         "FROM battle_judge_owner_daily_usage "
-                        "WHERE budget_day = CURRENT_DATE "
+                        "WHERE budget_day = :day "
                         "  AND owner_user_id = ANY(CAST(:ids AS UUID[]))"
                     ),
-                    {"ids": ids},
+                    {"ids": ids, "day": budget_day},
                 )
             ).scalar_one()
         )

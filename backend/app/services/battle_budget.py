@@ -32,6 +32,23 @@ from app.core.redis_client import get_redis
 # rating namespaces so a budget lock can never collide with them.
 BUDGET_LOCK_NAMESPACE = 0x62_74_6C_34  # "btl4"
 
+
+def current_budget_day() -> date:
+    """The ONE decision of "what day is the judge budget on" — process-local.
+
+    Every layer that touches ``budget_day`` (the authoritative reservation
+    writers here, the advisory accept-preflight read in the repository) must
+    call this and pass the result down. A SQL-side ``CURRENT_DATE`` is a second,
+    independent source: it resolves in the DATABASE timezone, so with a process
+    running MSK against a UTC database the preflight read a different day than
+    the writers for ~3h daily and silently fell open.
+
+    Process-local (not UTC) is the canonical choice because every existing
+    ``budget_day`` row was written with ``date.today()``; switching to a UTC day
+    would reinterpret stored history and shift a live budget window mid-day.
+    """
+    return date.today()
+
 # Redis keys for the transient circuit breaker (V68 B5). Redis is the RIGHT store
 # here (unlike the spend ledger): the breaker is transient by design, so an
 # eviction only closes it early, which fails safe toward judging.
@@ -173,7 +190,7 @@ class BattleJudgeBudgetService:
           5. commit — only THEN may the caller transmit.
         """
         settings = get_settings()
-        budget_day = date.today()
+        budget_day = current_budget_day()
         # Distinct owners are mandatory for a rated (paid) panel, but dedupe
         # defensively so a same-owner battle can never double-charge one owner.
         owners = sorted({str(owner_a_user_id), str(owner_b_user_id)})
@@ -371,7 +388,7 @@ class BattleJudgeBudgetService:
         worse than a delayed one.
         """
         settings = get_settings()
-        budget_day = date.today()
+        budget_day = current_budget_day()
         owner = str(user_id)
 
         async with self._session_factory() as session, session.begin():

@@ -63,6 +63,7 @@ from app.schemas.battles import (
     Vote,
 )
 from app.services.agent_service import AgentService, get_agent_by_api_key
+from app.services.battle_budget import current_budget_day
 from app.services.battle_runner import _notify_battle_owners
 from app.services.battle_service import (
     DAILY_TASK_SUBMISSION_LIMIT,
@@ -689,7 +690,7 @@ async def accept_challenge(
     if owner_a is not None and owner_b is not None and str(owner_a) != str(owner_b):
         settings = get_settings()
         global_used, owner_used = await repo.judge_budget_usage(
-            [str(owner_a), str(owner_b)]
+            [str(owner_a), str(owner_b)], current_budget_day()
         )
         if (
             settings.battle_judge_global_daily_call_limit - global_used < 6

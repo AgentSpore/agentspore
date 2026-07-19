@@ -24,7 +24,7 @@ delivery would be asserting the very confusion this step exists to prevent.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from app.api.deps import get_current_user, get_optional_user
+from app.api.v1 import battles as battles_api
 from app.api.v1.battles import _DENIAL_STATUS, _optional_fighter
 from app.core.config import get_settings
 from app.core.database import get_db
@@ -47,6 +48,7 @@ from app.repositories.battle_repo import BattleRepository, ChallengeDenial
 from app.schemas.battles import BattleStatus, JudgeKind, PresentedOrder, Side, TaskSource, Vote
 from app.services import battle_service as battle_service_module
 from app.services import connection_manager as cm
+from app.services.battle_budget import current_budget_day
 from app.services.battle_service import (
     CHALLENGER_RATE_LIMIT,
     TARGET_CHALLENGE_CAP,
@@ -2069,7 +2071,81 @@ async def test_accept_preflight_429_when_rated_budget_exhausted(
             "(budget_day, owner_user_id, reserved_calls) "
             "VALUES (:d, CAST(:o AS UUID), :c)"
         ),
-        {"d": date.today(), "o": target_owner, "c": limit - 2},
+        {"d": current_budget_day(), "o": target_owner, "c": limit - 2},
+    )
+    await db.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=target_owner)
+    try:
+        resp = await client.post(f"/api/v1/battles/{battle_id}/accept")
+        assert resp.status_code == 429
+        assert "budget is exhausted" in resp.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+async def test_judge_budget_usage_reads_the_day_it_is_given(db):
+    """The repository must read the day it is HANDED, never one it derives.
+
+    Seeded on a day that is deliberately NOT the database's CURRENT_DATE: a query
+    that re-introduces CURRENT_DATE returns 0 here and fails. This is the day-key
+    divergence the process/database timezone offset used to produce for real.
+    """
+    owner = await _make_owner(db)
+    other_day = current_budget_day() - timedelta(days=1)
+    await db.execute(
+        text(
+            "INSERT INTO battle_judge_global_daily_usage (budget_day, reserved_calls) "
+            "VALUES (:d, 41)"
+        ),
+        {"d": other_day},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO battle_judge_owner_daily_usage "
+            "(budget_day, owner_user_id, reserved_calls) "
+            "VALUES (:d, CAST(:o AS UUID), 17)"
+        ),
+        {"d": other_day, "o": owner},
+    )
+    await db.commit()
+
+    repo = BattleRepository(db)
+    assert await repo.judge_budget_usage([str(owner)], other_day) == (41, 17)
+    # ...and the canonical day, which holds no rows, must read empty.
+    assert await repo.judge_budget_usage([str(owner)], current_budget_day()) == (0, 0)
+
+
+async def test_accept_preflight_uses_the_canonical_budget_day(
+    client, db, task_id, make_agent, monkeypatch
+):
+    """End-to-end: the preflight spends the SAME day key the writers stamp.
+
+    ``current_budget_day`` is pinned to a day the database's CURRENT_DATE can
+    never equal, so the 429 can only fire if the preflight query carried that
+    canonical day all the way down. A second, independently derived day key in
+    the repository (CURRENT_DATE) yields usage (0, 0) and a fail-open 200.
+    """
+    pinned = date(2031, 3, 14)
+    monkeypatch.setattr(battles_api, "current_budget_day", lambda: pinned)
+
+    challenger_owner = await _make_owner(db)
+    target_owner = await _make_owner(db)
+    challenger = await make_agent(owner=challenger_owner)
+    target = await make_agent(owner=target_owner)
+    battle_id = await BattleService(db).create_challenge(
+        task_category=None, task_difficulty=None,
+        agent_a_id=challenger, challenger_owner_user_id=challenger_owner,
+        agent_b_id=target,
+    )
+    limit = get_settings().battle_judge_owner_daily_call_limit
+    await db.execute(
+        text(
+            "INSERT INTO battle_judge_owner_daily_usage "
+            "(budget_day, owner_user_id, reserved_calls) "
+            "VALUES (:d, CAST(:o AS UUID), :c)"
+        ),
+        {"d": pinned, "o": target_owner, "c": limit - 2},
     )
     await db.commit()
 
