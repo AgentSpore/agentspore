@@ -53,7 +53,12 @@ from app.services.battle_judges import (
 VALIDATION_MODEL = "zai/glm-4.5-flash"
 VALIDATION_TEMPERATURE = 0.0
 VALIDATION_HTTP_TIMEOUT_SECONDS = 60.0
-VALIDATION_MAX_TOKENS = 800
+# Raised from 800 after a live measurement: the validation model reasons before it
+# answers, and on a task whose feasibility takes real thought it spent the whole
+# budget thinking and returned an EMPTY completion — parsed as
+# 'llm_unreadable_response', i.e. a legitimate task rejected for a token bound.
+# The ceiling exists to stop a runaway, not to ration a 60-token JSON object.
+VALIDATION_MAX_TOKENS = 2_000
 
 # Cheap-filter bounds. The lower bound on the prompt is the real filter — a task
 # statement short enough to fit in a tweet is not self-contained, which is one of
@@ -81,6 +86,7 @@ REASON_RUBRIC_ITEM_INVALID = "rubric_item_invalid"
 REASON_DUPLICATE_CONTENT = "duplicate_content"
 REASON_INJECTION_IN_PROMPT = "injection_in_prompt"
 REASON_INJECTION_IN_RUBRIC = "injection_in_rubric"
+REASON_MISSING_ARTIFACT = "missing_referenced_artifact"
 REASON_LLM_REJECTED = "llm_rejected"
 REASON_LLM_UNREADABLE = "llm_unreadable_response"
 
@@ -160,6 +166,50 @@ def rubric_texts(rubric: list[dict[str, Any]]) -> list[str]:
     return fragments
 
 
+# A task that says "read the review below" and then carries no review is not
+# self-contained — the agents would grade an artifact that does not exist. The
+# LLM misses this reliably (it reads the *rubric* as checkable and stops), so the
+# check is deterministic: it cannot be argued out of its verdict and costs nothing.
+#
+# Precision over recall, deliberately. Two independent conditions must BOTH hold:
+# a content noun introduced as "the ... below / the following ...", AND no
+# embedded block anywhere in the prompt. Legitimate tasks that do inline their
+# material carry it as a fenced block, a quoted span or its own paragraph, so
+# they never reach the second condition.
+_ARTIFACT_NOUNS_RU = (
+    r"текст\w*|отзыв\w*|стать\w+|код\w*|документ\w*|фрагмент\w*|письм\w+"
+    r"|таблиц\w+|данны\w+|диалог\w*|лог\w*|файл\w*|отрывк?\w*|сообщени\w+"
+    r"|рецензи\w+|коммент\w+|выдержк\w+|листинг\w*"
+)
+_ARTIFACT_NOUNS_EN = (
+    r"text|review|article|code|document|snippet|fragment|letter|email"
+    r"|table|dataset|dialogue|log|file|excerpt|message|passage|listing"
+)
+_ARTIFACT_REFERENCE = re.compile(
+    r"(?:(?:приведённ|приведенн|представленн|указанн|следующ|прилагаем)\w*\s+"
+    rf"(?:ниже\s+)?(?:{_ARTIFACT_NOUNS_RU}))"
+    rf"|(?:(?:{_ARTIFACT_NOUNS_RU})\s+ниже\b)"
+    rf"|(?:\b(?:the\s+)?(?:following|below|attached|given)\s+(?:{_ARTIFACT_NOUNS_EN})\b)"
+    rf"|(?:\b(?:{_ARTIFACT_NOUNS_EN})\s+below\b)",
+    re.IGNORECASE,
+)
+_CODE_FENCE = re.compile(r"```|~~~")
+_QUOTED_SPAN = re.compile(r"[«\"“'](.{40,})[»\"”']", re.DOTALL)
+_PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
+
+
+def detect_missing_artifact(prompt: str) -> bool:
+    """True when the prompt points at material it does not actually include."""
+    if not _ARTIFACT_REFERENCE.search(prompt):
+        return False
+    embedded = (
+        _CODE_FENCE.search(prompt) is not None
+        or _QUOTED_SPAN.search(prompt) is not None
+        or _PARAGRAPH_BREAK.search(prompt) is not None
+    )
+    return not embedded
+
+
 def run_cheap_filters(
     *,
     title: str,
@@ -207,6 +257,9 @@ def run_cheap_filters(
     if duplicate_exists:
         return CheapFilterVerdict(passed=False, reason=REASON_DUPLICATE_CONTENT)
 
+    if detect_missing_artifact(prompt):
+        return CheapFilterVerdict(passed=False, reason=REASON_MISSING_ARTIFACT)
+
     prompt_patterns = detect_injection(prompt)
     if prompt_patterns:
         return CheapFilterVerdict(
@@ -247,7 +300,42 @@ today's data, or anything that depends on the current time or on randomness;
 - the content is prohibited (illegal, hateful, sexual, or targets a real \
 private person).
 
-Otherwise accept it.
+Apply these three checks explicitly, because a task can pass every check above \
+by its FORM while failing it on CONTENT:
+
+1. COST. Before judging anything else, estimate the amount of work an answer \
+requires and compare it with time_limit_seconds. If the task demands search, brute \
+force, enumeration or repeated trials, estimate the size of the search space in \
+orders of magnitude. A task whose only known method needs far more operations \
+than a competent agent can perform in the limit is UNSOLVABLE and must be \
+rejected, no matter how precisely it is worded or how checkable its answer \
+would be. Finding an input whose hash has N leading zero hex digits costs about \
+16^N attempts; inverting a hash, factoring a large number, brute-forcing a key \
+or exhausting a combinatorial space are the usual forms. A perfectly \
+verifiable answer that nobody can reach is still a broken task.
+
+2. AGREEMENT. Judge EACH rubric criterion by one question: would two competent \
+reviewers, working independently and seeing the same answer, reach the same \
+verdict on this criterion? If they could reasonably disagree, the criterion is \
+subjective. Being phrased as a binary choice ("met / not met", "pass / fail", \
+"0 or 1") does NOT make a criterion objective — the answer format is not the \
+criterion. Words like informative, convincing, trustworthy, coherent, \
+well-written, sincere, expressive, interesting, natural, appropriate, \
+sufficient, or "at least N convincing arguments" describe a reader's \
+impression, not a fact about the text, and reviewers routinely disagree on \
+them. If the rubric's weight rests on such criteria, reject.
+
+3. PRESENCE. List every artifact the task refers to — a text, review, article, \
+dataset, table, code listing, log, image, file, previous message. Each one must \
+be reproduced IN FULL inside the task text itself. A task that says "read the \
+text below", "analyse the following code" or "evaluate the attached review" \
+without that material actually being present is not self-contained: the agents \
+would have nothing to work on. Reject it.
+
+Otherwise accept it. These checks exist to catch tasks that are broken, not to \
+raise the bar: a task with a precise statement, an answer two reviewers would \
+score identically, and a workload that fits the time limit must be ACCEPTED \
+even if it is easy, narrow, or dull.
 
 Answer with ONE JSON object and nothing else:
 {"verdict": "accept" | "reject", "reasons": ["short reason", ...], \
