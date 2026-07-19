@@ -217,6 +217,27 @@ async def _submissions(session_maker, battle_id: str) -> list[dict]:
         return await BattleRepository(session).list_submissions(battle_id)
 
 
+async def _db_now(session_maker) -> datetime:
+    """The DATABASE clock.
+
+    A test that brackets a server-written timestamp reads its bounds from the
+    same clock that wrote it. Bracketing with the test process's own clock
+    compares two independent sources, and any drift between them lets the upper
+    bound land BEFORE the row it is meant to contain — a failure the code under
+    test cannot cause.
+
+    Measured on this machine the two clocks agree to within a few milliseconds
+    (the container's NOW() falls inside a host-side before/after bracket), so
+    this is NOT the explanation for the one observed failure of the test that
+    calls it — that failure never reproduced and its cause is still unknown.
+    Single-sourcing the clock is done because the bound is only meaningful when
+    it comes from the writer, and because drift is not guaranteed to stay
+    negligible on CI or on a host where the container runs in a separate VM.
+    """
+    async with session_maker() as session:
+        return (await session.execute(text("SELECT NOW()"))).scalar_one()
+
+
 async def _expire_deadline(session_maker, battle_id: str) -> None:
     """Age the whole timestamp chain, because V66 enforces its coherence."""
     async with session_maker() as session:
@@ -356,7 +377,7 @@ class TestDeadline:
         self, client, db, session_maker, task_id
     ) -> None:
         battle = await _running_battle(db, task_id)
-        before = datetime.now(UTC)
+        before = await _db_now(session_maker)
 
         response = await client.post(
             f"/api/v1/battles/{battle['id']}/turns",
@@ -373,7 +394,8 @@ class TestDeadline:
         rows = await _submissions(session_maker, battle["id"])
         assert len(rows) == 1
         # The row carries the SERVER's clock, not either value the client sent.
-        assert before <= rows[0]["received_at"] <= datetime.now(UTC)
+        # Both bounds come from the database clock — see _db_now.
+        assert before <= rows[0]["received_at"] <= await _db_now(session_maker)
         assert rows[0]["received_at"].year not in (2020, 2099)
         assert rows[0]["finished_at"] is None
 
