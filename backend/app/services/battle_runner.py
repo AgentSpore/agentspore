@@ -279,11 +279,21 @@ class BattleRunner:
         # The V68 battle_rated_requires_eligibility CHECK enforces the first
         # clause structurally: is_rated=TRUE is illegal unless rated_eligible=TRUE.
         judging_stopped = fighters["judging_stop_reason"] is not None
+        # Quarantine backstop (V70). A quarantined task is a user submission that
+        # no moderator has approved, so its AUTHOR knows the answer — rating a
+        # battle fought on one would hand out real Elo for prepared work. The
+        # primary defence is the pool split in admit_to_queue, which refuses to
+        # bind a quarantined task to a rated-eligible battle at all; this clause
+        # is the second line, and it must never be the one that fires. If it
+        # does, the battle still completes and is still shown — it simply does
+        # not rate, which is the same treatment every other ineligibility gets.
+        task_in_quarantine = bool(fighters["task_in_quarantine"])
         should_rate = (
             fighters["rated_eligible"] is True
             and winner is not None
             and not same_owner
             and not judging_stopped
+            and not task_in_quarantine
         )
         change = apply_battle_result(
             fighters["elo_a"],
@@ -306,6 +316,11 @@ class BattleRunner:
             verdict_reason=reason,
             is_rated=should_rate,
             judging_stop_reason=fighters["judging_stop_reason"],
+            # Only stamped when the backstop actually bit, and finalize COALESCEs
+            # it so an earlier, more specific acceptance-time reason survives.
+            rated_ineligibility_reason=(
+                BattleService.TASK_IN_QUARANTINE_REASON if task_in_quarantine else None
+            ),
             elo_a_before=change.a_before,
             elo_b_before=change.b_before,
             elo_a_after=change.a_after,

@@ -340,6 +340,24 @@ class BattleService:
             rated_ineligibility_reason=reason,
         )
 
+    # The rated-ineligibility reason vocabulary lives here, next to the gate that
+    # produces the rest of it ("same_owner", "account_unverified",
+    # "account_too_new", "owner_concurrent_quota", "owner_daily_quota"), so the
+    # set a caller must understand is readable in one place.
+    #
+    # This one is the odd member: it is the ONLY reason _decide_rated_eligibility
+    # cannot itself return. The rated verdict is frozen at acceptance
+    # (challenge_pending -> accepted), while the task is bound much later, at
+    # reserved -> queued — so at the moment this gate runs there is no task to
+    # inspect. It is produced by battle_runner.settle_battle instead, from the
+    # bound task, and recorded through finalize(rated_ineligibility_reason=...).
+    #
+    # It should never actually be recorded: admit_to_queue's pool split (V70)
+    # makes a rated battle structurally unable to bind a quarantined task. If
+    # this string ever appears in the data, the pool split has a hole and the
+    # settle-time backstop is what stopped a user-authored task from moving Elo.
+    TASK_IN_QUARANTINE_REASON = "task_in_quarantine"
+
     async def _decide_rated_eligibility(
         self, owner_a: str, owner_b: str
     ) -> tuple[bool, date | None, str | None]:

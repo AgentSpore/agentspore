@@ -335,6 +335,122 @@ class BattleJudgeBudgetService:
             granted=True, ledger_id=str(ledger_id), provider_attempt_no=attempt_no
         )
 
+    async def reserve_validation_call(
+        self,
+        *,
+        user_id: str,
+        provider: str,
+        model: str,
+    ) -> ReservationResult:
+        """Reserve ONE call unit for a task-validation LLM call, or refuse.
+
+        The SAME budget as the judge panel, deliberately: same advisory-lock
+        namespace, same ``battle_judge_global_daily_usage`` /
+        ``battle_judge_owner_daily_usage`` counters, same ``STOP_REASONS``, same
+        reserve-commit-then-transmit order. A second mechanism with its own
+        counters would mean the global daily cap is not a cap — judging could be
+        stopped for the day while validation kept spending, which is precisely
+        the hole a separate ledger creates.
+
+        The submitter is charged as the owner: they are the one party to a
+        validation call, so their ``battle_judge_owner_daily_call_limit`` is what
+        bounds how much one account can make the platform spend, exactly as it
+        bounds their share of a judge panel.
+
+        Differences from :meth:`reserve_call`, all forced by there being no
+        battle here: no lease validation (there is no row to lose — the caller
+        holds a task row it just created, not a lease), no per-battle attempt
+        cap, and the ledger row is written with ``kind='validation'`` and a
+        ``submitter_user_id`` instead of the battle/run/owner-pair columns (the
+        V70 ``battle_judge_call_kind_shape`` CHECK enforces exactly one of the
+        two shapes). ``provider_attempt_no`` is always 1: validation is a single
+        call with no retry ladder, so there is no attempt sequence to number.
+
+        Refusals are never fatal to the submission — the caller leaves the task
+        in 'pending_validation' for a later pass. A dropped submission would be
+        worse than a delayed one.
+        """
+        settings = get_settings()
+        budget_day = date.today()
+        owner = str(user_id)
+
+        async with self._session_factory() as session, session.begin():
+            # Same lock order as reserve_call — global first, then the owner —
+            # so a judge reservation and a validation reservation running
+            # concurrently can never deadlock against each other.
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:ns, :key)"),
+                {"ns": BUDGET_LOCK_NAMESPACE, "key": _GLOBAL_LOCK_KEY},
+            )
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:ns, hashtext(:owner))"),
+                {"ns": BUDGET_LOCK_NAMESPACE, "owner": owner},
+            )
+
+            global_used = await self._counter_value(
+                session, "battle_judge_global_daily_usage", budget_day, None
+            )
+            if global_used >= settings.battle_judge_global_daily_call_limit:
+                return ReservationResult(granted=False, reason="global_budget_exhausted")
+
+            owner_used = await self._counter_value(
+                session, "battle_judge_owner_daily_usage", budget_day, owner
+            )
+            if owner_used >= settings.battle_judge_owner_daily_call_limit:
+                return ReservationResult(granted=False, reason="owner_budget_exhausted")
+
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO battle_judge_global_daily_usage
+                        (budget_day, reserved_calls)
+                    VALUES (:day, 1)
+                    ON CONFLICT (budget_day)
+                    DO UPDATE SET reserved_calls =
+                        battle_judge_global_daily_usage.reserved_calls + 1
+                    """
+                ),
+                {"day": budget_day},
+            )
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO battle_judge_owner_daily_usage
+                        (budget_day, owner_user_id, reserved_calls)
+                    VALUES (:day, CAST(:owner AS UUID), 1)
+                    ON CONFLICT (budget_day, owner_user_id)
+                    DO UPDATE SET reserved_calls =
+                        battle_judge_owner_daily_usage.reserved_calls + 1
+                    """
+                ),
+                {"day": budget_day, "owner": owner},
+            )
+
+            ledger_id = (
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO battle_judge_call_ledger
+                            (kind, submitter_user_id, budget_day,
+                             provider_attempt_no, provider, model, status)
+                        VALUES ('validation', CAST(:owner AS UUID), :day,
+                                1, :provider, :model, 'reserved')
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "owner": owner,
+                        "day": budget_day,
+                        "provider": provider,
+                        "model": model,
+                    },
+                )
+            ).scalar_one()
+
+        return ReservationResult(
+            granted=True, ledger_id=str(ledger_id), provider_attempt_no=1
+        )
+
     async def settle_call(
         self,
         ledger_id: str,

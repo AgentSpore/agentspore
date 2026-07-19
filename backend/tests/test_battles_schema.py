@@ -44,6 +44,8 @@ V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
 V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
 V68_PATH = MIGRATIONS / "V68__battle_anti_abuse.sql"
+V69_PATH = MIGRATIONS / "V69__battle_injection_stop_reason.sql"
+V70_PATH = MIGRATIONS / "V70__battle_user_tasks.sql"
 
 # Minimal FK targets only. Every battle table's DDL comes from the real V66.
 BASE_SCHEMA = """
@@ -91,7 +93,7 @@ async def engine(pg_container):
     eng = create_async_engine(async_url, future=True)
     sql = (
         f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};"
-        f"{V67_PATH.read_text()};{V68_PATH.read_text()}"
+        f"{V67_PATH.read_text()};{V68_PATH.read_text()};{V69_PATH.read_text()};{V70_PATH.read_text()}"
     )
     # One transaction for the whole migration, mirroring Flyway's V__ handling.
     # Statements are applied one at a time because asyncpg refuses multiple
@@ -152,7 +154,7 @@ async def task_id(db_session, owner_id) -> str:
         prompt="Parse this log format.",
         rubric=RUBRIC,
         time_limit_seconds=600,
-        created_by_user_id=owner_id,
+        created_by_user_id=None,
     )
     await db_session.commit()
     return tid
@@ -745,7 +747,7 @@ async def test_bound_snapshot_comes_from_the_task_row_not_the_caller(
         prompt="Parse this log format.",
         rubric=RUBRIC,
         time_limit_seconds=600,
-        created_by_user_id=owner_id,
+        created_by_user_id=None,
     )
     battle_id = await repo._create_battle(
         agent_a_id=agent_a,
