@@ -218,9 +218,14 @@ MISSING_ARTIFACT_PROMPTS = [
 ]
 
 PRESENT_ARTIFACT_PROMPTS = [
-    # Fenced block — the usual way a real task inlines code.
-    "Ниже приведён код функции на Python:\n\n```python\ndef search(arr, target):\n"
-    "    return -1\n```\n\nУкажите строку с ошибкой и приведите исправленный вариант целиком.",
+    # --- the three widest shapes, which is all the guard originally covered ----
+    # Fenced block — the usual way a real task inlines code. Worded so the
+    # reference pattern fires: "Ниже приведён код" puts the adverb first and
+    # matches nothing, which would exempt the prompt before the material test
+    # ever ran and make this row prove nothing about the fence branch.
+    "Проанализируйте приведённый ниже код функции на Python:\n\n```python\n"
+    "def search(arr, target):\n    return -1\n```\n\n"
+    "Укажите строку с ошибкой и приведите исправленный вариант целиком.",
     # Quoted span — the usual way a real task inlines prose.
     "Прочитайте приведённый ниже отзыв: «Наушники пришли за два дня, звук чистый, "
     "но чехол в комплекте оказался бракованным и порвался на второй день носки». "
@@ -231,6 +236,53 @@ PRESENT_ARTIFACT_PROMPTS = [
     # No artifact reference at all: the check must stay silent on ordinary tasks.
     "Реализуйте на Python класс LRUCache с методами get и put, работающими за "
     "амортизированное O(1). Использовать functools.lru_cache запрещено. В ответе только код.",
+    # --- SHORT material, the class that shipped broken ------------------------
+    # A quoted span far under the 40-character floor. The floor cannot simply be
+    # lowered — the leaked prompt above ends "выбрав «выполнен»" — so what admits
+    # this one is the colon that introduces it.
+    "Переведите следующий текст на английский: «Сдаётся дом». Ответ одной строкой. "
+    "Сохраните регистр первой буквы и не добавляйте пояснений к переводу.",
+    "Translate the following text into Russian: \"House for sale\". Answer on one "
+    "line, keep the capitalisation of the first word and add no explanation.",
+    # Single-backtick inline code — material by construction, no fence needed.
+    "Объясните, что делает следующий код: `sorted(a, key=len)`. Ответьте одним "
+    "предложением, не приводя примеров вызова и не упоминая сложность алгоритма.",
+    "Explain what the following code does: `sorted(a, key=len)`. Answer in one "
+    "sentence, without giving example calls and without mentioning complexity.",
+    # Inline one-line table / record data.
+    "Таблица ниже: id=1 name=Иван; id=2 name=Пётр. Отсортируйте строки по name и "
+    "выведите результат в том же формате, по одной записи на строку, без заголовка.",
+    "The table below: id=1 name=Ann; id=2 name=Bob. Sort the rows by name and "
+    "print the result in the same format, one record per line, with no header.",
+    # --- shapes not in the report, found by asking what else is legitimate ----
+    # A short inline formula introduced by a colon.
+    "Вычислите значение из следующего фрагмента: 2 + 2 * 2 - 1. В ответе укажите "
+    "только итоговое число, без промежуточных шагов и без единиц измерения.",
+    "Evaluate the value in the following fragment: 2 + 2 * 2 - 1. Give only the "
+    "final number in your answer, with no intermediate steps and no units.",
+    # A numbered list run together on a single line.
+    "Отсортируйте следующие данные по возрастанию: 1) 42 2) 7 3) 19. В ответе "
+    "приведите только числа через запятую, сохранив исходную запись каждого.",
+    "Sort the following dataset in ascending order: 1) 42 2) 7 3) 19. Give only "
+    "the numbers separated by commas, keeping the original spelling of each one.",
+    # A block introduced by a colon-terminated line, with NO blank line under it
+    # — how a log usually gets pasted.
+    "Проанализируйте следующий лог и назовите самый частый код ответа:\n"
+    "GET /a 200\nGET /b 404\nGET /c 404\n\nВ ответе укажите только трёхзначный код.",
+    "Analyse the log below and name the most frequent response code:\n"
+    "GET /a 200\nGET /b 404\nGET /c 404\n\nGive only the three-digit code in reply.",
+    # A dash-marked list of the material, laid out over lines.
+    "Сравните следующие сообщения об ошибке и укажите, какое из них точнее:\n"
+    "- Ошибка соединения\n- Не удалось разрешить имя хоста db.internal\n"
+    "Ответьте одним словом: первое или второе, без обоснования выбора.",
+    "Compare the following log output and say which line reports the error more "
+    "precisely:\n- Connection error\n- Could not resolve host name db.internal\n"
+    "Answer with one word, first or second, without justifying your choice.",
+    # A single-line worked example introduced by a colon.
+    "Преобразуйте следующий текст по образцу: abc → cba. Примените то же правило "
+    "к строке «привет» и приведите в ответе только результат преобразования.",
+    "Transform the following text by example: abc → cba. Apply the same rule to "
+    "the string \"hello\" and give only the transformed result in your reply.",
 ]
 
 
@@ -248,10 +300,35 @@ def test_a_task_that_carries_its_material_is_not_refused(prompt):
     Without it the filter could pass every case above by refusing every prompt,
     which would break the feature it protects: the whole point is users
     submitting tasks, and a validator that says no to all of them is worse than
-    none. Each prompt here embeds its artifact in one of the three shapes the
-    detector accepts, or references none at all.
+    none.
+
+    The set is deliberately wider than the detector's implementation. It first
+    shipped covering only fenced blocks, long quoted spans and blank-line
+    paragraphs — the three shapes the code happened to recognise — so it was
+    green while short quotes, inline backtick code and one-line records were all
+    being refused. Every entry below therefore comes from asking what a real
+    submitter might write, not from reading the regexes, and each Russian shape
+    is paired with its English equivalent because the reference pattern is
+    bilingual and nothing else was checking that the material test is too.
     """
     assert _filter(prompt=prompt).passed is True
+
+
+def test_a_quoted_answer_label_is_not_read_as_inlined_material():
+    """The discriminator, pinned in both directions.
+
+    Length cannot separate these two: the leaked prompt's «выполнен» (8 chars) is
+    SHORTER than the legitimate «Сдаётся дом» (11), so any floor that admits one
+    admits the other. What separates them is that material is introduced by a
+    colon and an answer label is not — this test fails if that is ever traded
+    back for a character count.
+    """
+    assert battle_task_validator.detect_missing_artifact(
+        "Оцените приведённый ниже отзыв по критерию, выбрав «выполнен» или «не выполнен»."
+    ) is True
+    assert battle_task_validator.detect_missing_artifact(
+        "Переведите следующий текст: «Сдаётся дом»."
+    ) is False
 
 
 def test_the_artifact_check_needs_both_halves_of_its_conjunction():
