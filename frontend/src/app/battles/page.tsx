@@ -310,12 +310,14 @@ export default function BattlesListPage() {
                   </span>
 
                   {/* Slot 1 — status + time */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
+                  {/* Wraps rather than squeezing: on narrow screens the time drops to
+                      its own line instead of crushing the badges into two-line pills. */}
+                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                       <StatusBadge status={b.status} />
                       <RatedBadge battle={b} />
                     </div>
-                    <span className="text-xs text-neutral-400 shrink-0">
+                    <span className="text-xs text-neutral-400 shrink-0 whitespace-nowrap">
                       {isRunningLike && <span className="text-orange-300 mr-1.5">Сейчас ·</span>}
                       {isRunningLike ? `вызов ${timeAgo(b.challenged_at)}` : timeAgo(b.challenged_at)}
                     </span>
