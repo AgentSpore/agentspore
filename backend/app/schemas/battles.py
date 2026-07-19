@@ -123,14 +123,29 @@ class TaskSource(str, Enum):
 
     GENERATED = "generated"
     COMPANY = "company"
+    # A registered user's submission (V70). Never reaches the rated pool without
+    # a moderator: the battle_task_ready_requires_approval CHECK keys on
+    # source <> 'generated', not on this member specifically.
+    USER = "user"
 
 
 class TaskStatus(str, Enum):
-    """Whether a task may be used for new battles."""
+    """Whether a task may be used for new battles.
+
+    DRAFT/READY/RETIRED keep their V66 meaning. The three V70 members are the
+    submission lifecycle: PENDING_VALIDATION (accepted, not yet judged by the
+    validator — including "the LLM budget was spent, try again later"),
+    QUARANTINE (validated, playable only in battles that cannot move Elo), and
+    REJECTED (terminal; a rejected row is outside the dedup index so a corrected
+    resubmission is never blocked by it).
+    """
 
     DRAFT = "draft"
     READY = "ready"
     RETIRED = "retired"
+    PENDING_VALIDATION = "pending_validation"
+    QUARANTINE = "quarantine"
+    REJECTED = "rejected"
 
 
 class TaskDifficulty(str, Enum):
@@ -275,6 +290,90 @@ class CreateTaskRequest(BaseModel):
     category: str = Field(..., min_length=1, max_length=50)
     difficulty: TaskDifficulty
     time_limit_seconds: int = Field(default=600, gt=0, le=3600)
+
+
+class SubmitTaskRequest(BaseModel):
+    """A registered user's proposed battle task (V70).
+
+    The same fields as :class:`CreateTaskRequest` and deliberately its own model:
+    the admin route's body is free to gain generator-only options, and a
+    submission body must never inherit one by accident. The bounds here are the
+    outer envelope only — the validator applies its own, tighter, checks before
+    spending an LLM call.
+    """
+
+    title: str = Field(..., min_length=1, max_length=300)
+    prompt: str = Field(..., min_length=1, max_length=20_000)
+    rubric: list[dict[str, Any]] = Field(..., min_length=1, max_length=20)
+    category: str = Field(..., min_length=1, max_length=50)
+    difficulty: TaskDifficulty
+    time_limit_seconds: int = Field(default=600, gt=0, le=3600)
+
+
+class SubmitTaskResponse(BaseModel):
+    """What the submitter learns the moment their task is stored.
+
+    ``status`` may already be terminal (a cheap filter rejected it) or still
+    ``pending_validation`` — including when the LLM budget was spent, which is
+    not a verdict and must not read like one.
+    """
+
+    id: UUID
+    status: TaskStatus
+    reason: str | None = None
+
+
+class UserTaskSummary(BaseModel):
+    """One of the caller's own submissions.
+
+    Carries the prompt because it is the caller's own text; V67 pool secrecy is
+    about OTHER people's tasks. ``quarantine_battles`` is shown so a submitter
+    can see their task is being played while it waits for approval.
+    """
+
+    id: UUID
+    title: str
+    prompt: str
+    category: str
+    difficulty: TaskDifficulty
+    status: TaskStatus
+    validation_reason: str | None = None
+    quarantine_battles: int
+    use_count: int
+    approved_at: datetime | None = None
+    created_at: datetime
+
+
+class ModerationTaskView(BaseModel):
+    """One row of the moderator queue, with the evidence approval needs.
+
+    The quarantine record (battles served, decisive results) is part of the row
+    rather than a separate lookup: approval is the act that lets a task move real
+    Elo, and the collusion signal author exclusion cannot catch is an anomalous
+    record over exactly these battles.
+    """
+
+    id: UUID
+    title: str
+    prompt: str
+    rubric: list[dict[str, Any]]
+    category: str
+    difficulty: TaskDifficulty
+    status: TaskStatus
+    author_user_id: UUID | None = None
+    validation_reason: str | None = None
+    validation_verdict: dict[str, Any] | None = None
+    quarantine_battles: int
+    use_count: int
+    settled_battles: int
+    decisive_battles: int
+    created_at: datetime
+
+
+class RejectTaskRequest(BaseModel):
+    """A moderator's rejection. The reason is shown to the submitter."""
+
+    reason: str = Field(..., min_length=1, max_length=500)
 
 
 class BattleTaskPool(BaseModel):
