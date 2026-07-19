@@ -102,6 +102,12 @@ TASK_POOL_LOCK_NAMESPACE = 0x62_74_6C_32  # "btl2"
 # and a challenge lock on the same UUID cannot collide.
 RATING_LOCK_NAMESPACE = 0x62_74_6C_33  # "btl3"
 
+# Task-submission serialisation, per submitting user (V70). "btl4" belongs to the
+# judge-call budget (battle_budget), so this takes the next one: a submitter's
+# daily-quota lock and a budget reservation must be able to nest without ever
+# being the same lock.
+SUBMISSION_LOCK_NAMESPACE = 0x62_74_6C_35  # "btl5"
+
 # The anti-precompute policy (V67), all three cheap mitigations:
 #   * random selection from the matching ready pool,
 #   * a global reuse cooldown, and
@@ -929,6 +935,45 @@ class BattleRepository:
             },
         )
         return result.scalar_one_or_none() is not None
+
+    async def get_submission_state(self, task_id: str) -> dict[str, Any] | None:
+        """The submission's CURRENT status and reason, or None if it is gone.
+
+        Exists for the losing side of a race: when a verdict fails to apply
+        because someone else already decided the task, the answer to the
+        submitter must be what the row actually says now, not what this pass
+        computed and could not write.
+        """
+        result = await self.db.execute(
+            text(
+                "SELECT status, validation_reason FROM battle_tasks "
+                "WHERE id = CAST(:task_id AS UUID)"
+            ),
+            {"task_id": str(task_id)},
+        )
+        row = result.mappings().one_or_none()
+        return dict(row) if row is not None else None
+
+    async def lock_submitter(self, user_id: str) -> None:
+        """Serialise task submission by ONE user, until commit.
+
+        Without it the daily quota is not a quota: ``count_submissions_today``
+        is a read under READ COMMITTED, so N concurrent submissions all count
+        the same committed rows, all see room, and all insert — the limit leaks
+        by exactly the number of concurrent callers, which is the case a limit
+        exists to stop. The content-key unique index does not help here: the
+        submissions race with DIFFERENT texts.
+
+        An advisory lock in the same style as :meth:`lock_challenge_target`,
+        under its OWN namespace: a submitter serialising against themselves must
+        not contend with challenge admission for the same person, which is an
+        unrelated path. Released by commit or rollback, so a crashed submitter
+        cannot wedge their own account.
+        """
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, hashtext(:user_id))"),
+            {"ns": SUBMISSION_LOCK_NAMESPACE, "user_id": str(user_id)},
+        )
 
     async def approve_submission(self, task_id: str, approver_user_id: str) -> bool:
         """Promote a quarantined submission into the rated pool. Does not commit.

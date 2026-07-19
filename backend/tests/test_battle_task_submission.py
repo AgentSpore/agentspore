@@ -41,7 +41,8 @@ from app.repositories.battle_repo import (
     BattleRepository,
     _bindable_task_status,
 )
-from app.schemas.battles import TaskSource, TaskStatus
+from app.schemas.battles import SubmitTaskResponse, TaskSource, TaskStatus
+from app.services import battle_budget as battle_budget_module
 from app.services import battle_service as battle_service_module
 from app.services import battle_task_validator as validator_module
 from app.services.battle_service import (
@@ -113,10 +114,13 @@ class _FakeRedis:
         return None
 
     async def exists(self, key: str) -> int:
-        return 0
+        return 1 if key in self.counters else 0
 
     async def set(self, key: str, value: str, ex: int | None = None) -> None:
-        return None
+        self.counters[key] = 1
+
+    async def delete(self, key: str) -> None:
+        self.counters.pop(key, None)
 
 
 @pytest.fixture(autouse=True)
@@ -127,6 +131,11 @@ def redis_up(monkeypatch):
         return fake
 
     monkeypatch.setattr(battle_service_module, "get_redis", _get_redis)
+    # The circuit breaker reads Redis through battle_budget, not through the
+    # service module, so patching only the latter would leave breaker_is_open
+    # talking to a real Redis that is not running — it fails closed, which hides
+    # a breaker test's failure behind "no Redis" rather than proving anything.
+    monkeypatch.setattr(battle_budget_module, "get_redis", _get_redis)
     return fake
 
 
@@ -604,3 +613,104 @@ async def test_generated_pool_is_untouched_by_submissions(db, make_user, llm, su
         assert row["status"] == "ready"
         assert row["source"] == "generated"
         assert row["validation_reason"] is None
+
+
+# --- Regressions from review of ca98750 -------------------------------------
+
+
+async def test_a_moderator_deciding_mid_call_still_answers_the_submitter(
+    db, make_user, llm, submit, monkeypatch
+):
+    """Losing the race to a moderator returns the REAL state, not a crash.
+
+    The validation call can sit on the provider for up to a minute, and a
+    moderator may reject the submission in that window. The row is then correct
+    and the moderator's decision stands — only the ANSWER is in question, and the
+    original code answered with status=None, which fails SubmitTaskResponse
+    validation and 500s a request the server handled correctly.
+
+    The rejection is performed from INSIDE the stubbed provider call, which is
+    what makes this the real interleaving rather than a re-ordering that only
+    resembles it.
+    """
+    author = await make_user()
+
+    # The row exists and is committed by the time the service hands off to the
+    # provider, so the moderator's target is read back from it rather than
+    # guessed — and the rejection happens while the "call" is in flight.
+    async def _reject_while_the_model_thinks(**kwargs):
+        row = await db.execute(
+            text(
+                "SELECT id FROM battle_tasks WHERE source = 'user' "
+                "AND created_by_user_id = CAST(:u AS UUID) "
+                "AND status = 'pending_validation'"
+            ),
+            {"u": author},
+        )
+        assert await BattleService(db).reject_task(
+            str(row.scalar_one()), "decided by a moderator first"
+        )
+        return ValidationVerdict(verdict="accept", reasons=[])
+
+    monkeypatch.setattr(
+        battle_service_module, "validate_with_llm", _reject_while_the_model_thinks
+    )
+
+    outcome = await submit(author)
+
+    # A usable answer, and the moderator's decision — not the validator's.
+    assert outcome["status"] == TaskStatus.REJECTED.value
+    assert outcome["reason"] == "decided by a moderator first"
+    assert await _status_of(db, outcome["id"]) == "rejected"
+    # And it survives the response model, which is where the 500 came from.
+    assert SubmitTaskResponse(**outcome).status is TaskStatus.REJECTED
+
+
+async def test_an_open_breaker_refuses_before_spending(db, make_user, llm, submit):
+    """During a provider incident validation stops spending, like judging does.
+
+    The breaker is shared with the judge panel because the budget is. A
+    validation path that ignored it would keep burning the SAME budget judging
+    had already backed off from. Refused softly: the task waits for a later pass.
+    """
+    redis = await battle_budget_module.get_redis()
+    await redis.set("battle:judge:breaker", "1")
+    try:
+        author = await make_user()
+        outcome = await submit(author)
+    finally:
+        await redis.delete("battle:judge:breaker")
+
+    assert outcome["status"] == TaskStatus.PENDING_VALIDATION.value
+    assert llm.calls == 0
+    spent = await db.execute(
+        text("SELECT COUNT(*) FROM battle_judge_call_ledger WHERE kind = 'validation'")
+    )
+    assert int(spent.scalar_one()) == 0
+
+
+async def test_the_daily_quota_is_taken_under_a_lock(
+    db, make_user, llm, submit, monkeypatch
+):
+    """The quota count runs behind a per-submitter advisory lock.
+
+    Asserted by observing the lock is TAKEN rather than by racing two
+    submissions: the harness shares one session, so a genuine concurrent run
+    would need a second connection and would prove the lock's presence by
+    deadlock timing — flaky evidence for a fact the ordering makes exact. What
+    matters is that the count is not a bare read-then-write: without the lock N
+    concurrent submitters all read the same total and all pass.
+    """
+    author = await make_user()
+    calls: list[str] = []
+    original = BattleRepository.lock_submitter
+
+    async def _spy(self, user_id: str) -> None:
+        calls.append(str(user_id))
+        await original(self, user_id)
+
+    monkeypatch.setattr(BattleRepository, "lock_submitter", _spy)
+    outcome = await submit(author)
+
+    assert calls == [author], "the quota must be counted under the submitter lock"
+    assert outcome["status"] == TaskStatus.QUARANTINE.value

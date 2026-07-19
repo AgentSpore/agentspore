@@ -40,7 +40,7 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from app.services.battle_judges import detect_injection
+from app.services.battle_judges import _is_permanent_error, detect_injection
 
 # The model that validates. Kept separate from JUDGE_MODEL as a NAME even though
 # it currently resolves the same way: the two jobs have different prompts and
@@ -90,7 +90,15 @@ class ValidationTransportError(Exception):
     The caller must leave the submission in 'pending_validation': a transport
     failure says nothing about the task, and turning it into a rejection would
     punish a submitter for the platform's outage.
+
+    ``permanent`` marks the failures no backoff can fix — a zero balance or a
+    rejected key — so the caller can open the circuit breaker at once instead of
+    letting every subsequent submission discover the same dead provider.
     """
+
+    def __init__(self, message: str, *, permanent: bool = False) -> None:
+        self.permanent = permanent
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -346,6 +354,14 @@ async def call_validation_model(
     and committed by the caller, so a retry here would spend a second unit the
     ledger never authorised. A failed validation leaves the submission pending
     and the next pass may reserve afresh.
+
+    A 200 with an UNEXPECTED SHAPE is a transport failure too, and the decode is
+    inside the try for exactly that reason. ``response.json()[...]`` raises
+    ValueError (bad JSON), KeyError, IndexError or TypeError on a truncated or
+    error-shaped envelope, and none of those is an ``httpx.HTTPError``: escaping
+    here would 500 the submitter AND strand the reserved ledger row in
+    'reserved' forever, because the caller's ``settle_call`` only runs on this
+    exception type.
     """
     try:
         async with httpx.AsyncClient() as client:
@@ -360,15 +376,24 @@ async def call_validation_model(
                 },
                 timeout=VALIDATION_HTTP_TIMEOUT_SECONDS,
             )
-        if response.status_code == 200:
-            return str(response.json()["choices"][0]["message"]["content"])
-        # The body is truncated and never logged with the header: the request
-        # carries a bearer token and an error path is exactly where one leaks.
-        raise ValidationTransportError(
-            f"HTTP {response.status_code}: {response.text[:300]}"
-        )
+        if response.status_code != 200:
+            # The body is truncated and never logged with the header: the request
+            # carries a bearer token and an error path is exactly where one leaks.
+            body = response.text[:300]
+            raise ValidationTransportError(
+                f"HTTP {response.status_code}: {body}",
+                # Reuses the judge path's marker list rather than restating it:
+                # a zero balance arrives as an ordinary 429 and only the shared
+                # markers tell it apart from throttling.
+                permanent=_is_permanent_error(body),
+            )
+        return str(response.json()["choices"][0]["message"]["content"])
     except httpx.HTTPError as exc:
         raise ValidationTransportError(f"transport: {exc}") from exc
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise ValidationTransportError(
+            f"malformed provider envelope: {type(exc).__name__}"
+        ) from exc
 
 
 async def validate_with_llm(
