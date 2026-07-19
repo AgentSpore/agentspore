@@ -165,3 +165,152 @@ main {
   transform: translateY(-2px);
   box-shadow: 0 4px 24px rgba(139, 92, 246, 0.06);
 }
+
+/* === Battles (list / detail / verdict evidence) — motion tokens === */
+:root {
+  --battle-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --battle-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+@keyframes battle-row-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.battle-row {
+  animation: battle-row-in 260ms var(--battle-ease-out) both;
+  transition: transform 150ms ease-out, border-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+.battle-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(139, 92, 246, 0.06);
+}
+
+/* Press feedback for any pressable battles element (buttons, chips, disclosure triggers). */
+.battle-press {
+  transition: transform 140ms ease-out;
+}
+.battle-press:active {
+  transform: scale(0.97);
+}
+
+/* Live-state indicator dot (replaces whole-badge animate-pulse). */
+@keyframes battle-live-ping {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+.battle-live-dot-ping {
+  animation: battle-live-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Progressive disclosure (raw judge runs, long task prompts) — 0fr→1fr is the
+   standard technique for animating to an unmeasured content height. */
+.battle-disclosure {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms var(--battle-ease-in-out);
+}
+.battle-disclosure[data-open] {
+  grid-template-rows: 1fr;
+}
+.battle-disclosure-inner {
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+}
+.battle-disclosure[data-open] .battle-disclosure-inner {
+  opacity: 1;
+  transition: opacity 220ms ease-out 60ms;
+}
+.battle-chevron {
+  transition: transform 200ms var(--battle-ease-out);
+}
+
+/* Verdict reveal — mounts once when a battle's conditional verdict block
+   first renders (React never replays a CSS mount-animation on re-render of
+   an already-mounted node), so it plays exactly once per completed battle. */
+@keyframes battle-verdict-in {
+  from { opacity: 0; transform: scale(0.97) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.battle-verdict-enter {
+  animation: battle-verdict-in 320ms var(--battle-ease-out) both;
+}
+
+/* Availability toggle sliding indicator. */
+.battle-toggle-thumb {
+  transition: transform 180ms var(--battle-ease-out);
+}
+
+/* Opponent search results panel — appears from the input, no scale-from-center. */
+@keyframes battle-opponent-results-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.battle-opponent-results {
+  animation: battle-opponent-results-in 160ms ease-out both;
+}
+
+/* Status stepper (detail page) — dot/connector progress on server-status change. */
+.battle-stepper-dot {
+  transition: background-color 200ms ease-out, border-color 200ms ease-out, transform 200ms ease-out;
+}
+.battle-stepper-dot[data-current] {
+  transform: scale(1);
+  animation: battle-stepper-pop 200ms ease-out both;
+}
+@keyframes battle-stepper-pop {
+  from { transform: scale(0.96); opacity: 0.7; }
+  to { transform: scale(1); opacity: 1; }
+}
+.battle-stepper-connector {
+  transition: background-color 200ms ease-out, opacity 200ms ease-out;
+}
+
+/* Deadline urgency (< 1 minute remaining). */
+@keyframes battle-urgent-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.battle-urgent {
+  animation: battle-urgent-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .battle-row {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    transition: border-color 150ms ease-out;
+  }
+  .battle-row:hover {
+    transform: none;
+  }
+  .battle-live-dot-ping {
+    animation: none;
+    opacity: 0 !important;
+  }
+  .battle-disclosure,
+  .battle-disclosure-inner,
+  .battle-chevron,
+  .battle-toggle-thumb {
+    transition-duration: 0.01ms;
+  }
+  .battle-verdict-enter {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .battle-urgent {
+    animation: none;
+    opacity: 1;
+  }
+  .battle-opponent-results {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .battle-stepper-dot[data-current] {
+    animation: none;
+    transform: none;
+  }
+}

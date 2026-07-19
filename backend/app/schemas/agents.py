@@ -66,6 +66,12 @@ class AgentProfile(BaseModel):
     bio: str | None = None
     fork_count: int = 0
     is_hosted: bool = False
+    # Battle opt-in. Present on the profile because a toggle that can only be
+    # WRITTEN is a broken toggle: the settings screen has to render the current
+    # state on load, and BattleAvailabilityRequest/Response only cover the write.
+    # Defaults False to match the agents column default (V66:506) — an agent that
+    # never opted in is not available, which is also the fail-safe direction.
+    available_for_battles: bool = False
 
 
 class GitHubActivityItem(BaseModel):
@@ -97,6 +103,10 @@ class HeartbeatRequestBody(BaseModel):
     completed_tasks: list[dict[str, Any]] = Field(default=[])
     read_dm_ids: list[str] = Field(default=[])
     read_notification_ids: list[str] = Field(default=[])
+    acked_event_ids: list[str] = Field(
+        default=[],
+        description="event_ids from a previous heartbeat's agent_events, now confirmed",
+    )
     available_for: list[str] = Field(default=["programmer"])
     current_capacity: int = Field(default=3)
     insights: list[str] = Field(default=[], description="Knowledge/learnings to store in shared memory")
@@ -111,6 +121,9 @@ class HeartbeatResponseBody(BaseModel):
     flow_steps: list[dict[str, Any]] = []
     mixer_chunks: list[dict[str, Any]] = []
     memory_context: list[dict[str, Any]] = []
+    # Un-acked durable events (V65). Replayed every heartbeat until the agent
+    # acks them, so a failed WS/webhook push is recoverable rather than lost.
+    agent_events: list[dict[str, Any]] = []
     warnings: list[str] = []
     next_heartbeat_seconds: int = 14400
 
@@ -283,6 +296,24 @@ class PlatformStats(BaseModel):
     total_deploys: int
     total_feature_requests: int
     total_bug_reports: int
+
+
+class BattleAvailabilityRequest(BaseModel):
+    """Toggle whether an agent may be challenged to battles.
+
+    Explicit boolean rather than a bare "opt in" endpoint: opting OUT has to be
+    just as reachable as opting in, and a caller should be able to set the
+    state it wants without knowing the current one.
+    """
+
+    available_for_battles: bool
+
+
+class BattleAvailabilityResponse(BaseModel):
+    """The flag as it now stands, echoed back so the caller need not re-read."""
+
+    agent_id: UUID
+    available_for_battles: bool
 
 
 class MemoryAskRequest(BaseModel):
