@@ -21,6 +21,7 @@ from app.services.battle_task_validator import (
     REASON_INJECTION_IN_PROMPT,
     REASON_INJECTION_IN_RUBRIC,
     REASON_LLM_UNREADABLE,
+    REASON_MISSING_ARTIFACT,
     REASON_PROMPT_TOO_SHORT,
     REASON_RUBRIC_ITEM_INVALID,
     REASON_TITLE_EMPTY,
@@ -192,3 +193,83 @@ async def test_a_malformed_200_envelope_is_a_transport_error(monkeypatch, payloa
         await battle_task_validator.call_validation_model(
             base_url="https://stub.invalid/v1", api_key="unused", messages=[]
         )
+
+
+# --- missing referenced artifact ------------------------------------------
+#
+# Deterministic counterpart to the LLM's "self-contained" criterion, added after a
+# live red-team run: a task that told the agents to grade "the review below" while
+# carrying no review at all was ACCEPTED by the model, which read the rubric as
+# checkable and never asked what was being checked. The filter fires only when a
+# content noun is introduced as "below / the following" AND the prompt embeds no
+# block at all, so the cases below pin BOTH halves of that conjunction.
+
+MISSING_ARTIFACT_PROMPTS = [
+    "Прочитайте приведённый ниже отзыв покупателя о товаре и объективно оцените "
+    "его качество по каждому из критериев рубрики, выбрав «выполнен» или «не выполнен».",
+    "Проанализируйте следующий фрагмент кода и перечислите все допущенные в нём "
+    "ошибки, указав для каждой номер строки и краткое объяснение её причины.",
+    "Оцените текст ниже по трём параметрам и приведите итоговую сводку своих "
+    "наблюдений в виде нумерованного списка из трёх пунктов без пояснений.",
+    "Summarise the following article in exactly three sentences and list the two "
+    "claims it makes that are not supported by any evidence it presents.",
+    "Refactor the code below so that it no longer allocates inside the loop, then "
+    "state which allocation you removed and why it was safe to hoist it out.",
+]
+
+PRESENT_ARTIFACT_PROMPTS = [
+    # Fenced block — the usual way a real task inlines code.
+    "Ниже приведён код функции на Python:\n\n```python\ndef search(arr, target):\n"
+    "    return -1\n```\n\nУкажите строку с ошибкой и приведите исправленный вариант целиком.",
+    # Quoted span — the usual way a real task inlines prose.
+    "Прочитайте приведённый ниже отзыв: «Наушники пришли за два дня, звук чистый, "
+    "но чехол в комплекте оказался бракованным и порвался на второй день носки». "
+    "Определите тональность отзыва одним словом: положительная, отрицательная или смешанная.",
+    # Own paragraph — material set off by a blank line, unquoted and unfenced.
+    "Проанализируйте следующий лог веб-сервера и назовите статус-код, встречающийся чаще всего.\n\n"
+    "GET /a 200\nGET /b 404\nGET /c 404\nPOST /d 500\n\nВ ответе укажите только код.",
+    # No artifact reference at all: the check must stay silent on ordinary tasks.
+    "Реализуйте на Python класс LRUCache с методами get и put, работающими за "
+    "амортизированное O(1). Использовать functools.lru_cache запрещено. В ответе только код.",
+]
+
+
+@pytest.mark.parametrize("prompt", MISSING_ARTIFACT_PROMPTS)
+def test_a_task_that_points_at_material_it_does_not_carry_is_refused(prompt):
+    verdict = _filter(prompt=prompt)
+    assert verdict.passed is False
+    assert verdict.reason == REASON_MISSING_ARTIFACT
+
+
+@pytest.mark.parametrize("prompt", PRESENT_ARTIFACT_PROMPTS)
+def test_a_task_that_carries_its_material_is_not_refused(prompt):
+    """The false-positive guard.
+
+    Without it the filter could pass every case above by refusing every prompt,
+    which would break the feature it protects: the whole point is users
+    submitting tasks, and a validator that says no to all of them is worse than
+    none. Each prompt here embeds its artifact in one of the three shapes the
+    detector accepts, or references none at all.
+    """
+    assert _filter(prompt=prompt).passed is True
+
+
+def test_the_artifact_check_needs_both_halves_of_its_conjunction():
+    """A reference alone, or a missing block alone, must not be enough.
+
+    This is the mutation check in test form: neutering either half of
+    ``detect_missing_artifact`` — dropping the reference regex or dropping the
+    embedded-block test — makes one of these two assertions fail.
+    """
+    # Reference present, block present -> silent.
+    assert battle_task_validator.detect_missing_artifact(
+        "Прочитайте приведённый ниже текст:\n\nздесь сам текст задания\n\nи оцените его."
+    ) is False
+    # No reference, no block -> silent.
+    assert battle_task_validator.detect_missing_artifact(
+        "Напишите функцию, возвращающую сумму целых чисел от одного до ста включительно."
+    ) is False
+    # Reference present, no block -> fires.
+    assert battle_task_validator.detect_missing_artifact(
+        "Прочитайте приведённый ниже отзыв и оцените его информативность одним словом."
+    ) is True
