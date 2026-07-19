@@ -88,13 +88,13 @@ async def task_id(db_session) -> str:
     tid = await repo.create_task(
         source=TaskSource.GENERATED, category="general", title="T",
         prompt="Parse this.", rubric=RUBRIC, time_limit_seconds=600,
-        created_by_user_id=uid,
+        created_by_user_id=None,
     )
     for i in range(24):
         await repo.create_task(
             source=TaskSource.GENERATED, category="general", title="T",
             prompt=f"Parse this. (variant {i})", rubric=RUBRIC,
-            time_limit_seconds=600, created_by_user_id=uid,
+            time_limit_seconds=600, created_by_user_id=None,
         )
     await db_session.commit()
     return tid
