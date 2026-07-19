@@ -149,17 +149,28 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
               </span>
             </>
           ) : isCompleted ? (
-            <>
-              <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
-                Elo после боя
-              </span>
-              <span className="font-mono tabular-nums text-lg font-semibold text-white">
-                {eloAFinal ?? "—"} : {eloBFinal ?? "—"}
-              </span>
-              <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
-                {battle.winner === null && "без изменений · нет кворума"}
-              </span>
-            </>
+            battle.is_rated ? (
+              <>
+                <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
+                  Elo после боя
+                </span>
+                <span className="font-mono tabular-nums text-lg font-semibold text-white">
+                  {eloAFinal ?? "—"} : {eloBFinal ?? "—"}
+                </span>
+                <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
+                  {battle.winner === null && "без изменений · нет кворума"}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
+                  Без рейтинга
+                </span>
+                <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
+                  Elo не изменился
+                </span>
+              </>
+            )
           ) : (
             <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">VS</span>
           )}

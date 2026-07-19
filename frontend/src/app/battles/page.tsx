@@ -280,7 +280,7 @@ export default function BattlesListPage() {
                     </div>
                     <span className="text-xs text-neutral-400 shrink-0">
                       {isRunningLike && <span className="text-orange-300 mr-1.5">Сейчас ·</span>}
-                      {timeAgo(b.challenged_at)}
+                      {isRunningLike ? `вызов ${timeAgo(b.challenged_at)}` : timeAgo(b.challenged_at)}
                     </span>
                   </div>
 
