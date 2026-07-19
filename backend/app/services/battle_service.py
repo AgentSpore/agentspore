@@ -52,7 +52,12 @@ from app.repositories.battle_repo import (
     ReservationConflictError,
 )
 from app.schemas.battles import BattleStatus, TaskStatus
-from app.services.battle_budget import BattleJudgeBudgetService
+from app.services.battle_budget import (
+    BattleJudgeBudgetService,
+    breaker_is_open,
+    breaker_record_attempt,
+    breaker_record_failure,
+)
 from app.services.battle_task_validator import (
     VALIDATION_MODEL,
     ValidationTransportError,
@@ -734,8 +739,19 @@ class BattleService:
         Returns ``{"id", "status", "reason"}``. Raises
         :class:`TaskSubmissionDeniedError` when nothing was created at all.
         """
+        # Serialise this submitter against themselves BEFORE counting. The count
+        # is a read under READ COMMITTED, so without the lock N concurrent
+        # submissions all see the same total, all find room and all insert — the
+        # quota would leak by the number of concurrent callers. Held until the
+        # insert below commits, which is what makes the count that authorised it
+        # still true when the row lands.
+        await self.repo.lock_submitter(user_id)
         used_today = await self.repo.count_submissions_today(user_id)
         if used_today >= DAILY_TASK_SUBMISSION_LIMIT:
+            # Roll back so the advisory lock is released now rather than
+            # whenever this request's session happens to close: nothing was
+            # written, and a denied submitter must not block their own retry.
+            await self.db.rollback()
             raise TaskSubmissionDeniedError(TaskSubmissionDenial.DAILY_QUOTA_EXHAUSTED)
 
         duplicate = await self.repo.content_key_exists(prompt)
@@ -811,8 +827,24 @@ class BattleService:
 
         The budget is the judge panel's, on purpose (see
         ``reserve_validation_call``): validation that could spend past an
-        exhausted judge cap would mean the cap is not a cap.
+        exhausted judge cap would mean the cap is not a cap. For the same
+        reason the CIRCUIT BREAKER applies here too — checked before reserving,
+        fed by this call's own attempt and failure. Sharing the budget while
+        ignoring the breaker would mean validation kept spending into a provider
+        outage that judging had already backed off from, and that its own
+        failures never counted toward opening it.
         """
+        if await breaker_is_open():
+            # Treated exactly like an exhausted budget: refuse softly, leave the
+            # task pending. The breaker is a transient incident signal, so a
+            # later pass validates the same submission once it closes.
+            logger.warning("task {} left pending: judge breaker open", task_id)
+            return {
+                "id": task_id,
+                "status": TaskStatus.PENDING_VALIDATION.value,
+                "reason": None,
+            }
+
         provider = OpenRouterService().resolve_provider(VALIDATION_MODEL)
         if provider is None:
             logger.warning(
@@ -844,6 +876,10 @@ class BattleService:
                 "reason": None,
             }
 
+        # Counted before transmitting, like the judge path: the breaker's spike
+        # rule measures attempts made, and an attempt recorded only on success
+        # would never see the storm it exists to detect.
+        await breaker_record_attempt()
         try:
             verdict = await validate_with_llm(
                 base_url=provider["base_url"],
@@ -861,6 +897,10 @@ class BattleService:
                 succeeded=False,
                 error_class=type(exc).__name__,
             )
+            # A permanent failure (zero balance, rejected key) opens the breaker
+            # at once — no backoff creates money — while transient ones only
+            # count toward the threshold.
+            await breaker_record_failure(permanent=exc.permanent)
             logger.warning("task {} validation call failed: {}", task_id, exc)
             return {
                 "id": task_id,
@@ -877,11 +917,27 @@ class BattleService:
         )
         await self.db.commit()
         if not applied:
-            # Someone else decided this submission first (a moderator rejecting
-            # it, or a concurrent pass). Their decision stands; report what the
-            # row actually is rather than what this pass computed.
+            # Someone else decided this submission first — a moderator rejecting
+            # it while this call sat on the provider for up to a minute. Their
+            # decision stands, and the row is consistent; only the answer is in
+            # question. Re-read the ACTUAL state and report that: the submitter
+            # asked what happened to their task, and the truthful answer is what
+            # the row says now, not what this pass computed and could not write.
+            # Returning a null status instead would fail SubmitTaskResponse
+            # validation and 500 a request the server handled correctly.
             logger.info("task {} already left pending_validation; verdict dropped", task_id)
-            return {"id": task_id, "status": None, "reason": None}
+            current = await self.repo.get_submission_state(task_id)
+            if current is None:
+                return {
+                    "id": task_id,
+                    "status": TaskStatus.REJECTED.value,
+                    "reason": "submission is no longer available",
+                }
+            return {
+                "id": task_id,
+                "status": current["status"],
+                "reason": current["validation_reason"],
+            }
         return {"id": task_id, "status": status.value, "reason": reason}
 
     async def approve_task(self, task_id: str, approver_user_id: str) -> bool:
