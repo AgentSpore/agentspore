@@ -33,16 +33,24 @@ from config import get_settings
 # (`/workspace/.deep/memory/main/MEMORY.md`). Override to write directly into
 # the configured memory_dir as `{memory_dir}/MEMORY.md`. Safe because we never
 # instantiate multiple AgentMemoryToolset siblings on the same memory_dir.
-import pydantic_deep.toolsets.memory as _pdmem  # noqa: E402
-
-_DEFAULT_MEMORY_FILENAME = _pdmem.DEFAULT_MEMORY_FILENAME
+#
+# The patch target is `pydantic_deep.features.memory.toolset`, not the
+# `...memory.service` module that defines `get_memory_path` and not the
+# `pydantic_deep.toolsets.memory` deprecation shim: `toolset.py` does
+# `from ...service import get_memory_path` at import time, so `AgentMemoryToolset`
+# resolves the name in its OWN module globals. Rebinding it anywhere else has no
+# effect on the call site.
+import pydantic_deep.features.memory.toolset as _pdmem_toolset  # noqa: E402
+from pydantic_deep.features.memory.service import (  # noqa: E402
+    DEFAULT_MEMORY_FILENAME as _DEFAULT_MEMORY_FILENAME,
+)
 
 
 def _flat_get_memory_path(memory_dir: str, agent_name: str) -> str:
     return f"{memory_dir.rstrip('/')}/{_DEFAULT_MEMORY_FILENAME}"
 
 
-_pdmem.get_memory_path = _flat_get_memory_path
+_pdmem_toolset.get_memory_path = _flat_get_memory_path
 import observability
 from prometheus_fastapi_instrumentator import Instrumentator
 

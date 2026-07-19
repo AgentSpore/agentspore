@@ -224,7 +224,8 @@ async def run_real_llm(
             usage_limits=UsageLimits(request_limit=200),
         )
         trace = _trace_from_messages(result.all_messages())
-        usage = result.usage()
+        # pydantic-ai 2.0: `usage` is a property returning a non-callable RunUsage.
+        usage = result.usage
         cost_usd: float | None = None
         if usage and hasattr(usage, "total_tokens") and usage.total_tokens:
             # Rough OpenRouter estimate: $0.50/1M tokens for free-tier models.
