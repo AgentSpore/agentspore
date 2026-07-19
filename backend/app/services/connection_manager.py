@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from enum import Enum
 from typing import Any
 
 import httpx
@@ -25,13 +26,53 @@ from fastapi import WebSocket, WebSocketDisconnect
 from loguru import logger
 from redis.asyncio import Redis
 
+from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
+from app.repositories.agent_event_repo import AgentEventRepository
 from app.services.agent_webhook_service import AgentWebhookService
 
 # Event types that warrant auto-waking a stopped hosted agent.
 WAKEABLE_EVENTS: frozenset[str] = frozenset({
     "dm", "task", "mention", "rental_message", "notification", "cron_task_triggered",
 })
+
+# Event types persisted to the durable agent_events outbox (V65) and replayed
+# by the heartbeat drain until acked.
+#
+# Opt-in on purpose. Types like "dm"/"task"/"notification" already have their
+# own durable tables and heartbeat collectors (agent_dms + _heartbeat_collect_dms,
+# etc.); persisting them here too would deliver them twice. Only event types
+# with no other durable path belong in this set.
+DURABLE_EVENTS: frozenset[str] = frozenset({
+    "battle_turn", "battle_ready_check",
+})
+
+# Default lifetime of a durable event.
+#
+# This number must clear the documented heartbeat cadence, or QUEUED would be
+# a fresh lie: an agent polling exactly as documented (every 14400s — see
+# skill.md and docs/HEARTBEAT.md) would find its event already expired and
+# filtered out by list_unacked. A queued event waits up to one full interval
+# to be drained, and the agent acks on the FOLLOWING heartbeat — so the floor
+# is two intervals, plus margin for jitter and clock skew.
+#
+# Callers with a real domain deadline pass their own ttl_seconds: a battle
+# turn is worthless after ~10 minutes and should expire with the round.
+HEARTBEAT_INTERVAL_SECONDS = 14400  # keep in sync with HeartbeatResponseBody
+DURABLE_EVENT_TTL_SECONDS = 2 * HEARTBEAT_INTERVAL_SECONDS + 3600  # 32400
+
+
+class DeliveryResult(str, Enum):
+    """Outcome of an attempt to deliver an event to an agent.
+
+    Honest by construction — see V65__agent_events.sql. In particular a Redis
+    publish with zero subscribers is NOT ``DELIVERED``: it proves only that
+    bytes reached Redis, never that an agent received them.
+    """
+
+    DELIVERED = "delivered"  # a live receiver was confirmed
+    QUEUED = "queued"        # persisted to the outbox, awaiting heartbeat drain
+    FAILED = "failed"        # no live receiver and nothing persisted
 
 
 class ConnectionManager:
@@ -86,10 +127,13 @@ class ConnectionManager:
         logger.info("WS disconnected: agent={}, total_local={}", agent_id, len(self._connections))
 
     async def send(self, agent_id: str, event: dict[str, Any]) -> bool:
-        """Deliver an event to an agent through any available channel.
+        """Deliver an event to an agent over WebSocket, locally or cross-worker.
 
-        Returns True if delivered (locally or via Redis publish), False otherwise.
-        Caller is responsible for webhook/heartbeat fallback.
+        Returns True only when a live receiver was confirmed: either a local
+        socket accepted the frame, or ``redis.publish`` reported at least one
+        subscriber. A publish that reaches zero subscribers returns False —
+        it means no worker holds a socket for this agent, so the caller must
+        fall back. Caller owns webhook/heartbeat fallback.
         """
         # 1. Try local WebSocket
         if ws := self._connections.get(agent_id):
@@ -100,14 +144,19 @@ class ConnectionManager:
                 logger.warning("Local WS send failed for {}: {}", agent_id, e)
                 await self.disconnect(agent_id)
 
-        # 2. Publish to Redis (other workers may have this agent)
+        # 2. Publish to Redis (another worker may hold this agent's socket).
+        # publish() returns the number of subscribers that received the
+        # message — zero means nobody is listening, which is not delivery.
         try:
             redis = await self._ensure_redis()
-            await redis.publish(
+            receivers = await redis.publish(
                 f"{self.REDIS_CHANNEL_PREFIX}{agent_id}",
                 json.dumps(event),
             )
-            return True
+            if receivers and int(receivers) > 0:
+                return True
+            logger.debug("Redis publish for {} reached 0 subscribers", agent_id)
+            return False
         except Exception as e:
             logger.warning("Redis publish failed for {}: {}", agent_id, e)
             return False
@@ -262,38 +311,178 @@ async def deliver_user_event(user_id: str, event: dict[str, Any]) -> None:
         logger.debug("deliver_user_event failed for {}: {}", user_id, exc)
 
 
-async def deliver_event(agent_id: str, event: dict[str, Any]) -> None:
+async def _persist_durable_event(
+    agent_id: str, event: dict[str, Any], ttl_seconds: int
+) -> str | None:
+    """Write a durable event to the outbox and commit before any transport.
+
+    Committing first means a crash mid-delivery loses at most the live push,
+    never the event: the heartbeat drain replays it. Same discipline as
+    EventPublisher.publish_and_commit — the DB row is the source of truth,
+    the live push is a convenience.
+
+    Returns None if the row could not be written; the caller must then treat
+    the delivery as failed rather than proceed, or the outbox guarantee would
+    hold only on the happy path.
+    """
+    try:
+        async with async_session_maker() as db:
+            event_id = await AgentEventRepository(db).create(
+                target_agent_id=agent_id,
+                event_type=event["type"],
+                payload=event,
+                ttl_seconds=ttl_seconds,
+            )
+            await db.commit()
+            return event_id
+    except Exception as exc:
+        logger.warning("Durable event persist failed for {}: {}", agent_id, exc)
+        return None
+
+
+async def _record_dispatch(event_id: str, status: str) -> None:
+    """Best-effort transport-outcome write. Never fails the delivery path."""
+    try:
+        async with async_session_maker() as db:
+            await AgentEventRepository(db).mark_dispatched(event_id, status)
+            await db.commit()
+    except Exception as exc:
+        logger.warning("Dispatch status write failed for event {}: {}", event_id, exc)
+
+
+async def deliver_event(
+    agent_id: str, event: dict[str, Any], ttl_seconds: int | None = None
+) -> DeliveryResult:
     """Deliver an event to an agent with full fallback chain.
 
     Order:
-    1. WebSocket (local or via Redis pub/sub)
-    2. Webhook (if registered)
-    3. Heartbeat queue (legacy, picked up by next heartbeat)
+    1. Durable outbox row (types in DURABLE_EVENTS only) — persisted and
+       committed BEFORE transport, so the event survives a process restart.
+    2. WebSocket (local, or via Redis pub/sub with a confirmed subscriber)
+    3. Webhook (if registered)
+    4. Heartbeat drain (durable types) / auto-wake (wakeable types)
+
+    ``ttl_seconds`` overrides how long a durable event stays live; defaults to
+    DURABLE_EVENT_TTL_SECONDS, which clears the documented heartbeat cadence.
+    Pass a shorter one when the event has a real deadline (a battle round).
+
+    Returns an honest result rather than None:
+      DELIVERED — a live receiver was confirmed
+      QUEUED    — no live receiver, but the event is durably stored and the
+                  next heartbeat will hand it over
+      FAILED    — no live receiver and nothing was stored, either because the
+                  type is not durable or because the outbox write failed
 
     This is the main entry point for platform code that wants to push
     events to agents in real-time.
     """
+    event_id: str | None = None
+    if event.get("type") in DURABLE_EVENTS:
+        event_id = await _persist_durable_event(
+            agent_id, event, ttl_seconds or DURABLE_EVENT_TTL_SECONDS
+        )
+        if event_id is None:
+            # No row means no recovery path: a live push could still land, but
+            # we would have no way to retry or to know it was ever acked. Fail
+            # loudly instead of reporting a delivery we cannot stand behind.
+            logger.error(
+                "Durable event {} for {} not persisted — refusing to dispatch",
+                event.get("type"), agent_id,
+            )
+            return DeliveryResult.FAILED
+        event.setdefault("event_id", event_id)
+
     manager = get_connection_manager()
     delivered = await manager.send(agent_id, event)
+
+    if not delivered:
+        # Fallback 1: webhook (for serverless agents — Lambda, Vercel, etc.)
+        try:
+            delivered = await AgentWebhookService.deliver(agent_id, event)
+        except Exception as e:
+            logger.warning("Webhook fallback failed for {}: {}", agent_id, e)
+
     if delivered:
-        return
+        if event_id:
+            await _record_dispatch(event_id, "delivered")
+        return DeliveryResult.DELIVERED
 
-    # Fallback 1: webhook (for serverless agents — Lambda, Vercel, etc.)
-    try:
-        if await AgentWebhookService.deliver(agent_id, event):
-            return
-    except Exception as e:
-        logger.warning("Webhook fallback failed for {}: {}", agent_id, e)
-
-    # (no further fallback for agents below)
-    # Fallback 2: heartbeat queue (legacy)
-    # Events stored in DB are delivered on next heartbeat call
-    logger.debug("Event for {} queued for next heartbeat: {}", agent_id, event.get("type"))
+    # Fallback 2: durable events wait for the heartbeat drain to hand them over.
+    if event_id:
+        await _record_dispatch(event_id, "queued")
+        logger.debug("Event {} for {} queued for next heartbeat", event_id, event.get("type"))
 
     # Fallback 3: auto-wake hosted agent for wakeable event types.
-    # Lazy import to avoid circular dependency: connection_manager <-> hosted_agent_service.
     if event.get("type") in WAKEABLE_EVENTS:
         asyncio.create_task(_auto_wake_hosted(agent_id, event))
+
+    if event_id:
+        return DeliveryResult.QUEUED
+    # Nothing delivered and nothing stored — say so instead of pretending.
+    logger.debug("Event for {} not delivered and not durable: {}", agent_id, event.get("type"))
+    return DeliveryResult.FAILED
+
+
+async def dispatch_existing(agent_id: str, event_id: str) -> DeliveryResult:
+    """Deliver an outbox row that ALREADY exists. Never inserts.
+
+    The companion to deliver_event, not a replacement: deliver_event owns
+    "create this event and send it", which is right for every caller that has
+    only a payload. It is wrong for a caller that already persisted the row
+    itself — for a durable type it would insert a SECOND row, and the caller
+    would be left with two events where it armed one.
+
+    That is not hypothetical. A battle arms two battle_ready_check rows inside
+    its transaction, because readiness is bound to those exact event ids;
+    dispatching them through deliver_event minted duplicates, so each fighter
+    saw the same ready check twice in its heartbeat and acking the duplicate
+    proved nothing — the battle stalled until its lease lapsed.
+
+    The row is re-read through list_unacked, so this cannot dispatch an event
+    that is expired, already acked, or belongs to a different agent: those are
+    exactly the rows that query refuses to return. Passing agent_id is what
+    makes the target check real rather than a formality — an event_id alone
+    would be a caller's word for whose event it is.
+
+    The event sent is rebuilt from the stored payload, so the wire format is
+    whatever was persisted, not whatever the dispatching caller reconstructs.
+
+    Returns the same honest DeliveryResult as deliver_event:
+      DELIVERED — a live receiver was confirmed
+      QUEUED    — nobody live; the row stands and the heartbeat drain owns it
+      FAILED    — the row is gone, expired, acked, or not this agent's
+    """
+    async with async_session_maker() as db:
+        live = await AgentEventRepository(db).list_unacked(agent_id)
+
+    row = next((r for r in live if str(r["event_id"]) == str(event_id)), None)
+    if row is None:
+        # Not live for THIS agent: expired, already acked, or never theirs.
+        # Say so rather than sending an event we cannot stand behind.
+        logger.warning(
+            "dispatch_existing: event {} is not live for agent {}", event_id, agent_id
+        )
+        return DeliveryResult.FAILED
+
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    event: dict[str, Any] = dict(payload or {})
+    event["type"] = row["type"]
+    event["event_id"] = str(row["event_id"])
+
+    delivered = await get_connection_manager().send(agent_id, event)
+    if not delivered:
+        try:
+            delivered = await AgentWebhookService.deliver(agent_id, event)
+        except Exception as exc:
+            logger.warning("Webhook fallback failed for {}: {}", agent_id, exc)
+
+    # Recorded on the SAME row — the point of the exercise.
+    await _record_dispatch(
+        str(event_id), "delivered" if delivered else "queued"
+    )
+    return DeliveryResult.DELIVERED if delivered else DeliveryResult.QUEUED
 
 
 async def _auto_wake_hosted(agent_id: str, event: dict[str, Any]) -> None:
