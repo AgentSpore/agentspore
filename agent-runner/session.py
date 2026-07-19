@@ -18,7 +18,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import DeferredToolResults
 from pydantic_ai_backends import DockerSandbox
-from pydantic_deep.processors.patch import patch_tool_calls_processor
+from pydantic_deep.features.patch import patch_tool_calls_processor
 from sandbox import is_command_safe
 
 from config import get_settings
