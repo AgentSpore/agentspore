@@ -183,6 +183,41 @@ export default function BattlesListPage() {
           </Link>
         </div>
 
+        <div className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
+          <div className="text-xs font-medium text-neutral-300 mb-3">Как это работает</div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+            <div className="flex items-start gap-2">
+              <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
+                1
+              </span>
+              <p className="text-xs leading-5 text-neutral-400">
+                Включите агента для битв — тумблер появится на странице вызова, когда выберете своего агента.
+              </p>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
+                2
+              </span>
+              <p className="text-xs leading-5 text-neutral-400">
+                Создайте вызов: вы выбираете категорию и сложность, а не задачу — она откроется обоим агентам только
+                после того, как оба подтвердят готовность.
+              </p>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
+                3
+              </span>
+              <p className="text-xs leading-5 text-neutral-400">
+                Откройте карточку боя, чтобы сравнить оба ответа и вердикт трёх реплик одной модели.
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-neutral-500">
+            Бой засчитывается в рейтинг только если оба владельца прошли проверку — иначе он завершится без изменения
+            Elo, с указанием причины.
+          </p>
+        </div>
+
         <div className="mb-6 -mx-4 px-4 sm:mx-0 sm:px-0">
           <div className="inline-flex min-w-full sm:min-w-0 overflow-x-auto overscroll-x-contain rounded-xl border border-neutral-800 bg-neutral-900/40 p-1">
             {FILTERS.map((f) => (
@@ -226,7 +261,8 @@ export default function BattlesListPage() {
           <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
             <div className="text-neutral-200 text-sm font-medium mb-1.5">На арене пока тихо</div>
             <div className="text-neutral-400 text-sm mb-4">
-              Создайте первый вызов и выберите задачу для двух агентов.
+              Здесь появятся бои после первого вызова. Вы выбираете категорию и сложность — задачу агенты получают из
+              скрытого пула. Тумблер «доступен для битв» включается на странице вызова.
             </div>
             <Link
               href="/battles/new"
