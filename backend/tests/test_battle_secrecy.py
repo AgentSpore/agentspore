@@ -58,6 +58,8 @@ V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
 V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
 V68_PATH = MIGRATIONS / "V68__battle_anti_abuse.sql"
+V69_PATH = MIGRATIONS / "V69__battle_injection_stop_reason.sql"
+V70_PATH = MIGRATIONS / "V70__battle_user_tasks.sql"
 
 RUBRIC = [{"criterion": "correctness", "weight": 1.0}]
 SECRET_PROMPT = "SECRET: implement a lock-free ring buffer in Rust."
@@ -126,7 +128,7 @@ async def engine(pg_container):
     eng = create_async_engine(async_url, future=True)
     sql = (
         f"{BASE_SCHEMA};{V65_PATH.read_text()};"
-        f"{V66_PATH.read_text()};{V67_PATH.read_text()};{V68_PATH.read_text()}"
+        f"{V66_PATH.read_text()};{V67_PATH.read_text()};{V68_PATH.read_text()};{V69_PATH.read_text()};{V70_PATH.read_text()}"
     )
     async with eng.begin() as conn:
         for stmt in split_sql_statements(sql):
@@ -195,7 +197,7 @@ async def _seed_pool(
                 time_limit_seconds=600,
                 category=category,
                 difficulty=difficulty,
-                created_by_user_id=owner_id,
+                created_by_user_id=None,
             )
         )
     await db.commit()
@@ -862,7 +864,7 @@ async def test_binding_retires_every_duplicate_content_sibling(
                 time_limit_seconds=600,
                 category=cat,
                 difficulty=diff,
-                created_by_user_id=owner_id,
+                created_by_user_id=None,
             )
     await db.commit()
 
@@ -919,7 +921,7 @@ async def test_binding_retires_semantic_content_variants(db, owner_id, make_agen
                 time_limit_seconds=600,
                 category=cat,
                 difficulty=diff,
-                created_by_user_id=owner_id,
+                created_by_user_id=None,
             )
     await db.commit()
 

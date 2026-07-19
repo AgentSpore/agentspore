@@ -60,6 +60,8 @@ V65_PATH = MIGRATIONS / "V65__agent_events.sql"
 V66_PATH = MIGRATIONS / "V66__battles.sql"
 V67_PATH = MIGRATIONS / "V67__battle_task_secrecy.sql"
 V68_PATH = MIGRATIONS / "V68__battle_anti_abuse.sql"
+V69_PATH = MIGRATIONS / "V69__battle_injection_stop_reason.sql"
+V70_PATH = MIGRATIONS / "V70__battle_user_tasks.sql"
 
 RUBRIC = [{"criterion": "correctness", "weight": 1.0}]
 
@@ -128,7 +130,7 @@ async def engine(pg_container):
     eng = create_async_engine(async_url, future=True)
     sql = (
         f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};"
-        f"{V67_PATH.read_text()};{V68_PATH.read_text()}"
+        f"{V67_PATH.read_text()};{V68_PATH.read_text()};{V69_PATH.read_text()};{V70_PATH.read_text()}"
     )
     async with eng.begin() as conn:
         for stmt in split_sql_statements(sql):
@@ -204,6 +206,14 @@ async def task_id(db, owner_id) -> str:
     # prompts, so duplicate content does not inflate the count. Seed a full pool
     # of distinct general/medium tasks so admission passes; return one
     # representative id for the transition-test helpers.
+    #
+    # created_by_user_id is None, NOT owner_id (V70). Author exclusion removes a
+    # task from the pool of any battle whose fighters' owner authored it, so
+    # seeding the pool as if the fighter had written all 25 tasks empties it and
+    # nothing binds. That fixture shape was never realistic anyway: in production
+    # these are admin-generated tasks and the generator is not a fighter. Tests
+    # that exercise the exclusion itself seed a real author explicitly — see
+    # tests/test_battle_user_tasks.py.
     repo = BattleRepository(db)
     tid = await repo.create_task(
         source=TaskSource.GENERATED,
@@ -212,7 +222,7 @@ async def task_id(db, owner_id) -> str:
         prompt="Parse this log format.",
         rubric=RUBRIC,
         time_limit_seconds=600,
-        created_by_user_id=owner_id,
+        created_by_user_id=None,
     )
     for i in range(24):
         await repo.create_task(
@@ -222,7 +232,7 @@ async def task_id(db, owner_id) -> str:
             prompt=f"Parse this log format. (variant {i})",
             rubric=RUBRIC,
             time_limit_seconds=600,
-            created_by_user_id=owner_id,
+            created_by_user_id=None,
         )
     await db.commit()
     return tid

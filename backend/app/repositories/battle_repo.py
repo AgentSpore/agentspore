@@ -215,6 +215,69 @@ _CONTENT_KEY_T = r"regexp_replace(btrim(lower(t.prompt)), '\s+', ' ', 'g')"
 _CONTENT_KEY_C = r"regexp_replace(btrim(lower(c.prompt)), '\s+', ' ', 'g')"
 
 
+# --- User-submitted tasks: author exclusion and the quarantine pool (V70) ----
+# THE anti-cheat. A user who submits a task knows its answer, so binding it to a
+# battle they are fighting hands them a prepared win at real Elo. LLM validation
+# cannot see this (it judges text quality), and quarantine only blunts it, so the
+# exclusion is absolute: a task authored by either fighter's frozen owner is not
+# in the pool at all, for that battle. The author's own task is simply burned for
+# them.
+#
+# IS DISTINCT FROM, never NOT IN: agent_b_owner_snapshot is NULL on an open
+# challenge, and `x NOT IN (a, NULL)` evaluates to NULL — which drops the row.
+# That would silently empty the pool for every open challenge, turning the
+# anti-cheat into an outage. IS DISTINCT FROM treats NULL as "not equal", which
+# is the intended reading: an absent owner authored nothing.
+#
+# Residual risk, stated rather than papered over: this keys on the AUTHOR's user
+# id, so it stops the author and their second account only if that account is the
+# owner. Two different people colluding off-platform (author sends the task to an
+# accomplice) defeats it. Quarantine plus the approval queue are what bound that
+# case — an anomalous quarantine winrate is visible before the task ever rates.
+def _task_not_authored_by_fighters(owner_a: str, owner_b: str) -> str:
+    """SQL predicate: task ``t`` was not authored by either fighter's owner.
+
+    ``owner_a`` / ``owner_b`` are SQL EXPRESSIONS (a cast bind parameter or a
+    column reference), never caller input — every call site passes a literal
+    written in this module.
+    """
+    return f"""(
+                          t.created_by_user_id IS NULL
+                          OR (
+                              t.created_by_user_id IS DISTINCT FROM {owner_a}
+                              AND t.created_by_user_id IS DISTINCT FROM {owner_b}
+                          )
+                      )"""
+
+
+def _bindable_task_status(rated_eligible: str) -> str:
+    """SQL predicate: task ``t`` is in the pool THIS battle may draw from.
+
+    Two pools, one predicate. A rated-eligible battle sees only 'ready' — the
+    approved pool. Any other battle (rated_eligible FALSE or not yet decided)
+    also sees 'quarantine', the validated-but-unapproved submissions. That is the
+    whole point of quarantine: a submitted task gets real play, and the author's
+    foreknowledge is worthless because Elo cannot move.
+
+    This is the PRIMARY guarantee that a quarantined task never rates. The check
+    in settle_battle is a backstop for the same fact, not the mechanism — by the
+    time settle runs, a rated battle that somehow bound a quarantined task has
+    already been fought, and refusing to rate it is damage control rather than
+    prevention.
+
+    ``rated_eligible`` is a SQL expression naming the battle's frozen verdict
+    (decided at acceptance). IS NOT TRUE, not = FALSE: the column is nullable
+    until acceptance, and an undecided battle must get the permissive pool.
+    """
+    return f"""(
+                          t.status = 'ready'
+                          OR (
+                              t.status = 'quarantine'
+                              AND {rated_eligible} IS NOT TRUE
+                          )
+                      )"""
+
+
 class BattleRepository:
     """All database operations for battles and their satellites."""
 
@@ -292,6 +355,19 @@ class BattleRepository:
                         SELECT COUNT(DISTINCT {_CONTENT_KEY_T}) FROM battle_tasks t
                         WHERE t.status = 'ready'
                           AND t.secret = TRUE
+                          -- Author exclusion (V70), site 1 of 5. Counted, not
+                          -- just filtered at bind: if the challenger's own
+                          -- submissions padded this count, the gate would admit
+                          -- a challenge the bind then cannot satisfy.
+                          AND {_task_not_authored_by_fighters(
+                              "CAST(:challenger_owner AS UUID)",
+                              "CAST(:agent_b_owner_snapshot AS UUID)",
+                          )}
+                          -- Deliberately 'ready' only, no quarantine: rated
+                          -- eligibility is not decided until acceptance, so this
+                          -- pre-challenge gate measures the STRICTER (rated)
+                          -- pool. Counting quarantine here would promise a
+                          -- challenge that a later rated bind cannot honour.
                           AND (CAST(:task_category AS TEXT) IS NULL
                                OR t.category = CAST(:task_category AS TEXT))
                           AND (CAST(:task_difficulty AS TEXT) IS NULL
@@ -870,6 +946,14 @@ class BattleRepository:
                       SELECT COUNT(DISTINCT {_CONTENT_KEY_T}) FROM battle_tasks t
                       WHERE t.status = 'ready'
                         AND t.secret = TRUE
+                        -- Author exclusion (V70), site 2 of 5. Mirrors
+                        -- diagnose_challenge exactly, including the 'ready'-only
+                        -- (rated) pool: the advisory count and this gate must
+                        -- measure the same set or the diagnosis lies.
+                        AND {_task_not_authored_by_fighters(
+                            "CAST(:agent_a_owner_snapshot AS UUID)",
+                            "CAST(:agent_b_owner_snapshot AS UUID)",
+                        )}
                         AND (CAST(:task_category AS TEXT) IS NULL
                              OR t.category = CAST(:task_category AS TEXT))
                         AND (CAST(:task_difficulty AS TEXT) IS NULL
@@ -1026,6 +1110,15 @@ class BattleRepository:
                               OR last_used_at
                                  < NOW() - make_interval(days => :cooldown_days)
                        ) AS fresh_count
+                -- NO author exclusion here, unlike the five BINDING sites (V70).
+                -- This endpoint is intentionally public and unauthenticated, so
+                -- there is no viewer to exclude against; threading auth through
+                -- it to fix a counter would change a public contract. The
+                -- consequence is a known cosmetic imprecision: an author sees
+                -- their own submissions counted in a bucket, so the number can
+                -- read one or two higher than what THEY could actually be
+                -- matched with. That leaks nothing — the author already knows
+                -- their own submissions exist — and the bind still excludes them.
                 FROM battle_tasks
                 WHERE status = 'ready'
                   AND secret = TRUE
@@ -1661,7 +1754,14 @@ class BattleRepository:
                 WITH eligible_battle AS MATERIALIZED (
                     SELECT battles.id,
                            battles.task_category_filter,
-                           battles.task_difficulty_filter
+                           battles.task_difficulty_filter,
+                           -- Carried into the pool predicate below (V70): the
+                           -- frozen owners decide author exclusion, and the
+                           -- frozen rated verdict decides whether quarantined
+                           -- tasks are in this battle's pool at all.
+                           battles.agent_a_owner_snapshot,
+                           battles.agent_b_owner_snapshot,
+                           battles.rated_eligible
                     FROM battles
                     WHERE battles.id = CAST(:battle_id AS UUID)
                       AND battles.status = 'reserved'
@@ -1680,11 +1780,23 @@ class BattleRepository:
                            t.time_limit_seconds
                     FROM battle_tasks t
                     CROSS JOIN eligible_battle eb
-                    WHERE t.status = 'ready'
+                    -- Two pools (V70): a rated-eligible battle draws only from
+                    -- the approved 'ready' pool; an unrated one also sees
+                    -- validated 'quarantine' submissions. This is the primary
+                    -- guarantee that a user task cannot move Elo before a
+                    -- moderator approves it.
+                    WHERE {_bindable_task_status("eb.rated_eligible")}
                       -- Only a SECRET task may bind: a quarantined pre-V67 row
                       -- whose prompt/rubric were public under V66's catalog is
                       -- precisely what the rated track must never hand a fighter.
                       AND t.secret = TRUE
+                      -- Author exclusion (V70), site 3 of 5 — the REAL binding
+                      -- site, and the one that must never be missed: this is
+                      -- where a task actually becomes the battle's task.
+                      AND {_task_not_authored_by_fighters(
+                          "eb.agent_a_owner_snapshot",
+                          "eb.agent_b_owner_snapshot",
+                      )}
                       AND (
                           eb.task_category_filter IS NULL
                           OR t.category = eb.task_category_filter
@@ -1738,7 +1850,15 @@ class BattleRepository:
                     UPDATE battle_tasks t
                     SET secret = FALSE,
                         last_used_at = NOW(),
-                        use_count = use_count + 1
+                        use_count = use_count + 1,
+                        -- Quarantine play counter (V70): the evidence the
+                        -- moderator approves on. Counted at BIND, in the same
+                        -- statement as the burn, so it cannot drift from
+                        -- use_count. Only quarantined rows advance it, so an
+                        -- approved task's history stops accruing the moment it
+                        -- becomes 'ready'.
+                        quarantine_battles = t.quarantine_battles
+                            + CASE WHEN t.status = 'quarantine' THEN 1 ELSE 0 END
                     FROM candidate c
                     WHERE {_CONTENT_KEY_T} = {_CONTENT_KEY_C}
                     RETURNING t.id
@@ -1831,8 +1951,19 @@ class BattleRepository:
                       -- bindable pool is genuinely below the minimum, so there is
                       -- no gap where a battle neither binds nor aborts.
                       SELECT COUNT(DISTINCT {_CONTENT_KEY_T}) FROM battle_tasks t
-                      WHERE t.status = 'ready'
+                      WHERE {_bindable_task_status("battles.rated_eligible")}
                         AND t.secret = TRUE
+                        -- Author exclusion (V70), site 4 of 5. This CAS decides
+                        -- whether to ABORT for an empty pool, so it must measure
+                        -- the identical set admit_to_queue draws from — pool
+                        -- split included. If it counted tasks the bind excludes,
+                        -- a battle whose only candidates are its own fighters'
+                        -- submissions would neither bind nor abort: it would sit
+                        -- reserved until the challenge expired.
+                        AND {_task_not_authored_by_fighters(
+                            "battles.agent_a_owner_snapshot",
+                            "battles.agent_b_owner_snapshot",
+                        )}
                         AND (battles.task_category_filter IS NULL
                              OR t.category = battles.task_category_filter)
                         AND (battles.task_difficulty_filter IS NULL
@@ -1956,7 +2087,10 @@ class BattleRepository:
                 WITH eligible_battle AS MATERIALIZED (
                     SELECT battles.id,
                            battles.task_category_filter,
-                           battles.task_difficulty_filter
+                           battles.task_difficulty_filter,
+                           battles.agent_a_owner_snapshot,
+                           battles.agent_b_owner_snapshot,
+                           battles.rated_eligible
                     FROM battles
                     WHERE battles.id = CAST(:battle_id AS UUID)
                       AND battles.status = 'reserved'
@@ -1968,11 +2102,20 @@ class BattleRepository:
                     SELECT t.id, t.title, t.prompt, t.rubric, t.time_limit_seconds
                     FROM battle_tasks t
                     CROSS JOIN eligible_battle eb
-                    WHERE t.status = 'ready'
-                      -- Even the unguarded test primitive binds only SECRET
-                      -- tasks: the pool predicate is the invariant, not a
-                      -- property of whichever caller happens to reach it.
+                    -- Even the unguarded test primitive splits the pool and
+                    -- excludes the authors (V70), for the same reason it already
+                    -- binds only SECRET tasks: these are invariants of BINDING,
+                    -- not properties of whichever caller happens to reach it. A
+                    -- test primitive that could bind an author's own quarantined
+                    -- task would let a test prove a safety property that
+                    -- production does not have.
+                    WHERE {_bindable_task_status("eb.rated_eligible")}
                       AND t.secret = TRUE
+                      -- Author exclusion (V70), site 5 of 5.
+                      AND {_task_not_authored_by_fighters(
+                          "eb.agent_a_owner_snapshot",
+                          "eb.agent_b_owner_snapshot",
+                      )}
                       AND (eb.task_category_filter IS NULL
                            OR t.category = eb.task_category_filter)
                       AND (eb.task_difficulty_filter IS NULL
@@ -2333,6 +2476,7 @@ class BattleRepository:
         elo_a_after: int | None = None,
         elo_b_after: int | None = None,
         judging_stop_reason: str | None = None,
+        rated_ineligibility_reason: str | None = None,
     ) -> dict | None:
         """judging -> completed. The single place a verdict becomes real.
 
@@ -2364,6 +2508,17 @@ class BattleRepository:
                     verdict_reason = :verdict_reason,
                     is_rated = :is_rated,
                     judging_stop_reason = :judging_stop_reason,
+                    -- COALESCE, not assignment: the reason is normally frozen at
+                    -- acceptance and must survive settling. Only a reason
+                    -- discovered LATER (the quarantine backstop, which needs the
+                    -- bound task the acceptance gate could not see) is written
+                    -- here, and it must not clobber an earlier, more specific
+                    -- one — a battle refused for owner_daily_quota stays refused
+                    -- for owner_daily_quota.
+                    rated_ineligibility_reason = COALESCE(
+                        rated_ineligibility_reason,
+                        :rated_ineligibility_reason
+                    ),
                     elo_a_before = :elo_a_before,
                     elo_b_before = :elo_b_before,
                     elo_a_after = :elo_a_after,
@@ -2387,6 +2542,7 @@ class BattleRepository:
                 "verdict_reason": verdict_reason,
                 "is_rated": is_rated,
                 "judging_stop_reason": judging_stop_reason,
+                "rated_ineligibility_reason": rated_ineligibility_reason,
                 "elo_a_before": elo_a_before,
                 "elo_b_before": elo_b_before,
                 "elo_a_after": elo_a_after,
@@ -3038,10 +3194,23 @@ class BattleRepository:
         battle = await self.db.execute(
             text(
                 """
-                SELECT agent_a_id, agent_b_id,
-                       agent_a_owner_snapshot, agent_b_owner_snapshot,
-                       rated_eligible, judging_stop_reason
-                  FROM battles WHERE id = CAST(:battle_id AS UUID)
+                SELECT b.agent_a_id, b.agent_b_id,
+                       b.agent_a_owner_snapshot, b.agent_b_owner_snapshot,
+                       b.rated_eligible, b.judging_stop_reason,
+                       -- Backstop for the quarantine pool split (V70). The
+                       -- binding predicate in admit_to_queue already makes this
+                       -- impossible for a rated battle, so this must always be
+                       -- FALSE where it matters; it exists so that if the pool
+                       -- split were ever weakened, the failure is an unrated
+                       -- battle rather than Elo awarded on a task one fighter
+                       -- may have written. LEFT JOIN + COALESCE because an
+                       -- unbound battle has task_id NULL, which is not
+                       -- "quarantined".
+                       COALESCE(t.status = 'quarantine', FALSE)
+                           AS task_in_quarantine
+                  FROM battles b
+                  LEFT JOIN battle_tasks t ON t.id = b.task_id
+                 WHERE b.id = CAST(:battle_id AS UUID)
                 """
             ),
             {"battle_id": str(battle_id)},
