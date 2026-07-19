@@ -46,6 +46,16 @@ def current_budget_day() -> date:
     Process-local (not UTC) is the canonical choice because every existing
     ``budget_day`` row was written with ``date.today()``; switching to a UTC day
     would reinterpret stored history and shift a live budget window mid-day.
+
+    DEPLOYMENT INVARIANT: every app process that shares a database must run in
+    the SAME timezone. Process-local single-sources the day within one process,
+    not across a fleet — two instances in different zones would disagree on the
+    day for the same daily window that caused the original defect, this time
+    between instance and instance rather than app and database. Today one
+    container runs all workers, so they share one OS zone and this cannot fire;
+    a multi-host rollout, or a rolling deploy that changes the zone, reopens it.
+    Pinning ``TZ`` in the image would make the day independent of deployment
+    topology — a deploy-side decision, not one this function can enforce.
     """
     return date.today()
 
