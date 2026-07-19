@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.services import battle_task_validator
 from app.services.battle_task_validator import (
     MIN_PROMPT_CHARS,
     REASON_DUPLICATE_CONTENT,
@@ -129,3 +130,65 @@ def test_an_unusable_reply_becomes_an_unreadable_rejection(raw):
     verdict = parse_validation_response(raw)
     assert verdict.verdict == VERDICT_REJECT
     assert verdict.reasons == [REASON_LLM_UNREADABLE]
+
+
+class _FakeResponse:
+    """A provider reply whose 200 body is not the shape the client expects."""
+
+    status_code = 200
+
+    def __init__(self, payload) -> None:
+        self._payload = payload
+        self.text = "irrelevant"
+
+    def json(self):
+        if isinstance(self._payload, Exception):
+            raise self._payload
+        return self._payload
+
+
+class _FakeClient:
+    def __init__(self, response) -> None:
+        self._response = response
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        return False
+
+    async def post(self, *args, **kwargs):
+        return self._response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        ValueError("not json"),
+        {},
+        {"choices": []},
+        {"choices": [{"message": {}}]},
+        {"choices": "not a list"},
+    ],
+    ids=["bad_json", "empty_object", "no_choices", "no_content", "wrong_type"],
+)
+async def test_a_malformed_200_envelope_is_a_transport_error(monkeypatch, payload):
+    """A 200 with an unexpected body must not escape as a raw exception.
+
+    ``response.json()[...]`` raises ValueError / KeyError / IndexError /
+    TypeError depending on how the envelope is broken, and none of them is an
+    ``httpx.HTTPError``. Escaping here would 500 the submitter AND strand the
+    reserved ledger row in 'reserved' forever, because the caller settles the
+    ledger only on ValidationTransportError. Every shape must therefore arrive
+    as that one type.
+    """
+    monkeypatch.setattr(
+        battle_task_validator.httpx,
+        "AsyncClient",
+        lambda *a, **k: _FakeClient(_FakeResponse(payload)),
+    )
+    with pytest.raises(battle_task_validator.ValidationTransportError):
+        await battle_task_validator.call_validation_model(
+            base_url="https://stub.invalid/v1", api_key="unused", messages=[]
+        )
