@@ -767,6 +767,92 @@ export const BATTLE_DIFFICULTY: Record<BattleTaskDifficulty, string> = {
   hard: "Сложно",
 };
 
+// --- User task submission (V70) --------------------------------------------
+// DRAFT/READY/RETIRED are the admin-generated task's own lifecycle and never
+// appear on a user's own submission; kept in the union because the backend
+// enum (TaskStatus) covers both, and UserTaskSummary.status is typed against
+// the whole thing rather than a narrower slice the API does not promise.
+export type BattleTaskStatus =
+  | "draft"
+  | "ready"
+  | "retired"
+  | "pending_validation"
+  | "quarantine"
+  | "rejected";
+
+// One rubric criterion, matching the shape the judge panel consumes
+// (battle_task_validator.rubric_texts): key + description, both required.
+export interface RubricCriterion {
+  key: string;
+  description: string;
+}
+
+export interface SubmitTaskRequest {
+  title: string;
+  prompt: string;
+  rubric: RubricCriterion[];
+  category: string;
+  difficulty: BattleTaskDifficulty;
+}
+
+// A 201 is not a verdict: status may already be terminal ('rejected', a cheap
+// filter refused it) or still 'pending_validation' — including when the LLM
+// budget was spent, which the caller must not read as an accept.
+export interface SubmitTaskResponse {
+  id: string;
+  status: BattleTaskStatus;
+  reason: string | null;
+}
+
+export interface UserTaskSummary {
+  id: string;
+  title: string;
+  prompt: string;
+  category: string;
+  difficulty: BattleTaskDifficulty;
+  status: BattleTaskStatus;
+  validation_reason: string | null;
+  quarantine_battles: number;
+  use_count: number;
+  approved_at: string | null;
+  created_at: string;
+}
+
+// Mirrors battle_service.DAILY_TASK_SUBMISSION_LIMIT for display only — the
+// server remains the sole enforcer; a 429 from POST /battles/tasks is the
+// authority, this is just what the form tells the submitter up front.
+export const DAILY_TASK_SUBMISSION_LIMIT = 5;
+
+export const TASK_STATUS: Record<BattleTaskStatus, { label: string; classes: string }> = {
+  draft: { label: "Черновик", classes: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
+  ready: { label: "В рейтинговом пуле", classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
+  retired: { label: "Снята с пула", classes: "bg-neutral-500/10 text-neutral-500 border-neutral-500/30" },
+  pending_validation: {
+    label: "На проверке",
+    classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse",
+  },
+  quarantine: { label: "Карантин (без рейтинга)", classes: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" },
+  rejected: { label: "Отклонена", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
+};
+
+// Stable reason codes from battle_task_validator, mapped to Russian prose for
+// the submitter. Falls back to the raw code for any value the map does not
+// (yet) cover, so an unmapped reason still shows something instead of nothing.
+export const TASK_REJECTION_REASON: Record<string, string> = {
+  title_empty: "Заголовок пустой",
+  title_too_long: "Заголовок слишком длинный",
+  prompt_too_short: "Текст задачи слишком короткий — он должен быть самодостаточным описанием",
+  prompt_too_long: "Текст задачи слишком длинный",
+  rubric_empty: "Рубрика пуста — нужен хотя бы один критерий",
+  rubric_too_long: "В рубрике слишком много критериев",
+  rubric_item_invalid: "Один из критериев рубрики заполнен некорректно",
+  duplicate_content: "Такая задача уже есть в пуле",
+  injection_in_prompt: "В тексте задачи обнаружена попытка инструктировать судью напрямую",
+  injection_in_rubric: "В рубрике обнаружена попытка инструктировать судью напрямую",
+  llm_rejected: "Автоматическая проверка сочла задачу нерешаемой или неоднозначной",
+  llm_unreadable_response: "Не удалось разобрать ответ проверки — попробуйте отправить снова",
+};
+
 // Owner-level block (V68 D). blocked_owner_id covers every current and future
 // agent of that owner; the caller's own id is never shipped back.
 export interface BattleBlockResponse {

@@ -217,6 +217,13 @@ export default function BattlesListPage() {
             лимит боёв и кворум реплик. Если условие не выполнено, бой завершится без изменения Elo — причина будет
             указана.
           </p>
+          <p className="mt-2 text-xs text-neutral-500">
+            Есть идея задачи для боя?{" "}
+            <Link href="/battles/tasks/new" className="text-violet-400 hover:text-violet-300 underline underline-offset-2">
+              Предложите свою
+            </Link>{" "}
+            — она пройдёт автоматическую проверку и сыграет в боях без рейтинга, пока модератор её не одобрит.
+          </p>
         </div>
 
         <div className="mb-6 -mx-4 px-4 sm:mx-0 sm:px-0">
