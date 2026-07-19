@@ -49,19 +49,28 @@ from app.schemas.battles import (
     JudgeKind,
     JudgeRunStatus,
     JudgeTally,
+    ModerationTaskView,
     PresentedOrder,
     ReadinessView,
+    RejectTaskRequest,
     Side,
+    SubmitTaskRequest,
+    SubmitTaskResponse,
     SubmitTurnRequest,
     TaskSource,
+    TaskStatus,
+    UserTaskSummary,
     Vote,
 )
 from app.services.agent_service import AgentService, get_agent_by_api_key
 from app.services.battle_runner import _notify_battle_owners
 from app.services.battle_service import (
+    DAILY_TASK_SUBMISSION_LIMIT,
     BattleService,
     ChallengeDeniedError,
     LimiterUnavailableError,
+    TaskSubmissionDenial,
+    TaskSubmissionDeniedError,
     normalize_task_category,
 )
 
@@ -301,6 +310,127 @@ async def generate_task(
     )
     await db.commit()
     return {"id": task_id}
+
+
+# --- User task submission (V70) --------------------------------------------
+# These STATIC /tasks/* routes are declared before GET /{battle_id} for the same
+# reason /blocks is: FastAPI matches in declaration order, and "tasks" would
+# otherwise be read as a battle id.
+
+_SUBMISSION_DENIAL_STATUS: dict[TaskSubmissionDenial, int] = {
+    TaskSubmissionDenial.DAILY_QUOTA_EXHAUSTED: 429,
+    TaskSubmissionDenial.DUPLICATE_CONTENT: 409,
+}
+
+_SUBMISSION_DENIAL_DETAIL: dict[TaskSubmissionDenial, str] = {
+    TaskSubmissionDenial.DAILY_QUOTA_EXHAUSTED: (
+        f"daily submission limit reached ({DAILY_TASK_SUBMISSION_LIMIT} per day)"
+    ),
+    TaskSubmissionDenial.DUPLICATE_CONTENT: (
+        "an identical task was submitted at the same moment"
+    ),
+}
+
+
+@router.post("/tasks", response_model=SubmitTaskResponse, status_code=201,
+             summary="Submit a battle task")
+async def submit_task(
+    body: SubmitTaskRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Any registered user may propose a task. It does NOT enter the rated pool.
+
+    An accepted submission is quarantined: it is played only in battles that
+    cannot move Elo, until a moderator approves it. That is what makes the
+    submitter's own knowledge of their task worthless, and it is why 201 here
+    does not mean "in the pool".
+
+    A 201 with ``status='rejected'`` is a real outcome, not an error: the cheap
+    filters refused it and the row exists so the author can read the reason.
+    """
+    category = normalize_task_category(body.category)
+    if category is None:
+        raise HTTPException(422, "category must not be blank")
+    try:
+        outcome = await BattleService(db).submit_task(
+            user_id=str(user.id),
+            title=body.title,
+            prompt=body.prompt,
+            rubric=body.rubric,
+            category=category,
+            difficulty=body.difficulty.value,
+            time_limit_seconds=body.time_limit_seconds,
+        )
+    except TaskSubmissionDeniedError as denied:
+        raise HTTPException(
+            _SUBMISSION_DENIAL_STATUS[denied.reason],
+            _SUBMISSION_DENIAL_DETAIL[denied.reason],
+        ) from denied
+    return SubmitTaskResponse(**outcome)
+
+
+@router.get("/tasks/mine", response_model=list[UserTaskSummary],
+            summary="My submitted tasks")
+async def list_my_tasks(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """The caller's own submissions with their status and rejection reason."""
+    rows = await BattleRepository(db).list_submissions_by_author(str(user.id))
+    return [UserTaskSummary(**row) for row in rows]
+
+
+@router.get("/tasks/moderation", response_model=list[ModerationTaskView],
+            summary="Moderation queue")
+async def list_task_moderation_queue(
+    admin: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin-only: submissions awaiting validation or approval, oldest first.
+
+    Carries each task's quarantine record, because approving one lets it move
+    real Elo and the record is the only evidence a moderator has that the author
+    is not playing their own task through an accomplice.
+    """
+    rows = await BattleRepository(db).list_moderation_queue()
+    return [
+        ModerationTaskView(
+            author_user_id=row.pop("created_by_user_id"),
+            **row,
+        )
+        for row in rows
+    ]
+
+
+@router.post("/tasks/{task_id}/approve", summary="Approve a quarantined task")
+async def approve_task(
+    task_id: UUID,
+    admin: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin-only: quarantine -> ready, the ONLY route into the rated pool.
+
+    409, not 404, when the task is not in quarantine: it usually exists and was
+    already rejected or already approved, and answering "not found" would send a
+    moderator looking for a row that is right there.
+    """
+    if not await BattleService(db).approve_task(str(task_id), str(admin.id)):
+        raise HTTPException(409, "task is not awaiting approval")
+    return {"id": str(task_id), "status": TaskStatus.READY.value}
+
+
+@router.post("/tasks/{task_id}/reject", summary="Reject a submitted task")
+async def reject_task(
+    task_id: UUID,
+    body: RejectTaskRequest,
+    admin: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin-only: refuse a pending or quarantined submission, with a reason."""
+    if not await BattleService(db).reject_task(str(task_id), body.reason):
+        raise HTTPException(409, "task is not awaiting validation or approval")
+    return {"id": str(task_id), "status": TaskStatus.REJECTED.value}
 
 
 # --- Owner-level blocks (V68 D) --------------------------------------------

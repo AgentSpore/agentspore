@@ -213,6 +213,11 @@ _BOTH_SIDES_ACKED_SQL = """
 _CONTENT_KEY = r"regexp_replace(btrim(lower(prompt)), '\s+', ' ', 'g')"
 _CONTENT_KEY_T = r"regexp_replace(btrim(lower(t.prompt)), '\s+', ' ', 'g')"
 _CONTENT_KEY_C = r"regexp_replace(btrim(lower(c.prompt)), '\s+', ' ', 'g')"
+# The same canonicalisation applied to a BIND PARAMETER, for asking "would this
+# text collide with an existing task?" before the row exists. Written out rather
+# than derived from _CONTENT_KEY by string surgery: a substitution on the word
+# "prompt" would silently rewrite anything else spelled that way.
+_CONTENT_KEY_PARAM = r"regexp_replace(btrim(lower(:prompt)), '\s+', ' ', 'g')"
 
 
 # --- User-submitted tasks: author exclusion and the quarantine pool (V70) ----
@@ -759,6 +764,281 @@ class BattleRepository:
             },
         )
         return str(result.scalar_one())
+
+    # -- user submissions (V70) ---------------------------------------------
+
+    async def create_submission(
+        self,
+        *,
+        user_id: str,
+        title: str,
+        prompt: str,
+        rubric: list[dict[str, Any]],
+        time_limit_seconds: int,
+        category: str,
+        difficulty: str,
+        status: TaskStatus,
+        validation_reason: str | None = None,
+        validation_verdict: dict[str, Any] | None = None,
+    ) -> str:
+        """Insert a user submission and return its id. Does not commit.
+
+        Separate from :meth:`create_task` rather than another set of optional
+        arguments on it: an admin-generated task is born READY and bindable,
+        while a submission is born un-bindable and carries verdict columns that
+        make no sense for the generator. ``created_by_user_id`` is REQUIRED here
+        — it is the author-exclusion key, and a submission with a NULL author is
+        a task nobody is excluded from.
+
+        A row may be born 'rejected' (a cheap filter refused it before any LLM
+        call). That is a real, visible submission the author can read back, not a
+        write we skip — and it is outside the dedup index, so it never blocks a
+        corrected resubmission.
+
+        Raises IntegrityError on the dedup index when a concurrent submission of
+        the same canonical content won the race; the caller turns that into a
+        refusal.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                INSERT INTO battle_tasks
+                    (source, title, prompt, rubric, category, difficulty,
+                     time_limit_seconds, status, created_by_user_id,
+                     validation_reason, validation_verdict)
+                VALUES
+                    ('user', :title, :prompt, CAST(:rubric AS JSONB), :category,
+                     :difficulty, :time_limit_seconds, :status,
+                     CAST(:user_id AS UUID), :validation_reason,
+                     CAST(:validation_verdict AS JSONB))
+                RETURNING id
+                """
+            ),
+            {
+                "title": title,
+                "prompt": prompt,
+                "rubric": json.dumps(rubric, default=str),
+                "category": category,
+                "difficulty": difficulty,
+                "time_limit_seconds": time_limit_seconds,
+                "status": status.value,
+                "user_id": str(user_id),
+                "validation_reason": validation_reason,
+                "validation_verdict": (
+                    json.dumps(validation_verdict, default=str)
+                    if validation_verdict
+                    else None
+                ),
+            },
+        )
+        return str(result.scalar_one())
+
+    async def count_submissions_today(self, user_id: str) -> int:
+        """How many tasks this user has submitted since local midnight.
+
+        Counts EVERY status, rejected included. The quota bounds how often one
+        account can make the platform look at a submission, and a rejected one
+        consumed exactly that; excluding them would make garbage free to send and
+        turn the quota into a limit on good submissions only.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM battle_tasks
+                WHERE source = 'user'
+                  AND created_by_user_id = CAST(:user_id AS UUID)
+                  AND created_at >= date_trunc('day', NOW())
+                """
+            ),
+            {"user_id": str(user_id)},
+        )
+        return int(result.scalar_one())
+
+    async def content_key_exists(
+        self, prompt: str, *, exclude_task_id: str | None = None
+    ) -> bool:
+        """Is this prompt's canonical key already held by a live task?
+
+        Compares against EVERY non-rejected task, not just user submissions,
+        which is wider than the unique index deliberately: the index cannot span
+        generated twins (V67 tolerates duplicate content among generated tasks by
+        design), so resubmitting the text of an existing admin task is caught
+        here or not at all. The index still owns the race between two concurrent
+        identical submissions, which no read can close.
+
+        Keyed on ``content_key`` — the generated column — rather than recomputing
+        the expression, so this cannot drift from what the index enforces.
+        """
+        result = await self.db.execute(
+            text(
+                f"""
+                SELECT EXISTS (
+                    SELECT 1 FROM battle_tasks
+                    WHERE status <> 'rejected'
+                      AND content_key = {_CONTENT_KEY_PARAM}
+                      -- Cast BOTH occurrences: asyncpg infers a parameter's type
+                      -- from its use, and a bare ``:exclude IS NULL`` gives it
+                      -- nothing to infer from (AmbiguousParameterError).
+                      AND (
+                          CAST(:exclude AS UUID) IS NULL
+                          OR id <> CAST(:exclude AS UUID)
+                      )
+                )
+                """  # noqa: S608 - _CONTENT_KEY_PARAM is a module literal
+            ),
+            {
+                "prompt": prompt,
+                "exclude": (str(exclude_task_id) if exclude_task_id else None),
+            },
+        )
+        return bool(result.scalar_one())
+
+    async def record_validation_outcome(
+        self,
+        task_id: str,
+        *,
+        status: TaskStatus,
+        reason: str | None,
+        verdict: dict[str, Any] | None = None,
+    ) -> bool:
+        """Write a validation verdict onto a submission. Does not commit.
+
+        Guarded on ``status = 'pending_validation'``: a verdict may only land on
+        a submission still awaiting one. Returns False if it did not apply, which
+        is how a late second validation pass (a retry racing the pass that
+        already decided) is discarded instead of overwriting a moderator's or an
+        earlier validator's decision.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battle_tasks
+                SET status = :status,
+                    validation_reason = :reason,
+                    validation_verdict = CAST(:verdict AS JSONB)
+                WHERE id = CAST(:task_id AS UUID)
+                  AND status = 'pending_validation'
+                RETURNING id
+                """
+            ),
+            {
+                "task_id": str(task_id),
+                "status": status.value,
+                "reason": reason,
+                "verdict": (json.dumps(verdict, default=str) if verdict else None),
+            },
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def approve_submission(self, task_id: str, approver_user_id: str) -> bool:
+        """Promote a quarantined submission into the rated pool. Does not commit.
+
+        The ONLY quarantine -> ready transition. Guarded on the current status
+        inside the UPDATE rather than by a read-then-write, so two moderators
+        acting at once cannot both succeed, and a task that was rejected (or is
+        still pending validation, or is already ready) returns False rather than
+        being promoted.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battle_tasks
+                SET status = 'ready',
+                    approved_by_user_id = CAST(:approver AS UUID),
+                    approved_at = NOW()
+                WHERE id = CAST(:task_id AS UUID)
+                  AND status = 'quarantine'
+                RETURNING id
+                """
+            ),
+            {"task_id": str(task_id), "approver": str(approver_user_id)},
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def reject_submission(self, task_id: str, reason: str) -> bool:
+        """Reject a submission awaiting validation or approval. Does not commit.
+
+        Rejection is terminal and deliberately does NOT record an approver: the
+        approval columns are all-or-nothing (V70 CHECK) and mean "this reached
+        the rated pool through a human", which a rejection never did.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battle_tasks
+                SET status = 'rejected',
+                    validation_reason = :reason
+                WHERE id = CAST(:task_id AS UUID)
+                  AND status IN ('pending_validation', 'quarantine')
+                RETURNING id
+                """
+            ),
+            {"task_id": str(task_id), "reason": reason},
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def list_submissions_by_author(
+        self, user_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """This user's own submissions, newest first.
+
+        Returns the prompt: it is the submitter's own text, so withholding it
+        would be secrecy against its author. The rest of the pool's secrecy
+        (V67) is unaffected — nothing here reaches another user's task.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT id, title, prompt, category, difficulty, status,
+                       validation_reason, quarantine_battles, use_count,
+                       approved_at, created_at
+                FROM battle_tasks
+                WHERE source = 'user'
+                  AND created_by_user_id = CAST(:user_id AS UUID)
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """
+            ),
+            {"user_id": str(user_id), "limit": limit},
+        )
+        return [dict(row) for row in result.mappings().all()]
+
+    async def list_moderation_queue(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Submissions awaiting validation or approval, oldest pressure first.
+
+        Carries the quarantine EVIDENCE, not just the text: how many unrated
+        battles the task has served and how its two sides fared. Approval moves a
+        task into the rated pool, and the signal that the author is colluding
+        with a fighter is an anomalous record over those battles — a moderator
+        reading only the prompt cannot see it, so the queue would be asking for a
+        decision it withheld the evidence for.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT t.id, t.title, t.prompt, t.rubric, t.category,
+                       t.difficulty, t.status, t.validation_reason,
+                       t.validation_verdict, t.quarantine_battles, t.use_count,
+                       t.created_by_user_id, t.created_at,
+                       COALESCE(b.settled, 0) AS settled_battles,
+                       COALESCE(b.decisive, 0) AS decisive_battles
+                FROM battle_tasks t
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(*) AS settled,
+                           COUNT(*) FILTER (WHERE bt.winner IS NOT NULL)
+                               AS decisive
+                    FROM battles bt
+                    WHERE bt.task_id = t.id
+                      AND bt.status = 'completed'
+                ) b ON TRUE
+                WHERE t.status IN ('pending_validation', 'quarantine')
+                ORDER BY t.created_at ASC
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        )
+        return [dict(row) for row in result.mappings().all()]
 
     # -- battles ------------------------------------------------------------
 

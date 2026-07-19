@@ -35,11 +35,14 @@ and may call connection_manager; battle_repo imports nothing from here.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from enum import Enum
 
 from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
+from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository
@@ -48,8 +51,16 @@ from app.repositories.battle_repo import (
     ChallengeDenial,
     ReservationConflictError,
 )
-from app.schemas.battles import BattleStatus
+from app.schemas.battles import BattleStatus, TaskStatus
+from app.services.battle_budget import BattleJudgeBudgetService
+from app.services.battle_task_validator import (
+    VALIDATION_MODEL,
+    ValidationTransportError,
+    run_cheap_filters,
+    validate_with_llm,
+)
 from app.services.connection_manager import DeliveryResult, dispatch_existing
+from app.services.openrouter_service import OpenRouterService
 
 # How long a challenge waits for B's owner to answer. Consent is a human
 # decision, so this is generous — hours, not seconds.
@@ -119,6 +130,37 @@ def normalize_task_category(category: str | None) -> str | None:
     return trimmed or None
 
 
+# How many tasks one account may submit per day (V70). Deliberately small: each
+# accepted submission spends an LLM call from the SAME budget the judge panel
+# draws on, so an unbounded submitter competes with live battles for it. The
+# LLM-call budget is a second, independent ceiling — this one bounds how much of
+# the moderator queue a single account can fill, which no spend limit does.
+DAILY_TASK_SUBMISSION_LIMIT = 5
+
+
+class TaskSubmissionDenial(str, Enum):
+    """Why a submission created nothing at all.
+
+    Distinct from a REJECTION, which is a stored verdict about a task that does
+    exist. A denial means there is no row: the caller gets a status code, not a
+    submission id.
+    """
+
+    DAILY_QUOTA_EXHAUSTED = "daily_quota_exhausted"
+    # Lost the race to a concurrent identical submission. Reported separately
+    # from the cheap-filter duplicate rejection because the outcomes differ: this
+    # one has nothing to show in "my submissions".
+    DUPLICATE_CONTENT = "duplicate_content"
+
+
+class TaskSubmissionDeniedError(Exception):
+    """A submission was refused outright. ``reason`` names which gate."""
+
+    def __init__(self, reason: TaskSubmissionDenial):
+        self.reason = reason
+        super().__init__(reason.value)
+
+
 class ChallengeDeniedError(Exception):
     """An admission gate refused. ``reason`` names which one."""
 
@@ -139,10 +181,19 @@ class LimiterUnavailableError(Exception):
 class BattleService:
     """Challenge, consent, reservation and readiness for battles."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        session_factory: async_sessionmaker | None = None,
+    ):
         self.db = db
         self.repo = BattleRepository(db)
         self.events = AgentEventRepository(db)
+        # The budget ledger reserves in its OWN short transaction, committed
+        # before the provider request, so it cannot share the request session.
+        # Injectable because "which database" is exactly what a test needs to
+        # redirect; defaults to the app factory so no caller has to know.
+        self._session_factory = session_factory or async_session_maker
 
     # -- admission ----------------------------------------------------------
 
@@ -650,6 +701,208 @@ class BattleService:
         await self.repo.release_reservations(battle_id)
         return {"outcome": "released", "battle": released, "silent_sides": ()}
 
+    # -- user task submission (V70) -----------------------------------------
+
+    async def submit_task(
+        self,
+        *,
+        user_id: str,
+        title: str,
+        prompt: str,
+        rubric: list[dict],
+        category: str,
+        difficulty: str,
+        time_limit_seconds: int,
+    ) -> dict:
+        """Accept a task submission, then validate it. Owns its transactions.
+
+        The order is the whole design:
+
+        1. the daily quota, because it costs one indexed count and refusing here
+           spends nothing else;
+        2. the cheap filters (shape, dedup, injection), which decide without a
+           provider — a submission refused here NEVER reaches the LLM, so a
+           duplicate cannot spend a judging call to be told it is a duplicate;
+        3. the row, COMMITTED before any provider request, so a crash or a budget
+           refusal leaves a submission the author can see rather than losing it;
+        4. one LLM call, whose verdict lands in a second transaction.
+
+        A cheap-filter refusal is still stored, as a 'rejected' row: the author
+        asked a question and deserves the answer in ``GET /battles/tasks/mine``
+        rather than only in an HTTP response they may never see again.
+
+        Returns ``{"id", "status", "reason"}``. Raises
+        :class:`TaskSubmissionDeniedError` when nothing was created at all.
+        """
+        used_today = await self.repo.count_submissions_today(user_id)
+        if used_today >= DAILY_TASK_SUBMISSION_LIMIT:
+            raise TaskSubmissionDeniedError(TaskSubmissionDenial.DAILY_QUOTA_EXHAUSTED)
+
+        duplicate = await self.repo.content_key_exists(prompt)
+        cheap = run_cheap_filters(
+            title=title, prompt=prompt, rubric=rubric, duplicate_exists=duplicate
+        )
+        status = TaskStatus.PENDING_VALIDATION if cheap.passed else TaskStatus.REJECTED
+        verdict_document = (
+            None
+            if cheap.passed
+            else {"stage": "cheap_filters", "reason": cheap.reason, "detail": cheap.detail}
+        )
+
+        try:
+            task_id = await self.repo.create_submission(
+                user_id=user_id,
+                title=title,
+                prompt=prompt,
+                rubric=rubric,
+                time_limit_seconds=time_limit_seconds,
+                category=category,
+                difficulty=difficulty,
+                status=status,
+                validation_reason=cheap.reason,
+                validation_verdict=verdict_document,
+            )
+            await self.db.commit()
+        except IntegrityError:
+            # The dedup index fired: a concurrent submission of the same
+            # canonical content committed between our read and our insert. The
+            # read above cannot close that window; the index can, which is why it
+            # exists. Nothing was created, so this is a refusal, not a rejection.
+            await self.db.rollback()
+            raise TaskSubmissionDeniedError(
+                TaskSubmissionDenial.DUPLICATE_CONTENT
+            ) from None
+
+        if not cheap.passed:
+            return {"id": task_id, "status": status.value, "reason": cheap.reason}
+
+        return await self.validate_submission(
+            task_id=task_id,
+            user_id=user_id,
+            title=title,
+            prompt=prompt,
+            rubric=rubric,
+            category=category,
+            difficulty=difficulty,
+            time_limit_seconds=time_limit_seconds,
+        )
+
+    async def validate_submission(
+        self,
+        *,
+        task_id: str,
+        user_id: str,
+        title: str,
+        prompt: str,
+        rubric: list[dict],
+        category: str,
+        difficulty: str,
+        time_limit_seconds: int,
+    ) -> dict:
+        """Spend ONE budgeted LLM call on a pending submission and record it.
+
+        Every refusal short of a verdict leaves the task in 'pending_validation'
+        and returns normally. That is the deliberate shape: no provider
+        configured, an exhausted judge budget and a transport failure are all
+        facts about the PLATFORM, and none of them is evidence about the task.
+        Rejecting on any of them would punish a submitter for our outage, and
+        raising would answer a submission that WAS accepted with a 500 — so a
+        pending task simply waits for a later pass.
+
+        The budget is the judge panel's, on purpose (see
+        ``reserve_validation_call``): validation that could spend past an
+        exhausted judge cap would mean the cap is not a cap.
+        """
+        provider = OpenRouterService().resolve_provider(VALIDATION_MODEL)
+        if provider is None:
+            logger.warning(
+                "task {} left pending: no usable provider for {}",
+                task_id,
+                VALIDATION_MODEL,
+            )
+            return {
+                "id": task_id,
+                "status": TaskStatus.PENDING_VALIDATION.value,
+                "reason": None,
+            }
+
+        budget = BattleJudgeBudgetService(self._session_factory)
+        reservation = await budget.reserve_validation_call(
+            user_id=user_id,
+            provider=VALIDATION_MODEL.split("/")[0],
+            model=VALIDATION_MODEL,
+        )
+        if not reservation.granted:
+            logger.warning(
+                "task {} left pending: validation budget refused ({})",
+                task_id,
+                reservation.reason,
+            )
+            return {
+                "id": task_id,
+                "status": TaskStatus.PENDING_VALIDATION.value,
+                "reason": None,
+            }
+
+        try:
+            verdict = await validate_with_llm(
+                base_url=provider["base_url"],
+                api_key=provider["api_key"],
+                title=title,
+                prompt=prompt,
+                rubric=rubric,
+                category=category,
+                difficulty=difficulty,
+                time_limit_seconds=time_limit_seconds,
+            )
+        except ValidationTransportError as exc:
+            await budget.settle_call(
+                str(reservation.ledger_id),
+                succeeded=False,
+                error_class=type(exc).__name__,
+            )
+            logger.warning("task {} validation call failed: {}", task_id, exc)
+            return {
+                "id": task_id,
+                "status": TaskStatus.PENDING_VALIDATION.value,
+                "reason": None,
+            }
+
+        await budget.settle_call(str(reservation.ledger_id), succeeded=True)
+
+        status = TaskStatus.QUARANTINE if verdict.accepted else TaskStatus.REJECTED
+        reason = None if verdict.accepted else "; ".join(verdict.reasons)[:500]
+        applied = await self.repo.record_validation_outcome(
+            task_id, status=status, reason=reason, verdict=verdict.as_document()
+        )
+        await self.db.commit()
+        if not applied:
+            # Someone else decided this submission first (a moderator rejecting
+            # it, or a concurrent pass). Their decision stands; report what the
+            # row actually is rather than what this pass computed.
+            logger.info("task {} already left pending_validation; verdict dropped", task_id)
+            return {"id": task_id, "status": None, "reason": None}
+        return {"id": task_id, "status": status.value, "reason": reason}
+
+    async def approve_task(self, task_id: str, approver_user_id: str) -> bool:
+        """Moderator promotion, quarantine -> ready. Commits on success.
+
+        False means the task was not in quarantine — already rejected, already
+        approved, or still awaiting validation. The repository decides that
+        inside the UPDATE, so this never reads-then-writes.
+        """
+        approved = await self.repo.approve_submission(task_id, approver_user_id)
+        if approved:
+            await self.db.commit()
+        return approved
+
+    async def reject_task(self, task_id: str, reason: str) -> bool:
+        """Moderator rejection of a pending or quarantined submission. Commits."""
+        rejected = await self.repo.reject_submission(task_id, reason)
+        if rejected:
+            await self.db.commit()
+        return rejected
+
 
 def _unready_abort_reason(silent_sides: tuple[str, ...], max_generations: int) -> str:
     """Name the side(s) that never confirmed readiness, for the abort record."""
@@ -675,9 +928,12 @@ def get_battle_service(db: AsyncSession) -> BattleService:
 # ReservationConflictError is re-exported so the router can branch on it
 # without importing the repository layer directly.
 __all__ = [
+    "DAILY_TASK_SUBMISSION_LIMIT",
     "BattleService",
     "ChallengeDeniedError",
     "LimiterUnavailableError",
     "ReservationConflictError",
+    "TaskSubmissionDenial",
+    "TaskSubmissionDeniedError",
     "get_battle_service",
 ]
