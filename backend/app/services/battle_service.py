@@ -57,6 +57,7 @@ from app.services.battle_budget import (
     breaker_is_open,
     breaker_record_attempt,
     breaker_record_failure,
+    current_budget_day,
 )
 from app.services.battle_task_validator import (
     VALIDATION_MODEL,
@@ -444,7 +445,7 @@ class BattleService:
             ):
                 return (False, None, "owner_concurrent_quota")
 
-        today = date.today()
+        today = current_budget_day()
         for owner in (owner_a, owner_b):
             if (
                 await self.repo.count_owner_rated_for_day(owner, today)
