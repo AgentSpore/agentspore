@@ -86,6 +86,7 @@ from app.services.battle_judges import (
     resolve_verdict,
     rubric_keys,
     scan_submissions,
+    wire_model_name,
 )
 from app.services.battle_service import BattleService
 from app.services.connection_manager import dispatch_existing
@@ -718,18 +719,27 @@ class BattleRunner:
         resolves (RU-ASN geo-block), so this returns ``[primary]`` and the panel
         runs prompt-diversity only — the honest, recorded degraded mode.
 
-        ``wire_model`` is kept equal to ``model_id`` to preserve the exact,
-        live-verified request the primary z.ai model sends today. Provider-
-        specific wire-model normalization is deferred until a second provider is
-        genuinely enabled and live-verified — this extra-model path is dormant
-        until then.
+        ``wire_model`` is the id STRIPPED of its provider prefix. It used to be
+        kept equal to ``model_id`` on the claim that this preserved the exact,
+        live-verified request; that claim was false. The provider rejects the
+        prefixed form with ``400 {"code":"1211","message":"Unknown Model"}`` on
+        this very model, verified live — the prefixed request was never the one
+        that worked. It went unnoticed because the out-of-range ``seed`` on the
+        same request returned 400 first and masked it.
+
+        The strip is NOT deferred to "when a second provider is enabled": the
+        prefix is the platform's own convention, so every id in the roster
+        carries it and every id needs the same treatment. Should some provider
+        ever want a name we cannot derive by stripping, that is a per-provider
+        mapping to add THEN — it does not justify shipping an id no provider
+        accepts now.
         """
         primary = JudgeModel(
             model_id=JUDGE_MODEL,
             provider=JUDGE_MODEL.split("/", 1)[0],
             base_url=base_url,
             api_key=api_key,
-            wire_model=JUDGE_MODEL,
+            wire_model=wire_model_name(JUDGE_MODEL),
         )
         settings = get_settings()
         extra_ids = [m for m in settings.battle_judge_models if m != JUDGE_MODEL]
@@ -753,7 +763,7 @@ class BattleRunner:
                     provider=mid.split("/", 1)[0],
                     base_url=creds["base_url"],
                     api_key=creds["api_key"],
-                    wire_model=mid,
+                    wire_model=wire_model_name(mid),
                 )
             )
         return roster

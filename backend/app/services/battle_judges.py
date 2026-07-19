@@ -351,6 +351,34 @@ def sanitize_submission(
     return cleaned, False
 
 
+def wire_model_name(model_id: str) -> str:
+    """The provider-facing model name for a platform model id.
+
+    A platform model id carries a provider prefix (``zai/glm-4.5-flash``) and is
+    what the budget ledger, ``judge_ref`` and stored verdicts record. The
+    provider's own ``model`` field takes only the segment after that prefix:
+    z.ai answers the prefixed form with
+    ``400 {"code":"1211","message":"Unknown Model, please check the model code."}``
+    even though the bare name is live. Mirrors the split already used for model
+    ids elsewhere in the codebase (``openrouter_service._model_label``).
+    """
+    return model_id.strip().rsplit("/", 1)[-1]
+
+
+def seed_int32(seed: str) -> int:
+    """A provider-safe ``seed`` integer derived from a replicate seed hex string.
+
+    The provider parses ``seed`` as a SIGNED 32-bit int, so the full 32 bits of
+    eight hex chars overflow it: ``3493235363`` came back as
+    ``400 ... Numeric value (3493235363) out of range of int``. Masking off the
+    sign bit keeps the value in ``0..2**31-1`` while staying a pure function of
+    the seed string — the same battle and replicate number still map to the same
+    provider seed across reconciler restarts, which is the whole point of
+    :func:`replicate_seed`.
+    """
+    return int(seed[:8], 16) & 0x7FFFFFFF
+
+
 def replicate_seed(battle_id: str, replicate_no: int) -> str:
     """Stable identity for one replicate: ``hash(battle_id, replicate_no)``.
 
@@ -848,7 +876,11 @@ async def call_judge_model(
     messages: list[dict[str, str]],
     seed: str,
     gate: LLMGate,
-    wire_model: str = JUDGE_MODEL,
+    # Every real caller passes ``JudgeModel.wire_model`` explicitly; this default
+    # exists only so the signature is usable standalone. It is normalized through
+    # wire_model_name because JUDGE_MODEL is a PLATFORM id — handing that prefixed
+    # form to a provider is the 1211 "Unknown Model" failure.
+    wire_model: str = wire_model_name(JUDGE_MODEL),
 ) -> str:
     """ONE gated, bounded provider HTTP attempt. Raises JudgeTransportError on failure.
 
@@ -869,7 +901,7 @@ async def call_judge_model(
                     "temperature": JUDGE_TEMPERATURE,
                     # Passed in case the provider honours it; the seed is
                     # the replicate's identity regardless of whether it does.
-                    "seed": int(seed[:8], 16),
+                    "seed": seed_int32(seed),
                     "max_tokens": 1200,
                 },
                 timeout=JUDGE_HTTP_TIMEOUT_SECONDS,
