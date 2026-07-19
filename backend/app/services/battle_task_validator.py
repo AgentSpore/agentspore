@@ -40,7 +40,11 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from app.services.battle_judges import _is_permanent_error, detect_injection
+from app.services.battle_judges import (
+    _is_permanent_error,
+    detect_injection,
+    wire_model_name,
+)
 
 # The model that validates. Kept separate from JUDGE_MODEL as a NAME even though
 # it currently resolves the same way: the two jobs have different prompts and
@@ -350,6 +354,11 @@ async def call_validation_model(
 ) -> str:
     """ONE bounded provider request. Raises :class:`ValidationTransportError`.
 
+    ``model`` is the PLATFORM model id (``zai/glm-4.5-flash``) — the form kept in
+    the budget ledger and in the stored verdict document. Only its wire name goes
+    out on the request; see :func:`wire_model_name` for why the prefixed form is
+    rejected by the provider.
+
     Exactly one attempt, no retry ladder: the budget unit was already reserved
     and committed by the caller, so a retry here would spend a second unit the
     ledger never authorised. A failed validation leaves the submission pending
@@ -369,7 +378,7 @@ async def call_validation_model(
                 f"{base_url.rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "model": model,
+                    "model": wire_model_name(model),
                     "messages": messages,
                     "temperature": VALIDATION_TEMPERATURE,
                     "max_tokens": VALIDATION_MAX_TOKENS,
