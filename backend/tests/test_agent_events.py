@@ -1,0 +1,644 @@
+"""Tests for phase-0 durable delivery (V65 agent_events).
+
+One test per build-step invariant:
+  1 migration      — stable event_id; deliver/ACK transitions idempotent
+  2 repository     — pending events survive a restart, scoped to their agent
+  3 conn. manager  — publish with 0 subscribers is `queued`, never `delivered`
+  4 ACK ownership  — only the target agent may set acked_at
+  5 heartbeat      — drain returns all un-acked events after failed delivery
+  6 background     — fail-closed task never runs run_once on a Redis outage
+
+Steps 1/2/4/5 exercise the REAL V65 migration file against testcontainers
+Postgres rather than a re-declared inline schema — a typo in the migration
+must fail these tests, which is the whole point of testing a migration.
+They are marked @pytest.mark.integration (need Docker).
+Steps 3/6 are pure unit tests and need no Docker.
+"""
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from testcontainers.postgres import PostgresContainer
+
+from app.core.background import ALL_TASKS, ScheduledTask
+from app.repositories.agent_event_repo import AgentEventRepository
+from app.schemas.agents import HeartbeatRequestBody
+from app.services import connection_manager as cm
+from app.services.connection_manager import ConnectionManager, DeliveryResult
+
+V65_PATH = Path(__file__).resolve().parents[2] / "db" / "migrations" / "V65__agent_events.sql"
+
+# Minimal FK target only. agent_events DDL comes from the real migration.
+AGENTS_SCHEMA = """
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS agents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    handle TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+"""
+
+
+@pytest.fixture(scope="module")
+def pg_container():
+    with PostgresContainer("postgres:16-alpine") as pg:
+        yield pg
+
+
+@pytest.fixture
+async def engine(pg_container):
+    """Engine with the agents FK target + the REAL V65 migration applied."""
+    async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
+    eng = create_async_engine(async_url, future=True)
+    migration_sql = V65_PATH.read_text()
+    # One transaction for the whole migration, mirroring Flyway's V__ handling.
+    # Statements are applied one at a time because asyncpg refuses multiple
+    # commands in a single prepared statement.
+    async with eng.begin() as conn:
+        for stmt in f"{AGENTS_SCHEMA};{migration_sql}".split(";"):
+            if stmt.strip():
+                await conn.execute(text(stmt))
+    yield eng
+    await eng.dispose()
+
+
+@pytest.fixture
+def session_maker(engine):
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
+@pytest.fixture
+async def db_session(session_maker):
+    async with session_maker() as session:
+        yield session
+
+
+@pytest.fixture
+async def agent_id(db_session) -> str:
+    aid = str(uuid.uuid4())
+    await db_session.execute(
+        text("INSERT INTO agents (id, handle, name) VALUES (CAST(:id AS UUID), :h, :n)"),
+        {"id": aid, "h": f"fighter-{aid[:8]}", "n": "Fighter"},
+    )
+    await db_session.commit()
+    return aid
+
+
+@pytest.fixture
+async def other_agent_id(db_session) -> str:
+    aid = str(uuid.uuid4())
+    await db_session.execute(
+        text("INSERT INTO agents (id, handle, name) VALUES (CAST(:id AS UUID), :h, :n)"),
+        {"id": aid, "h": f"intruder-{aid[:8]}", "n": "Intruder"},
+    )
+    await db_session.commit()
+    return aid
+
+
+# ── Step 1: migration invariant ───────────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_double_ack_is_idempotent_and_leaves_one_row(db_session, agent_id):
+    """Insert → deliver → ACK twice → exactly one row, acked_at unchanged."""
+    repo = AgentEventRepository(db_session)
+    event_id = await repo.create(agent_id, "battle_turn", {"round": 1}, ttl_seconds=600)
+    await repo.mark_dispatched(event_id, "delivered")
+    await db_session.commit()
+
+    first = await repo.mark_acked(agent_id, [event_id])
+    await db_session.commit()
+    row1 = (await db_session.execute(
+        text("SELECT status, acked_at FROM agent_events WHERE event_id = CAST(:e AS UUID)"),
+        {"e": event_id},
+    )).mappings().one()
+
+    second = await repo.mark_acked(agent_id, [event_id])
+    await db_session.commit()
+    row2 = (await db_session.execute(
+        text("SELECT status, acked_at FROM agent_events WHERE event_id = CAST(:e AS UUID)"),
+        {"e": event_id},
+    )).mappings().one()
+
+    assert first == [event_id]
+    assert second == []  # second ack transitions nothing
+    assert row1["acked_at"] == row2["acked_at"]  # timestamp never moves
+    assert row2["status"] == "acked"
+
+    count = (await db_session.execute(
+        text("SELECT COUNT(*) FROM agent_events WHERE target_agent_id = CAST(:a AS UUID)"),
+        {"a": agent_id},
+    )).scalar_one()
+    assert count == 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_ack_without_dispatch_cannot_exist(db_session, agent_id):
+    """CHECK makes 'acked but never dispatched' unrepresentable."""
+    with pytest.raises(Exception, match="agent_events_acked_after_dispatch"):
+        await db_session.execute(
+            text("""
+                INSERT INTO agent_events
+                    (target_agent_id, type, payload, status, acked_at, expires_at)
+                VALUES (CAST(:a AS UUID), 'battle_turn', '{}'::jsonb, 'acked',
+                        NOW(), NOW() + INTERVAL '10 minutes')
+            """),
+            {"a": agent_id},
+        )
+    await db_session.rollback()
+
+
+# ── Step 2: repository invariant ──────────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pending_event_survives_session_restart(session_maker, agent_id):
+    """Recreate the repository/session and fetch the same pending event."""
+    async with session_maker() as s1:
+        event_id = await AgentEventRepository(s1).create(
+            agent_id, "battle_turn", {"task": "build a thing"}, ttl_seconds=600
+        )
+        await s1.commit()
+
+    # A brand-new session — nothing carried over in memory.
+    async with session_maker() as s2:
+        rows = await AgentEventRepository(s2).list_unacked(agent_id)
+
+    assert [str(r["event_id"]) for r in rows] == [event_id]
+    assert rows[0]["payload"] == {"task": "build a thing"}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_events_are_scoped_to_target_agent(db_session, agent_id, other_agent_id):
+    """One agent never sees another agent's pending events."""
+    repo = AgentEventRepository(db_session)
+    mine = await repo.create(agent_id, "battle_turn", {"n": 1}, ttl_seconds=600)
+    await repo.create(other_agent_id, "battle_turn", {"n": 2}, ttl_seconds=600)
+    await db_session.commit()
+
+    rows = await repo.list_unacked(agent_id)
+    assert [str(r["event_id"]) for r in rows] == [mine]
+
+
+# ── Step 3: connection manager invariant (no Docker) ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_publish_with_zero_subscribers_is_not_delivery():
+    """redis.publish() reporting 0 subscribers must not count as delivered."""
+    manager = ConnectionManager()
+    redis = AsyncMock()
+    redis.publish.return_value = 0  # nobody subscribed
+    manager._redis = redis
+
+    assert await manager.send("agent-1", {"type": "battle_turn"}) is False
+
+
+@pytest.mark.asyncio
+async def test_publish_with_a_subscriber_is_delivery():
+    """A confirmed subscriber is the only thing that makes a publish delivery."""
+    manager = ConnectionManager()
+    redis = AsyncMock()
+    redis.publish.return_value = 1
+    manager._redis = redis
+
+    assert await manager.send("agent-1", {"type": "battle_turn"}) is True
+
+
+@pytest.mark.asyncio
+async def test_deliver_event_returns_queued_when_no_subscribers():
+    """0 subscribers + no webhook → deliver_event() returns queued, never delivered."""
+    with (
+        patch.object(cm, "_persist_durable_event", AsyncMock(return_value="evt-1")),
+        patch.object(cm, "_record_dispatch", AsyncMock()) as record,
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=False)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        get_mgr.return_value.send = AsyncMock(return_value=False)
+        result = await cm.deliver_event("agent-1", {"type": "battle_turn"})
+
+    assert result == DeliveryResult.QUEUED
+    assert result != DeliveryResult.DELIVERED
+    record.assert_awaited_once_with("evt-1", "queued")
+
+
+@pytest.mark.asyncio
+async def test_deliver_event_returns_failed_for_non_durable_undeliverable_event():
+    """A non-durable type with no receiver is failed — nothing was stored."""
+    with (
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=False)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        get_mgr.return_value.send = AsyncMock(return_value=False)
+        result = await cm.deliver_event("agent-1", {"type": "flow_step"})
+
+    assert result == DeliveryResult.FAILED
+
+
+@pytest.mark.asyncio
+async def test_persist_failure_aborts_before_transport():
+    """Outbox write fails → FAILED, and the event is never dispatched.
+
+    The failure path, not the happy one: with no row there is no retry and no
+    ack, so reporting DELIVERED because a WS frame happened to land would be
+    the same class of lie phase 0 exists to remove.
+    """
+    with (
+        patch.object(cm, "_persist_durable_event", AsyncMock(return_value=None)),
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=True)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        send = AsyncMock(return_value=True)  # transport WOULD have succeeded
+        get_mgr.return_value.send = send
+        result = await cm.deliver_event("agent-1", {"type": "battle_turn"})
+
+    assert result == DeliveryResult.FAILED
+    send.assert_not_awaited()  # never dispatched without a durable row
+
+
+@pytest.mark.asyncio
+async def test_default_ttl_outlives_the_documented_heartbeat_interval():
+    """QUEUED promises the next heartbeat — the default TTL must survive it.
+
+    An agent polling exactly as documented (skill.md / docs/HEARTBEAT.md:
+    every 14400s) receives the event, then acks on the FOLLOWING heartbeat.
+    """
+    assert cm.DURABLE_EVENT_TTL_SECONDS > 2 * cm.HEARTBEAT_INTERVAL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_caller_can_shorten_ttl_for_a_deadline_bound_event():
+    """A battle turn is worthless after its round — callers pass their own TTL."""
+    persist = AsyncMock(return_value="evt-1")
+    with (
+        patch.object(cm, "_persist_durable_event", persist),
+        patch.object(cm, "_record_dispatch", AsyncMock()),
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=False)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        get_mgr.return_value.send = AsyncMock(return_value=False)
+        await cm.deliver_event("agent-1", {"type": "battle_turn"}, ttl_seconds=600)
+
+    assert persist.await_args.args[2] == 600
+
+
+# ── dispatch_existing: send an already-persisted row, never insert ────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_existing_never_inserts_a_second_row():
+    """The whole point: dispatch a row that exists, do not mint another.
+
+    deliver_event creates-then-sends, which is right for a caller holding only
+    a payload and wrong for one that already armed the row itself. A caller
+    that persisted two ready-checks and dispatched them through deliver_event
+    got four rows and two useless duplicates.
+    """
+    live = [{"event_id": "evt-1", "type": "battle_ready_check",
+             "payload": {"type": "battle_ready_check", "battle_id": "b1", "side": "a"}}]
+    with (
+        patch.object(cm, "async_session_maker"),
+        patch.object(cm.AgentEventRepository, "list_unacked", AsyncMock(return_value=live)),
+        patch.object(cm, "_persist_durable_event", AsyncMock()) as persist,
+        patch.object(cm, "_record_dispatch", AsyncMock()) as record,
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=False)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        get_mgr.return_value.send = AsyncMock(return_value=True)
+        result = await cm.dispatch_existing("agent-1", "evt-1")
+
+    assert result == DeliveryResult.DELIVERED
+    persist.assert_not_awaited()  # no second row, ever
+    record.assert_awaited_once_with("evt-1", "delivered")  # same row marked
+
+
+@pytest.mark.asyncio
+async def test_dispatch_existing_sends_the_stored_payload_with_its_own_id():
+    """The wire event is rebuilt from the row, not from the caller's memory."""
+    live = [{"event_id": "evt-9", "type": "battle_ready_check",
+             "payload": {"type": "battle_ready_check", "battle_id": "b1", "side": "b"}}]
+    with (
+        patch.object(cm, "async_session_maker"),
+        patch.object(cm.AgentEventRepository, "list_unacked", AsyncMock(return_value=live)),
+        patch.object(cm, "_record_dispatch", AsyncMock()),
+        patch.object(cm.AgentWebhookService, "deliver", AsyncMock(return_value=False)),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        send = AsyncMock(return_value=True)
+        get_mgr.return_value.send = send
+        await cm.dispatch_existing("agent-1", "evt-9")
+
+    sent = send.await_args.args[1]
+    assert sent["event_id"] == "evt-9"
+    assert sent["type"] == "battle_ready_check"
+    assert sent["side"] == "b"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_existing_refuses_an_event_that_is_not_live():
+    """Expired, already acked, or another agent's — all the same answer.
+
+    list_unacked returns only rows that are live, unexpired and belong to this
+    agent, so an event missing from it is one we must not send. Dispatching it
+    anyway would resurrect a dead event and invite an ack that proves nothing.
+    """
+    with (
+        patch.object(cm, "async_session_maker"),
+        patch.object(cm.AgentEventRepository, "list_unacked", AsyncMock(return_value=[])),
+        patch.object(cm, "_record_dispatch", AsyncMock()) as record,
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        send = AsyncMock(return_value=True)  # transport WOULD have worked
+        get_mgr.return_value.send = send
+        result = await cm.dispatch_existing("agent-1", "evt-expired")
+
+    assert result == DeliveryResult.FAILED
+    send.assert_not_awaited()
+    record.assert_not_awaited()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_dispatch_existing_refuses_a_truly_expired_row(db_session, agent_id, session_maker):
+    """Same rule, against the real V65 expiry guard rather than a stub."""
+    repo = AgentEventRepository(db_session)
+    event_id = await repo.create(
+        target_agent_id=agent_id,
+        event_type="battle_ready_check",
+        payload={"type": "battle_ready_check", "battle_id": "b1", "side": "a"},
+        ttl_seconds=60,
+    )
+    await db_session.commit()
+    await db_session.execute(
+        text(
+            "UPDATE agent_events SET expires_at = NOW() - interval '1 second' "
+            "WHERE event_id = CAST(:e AS UUID)"
+        ),
+        {"e": event_id},
+    )
+    await db_session.commit()
+
+    with (
+        patch.object(cm, "async_session_maker", session_maker),
+        patch.object(cm, "get_connection_manager") as get_mgr,
+    ):
+        get_mgr.return_value.send = AsyncMock(return_value=True)
+        result = await cm.dispatch_existing(agent_id, event_id)
+
+    assert result == DeliveryResult.FAILED
+
+
+# ── Step 4: ACK ownership invariant ───────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_ack_from_wrong_agent_leaves_row_untouched(db_session, agent_id, other_agent_id):
+    """A wrong agent's ACK leaves the row unchanged."""
+    repo = AgentEventRepository(db_session)
+    event_id = await repo.create(agent_id, "battle_turn", {"round": 1}, ttl_seconds=600)
+    await repo.mark_dispatched(event_id, "delivered")
+    await db_session.commit()
+
+    acked = await repo.mark_acked(other_agent_id, [event_id])
+    await db_session.commit()
+
+    row = (await db_session.execute(
+        text("SELECT status, acked_at FROM agent_events WHERE event_id = CAST(:e AS UUID)"),
+        {"e": event_id},
+    )).mappings().one()
+
+    assert acked == []
+    assert row["acked_at"] is None
+    assert row["status"] == "delivered"  # still awaiting the real target's ack
+
+
+# ── Step 5: heartbeat drain invariant ─────────────────────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_heartbeat_drain_returns_unacked_event_after_failed_delivery(
+    db_session, agent_id
+):
+    """Queue an event (delivery failed), drain it, assert identical id + payload."""
+    repo = AgentEventRepository(db_session)
+    payload = {"task": "duel", "deadline_seconds": 600}
+    event_id = await repo.create(agent_id, "battle_turn", payload, ttl_seconds=600)
+    await repo.mark_dispatched(event_id, "queued")  # WS/webhook found nobody
+    await db_session.commit()
+
+    rows = await repo.list_unacked(agent_id)
+
+    assert len(rows) == 1
+    assert str(rows[0]["event_id"]) == event_id
+    assert rows[0]["payload"] == payload
+
+    # Still un-acked → still redelivered on the next heartbeat (at-least-once).
+    await repo.mark_drained([event_id])
+    await db_session.commit()
+    assert len(await repo.list_unacked(agent_id)) == 1
+
+    await repo.mark_acked(agent_id, [event_id])
+    await db_session.commit()
+    assert await repo.list_unacked(agent_id) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_heartbeat_ack_stops_redelivery_for_an_agent_without_ws(
+    db_session, agent_id
+):
+    """The recovery channel a WS-less agent actually uses, end to end.
+
+    Receive via heartbeat #1 → ack via heartbeat #2 → gone by heartbeat #3.
+    Without an HTTP ack path this loops forever: mark_drained sets 'delivered',
+    which is still a live status, so the row comes back every single time.
+    """
+    repo = AgentEventRepository(db_session)
+    event_id = await repo.create(agent_id, "battle_turn", {"n": 1}, ttl_seconds=600)
+    await repo.mark_dispatched(event_id, "queued")  # no WS, nobody home
+    await db_session.commit()
+
+    # Heartbeat #1: agent receives it.
+    first = await repo.list_unacked(agent_id)
+    await repo.mark_drained([str(r["event_id"]) for r in first])
+    await db_session.commit()
+    assert [str(r["event_id"]) for r in first] == [event_id]
+
+    # Heartbeat #2: agent sends acked_event_ids; still redelivered until acked.
+    second = await repo.list_unacked(agent_id)
+    assert [str(r["event_id"]) for r in second] == [event_id]
+    await repo.mark_acked(agent_id, [event_id])
+    await db_session.commit()
+
+    # Heartbeat #3: gone for good.
+    assert await repo.list_unacked(agent_id) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_expired_event_cannot_be_acked(db_session, agent_id):
+    """A late ACK must not resurrect a dead event into a false liveness signal."""
+    await db_session.execute(
+        text("""
+            INSERT INTO agent_events
+                (event_id, target_agent_id, type, payload, status, dispatched_at, expires_at)
+            VALUES (CAST(:e AS UUID), CAST(:a AS UUID), 'battle_turn', '{}'::jsonb,
+                    'delivered', NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 minute')
+        """),
+        {"e": (expired_id := str(uuid.uuid4())), "a": agent_id},
+    )
+    await db_session.commit()
+
+    acked = await AgentEventRepository(db_session).mark_acked(agent_id, [expired_id])
+    await db_session.commit()
+
+    row = (await db_session.execute(
+        text("SELECT status, acked_at FROM agent_events WHERE event_id = CAST(:e AS UUID)"),
+        {"e": expired_id},
+    )).mappings().one()
+
+    assert acked == []
+    assert row["acked_at"] is None
+    assert row["status"] == "delivered"  # untouched, not resurrected to 'acked'
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_expired_events_are_not_drained(db_session, agent_id):
+    """An event past expires_at is never handed to the agent."""
+    await db_session.execute(
+        text("""
+            INSERT INTO agent_events (target_agent_id, type, payload, status, expires_at)
+            VALUES (CAST(:a AS UUID), 'battle_turn', '{}'::jsonb, 'queued',
+                    NOW() - INTERVAL '1 minute')
+        """),
+        {"a": agent_id},
+    )
+    await db_session.commit()
+
+    assert await AgentEventRepository(db_session).list_unacked(agent_id) == []
+
+
+# ── SDK parity (no Docker) ────────────────────────────────────────────
+
+
+def test_both_sdk_clients_expose_agent_events():
+    """Sync and async clients must map agent_events identically.
+
+    types.py defaults the field to [], so an async client that forgets to map
+    it loses events silently — no error, just an agent that never acts.
+    """
+    sdk_src = (
+        Path(__file__).resolve().parents[2] / "sdk" / "python" / "agentspore" / "client.py"
+    ).read_text()
+
+    # One occurrence per client (sync + async).
+    assert sdk_src.count('agent_events=data.get("agent_events", [])') == 2
+    # Both must be able to ack over HTTP.
+    assert sdk_src.count('"acked_event_ids": acked_event_ids or []') == 2
+
+
+def test_heartbeat_request_schema_accepts_acked_event_ids():
+    """The HTTP ack path an agent without a WebSocket depends on."""
+    body = HeartbeatRequestBody(acked_event_ids=["a", "b"])
+    assert body.acked_event_ids == ["a", "b"]
+    assert HeartbeatRequestBody().acked_event_ids == []  # optional
+
+
+# ── Step 6: background leader-lock invariant (no Docker) ──────────────
+
+
+class _FailClosedTask(ScheduledTask):
+    """Stands in for a battle round runner: spends budget, must not double-run."""
+
+    name = "test_fail_closed"
+    interval_s = 1
+    lock_ttl_s = 10
+    fail_closed = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.runs = 0
+
+    async def run_once(self) -> None:
+        self.runs += 1
+
+
+class _FailOpenTask(_FailClosedTask):
+    """Counterpart with today's default — proves existing tasks are untouched."""
+
+    name = "test_fail_open"
+    fail_closed = False
+
+
+@pytest.mark.asyncio
+async def test_redis_outage_blocks_a_fail_closed_task():
+    """Mocked Redis exception → run_once() is never called."""
+    task = _FailClosedTask()
+    with patch(
+        "app.core.background.get_redis", AsyncMock(side_effect=ConnectionError("redis down"))
+    ):
+        assert await task._acquire_leader() is False
+    assert task.runs == 0
+
+
+@pytest.mark.asyncio
+async def test_redis_outage_still_permits_a_fail_open_task():
+    """Counterpoint: the existing four tasks keep running during an outage."""
+    task = _FailOpenTask()
+    with patch(
+        "app.core.background.get_redis", AsyncMock(side_effect=ConnectionError("redis down"))
+    ):
+        assert await task._acquire_leader() is True
+
+
+@pytest.mark.asyncio
+async def test_only_declared_tasks_are_fail_closed():
+    """Guard: nothing in ALL_TASKS silently flipped semantics.
+
+    Was ``== [False] * len(ALL_TASKS)``. That shape asserted "no task has ever
+    opted in", which stopped being true the moment the flag was used for the
+    thing step 6 added it for: ``_FailClosedTask`` above is documented as a
+    stand-in for "a battle round runner: spends budget, must not double-run",
+    and BattleRunTask is now exactly that — it pays for judge calls and moves
+    Elo, so a duplicate run is unrecoverable.
+
+    A named allowlist keeps the original intent and sharpens it. The guard was
+    against a SILENT flip, and it still fires on one: any task that sets
+    fail_closed without being declared here fails this test, and so does
+    BattleRunTask quietly losing it. Only the deliberate, declared opt-in passes.
+    """
+    opted_in = {t.__name__ for t in ALL_TASKS if t.fail_closed}
+    assert opted_in == {"BattleRunTask"}
+    # Every other task keeps the long-standing fail-open default.
+    assert [t.fail_closed for t in ALL_TASKS if t.__name__ != "BattleRunTask"] == [False] * (
+        len(ALL_TASKS) - 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_leader_lock_records_token_for_renewal():
+    """Acquiring the lease stores a token so renewal can prove ownership."""
+    task = _FailClosedTask()
+    redis = AsyncMock()
+    redis.set.return_value = True
+    with patch("app.core.background.get_redis", AsyncMock(return_value=redis)):
+        assert await task._acquire_leader() is True
+
+    assert task._lock_token is not None
+    # The lease value must be the token, not a constant — otherwise any worker
+    # could renew any other worker's lease.
+    assert redis.set.await_args.args[1] == task._lock_token

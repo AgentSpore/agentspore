@@ -14,12 +14,23 @@ the leader crashes.
 Tasks that coordinate via row-level atomic claims (e.g. cron scheduler
 with `FOR UPDATE SKIP LOCKED`) set `lock_ttl_s = None` to disable the
 leader gate — row-level claim is already exactly-once.
+
+Redis outage behaviour is a per-task choice (`fail_closed`):
+- `fail_closed = False` (default) — every worker considers itself leader
+  and the task keeps running. Safe only for tasks that are idempotent by
+  construction, which is why the existing tasks opt out: they guard with
+  `GREATEST`, `WHERE status = 'pending'`, or `ON CONFLICT`, so a duplicate
+  run converges to the same state.
+- `fail_closed = True` — nobody runs. Required for anything that spends
+  someone's budget or moves a rating, where a duplicate run is not
+  recoverable (two workers starting the same battle, double Elo).
 """
 
 from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from uuid import uuid4
 
 from loguru import logger
 from sqlalchemy import text
@@ -27,6 +38,16 @@ from sqlalchemy import text
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
 from app.services.github_service import get_github_service
+
+# Extend the lease only while we still own it: compare-and-expire, so a
+# task whose lease already expired (and was taken by another worker)
+# cannot stomp the new holder's key.
+_RENEW_LEASE_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('expire', KEYS[1], ARGV[2])
+end
+return 0
+"""
 
 
 class ScheduledTask(ABC):
@@ -37,6 +58,13 @@ class ScheduledTask(ABC):
     lock_ttl_s: int | None  # None disables leader lock
     initial_delay_s: int = 0
     non_leader_poll_s: int | None = None  # defaults to interval_s
+    # Opt-in: deny execution when Redis is unreachable. Default preserves the
+    # long-standing fail-open behaviour of the existing tasks.
+    fail_closed: bool = False
+
+    def __init__(self) -> None:
+        # Identifies THIS worker's lease, so renewal can verify ownership.
+        self._lock_token: str | None = None
 
     async def start(self) -> None:
         if self.initial_delay_s:
@@ -45,23 +73,72 @@ class ScheduledTask(ABC):
             if self.lock_ttl_s is not None and not await self._acquire_leader():
                 await asyncio.sleep(self.non_leader_poll_s or self.interval_s)
                 continue
+            renewer = (
+                asyncio.create_task(self._renew_lease())
+                if self._lock_token is not None
+                else None
+            )
             try:
                 await self.run_once()
             except Exception as e:
                 logger.warning("Task {} error: {}", self.name, e)
+            finally:
+                if renewer is not None:
+                    renewer.cancel()
             await asyncio.sleep(self.interval_s)
 
+    def _lock_key(self) -> str:
+        return f"scheduler:leader:{self.name}"
+
     async def _acquire_leader(self) -> bool:
+        self._lock_token = None
         try:
             redis = await get_redis()
+            token = uuid4().hex
             got = await redis.set(
-                f"scheduler:leader:{self.name}", "1",
+                self._lock_key(), token,
                 ex=self.lock_ttl_s, nx=True,
             )
+            if got:
+                self._lock_token = token
             return bool(got)
         except Exception as e:
             logger.warning("Leader lock {}: {}", self.name, e)
+            if self.fail_closed:
+                # Spends budget / moves a rating — a duplicate run is worse
+                # than a skipped one. Deny rather than let every worker run.
+                logger.warning(
+                    "Task {} is fail-closed: skipping cycle while Redis is unreachable",
+                    self.name,
+                )
+                return False
             return True  # fail-open so a Redis outage doesn't halt the task
+
+    async def _renew_lease(self) -> None:
+        """Keep the lease alive for as long as run_once is still running.
+
+        Without this the lease expires mid-run (lock_ttl_s is fixed at
+        acquire time) and a second worker starts the same cycle
+        concurrently — exactly the duplicate the leader lock exists to stop.
+        """
+        token = self._lock_token
+        if token is None or self.lock_ttl_s is None:
+            return
+        interval = max(1, self.lock_ttl_s // 3)
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                redis = await get_redis()
+                renewed = await redis.eval(
+                    _RENEW_LEASE_LUA, 1, self._lock_key(), token, str(self.lock_ttl_s),
+                )
+                if not renewed:
+                    logger.warning("Task {} lost its lease mid-run", self.name)
+                    return
+        except asyncio.CancelledError:
+            pass  # normal: run_once finished
+        except Exception as e:
+            logger.warning("Lease renewal {}: {}", self.name, e)
 
     @abstractmethod
     async def run_once(self) -> None:
@@ -324,12 +401,85 @@ class CronSchedulerTask(ScheduledTask):
                 logger.info("Cron scheduler: executed {} tasks", count)
 
 
+class BattleRunTask(ScheduledTask):
+    """Drives running battles to a verdict: deadline -> judging -> completed.
+
+    ``fail_closed=True`` — unlike every other task here. This one spends the
+    platform's z.ai budget on judge calls, so if Redis is unreachable it must
+    NOT run: without Redis there is no llm_gate, and without the gate an
+    unbounded number of workers would hammer a 3-concurrency account.
+
+    That flag is admission control, NOT a correctness fence, and the distinction
+    is the whole design of battle_runner. Losing the leader lease mid-pass does
+    not stop ``run_once()`` — ``_renew_lease`` only logs and returns while the
+    loop keeps going. So a former leader and its replacement can execute battle
+    work at the same instant. Correctness therefore lives in the per-row
+    PostgreSQL claims and their tokens, never in this lease.
+
+    ``interval_s`` is short because ``reconcile_once`` is a SHORT reconciler: it
+    claims a bounded batch, takes one step each, and returns. It must never hold
+    a battle for the length of the task's life.
+    """
+
+    name = "battle_run"
+    interval_s = 30
+    lock_ttl_s = 600
+    initial_delay_s = 20
+    fail_closed = True
+
+    async def run_once(self) -> None:
+        # Local imports: battle_runner -> battle_judges -> llm_gate pulls in the
+        # service layer, which imports this core module at its top. Same cycle
+        # CronSchedulerTask documents above.
+        from app.services.battle_judges import JUDGE_MODEL  # noqa: PLC0415
+        from app.services.battle_runner import reconcile_once  # noqa: PLC0415
+        from app.services.llm_gate import LLMGate  # noqa: PLC0415
+        from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
+
+        # resolve_provider() reads the key itself and returns None when it is
+        # unset, so this covers both "no credentials" and "unknown provider" —
+        # no separate settings lookup needed. A None provider does NOT skip the
+        # pass: only the paid judge panel needs it. reconcile_once still runs the
+        # free DB-only lifecycle (arm/admit/start/close_deadline) and the reaper
+        # every pass, so a provider outage never freezes battles or cleanup — it
+        # only defers scoring. Passing provider (possibly None) lets reconcile
+        # gate just the judging phase.
+        provider = OpenRouterService().resolve_provider(JUDGE_MODEL)
+        # Circuit breaker (V68 B5): while open, treat the provider as absent so
+        # the paid judge phases are skipped this pass, exactly like a missing
+        # provider — the free lifecycle transitions and the reaper still run, and
+        # the stranded-judging escape hatch stays off (it is provider-gated). A
+        # Redis outage fails the breaker CLOSED, so judging is never frozen by the
+        # breaker itself.
+        from app.services.battle_budget import breaker_is_open  # noqa: PLC0415
+
+        if provider is not None and await breaker_is_open():
+            logger.warning("Battle run: judge breaker open — skipping judging this pass")
+            provider = None
+        counts = await reconcile_once(
+            session_factory=async_session_maker,
+            gate=LLMGate(await get_redis()),
+            provider=provider,
+        )
+        if provider is None:
+            # Logged every pass (not gated on counts) so a stuck provider is
+            # observable even when no free phase advanced this pass.
+            logger.warning(
+                "Battle run (lifecycle ran, judging skipped: no usable provider for {}): {}",
+                JUDGE_MODEL,
+                counts,
+            )
+        elif any(counts.values()):
+            logger.info("Battle run: {}", counts)
+
+
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     HackathonAdvanceTask,
     GitHubSyncTask,
     MixerCleanupTask,
     CronSchedulerTask,
+    BattleRunTask,
 )
 
 

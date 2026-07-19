@@ -661,6 +661,251 @@ export const HOSTED_STATUS: Record<string, { label: string; icon: string; color:
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Battles ─────────────────────────────────────────────────────────────────
+
+export type BattleStatus =
+  | "challenge_pending"
+  | "accepted"
+  | "reserved"
+  | "queued"
+  | "running"
+  | "judging"
+  | "completed"
+  | "declined"
+  | "expired"
+  | "aborted";
+
+export type BattleWinner = "a" | "b" | "tie";
+export type BattleSide = "a" | "b";
+export type BattleTaskDifficulty = "easy" | "medium" | "hard";
+
+export interface BattleReadiness {
+  generation: number;
+  lease_expires_at: string | null;
+  accepted: boolean;
+  ready: boolean;
+}
+
+// The bound task is withheld until the battle is running (V67): task_id and
+// task_title_snapshot are null on every pre-running row, and
+// task_content_withheld says so explicitly rather than letting a null read as
+// "no task". The requested filter (category/difficulty) is always safe to
+// show — it reveals nothing about which concrete task was picked.
+export interface BattleSummary {
+  id: string;
+  task_id: string | null;
+  status: BattleStatus;
+  agent_a_id: string;
+  agent_b_id: string | null;
+  winner: BattleWinner | null;
+  challenged_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+  task_category_filter: string | null;
+  task_difficulty_filter: BattleTaskDifficulty | null;
+  task_title_snapshot: string | null;
+  task_content_withheld: boolean;
+
+  // Rated-track badge inputs (V68 F1). rated_eligible is the frozen
+  // acceptance decision (null = undecided/pre-acceptance), is_rated the
+  // settled outcome (null until completed), rated_ineligibility_reason names
+  // why an unrated battle is unrated, judging_stop_reason is the public-safe
+  // reason judging itself stopped early. None reveals an owner-snapshot id.
+  rated_eligible: boolean | null;
+  is_rated: boolean | null;
+  rated_ineligibility_reason: string | null;
+  judging_stop_reason: string | null;
+}
+
+export interface BattleDetail extends BattleSummary {
+  viewer_can_accept: boolean;
+  agent_b_accepted_at: string | null;
+  challenge_expires_at: string;
+  task_prompt_snapshot: string | null;
+  task_rubric_snapshot: Record<string, unknown>[] | null;
+  time_limit_seconds_snapshot: number | null;
+  verdict_reason: string | null;
+  elo_a_before: number | null;
+  elo_b_before: number | null;
+  elo_a_after: number | null;
+  elo_b_after: number | null;
+  queued_at: string | null;
+  deadline_at: string | null;
+  readiness: BattleReadiness | null;
+}
+
+// Challenger picks a task CATEGORY + DIFFICULTY, never a task id (V67) — the
+// concrete task is chosen and snapshotted only after both fighters prove
+// readiness, so no side can precompute an answer to a task it picked. Both
+// filters are nullable; null means "any".
+export interface CreateChallengeRequest {
+  task_category: string | null;
+  task_difficulty: BattleTaskDifficulty | null;
+  agent_a_id: string;
+  agent_b_id?: string;
+}
+
+// One (category, difficulty) bucket of the fresh task pool — counts only,
+// never task content, so a challenger can see which filters are pickable
+// without ever seeing a task id, title, prompt or rubric.
+export interface BattleTaskPool {
+  category: string;
+  difficulty: BattleTaskDifficulty;
+  fresh_count: number;
+  challenge_available: boolean;
+}
+
+export interface BattleTaskPoolsResponse {
+  minimum_pool_size: number;
+  cooldown_days: number;
+  pools: BattleTaskPool[];
+}
+
+export const BATTLE_DIFFICULTY: Record<BattleTaskDifficulty, string> = {
+  easy: "Легко",
+  medium: "Средне",
+  hard: "Сложно",
+};
+
+// --- User task submission (V70) --------------------------------------------
+// DRAFT/READY/RETIRED are the admin-generated task's own lifecycle and never
+// appear on a user's own submission; kept in the union because the backend
+// enum (TaskStatus) covers both, and UserTaskSummary.status is typed against
+// the whole thing rather than a narrower slice the API does not promise.
+export type BattleTaskStatus =
+  | "draft"
+  | "ready"
+  | "retired"
+  | "pending_validation"
+  | "quarantine"
+  | "rejected";
+
+// One rubric criterion, matching the shape the judge panel consumes
+// (battle_task_validator.rubric_texts): key + description, both required.
+export interface RubricCriterion {
+  key: string;
+  description: string;
+}
+
+export interface SubmitTaskRequest {
+  title: string;
+  prompt: string;
+  rubric: RubricCriterion[];
+  category: string;
+  difficulty: BattleTaskDifficulty;
+}
+
+// A 201 is not a verdict: status may already be terminal ('rejected', a cheap
+// filter refused it) or still 'pending_validation' — including when the LLM
+// budget was spent, which the caller must not read as an accept.
+export interface SubmitTaskResponse {
+  id: string;
+  status: BattleTaskStatus;
+  reason: string | null;
+}
+
+export interface UserTaskSummary {
+  id: string;
+  title: string;
+  prompt: string;
+  category: string;
+  difficulty: BattleTaskDifficulty;
+  status: BattleTaskStatus;
+  validation_reason: string | null;
+  quarantine_battles: number;
+  use_count: number;
+  approved_at: string | null;
+  created_at: string;
+}
+
+// Mirrors battle_service.DAILY_TASK_SUBMISSION_LIMIT for display only — the
+// server remains the sole enforcer; a 429 from POST /battles/tasks is the
+// authority, this is just what the form tells the submitter up front.
+export const DAILY_TASK_SUBMISSION_LIMIT = 5;
+
+export const TASK_STATUS: Record<BattleTaskStatus, { label: string; classes: string }> = {
+  draft: { label: "Черновик", classes: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
+  ready: { label: "В рейтинговом пуле", classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
+  retired: { label: "Снята с пула", classes: "bg-neutral-500/10 text-neutral-500 border-neutral-500/30" },
+  pending_validation: {
+    label: "На проверке",
+    classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse",
+  },
+  quarantine: { label: "Карантин (без рейтинга)", classes: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" },
+  rejected: { label: "Отклонена", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
+};
+
+// Stable reason codes from battle_task_validator, mapped to Russian prose for
+// the submitter. Falls back to the raw code for any value the map does not
+// (yet) cover, so an unmapped reason still shows something instead of nothing.
+export const TASK_REJECTION_REASON: Record<string, string> = {
+  title_empty: "Заголовок пустой",
+  title_too_long: "Заголовок слишком длинный",
+  prompt_too_short: "Текст задачи слишком короткий — он должен быть самодостаточным описанием",
+  prompt_too_long: "Текст задачи слишком длинный",
+  rubric_empty: "Рубрика пуста — нужен хотя бы один критерий",
+  rubric_too_long: "В рубрике слишком много критериев",
+  rubric_item_invalid: "Один из критериев рубрики заполнен некорректно",
+  duplicate_content: "Такая задача уже есть в пуле",
+  injection_in_prompt: "В тексте задачи обнаружена попытка инструктировать судью напрямую",
+  injection_in_rubric: "В рубрике обнаружена попытка инструктировать судью напрямую",
+  llm_rejected: "Автоматическая проверка сочла задачу нерешаемой или неоднозначной",
+  llm_unreadable_response: "Не удалось разобрать ответ проверки — попробуйте отправить снова",
+};
+
+// Owner-level block (V68 D). blocked_owner_id covers every current and future
+// agent of that owner; the caller's own id is never shipped back.
+export interface BattleBlockResponse {
+  id: string;
+  blocked_owner_id: string;
+  created_at: string;
+}
+
+export interface CreateBattleBlockRequest {
+  blocked_agent_id?: string;
+  blocked_owner_id?: string;
+}
+
+// rated_ineligibility_reason values (backend/app/services/battle_service.py
+// _decide_rated_eligibility, most-specific-first).
+export const RATED_INELIGIBILITY_REASON: Record<string, string> = {
+  same_owner: "оба агента принадлежат одному владельцу",
+  account_unverified: "аккаунт одного из владельцев не верифицирован",
+  account_too_new: "аккаунт одного из владельцев слишком новый",
+  owner_concurrent_quota: "исчерпан лимит одновременных рейтинговых боёв",
+  owner_daily_quota: "исчерпан дневной лимит рейтинговых боёв",
+};
+
+// judging_stop_reason values (backend/app/services/battle_budget.py
+// STOP_REASONS + legacy nulls from before V68).
+export const JUDGING_STOP_REASON: Record<string, string> = {
+  owner_budget_exhausted: "исчерпан бюджет судейства владельца",
+  global_budget_exhausted: "исчерпан общий бюджет судейства платформы",
+  battle_attempt_cap: "достигнут лимит попыток судейства для этого боя",
+  injection_suspected: "в ответе замечена попытка повлиять на реплики — бой без рейтинга",
+};
+
+// Statuses a spectator should see refresh quickly (challenge is live/moving).
+export const BATTLE_FAST_STATES = new Set<BattleStatus>([
+  "reserved",
+  "queued",
+  "running",
+  "judging",
+]);
+
+export const BATTLE_STATUS: Record<BattleStatus, { label: string; classes: string }> = {
+  challenge_pending: { label: "Вызов отправлен", classes: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
+  accepted: { label: "Принят", classes: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" },
+  reserved: { label: "Резервируется", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
+  queued: { label: "В очереди", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
+  running: { label: "Идёт бой", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
+  judging: { label: "Проверка реплик", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
+  completed: { label: "Завершён", classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
+  declined: { label: "Отклонён", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
+  expired: { label: "Истёк", classes: "bg-neutral-500/10 text-neutral-500 border-neutral-500/30" },
+  aborted: { label: "Прерван", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
+};
+
 export function countdown(target: string | null | undefined): string {
   if (!target) return "—";
   const ms = new Date(target).getTime();

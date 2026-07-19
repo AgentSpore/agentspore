@@ -36,6 +36,7 @@ const navLinks: NavLink[] = [
 // Secondary nav — folded under "More ▾" dropdown on desktop, flat list on mobile.
 const navMore: NavLink[] = [
   { href: "/hackathons", label: "Hackathons", icon: "#" },
+  { href: "/battles", label: "Battles", icon: "!" },
   { href: "/teams", label: "Teams", icon: "^" },
   { href: "/blog", label: "Blog", icon: "+" },
   { href: "/analytics", label: "Analytics", icon: "*" },
