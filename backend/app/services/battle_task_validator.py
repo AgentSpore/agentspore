@@ -87,6 +87,7 @@ REASON_DUPLICATE_CONTENT = "duplicate_content"
 REASON_INJECTION_IN_PROMPT = "injection_in_prompt"
 REASON_INJECTION_IN_RUBRIC = "injection_in_rubric"
 REASON_MISSING_ARTIFACT = "missing_referenced_artifact"
+REASON_INFEASIBLE_SEARCH = "computationally_infeasible"
 REASON_LLM_REJECTED = "llm_rejected"
 REASON_LLM_UNREADABLE = "llm_unreadable_response"
 
@@ -277,6 +278,137 @@ def detect_missing_artifact(prompt: str) -> bool:
     return not _carries_embedded_material(prompt)
 
 
+# The one adversarial class a wording change cannot close, priced HERE because the
+# LLM will not price it. "Find a nonce whose SHA-256 begins with 16 leading zeros"
+# is perfectly checkable and perfectly precise, so it passes every FORM criterion —
+# and it needs about 16**16 ≈ 2**64 hash evaluations, which no agent performs inside
+# a battle. Measured live (reference_battle_task_validator_asr): the validation
+# model reads the checkable rubric and ACCEPTS the task; it does not estimate the
+# search space. So the cost is computed deterministically, from the one number the
+# task is forced to state.
+#
+# Precision over recall, like every terminal-rejection filter in this module (a
+# false positive burns a fifth of the submitter's daily quota; the LLM is the
+# backstop for a false negative). The filter therefore fires ONLY on the full
+# conjunction of five independent cues:
+#
+#   1. a cryptographic hash / proof-of-work is named;
+#   2. the deliverable is the VALUE itself — a find/produce verb aimed at a nonce,
+#      input or string — NOT a function that computes it;
+#   3. no code-implementation cue is present (a task asking for a MINER FUNCTION is
+#      an ordinary coding task: the agent writes code and the rubric grades it). The
+#      cue is an ACTOR VERB next to a code object ("implement a function", "напишите
+#      функцию", "the source code of ..."), NOT the bare word "function": "hash
+#      function" / "хеш-функция" is the ordinary name of SHA-256 in a proof-of-work
+#      task and must NOT suppress a request for the nonce VALUE;
+#   4. a leading-zero prefix condition is stated;
+#   5. its magnitude is at or above a threshold that is infeasible by hand.
+#
+# The threshold is in leading zero digits: 16**8 ≈ 4.3e9 hash evaluations already
+# cannot be done by an agent writing a text answer, and the canonical attack states
+# 16. The magnitude is read whether spelled in digits ("16") or in words
+# ("sixteen" / "шестнадцать") — a number word is normalised to its digits before the
+# count is measured, so the word form is not a bypass. A task that says "one leading
+# zero" (feasible) stays below the threshold and is left to the LLM.
+_INFEASIBLE_ZERO_DIGITS = 8
+
+_POW_HASH_CUE = re.compile(
+    r"\b(?:sha-?(?:1|224|256|384|512|3)?|md5|blake2?[bs]?|keccak|ripemd\d*|scrypt|argon2)\b"
+    r"|\bhash\w*|хеш\w*|хэш\w*"
+    r"|proof[\s-]?of[\s-]?work|\bpow\b|доказательств\w*\s+работы",
+    re.IGNORECASE,
+)
+# A demand for the VALUE: a find/produce verb within a short span of a nonce/input/
+# string/value target. Third-person prose ("proof-of-work uses a nonce") lacks the
+# verb→target adjacency and does not match.
+_FIND_VALUE_CUE = re.compile(
+    r"(?:подбер\w+|подобрат\w*|найд\w+|найти|укажите|приведите|предостав\w+"
+    r"|предъяв\w+|вычислите|подбира\w+"
+    r"|find|provide|give|submit|produce|determine|compute|search\s+for)"
+    r"[^.\n]{0,40}?"
+    r"(?:nonce|preimage|прообраз\w*|строк\w+|значени\w+|вход\w+|число|input|string|value)",
+    re.IGNORECASE,
+)
+# A code deliverable makes the task legitimate, but ONLY an actor verb aimed at a
+# code object counts — "implement/write/реализуйте/напишите ... function/code", or
+# an explicit "source code of ..." phrase. A bare "function"/"функци" is NOT a
+# suppressor: "hash function" / "хеш-функция" is the ordinary name of the primitive
+# in a proof-of-work task, so keying off the lone word would let every attack
+# through by simply writing "hash function output".
+_CODE_DELIVERABLE_CUE = re.compile(
+    r"(?:реализ\w+|напиш\w+|напис\w+|имплемент\w+|запрограммир\w+"
+    r"|implement|write|code\s+up|program)"
+    r"[^.\n]{0,40}?"
+    r"(?:функци\w+|\bкод\b|кода\b|программ\w+|скрипт\w*|алгоритм\w*|псевдокод"
+    r"|function|\bcode\b|program|script|algorithm|pseudocode)"
+    r"|(?:исходн\w+\s+код\w*|source\s+code|the\s+code\s+of|только\s+код\w*"
+    r"|only\s+(?:the\s+)?code|верните\s+код\w*|return\s+(?:the\s+)?code)",
+    re.IGNORECASE,
+)
+# The prefix condition ("... begins with N leading zeros", "... N нулей подряд").
+_LEADING_CONTEXT = re.compile(
+    r"подряд|в\s+начал\w+|начина\w+\s+с\b|ведущ\w+\s+нул|начальн\w+\s+нул"
+    r"|leading\s+zero|(?:starts?|begins?|beginning)\s+with|\bprefix\w*",
+    re.IGNORECASE,
+)
+# The magnitude, captured as an integer, in a zeros context (with the usual
+# "leading / ведущих" words allowed between the number and "zeros"). A number word
+# is normalised to its digits by _digits_from_words BEFORE this runs, so "sixteen
+# leading zeros" and "шестнадцать нулей" are measured identically to "16".
+_ZERO_COUNT = re.compile(
+    r"(\d{1,4})\s*(?:(?:leading|начальн\w*|ведущ\w*)\s+)?(?:нул\w+|zeroe?s?)",
+    re.IGNORECASE,
+)
+
+# Spelled-out magnitudes at or above the threshold. Only values that can actually
+# trip the filter are listed (< threshold words never matter), plus the round
+# compounds an attacker reaches for. Two-word RU forms ("тридцать два") are keyed as
+# the whole phrase so the longest-match pass below resolves them before the bare ten.
+_NUMBER_WORDS: dict[str, int] = {
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+    "twenty-four": 24, "thirty": 30, "thirty-two": 32, "forty": 40,
+    "forty-eight": 48, "sixty": 60, "sixty-four": 64, "hundred": 100,
+    "восемь": 8, "девять": 9, "десять": 10, "одиннадцать": 11, "двенадцать": 12,
+    "тринадцать": 13, "четырнадцать": 14, "пятнадцать": 15, "шестнадцать": 16,
+    "семнадцать": 17, "восемнадцать": 18, "девятнадцать": 19, "двадцать": 20,
+    "двадцать четыре": 24, "тридцать": 30, "тридцать два": 32, "сорок": 40,
+    "сорок восемь": 48, "шестьдесят": 60, "шестьдесят четыре": 64, "сто": 100,
+}
+# Longest key first so "thirty-two" / "тридцать два" win over "thirty" / "тридцать".
+_NUMBER_WORD_RE = re.compile(
+    r"\b(" + "|".join(re.escape(w) for w in sorted(_NUMBER_WORDS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _digits_from_words(text: str) -> str:
+    """Rewrite spelled-out numbers to their digits so the count regex can read them.
+
+    Applied only to price the leading-zero magnitude; a substitution far from a
+    zeros context cannot trip the filter because _ZERO_COUNT still requires the
+    "нул/zeros" adjacency.
+    """
+    return _NUMBER_WORD_RE.sub(lambda m: str(_NUMBER_WORDS[m.group(1).lower()]), text)
+
+
+def detect_infeasible_search(prompt: str) -> bool:
+    """True when the task demands a value only an astronomically large search yields.
+
+    Deterministic price of the ``COST`` criterion the LLM validator ignores. See
+    the note above for the five-cue conjunction and why each is required.
+    """
+    if _CODE_DELIVERABLE_CUE.search(prompt):
+        return False
+    if not (_POW_HASH_CUE.search(prompt) and _FIND_VALUE_CUE.search(prompt)):
+        return False
+    if not _LEADING_CONTEXT.search(prompt):
+        return False
+    counts = _ZERO_COUNT.findall(_digits_from_words(prompt))
+    return any(int(count) >= _INFEASIBLE_ZERO_DIGITS for count in counts)
+
+
 def run_cheap_filters(
     *,
     title: str,
@@ -326,6 +458,9 @@ def run_cheap_filters(
 
     if detect_missing_artifact(prompt):
         return CheapFilterVerdict(passed=False, reason=REASON_MISSING_ARTIFACT)
+
+    if detect_infeasible_search(prompt):
+        return CheapFilterVerdict(passed=False, reason=REASON_INFEASIBLE_SEARCH)
 
     prompt_patterns = detect_injection(prompt)
     if prompt_patterns:
