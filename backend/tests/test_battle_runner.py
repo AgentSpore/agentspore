@@ -46,6 +46,7 @@ from app.schemas.battles import BattleStatus, Side, TaskSource, Vote, Winner
 from app.services.battle_judges import (
     JUDGE_KIND_LLM,
     JUDGE_MODEL,
+    REPLICATE_COUNT,
     JudgeRunResult,
     JudgeTransportError,
     replicate_seed,
@@ -3003,3 +3004,145 @@ class TestLifecycleBranches:
         ]
         assert len(expired_notif) == 1
         assert expired_notif[0].kwargs["assigned_to_agent_id"] == agent_a
+
+
+class TestUnparsableJudgeReplyIsRetried:
+    """The live defect: one unparsable half cost a unanimous panel its verdict.
+
+    Production battle #1: six raw runs, all 'completed', all attempt_count=1,
+    zero errored. Four half-votes said 'a' at confidence 0.9; the fifth replied
+    something that did not parse, was frozen as an abstention, and the battle
+    completed 'no quorum: 2 valid of 3 required' with winner NULL.
+    """
+
+    # Side A's final text, made distinguishable so a mocked judge can vote the
+    # same FIGHTER in both presentation orders. A mock that always votes the
+    # first slot would flip sides between ab and ba and collapse to a
+    # position_sensitive tie — proving nothing about quorum.
+    _A_TEXT = "answer from side a"
+
+    @classmethod
+    async def _distinguish_sides(cls, session_maker, battle_id: str) -> None:
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battle_submissions SET content = :c "
+                    "WHERE battle_id = CAST(:b AS UUID) AND side = 'a'"
+                ),
+                {"c": cls._A_TEXT, "b": battle_id},
+            )
+            await session.commit()
+
+    @classmethod
+    def _vote_for_side_a(cls, **kwargs) -> str:
+        """A judge that consistently prefers side A, whichever slot it sits in."""
+        document = json.loads(kwargs["messages"][1]["content"])
+        label = next(
+            s["label"] for s in document["submissions"] if s["text"] == cls._A_TEXT
+        )
+        return json.dumps(
+            {
+                "vote": label,
+                "confidence": 0.9,
+                "reasoning": f"{label} is more complete",
+                "scores": {"correctness": 1.0},
+            }
+        )
+
+    async def test_an_unparsable_half_is_released_not_frozen(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.call_judge_model",
+                AsyncMock(return_value="I liked the first one, honestly."),
+            ):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            judgements = await repo.list_judgements(battle_id)
+            runs = await repo.list_judge_runs(battle_id)
+
+        assert judgements == [], (
+            "an unparsable reply was collapsed into a terminal vote — the "
+            "replicate can now never be re-asked"
+        )
+        # 'failed' with the lease dropped is precisely what claim_judge_run
+        # re-claims, so the retry does not wait out a lease period.
+        assert runs and all(
+            r["status"] == "failed"
+            and r["vote"] is None
+            and r["lease_token"] is None
+            and r["attempt_count"] == 1
+            for r in runs
+        )
+
+    async def test_a_retry_after_an_unparsable_half_reaches_quorum(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, agent_a, _, token = await _battle_in_judging(
+            db_session, task_id, votes=[]
+        )
+        await self._distinguish_sides(session_maker, battle_id)
+        # One garbage reply, then honest ones — the live shape (5 good, 1 bad).
+        calls = {"n": 0}
+
+        async def _answer(**kwargs) -> str:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return "not json at all"
+            return self._vote_for_side_a(**kwargs)
+
+        for _ in range(2):
+            async with session_maker() as session:
+                runner = BattleRunner(session, gate=None)
+                with patch(
+                    "app.services.battle_runner.call_judge_model",
+                    AsyncMock(side_effect=_answer),
+                ):
+                    await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == REPLICATE_COUNT
+        assert all(j["vote"] == "a" for j in judgements)
+
+        change = await _settle_in_own_session(session_maker, battle_id, token)
+        assert change is not None and change.applied is True
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["winner"] == Side.A.value, (
+            "four unanimous half-votes plus one retried reply must produce a "
+            "winner, not 'no quorum'"
+        )
+
+    async def test_a_deliberate_abstention_is_final_and_never_retried(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """The counter-property: a judge that declines is taken at its word."""
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+        declined = '{"vote": "abstain", "confidence": 0.1, "reasoning": "cannot tell"}'
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.call_judge_model",
+                AsyncMock(return_value=declined),
+            ):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            judgements = await repo.list_judgements(battle_id)
+            runs = await repo.list_judge_runs(battle_id)
+
+        assert runs and all(
+            r["status"] == "completed" and r["vote"] == "abstain" and r["attempt_count"] == 1
+            for r in runs
+        ), "a deliberate abstention was re-asked until the judge picked a side"
+        assert len(judgements) == REPLICATE_COUNT
+        assert all(j["vote"] == "abstain" for j in judgements)

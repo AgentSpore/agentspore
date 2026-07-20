@@ -194,12 +194,21 @@ async def _seed_pool(
     author: str | None = None,
     status: str = "ready",
     tag: str = "p",
+    source: str = "generated",
 ) -> list[str]:
     """Seed ``count`` DISTINCT-content tasks, all by one author and status.
 
     Content must be distinct: every pool gate counts COUNT(DISTINCT content_key),
     so duplicated prompts would silently under-fill the pool and a test would
     pass for the wrong reason.
+
+    ``source`` matters as much as ``author``: the anti-cheat excludes a task
+    because its author SUBMITTED it, and only a source='user' row carries that
+    claim. Seeding an authored task as 'generated' — which every author test did
+    before — tested a fixture production never produces: an admin-minted task
+    that happens to record its creator. A 'user' row reaching 'ready' also needs
+    a moderator, per battle_task_ready_requires_approval, so approval is stamped
+    in the same statement that flips the source.
     """
     repo = BattleRepository(db)
     ids = [
@@ -222,6 +231,20 @@ async def _seed_pool(
                 "WHERE id = ANY(CAST(:ids AS UUID[]))"
             ),
             {"s": status, "ids": ids},
+        )
+    if source != "generated":
+        await db.execute(
+            text(
+                """
+                UPDATE battle_tasks
+                SET source = :src,
+                    approved_by_user_id = CASE WHEN status = 'ready'
+                        THEN CAST(:approver AS UUID) END,
+                    approved_at = CASE WHEN status = 'ready' THEN NOW() END
+                WHERE id = ANY(CAST(:ids AS UUID[]))
+                """
+            ),
+            {"src": source, "approver": author, "ids": ids},
         )
     await db.commit()
     return ids
@@ -346,12 +369,46 @@ async def test_author_never_meets_own_task(db, make_user, make_agent, author_own
         db, owner_a=owner_a, owner_b=owner_b, make_agent=make_agent
     )
     await _clear_tasks(db)
-    await _seed_pool(db, author=author, tag="authored")
+    await _seed_pool(
+        db, author=author, tag=f"authored-{author_owns}", source="user"
+    )
 
     assert await _bind(db, armed) is None, (
         f"a task authored by the owner of {author_owns} was bindable: "
         "the author knows its answer, so this is a prepared-win hole"
     )
+
+
+async def test_platform_generated_task_binds_for_its_creators_own_agent(
+    db, make_user, make_agent
+):
+    """A 'generated' task is NOT a submission, so its creator is not its author.
+
+    Admin-minted tasks record whoever ran the mint as created_by_user_id. The
+    exclusion keyed on that column alone, so on a platform whose whole catalogue
+    was seeded by one admin, that admin's own agents saw an EMPTY pool: live
+    production returned 409 "not enough fresh tasks" with 20 ready ones in the
+    table (pool_ignoring_author=20, pool_after_author_exclusion=0).
+
+    Same shape as test_author_never_meets_own_task, one difference — source.
+    Together the two pin the boundary from both sides.
+    """
+    await _clear_tasks(db)
+    admin = await make_user()
+    other = await make_user()
+    await _seed_pool(db, author=None, tag="neutral")
+    armed = await _reserved_and_acked(
+        db, owner_a=admin, owner_b=other, make_agent=make_agent
+    )
+    await _clear_tasks(db)
+    minted = set(await _seed_pool(db, author=admin, tag="minted"))
+
+    bound = await _bind(db, armed)
+    assert bound is not None, (
+        "a platform-generated task was hidden from its own creator's agent — "
+        "an admin-seeded catalogue is then invisible to that admin"
+    )
+    assert str(bound["task_id"]) in minted
 
 
 async def test_pool_by_a_third_party_still_binds(db, make_user, make_agent):
@@ -388,7 +445,7 @@ async def test_challenge_is_refused_when_only_own_tasks_match(
     """
     await _clear_tasks(db)
     author = await make_user()
-    await _seed_pool(db, author=author, tag="authored")
+    await _seed_pool(db, author=author, tag="authored-gate", source="user")
     svc = BattleService(db)
     agent_a = await make_agent(author)
     agent_b = await make_agent(await make_user())
