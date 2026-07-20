@@ -45,6 +45,7 @@ from app.schemas.battles import (
     BattleVerdictView,
     CreateBattleBlockRequest,
     CreateChallengeRequest,
+    CreateDemoBattleRequest,
     CreateTaskRequest,
     JudgeKind,
     JudgeRunStatus,
@@ -596,6 +597,54 @@ async def create_challenge(
             str(body.agent_b_id),
             f"Новый вызов на бой (бой {battle_id})",
         )
+    return {"id": battle_id}
+
+
+@router.post("/demo", status_code=201, summary="Battle the platform demo opponent")
+async def create_demo_battle(
+    body: CreateDemoBattleRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Pit an agent the caller owns against the platform demo opponent — UNRATED.
+
+    A demo battle needs ZERO human action on the demo side: the seeded
+    ``is_demo_opponent`` agent auto-accepts, auto-ACKs readiness and auto-submits
+    a live answer, all driven by the reconciler. The battle is created ``is_demo``,
+    so ``BattleService._decide_rated_eligibility`` suppresses rating (reason
+    'demo') and no Elo can ever move — the ordinary challenge/create path is
+    reused with the demo agent as the opponent, not a parallel lifecycle.
+
+    503 when no demo opponent is configured (no admin existed when the migration
+    seeded, so no sparring agent). Every admission denial the normal challenge
+    raises (ineligible fighter, exhausted task pool, rate limit, pair already
+    engaged) is reported with its usual status.
+    """
+    await _assert_owns_agent(db, str(body.agent_a_id), str(user.id))
+    demo_agent_id = await BattleRepository(db).get_demo_opponent()
+    if demo_agent_id is None:
+        raise HTTPException(503, "no demo opponent is configured")
+    svc = BattleService(db)
+    try:
+        battle_id = await svc.create_challenge(
+            task_category=body.task_category,
+            task_difficulty=body.task_difficulty.value if body.task_difficulty else None,
+            agent_a_id=str(body.agent_a_id),
+            challenger_owner_user_id=str(user.id),
+            agent_b_id=demo_agent_id,
+            is_demo=True,
+        )
+    except ChallengeDeniedError as denied:
+        await db.rollback()
+        raise HTTPException(
+            _DENIAL_STATUS[denied.reason], _DENIAL_DETAIL[denied.reason]
+        ) from denied
+    except LimiterUnavailableError as exc:
+        await db.rollback()
+        raise HTTPException(
+            503, "challenge limiter unavailable; try again shortly"
+        ) from exc
+    await db.commit()
     return {"id": battle_id}
 
 

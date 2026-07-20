@@ -243,6 +243,7 @@ class BattleService:
         agent_a_id: str,
         challenger_owner_user_id: str,
         agent_b_id: str | None = None,
+        is_demo: bool = False,
     ) -> str:
         """Create a challenge over a task FILTER. Returns the battle id. No commit.
 
@@ -302,6 +303,7 @@ class BattleService:
             target_cap=TARGET_CHALLENGE_CAP,
             agent_b_id=agent_b_id,
             agent_b_owner_snapshot=target_owner,
+            is_demo=is_demo,
         )
         if battle_id is None:
             # The diagnostic said yes and the insert still refused: something
@@ -387,7 +389,7 @@ class BattleService:
         # accepts near a quota cannot both pass.
         await self.repo.lock_rating_owners([owner_a, owner_b])
         rated_eligible, quota_day, reason = await self._decide_rated_eligibility(
-            owner_a, owner_b
+            owner_a, owner_b, is_demo=bool(battle.get("is_demo"))
         )
         return await self.repo.accept_as_owner(
             battle_id,
@@ -416,7 +418,7 @@ class BattleService:
     TASK_IN_QUARANTINE_REASON = "task_in_quarantine"
 
     async def _decide_rated_eligibility(
-        self, owner_a: str, owner_b: str
+        self, owner_a: str, owner_b: str, is_demo: bool = False
     ) -> tuple[bool, date | None, str | None]:
         """The phase-1 anti-Sybil rated gate. Returns (eligible, quota_day, reason).
 
@@ -424,8 +426,16 @@ class BattleService:
         first one that bit. Every FALSE outcome still yields a perfectly valid,
         judged-for-fun battle; it just cannot move Elo. Call under
         :meth:`BattleRepository.lock_rating_owners` for the counts to be race-free.
+
+        The demo rule is FIRST and is the WHOLE rating suppression for demo mode:
+        a battle against the platform demo opponent is a showcase, not a contest,
+        so it can never move Elo even between two distinct, verified, aged owners
+        that would otherwise rate. Nothing else about the rated path changes.
         """
         settings = get_settings()
+
+        if is_demo:
+            return (False, None, "demo")
 
         if owner_a == owner_b:
             return (False, None, "same_owner")
@@ -706,6 +716,56 @@ class BattleService:
             return None
         await self.repo.release_reservations(battle_id)
         return {"outcome": "released", "battle": released, "silent_sides": ()}
+
+    # -- demo auto-drive ----------------------------------------------------
+
+    async def auto_accept_demo(self, battle_id: str) -> dict | None:
+        """challenge_pending -> accepted for a demo battle, with NO human action.
+
+        The platform demo opponent (always agent_b, owned by the seeding admin)
+        has no owner sitting at a UI to click accept, so the reconciler consents
+        on its behalf — as the demo agent's OWN owner, which is exactly what
+        accept_as_owner's CAS requires (accepting user == agent_b_owner_snapshot
+        == current owner). Consent runs through the ordinary :meth:`accept`, so
+        the frozen rated verdict is written the same way — and, being demo, it is
+        (False, 'demo'): the battle is unrated before it ever arms.
+
+        Does not commit — the caller owns the boundary. Returns None when the
+        battle is not a consent-able demo challenge (already accepted, expired,
+        not a demo, or no opponent), which the caller treats as a no-op.
+        """
+        battle = await self.repo.get(battle_id)
+        if (
+            battle is None
+            or not battle.get("is_demo")
+            or battle["agent_b_id"] is None
+            or battle.get("agent_b_owner_snapshot") is None
+        ):
+            return None
+        return await self.accept(battle_id, str(battle["agent_b_owner_snapshot"]))
+
+    async def synth_demo_ready_ack(self, battle: dict) -> list[str]:
+        """ACK the demo opponent's CURRENT ready-check on its behalf. Idempotent.
+
+        A real opponent proves readiness by ACKing the ready-check its heartbeat
+        drained; the demo opponent has no live agent, so the platform records the
+        same fact for it. Keyed to the exact armed event id on the battle row
+        (``ready_check_event_id_b``, side B — the demo opponent is always agent_b),
+        so a re-armed generation acks the NEW event, never a stale one.
+
+        :meth:`AgentEventRepository.mark_acked` is a no-op when the event is
+        already acked or has expired, so re-running a reconcile tick — or a
+        heartbeat that happened to beat us to it — cannot move acked_at or ack an
+        expired event. Does not commit; the ack is visible to the caller's own
+        subsequent statements (same transaction, READ COMMITTED) and is what
+        admit_to_queue's both-sides-acked predicate then reads.
+        """
+        event_id = battle.get("ready_check_event_id_b")
+        if event_id is None or battle.get("agent_b_id") is None:
+            return []
+        return await self.events.mark_acked(
+            str(battle["agent_b_id"]), [str(event_id)]
+        )
 
     # -- user task submission (V70) -----------------------------------------
 
