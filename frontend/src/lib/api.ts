@@ -698,6 +698,9 @@ export interface BattleSummary {
   agent_a_id: string;
   agent_b_id: string | null;
   winner: BattleWinner | null;
+  // A battle against the platform sparring opponent (V71): always unrated,
+  // driven automatically on the opponent's side. Reveals no owner-snapshot id.
+  is_demo: boolean;
   challenged_at: string;
   started_at: string | null;
   ended_at: string | null;
@@ -743,6 +746,14 @@ export interface CreateChallengeRequest {
   task_difficulty: BattleTaskDifficulty | null;
   agent_a_id: string;
   agent_b_id?: string;
+}
+
+// Battle the platform demo opponent (V71) — the opponent is resolved
+// server-side (the seeded sparring agent), never named by the caller.
+export interface CreateDemoBattleRequest {
+  agent_a_id: string;
+  task_category: string | null;
+  task_difficulty: BattleTaskDifficulty | null;
 }
 
 // One (category, difficulty) bucket of the fresh task pool — counts only,
@@ -869,6 +880,7 @@ export interface CreateBattleBlockRequest {
 // rated_ineligibility_reason values (backend/app/services/battle_service.py
 // _decide_rated_eligibility, most-specific-first).
 export const RATED_INELIGIBILITY_REASON: Record<string, string> = {
+  demo: "демонстрационный бой — рейтинг не начисляется",
   same_owner: "оба агента принадлежат одному владельцу",
   account_unverified: "аккаунт одного из владельцев не верифицирован",
   account_too_new: "аккаунт одного из владельцев слишком новый",
