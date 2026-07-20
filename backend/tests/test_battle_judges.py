@@ -23,28 +23,38 @@ check kept separate from this suite, and it is not run here.
 from __future__ import annotations
 
 import json
+from typing import Any, cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.battle_judges import (
     JUDGE_SYSTEM_PROMPT,
+    JUDGE_SYSTEM_PROMPTS,
     LABEL_ONE,
     LABEL_TWO,
     MAX_SUBMISSION_CHARS,
     QUORUM,
     REPLICATE_COUNT,
     CollapsedVote,
+    JudgeModel,
     JudgeRunResult,
     build_judge_messages,
     build_judge_payload,
     collapse_pair,
+    has_residual_side_label,
+    normalize_reasoning_sides,
     parse_judge_response,
     replicate_seed,
     resolve_verdict,
     rubric_keys,
     sanitize_submission,
+    warn_on_residual_side_label,
 )
+from app.services.battle_runner import BattleRunner
 
 RUBRIC = [
     {"key": "correctness", "description": "Does it work?", "weight": 2.0},
@@ -450,3 +460,312 @@ class TestVerdict:
         verdict = resolve_verdict(self._votes(Vote.A, Vote.A, Vote.B))
         assert "judges" not in verdict.reason
         assert "replicates" in verdict.reason
+
+
+class TestUnparsableIsNotAnAbstention:
+    """The distinction the retry rests on: no answer vs. a declining answer."""
+
+    LABEL_MAP = {LABEL_ONE: Side.A, LABEL_TWO: Side.B}
+
+    def test_an_unparsable_reply_returns_none_so_the_caller_can_retry(self) -> None:
+        # None is the signal "the call produced nothing" — the runner turns it
+        # into a released, re-claimable slot rather than a terminal vote.
+        assert parse_judge_response("I think alpha, honestly", self.LABEL_MAP, ALLOWED_KEYS) is None
+
+    def test_a_deliberate_abstention_parses_and_is_a_real_vote(self) -> None:
+        raw = json.dumps(
+            {"vote": "abstain", "confidence": 0.2, "reasoning": "both unreadable"}
+        )
+        result = parse_judge_response(raw, self.LABEL_MAP, ALLOWED_KEYS)
+        assert result is not None, (
+            "a well-formed decline must be a vote, not a parse failure: retrying "
+            "a judge that deliberately abstained until it picks a side would "
+            "manufacture a verdict"
+        )
+        assert result.vote is Vote.ABSTAIN
+
+
+class TestStoredReasoningNamesTheVotedSide:
+    """The prose and the vote in one row must name the same fighter."""
+
+    def test_ba_order_reasoning_is_rewritten_to_the_side_it_voted(self) -> None:
+        _, label_map = build_judge_payload(
+            "task", RUBRIC, "answer a", "answer b", PresentedOrder.BA
+        )
+        raw = json.dumps(
+            {
+                "vote": LABEL_TWO,
+                "confidence": 0.9,
+                "reasoning": "submission_beta is clearly stronger than submission_alpha.",
+            }
+        )
+        result = parse_judge_response(raw, label_map, ALLOWED_KEYS)
+        assert result is not None
+        # Under 'ba' the second slot is side A, so this reply IS a vote for A.
+        assert result.vote is Vote.A
+        assert result.reasoning == "side A is clearly stronger than side B.", (
+            "stored prose still names the presentation slot, so a reader sees "
+            "'beta wins' beside vote='a' and believes the opposite fighter won"
+        )
+
+    @pytest.mark.parametrize(
+        ("reasoning", "expected"),
+        [
+            (
+                "submission_alpha is stronger than submission_beta.",
+                "side B is stronger than side A.",
+            ),
+            (
+                "Alpha uses alpha-beta pruning; beta search is cheaper.",
+                "Alpha uses alpha-beta pruning; beta search is cheaper.",
+            ),
+            (
+                "Beta sets alpha=0.05 as the significance level.",
+                "Beta sets alpha=0.05 as the significance level.",
+            ),
+            (
+                "The beta coefficient in the regression is wrong.",
+                "The beta coefficient in the regression is wrong.",
+            ),
+        ],
+        ids=["labels-rewritten", "alpha-beta-pruning", "significance-level", "beta-coefficient"],
+    )
+    def test_domain_vocabulary_survives_the_rewrite(
+        self, reasoning: str, expected: str
+    ) -> None:
+        """Only whole labels move; "alpha" and "beta" are ordinary technical words.
+
+        The first case is the POSITIVE CONTROL: without it, a function that
+        returned its input unchanged would satisfy the other three and the
+        wrong-side defect would be back.
+
+        The other three come from the categories the live pool already carries
+        (`algorithms`, `data`), where alpha/beta are the domain's own vocabulary.
+        Rewriting them produced "side B uses side B-side A pruning" — nonsense
+        that ALSO names a side, which is worse than the prose it replaced.
+        """
+        _, label_map = build_judge_payload(
+            "task", RUBRIC, "answer a", "answer b", PresentedOrder.BA
+        )
+        assert normalize_reasoning_sides(reasoning, label_map) == expected
+
+    def test_the_output_contract_tells_the_model_to_use_whole_labels(self) -> None:
+        """The other half of the fix: close the gap at the SOURCE.
+
+        The narrow rewrite leaves a bare "beta is stronger" untouched (mangling it
+        is the greater harm), so the model is instructed not to write one. Every
+        paraphrase shares the contract verbatim, so this holds for all three.
+        """
+        for prompt in JUDGE_SYSTEM_PROMPTS:
+            assert "refer to a submission ONLY by its full label" in prompt
+
+    def test_the_rewrite_never_lengthens_the_text(self) -> None:
+        """So the caller's 500-char cap cannot bite earlier than before.
+
+        'submission_alpha' (16) -> 'side A' (6). A rewrite that EXPANDED text
+        would silently truncate content that used to fit.
+        """
+        _, label_map = build_judge_payload(
+            "task", RUBRIC, "answer a", "answer b", PresentedOrder.BA
+        )
+        long_reasoning = f"{LABEL_ONE} beats {LABEL_TWO}. " * 40
+        assert len(normalize_reasoning_sides(long_reasoning, label_map)) < len(
+            long_reasoning
+        )
+
+
+class TestResidualSideLabelTelemetry:
+    """The counter for what the narrow rewrite deliberately leaves alone.
+
+    `normalize_reasoning_sides` rewrites whole labels only, so a judge that
+    ignores the output contract and writes a bare "Beta is stronger" keeps prose
+    that can read as the opposite of the vote beside it. This predicate MEASURES
+    that residual. It does not act on it, and must not: the token has no
+    polarity — "beta is stronger" contradicts vote='b' while "beta is weaker"
+    agrees with it, using the same word — so any enforcement would be a coin flip
+    whose failure mode is deleting a correct explanation.
+    """
+
+    def test_fires_on_a_bare_label_sentence(self) -> None:
+        """The signal being counted: the contract-violating reply."""
+        assert has_residual_side_label("Beta is stronger overall.") is True
+
+    def test_fires_on_domain_vocabulary_and_leaves_the_text_untouched(self) -> None:
+        """THE ACCEPTED MISFIRE, asserted so it can never be mistaken for a bug.
+
+        "the beta coefficient" is honest domain vocabulary and is indistinguishable
+        from a mislabelled side at token level. It fires; the cost is one log line.
+        What it must NOT cost is the text: the reasoning is returned byte-identical,
+        which is the whole reason this is telemetry and not a filter.
+        """
+        reasoning = "the beta coefficient in the regression is wrong."
+        _, label_map = build_judge_payload(
+            "task", RUBRIC, "answer a", "answer b", PresentedOrder.BA
+        )
+
+        assert has_residual_side_label(reasoning) is True
+        assert normalize_reasoning_sides(reasoning, label_map) == reasoning
+
+    @pytest.mark.parametrize(
+        "reasoning",
+        [
+            "side A is stronger.",
+            "side B argued the constraint more precisely than side A.",
+        ],
+        ids=["normalised-a", "normalised-both"],
+    )
+    def test_silent_on_already_normalised_text(self, reasoning: str) -> None:
+        """Post-rewrite prose speaks in sides, so the steady state emits nothing."""
+        assert has_residual_side_label(reasoning) is False
+
+    @pytest.mark.parametrize("reasoning", ["", None], ids=["empty", "none"])
+    def test_silent_on_empty_or_missing_reasoning(self, reasoning: str | None) -> None:
+        """An absent reasoning is not a violation — `parse_judge_response` stores
+        None whenever the model omitted the field."""
+        assert has_residual_side_label(reasoning) is False
+
+    def test_the_warning_never_carries_the_reasoning_text(self) -> None:
+        """The reasoning derives from UNTRUSTED submissions and must not reach a log.
+
+        This is the security assertion of the feature: the line may name the run
+        and the vote — identifiers, enough to fetch the row on purpose — and
+        nothing else. A regression that interpolated the text would leak fighter
+        content into every log aggregator downstream.
+        """
+        emitted: list[str] = []
+        sink_id = logger.add(emitted.append, level="WARNING", format="{message}")
+        try:
+            warn_on_residual_side_label(
+                "run-4f2c", Vote.B, "Beta wins; the secret payload is HERE."
+            )
+        finally:
+            logger.remove(sink_id)
+
+        assert len(emitted) == 1
+        line = emitted[0]
+        assert "run-4f2c" in line
+        assert "b" in line
+        assert "secret payload" not in line
+        assert "Beta wins" not in line
+
+    def test_no_line_is_emitted_when_the_predicate_is_silent(self) -> None:
+        """A clean reply costs nothing at all — not even a suppressed record."""
+        emitted: list[str] = []
+        sink_id = logger.add(emitted.append, level="WARNING", format="{message}")
+        try:
+            warn_on_residual_side_label("run-4f2c", Vote.A, "side A is stronger.")
+        finally:
+            logger.remove(sink_id)
+
+        assert emitted == []
+
+
+class TestTheRunnerActuallyCallsTheTelemetry:
+    """Pin the CALL SITE, not just the predicate.
+
+    Removing the `warn_on_residual_side_label(...)` line from `_run_one_half`
+    left the whole suite green: 413 passed with the measurement dead. That is the
+    worst possible failure for this feature — a silently-dead counter reports "no
+    warnings", which is indistinguishable from "the residual never happens" and
+    produces false confidence instead of an obvious gap. So the wiring gets its
+    own test, and it must go red when that line goes away.
+
+    What is mocked here is the I/O boundary ONLY: the repository, the session
+    commit, and the provider call. Everything the assertion depends on runs for
+    real — `build_judge_payload` builds the label map, `parse_judge_response`
+    validates the reply, `normalize_reasoning_sides` rewrites it, and the
+    runner's own control flow decides whether the emitter is reached. The test
+    therefore fails for exactly one reason: the call site is gone or unreachable.
+    """
+
+    @staticmethod
+    def _reply(reasoning: str) -> str:
+        return json.dumps(
+            {
+                "vote": LABEL_ONE,
+                "confidence": 0.9,
+                "reasoning": reasoning,
+                "scores": {"correctness": 1.0, "clarity": 1.0},
+            }
+        )
+
+    async def _drive_one_judge(
+        self, reply: str
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Run `_run_one_half` against a mocked boundary. Returns lines + the write."""
+        # The session/gate/client are pure I/O collaborators here — cast rather
+        # than stand up a real engine, which would prove nothing extra.
+        runner = BattleRunner(
+            cast(AsyncSession, AsyncMock()),
+            gate=cast(Any, None),
+            http=cast(Any, AsyncMock()),
+        )
+        runner.repo = AsyncMock()
+        runner.repo.create_judge_run = AsyncMock(return_value="run-77ab")
+        runner.repo.claim_judge_run = AsyncMock(return_value="claimed")
+        runner.repo.complete_judge_run = AsyncMock(return_value={"id": "run-77ab"})
+
+        emitted: list[str] = []
+        sink_id = logger.add(emitted.append, level="WARNING", format="{message}")
+        try:
+            with patch(
+                "app.services.battle_runner.call_judge_model",
+                AsyncMock(return_value=reply),
+            ):
+                await runner._run_one_half(
+                    battle_id="b-1",
+                    battle={"task_prompt_snapshot": "task"},
+                    seed="seed-1",
+                    order=PresentedOrder.BA,
+                    rubric=RUBRIC,
+                    allowed=ALLOWED_KEYS,
+                    submission_a="answer a",
+                    submission_b="answer b",
+                    model=JudgeModel(
+                        provider="p",
+                        model_id="m",
+                        wire_model="m",
+                        base_url="http://u",
+                        api_key="unused-mock-provider-is-patched",
+                    ),
+                    system_prompt=JUDGE_SYSTEM_PROMPT,
+                )
+        finally:
+            logger.remove(sink_id)
+
+        written = dict(runner.repo.complete_judge_run.call_args.kwargs)
+        return emitted, written
+
+    async def test_a_bare_label_reply_emits_the_warning_on_the_write_path(self) -> None:
+        """THE regression pin: delete the call site and this test fails.
+
+        A contract-violating reply travels the real parse path and must reach the
+        emitter before the row is written.
+        """
+        emitted, written = await self._drive_one_judge(
+            self._reply("Beta is stronger overall.")
+        )
+
+        assert len(emitted) == 1
+        assert "run-77ab" in emitted[0]
+        # And the counter changed nothing: the row still gets the exact text.
+        assert written["reasoning"] == "Beta is stronger overall."
+        assert "Beta is stronger" not in emitted[0]
+
+    async def test_a_contract_compliant_reply_emits_nothing_on_the_same_path(
+        self,
+    ) -> None:
+        """The counter-property, and the reason the pin above is not vacuous.
+
+        Semantically the SAME claim, written the way the contract asks. The label
+        is rewritten to a side, no bare token survives, and the path stays silent
+        — so the assertion above is measuring the reply's compliance, not merely
+        the fact that some code ran.
+        """
+        emitted, written = await self._drive_one_judge(
+            self._reply(f"{LABEL_TWO} is stronger overall.")
+        )
+
+        assert emitted == []
+        # Under presented_order 'ba' the second slot is side A.
+        assert written["reasoning"] == "side A is stronger overall."
