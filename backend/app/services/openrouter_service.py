@@ -39,6 +39,7 @@ _PROVIDER_DISPLAY: dict[str, str] = {
     "nvidia": "NVIDIA NIM",
     "together": "Together AI",
     "zai": "Z.AI",
+    "moonshot": "Moonshot",
     "cloudflare": "Cloudflare Workers AI",
     "deepseek": "DeepSeek",
 }
@@ -169,6 +170,15 @@ class OpenRouterService:
             # glm-4.5-flash leads because it is the only measured-reliable free
             # model; glm-4.7-flash stays listed but rate-limits (429/1302).
             "static_models": ["glm-4.5-flash", "glm-4.7-flash"],
+        },
+        "moonshot": {
+            # Moonshot's OpenAI-compatible endpoint. Reachable from our prod ASN
+            # (verified live as a judge: kimi-k3, temp=1, no-stream, ~7s, 3/3 ok)
+            # where the US free providers geo-block us — this is the second
+            # reachable judge model that lifts the panel out of single-model.
+            "base_url": "https://api.moonshot.ai/v1",
+            "api_key_field": "moonshot_api_key",
+            "static_models": ["kimi-k3"],
         },
         "cloudflare": {
             # {account_id} is substituted from `account_id_field` at consume time.
