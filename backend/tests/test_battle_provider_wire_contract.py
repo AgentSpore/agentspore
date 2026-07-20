@@ -19,7 +19,9 @@ from app.services import battle_runner as battle_runner_module
 from app.services import battle_task_validator, openrouter_service
 from app.services.battle_judges import (
     JUDGE_MODEL,
+    JUDGE_TEMPERATURE,
     call_judge_model,
+    judge_temperature_for,
     replicate_seed,
     seed_int32,
     wire_model_name,
@@ -207,6 +209,90 @@ def test_every_extra_roster_entry_is_stripped_too(monkeypatch, runner):
     # A multi-segment id keeps only its LAST segment: the provider names the
     # model, everything before it is platform routing.
     assert roster[1].wire_model == "some-model"
+
+
+# -- the moonshot judge provider (kimi-k3) -----------------------------------
+
+MOONSHOT_MODEL = "moonshot/kimi-k3"
+
+
+def test_moonshot_resolves_kimi_to_its_own_base_url_and_key(monkeypatch):
+    """kimi-k3 is the second reachable judge model: it must prefix-route to the
+    Moonshot endpoint with the moonshot key, exactly like zai does with its own."""
+    monkeypatch.setattr(
+        openrouter_service,
+        "get_settings",
+        lambda: SimpleNamespace(moonshot_api_key="sk-moonshot-test"),
+    )
+    creds = openrouter_service.OpenRouterService().resolve_provider(MOONSHOT_MODEL)
+    assert creds is not None
+    assert creds["base_url"] == "https://api.moonshot.ai/v1"
+    assert creds["api_key"] == "sk-moonshot-test"
+
+
+def test_moonshot_is_unresolved_without_a_key(monkeypatch):
+    """No key -> the roster builder drops kimi and the panel stays single-model,
+    never a JudgeModel with an empty api_key."""
+    monkeypatch.setattr(
+        openrouter_service,
+        "get_settings",
+        lambda: SimpleNamespace(moonshot_api_key=""),
+    )
+    assert openrouter_service.OpenRouterService().resolve_provider(MOONSHOT_MODEL) is None
+
+
+def test_kimis_wire_name_drops_the_provider_prefix():
+    """The provider takes ``kimi-k3``, not the platform id ``moonshot/kimi-k3`` —
+    the same 1211 mine the zai path already documents."""
+    assert wire_model_name(MOONSHOT_MODEL) == "kimi-k3"
+    assert "/" not in wire_model_name(MOONSHOT_MODEL)
+
+
+# -- per-model judge temperature ---------------------------------------------
+
+
+def test_glm_keeps_the_default_temperature_kimi_overrides_to_one():
+    """kimi-k3 was measured to only parse at temperature 1.0; glm stays at 0.7."""
+    assert judge_temperature_for(JUDGE_MODEL) == JUDGE_TEMPERATURE == 0.7
+    assert judge_temperature_for(MOONSHOT_MODEL) == 1.0
+
+
+def test_the_roster_carries_each_models_temperature(monkeypatch, runner):
+    """The roster builder stamps the per-model temperature onto every JudgeModel,
+    so glm is called at 0.7 and kimi at 1.0 without any per-call branching."""
+    monkeypatch.setattr(
+        battle_runner_module,
+        "get_settings",
+        lambda: SimpleNamespace(battle_judge_models=[JUDGE_MODEL, MOONSHOT_MODEL]),
+    )
+
+    class _StubService:
+        @staticmethod
+        def resolve_provider(_model_id):
+            return {"base_url": "https://moonshot.invalid/v1", "api_key": "unused"}
+
+    monkeypatch.setattr(openrouter_service, "OpenRouterService", _StubService)
+
+    roster = runner._resolve_judge_roster("https://stub.invalid/v1", "unused")
+    by_id = {m.model_id: m for m in roster}
+    assert by_id[JUDGE_MODEL].temperature == 0.7
+    assert by_id[MOONSHOT_MODEL].temperature == 1.0
+
+
+@pytest.mark.asyncio
+async def test_call_judge_model_sends_the_temperature_it_was_given(capturing_client):
+    """The temperature on the request body is the model's, not a hardcoded 0.7."""
+    await call_judge_model(
+        client=capturing_client,
+        base_url="https://stub.invalid/v1",
+        api_key="unused",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=_OpenGate(),
+        wire_model="kimi-k3",
+        temperature=1.0,
+    )
+    assert capturing_client.body["temperature"] == 1.0
 
 
 # -- the seed field ----------------------------------------------------------
