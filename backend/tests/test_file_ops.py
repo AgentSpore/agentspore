@@ -32,6 +32,7 @@ from app.core.etag import parse_if_match as _parse_if_match
 from app.main import app as fastapi_app
 from app.repositories.hosted_agent_repo import HostedAgentRepository, StaleVersionError
 from app.services.hosted_agent_service import HostedAgentService, get_hosted_agent_service
+from app.services.runner_client import RunnerFileClient
 
 try:
     from testcontainers.postgres import (
@@ -146,6 +147,12 @@ def build_service(repo):
     svc.settings = MagicMock()
     svc.settings.agent_runner_key = "test-key"
     svc.settings.agent_runner_url = "http://runner.test"
+    # The service freezes the runner URL into its RunnerFileClient at __init__
+    # time (from the real settings, where agent_runner_url defaults to "").
+    # Patching svc.runner_url/svc.settings only moves the `if self.runner_url`
+    # guards — the HTTP call itself goes through svc._rc, so that collaborator
+    # must be rebuilt too or the client emits base-less relative URLs.
+    svc._rc = RunnerFileClient(runner_url="http://runner.test", runner_key="test-key")
     svc.get_hosted_agent = AsyncMock(return_value={"id": "x", "status": "running"})
     return svc
 
