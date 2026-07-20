@@ -16,7 +16,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.background import ScheduledTask
+from app.core.background import ALL_TASKS, MIN_RENEW_INTERVAL_S, CronSchedulerTask, ScheduledTask
+
+# A crashed worker must not park a task for longer than this. Lives in the test
+# rather than in background.py because it is a review guard on the declared
+# values, not a runtime knob: the old workaround pairing (lock_ttl_s ~=
+# interval_s + 20) put mixer_cleanup at 3620 — a full hour of stalled cleanup
+# after one crash — and nothing failed. Now it would.
+MAX_CRASH_STALL_S = 300
 
 
 class FakeRedis:
@@ -152,6 +159,50 @@ async def test_lock_ttl_none_bypasses_the_gate_entirely():
     assert task.runs >= 2
     assert redis.evals == [], "an ungated task must not touch the lease at all"
     assert redis.store[task._lock_key()] == "someone-else"
+
+
+def test_every_ttl_leaves_room_for_at_least_three_renewals():
+    """Lower bound: a TTL too small to renew loses the lease to a Redis blip.
+
+    Renewal fires every `lock_ttl_s // 3`, so a TTL below 3x the floor means
+    the first renewal is already inside round-trip noise. A future edit that
+    picks a too-small number must fail here rather than silently drop leases
+    mid-run — the failure mode is a SECOND worker entering a cycle the first
+    one is still executing, which no other test in this file would catch.
+    """
+    too_tight = {
+        t.__name__: t.lock_ttl_s
+        for t in ALL_TASKS
+        if t.lock_ttl_s is not None and t.lock_ttl_s < 3 * MIN_RENEW_INTERVAL_S
+    }
+    assert too_tight == {}, f"lock_ttl_s below the renewal floor: {too_tight}"
+
+
+def test_no_task_lets_a_crash_stall_it_for_longer_than_the_cap():
+    """Upper bound: lock_ttl_s is how long a CRASHED worker blocks its peer.
+
+    Pins the meaning the retune gave it. Reverting any task to the old
+    `interval_s + 20` pairing (620 / 320 / 3620) fails here, which is the point
+    — that convention was a workaround for the missing release, and it read as
+    intentional design for long enough to cost a production incident.
+    """
+    too_slack = {
+        t.__name__: t.lock_ttl_s
+        for t in ALL_TASKS
+        if t.lock_ttl_s is not None and t.lock_ttl_s > MAX_CRASH_STALL_S
+    }
+    assert too_slack == {}, f"a crash would stall these beyond the cap: {too_slack}"
+
+
+def test_cron_scheduler_keeps_its_gate_disabled():
+    """`lock_ttl_s = None` is deliberate (row-level FOR UPDATE SKIP LOCKED).
+
+    Guard against a future bulk retune of the TTLs sweeping this one up: giving
+    cron_scheduler a leader lock would REMOVE the exactly-once guarantee's
+    fast-failover property, not add safety.
+    """
+    assert CronSchedulerTask.lock_ttl_s is None
+    assert CronSchedulerTask in ALL_TASKS
 
 
 @pytest.mark.asyncio
