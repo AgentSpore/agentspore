@@ -193,13 +193,23 @@ TASK_BIND_LEASE_SECONDS = 15
 SILENT_FIGHTER_SEQ_NO = 9_999
 SILENT_FIGHTER_ERROR = "no submission before deadline"
 
+# The model the demo opponent answers with. Deliberately NOT the judge model:
+# the judge (JUDGE_MODEL, glm) is slow and flaky (~17s, 2/3 parseable) so a
+# single-call demo answer against it always timed out and the demo side never
+# spoke. kimi-k3 was measured live at ~7s with 0 timeouts, so it reliably
+# answers within the deadline. It has its OWN provider (moonshot) credentials
+# and REQUIRES temperature=1 — both flow through the per-model resolution in
+# _generate_demo_answer, never a hardcoded path.
+DEMO_ANSWER_MODEL = "moonshot/kimi-k3"
+
 # Hard ceiling on the demo opponent's live answer call. The demo answer is the
 # ONLY step in a reconcile pass that awaits a provider, and it now runs detached
 # (see _spawn_demo_drive) so it can never freeze the pass — but a hung provider
 # would still leak a background task forever without this bound. On timeout the
 # task writes nothing and close_deadline degrades the demo side to silent-fighter,
-# so the battle is still judged.
-DEMO_ANSWER_TIMEOUT_SECONDS = 15.0
+# so the battle is still judged. 90s comfortably covers a kimi-k3 answer plus
+# headroom and still lands well inside the ~15-minute battle deadline.
+DEMO_ANSWER_TIMEOUT_SECONDS = 90.0
 
 
 # The demo opponent's system framing. Deliberately plain: the demo agent is a
@@ -839,12 +849,16 @@ class BattleRunner:
     ) -> str | None:
         """One gated provider call producing the demo opponent's answer, or None.
 
-        Reuses the judge's exact call shape (:func:`call_judge_model`) and the
-        SAME provider stack the panel uses (the credentials resolved upstream for
-        JUDGE_MODEL and threaded into this pass), so the demo opponent answers
-        through the one reachable model rather than a second, unmanaged path.
-        Returns the answer capped to MAX_SUBMISSION_CHARS, or None on any
-        transport failure (the caller degrades to deadline silence).
+        Reuses the judge's exact call shape (:func:`call_judge_model`) but routes
+        to DEMO_ANSWER_MODEL (kimi-k3) rather than the judge model: kimi answers
+        fast and reliably inside the deadline where a single glm call always
+        timed out. kimi is a distinct provider (moonshot), so its OWN base_url /
+        api_key are resolved here via OpenRouterService — falling back to the
+        judge credentials threaded in only when moonshot is unconfigured. It also
+        REQUIRES temperature=1, applied through judge_temperature_for so kimi is
+        not silently sampled wrong. Returns the answer capped to
+        MAX_SUBMISSION_CHARS, or None on any transport failure (the caller
+        degrades to deadline silence).
         """
         prompt = battle.get("task_prompt_snapshot")
         if not prompt:
@@ -854,17 +868,26 @@ class BattleRunner:
         rubric = battle.get("task_rubric_snapshot") or []
         messages = build_demo_answer_messages(str(prompt), rubric)
 
+        # Local import: OpenRouterService pulls in the wider service graph that
+        # imports core.background at its top (same cycle _resolve_judge_roster
+        # documents).
+        from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
+
+        creds = OpenRouterService().resolve_provider(DEMO_ANSWER_MODEL)
+        demo_base_url = creds["base_url"] if creds else base_url
+        demo_api_key = creds["api_key"] if creds else api_key
+
         http = self.http or httpx.AsyncClient()
         try:
             raw = await call_judge_model(
                 client=http,
-                base_url=base_url,
-                api_key=api_key,
+                base_url=demo_base_url,
+                api_key=demo_api_key,
                 messages=messages,
                 seed=replicate_seed(str(battle["id"]), 0),
                 gate=self.gate,
-                wire_model=wire_model_name(JUDGE_MODEL),
-                temperature=judge_temperature_for(JUDGE_MODEL),
+                wire_model=wire_model_name(DEMO_ANSWER_MODEL),
+                temperature=judge_temperature_for(DEMO_ANSWER_MODEL),
             )
         except JudgeTransportError as exc:
             logger.warning(
