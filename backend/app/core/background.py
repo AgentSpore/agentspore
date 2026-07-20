@@ -206,7 +206,14 @@ class ScheduledTask(ABC):
             return
         try:
             redis = await get_redis()
-            await redis.eval(_RELEASE_LOCK_LUA, 1, self._lock_key(), token)
+            # register_script(...) over redis.eval(...): eval is typed
+            # `Awaitable[str] | str` (one stub shared by the sync and async
+            # clients) with loosely-typed *keys_and_args, so a direct call is
+            # neither awaitable nor argument-checkable under `ty`. The Script
+            # object models keys/args explicitly and its async __call__ returns
+            # a real awaitable. Same runtime EVAL; a properly typed boundary.
+            release = redis.register_script(_RELEASE_LOCK_LUA)
+            await release(keys=[self._lock_key()], args=[token])
         except Exception as e:
             logger.warning("Leader lock release {}: {}", self.name, e)
 
