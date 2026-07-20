@@ -608,12 +608,14 @@ async def create_demo_battle(
 ):
     """Pit an agent the caller owns against the platform demo opponent — UNRATED.
 
-    A demo battle needs ZERO human action on the demo side: the seeded
-    ``is_demo_opponent`` agent auto-accepts, auto-ACKs readiness and auto-submits
-    a live answer, all driven by the reconciler. The battle is created ``is_demo``,
-    so ``BattleService._decide_rated_eligibility`` suppresses rating (reason
-    'demo') and no Elo can ever move — the ordinary challenge/create path is
-    reused with the demo agent as the opponent, not a parallel lifecycle.
+    A demo battle needs ZERO human action on the demo side: the demo opponent is
+    consented for INLINE here (so the battle is returned already 'accepted', with
+    no ~30s wait and no 'challenge_pending' pressure on TARGET_CHALLENGE_CAP), then
+    the reconciler auto-ACKs readiness and auto-submits a live answer. The battle
+    is created ``is_demo``, so ``BattleService._decide_rated_eligibility``
+    suppresses rating (reason 'demo') and no Elo can ever move — the ordinary
+    challenge/create path is reused with the demo agent as the opponent, not a
+    parallel lifecycle. The reconciler's auto-accept remains the crash backstop.
 
     503 when no demo opponent is configured (no admin existed when the migration
     seeded, so no sparring agent). Every admission denial the normal challenge
@@ -626,13 +628,12 @@ async def create_demo_battle(
         raise HTTPException(503, "no demo opponent is configured")
     svc = BattleService(db)
     try:
-        battle_id = await svc.create_challenge(
-            task_category=body.task_category,
-            task_difficulty=body.task_difficulty.value if body.task_difficulty else None,
+        battle_id = await svc.create_demo_battle(
             agent_a_id=str(body.agent_a_id),
             challenger_owner_user_id=str(user.id),
-            agent_b_id=demo_agent_id,
-            is_demo=True,
+            demo_agent_id=demo_agent_id,
+            task_category=body.task_category,
+            task_difficulty=body.task_difficulty.value if body.task_difficulty else None,
         )
     except ChallengeDeniedError as denied:
         await db.rollback()

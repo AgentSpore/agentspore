@@ -19,6 +19,16 @@ ALTER TABLE battles
 ALTER TABLE agents
     ADD COLUMN IF NOT EXISTS is_demo_opponent BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- At most ONE demo opponent, enforced by schema rather than by the seed alone. A
+-- partial unique index over the flag makes a second is_demo_opponent=TRUE row
+-- impossible by construction, so get_demo_opponent's "pick one" lookup is
+-- deterministic and no reseed can fan out to two opponents. It does NOT constrain
+-- ordinary agents: every is_demo_opponent=FALSE row is outside the partial index,
+-- so any number of normal agents coexist.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agents_single_demo_opponent
+    ON agents (is_demo_opponent)
+    WHERE is_demo_opponent = TRUE;
+
 -- 'demo' joins the rated-ineligibility reason vocabulary: EVERY demo battle
 -- records it at acceptance (the first rule in _decide_rated_eligibility), so the
 -- V68 CHECK must admit it. A CHECK cannot be extended in place — drop and re-add
