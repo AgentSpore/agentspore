@@ -23,9 +23,12 @@ check kept separate from this suite, and it is not run here.
 from __future__ import annotations
 
 import json
+from typing import Any, cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.battle_judges import (
@@ -37,6 +40,7 @@ from app.services.battle_judges import (
     QUORUM,
     REPLICATE_COUNT,
     CollapsedVote,
+    JudgeModel,
     JudgeRunResult,
     build_judge_messages,
     build_judge_payload,
@@ -50,6 +54,7 @@ from app.services.battle_judges import (
     sanitize_submission,
     warn_on_residual_side_label,
 )
+from app.services.battle_runner import BattleRunner
 
 RUBRIC = [
     {"key": "correctness", "description": "Does it work?", "weight": 2.0},
@@ -653,3 +658,114 @@ class TestResidualSideLabelTelemetry:
             logger.remove(sink_id)
 
         assert emitted == []
+
+
+class TestTheRunnerActuallyCallsTheTelemetry:
+    """Pin the CALL SITE, not just the predicate.
+
+    Removing the `warn_on_residual_side_label(...)` line from `_run_one_half`
+    left the whole suite green: 413 passed with the measurement dead. That is the
+    worst possible failure for this feature — a silently-dead counter reports "no
+    warnings", which is indistinguishable from "the residual never happens" and
+    produces false confidence instead of an obvious gap. So the wiring gets its
+    own test, and it must go red when that line goes away.
+
+    What is mocked here is the I/O boundary ONLY: the repository, the session
+    commit, and the provider call. Everything the assertion depends on runs for
+    real — `build_judge_payload` builds the label map, `parse_judge_response`
+    validates the reply, `normalize_reasoning_sides` rewrites it, and the
+    runner's own control flow decides whether the emitter is reached. The test
+    therefore fails for exactly one reason: the call site is gone or unreachable.
+    """
+
+    @staticmethod
+    def _reply(reasoning: str) -> str:
+        return json.dumps(
+            {
+                "vote": LABEL_ONE,
+                "confidence": 0.9,
+                "reasoning": reasoning,
+                "scores": {"correctness": 1.0, "clarity": 1.0},
+            }
+        )
+
+    async def _drive_one_judge(
+        self, reply: str
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Run `_run_one_half` against a mocked boundary. Returns lines + the write."""
+        # The session/gate/client are pure I/O collaborators here — cast rather
+        # than stand up a real engine, which would prove nothing extra.
+        runner = BattleRunner(
+            cast(AsyncSession, AsyncMock()),
+            gate=cast(Any, None),
+            http=cast(Any, AsyncMock()),
+        )
+        runner.repo = AsyncMock()
+        runner.repo.create_judge_run = AsyncMock(return_value="run-77ab")
+        runner.repo.claim_judge_run = AsyncMock(return_value="claimed")
+        runner.repo.complete_judge_run = AsyncMock(return_value={"id": "run-77ab"})
+
+        emitted: list[str] = []
+        sink_id = logger.add(emitted.append, level="WARNING", format="{message}")
+        try:
+            with patch(
+                "app.services.battle_runner.call_judge_model",
+                AsyncMock(return_value=reply),
+            ):
+                await runner._run_one_half(
+                    battle_id="b-1",
+                    battle={"task_prompt_snapshot": "task"},
+                    seed="seed-1",
+                    order=PresentedOrder.BA,
+                    rubric=RUBRIC,
+                    allowed=ALLOWED_KEYS,
+                    submission_a="answer a",
+                    submission_b="answer b",
+                    model=JudgeModel(
+                        provider="p",
+                        model_id="m",
+                        wire_model="m",
+                        base_url="http://u",
+                        api_key="unused-mock-provider-is-patched",
+                    ),
+                    system_prompt=JUDGE_SYSTEM_PROMPT,
+                )
+        finally:
+            logger.remove(sink_id)
+
+        written = dict(runner.repo.complete_judge_run.call_args.kwargs)
+        return emitted, written
+
+    async def test_a_bare_label_reply_emits_the_warning_on_the_write_path(self) -> None:
+        """THE regression pin: delete the call site and this test fails.
+
+        A contract-violating reply travels the real parse path and must reach the
+        emitter before the row is written.
+        """
+        emitted, written = await self._drive_one_judge(
+            self._reply("Beta is stronger overall.")
+        )
+
+        assert len(emitted) == 1
+        assert "run-77ab" in emitted[0]
+        # And the counter changed nothing: the row still gets the exact text.
+        assert written["reasoning"] == "Beta is stronger overall."
+        assert "Beta is stronger" not in emitted[0]
+
+    async def test_a_contract_compliant_reply_emits_nothing_on_the_same_path(
+        self,
+    ) -> None:
+        """The counter-property, and the reason the pin above is not vacuous.
+
+        Semantically the SAME claim, written the way the contract asks. The label
+        is rewritten to a side, no bare token survives, and the path stays silent
+        — so the assertion above is measuring the reply's compliance, not merely
+        the fact that some code ran.
+        """
+        emitted, written = await self._drive_one_judge(
+            self._reply(f"{LABEL_TWO} is stronger overall.")
+        )
+
+        assert emitted == []
+        # Under presented_order 'ba' the second slot is side A.
+        assert written["reasoning"] == "side A is stronger overall."
