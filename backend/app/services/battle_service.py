@@ -719,6 +719,48 @@ class BattleService:
 
     # -- demo auto-drive ----------------------------------------------------
 
+    async def create_demo_battle(
+        self,
+        *,
+        agent_a_id: str,
+        challenger_owner_user_id: str,
+        demo_agent_id: str,
+        task_category: str | None,
+        task_difficulty: str | None,
+    ) -> str:
+        """Create a demo challenge AND accept it inline, in ONE transaction. No commit.
+
+        A demo battle needs no human consent on the opponent side, so acceptance
+        is folded into creation: the row is written 'challenge_pending' and driven
+        straight to 'accepted' before the caller commits, so it NEVER exists as a
+        visible 'challenge_pending' row. That removes the ~30s a demo user would
+        otherwise wait for the reconciler's auto-accept tick AND keeps the battle
+        off TARGET_CHALLENGE_CAP entirely — the cap counts 'challenge_pending'
+        rows, and this one is only ever committed already 'accepted', so a burst of
+        new demo users cannot starve each other on it.
+
+        The reconciler's auto-accept stays the crash backstop: a crash before this
+        accept never commits the challenge at all, and a crash after commit leaves
+        it already 'accepted' — neither ships a half-open state. On the (in one
+        uncommitted transaction, unreachable) chance the inline accept matches no
+        row, the battle stays 'challenge_pending' and that backstop consents on the
+        next tick, so this never raises for a stale-accept.
+
+        The rated verdict is frozen exactly as for any accept: being demo, it is
+        (False, 'demo'), so the battle is unrated before it ever arms. Raises the
+        same ChallengeDeniedError / LimiterUnavailableError create_challenge does.
+        """
+        battle_id = await self.create_challenge(
+            task_category=task_category,
+            task_difficulty=task_difficulty,
+            agent_a_id=agent_a_id,
+            challenger_owner_user_id=challenger_owner_user_id,
+            agent_b_id=demo_agent_id,
+            is_demo=True,
+        )
+        await self.auto_accept_demo(battle_id)
+        return battle_id
+
     async def auto_accept_demo(self, battle_id: str) -> dict | None:
         """challenge_pending -> accepted for a demo battle, with NO human action.
 

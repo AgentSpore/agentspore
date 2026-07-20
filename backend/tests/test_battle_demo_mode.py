@@ -25,6 +25,7 @@ import pytest
 import pytest_asyncio
 from conftest import split_sql_statements
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
@@ -177,7 +178,12 @@ async def _make_demo_challenge(session, *, is_demo: bool = True) -> tuple[str, s
     owner_a = await _owner(session)
     owner_b = await _owner(session)
     agent_a = await _agent(session, owner_a)
-    agent_b = await _agent(session, owner_b, demo=is_demo)
+    # agent_b is an ORDINARY agent: the auto-drive keys on the BATTLE's is_demo
+    # flag, never on agents.is_demo_opponent (that flag only serves the endpoint's
+    # get_demo_opponent lookup, and the single-demo-opponent unique index would
+    # reject a second one anyway). So the battle-level demo behaviour is exercised
+    # without minting a demo-opponent agent per test.
+    agent_b = await _agent(session, owner_b)
     repo = BattleRepository(session)
     battle_id = await repo.create_challenge(
         task_category="general",
@@ -523,3 +529,69 @@ class TestDemoAutoDrive:
             subs = await BattleRepository(session).list_submissions(battle_id)
         demo_finals = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
         assert len(demo_finals) == 1, "still exactly one demo final"
+
+
+# ---------------------------------------------------------------------------
+# Schema guarantee + inline acceptance (the follow-up fixes).
+# ---------------------------------------------------------------------------
+
+
+class TestDemoSchemaAndCreation:
+    async def test_unique_index_rejects_a_second_demo_opponent(
+        self, session_maker, db_session, task_pool
+    ) -> None:
+        """The partial unique index makes a SECOND is_demo_opponent=TRUE agent
+        impossible by construction — so get_demo_opponent's single-row guarantee
+        holds at the schema level, not just by the seed's ON CONFLICT.
+        """
+        async with session_maker() as session:
+            owner = await _owner(session)
+            await _agent(session, owner, demo=True)  # the one demo opponent
+            await session.commit()
+
+        with pytest.raises(IntegrityError):
+            async with session_maker() as session:
+                owner2 = await _owner(session)
+                await _agent(session, owner2, demo=True)  # a second one is rejected
+                await session.commit()
+
+    async def test_demo_battle_is_accepted_immediately_on_creation(
+        self, session_maker, db_session, task_pool
+    ) -> None:
+        """create_demo_battle folds the opponent's consent into creation: the
+        battle is 'accepted' the instant it exists — never 'challenge_pending' —
+        so a demo user waits for no reconciler tick and the battle never presses
+        on TARGET_CHALLENGE_CAP. The rated verdict is still frozen (False, 'demo').
+        """
+        async with session_maker() as session:
+            owner_a = await _owner(session)
+            owner_b = await _owner(session)
+            agent_a = await _agent(session, owner_a)
+            # An ordinary agent stands in for the resolved demo opponent — the
+            # inline accept keys on the battle's is_demo flag, not this agent's.
+            demo_agent = await _agent(session, owner_b)
+            await session.commit()
+
+            svc = BattleService(session)
+            # The service create path calls the Redis-backed challenger rate
+            # limiter, which the integration DB fixture has no Redis for; it is not
+            # what is under test, so stub it to a no-op.
+            with patch.object(
+                BattleService, "_check_challenger_rate_limit", AsyncMock(return_value=None)
+            ):
+                battle_id = await svc.create_demo_battle(
+                    agent_a_id=agent_a,
+                    challenger_owner_user_id=owner_a,
+                    demo_agent_id=demo_agent,
+                    task_category="general",
+                    task_difficulty=None,
+                )
+            await session.commit()
+
+        async with session_maker() as session:
+            b = await BattleRepository(session).get(battle_id)
+        assert b["status"] == "accepted", "inline accept — never left challenge_pending"
+        assert b["is_demo"] is True
+        assert b["agent_b_accepted_at"] is not None
+        assert b["rated_eligible"] is False
+        assert b["rated_ineligibility_reason"] == "demo"
