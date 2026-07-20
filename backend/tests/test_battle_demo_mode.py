@@ -15,6 +15,7 @@ goes red (a cross-owner demo battle would then rate).
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from contextlib import contextmanager
 from functools import partial
@@ -34,7 +35,12 @@ from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side, TaskSource, Vote
 from app.services.battle_judges import JUDGE_KIND_LLM, JUDGE_MODEL, replicate_seed
-from app.services.battle_runner import BattleRunner, reconcile_once
+from app.services.battle_runner import (
+    BattleRunner,
+    _await_demo_drives,
+    _demo_inflight,
+    reconcile_once,
+)
 from app.services.battle_service import BattleService
 from app.services.connection_manager import DeliveryResult
 
@@ -400,9 +406,13 @@ class TestDemoAutoDrive:
         # -- pass 2: reserved -> queued -> running, demo answer submitted ------
         with _no_transport(), patch("app.services.battle_runner.call_judge_model", judge):
             counts = await drive()
-        assert counts["queued"] == 1, counts
-        assert counts["started"] == 1, counts
-        assert counts["demo_submitted"] == 1, counts
+            assert counts["queued"] == 1, counts
+            assert counts["started"] == 1, counts
+            # The demo answer is now generated in a DETACHED task off the pass, so
+            # the pass returns before it lands. Await the in-flight drive (inside the
+            # provider patch, since the detached task calls the provider), then it is
+            # final.
+            await _await_demo_drives()
 
         async with session_maker() as session:
             b = await BattleRepository(session).get(battle_id)
@@ -437,6 +447,157 @@ class TestDemoAutoDrive:
             b = await BattleRepository(session).get(battle_id)
         assert b["status"] == "completed", "reached a judged result"
         assert b["is_rated"] is False, "a demo battle never rates"
+
+    async def test_slow_demo_provider_does_not_stall_the_reconcile_pass(
+        self, session_maker, db_session, task_pool
+    ) -> None:
+        """A HUNG demo provider must not freeze the reconcile pass.
+
+        The reconcile pass is one serialized asyncio task driving every battle,
+        and the demo answer is the only step in it that awaits a live LLM call.
+        Awaited inline, a slow/flaky provider blocked the whole pass and stalled
+        ALL battles — the reason demo mode was pulled from production. The demo
+        answer now runs DETACHED, so the pass returns at once and the demo answer
+        merely lands later (or degrades to deadline silence on timeout).
+
+        MUTATION: put the demo submit back inline (await it in the queued loop
+        instead of _spawn_demo_drive). ``reconcile_once`` then blocks on the hung
+        provider forever and the ``asyncio.wait_for`` below raises TimeoutError.
+        """
+        battle_id, agent_a, agent_b, _, _ = await _make_demo_challenge(db_session)
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        ok = AsyncMock(return_value=VALID_JUDGE_REPLY)
+
+        # -- pass 1: auto-accept + arm -> reserved, then ack user side + lapse ---
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", ok):
+            await drive()
+        async with session_maker() as session:
+            b = await BattleRepository(session).get(battle_id)
+            await AgentEventRepository(session).mark_acked(
+                agent_a, [str(b["ready_check_event_id_a"])]
+            )
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_expires_at = NOW() - INTERVAL '1 second' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+
+        # -- pass 2: the demo provider HANGS on a never-set event ---------------
+        release = asyncio.Event()
+
+        async def hang(*_a, **_k):
+            await release.wait()
+            return VALID_JUDGE_REPLY
+
+        try:
+            with _no_transport(), patch("app.services.battle_runner.call_judge_model", hang):
+                # New code returns immediately (demo drive detached); old inline
+                # code would block here until the 5s ceiling and raise.
+                counts = await asyncio.wait_for(drive(), timeout=5)
+
+            assert counts["started"] == 1, counts
+            async with session_maker() as session:
+                b = await BattleRepository(session).get(battle_id)
+                subs = await BattleRepository(session).list_submissions(battle_id)
+            assert b["status"] == "running", "battle advanced despite the hung provider"
+            demo_finals = [
+                s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]
+            ]
+            assert demo_finals == [], "demo answer is still pending in its detached task"
+            assert battle_id in _demo_inflight, "the demo drive is running off the pass"
+        finally:
+            for t in list(_demo_inflight.values()):
+                t.cancel()
+            await _await_demo_drives()
+
+    async def test_demo_timeout_degrades_to_deadline_silence(
+        self, session_maker, db_session, task_pool
+    ) -> None:
+        """When the demo answer call times out, the demo side writes nothing and
+        close_deadline synthesizes silent-fighter, so the battle is still judged.
+
+        Drives the demo battle to running with the answer call SLOWER than the
+        hard timeout, awaits the detached drive (which gives up), then lapses the
+        deadline and runs one more pass: close_deadline fills the demo side with a
+        truncated silent submission and the battle reaches a verdict.
+        """
+        battle_id, agent_a, agent_b, _, _ = await _make_demo_challenge(db_session)
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        ok = AsyncMock(return_value=VALID_JUDGE_REPLY)
+
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", ok):
+            await drive()
+        async with session_maker() as session:
+            b = await BattleRepository(session).get(battle_id)
+            await AgentEventRepository(session).mark_acked(
+                agent_a, [str(b["ready_check_event_id_a"])]
+            )
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_expires_at = NOW() - INTERVAL '1 second' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+
+        # A demo answer call slower than the hard timeout: the detached drive
+        # aborts it and writes nothing.
+        async def too_slow(*_a, **_k):
+            await asyncio.sleep(30)
+            return VALID_JUDGE_REPLY
+
+        with (
+            patch("app.services.battle_runner.DEMO_ANSWER_TIMEOUT_SECONDS", 0.05),
+            _no_transport(),
+            patch("app.services.battle_runner.call_judge_model", too_slow),
+        ):
+            await drive()
+            await _await_demo_drives()
+
+        async with session_maker() as session:
+            subs = await BattleRepository(session).list_submissions(battle_id)
+        demo_finals = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
+        assert demo_finals == [], "timed-out demo answer wrote nothing"
+
+        # User submits, deadline lapses, one more pass -> silent demo side, judged.
+        async with session_maker() as session:
+            assert await BattleRepository(session).add_submission(
+                battle_id, Side.A, 1, "my answer", is_final=True
+            )
+            # Pull the deadline back to just after started_at — provably passed
+            # (started_at is already seconds old) while the deadline_at > started_at
+            # constraint and the rest of the monotonic timeline stay intact.
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_token = NULL, lease_expires_at = NULL, "
+                    "deadline_at = started_at + INTERVAL '1 millisecond' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", ok):
+            await drive()
+
+        async with session_maker() as session:
+            b = await BattleRepository(session).get(battle_id)
+            subs = await BattleRepository(session).list_submissions(battle_id)
+        assert b["status"] == "completed", "reached a judged result despite demo timeout"
+        demo_finals = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
+        assert len(demo_finals) == 1 and demo_finals[0]["truncated"] is True, (
+            "demo side is silent-fighter (truncated), not a live answer"
+        )
 
     async def test_demo_opponent_never_declines(
         self, session_maker, db_session, task_pool
@@ -508,6 +669,7 @@ class TestDemoAutoDrive:
             await session.commit()
         with _no_transport(), patch("app.services.battle_runner.call_judge_model", judge):
             await drive()
+            await _await_demo_drives()
 
         async with session_maker() as session:
             subs = await BattleRepository(session).list_submissions(battle_id)
