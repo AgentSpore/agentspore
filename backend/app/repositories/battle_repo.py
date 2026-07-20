@@ -1184,6 +1184,7 @@ class BattleRepository:
         agent_b_owner_snapshot: str | None = None,
         minimum_pool_size: int = MINIMUM_TASK_POOL,
         cooldown_days: int = TASK_REUSE_COOLDOWN_DAYS,
+        is_demo: bool = False,
     ) -> str | None:
         """Create a challenge, enforcing EVERY admission rule. No commit.
 
@@ -1226,6 +1227,7 @@ class BattleRepository:
             challenge_ttl_seconds=challenge_ttl_seconds,
             agent_b_id=agent_b_id,
             agent_b_owner_snapshot=agent_b_owner_snapshot,
+            is_demo=is_demo,
             admission_sql=f"""
                   AND EXISTS (
                       SELECT 1 FROM agents a
@@ -1330,6 +1332,7 @@ class BattleRepository:
         agent_b_owner_snapshot: str | None,
         admission_sql: str,
         admission_params: dict[str, Any],
+        is_demo: bool = False,
     ) -> str | None:
         """The one INSERT behind _create_battle and create_challenge.
 
@@ -1353,13 +1356,13 @@ class BattleRepository:
                     (task_category_filter, task_difficulty_filter,
                      agent_a_id, agent_b_id,
                      agent_a_owner_snapshot, agent_b_owner_snapshot,
-                     challenge_expires_at, status)
+                     challenge_expires_at, status, is_demo)
                 SELECT CAST(:task_category AS TEXT), CAST(:task_difficulty AS TEXT),
                        CAST(:agent_a_id AS UUID), CAST(:agent_b_id AS UUID),
                        CAST(:agent_a_owner_snapshot AS UUID),
                        CAST(:agent_b_owner_snapshot AS UUID),
                        NOW() + make_interval(secs => :challenge_ttl),
-                       'challenge_pending'
+                       'challenge_pending', CAST(:is_demo AS BOOLEAN)
                 WHERE TRUE
                   {admission_sql}
                 RETURNING id
@@ -1375,6 +1378,7 @@ class BattleRepository:
                     str(agent_b_owner_snapshot) if agent_b_owner_snapshot else None
                 ),
                 "challenge_ttl": challenge_ttl_seconds,
+                "is_demo": is_demo,
                 **admission_params,
             },
         )
@@ -1389,6 +1393,54 @@ class BattleRepository:
         )
         row = result.mappings().first()
         return dict(row) if row else None
+
+    async def get_demo_opponent(self) -> str | None:
+        """The platform demo sparring agent's id, or None if none is configured.
+
+        Resolved by the ``is_demo_opponent`` flag, never a hardcoded id, so a
+        reseed under a new id keeps working. The same eligibility predicate every
+        fighter must pass is required here too: a demo opponent that was
+        deactivated or opted out is no opponent, and the challenge would be
+        refused at insert anyway. A partial unique index guarantees at most one
+        such row, so the ORDER BY/LIMIT is a defensive tie-break, not a real
+        choice.
+        """
+        result = await self.db.execute(
+            text(
+                f"""
+                SELECT a.id FROM agents a
+                WHERE a.is_demo_opponent = TRUE
+                  AND {_AGENT_ELIGIBLE_SQL}
+                ORDER BY a.created_at
+                LIMIT 1
+                """
+            )
+        )
+        row = result.first()
+        return str(row[0]) if row else None
+
+    async def find_demo_challenges_pending(self, limit: int) -> list[str]:
+        """Ids of demo battles awaiting the platform opponent's auto-accept.
+
+        Only ``is_demo`` challenge_pending rows with an opponent and an unexpired
+        challenge — the exact set the reconciler consents to on the demo side's
+        behalf. Oldest first, bounded, so one pass stays short.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT id FROM battles
+                WHERE status = 'challenge_pending'
+                  AND is_demo = TRUE
+                  AND agent_b_id IS NOT NULL
+                  AND challenge_expires_at > NOW()
+                ORDER BY challenged_at
+                LIMIT :limit
+                """
+            ),
+            {"limit": limit},
+        )
+        return [str(r[0]) for r in result.fetchall()]
 
     async def list_battles(
         self,

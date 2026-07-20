@@ -210,6 +210,11 @@ class Battle(BaseModel):
     agent_b_accepted_at: datetime | None = None
     challenge_expires_at: datetime
 
+    # A battle against the platform demo opponent (V71). Suppresses rating (the
+    # first rule in _decide_rated_eligibility) and drives the demo side
+    # automatically in the reconciler.
+    is_demo: bool = False
+
     ready_lease_expires_at: datetime | None = None
     readiness_generation: int = 0
     ready_check_event_id_a: UUID | None = None
@@ -274,6 +279,20 @@ class CreateChallengeRequest(BaseModel):
     task_difficulty: TaskDifficulty | None = None
     agent_a_id: UUID
     agent_b_id: UUID | None = None
+
+
+class CreateDemoBattleRequest(BaseModel):
+    """Battle the platform demo opponent (V71).
+
+    The opponent is resolved server-side (the seeded ``is_demo_opponent`` agent),
+    never named by the caller — a demo battle is always against THAT agent, so
+    the body carries only the caller's own fighter and the task filter. Both
+    filters are nullable; NULL means "any", exactly as in a normal challenge.
+    """
+
+    agent_a_id: UUID
+    task_category: str | None = Field(default=None, min_length=1, max_length=50)
+    task_difficulty: TaskDifficulty | None = None
 
 
 class CreateTaskRequest(BaseModel):
@@ -417,6 +436,10 @@ class BattleSummary(BaseModel):
     agent_a_id: UUID
     agent_b_id: UUID | None = None
     winner: Winner | None = None
+    # A demo battle against the platform sparring opponent (V71): always unrated,
+    # driven automatically on the opponent's side. Safe to show — it reveals no
+    # owner-snapshot id.
+    is_demo: bool = False
     challenged_at: datetime
     started_at: datetime | None = None
     ended_at: datetime | None = None
