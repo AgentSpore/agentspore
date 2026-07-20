@@ -29,6 +29,7 @@ import pytest
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.battle_judges import (
     JUDGE_SYSTEM_PROMPT,
+    JUDGE_SYSTEM_PROMPTS,
     LABEL_ONE,
     LABEL_TWO,
     MAX_SUBMISSION_CHARS,
@@ -39,6 +40,7 @@ from app.services.battle_judges import (
     build_judge_messages,
     build_judge_payload,
     collapse_pair,
+    normalize_reasoning_sides,
     parse_judge_response,
     replicate_seed,
     resolve_verdict,
@@ -486,17 +488,79 @@ class TestStoredReasoningNamesTheVotedSide:
             {
                 "vote": LABEL_TWO,
                 "confidence": 0.9,
-                "reasoning": "submission_beta is clearly stronger than alpha.",
+                "reasoning": "submission_beta is clearly stronger than submission_alpha.",
             }
         )
         result = parse_judge_response(raw, label_map, ALLOWED_KEYS)
         assert result is not None
         # Under 'ba' the second slot is side A, so this reply IS a vote for A.
         assert result.vote is Vote.A
-        assert result.reasoning is not None
-        assert "side A is clearly stronger than side B." == result.reasoning, (
+        assert result.reasoning == "side A is clearly stronger than side B.", (
             "stored prose still names the presentation slot, so a reader sees "
             "'beta wins' beside vote='a' and believes the opposite fighter won"
         )
-        assert "alpha" not in result.reasoning.lower()
-        assert "beta" not in result.reasoning.lower()
+
+    @pytest.mark.parametrize(
+        ("reasoning", "expected"),
+        [
+            (
+                "submission_alpha is stronger than submission_beta.",
+                "side B is stronger than side A.",
+            ),
+            (
+                "Alpha uses alpha-beta pruning; beta search is cheaper.",
+                "Alpha uses alpha-beta pruning; beta search is cheaper.",
+            ),
+            (
+                "Beta sets alpha=0.05 as the significance level.",
+                "Beta sets alpha=0.05 as the significance level.",
+            ),
+            (
+                "The beta coefficient in the regression is wrong.",
+                "The beta coefficient in the regression is wrong.",
+            ),
+        ],
+        ids=["labels-rewritten", "alpha-beta-pruning", "significance-level", "beta-coefficient"],
+    )
+    def test_domain_vocabulary_survives_the_rewrite(
+        self, reasoning: str, expected: str
+    ) -> None:
+        """Only whole labels move; "alpha" and "beta" are ordinary technical words.
+
+        The first case is the POSITIVE CONTROL: without it, a function that
+        returned its input unchanged would satisfy the other three and the
+        wrong-side defect would be back.
+
+        The other three come from the categories the live pool already carries
+        (`algorithms`, `data`), where alpha/beta are the domain's own vocabulary.
+        Rewriting them produced "side B uses side B-side A pruning" — nonsense
+        that ALSO names a side, which is worse than the prose it replaced.
+        """
+        _, label_map = build_judge_payload(
+            "task", RUBRIC, "answer a", "answer b", PresentedOrder.BA
+        )
+        assert normalize_reasoning_sides(reasoning, label_map) == expected
+
+    def test_the_output_contract_tells_the_model_to_use_whole_labels(self) -> None:
+        """The other half of the fix: close the gap at the SOURCE.
+
+        The narrow rewrite leaves a bare "beta is stronger" untouched (mangling it
+        is the greater harm), so the model is instructed not to write one. Every
+        paraphrase shares the contract verbatim, so this holds for all three.
+        """
+        for prompt in JUDGE_SYSTEM_PROMPTS:
+            assert "refer to a submission ONLY by its full label" in prompt
+
+    def test_the_rewrite_never_lengthens_the_text(self) -> None:
+        """So the caller's 500-char cap cannot bite earlier than before.
+
+        'submission_alpha' (16) -> 'side A' (6). A rewrite that EXPANDED text
+        would silently truncate content that used to fit.
+        """
+        _, label_map = build_judge_payload(
+            "task", RUBRIC, "answer a", "answer b", PresentedOrder.BA
+        )
+        long_reasoning = f"{LABEL_ONE} beats {LABEL_TWO}. " * 40
+        assert len(normalize_reasoning_sides(long_reasoning, label_map)) < len(
+            long_reasoning
+        )
