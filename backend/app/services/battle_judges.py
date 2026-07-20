@@ -124,6 +124,10 @@ Reply with ONE JSON object and nothing else:
 or "tie". No other value is valid.
 - "scores" MUST contain exactly the rubric criterion keys from the document — no \
 more, no fewer.
+- Inside "reasoning", refer to a submission ONLY by its full label \
+(submission_alpha / submission_beta). Never abbreviate one to "alpha" or "beta": \
+those words have ordinary technical meanings and the label is what identifies \
+the submission.
 - Output no prose, no markdown fence, no explanation outside the JSON object.\
 """
 
@@ -756,19 +760,39 @@ def parse_judge_response(
 
 # The judge writes prose about "submission_alpha" / "submission_beta" — labels
 # whose meaning is the PRESENTATION SLOT, not the fighter. Under presented_order
-# 'ba' the first slot is side B, so a reply reading "beta is stronger" is a vote
-# for side A. The vote is mapped correctly; the prose was stored raw and therefore
-# named the opposite side of the vote sitting beside it in the same row.
-_LABEL_TOKEN_RE = re.compile(r"\b(?:submission[_ ]?)?(alpha|beta)\b", re.IGNORECASE)
+# 'ba' the first slot is side B, so a reply reading "submission_beta is stronger"
+# is a vote for side A. The vote is mapped correctly; the prose was stored raw and
+# therefore named the opposite side of the vote sitting beside it in the same row.
+#
+# ONLY THE WHOLE LABEL IS REWRITTEN. The bare words "alpha" and "beta" are
+# ordinary technical vocabulary — "alpha-beta pruning", "alpha = 0.05", "the beta
+# coefficient" — and the live task pool already carries `algorithms` and `data`
+# categories where they occur honestly. A rule that rewrote the bare words turned
+# a correct sentence into nonsense that ALSO named a side:
+#     "Alpha uses alpha-beta pruning"  ->  "side B uses side B-side A pruning"
+# That is worse than the defect it fixes, so the pattern demands the
+# ``submission`` prefix, which no honest sentence about pruning or significance
+# levels contains. The residual — a judge that writes a bare "beta is stronger" —
+# is closed at the SOURCE instead, by the output contract instructing the model to
+# name submissions only by their full labels (see _JUDGE_OUTPUT_CONTRACT). What a
+# non-compliant model still writes is left BYTE-IDENTICAL rather than mangled:
+# the authoritative statement of who won is the ``vote`` column, and any UI must
+# render that, never parse the prose.
+_LABEL_TOKEN_RE = re.compile(r"\bsubmission[_ ]?(alpha|beta)\b", re.IGNORECASE)
 
 
 def normalize_reasoning_sides(reasoning: str | None, label_map: dict[str, Side]) -> str:
-    """Rewrite the judge's opaque slot labels into the SIDE each one denotes.
+    """Rewrite the judge's opaque slot LABELS into the side each one denotes.
 
     Applied at parse time, so every persisted ``reasoning`` — raw run and
     collapsed vote alike — speaks the same vocabulary as the ``vote`` column and
     cannot be read as the wrong fighter. The substitution is the same map that
     resolves the vote itself, so the two can never diverge.
+
+    Scope is deliberately narrow: full labels only, never the bare words "alpha"
+    and "beta", which are ordinary domain vocabulary (see the comment above). The
+    rewrite only ever SHORTENS the text — ``submission_alpha`` (16 chars) becomes
+    ``side A`` (6) — so it cannot push content past the caller's 500-char cap.
     """
     if not reasoning:
         return ""
