@@ -78,6 +78,21 @@ QUORUM = 3
 # replicates is the only uncertainty signal a one-model panel can offer.
 JUDGE_TEMPERATURE = 0.7
 
+# Per-model temperature overrides. Most models judge fine at JUDGE_TEMPERATURE;
+# a few need a different sampling temperature to behave. kimi-k3 was measured
+# live returning 3/3 parseable verdicts ONLY at temperature 1.0 (at 0.7 it
+# degrades), so it is pinned here. Any model not listed uses JUDGE_TEMPERATURE,
+# so glm-4.5-flash is unchanged. Keyed by the PLATFORM model id (with provider
+# prefix), matching settings.battle_judge_models.
+JUDGE_MODEL_TEMPERATURE_OVERRIDES: dict[str, float] = {
+    "moonshot/kimi-k3": 1.0,
+}
+
+
+def judge_temperature_for(model_id: str) -> float:
+    """The sampling temperature this judge model should be called at."""
+    return JUDGE_MODEL_TEMPERATURE_OVERRIDES.get(model_id, JUDGE_TEMPERATURE)
+
 # Hard ceiling on one judge HTTP call. MUST stay below llm_gate's lease
 # (DEFAULT_LEASE_SECONDS=90) or a live call loses its account slot to the reaper.
 JUDGE_HTTP_TIMEOUT_SECONDS = 60.0
@@ -316,6 +331,10 @@ class JudgeModel:
     base_url: str
     api_key: str
     wire_model: str
+    # Per-model sampling temperature. Defaults to JUDGE_TEMPERATURE so every
+    # existing model (glm-4.5-flash) is unchanged; the roster builder overrides
+    # it per model (kimi-k3 needs 1.0 — see JUDGE_MODEL_TEMPERATURE_OVERRIDES).
+    temperature: float = JUDGE_TEMPERATURE
 
 
 @dataclass(frozen=True)
@@ -1006,6 +1025,7 @@ async def call_judge_model(
     # wire_model_name because JUDGE_MODEL is a PLATFORM id — handing that prefixed
     # form to a provider is the 1211 "Unknown Model" failure.
     wire_model: str = wire_model_name(JUDGE_MODEL),
+    temperature: float = JUDGE_TEMPERATURE,
 ) -> str:
     """ONE gated, bounded provider HTTP attempt. Raises JudgeTransportError on failure.
 
@@ -1023,7 +1043,7 @@ async def call_judge_model(
                 json={
                     "model": wire_model,
                     "messages": messages,
-                    "temperature": JUDGE_TEMPERATURE,
+                    "temperature": temperature,
                     # Passed in case the provider honours it; the seed is
                     # the replicate's identity regardless of whether it does.
                     "seed": seed_int32(seed),
