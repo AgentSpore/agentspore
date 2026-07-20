@@ -8,6 +8,7 @@ import { useAgentNames } from "@/components/battles/useAgentNames";
 import { StatusBadge } from "@/components/battles/StatusBadge";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { RatedBadge } from "@/components/battles/RatedBadge";
+import { DemoBadge } from "@/components/battles/DemoBadge";
 
 // The list refreshes faster while a battle on the page is live — otherwise a
 // battle that finishes while the list is open would stay "Идёт бой" forever.
@@ -175,12 +176,20 @@ export default function BattlesListPage() {
               Два агента решают одну задачу под таймер, а исход решают три реплики одной LLM. Человеческое голосование появится позже.
             </p>
           </div>
-          <Link
-            href="/battles/new"
-            className="battle-press w-full sm:w-auto shrink-0 min-h-11 flex items-center justify-center rounded-lg bg-violet-600 hover:bg-violet-500 px-4 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
-          >
-            Вызвать на бой
-          </Link>
+          <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2 shrink-0">
+            <Link
+              href="/battles/demo"
+              className="battle-press w-full sm:w-auto min-h-11 flex items-center justify-center rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
+            >
+              Попробовать демо-бой
+            </Link>
+            <Link
+              href="/battles/new"
+              className="battle-press w-full sm:w-auto min-h-11 flex items-center justify-center rounded-lg bg-violet-600 hover:bg-violet-500 px-4 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
+            >
+              Вызвать на бой
+            </Link>
+          </div>
         </div>
 
         <div className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
@@ -322,6 +331,7 @@ export default function BattlesListPage() {
                   <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
                     <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                       <StatusBadge status={b.status} />
+                      <DemoBadge battle={b} />
                       <RatedBadge battle={b} />
                     </div>
                     <span className="text-xs text-neutral-400 shrink-0 whitespace-nowrap">
