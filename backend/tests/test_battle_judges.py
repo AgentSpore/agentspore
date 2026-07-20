@@ -450,3 +450,53 @@ class TestVerdict:
         verdict = resolve_verdict(self._votes(Vote.A, Vote.A, Vote.B))
         assert "judges" not in verdict.reason
         assert "replicates" in verdict.reason
+
+
+class TestUnparsableIsNotAnAbstention:
+    """The distinction the retry rests on: no answer vs. a declining answer."""
+
+    LABEL_MAP = {LABEL_ONE: Side.A, LABEL_TWO: Side.B}
+
+    def test_an_unparsable_reply_returns_none_so_the_caller_can_retry(self) -> None:
+        # None is the signal "the call produced nothing" — the runner turns it
+        # into a released, re-claimable slot rather than a terminal vote.
+        assert parse_judge_response("I think alpha, honestly", self.LABEL_MAP, ALLOWED_KEYS) is None
+
+    def test_a_deliberate_abstention_parses_and_is_a_real_vote(self) -> None:
+        raw = json.dumps(
+            {"vote": "abstain", "confidence": 0.2, "reasoning": "both unreadable"}
+        )
+        result = parse_judge_response(raw, self.LABEL_MAP, ALLOWED_KEYS)
+        assert result is not None, (
+            "a well-formed decline must be a vote, not a parse failure: retrying "
+            "a judge that deliberately abstained until it picks a side would "
+            "manufacture a verdict"
+        )
+        assert result.vote is Vote.ABSTAIN
+
+
+class TestStoredReasoningNamesTheVotedSide:
+    """The prose and the vote in one row must name the same fighter."""
+
+    def test_ba_order_reasoning_is_rewritten_to_the_side_it_voted(self) -> None:
+        _, label_map = build_judge_payload(
+            "task", RUBRIC, "answer a", "answer b", PresentedOrder.BA
+        )
+        raw = json.dumps(
+            {
+                "vote": LABEL_TWO,
+                "confidence": 0.9,
+                "reasoning": "submission_beta is clearly stronger than alpha.",
+            }
+        )
+        result = parse_judge_response(raw, label_map, ALLOWED_KEYS)
+        assert result is not None
+        # Under 'ba' the second slot is side A, so this reply IS a vote for A.
+        assert result.vote is Vote.A
+        assert result.reasoning is not None
+        assert "side A is clearly stronger than side B." == result.reasoning, (
+            "stored prose still names the presentation slot, so a reader sees "
+            "'beta wins' beside vote='a' and believes the opposite fighter won"
+        )
+        assert "alpha" not in result.reasoning.lower()
+        assert "beta" not in result.reasoning.lower()

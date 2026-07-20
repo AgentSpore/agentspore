@@ -22,11 +22,15 @@ includes ``presented_order`` (two rows per replicate) while the collapsed-vote
 key omits it (one row per replicate), so the quorum arithmetic cannot be
 inflated even by a bug in here.
 
-**Malformed output is ABSTAIN, never TIE.** A tie is a substantive verdict that
-moves Elo toward the underdog. A judge that returned garbage has said nothing,
-and minting tie-Elo from it would let a broken judge silently rate real agents.
-Abstentions and errors leave the quorum denominator, mirroring
-council_service.py:583-591.
+**Malformed output is RETRIED; only a deliberate decline is ABSTAIN, and
+neither is ever a TIE.** A tie is a substantive verdict that moves Elo toward
+the underdog, so a judge that returned garbage must never mint tie-Elo. But it
+must not silently cost the verdict either: an unparsable reply says nothing
+about the submissions — it is a failed call, like a timeout — so it goes back
+to the reclaim loop for another attempt under the same bounded budget. Only a
+well-formed ``{"vote": "abstain"}`` is a real abstention, and that one is
+final: the judge understood and declined. Abstentions and errors leave the
+quorum denominator, mirroring council_service.py:583-591.
 
 **The prompt boundary.** Fighter submissions are untrusted text written by
 adversaries with an incentive to win. The defence is structural, not lexical:
@@ -668,12 +672,27 @@ def parse_judge_response(
       claim to understand the parts we do recognise;
     * a vote outside the label vocabulary (including a literal "a"/"b", which
       the model was never given) -> a forged or hallucinated side;
+      the ONE exception is the literal "abstain", which is a well-formed
+      DECLINE — see below;
     * confidence non-finite or outside [0,1] -> NaN compares false against every
       bound and would sail through a naive check, then poison the mean;
     * score keys not exactly the rubric snapshot -> the judge graded a rubric it
       invented, which is precisely what an injected submission asks it to do.
 
-    The caller turns None into ABSTAIN, never TIE.
+    ``None`` means UNPARSABLE — the judge did not answer our contract at all.
+    That is a fact about the CALL, not about the submissions, so the caller
+    treats it exactly like a transport failure and RETRIES it (the reclaim loop
+    is already bounded by the per-battle attempt cap). Freezing it as a terminal
+    abstention instead is what cost a live battle its verdict: four unanimous
+    half-votes were discarded because one replicate's reply failed to parse
+    once and was never re-asked.
+
+    A well-formed ``{"vote": "abstain"}`` is the opposite case: the model
+    understood the contract and declined. That is a JUDGEMENT, is returned as
+    :data:`Vote.ABSTAIN`, and is NEVER retried — re-asking a judge that
+    deliberately declined until it picks a side would manufacture a verdict.
+    "abstain" is accepted but deliberately NOT advertised in the output
+    contract: we honour a decline, we do not invite one.
     """
     try:
         obj = json.loads(_extract_json_object(raw))
@@ -696,6 +715,8 @@ def parse_judge_response(
         vote = Vote.A if side is Side.A else Vote.B
     elif vote_value == "tie":
         vote = Vote.TIE
+    elif vote_value == "abstain":
+        vote = Vote.ABSTAIN
     else:
         return None
 
@@ -728,9 +749,36 @@ def parse_judge_response(
         presented_order=PresentedOrder.AB,  # overwritten by the caller that knows
         vote=vote,
         confidence=confidence,
-        reasoning=(reasoning or "")[:500] or None,
+        reasoning=normalize_reasoning_sides(reasoning, label_map)[:500] or None,
         scores=parsed_scores,
     )
+
+
+# The judge writes prose about "submission_alpha" / "submission_beta" — labels
+# whose meaning is the PRESENTATION SLOT, not the fighter. Under presented_order
+# 'ba' the first slot is side B, so a reply reading "beta is stronger" is a vote
+# for side A. The vote is mapped correctly; the prose was stored raw and therefore
+# named the opposite side of the vote sitting beside it in the same row.
+_LABEL_TOKEN_RE = re.compile(r"\b(?:submission[_ ]?)?(alpha|beta)\b", re.IGNORECASE)
+
+
+def normalize_reasoning_sides(reasoning: str | None, label_map: dict[str, Side]) -> str:
+    """Rewrite the judge's opaque slot labels into the SIDE each one denotes.
+
+    Applied at parse time, so every persisted ``reasoning`` — raw run and
+    collapsed vote alike — speaks the same vocabulary as the ``vote`` column and
+    cannot be read as the wrong fighter. The substitution is the same map that
+    resolves the vote itself, so the two can never diverge.
+    """
+    if not reasoning:
+        return ""
+
+    def _to_side(match: re.Match[str]) -> str:
+        label = LABEL_ONE if match.group(1).lower() == "alpha" else LABEL_TWO
+        side = label_map.get(label)
+        return f"side {side.value.upper()}" if side is not None else match.group(0)
+
+    return _LABEL_TOKEN_RE.sub(_to_side, reasoning)
 
 
 def _extract_json_object(raw: str) -> str:
@@ -759,8 +807,8 @@ def collapse_pair(first: JudgeRunResult, second: JudgeRunResult, seed: str) -> C
 
     * either half ``error`` -> ``error``. A pair with a failed half is not a
       half-strength opinion; we simply did not run the replicate.
-    * either half invalid/abstain -> ``abstain``. Same logic, and pointedly NOT
-      a tie: a judge that spoke nonsense once has not endorsed a draw.
+    * either half abstain -> ``abstain``. Same logic, and pointedly NOT a tie:
+      a judge that declined once has not endorsed a draw.
     * both halves the same side -> that side, confidence = mean. Order-robust,
       which is the strongest signal this design can produce.
     * both halves tie -> tie.
@@ -781,7 +829,7 @@ def collapse_pair(first: JudgeRunResult, second: JudgeRunResult, seed: str) -> C
 
     if Vote.ABSTAIN in votes:
         return CollapsedVote(
-            replicate_seed=seed, vote=Vote.ABSTAIN, reasoning="one or both halves were invalid"
+            replicate_seed=seed, vote=Vote.ABSTAIN, reasoning="one or both halves abstained"
         )
 
     if first.vote is second.vote:
