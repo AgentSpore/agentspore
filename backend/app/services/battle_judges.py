@@ -56,6 +56,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from loguru import logger
 
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.llm_gate import LLMGate, LLMGateTimeoutError
@@ -803,6 +804,58 @@ def normalize_reasoning_sides(reasoning: str | None, label_map: dict[str, Side])
         return f"side {side.value.upper()}" if side is not None else match.group(0)
 
     return _LABEL_TOKEN_RE.sub(_to_side, reasoning)
+
+
+# TELEMETRY ONLY — this pair measures the residual the narrow rewrite leaves
+# behind, and changes nothing about what is stored or shown.
+#
+# A judge that ignores the output contract writes a bare "Beta is stronger",
+# which `normalize_reasoning_sides` deliberately does not touch. We want to know
+# HOW OFTEN that happens without paying the price of acting on it: the bare token
+# carries no polarity — "beta is stronger" contradicts vote='b' while "beta is
+# weaker" agrees with it, and the two sentences contain the SAME token. Any rule
+# that suppressed or rewrote on this signal would be a coin flip whose failure
+# mode is destroying a correct explanation. So the signal is counted, never
+# enforced: a hit costs exactly one server-side log line.
+#
+# The misfire is therefore expected and accepted. "The beta coefficient in the
+# regression is wrong." fires this predicate — it is honest domain vocabulary,
+# not a mislabelled side (see the comment above `_LABEL_TOKEN_RE`). The rate this
+# emits is an upper bound on the defect, not a count of it.
+_BARE_SIDE_WORD_RE = re.compile(r"\b(alpha|beta)\b", re.IGNORECASE)
+
+
+def has_residual_side_label(reasoning: str | None) -> bool:
+    """Report whether a normalised ``reasoning`` still carries a bare side word.
+
+    Answers one question and takes no action on the answer. ``True`` means the
+    text contains "alpha" or "beta" as a standalone word, which after
+    normalisation can only come from a judge that ignored the output contract —
+    or from a submission that legitimately discusses alpha-beta pruning or a beta
+    coefficient. The two are indistinguishable at token level, which is exactly
+    why this is a counter and not a filter.
+    """
+    if not reasoning:
+        return False
+    return _BARE_SIDE_WORD_RE.search(reasoning) is not None
+
+
+def warn_on_residual_side_label(run_id: str, vote: Vote, reasoning: str | None) -> None:
+    """Emit one warning line when a persisted reasoning keeps a bare side word.
+
+    The reasoning text is NEVER logged. It derives from untrusted fighter
+    submissions, and this module's standing discipline is to log the type and the
+    identifiers, never the value — so the line carries the run id and the vote,
+    enough to fetch the row deliberately, and nothing that leaks content into a
+    log aggregator.
+    """
+    if has_residual_side_label(reasoning):
+        logger.warning(
+            "judge run {} (vote {}) kept a bare alpha/beta token in its reasoning; "
+            "telemetry only, the text is stored unmodified",
+            run_id,
+            vote.value,
+        )
 
 
 def _extract_json_object(raw: str) -> str:
