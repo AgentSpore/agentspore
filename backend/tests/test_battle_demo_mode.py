@@ -36,6 +36,7 @@ from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side, TaskSource, Vote
 from app.services.battle_judges import JUDGE_KIND_LLM, JUDGE_MODEL, replicate_seed
 from app.services.battle_runner import (
+    DEMO_ANSWER_TIMEOUT_SECONDS,
     BattleRunner,
     _await_demo_drives,
     _demo_inflight,
@@ -757,3 +758,144 @@ class TestDemoSchemaAndCreation:
         assert b["agent_b_accepted_at"] is not None
         assert b["rated_eligible"] is False
         assert b["rated_ineligibility_reason"] == "demo"
+
+
+# ---------------------------------------------------------------------------
+# Demo answer model routing — the demo opponent answers on kimi-k3 (fast, no
+# timeouts) while the judge panel stays on the glm judge model.
+# ---------------------------------------------------------------------------
+
+
+async def _walk_demo_to_running_and_capture(session_maker, db_session, judge) -> str:
+    """Drive a demo battle to 'running' with its detached demo answer landed.
+
+    Returns the battle_id. ``judge`` is the call_judge_model mock; on return its
+    call log holds exactly the demo answer call (no judge panel yet — the user
+    side has not submitted a final).
+    """
+    battle_id, agent_a, _agent_b, _, _ = await _make_demo_challenge(db_session)
+    provider = {"api_key": "k", "base_url": "http://unused"}
+    drive = partial(
+        reconcile_once, session_factory=session_maker, gate=None, provider=provider
+    )
+    with _no_transport(), patch("app.services.battle_runner.call_judge_model", judge):
+        await drive()  # pass 1: accept + arm -> reserved
+    async with session_maker() as session:
+        b = await BattleRepository(session).get(battle_id)
+        await AgentEventRepository(session).mark_acked(
+            agent_a, [str(b["ready_check_event_id_a"])]
+        )
+        await session.execute(
+            text(
+                "UPDATE battles SET lease_expires_at = NOW() - INTERVAL '1 second' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"b": battle_id},
+        )
+        await session.commit()
+    with _no_transport(), patch("app.services.battle_runner.call_judge_model", judge):
+        await drive()  # pass 2: -> running, detached demo answer spawned
+        await _await_demo_drives()
+    return battle_id
+
+
+class TestDemoAnswerModelRouting:
+    async def test_demo_answer_routes_to_kimi_at_temperature_one(
+        self, session_maker, db_session, task_pool
+    ) -> None:
+        """The demo opponent's answer call targets moonshot/kimi-k3 with
+        temperature=1.0 — NOT the judge model (glm) at its temperature.
+
+        Routing the single-call demo answer to the slow, flaky judge model made
+        it always time out, so the demo side never spoke. kimi answers fast; and
+        kimi is only parseable at temperature 1.0, so both the wire model and the
+        temperature must be kimi's.
+
+        MUTATION (on a copy of battle_runner.py): set DEMO_ANSWER_MODEL back to
+        the judge model, or drop kimi's temperature override to 0.7 — this test
+        goes red on the wire_model / temperature assertion.
+        """
+        judge = AsyncMock(return_value=VALID_JUDGE_REPLY)
+        battle_id = await _walk_demo_to_running_and_capture(
+            session_maker, db_session, judge
+        )
+
+        async with session_maker() as session:
+            subs = await BattleRepository(session).list_submissions(battle_id)
+        demo_finals = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
+        assert len(demo_finals) == 1, "the demo opponent actually answered"
+
+        assert judge.await_count == 1, "exactly the demo answer call, no judge panel yet"
+        _, kwargs = judge.call_args
+        assert kwargs["wire_model"] == "kimi-k3", "demo answer routed to kimi-k3"
+        assert kwargs["temperature"] == 1.0, "kimi requires temperature 1.0"
+
+    async def test_judge_panel_stays_on_glm(
+        self, session_maker, db_session, task_pool
+    ) -> None:
+        """Only the demo ANSWER moves to kimi; judging stays on the glm judge
+        model. The judge panel call carries the glm wire model, never kimi's.
+        """
+        battle_id, agent_a, _agent_b, _, _ = await _make_demo_challenge(db_session)
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+
+        # The demo answer must be benign prose (not a judge-shaped JSON, which the
+        # injection guard would quarantine before the panel ever calls the model);
+        # the panel calls return a real judge verdict.
+        async def by_model(*_a, **kwargs):
+            if kwargs.get("wire_model") == "kimi-k3":
+                return "A plain, ordinary demo answer to the task."
+            return VALID_JUDGE_REPLY
+
+        judge = AsyncMock(side_effect=by_model)
+
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", judge):
+            await drive()
+        async with session_maker() as session:
+            b = await BattleRepository(session).get(battle_id)
+            await AgentEventRepository(session).mark_acked(
+                agent_a, [str(b["ready_check_event_id_a"])]
+            )
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_expires_at = NOW() - INTERVAL '1 second' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", judge):
+            await drive()
+            await _await_demo_drives()
+        async with session_maker() as session:
+            assert await BattleRepository(session).add_submission(
+                battle_id, Side.A, 1, "my answer", is_final=True
+            )
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_token = NULL, lease_expires_at = NULL "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", judge):
+            await drive()  # judge panel + settle
+
+        wire_models = {c.kwargs["wire_model"] for c in judge.call_args_list}
+        assert "glm-4.5-flash" in wire_models, "the judge panel ran on the glm model"
+        panel_only = wire_models - {"kimi-k3"}
+        assert panel_only == {"glm-4.5-flash"}, (
+            "every non-demo call is the glm judge; kimi is the demo answer only"
+        )
+
+    async def test_demo_answer_timeout_is_ninety_seconds(self) -> None:
+        """The detached demo answer's hard ceiling is 90s — enough for a kimi
+        answer plus headroom, still well inside the ~15-minute battle deadline.
+        The answer is detached, so a longer bound cannot freeze the reconcile
+        pass; it only bounds the background task's lifetime.
+        """
+        assert DEMO_ANSWER_TIMEOUT_SECONDS == 90.0
