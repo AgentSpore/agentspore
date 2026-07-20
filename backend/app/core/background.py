@@ -11,6 +11,29 @@ Leader lock uses Redis `SET NX EX`; only the holder runs `run_once`.
 Non-leaders poll at `non_leader_poll_s` so they pick up work fast if
 the leader crashes.
 
+The lease is held for the DURATION of `run_once` — renewed while it runs,
+then released (ownership-checked compare-and-delete) in the loop's
+`finally`. `lock_ttl_s` is therefore a crash-safety bound, NOT the cadence:
+the cadence is `interval_s`. A lease that outlived its cycle would make the
+task fail to re-acquire its own lock and stretch the period to
+max(interval_s, lock_ttl_s).
+
+How to choose `lock_ttl_s` (read this before changing one):
+
+It answers exactly ONE question — *how long may a CRASHED worker's lease
+block its replacement?* It is NOT "how long does run_once take" (renewal
+covers that, however long it runs) and it is NOT "a bit more than
+interval_s" (that pairing was a workaround for the missing release, not a
+design; it is gone).
+
+- Upper bound: this task's tolerance for being stalled after a crash. A
+  user-visible reconciler wants seconds; a nightly-ish cleanup can wait.
+- Lower bound: renewal fires every `lock_ttl_s // 3`, which must stay
+  comfortably above a Redis round-trip so a transient blip cannot cost a
+  lease mid-run. `MIN_RENEW_INTERVAL_S` pins that floor, and
+  `test_scheduler_leader_lock.py` fails the build if any task drops below
+  3x it — a too-small TTL must break loudly, not silently lose leases.
+
 Tasks that coordinate via row-level atomic claims (e.g. cron scheduler
 with `FOR UPDATE SKIP LOCKED`) set `lock_ttl_s = None` to disable the
 leader gate — row-level claim is already exactly-once.
@@ -29,6 +52,7 @@ Redis outage behaviour is a per-task choice (`fail_closed`):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from abc import ABC, abstractmethod
 from uuid import uuid4
 
@@ -48,6 +72,23 @@ if redis.call('get', KEYS[1]) == ARGV[1] then
 end
 return 0
 """
+
+# Release only our OWN lease: compare-and-delete. A worker whose lease already
+# expired (and was re-acquired by someone else) must never delete the new
+# holder's key — that would let a third worker in and defeat the whole gate.
+_RELEASE_LOCK_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
+
+# Floor for the renewal interval (`lock_ttl_s // 3`). A renewal is one Redis
+# round-trip on an otherwise idle asyncio task, so single-digit seconds is
+# already generous; the point is that no task may set a TTL so small that a
+# momentary Redis hiccup costs it the lease while run_once is still going.
+# Enforced over ALL_TASKS by test_scheduler_leader_lock.py.
+MIN_RENEW_INTERVAL_S = 5
 
 
 class ScheduledTask(ABC):
@@ -84,7 +125,13 @@ class ScheduledTask(ABC):
                 logger.warning("Task {} error: {}", self.name, e)
             finally:
                 if renewer is not None:
+                    # Await the cancellation before releasing: a renewer caught
+                    # mid-EXPIRE would otherwise re-arm the key we just deleted,
+                    # leaving an orphan lease that blocks the next lock_ttl_s.
                     renewer.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await renewer
+                await self._release_leader()
             await asyncio.sleep(self.interval_s)
 
     def _lock_key(self) -> str:
@@ -140,6 +187,36 @@ class ScheduledTask(ABC):
         except Exception as e:
             logger.warning("Lease renewal {}: {}", self.name, e)
 
+    async def _release_leader(self) -> None:
+        """Drop our own lease as soon as the cycle ends.
+
+        The lease is held for the DURATION of run_once, not for lock_ttl_s.
+        Without this release the key survives the sleep between cycles and the
+        task's own next `SET NX` fails against its own stale lock, so the
+        effective period becomes max(interval_s, lock_ttl_s) instead of
+        interval_s (battle_run: 10 minutes instead of 30 seconds). With the
+        release, lock_ttl_s is purely the crash-safety bound: the longest a
+        dead worker's lease can block its replacement.
+
+        Never raises into the loop — a Redis outage on release is a lease we
+        leave to expire on its own, not a reason to kill the task.
+        """
+        token, self._lock_token = self._lock_token, None
+        if token is None or self.lock_ttl_s is None:
+            return
+        try:
+            redis = await get_redis()
+            # register_script(...) over redis.eval(...): eval is typed
+            # `Awaitable[str] | str` (one stub shared by the sync and async
+            # clients) with loosely-typed *keys_and_args, so a direct call is
+            # neither awaitable nor argument-checkable under `ty`. The Script
+            # object models keys/args explicitly and its async __call__ returns
+            # a real awaitable. Same runtime EVAL; a properly typed boundary.
+            release = redis.register_script(_RELEASE_LOCK_LUA)
+            await release(keys=[self._lock_key()], args=[token])
+        except Exception as e:
+            logger.warning("Leader lock release {}: {}", self.name, e)
+
     @abstractmethod
     async def run_once(self) -> None:
         ...
@@ -148,7 +225,12 @@ class ScheduledTask(ABC):
 class GovernanceExpireTask(ScheduledTask):
     name = "governance_expire"
     interval_s = 600
-    lock_ttl_s = 620
+    # Crash bound. run_once is a single UPDATE, and an item sitting 'pending'
+    # a couple of minutes past its own expires_at is not something an operator
+    # can perceive against a 10-minute cadence — so tolerance is wide. 120
+    # (renewal every 40s) rather than the old 620, which would have stalled the
+    # TTL sweep for over ten minutes after one crash.
+    lock_ttl_s = 120
 
     async def run_once(self) -> None:
         async with async_session_maker() as db:
@@ -171,7 +253,12 @@ class HackathonAdvanceTask(ScheduledTask):
 
     name = "hackathon_advance"
     interval_s = 60
-    lock_ttl_s = 80
+    # Crash bound. These transitions are user-visible — a hackathon that should
+    # have opened for voting but still reads 'active' is something participants
+    # notice — so tolerance is one missed cycle, not several. 60 gives renewal
+    # every 20s, comfortably above MIN_RENEW_INTERVAL_S for a run_once that is
+    # a handful of UPDATEs plus one row loop.
+    lock_ttl_s = 60
 
     async def run_once(self) -> None:
         async with async_session_maker() as db:
@@ -250,7 +337,13 @@ class GitHubSyncTask(ScheduledTask):
 
     name = "github_sync"
     interval_s = 300
-    lock_ttl_s = 320
+    # Crash bound, deliberately matched to non_leader_poll_s below: that 60 is
+    # an explicit statement that this task wants fast failover, and the old 320
+    # silently defeated it — a non-leader polled every 60s only to be refused
+    # for the next five minutes. The paginated GitHub walk can genuinely run
+    # for minutes, but renewal (every 20s, on its own asyncio task that only
+    # needs Redis) covers that; the TTL does not have to.
+    lock_ttl_s = 60
     initial_delay_s = 30
     non_leader_poll_s = 60  # fast failover if leader crashes
 
@@ -353,7 +446,12 @@ class GitHubSyncTask(ScheduledTask):
 class MixerCleanupTask(ScheduledTask):
     name = "mixer_cleanup"
     interval_s = 3600
-    lock_ttl_s = 3620
+    # Crash bound. The most tolerant task here: expired mixer sessions are
+    # already expired, so sweeping them a few minutes late changes nothing an
+    # agent or operator can observe. 300 (renewal every 100s) — still a wide
+    # margin, but not the old 3620, which let one crash park cleanup for an
+    # entire hour.
+    lock_ttl_s = 300
 
     async def run_once(self) -> None:
         async with async_session_maker() as db:
@@ -423,7 +521,13 @@ class BattleRunTask(ScheduledTask):
 
     name = "battle_run"
     interval_s = 30
-    lock_ttl_s = 600
+    # Crash bound, and the tightest one here: this is the most user-visible
+    # task on the platform — a battle stuck in 'accepted' is watched by the
+    # people who submitted it. interval_s is 30, so 60 costs two missed cycles
+    # after a crash, against the ten minutes the old 600 cost. Renewal every
+    # 20s keeps a 3-minute judge panel's lease alive, since renewal runs on its
+    # own asyncio task and never waits on the judge calls.
+    lock_ttl_s = 60
     initial_delay_s = 20
     fail_closed = True
 
