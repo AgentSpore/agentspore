@@ -22,11 +22,15 @@ includes ``presented_order`` (two rows per replicate) while the collapsed-vote
 key omits it (one row per replicate), so the quorum arithmetic cannot be
 inflated even by a bug in here.
 
-**Malformed output is ABSTAIN, never TIE.** A tie is a substantive verdict that
-moves Elo toward the underdog. A judge that returned garbage has said nothing,
-and minting tie-Elo from it would let a broken judge silently rate real agents.
-Abstentions and errors leave the quorum denominator, mirroring
-council_service.py:583-591.
+**Malformed output is RETRIED; only a deliberate decline is ABSTAIN, and
+neither is ever a TIE.** A tie is a substantive verdict that moves Elo toward
+the underdog, so a judge that returned garbage must never mint tie-Elo. But it
+must not silently cost the verdict either: an unparsable reply says nothing
+about the submissions — it is a failed call, like a timeout — so it goes back
+to the reclaim loop for another attempt under the same bounded budget. Only a
+well-formed ``{"vote": "abstain"}`` is a real abstention, and that one is
+final: the judge understood and declined. Abstentions and errors leave the
+quorum denominator, mirroring council_service.py:583-591.
 
 **The prompt boundary.** Fighter submissions are untrusted text written by
 adversaries with an incentive to win. The defence is structural, not lexical:
@@ -52,6 +56,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from loguru import logger
 
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.llm_gate import LLMGate, LLMGateTimeoutError
@@ -120,6 +125,10 @@ Reply with ONE JSON object and nothing else:
 or "tie". No other value is valid.
 - "scores" MUST contain exactly the rubric criterion keys from the document — no \
 more, no fewer.
+- Inside "reasoning", refer to a submission ONLY by its full label \
+(submission_alpha / submission_beta). Never abbreviate one to "alpha" or "beta": \
+those words have ordinary technical meanings and the label is what identifies \
+the submission.
 - Output no prose, no markdown fence, no explanation outside the JSON object.\
 """
 
@@ -668,12 +677,27 @@ def parse_judge_response(
       claim to understand the parts we do recognise;
     * a vote outside the label vocabulary (including a literal "a"/"b", which
       the model was never given) -> a forged or hallucinated side;
+      the ONE exception is the literal "abstain", which is a well-formed
+      DECLINE — see below;
     * confidence non-finite or outside [0,1] -> NaN compares false against every
       bound and would sail through a naive check, then poison the mean;
     * score keys not exactly the rubric snapshot -> the judge graded a rubric it
       invented, which is precisely what an injected submission asks it to do.
 
-    The caller turns None into ABSTAIN, never TIE.
+    ``None`` means UNPARSABLE — the judge did not answer our contract at all.
+    That is a fact about the CALL, not about the submissions, so the caller
+    treats it exactly like a transport failure and RETRIES it (the reclaim loop
+    is already bounded by the per-battle attempt cap). Freezing it as a terminal
+    abstention instead is what cost a live battle its verdict: four unanimous
+    half-votes were discarded because one replicate's reply failed to parse
+    once and was never re-asked.
+
+    A well-formed ``{"vote": "abstain"}`` is the opposite case: the model
+    understood the contract and declined. That is a JUDGEMENT, is returned as
+    :data:`Vote.ABSTAIN`, and is NEVER retried — re-asking a judge that
+    deliberately declined until it picks a side would manufacture a verdict.
+    "abstain" is accepted but deliberately NOT advertised in the output
+    contract: we honour a decline, we do not invite one.
     """
     try:
         obj = json.loads(_extract_json_object(raw))
@@ -696,6 +720,8 @@ def parse_judge_response(
         vote = Vote.A if side is Side.A else Vote.B
     elif vote_value == "tie":
         vote = Vote.TIE
+    elif vote_value == "abstain":
+        vote = Vote.ABSTAIN
     else:
         return None
 
@@ -728,9 +754,108 @@ def parse_judge_response(
         presented_order=PresentedOrder.AB,  # overwritten by the caller that knows
         vote=vote,
         confidence=confidence,
-        reasoning=(reasoning or "")[:500] or None,
+        reasoning=normalize_reasoning_sides(reasoning, label_map)[:500] or None,
         scores=parsed_scores,
     )
+
+
+# The judge writes prose about "submission_alpha" / "submission_beta" — labels
+# whose meaning is the PRESENTATION SLOT, not the fighter. Under presented_order
+# 'ba' the first slot is side B, so a reply reading "submission_beta is stronger"
+# is a vote for side A. The vote is mapped correctly; the prose was stored raw and
+# therefore named the opposite side of the vote sitting beside it in the same row.
+#
+# ONLY THE WHOLE LABEL IS REWRITTEN. The bare words "alpha" and "beta" are
+# ordinary technical vocabulary — "alpha-beta pruning", "alpha = 0.05", "the beta
+# coefficient" — and the live task pool already carries `algorithms` and `data`
+# categories where they occur honestly. A rule that rewrote the bare words turned
+# a correct sentence into nonsense that ALSO named a side:
+#     "Alpha uses alpha-beta pruning"  ->  "side B uses side B-side A pruning"
+# That is worse than the defect it fixes, so the pattern demands the
+# ``submission`` prefix, which no honest sentence about pruning or significance
+# levels contains. The residual — a judge that writes a bare "beta is stronger" —
+# is closed at the SOURCE instead, by the output contract instructing the model to
+# name submissions only by their full labels (see _JUDGE_OUTPUT_CONTRACT). What a
+# non-compliant model still writes is left BYTE-IDENTICAL rather than mangled:
+# the authoritative statement of who won is the ``vote`` column, and any UI must
+# render that, never parse the prose.
+_LABEL_TOKEN_RE = re.compile(r"\bsubmission[_ ]?(alpha|beta)\b", re.IGNORECASE)
+
+
+def normalize_reasoning_sides(reasoning: str | None, label_map: dict[str, Side]) -> str:
+    """Rewrite the judge's opaque slot LABELS into the side each one denotes.
+
+    Applied at parse time, so every persisted ``reasoning`` — raw run and
+    collapsed vote alike — speaks the same vocabulary as the ``vote`` column and
+    cannot be read as the wrong fighter. The substitution is the same map that
+    resolves the vote itself, so the two can never diverge.
+
+    Scope is deliberately narrow: full labels only, never the bare words "alpha"
+    and "beta", which are ordinary domain vocabulary (see the comment above). The
+    rewrite only ever SHORTENS the text — ``submission_alpha`` (16 chars) becomes
+    ``side A`` (6) — so it cannot push content past the caller's 500-char cap.
+    """
+    if not reasoning:
+        return ""
+
+    def _to_side(match: re.Match[str]) -> str:
+        label = LABEL_ONE if match.group(1).lower() == "alpha" else LABEL_TWO
+        side = label_map.get(label)
+        return f"side {side.value.upper()}" if side is not None else match.group(0)
+
+    return _LABEL_TOKEN_RE.sub(_to_side, reasoning)
+
+
+# TELEMETRY ONLY — this pair measures the residual the narrow rewrite leaves
+# behind, and changes nothing about what is stored or shown.
+#
+# A judge that ignores the output contract writes a bare "Beta is stronger",
+# which `normalize_reasoning_sides` deliberately does not touch. We want to know
+# HOW OFTEN that happens without paying the price of acting on it: the bare token
+# carries no polarity — "beta is stronger" contradicts vote='b' while "beta is
+# weaker" agrees with it, and the two sentences contain the SAME token. Any rule
+# that suppressed or rewrote on this signal would be a coin flip whose failure
+# mode is destroying a correct explanation. So the signal is counted, never
+# enforced: a hit costs exactly one server-side log line.
+#
+# The misfire is therefore expected and accepted. "The beta coefficient in the
+# regression is wrong." fires this predicate — it is honest domain vocabulary,
+# not a mislabelled side (see the comment above `_LABEL_TOKEN_RE`). The rate this
+# emits is an upper bound on the defect, not a count of it.
+_BARE_SIDE_WORD_RE = re.compile(r"\b(alpha|beta)\b", re.IGNORECASE)
+
+
+def has_residual_side_label(reasoning: str | None) -> bool:
+    """Report whether a normalised ``reasoning`` still carries a bare side word.
+
+    Answers one question and takes no action on the answer. ``True`` means the
+    text contains "alpha" or "beta" as a standalone word, which after
+    normalisation can only come from a judge that ignored the output contract —
+    or from a submission that legitimately discusses alpha-beta pruning or a beta
+    coefficient. The two are indistinguishable at token level, which is exactly
+    why this is a counter and not a filter.
+    """
+    if not reasoning:
+        return False
+    return _BARE_SIDE_WORD_RE.search(reasoning) is not None
+
+
+def warn_on_residual_side_label(run_id: str, vote: Vote, reasoning: str | None) -> None:
+    """Emit one warning line when a persisted reasoning keeps a bare side word.
+
+    The reasoning text is NEVER logged. It derives from untrusted fighter
+    submissions, and this module's standing discipline is to log the type and the
+    identifiers, never the value — so the line carries the run id and the vote,
+    enough to fetch the row deliberately, and nothing that leaks content into a
+    log aggregator.
+    """
+    if has_residual_side_label(reasoning):
+        logger.warning(
+            "judge run {} (vote {}) kept a bare alpha/beta token in its reasoning; "
+            "telemetry only, the text is stored unmodified",
+            run_id,
+            vote.value,
+        )
 
 
 def _extract_json_object(raw: str) -> str:
@@ -759,8 +884,8 @@ def collapse_pair(first: JudgeRunResult, second: JudgeRunResult, seed: str) -> C
 
     * either half ``error`` -> ``error``. A pair with a failed half is not a
       half-strength opinion; we simply did not run the replicate.
-    * either half invalid/abstain -> ``abstain``. Same logic, and pointedly NOT
-      a tie: a judge that spoke nonsense once has not endorsed a draw.
+    * either half abstain -> ``abstain``. Same logic, and pointedly NOT a tie:
+      a judge that declined once has not endorsed a draw.
     * both halves the same side -> that side, confidence = mean. Order-robust,
       which is the strongest signal this design can produce.
     * both halves tie -> tie.
@@ -781,7 +906,7 @@ def collapse_pair(first: JudgeRunResult, second: JudgeRunResult, seed: str) -> C
 
     if Vote.ABSTAIN in votes:
         return CollapsedVote(
-            replicate_seed=seed, vote=Vote.ABSTAIN, reasoning="one or both halves were invalid"
+            replicate_seed=seed, vote=Vote.ABSTAIN, reasoning="one or both halves abstained"
         )
 
     if first.vote is second.vote:
