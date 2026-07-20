@@ -81,6 +81,7 @@ from app.services.battle_judges import (
     build_judge_payload,
     call_judge_model,
     collapse_pair,
+    judge_temperature_for,
     parse_judge_response,
     replicate_seed,
     resolve_verdict,
@@ -109,6 +110,21 @@ JUDGE_RUN_LEASE_SECONDS = 180
 # once spent, it collapses to a terminal 'error' vote so the panel can conclude
 # rather than waiting on a slot that will never answer.
 JUDGE_RUN_MAX_ATTEMPTS = 4
+
+# How long a judging battle waits before the next reconcile pass re-attempts a
+# replicate that could not be judged this pass (every roster model failed
+# transport, or a half is still reclaimable). It used to wait the whole
+# BATTLE_LEASE_SECONDS (300): run_judge_panel renews the battle lease to 300s
+# after each half, so a non-settling pass left the row unclaimable for ~5
+# minutes — the exact "5-6 min between attempt 2 and attempt 3" a live 14-minute
+# battle showed. Judging is an INTERACTIVE feature; a multi-minute stall per
+# retry is unacceptable. On the not-settled path the lease is shrunk to this
+# value so the next 30s reconcile tick re-attempts. It does NOT change the
+# attempt COUNT: each re-claim still increments lease_attempt_count toward
+# RUNNING_MAX_ATTEMPTS exactly as before — only the wall-clock wait shrinks.
+# Kept a few seconds (not 0) so a genuinely throttled provider is not hammered
+# faster than one reconcile tick.
+JUDGE_RETRY_BACKOFF_SECONDS = 10
 
 # How far past a battle's deadline both fighters stay reserved after it starts.
 # Small: the reservation must outlast the whole battle so a fighter cannot be
@@ -741,6 +757,7 @@ class BattleRunner:
             base_url=base_url,
             api_key=api_key,
             wire_model=wire_model_name(JUDGE_MODEL),
+            temperature=judge_temperature_for(JUDGE_MODEL),
         )
         settings = get_settings()
         extra_ids = [m for m in settings.battle_judge_models if m != JUDGE_MODEL]
@@ -765,6 +782,7 @@ class BattleRunner:
                     base_url=creds["base_url"],
                     api_key=creds["api_key"],
                     wire_model=wire_model_name(mid),
+                    temperature=judge_temperature_for(mid),
                 )
             )
         return roster
@@ -862,8 +880,15 @@ class BattleRunner:
             halves: list[JudgeRunResult] = []
             # A different model (where >1 reachable) AND a different system-prompt
             # paraphrase per replicate, so no single injected string can steer all
-            # three identically.
+            # three identically. ``model`` is the ASSIGNED model — used first, and
+            # the one recorded as this replicate's judge_ref, so the panel's model
+            # diversity reflects the assignment. ``fallbacks`` are the other roster
+            # models, tried in order ONLY when the assigned one cannot answer, so a
+            # dead model never strands a replicate below quorum (opportunistic
+            # diversity, guaranteed quorum). With a single-model roster fallbacks
+            # is empty and behaviour is exactly as before.
             model = roster[replicate_no % len(roster)]
+            fallbacks = [m for m in roster if m.model_id != model.model_id]
             system_prompt = JUDGE_SYSTEM_PROMPTS[replicate_no % len(JUDGE_SYSTEM_PROMPTS)]
 
             for order in PRESENTED_ORDERS:
@@ -878,6 +903,7 @@ class BattleRunner:
                         submission_a=final_by_side.get(Side.A.value),
                         submission_b=final_by_side.get(Side.B.value),
                         model=model,
+                        fallbacks=fallbacks,
                         system_prompt=system_prompt,
                         battle_lease_token=lease_token,
                         budget=budget,
@@ -1069,6 +1095,7 @@ class BattleRunner:
         system_prompt: str,
         battle_lease_token: str | None = None,
         budget: BattleJudgeBudgetService | None = None,
+        fallbacks: list[JudgeModel] | None = None,
     ) -> JudgeRunResult:
         """One raw run: claim the slot, reserve a budget unit, call, write back.
 
@@ -1076,7 +1103,20 @@ class BattleRunner:
         ``system_prompt`` its assigned paraphrase (Track 2 diversity). Both are
         threaded through so the run row's judge_ref, the budget ledger's
         provider/model, the system message and the wire model all reflect the
-        model that actually judged this replicate.
+        model assigned to this replicate.
+
+        ``fallbacks`` are the other roster models, tried IN ORDER only when the
+        assigned model raises a transport failure (429/throttle/exhausted/gate
+        saturation/permanent balance) — so a single dead model can never leave a
+        half permanently ``error`` and strand the replicate below quorum. The
+        rescue is bounded (at most len(roster) provider calls, all inside the ONE
+        budget unit already reserved for this half — a failed provider call is not
+        billed, so trying a live model after a dead one costs nothing and does not
+        raise the per-battle cap). The reservation, breaker signal and run-row
+        judge_ref stay keyed to the ASSIGNED model: a rescue is a reliability
+        event, logged server-side, not a re-attribution of the assignment. With
+        an empty ``fallbacks`` (single-model roster) this is exactly the prior
+        behaviour: try once, fail, release.
 
         When ``budget`` is supplied (the production path) a call unit is reserved
         in an independent transaction BEFORE the provider request — refused at the
@@ -1175,29 +1215,62 @@ class BattleRunner:
             try:
                 if budget is not None:
                     await breaker_record_attempt()
-                raw = await call_judge_model(
-                    client=http,
-                    base_url=model.base_url,
-                    api_key=model.api_key,
-                    messages=messages,
-                    seed=seed,
-                    gate=self.gate,
-                    wire_model=model.wire_model,
-                )
-            except JudgeTransportError as exc:
-                logger.warning("judge run {} failed: {}", run_id, exc)
-                if budget is not None:
-                    # Feed the breaker: a permanent (balance/auth) failure opens
-                    # it at once, transient failures only on threshold.
-                    await breaker_record_failure(permanent=exc.permanent)
-                if reservation is not None:
-                    await budget.settle_call(
-                        reservation.ledger_id,
-                        succeeded=False,
-                        error_class=type(exc).__name__,
-                    )
-                    reservation_settled = True
-                return JudgeRunResult(presented_order=order, vote=Vote.ERROR)
+                # Try the assigned model, then each fallback, until one answers.
+                # Only when EVERY candidate fails is the half a real failure — a
+                # rescued call keeps the half alive and the panel at quorum.
+                raw = None
+                last_exc: JudgeTransportError | None = None
+                for candidate in (model, *(fallbacks or ())):
+                    try:
+                        raw = await call_judge_model(
+                            client=http,
+                            base_url=candidate.base_url,
+                            api_key=candidate.api_key,
+                            messages=messages,
+                            seed=seed,
+                            gate=self.gate,
+                            wire_model=candidate.wire_model,
+                            temperature=candidate.temperature,
+                        )
+                        if candidate is not model:
+                            logger.info(
+                                "judge run {} rescued: assigned {} unavailable, "
+                                "judged by fallback {}",
+                                run_id, model.model_id, candidate.model_id,
+                            )
+                        break
+                    except JudgeTransportError as exc:
+                        last_exc = exc
+                        logger.warning(
+                            "judge run {} model {} failed: {}",
+                            run_id, candidate.model_id, exc,
+                        )
+                if raw is None:
+                    # No roster model could answer this half. NOW it is a real
+                    # failure: feed the breaker (permanence from the last error),
+                    # settle the budget unit failed, and release the run row to
+                    # 'failed' so the next reconcile pass re-attempts it promptly
+                    # (mirrors the unparsable-reply path — a failed call is
+                    # retryable within the per-battle attempt cap, and leaving it
+                    # 'running' to lapse is the old multi-minute stall).
+                    # last_exc is always set here: the loop always runs the
+                    # assigned model first, and raw is None only via the except.
+                    permanent = last_exc.permanent if last_exc is not None else False
+                    if budget is not None:
+                        await breaker_record_failure(permanent=permanent)
+                    if reservation is not None:
+                        error_class = (
+                            type(last_exc).__name__ if last_exc else "JudgeTransportError"
+                        )
+                        await budget.settle_call(
+                            reservation.ledger_id,
+                            succeeded=False,
+                            error_class=error_class,
+                        )
+                        reservation_settled = True
+                    await self.repo.fail_judge_run(run_id, run_token)
+                    await self.db.commit()
+                    return JudgeRunResult(presented_order=order, vote=Vote.ERROR)
             finally:
                 if self.http is None:
                     await http.aclose()
@@ -1401,6 +1474,17 @@ async def _judge_and_settle(
             if len(judgements) >= REPLICATE_COUNT:
                 if await runner.settle_battle(battle_id, token) is not None:
                     counts["settled"] += 1
+            else:
+                # The panel did not reach quorum this pass — a replicate is still
+                # reclaimable. run_judge_panel renewed the battle lease to the full
+                # BATTLE_LEASE_SECONDS, which would make the next re-attempt wait
+                # ~5 minutes. Shrink it so the next reconcile tick re-attempts in
+                # seconds instead. Guarded by the token: a no-op if the panel
+                # aborted on a lost lease (we no longer own the row).
+                await runner.repo.renew_battle_lease(
+                    battle_id, token, JUDGE_RETRY_BACKOFF_SECONDS
+                )
+                await runner.db.commit()
         except JudgeInjectionSuspected as exc:
             # A submission carried judge-directed injection shapes. The panel never
             # ran, so no paid call was spent. Attribution decides the outcome (F3):
