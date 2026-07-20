@@ -1899,7 +1899,12 @@ async def _drive_demo_answer(session_factory, gate, battle: dict, api_key, base_
 
 
 async def _await_demo_drives() -> None:
-    """Await every in-flight detached demo drive. For shutdown/tests only."""
+    """Await every in-flight detached demo drive. Test helper only.
+
+    Not wired into app shutdown: an abandoned drive is already safe — its
+    CancelledError handler writes nothing and close_deadline degrades the
+    demo side to a silent fighter, so the battle still reaches a verdict.
+    """
     await asyncio.gather(*list(_demo_inflight.values()), return_exceptions=True)
 
 
