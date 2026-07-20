@@ -26,8 +26,34 @@ from app.core.background import ALL_TASKS, MIN_RENEW_INTERVAL_S, CronSchedulerTa
 MAX_CRASH_STALL_S = 300
 
 
+class _FakeScript:
+    """What redis-py's register_script returns: a callable bound to a script.
+
+    Mirrors the compare-and-delete / compare-and-expire the real Lua does, so a
+    test can assert the store the way production Redis would leave it.
+    """
+
+    def __init__(self, redis: FakeRedis, script: str) -> None:
+        self._redis = redis
+        self._script = script
+
+    async def __call__(self, keys: list[str], args: list[str]):
+        key, token = keys[0], args[0]
+        self._redis.evals.append(self._script)
+        if self._redis.store.get(key) != token:
+            return 0
+        if "del" in self._script:
+            del self._redis.store[key]
+            return 1
+        return 1  # expire / renew
+
+
 class FakeRedis:
-    """Minimal Redis double: SET NX + the two Lua scripts the task evaluates.
+    """Minimal Redis double: SET NX + the two Lua scripts the task runs.
+
+    `eval` covers the renew path (unchanged production code at line ~179);
+    `register_script` covers the release path (the typed script API). Both feed
+    the same `evals` list so a test can assert "no Lua ran against the store".
 
     Deliberately does NOT implement key expiry. Expiry is a fallback for a
     crashed worker; a healthy loop's cadence must come from the explicit
@@ -53,6 +79,9 @@ class FakeRedis:
             del self.store[key]
             return 1
         return 1  # expire / renew
+
+    def register_script(self, script: str) -> _FakeScript:
+        return _FakeScript(self, script)
 
 
 class _CountingTask(ScheduledTask):
