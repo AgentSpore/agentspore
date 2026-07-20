@@ -36,6 +36,7 @@ exactly-once billing needs it from the provider, not from this file.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -191,6 +192,14 @@ TASK_BIND_LEASE_SECONDS = 15
 # be judged, never a retroactive abort.
 SILENT_FIGHTER_SEQ_NO = 9_999
 SILENT_FIGHTER_ERROR = "no submission before deadline"
+
+# Hard ceiling on the demo opponent's live answer call. The demo answer is the
+# ONLY step in a reconcile pass that awaits a provider, and it now runs detached
+# (see _spawn_demo_drive) so it can never freeze the pass — but a hung provider
+# would still leak a background task forever without this bound. On timeout the
+# task writes nothing and close_deadline degrades the demo side to silent-fighter,
+# so the battle is still judged.
+DEMO_ANSWER_TIMEOUT_SECONDS = 15.0
 
 
 # The demo opponent's system framing. Deliberately plain: the demo agent is a
@@ -1822,6 +1831,83 @@ async def reap_once(session_factory, provider: dict | None = None) -> dict[str, 
     return counts
 
 
+# Battle ids whose demo answer is being generated in a DETACHED background task.
+# Two jobs, both load-bearing: it dedups (never spawn a second driver for a battle
+# already in flight — a former leader and its replacement can run a pass at the
+# same instant), AND it keeps a strong reference to the Task so the event loop
+# does not garbage-collect it mid-await (the documented asyncio.create_task
+# caveat). The done-callback removes the entry, so the map only ever holds truly
+# in-flight drives.
+_demo_inflight: dict[str, asyncio.Task] = {}
+
+
+def _spawn_demo_drive(session_factory, gate, battle: dict, api_key, base_url) -> None:
+    """Fire-and-forget the demo opponent's live answer OFF the reconcile pass.
+
+    The reconcile pass is one serialized asyncio task that drives EVERY battle;
+    the demo answer is the only step in it that awaits a live LLM call. Awaited
+    inline, a slow or flaky provider froze the whole pass and stalled ALL battles
+    (not just demo ones) — which is why demo mode was pulled from production. This
+    detaches it: the pass spawns the call and returns immediately.
+
+    The detached task runs on its OWN db session (never the reconcile session —
+    sharing a session across the reconcile pass and a detached task raced into
+    IllegalStateChangeError) and under a hard timeout. On timeout/failure it
+    writes nothing and close_deadline degrades the demo side to silent-fighter, so
+    the battle still reaches a judged verdict. The in-flight guard makes a repeat
+    spawn for the same battle a no-op.
+    """
+    battle_id = str(battle["id"])
+    if battle_id in _demo_inflight:
+        return
+    task = asyncio.create_task(
+        _drive_demo_answer(session_factory, gate, battle, api_key, base_url)
+    )
+    _demo_inflight[battle_id] = task
+    task.add_done_callback(lambda _t, bid=battle_id: _demo_inflight.pop(bid, None))
+
+
+async def _drive_demo_answer(session_factory, gate, battle: dict, api_key, base_url) -> None:
+    """Generate + submit the demo opponent's answer, detached and time-bounded.
+
+    Opens its OWN short session (invariant: never the reconcile session). Every
+    failure — timeout, transport, shutdown cancellation — is swallowed here on
+    purpose: the demo side then falls to close_deadline's silent-fighter path, so
+    the battle is still judged. Never propagates and never touches the reconcile
+    pass.
+    """
+    battle_id = str(battle["id"])
+    try:
+        async with session_factory() as session:
+            runner = BattleRunner(session, gate)
+            await asyncio.wait_for(
+                runner.drive_demo_submission(battle, api_key, base_url),
+                timeout=DEMO_ANSWER_TIMEOUT_SECONDS,
+            )
+    except TimeoutError:
+        logger.warning(
+            "battle {} demo answer timed out after {}s — degrading to deadline silence",
+            battle_id,
+            DEMO_ANSWER_TIMEOUT_SECONDS,
+        )
+    except asyncio.CancelledError:
+        # Process shutdown (or a test tearing the task down). Leave the demo side
+        # to the deadline; do not re-raise into a bare fire-and-forget task.
+        logger.info("battle {} demo drive cancelled", battle_id)
+    except Exception as exc:
+        logger.warning("battle {} demo drive failed: {}", battle_id, exc)
+
+
+async def _await_demo_drives() -> None:
+    """Await every in-flight detached demo drive. Test helper only.
+
+    Not wired into app shutdown: an abandoned drive is already safe — its
+    CancelledError handler writes nothing and close_deadline degrades the
+    demo side to a silent fighter, so the battle still reaches a verdict.
+    """
+    await asyncio.gather(*list(_demo_inflight.values()), return_exceptions=True)
+
+
 async def reconcile_once(
     session_factory,
     gate: LLMGate,
@@ -1855,7 +1941,6 @@ async def reconcile_once(
     """
     counts = {
         "demo_accepted": 0,
-        "demo_submitted": 0,
         "armed": 0,
         "queued": 0,
         "started": 0,
@@ -1941,21 +2026,18 @@ async def reconcile_once(
             counts["queued"] += 1
 
     # 3. queued -> running, with both battle_turn rows. Cheap CAS + transport.
-    #    A demo battle's opponent submits its one live answer immediately after
-    #    the start, in a separate session — add_submission is guarded on
-    #    status='running' alone, so it needs no lease (start_queued's 300s battle
-    #    lease would otherwise block a same-pass re-claim). Provider-gated; a
-    #    failure just leaves the demo side to the deadline's silence.
+    #    A demo battle's opponent then submits its one live answer — but that is
+    #    the only LLM call in this whole pass, so it is DETACHED (_spawn_demo_drive)
+    #    onto its own session and hard timeout rather than awaited inline: a slow or
+    #    flaky provider must never freeze the serialized reconcile pass and stall
+    #    every other battle. The spawn returns immediately; add_submission inside it
+    #    is guarded on status='running' alone (no lease needed), and a failure just
+    #    leaves the demo side to the deadline's silence. Provider-gated.
     for battle in await claim(BattleStatus.QUEUED, POLL_MAX_ATTEMPTS, POLL_LEASE_SECONDS):
         if await step(battle, "start", lambda r, b: r.start_queued(b, token)):
             counts["started"] += 1
             if battle.get("is_demo") and provider is not None:
-                if await step(
-                    battle,
-                    "demo-submit",
-                    lambda r, b: r.drive_demo_submission(b, api_key, base_url),
-                ):
-                    counts["demo_submitted"] += 1
+                _spawn_demo_drive(session_factory, gate, battle, api_key, base_url)
 
     # 4. running -> judging. The ONLY phases that spend money (this and the
     #    judging resume below), so both keep claim_battles_for_reconcile's strict
