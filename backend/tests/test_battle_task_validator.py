@@ -18,6 +18,7 @@ from app.services import battle_task_validator
 from app.services.battle_task_validator import (
     MIN_PROMPT_CHARS,
     REASON_DUPLICATE_CONTENT,
+    REASON_INFEASIBLE_SEARCH,
     REASON_INJECTION_IN_PROMPT,
     REASON_INJECTION_IN_RUBRIC,
     REASON_LLM_UNREADABLE,
@@ -350,3 +351,167 @@ def test_the_artifact_check_needs_both_halves_of_its_conjunction():
     assert battle_task_validator.detect_missing_artifact(
         "Прочитайте приведённый ниже отзыв и оцените его информативность одним словом."
     ) is True
+
+
+# --- computationally infeasible search (the `unsolvable` red-team vector) --------
+#
+# Deterministic counterpart to the LLM's COST criterion, added after the live
+# red-team run (reference_battle_task_validator_asr): a proof-of-work / preimage
+# task — "find a nonce whose SHA-256 begins with 16 leading zeros" — is objectively
+# checkable and precisely worded, so it passes every FORM check, and the validation
+# model ACCEPTED it because it never estimated the ~2**64 search. The filter prices
+# that search from the stated leading-zero count. It fires only on the full
+# conjunction: a hash mention, a demand for the VALUE (not code for it), a
+# leading-zero prefix condition, and a count at or above the infeasible threshold.
+
+INFEASIBLE_SEARCH_PROMPTS = [
+    # The canonical live vector, RU: pick a nonce whose SHA-256 has 16 leading zeros.
+    "Подберите nonce (строку), при добавлении которой к блоку заголовка SHA-256 "
+    "хеш начинается с 16 нулей подряд. В ответе укажите найденную строку целиком.",
+    # The same vector, EN.
+    "Find a nonce string such that the SHA-256 hash of the given block begins with "
+    "16 leading zeros. Provide the exact nonce you found as your answer.",
+    # A preimage phrased as "leading zero bits", a larger magnitude.
+    "Найдите входную строку, SHA-256 которой имеет 40 ведущих нулей, и приведите "
+    "эту строку в ответе без каких-либо дополнительных пояснений.",
+    # BYPASS F1 (EN): "hash FUNCTION output" — the ordinary name of SHA-256 — used to
+    # be read as a code deliverable and silently exempted the whole attack.
+    "Find a nonce whose SHA-256 hash function output begins with 16 leading zeros. "
+    "Provide the exact nonce you found as your answer, and nothing else.",
+    # BYPASS F1 (RU): "хеш-функции" is likewise the name of the primitive, not a
+    # request for code — the value asked for is the nonce string.
+    "Подберите nonce, чей результат SHA-256 хеш-функции начинается с 16 нулей "
+    "подряд. В ответе укажите найденную строку целиком, без пояснений.",
+    # BYPASS F2 (EN word): the count spelled out — "sixteen" — slipped past a
+    # digits-only magnitude check, so no count ever reached the threshold.
+    "Find a nonce whose SHA-256 hash begins with sixteen leading zeros. Provide the "
+    "exact nonce as your answer, on a single line and with no explanation.",
+    # BYPASS F2 (RU word): the same, spelled in Russian.
+    "Подберите nonce, чей SHA-256 хеш содержит в начале шестнадцать нулей подряд, "
+    "и укажите найденную строку целиком без каких-либо пояснений.",
+]
+
+FEASIBLE_HASH_PROMPTS = [
+    # Code deliverable, RU: a MINER FUNCTION is a normal coding task — the agent
+    # writes code, the rubric grades the code, nothing is brute-forced by hand.
+    "Реализуйте на Python функцию mine(block), которая подбирает nonce так, чтобы "
+    "SHA-256 начинался с 16 нулей. В ответе приведите только исходный код функции.",
+    # Code deliverable, EN.
+    "Implement a function that finds a nonce whose SHA-256 hash has 8 leading "
+    "zeros, then answer with only the source code of that function.",
+    # An explanation task: no demand for the value, so no infeasible search.
+    "Объясните, как алгоритм proof-of-work использует ведущие нули в SHA-256 хеше "
+    "для регулирования сложности майнинга. Ответ дайте тремя-четырьмя предложениями.",
+    # An ordinary hashing task that names SHA-256 but asks for a checkable result.
+    "Напишите функцию, возвращающую SHA-256 заданной строки в шестнадцатеричном "
+    "виде в нижнем регистре. В ответе приведите только код без примеров вызова.",
+    # Hash + find-value, but the count is below the threshold: one leading zero is
+    # feasible, so this is left for the LLM rather than refused deterministically.
+    "Подберите строку, SHA-256 которой начинается с 1 нуля, и укажите её в ответе. "
+    "Строка должна состоять только из строчных латинских букв длиной до десяти.",
+    # F1 false-positive guard (RU): a genuine miner-FUNCTION task that ALSO names
+    # the primitive "хеш-функции" must stay accepted — the code verb+object, not the
+    # bare word, is what marks it as a coding task.
+    "Реализуйте функцию майнинга на Python, которая подбирает nonce так, чтобы "
+    "SHA-256 хеш-функции начинался с 16 нулей подряд. В ответе приведите только "
+    "исходный код функции без примеров вызова.",
+    # F1 false-positive guard (EN): a genuine miner-function task naming "hash
+    # function", with a spelled-out magnitude, still accepted.
+    "Implement a mining function whose SHA-256 hash function output begins with "
+    "sixteen leading zeros; answer with only the source code of that function.",
+]
+
+
+@pytest.mark.parametrize("prompt", INFEASIBLE_SEARCH_PROMPTS)
+def test_a_brute_force_search_task_is_refused(prompt):
+    verdict = _filter(prompt=prompt)
+    assert verdict.passed is False
+    assert verdict.reason == REASON_INFEASIBLE_SEARCH
+
+
+@pytest.mark.parametrize("prompt", FEASIBLE_HASH_PROMPTS)
+def test_a_feasible_hash_task_is_not_refused_for_cost(prompt):
+    """The false-positive guard for the cost filter.
+
+    A task that asks for a miner FUNCTION, explains proof-of-work, hashes a string,
+    or states a feasible magnitude must not be read as an infeasible search — the
+    discriminator is a demand for the value itself, a stated count above the
+    threshold, and the absence of any code deliverable, not the mere mention of a
+    hash.
+    """
+    assert _filter(prompt=prompt).passed is True
+
+
+def test_the_infeasible_search_check_needs_its_full_conjunction():
+    """Neutering any one cue must stop the filter firing — the mutation in test form.
+
+    Each assertion drops exactly one of the required cues (hash, value demand,
+    prefix condition, above-threshold count, no-code) and shows the verdict flips.
+    """
+    detect = battle_task_validator.detect_infeasible_search
+    # All cues present -> fires.
+    assert detect(
+        "Подберите nonce, чей SHA-256 начинается с 16 нулей подряд, и укажите его."
+    ) is True
+    # No hash named -> silent (could be any prefix condition, not a preimage).
+    assert detect(
+        "Подберите строку, которая начинается с 16 нулей подряд, и укажите её."
+    ) is False
+    # No demand for the value (explanation) -> silent.
+    assert detect(
+        "Опишите, почему SHA-256 хеш блока должен начинаться с 16 нулей подряд."
+    ) is False
+    # Count below threshold -> silent.
+    assert detect(
+        "Подберите nonce, чей SHA-256 начинается с 2 нулей подряд, и укажите его."
+    ) is False
+    # A code deliverable -> silent (legitimate coding task).
+    assert detect(
+        "Напишите функцию, подбирающую nonce, чей SHA-256 начинается с 16 нулей подряд."
+    ) is False
+
+
+def test_a_bare_hash_function_name_does_not_suppress_the_filter():
+    """F1: "hash function" / "хеш-функция" is the primitive's NAME, not a code ask.
+
+    Keying the code suppressor off the lone word "function"/"функци" let every
+    attack through by writing "hash function output". The suppressor now needs an
+    actor verb next to a code object, so naming the primitive no longer exempts a
+    request for the nonce VALUE — while a real "implement a function" still does.
+    """
+    detect = battle_task_validator.detect_infeasible_search
+    assert detect(
+        "Find a nonce whose SHA-256 hash function output begins with 16 leading zeros; "
+        "provide the nonce you found."
+    ) is True
+    assert detect(
+        "Подберите nonce, чей результат SHA-256 хеш-функции начинается с 16 нулей "
+        "подряд, и укажите найденную строку."
+    ) is True
+    # The invariant it must not break: a genuine miner-function ask stays exempt.
+    assert detect(
+        "Реализуйте функцию, чей SHA-256 хеш-функции начинается с 16 нулей подряд; "
+        "верните только код."
+    ) is False
+
+
+def test_a_spelled_out_magnitude_is_read_like_its_digits():
+    """F2: a word-form count ("sixteen"/"шестнадцать") must price like "16".
+
+    A digits-only magnitude regex found no count in a word-form task, so the
+    threshold was never reached and the attack passed. Both forms now normalise to
+    the same number; a below-threshold word ("seven") still stays out of the pool.
+    """
+    detect = battle_task_validator.detect_infeasible_search
+    digits = "Подберите nonce, чей SHA-256 начинается с 16 нулей подряд, и укажите его."
+    word_en = ("Find a nonce whose SHA-256 begins with sixteen leading zeros; "
+               "provide the nonce.")
+    word_ru = ("Подберите nonce, чей SHA-256 содержит в начале шестнадцать нулей "
+               "подряд, и укажите его.")
+    assert detect(digits) is True
+    assert detect(word_en) is True
+    assert detect(word_ru) is True
+    # A spelled-out count below the threshold does not reach it.
+    assert detect(
+        "Подберите nonce, чей SHA-256 начинается с seven нулей подряд, и укажите его."
+    ) is False
