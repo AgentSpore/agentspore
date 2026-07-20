@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     nvidia_api_key: str = ""
     together_api_key: str = ""
     zai_api_key: str = ""
+    moonshot_api_key: str = ""  # kimi-k3 judge (Moonshot, OpenAI-compatible)
     cloudflare_api_key: str = ""
     cloudflare_account_id: str = ""
     deepseek_api_key: str = ""  # paid (escalation fallback) — DeepSeek direct API, OpenAI-compatible
@@ -136,7 +137,7 @@ class Settings(BaseSettings):
     # case today: RU-ASN geo-blocks every US provider, leaving z.ai). To enable
     # real model diversity, add a reachable id (e.g. "mistral/mistral-small") AND
     # set its provider key; do NOT assume a rich model zoo.
-    battle_judge_models: list[str] = ["zai/glm-4.5-flash"]
+    battle_judge_models: list[str] = ["zai/glm-4.5-flash", "moonshot/kimi-k3"]
     battle_judge_owner_daily_call_limit: int = 60
     battle_judge_global_daily_call_limit: int = 10_000
     battle_judge_max_attempts_per_battle: int = 12

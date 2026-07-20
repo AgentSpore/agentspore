@@ -30,6 +30,7 @@ import uuid
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -43,6 +44,8 @@ from app.core.rating import DEFAULT_ELO, ELO_FLOOR, K_FACTOR
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository, ReservationConflictError
 from app.schemas.battles import BattleStatus, Side, TaskSource, Vote, Winner
+from app.services import battle_runner as battle_runner_module
+from app.services import openrouter_service
 from app.services.battle_judges import (
     JUDGE_KIND_LLM,
     JUDGE_MODEL,
@@ -53,6 +56,7 @@ from app.services.battle_judges import (
 )
 from app.services.battle_runner import (
     BATTLE_LEASE_SECONDS,
+    JUDGE_RETRY_BACKOFF_SECONDS,
     JUDGE_RUN_MAX_ATTEMPTS,
     POLL_MAX_ATTEMPTS,
     RECONCILE_BATCH,
@@ -1663,9 +1667,16 @@ class TestTransientJudgeErrorNotFrozen:
         # No collapsed vote was written — the old ON CONFLICT DO NOTHING would have
         # frozen an 'error' here and blocked every correct re-run.
         assert judgements == []
-        # The raw runs remain 'running' with attempts left, i.e. reclaimable.
+        # The raw runs are released to 'failed' with attempts left, i.e.
+        # IMMEDIATELY reclaimable: a transport failure that exhausts the roster now
+        # takes the same prompt-release path as an unparsable reply (fail_judge_run)
+        # instead of sitting 'running' until its lease lapses — that lease-lapse
+        # wait was the multi-minute retry stall the backoff fix removed.
         assert runs and all(
-            r["status"] == "running" and r["attempt_count"] == 1 for r in runs
+            r["status"] == "failed"
+            and r["attempt_count"] == 1
+            and r["lease_expires_at"] is None
+            for r in runs
         )
 
     async def test_a_later_pass_records_the_real_vote(
@@ -1681,12 +1692,15 @@ class TestTransientJudgeErrorNotFrozen:
             ):
                 await runner.run_judge_panel(battle_id, "k", "http://u", token)
 
-        # The run leases lapse (a real later pass is > JUDGE_RUN_LEASE_SECONDS on).
+        # A failed roster now releases the run to 'failed' with a NULL lease, so it
+        # is already reclaimable on the next pass without waiting a lease out. Age
+        # only any still-'running' rows (there are none here) — never a failed row,
+        # whose NULL token would violate the lease_token_has_expiry CHECK.
         async with session_maker() as session:
             await session.execute(
                 text(
                     "UPDATE battle_judge_runs SET lease_expires_at = NOW() - INTERVAL '1 second' "
-                    "WHERE battle_id = CAST(:b AS UUID)"
+                    "WHERE battle_id = CAST(:b AS UUID) AND status = 'running'"
                 ),
                 {"b": battle_id},
             )
@@ -1729,7 +1743,7 @@ class TestTransientJudgeErrorNotFrozen:
                     text(
                         "UPDATE battle_judge_runs "
                         "SET lease_expires_at = NOW() - INTERVAL '1 second' "
-                        "WHERE battle_id = CAST(:b AS UUID) AND status <> 'completed'"
+                        "WHERE battle_id = CAST(:b AS UUID) AND status = 'running'"
                     ),
                     {"b": battle_id},
                 )
@@ -1757,6 +1771,191 @@ class TestTransientJudgeErrorNotFrozen:
         assert battle["status"] == "completed"
         assert battle["winner"] is None
         assert await _elo(session_maker, agent_a) == DEFAULT_ELO
+
+
+# A stable marker planted in ONE fighter's final answer so a judge stub can vote
+# for that SIDE regardless of presentation order: it reads the JSON document,
+# finds whichever opaque label carries the marker, and votes it. An
+# always-one-label stub would collapse to a position-sensitive tie, so it could
+# never produce a decisive winner — which is exactly what the fallback test needs
+# to assert.
+_WINNER_MARKER = "WINNER_ALPHA_SIDE_MARKER"
+
+
+async def _set_final_answers(session_maker, battle_id: str, a_text: str, b_text: str) -> None:
+    """Overwrite the two final submissions so a judge stub can pick a real side."""
+    async with session_maker() as s:
+        for side, txt in (("a", a_text), ("b", b_text)):
+            await s.execute(
+                text(
+                    "UPDATE battle_submissions SET content = :c "
+                    "WHERE battle_id = CAST(:b AS UUID) AND side = :s AND is_final"
+                ),
+                {"c": txt, "b": battle_id, "s": side},
+            )
+        await s.commit()
+
+
+def _vote_marker_side(**kwargs):
+    """A judge that votes for whichever submission carries ``_WINNER_MARKER``."""
+    payload = json.loads(kwargs["messages"][1]["content"])
+    label = next(s["label"] for s in payload["submissions"] if _WINNER_MARKER in s["text"])
+    return json.dumps({"vote": label, "confidence": 0.9, "reasoning": "ok"})
+
+
+def _glm_dead_kimi_votes(**kwargs):
+    """glm always throttles (429); the kimi fallback answers with a real vote."""
+    if "glm" in kwargs["wire_model"]:
+        raise JudgeTransportError("throttled 1302")
+    return _vote_marker_side(**kwargs)
+
+
+def _install_two_model_roster(monkeypatch) -> None:
+    """Force _resolve_judge_roster to a real 2-model roster (glm + kimi).
+
+    The second model never resolves in CI (no moonshot key / RU-ASN geo-block),
+    so the diversity + fallback paths are only reachable by stubbing the config
+    and the provider resolver — the same seam the wire-contract suite uses.
+    """
+    monkeypatch.setattr(
+        battle_runner_module,
+        "get_settings",
+        lambda: SimpleNamespace(battle_judge_models=[JUDGE_MODEL, "moonshot/kimi-k3"]),
+    )
+
+    class _StubService:
+        @staticmethod
+        def resolve_provider(_model_id):
+            return {"base_url": "https://moonshot.invalid/v1", "api_key": "unused"}
+
+    monkeypatch.setattr(openrouter_service, "OpenRouterService", _StubService)
+
+
+class TestJudgeRosterFallback:
+    """Task 3/4: a dead assigned model must not strand a replicate, and a
+    non-settling pass must not stall the battle for minutes."""
+
+    async def test_a_two_model_roster_spreads_votes_across_both_models(
+        self, monkeypatch, session_maker, db_session, task_id
+    ) -> None:
+        """Diversity present: with both models answering, the three replicates are
+        judged by BOTH roster models (assignment glm, kimi, glm)."""
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+        await _set_final_answers(session_maker, battle_id, _WINNER_MARKER, "the other answer")
+        _install_two_model_roster(monkeypatch)
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.call_judge_model",
+                AsyncMock(side_effect=_vote_marker_side),
+            ):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+
+        assert len(judgements) == 3
+        # Both models cast votes — this is the diversity the single-model panel
+        # cannot offer; a homogeneous set here would mean the roster never spread.
+        assert {j["judge_ref"] for j in judgements} == {JUDGE_MODEL, "moonshot/kimi-k3"}
+        assert all(j["vote"] == "a" for j in judgements)
+
+    async def test_a_dead_assigned_model_falls_back_and_reaches_a_winner(
+        self, monkeypatch, session_maker, db_session, task_id
+    ) -> None:
+        """The critical property: the assigned model always 429s, yet every
+        replicate falls back to the live model and the panel settles a WINNER."""
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+        await _set_final_answers(session_maker, battle_id, _WINNER_MARKER, "the other answer")
+        _install_two_model_roster(monkeypatch)
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.call_judge_model",
+                AsyncMock(side_effect=_glm_dead_kimi_votes),
+            ):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == 3
+        assert all(j["vote"] == "a" for j in judgements)
+
+        # End to end: quorum + a real winner, not a no-quorum NULL.
+        change = await _settle_in_own_session(session_maker, battle_id, token)
+        assert change is not None
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "completed"
+        assert battle["winner"] == "a"
+
+    async def test_without_a_fallback_a_dead_model_strands_the_replicate(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """The mutation/control: on a SINGLE-model roster (no fallback resolves)
+        the same dead model strands every replicate — proving the fallback above
+        is load-bearing for quorum, not decoration."""
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.call_judge_model",
+                AsyncMock(side_effect=JudgeTransportError("throttled 1302")),
+            ):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        # No second model to rescue the halves -> no vote reaches quorum.
+        assert judgements == []
+
+    async def test_a_non_settling_pass_shortens_the_retry_wait_to_seconds(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """Task 4: a pass that reaches no quorum shrinks the battle lease from the
+        full BATTLE_LEASE_SECONDS to JUDGE_RETRY_BACKOFF_SECONDS, so the next
+        reconcile tick re-attempts in seconds instead of ~5 minutes."""
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+        # Hold the row the way a real reconcile claim does: a full-length lease.
+        async with session_maker() as s:
+            await s.execute(
+                text(
+                    "UPDATE battles SET lease_token = CAST(:t AS UUID), "
+                    "lease_expires_at = NOW() + make_interval(secs => :l) "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"t": token, "l": BATTLE_LEASE_SECONDS, "b": battle_id},
+            )
+            await s.commit()
+
+        counts = {"settled": 0}
+        with patch(
+            "app.services.battle_runner.call_judge_model",
+            AsyncMock(side_effect=JudgeTransportError("throttled 1302")),
+        ):
+            await _judge_and_settle(
+                session_maker, None, battle_id, token, "k", "http://u", counts
+            )
+
+        assert counts["settled"] == 0
+        async with session_maker() as s:
+            secs = float(
+                (
+                    await s.execute(
+                        text(
+                            "SELECT EXTRACT(EPOCH FROM (lease_expires_at - NOW())) "
+                            "FROM battles WHERE id = CAST(:b AS UUID)"
+                        ),
+                        {"b": battle_id},
+                    )
+                ).scalar_one()
+            )
+        # Shrunk to seconds, nowhere near the old ~5-minute (BATTLE_LEASE_SECONDS) wait.
+        assert secs <= JUDGE_RETRY_BACKOFF_SECONDS + 2
+        assert secs < BATTLE_LEASE_SECONDS / 2
 
 
 # A nonce the attacker plants so a susceptible model can be steered to a SIDE
