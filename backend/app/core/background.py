@@ -11,6 +11,13 @@ Leader lock uses Redis `SET NX EX`; only the holder runs `run_once`.
 Non-leaders poll at `non_leader_poll_s` so they pick up work fast if
 the leader crashes.
 
+The lease is held for the DURATION of `run_once` — renewed while it runs,
+then released (ownership-checked compare-and-delete) in the loop's
+`finally`. `lock_ttl_s` is therefore a crash-safety bound, NOT the cadence:
+the cadence is `interval_s`. A lease that outlived its cycle would make the
+task fail to re-acquire its own lock and stretch the period to
+max(interval_s, lock_ttl_s).
+
 Tasks that coordinate via row-level atomic claims (e.g. cron scheduler
 with `FOR UPDATE SKIP LOCKED`) set `lock_ttl_s = None` to disable the
 leader gate — row-level claim is already exactly-once.
@@ -29,6 +36,7 @@ Redis outage behaviour is a per-task choice (`fail_closed`):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from abc import ABC, abstractmethod
 from uuid import uuid4
 
@@ -45,6 +53,16 @@ from app.services.github_service import get_github_service
 _RENEW_LEASE_LUA = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
     return redis.call('expire', KEYS[1], ARGV[2])
+end
+return 0
+"""
+
+# Release only our OWN lease: compare-and-delete. A worker whose lease already
+# expired (and was re-acquired by someone else) must never delete the new
+# holder's key — that would let a third worker in and defeat the whole gate.
+_RELEASE_LOCK_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
 end
 return 0
 """
@@ -84,7 +102,13 @@ class ScheduledTask(ABC):
                 logger.warning("Task {} error: {}", self.name, e)
             finally:
                 if renewer is not None:
+                    # Await the cancellation before releasing: a renewer caught
+                    # mid-EXPIRE would otherwise re-arm the key we just deleted,
+                    # leaving an orphan lease that blocks the next lock_ttl_s.
                     renewer.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await renewer
+                await self._release_leader()
             await asyncio.sleep(self.interval_s)
 
     def _lock_key(self) -> str:
@@ -139,6 +163,29 @@ class ScheduledTask(ABC):
             pass  # normal: run_once finished
         except Exception as e:
             logger.warning("Lease renewal {}: {}", self.name, e)
+
+    async def _release_leader(self) -> None:
+        """Drop our own lease as soon as the cycle ends.
+
+        The lease is held for the DURATION of run_once, not for lock_ttl_s.
+        Without this release the key survives the sleep between cycles and the
+        task's own next `SET NX` fails against its own stale lock, so the
+        effective period becomes max(interval_s, lock_ttl_s) instead of
+        interval_s (battle_run: 10 minutes instead of 30 seconds). With the
+        release, lock_ttl_s is purely the crash-safety bound: the longest a
+        dead worker's lease can block its replacement.
+
+        Never raises into the loop — a Redis outage on release is a lease we
+        leave to expire on its own, not a reason to kill the task.
+        """
+        token, self._lock_token = self._lock_token, None
+        if token is None or self.lock_ttl_s is None:
+            return
+        try:
+            redis = await get_redis()
+            await redis.eval(_RELEASE_LOCK_LUA, 1, self._lock_key(), token)
+        except Exception as e:
+            logger.warning("Leader lock release {}: {}", self.name, e)
 
     @abstractmethod
     async def run_once(self) -> None:
@@ -423,7 +470,13 @@ class BattleRunTask(ScheduledTask):
 
     name = "battle_run"
     interval_s = 30
-    lock_ttl_s = 600
+    # Held only for the duration of run_once (released in the loop's finally)
+    # and renewed every lock_ttl_s // 3 while a long judge panel is in flight,
+    # so this number no longer sets the cadence — it is only how long a CRASHED
+    # worker's lease blocks its replacement. 600 meant a 10-minute freeze after
+    # one crash; 120 keeps that bound tight while leaving a 40-second renewal
+    # interval, comfortably longer than a Redis round-trip.
+    lock_ttl_s = 120
     initial_delay_s = 20
     fail_closed = True
 
