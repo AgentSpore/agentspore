@@ -86,6 +86,7 @@ from app.services.battle_judges import (
     resolve_verdict,
     rubric_keys,
     scan_submissions,
+    warn_on_residual_side_label,
     wire_model_name,
 )
 from app.services.battle_service import BattleService
@@ -1236,6 +1237,12 @@ class BattleRunner:
                 reasoning=parsed.reasoning,
                 scores=parsed.scores,
             )
+
+            # Telemetry, not a gate: count the replies that ignored the output
+            # contract and named a side by a bare word. Deliberately BEFORE the
+            # write and with no effect on it — `result.reasoning` is persisted
+            # byte-identical whether or not this fires.
+            warn_on_residual_side_label(str(run_id), result.vote, result.reasoning)
 
             # The token check is the whole point: if our lease lapsed while z.ai
             # was thinking, someone else owns this slot now and the answer is

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from loguru import logger
 
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.battle_judges import (
@@ -40,12 +41,14 @@ from app.services.battle_judges import (
     build_judge_messages,
     build_judge_payload,
     collapse_pair,
+    has_residual_side_label,
     normalize_reasoning_sides,
     parse_judge_response,
     replicate_seed,
     resolve_verdict,
     rubric_keys,
     sanitize_submission,
+    warn_on_residual_side_label,
 )
 
 RUBRIC = [
@@ -564,3 +567,89 @@ class TestStoredReasoningNamesTheVotedSide:
         assert len(normalize_reasoning_sides(long_reasoning, label_map)) < len(
             long_reasoning
         )
+
+
+class TestResidualSideLabelTelemetry:
+    """The counter for what the narrow rewrite deliberately leaves alone.
+
+    `normalize_reasoning_sides` rewrites whole labels only, so a judge that
+    ignores the output contract and writes a bare "Beta is stronger" keeps prose
+    that can read as the opposite of the vote beside it. This predicate MEASURES
+    that residual. It does not act on it, and must not: the token has no
+    polarity — "beta is stronger" contradicts vote='b' while "beta is weaker"
+    agrees with it, using the same word — so any enforcement would be a coin flip
+    whose failure mode is deleting a correct explanation.
+    """
+
+    def test_fires_on_a_bare_label_sentence(self) -> None:
+        """The signal being counted: the contract-violating reply."""
+        assert has_residual_side_label("Beta is stronger overall.") is True
+
+    def test_fires_on_domain_vocabulary_and_leaves_the_text_untouched(self) -> None:
+        """THE ACCEPTED MISFIRE, asserted so it can never be mistaken for a bug.
+
+        "the beta coefficient" is honest domain vocabulary and is indistinguishable
+        from a mislabelled side at token level. It fires; the cost is one log line.
+        What it must NOT cost is the text: the reasoning is returned byte-identical,
+        which is the whole reason this is telemetry and not a filter.
+        """
+        reasoning = "the beta coefficient in the regression is wrong."
+        _, label_map = build_judge_payload(
+            "task", RUBRIC, "answer a", "answer b", PresentedOrder.BA
+        )
+
+        assert has_residual_side_label(reasoning) is True
+        assert normalize_reasoning_sides(reasoning, label_map) == reasoning
+
+    @pytest.mark.parametrize(
+        "reasoning",
+        [
+            "side A is stronger.",
+            "side B argued the constraint more precisely than side A.",
+        ],
+        ids=["normalised-a", "normalised-both"],
+    )
+    def test_silent_on_already_normalised_text(self, reasoning: str) -> None:
+        """Post-rewrite prose speaks in sides, so the steady state emits nothing."""
+        assert has_residual_side_label(reasoning) is False
+
+    @pytest.mark.parametrize("reasoning", ["", None], ids=["empty", "none"])
+    def test_silent_on_empty_or_missing_reasoning(self, reasoning: str | None) -> None:
+        """An absent reasoning is not a violation — `parse_judge_response` stores
+        None whenever the model omitted the field."""
+        assert has_residual_side_label(reasoning) is False
+
+    def test_the_warning_never_carries_the_reasoning_text(self) -> None:
+        """The reasoning derives from UNTRUSTED submissions and must not reach a log.
+
+        This is the security assertion of the feature: the line may name the run
+        and the vote — identifiers, enough to fetch the row on purpose — and
+        nothing else. A regression that interpolated the text would leak fighter
+        content into every log aggregator downstream.
+        """
+        emitted: list[str] = []
+        sink_id = logger.add(emitted.append, level="WARNING", format="{message}")
+        try:
+            warn_on_residual_side_label(
+                "run-4f2c", Vote.B, "Beta wins; the secret payload is HERE."
+            )
+        finally:
+            logger.remove(sink_id)
+
+        assert len(emitted) == 1
+        line = emitted[0]
+        assert "run-4f2c" in line
+        assert "b" in line
+        assert "secret payload" not in line
+        assert "Beta wins" not in line
+
+    def test_no_line_is_emitted_when_the_predicate_is_silent(self) -> None:
+        """A clean reply costs nothing at all — not even a suppressed record."""
+        emitted: list[str] = []
+        sink_id = logger.add(emitted.append, level="WARNING", format="{message}")
+        try:
+            warn_on_residual_side_label("run-4f2c", Vote.A, "side A is stronger.")
+        finally:
+            logger.remove(sink_id)
+
+        assert emitted == []
