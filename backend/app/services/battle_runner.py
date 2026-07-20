@@ -86,6 +86,7 @@ from app.services.battle_judges import (
     resolve_verdict,
     rubric_keys,
     scan_submissions,
+    warn_on_residual_side_label,
     wire_model_name,
 )
 from app.services.battle_service import BattleService
@@ -1042,8 +1043,9 @@ class BattleRunner:
 
         Terminal when the run completed (it has a real vote to collapse) or its
         own attempt budget is spent (it will never be reclaimed, so its silence is
-        a definitive error). A run still pending/running with attempts left is
-        reclaimable — a transient throttle, not a verdict — and must not be
+        a definitive error). A run still pending/running/failed with attempts
+        left is reclaimable — a transient throttle or an unparsable reply, not a
+        verdict — and must not be
         collapsed yet. A missing row is treated as terminal so the panel cannot
         loop forever on a slot that no longer exists.
         """
@@ -1210,17 +1212,37 @@ class BattleRunner:
 
             parsed = parse_judge_response(raw, label_map, allowed)
             if parsed is None:
-                # Malformed output is an ABSTENTION. Never a tie: a broken judge
-                # must not mint tie-Elo.
-                result = JudgeRunResult(presented_order=order, vote=Vote.ABSTAIN)
-            else:
-                result = JudgeRunResult(
-                    presented_order=order,
-                    vote=parsed.vote,
-                    confidence=parsed.confidence,
-                    reasoning=parsed.reasoning,
-                    scores=parsed.scores,
+                # UNPARSABLE — the model did not answer our contract. That is a
+                # failed call, not a verdict, so it is RETRYABLE exactly like a
+                # transport error: release the slot back to 'failed' (its
+                # attempt is already spent, and the per-battle cap bounds the
+                # retries) and let a later pass ask again. Writing it as a
+                # terminal abstention is what silently cost a live battle its
+                # winner: one unparsable half froze its replicate out of the
+                # quorum while the other four half-votes were unanimous.
+                #
+                # A DELIBERATE abstention is the other branch below: it parses,
+                # so it completes the run and is never re-asked.
+                await self.repo.fail_judge_run(run_id, run_token)
+                await self.db.commit()
+                logger.warning(
+                    "judge run {} unparsable reply: released for retry", run_id
                 )
+                return JudgeRunResult(presented_order=order, vote=Vote.ABSTAIN)
+
+            result = JudgeRunResult(
+                presented_order=order,
+                vote=parsed.vote,
+                confidence=parsed.confidence,
+                reasoning=parsed.reasoning,
+                scores=parsed.scores,
+            )
+
+            # Telemetry, not a gate: count the replies that ignored the output
+            # contract and named a side by a bare word. Deliberately BEFORE the
+            # write and with no effect on it — `result.reasoning` is persisted
+            # byte-identical whether or not this fires.
+            warn_on_residual_side_label(str(run_id), result.vote, result.reasoning)
 
             # The token check is the whole point: if our lease lapsed while z.ai
             # was thinking, someone else owns this slot now and the answer is

@@ -240,6 +240,18 @@ _CONTENT_KEY_PARAM = r"regexp_replace(btrim(lower(:prompt)), '\s+', ' ', 'g')"
 # anti-cheat into an outage. IS DISTINCT FROM treats NULL as "not equal", which
 # is the intended reading: an absent owner authored nothing.
 #
+# SCOPED TO source='user', because the secrecy claim it protects only exists for
+# a SUBMITTED task. A 'generated' (or 'company') task is minted for the whole
+# platform and its author — an admin — did not write it in order to win with it;
+# they simply happen to be the row's creator. Excluding those made every task an
+# admin created invisible to that admin's own agents, which on a platform seeded
+# entirely by one admin emptied the pool to zero and refused every battle with
+# "not enough fresh tasks" while 20 ready ones existed.
+#
+# IS DISTINCT FROM on the source too, for the same NULL discipline used below: a
+# row with no source recorded is not a user submission, so it must not be
+# excluded on a comparison that evaluates to NULL.
+#
 # Residual risk, stated rather than papered over: this keys on the AUTHOR's user
 # id, so it stops the author and their second account only if that account is the
 # owner. Two different people colluding off-platform (author sends the task to an
@@ -254,6 +266,7 @@ def _task_not_authored_by_fighters(owner_a: str, owner_b: str) -> str:
     """
     return f"""(
                           t.created_by_user_id IS NULL
+                          OR t.source IS DISTINCT FROM '{TaskSource.USER.value}'
                           OR (
                               t.created_by_user_id IS DISTINCT FROM {owner_a}
                               AND t.created_by_user_id IS DISTINCT FROM {owner_b}
@@ -3437,6 +3450,41 @@ class BattleRepository:
                 "reasoning": reasoning,
                 "scores": json.dumps(scores, default=str) if scores else None,
             },
+        )
+        return self._one_or_none(result.mappings().first())
+
+    async def fail_judge_run(self, run_id: str, lease_token: str) -> dict | None:
+        """Hand a claimed run back as retryable. None = the caller lost the row.
+
+        The counterpart to :meth:`complete_judge_run` for a call that produced no
+        usable answer: the slot keeps its spent ``attempt_count`` but drops to
+        'failed' with no lease, which is precisely the state
+        :meth:`claim_judge_run` re-claims. Without it an unusable reply had only
+        two homes — write it as a terminal vote (freezing a non-answer into the
+        quorum) or abandon the row 'running' until its lease lapses (correct, but
+        it stalls the retry for a whole lease period).
+
+        Leaves ``vote``/``completed_at`` NULL, which the
+        battle_judge_run_completed_agrees CHECK requires of a non-completed row.
+        Demands the token AND a live lease for the same reason complete does: a
+        worker whose lease lapsed must not be able to release a slot someone else
+        has since reclaimed.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battle_judge_runs
+                SET status = 'failed',
+                    lease_token = NULL,
+                    lease_expires_at = NULL
+                WHERE id = CAST(:run_id AS UUID)
+                  AND lease_token = CAST(:lease_token AS UUID)
+                  AND lease_expires_at > NOW()
+                  AND status = 'running'
+                RETURNING *
+                """
+            ),
+            {"run_id": str(run_id), "lease_token": str(lease_token)},
         )
         return self._one_or_none(result.mappings().first())
 
