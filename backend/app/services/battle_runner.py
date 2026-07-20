@@ -86,6 +86,7 @@ from app.services.battle_judges import (
     replicate_seed,
     resolve_verdict,
     rubric_keys,
+    sanitize_submission,
     scan_submissions,
     warn_on_residual_side_label,
     wire_model_name,
@@ -190,6 +191,40 @@ TASK_BIND_LEASE_SECONDS = 15
 # be judged, never a retroactive abort.
 SILENT_FIGHTER_SEQ_NO = 9_999
 SILENT_FIGHTER_ERROR = "no submission before deadline"
+
+
+# The demo opponent's system framing. Deliberately plain: the demo agent is a
+# real, modest opponent the user's agent can beat or lose to, not a showcase of
+# the strongest possible answer. The rubric keys are surfaced so its answer is at
+# least aimed at what the judge scores.
+_DEMO_ANSWER_SYSTEM = (
+    "You are a competent but ordinary AI agent answering a timed challenge in a "
+    "head-to-head battle. Answer the task directly and completely. Do not ask "
+    "questions, do not add meta-commentary — produce only the answer itself."
+)
+
+
+def build_demo_answer_messages(
+    task_prompt: str, rubric: list[dict[str, object]]
+) -> list[dict[str, str]]:
+    """The chat messages for the demo opponent's single answer call.
+
+    A system framing plus the task prompt and, when present, the rubric criteria
+    the answer will be judged on — the same rubric the panel scores against, so
+    the demo answer is aimed at the real target rather than guessing at it.
+    """
+    keys = [
+        str(item.get("key"))
+        for item in rubric
+        if isinstance(item, dict) and item.get("key")
+    ]
+    user = task_prompt
+    if keys:
+        user = f"{task_prompt}\n\nYou will be judged on: {', '.join(keys)}."
+    return [
+        {"role": "system", "content": _DEMO_ANSWER_SYSTEM},
+        {"role": "user", "content": user},
+    ]
 
 
 def _outcome_for(side: Side, winner: Winner | None) -> str:
@@ -499,6 +534,16 @@ class BattleRunner:
         generation = battle["readiness_generation"]
         service = BattleService(self.db)
 
+        # Demo auto-drive: the platform opponent (agent_b) has no live agent to
+        # ACK the ready-check, so record its readiness here, in THIS transaction,
+        # keyed to the exact armed event of the current generation. Idempotent
+        # (mark_acked no-ops a repeat/expired ack) and visible to try_queue's
+        # both-sides-acked predicate below, which runs in the same transaction.
+        # The user's own agent still ACKs its side normally; only the demo side
+        # is synthesized.
+        if battle.get("is_demo"):
+            await service.synth_demo_ready_ack(battle)
+
         queued = await service.try_queue(battle_id, generation, lease_token)
         if queued is not None:
             await self.db.commit()
@@ -722,6 +767,109 @@ class BattleRunner:
 
         await self.db.commit()
         return True
+
+    # -- demo auto-drive ----------------------------------------------------
+
+    async def drive_demo_submission(
+        self, battle: dict, api_key: str, base_url: str
+    ) -> bool:
+        """Synthesize the demo opponent's ONE final answer via a live LLM call.
+
+        The demo opponent (always agent_b) has no live agent to post a turn, so
+        the platform answers for it on the bound task with a single real,
+        provider-generated answer — a modest opponent, not a canned string.
+
+        Idempotent AND no-repeat-spend: if side B already carries a final
+        submission this returns False WITHOUT calling the provider, so a battle
+        re-polled every reconcile tick spends exactly one answer call, not one
+        per tick. A provider/transport failure returns False and writes nothing —
+        close_deadline then synthesizes silence for the demo side at the deadline,
+        so the battle still reaches a judged result and the demo side never blocks.
+
+        The answer generation call is a FIGHTER's answer, not a judge call, so it
+        is budgeted the same way a real fighter's answer is — i.e. not against the
+        judge ledger. The judge panel that scores the battle still counts against
+        the demo agent owner's daily judge cap, unchanged (settle path).
+
+        Re-reads the battle rather than trusting the passed dict: the caller hands
+        the row it CLAIMED (as 'queued', a moment before start_queued flipped it to
+        'running'), so the bound task snapshot and the 'running' status are read
+        fresh here.
+        """
+        battle_id = str(battle["id"])
+        current = await self.repo.get(battle_id)
+        if current is None or current["status"] != BattleStatus.RUNNING.value:
+            return False
+        # Already answered? Never spend a second call — the partial unique index
+        # would reject the insert anyway, but the point is not to CALL the model.
+        already_final = any(
+            str(s["side"]) == Side.B.value and s["is_final"]
+            for s in await self.repo.list_submissions(battle_id)
+        )
+        if already_final:
+            return False
+
+        answer = await self._generate_demo_answer(current, api_key, base_url)
+        if answer is None:
+            return False
+
+        accepted = await self.repo.add_submission(
+            battle_id=battle_id,
+            side=Side.B,
+            seq_no=1,
+            content=answer,
+            is_final=True,
+        )
+        await self.db.commit()
+        if accepted:
+            logger.info("battle {} demo opponent submitted its answer", battle_id)
+        return accepted
+
+    async def _generate_demo_answer(
+        self, battle: dict, api_key: str, base_url: str
+    ) -> str | None:
+        """One gated provider call producing the demo opponent's answer, or None.
+
+        Reuses the judge's exact call shape (:func:`call_judge_model`) and the
+        SAME provider stack the panel uses (the credentials resolved upstream for
+        JUDGE_MODEL and threaded into this pass), so the demo opponent answers
+        through the one reachable model rather than a second, unmanaged path.
+        Returns the answer capped to MAX_SUBMISSION_CHARS, or None on any
+        transport failure (the caller degrades to deadline silence).
+        """
+        prompt = battle.get("task_prompt_snapshot")
+        if not prompt:
+            # A running battle is bound by the queued CHECK, so this is defensive:
+            # never call the model with no task to answer.
+            return None
+        rubric = battle.get("task_rubric_snapshot") or []
+        messages = build_demo_answer_messages(str(prompt), rubric)
+
+        http = self.http or httpx.AsyncClient()
+        try:
+            raw = await call_judge_model(
+                client=http,
+                base_url=base_url,
+                api_key=api_key,
+                messages=messages,
+                seed=replicate_seed(str(battle["id"]), 0),
+                gate=self.gate,
+                wire_model=wire_model_name(JUDGE_MODEL),
+                temperature=judge_temperature_for(JUDGE_MODEL),
+            )
+        except JudgeTransportError as exc:
+            logger.warning(
+                "battle {} demo answer generation failed: {}", battle["id"], exc
+            )
+            return None
+        finally:
+            if self.http is None:
+                await http.aclose()
+        # sanitize_submission returns (text, truncated) — the demo answer is
+        # capped like any fighter's, and a truncation flag we do not need here
+        # (the answer is short by construction; the cap is a hostile-input bound).
+        cleaned, _truncated = sanitize_submission(raw)
+        return cleaned or None
 
     # -- judging ------------------------------------------------------------
 
@@ -1705,7 +1853,15 @@ async def reconcile_once(
     skipped and NOT claimed — a battle that reached 'judging' simply waits for
     the provider to return rather than burning its attempt budget toward abort.
     """
-    counts = {"armed": 0, "queued": 0, "started": 0, "judged": 0, "settled": 0}
+    counts = {
+        "demo_accepted": 0,
+        "demo_submitted": 0,
+        "armed": 0,
+        "queued": 0,
+        "started": 0,
+        "judged": 0,
+        "settled": 0,
+    }
     token = str(uuid.uuid4())
     api_key = provider["api_key"] if provider is not None else None
     base_url = provider["base_url"] if provider is not None else None
@@ -1743,6 +1899,33 @@ async def reconcile_once(
                 await session.rollback()
                 return False
 
+    # 0. Demo auto-accept: a demo battle's platform opponent (agent_b) has no
+    #    human to click accept, so the reconciler consents on its behalf, as the
+    #    demo agent's own owner. DB-only and free, so it runs every pass
+    #    regardless of the provider. Committed per-battle in its own session; the
+    #    accept CAS is idempotent, so a re-run over an already-accepted battle is
+    #    a no-op that returns None. This must precede the arm phase, which claims
+    #    'accepted' rows produced here.
+    async with session_factory() as session:
+        demo_pending = await BattleRepository(session).find_demo_challenges_pending(
+            RECONCILE_BATCH
+        )
+    for battle_id in demo_pending:
+        async with session_factory() as session:
+            service = BattleService(session)
+            try:
+                accepted = await service.auto_accept_demo(battle_id)
+                if accepted is not None:
+                    await session.commit()
+                    counts["demo_accepted"] += 1
+                else:
+                    await session.rollback()
+            except Exception as exc:
+                logger.exception(
+                    "demo auto-accept failed for battle {}: {}", battle_id, exc
+                )
+                await session.rollback()
+
     # 1. accepted -> reserved, and push the ready-checks. Cheap CAS + transport.
     for battle in await claim(BattleStatus.ACCEPTED, POLL_MAX_ATTEMPTS, POLL_LEASE_SECONDS):
         if await step(battle, "arm", lambda r, b: r.arm_accepted(b)):
@@ -1758,9 +1941,21 @@ async def reconcile_once(
             counts["queued"] += 1
 
     # 3. queued -> running, with both battle_turn rows. Cheap CAS + transport.
+    #    A demo battle's opponent submits its one live answer immediately after
+    #    the start, in a separate session — add_submission is guarded on
+    #    status='running' alone, so it needs no lease (start_queued's 300s battle
+    #    lease would otherwise block a same-pass re-claim). Provider-gated; a
+    #    failure just leaves the demo side to the deadline's silence.
     for battle in await claim(BattleStatus.QUEUED, POLL_MAX_ATTEMPTS, POLL_LEASE_SECONDS):
         if await step(battle, "start", lambda r, b: r.start_queued(b, token)):
             counts["started"] += 1
+            if battle.get("is_demo") and provider is not None:
+                if await step(
+                    battle,
+                    "demo-submit",
+                    lambda r, b: r.drive_demo_submission(b, api_key, base_url),
+                ):
+                    counts["demo_submitted"] += 1
 
     # 4. running -> judging. The ONLY phases that spend money (this and the
     #    judging resume below), so both keep claim_battles_for_reconcile's strict
