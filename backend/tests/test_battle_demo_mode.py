@@ -829,6 +829,14 @@ class TestDemoAnswerModelRouting:
         _, kwargs = judge.call_args
         assert kwargs["wire_model"] == "kimi-k3", "demo answer routed to kimi-k3"
         assert kwargs["temperature"] == 1.0, "kimi requires temperature 1.0"
+        assert kwargs["max_tokens"] == 8192, (
+            "demo answer uses the wide budget, NOT the judge's 1200 cap that "
+            "kimi's reasoning exhausted before emitting any content"
+        )
+        assert kwargs["http_timeout"] == 240.0, (
+            "demo answer overrides the 60s judge HTTP ceiling; a full kimi answer "
+            "takes ~120s and the tight ceiling would abort it as a timeout"
+        )
 
     async def test_judge_panel_stays_on_glm(
         self, session_maker, db_session, task_pool
@@ -892,10 +900,11 @@ class TestDemoAnswerModelRouting:
             "every non-demo call is the glm judge; kimi is the demo answer only"
         )
 
-    async def test_demo_answer_timeout_is_ninety_seconds(self) -> None:
-        """The detached demo answer's hard ceiling is 90s — enough for a kimi
-        answer plus headroom, still well inside the ~15-minute battle deadline.
-        The answer is detached, so a longer bound cannot freeze the reconcile
-        pass; it only bounds the background task's lifetime.
+    async def test_demo_answer_timeout_is_generous(self) -> None:
+        """The detached demo answer's hard ceiling is 240s — kimi reasons at the
+        wide DEMO_ANSWER_MAX_TOKENS budget then answers, which the earlier 90s
+        bound could clip, still well inside the ~15-minute battle deadline. The
+        answer is detached, so a longer bound cannot freeze the reconcile pass;
+        it only bounds the background task's lifetime.
         """
-        assert DEMO_ANSWER_TIMEOUT_SECONDS == 90.0
+        assert DEMO_ANSWER_TIMEOUT_SECONDS == 240.0
