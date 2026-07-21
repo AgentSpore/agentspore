@@ -1811,23 +1811,30 @@ def _glm_dead_kimi_votes(**kwargs):
     return _vote_marker_side(**kwargs)
 
 
-def _install_two_model_roster(monkeypatch) -> None:
-    """Force _resolve_judge_roster to a real 2-model roster (glm + kimi).
+_ROSTER_SECOND_MODEL = "zai/glm-4.5-flash"
 
-    The second model never resolves in CI (no moonshot key / RU-ASN geo-block),
-    so the diversity + fallback paths are only reachable by stubbing the config
-    and the provider resolver — the same seam the wire-contract suite uses.
+
+def _install_two_model_roster(monkeypatch) -> None:
+    """Force _resolve_judge_roster to a real 2-model roster (kimi primary + glm).
+
+    The second model's provider is stubbed so both roster entries resolve — in CI
+    the real resolver would drop it, so the diversity + fallback paths are only
+    reachable by stubbing the config and the provider resolver, the same seam the
+    wire-contract suite uses. JUDGE_MODEL is kimi (the primary), so the second
+    model must be a DIFFERENT id or the roster collapses to single-model.
     """
     monkeypatch.setattr(
         battle_runner_module,
         "get_settings",
-        lambda: SimpleNamespace(battle_judge_models=[JUDGE_MODEL, "moonshot/kimi-k3"]),
+        lambda: SimpleNamespace(
+            battle_judge_models=[JUDGE_MODEL, _ROSTER_SECOND_MODEL]
+        ),
     )
 
     class _StubService:
         @staticmethod
         def resolve_provider(_model_id):
-            return {"base_url": "https://moonshot.invalid/v1", "api_key": "unused"}
+            return {"base_url": "https://glm.invalid/v1", "api_key": "unused"}
 
     monkeypatch.setattr(openrouter_service, "OpenRouterService", _StubService)
 
@@ -1859,8 +1866,43 @@ class TestJudgeRosterFallback:
         assert len(judgements) == 3
         # Both models cast votes — this is the diversity the single-model panel
         # cannot offer; a homogeneous set here would mean the roster never spread.
-        assert {j["judge_ref"] for j in judgements} == {JUDGE_MODEL, "moonshot/kimi-k3"}
+        assert {j["judge_ref"] for j in judgements} == {JUDGE_MODEL, _ROSTER_SECOND_MODEL}
         assert all(j["vote"] == "a" for j in judgements)
+
+    async def test_the_primary_replicate_judges_on_kimi_at_temperature_one(
+        self, monkeypatch, session_maker, db_session, task_id
+    ) -> None:
+        """The owner's choice: kimi-k3 is the PRIMARY judge. On a single-model
+        roster every replicate — the first included — calls the kimi wire model at
+        temperature 1.0, never the glm default at 0.7.
+
+        MUTATION (on a copy): revert JUDGE_MODEL to glm-4.5-flash, or drop kimi's
+        temperature override to 0.7 — the wire_model / temperature assertion goes
+        red.
+        """
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+        await _set_final_answers(session_maker, battle_id, _WINNER_MARKER, "the other answer")
+        # Force a single-model roster (only the primary) so every replicate is the
+        # primary and no glm entry can absorb the assertion.
+        monkeypatch.setattr(
+            battle_runner_module,
+            "get_settings",
+            lambda: SimpleNamespace(battle_judge_models=[JUDGE_MODEL]),
+        )
+
+        recorder = AsyncMock(side_effect=_vote_marker_side)
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch("app.services.battle_runner.call_judge_model", recorder):
+                await runner.run_judge_panel(battle_id, "k", "http://u", token)
+
+        assert recorder.await_count > 0, "the panel actually called the judge model"
+        first = recorder.call_args_list[0]
+        assert first.kwargs["wire_model"] == "kimi-k3", "the primary is the kimi wire model"
+        assert first.kwargs["temperature"] == 1.0, "kimi judging is at temperature 1.0"
+        # Every call in a single-model kimi roster is kimi at 1.0.
+        assert all(c.kwargs["wire_model"] == "kimi-k3" for c in recorder.call_args_list)
+        assert all(c.kwargs["temperature"] == 1.0 for c in recorder.call_args_list)
 
     async def test_a_dead_assigned_model_falls_back_and_reaches_a_winner(
         self, monkeypatch, session_maker, db_session, task_id
