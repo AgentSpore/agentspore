@@ -196,20 +196,42 @@ SILENT_FIGHTER_ERROR = "no submission before deadline"
 # The model the demo opponent answers with. Deliberately NOT the judge model:
 # the judge (JUDGE_MODEL, glm) is slow and flaky (~17s, 2/3 parseable) so a
 # single-call demo answer against it always timed out and the demo side never
-# spoke. kimi-k3 was measured live at ~7s with 0 timeouts, so it reliably
-# answers within the deadline. It has its OWN provider (moonshot) credentials
+# spoke. kimi-k3 answers reliably (0 timeouts); note a FULL task answer at the
+# wide DEMO_ANSWER_MAX_TOKENS budget was measured live at ~120s (a short judge
+# verdict is ~7s — do not size the demo timeouts off the verdict figure). It has
+# its OWN provider (moonshot) credentials
 # and REQUIRES temperature=1 — both flow through the per-model resolution in
 # _generate_demo_answer, never a hardcoded path.
 DEMO_ANSWER_MODEL = "moonshot/kimi-k3"
+
+# Response-length ceiling for the demo opponent's answer call. Deliberately NOT
+# the judge cap (JUDGE_MAX_TOKENS=1200, sized for a short JSON verdict): kimi-k3
+# is a reasoning model, and on a non-trivial battle task it spends ~1200 tokens
+# on reasoning alone before emitting a single character of answer. Under the
+# judge cap the call returned finish_reason='length' with EMPTY content, so the
+# demo side stayed silent (live-repro'd on prod). 8192 gives reasoning (~2000)
+# plus a full answer (~2000) ample room to finish naturally (finish_reason=stop);
+# the answer is still capped to MAX_SUBMISSION_CHARS after the fact.
+DEMO_ANSWER_MAX_TOKENS = 8192
 
 # Hard ceiling on the demo opponent's live answer call. The demo answer is the
 # ONLY step in a reconcile pass that awaits a provider, and it now runs detached
 # (see _spawn_demo_drive) so it can never freeze the pass — but a hung provider
 # would still leak a background task forever without this bound. On timeout the
 # task writes nothing and close_deadline degrades the demo side to silent-fighter,
-# so the battle is still judged. 90s comfortably covers a kimi-k3 answer plus
-# headroom and still lands well inside the ~15-minute battle deadline.
-DEMO_ANSWER_TIMEOUT_SECONDS = 90.0
+# so the battle is still judged. 240s comfortably covers a kimi-k3 reasoning +
+# answer at the wider DEMO_ANSWER_MAX_TOKENS budget and still lands well inside
+# the ~15-minute battle deadline.
+DEMO_ANSWER_TIMEOUT_SECONDS = 240.0
+
+# TTL on the cross-process demo-drive claim (Redis SET NX EX). uvicorn runs 4
+# workers and each holds its OWN in-process _demo_inflight guard, so absent a
+# shared claim up to 4 workers each PAY for the same demo answer. The claim
+# admits exactly one worker per battle; the TTL only has to outlive one drive
+# attempt (timeout + headroom) — it is never released, so the winning drive's
+# final submission (and the already_final short-circuit) prevents any re-pay,
+# and a failed drive is retried only after the TTL lapses, not 4× at once.
+DEMO_DRIVE_CLAIM_TTL_SECONDS = int(DEMO_ANSWER_TIMEOUT_SECONDS) + 30
 
 
 # The demo opponent's system framing. Deliberately plain: the demo agent is a
@@ -888,6 +910,13 @@ class BattleRunner:
                 gate=self.gate,
                 wire_model=wire_model_name(DEMO_ANSWER_MODEL),
                 temperature=judge_temperature_for(DEMO_ANSWER_MODEL),
+                # A reasoning model answering a real task needs far more room than
+                # the tight judging default, or it truncates to empty content.
+                max_tokens=DEMO_ANSWER_MAX_TOKENS,
+                # kimi-k3 answering a real task was measured live at ~120s; the 60s
+                # judging HTTP ceiling would abort it as a transport timeout and
+                # silence the demo side. Match the detached task's own bound.
+                http_timeout=DEMO_ANSWER_TIMEOUT_SECONDS,
             )
         except JudgeTransportError as exc:
             logger.warning(
@@ -1864,7 +1893,49 @@ async def reap_once(session_factory, provider: dict | None = None) -> dict[str, 
 _demo_inflight: dict[str, asyncio.Task] = {}
 
 
-def _spawn_demo_drive(session_factory, gate, battle: dict, api_key, base_url) -> None:
+def _demo_drive_claim_key(battle_id: str) -> str:
+    return f"battle:demo-drive:{battle_id}"
+
+
+async def _claim_demo_drive(gate, battle_id: str) -> bool:
+    """Win the cross-process right to generate this battle's demo answer.
+
+    ``_demo_inflight`` guards only WITHIN one process; uvicorn runs 4 workers, so
+    without a shared claim every worker that reaches this step pays for the same
+    demo answer (add_submission dedups the row, but the LLM call is already spent
+    up to 4×). A single ``SET NX EX`` on a per-battle key admits exactly one
+    worker. The claim is never released: the winner's final submission and the
+    ``already_final`` short-circuit stop any re-pay, and the TTL only bounds a
+    retry after a failed drive.
+
+    Fail-open on a missing/unreachable Redis: if the shared lock cannot be
+    consulted we let the drive proceed rather than silence the demo opponent (the
+    very defect this feature fixes). A Redis outage also breaks the LLM gate, so
+    the duplicate-pay window it opens is narrow. ``gate`` is the LLMGate; its
+    ``_redis`` is the shared client. ``gate is None`` (unit tests) means a single
+    process — the in-process guard already suffices.
+    """
+    redis = getattr(gate, "_redis", None)
+    if redis is None:
+        return True
+    try:
+        got = await redis.set(
+            _demo_drive_claim_key(battle_id),
+            "1",
+            ex=DEMO_DRIVE_CLAIM_TTL_SECONDS,
+            nx=True,
+        )
+        return bool(got)
+    except Exception as exc:  # noqa: BLE001 — fail-open, see docstring
+        logger.warning(
+            "battle {} demo-drive claim check failed, proceeding: {}",
+            battle_id,
+            exc,
+        )
+        return True
+
+
+async def _spawn_demo_drive(session_factory, gate, battle: dict, api_key, base_url) -> None:
     """Fire-and-forget the demo opponent's live answer OFF the reconcile pass.
 
     The reconcile pass is one serialized asyncio task that drives EVERY battle;
@@ -1873,15 +1944,22 @@ def _spawn_demo_drive(session_factory, gate, battle: dict, api_key, base_url) ->
     (not just demo ones) — which is why demo mode was pulled from production. This
     detaches it: the pass spawns the call and returns immediately.
 
+    Only the (fast) cross-process claim is awaited here — the SET NX, not the LLM
+    call — so the reconcile pass is still never blocked on a provider.
+
     The detached task runs on its OWN db session (never the reconcile session —
     sharing a session across the reconcile pass and a detached task raced into
     IllegalStateChangeError) and under a hard timeout. On timeout/failure it
     writes nothing and close_deadline degrades the demo side to silent-fighter, so
     the battle still reaches a judged verdict. The in-flight guard makes a repeat
-    spawn for the same battle a no-op.
+    spawn WITHIN one process a no-op; ``_claim_demo_drive`` makes it a no-op ACROSS
+    processes.
     """
     battle_id = str(battle["id"])
     if battle_id in _demo_inflight:
+        return
+    if not await _claim_demo_drive(gate, battle_id):
+        # Another worker owns this demo drive; do not spawn (and do not pay).
         return
     task = asyncio.create_task(
         _drive_demo_answer(session_factory, gate, battle, api_key, base_url)
@@ -2060,7 +2138,9 @@ async def reconcile_once(
         if await step(battle, "start", lambda r, b: r.start_queued(b, token)):
             counts["started"] += 1
             if battle.get("is_demo") and provider is not None:
-                _spawn_demo_drive(session_factory, gate, battle, api_key, base_url)
+                await _spawn_demo_drive(
+                    session_factory, gate, battle, api_key, base_url
+                )
 
     # 4. running -> judging. The ONLY phases that spend money (this and the
     #    judging resume below), so both keep claim_battles_for_reconcile's strict
