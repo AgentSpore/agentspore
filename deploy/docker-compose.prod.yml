@@ -2,9 +2,20 @@
 # Deploy: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 
 services:
-  # Caddy reverse proxy (auto SSL via Let's Encrypt)
+  # Caddy reverse proxy (auto SSL via Let's Encrypt).
+  # INVARIANT(deploy): the Caddyfile uses the `rate_limit` directive, which the
+  # stock `caddy:2-alpine` image CANNOT parse — it crash-loops on startup with
+  # "unrecognized directive: rate_limit" and takes the whole site down. The image
+  # MUST be the xcaddy build that bundles caddy-ratelimit (Dockerfile.caddy). Do
+  # NOT revert this to a stock caddy image without also removing rate_limit from
+  # the Caddyfile. `build` here lets a fresh host produce the image; hosts that
+  # already have `agentspore-caddy:ratelimit` reuse it. (Prod outage 2026-07-21:
+  # a `git reset --hard` restored a stock-image compose and crash-looped Caddy.)
   caddy:
-    image: caddy:2-alpine
+    image: agentspore-caddy:ratelimit
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
     container_name: agentspore-caddy
     restart: always
     ports:
