@@ -32,6 +32,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.battle_judges import (
+    JUDGE_HTTP_TIMEOUT_SECONDS,
+    JUDGE_MAX_TOKENS,
+    JUDGE_MODEL,
     JUDGE_SYSTEM_PROMPT,
     JUDGE_SYSTEM_PROMPTS,
     LABEL_ONE,
@@ -55,6 +58,7 @@ from app.services.battle_judges import (
     warn_on_residual_side_label,
 )
 from app.services.battle_runner import BattleRunner
+from app.services.llm_gate import DEFAULT_LEASE_SECONDS
 
 RUBRIC = [
     {"key": "correctness", "description": "Does it work?", "weight": 2.0},
@@ -769,3 +773,31 @@ class TestTheRunnerActuallyCallsTheTelemetry:
         assert emitted == []
         # Under presented_order 'ba' the second slot is side A.
         assert written["reasoning"] == "side A is stronger overall."
+
+
+class TestJudgeBudgetInvariants:
+    """The judge-call limits must match a REASONING JUDGE_MODEL, not a short one.
+
+    These are the two limits that leaked from a non-reasoning sizing when
+    JUDGE_MODEL became kimi-k3 (a reasoning model): a token cap too small to
+    hold reasoning + verdict truncates the JSON to UNPARSABLE, and an HTTP
+    timeout at/above the gate lease reaps a live call's slot mid-flight. Both
+    were measured live 2026-07-21; these pin the fix so a later edit that lowers
+    either back to the short-verdict sizing fails loudly instead of silently
+    reintroducing ~17% unparsable verdicts / lease over-subscription.
+    """
+
+    def test_max_tokens_leaves_reasoning_headroom(self) -> None:
+        # The verdict JSON is ~200 tokens; a reasoning model needs the rest for
+        # hidden reasoning before it. 4096 was the measured-clean value.
+        assert JUDGE_MAX_TOKENS >= 4096
+
+    def test_http_timeout_stays_below_gate_lease(self) -> None:
+        # INVARIANT: a judge call must finish before its account lease expires,
+        # or the reaper hands its slot to another caller mid-flight.
+        assert JUDGE_HTTP_TIMEOUT_SECONDS < DEFAULT_LEASE_SECONDS
+
+    def test_judge_model_is_the_reasoning_model_these_limits_assume(self) -> None:
+        # The headroom above is justified ONLY because the default judge is a
+        # reasoning model. If JUDGE_MODEL ever changes, re-derive the limits.
+        assert JUDGE_MODEL == "moonshot/kimi-k3"
