@@ -78,6 +78,13 @@ QUORUM = 3
 # replicates is the only uncertainty signal a one-model panel can offer.
 JUDGE_TEMPERATURE = 0.7
 
+# Response-length ceiling for a JUDGE call. A judge only ever emits a short,
+# fixed-shape JSON verdict, so 1200 tokens is ample and keeps the call cheap and
+# fast. This is DELIBERATELY tight and is the judging default only: a reasoning
+# model asked to *answer a task* (the demo opponent) needs far more room — see
+# ``call_judge_model``'s ``max_tokens`` parameter, which the demo path overrides.
+JUDGE_MAX_TOKENS = 1200
+
 # Per-model temperature overrides. Most models judge fine at JUDGE_TEMPERATURE;
 # a few need a different sampling temperature to behave. kimi-k3 was measured
 # live returning 3/3 parseable verdicts ONLY at temperature 1.0 (at 0.7 it
@@ -1026,6 +1033,19 @@ async def call_judge_model(
     # form to a provider is the 1211 "Unknown Model" failure.
     wire_model: str = wire_model_name(JUDGE_MODEL),
     temperature: float = JUDGE_TEMPERATURE,
+    # Judging default is deliberately tight (JUDGE_MAX_TOKENS): a verdict is a
+    # short JSON blob. The demo-answer path overrides this — a reasoning model
+    # (kimi-k3) answering a real task spends its early budget on reasoning tokens,
+    # and the judge cap would truncate it to finish_reason='length' with EMPTY
+    # content. Keeping this a parameter leaves the judging call byte-for-byte
+    # unchanged while letting the demo opponent answer in full.
+    max_tokens: int = JUDGE_MAX_TOKENS,
+    # Judging default (JUDGE_HTTP_TIMEOUT_SECONDS) is sized for a short verdict.
+    # The demo-answer path overrides it: a reasoning model answering a real task
+    # was measured at ~120s wall-clock, which the 60s judge ceiling would cut off
+    # as a transport timeout -> empty submission -> silent demo opponent. Kept a
+    # parameter so the judging call stays byte-for-byte unchanged.
+    http_timeout: float = JUDGE_HTTP_TIMEOUT_SECONDS,
 ) -> str:
     """ONE gated, bounded provider HTTP attempt. Raises JudgeTransportError on failure.
 
@@ -1047,9 +1067,9 @@ async def call_judge_model(
                     # Passed in case the provider honours it; the seed is
                     # the replicate's identity regardless of whether it does.
                     "seed": seed_int32(seed),
-                    "max_tokens": 1200,
+                    "max_tokens": max_tokens,
                 },
-                timeout=JUDGE_HTTP_TIMEOUT_SECONDS,
+                timeout=http_timeout,
             )
 
             if response.status_code == 200:
