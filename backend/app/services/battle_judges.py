@@ -61,8 +61,15 @@ from loguru import logger
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.llm_gate import LLMGate, LLMGateTimeoutError
 
-# The only reliably free model available to us. See the module docstring.
-JUDGE_MODEL = "zai/glm-4.5-flash"
+# The PRIMARY judge model. glm-4.5-flash (the one reliably free model) is fast to
+# call but flaky as a judge: ~2/3 of its replies parse and a whole battle's
+# panel drifts to ~8 minutes on its retries. kimi-k3 was measured live as a judge
+# at ~7s with 0 timeouts and a clean parseable verdict, so it is promoted to
+# primary and glm stays in the roster as the second model (fallback + diversity).
+# kimi is a PAID model on moonshot — that per-battle cost is a deliberate,
+# owner-accepted trade for a reliable verdict. kimi requires temperature=1.0,
+# pinned in JUDGE_MODEL_TEMPERATURE_OVERRIDES below.
+JUDGE_MODEL = "moonshot/kimi-k3"
 JUDGE_KIND_LLM = "llm"
 
 # Three replicates x two orders = six calls, three collapsed votes.

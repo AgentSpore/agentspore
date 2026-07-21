@@ -194,15 +194,16 @@ TASK_BIND_LEASE_SECONDS = 15
 SILENT_FIGHTER_SEQ_NO = 9_999
 SILENT_FIGHTER_ERROR = "no submission before deadline"
 
-# The model the demo opponent answers with. Deliberately NOT the judge model:
-# the judge (JUDGE_MODEL, glm) is slow and flaky (~17s, 2/3 parseable) so a
-# single-call demo answer against it always timed out and the demo side never
-# spoke. kimi-k3 answers reliably (0 timeouts); note a FULL task answer at the
-# wide DEMO_ANSWER_MAX_TOKENS budget was measured live at ~120s (a short judge
-# verdict is ~7s — do not size the demo timeouts off the verdict figure). It has
-# its OWN provider (moonshot) credentials
-# and REQUIRES temperature=1 — both flow through the per-model resolution in
-# _generate_demo_answer, never a hardcoded path.
+# The model the demo opponent answers with. kimi-k3 answers reliably (0 timeouts)
+# where the old glm judge always timed out on a single-call demo answer, so the
+# demo side never spoke. It is now ALSO the primary judge model (JUDGE_MODEL), but
+# this constant is kept SEPARATE on purpose: the demo path answers a full task and
+# so overrides the tight judging defaults with a much wider token budget
+# (DEMO_ANSWER_MAX_TOKENS) and a longer HTTP timeout — a FULL task answer was
+# measured live at ~120s, whereas a short judge verdict is ~7s (do not size the
+# demo timeouts off the verdict figure). kimi has its OWN provider (moonshot)
+# credentials and REQUIRES temperature=1 — both flow through the per-model
+# resolution in _generate_demo_answer, never a hardcoded path.
 DEMO_ANSWER_MODEL = "moonshot/kimi-k3"
 
 # Response-length ceiling for the demo opponent's answer call. Deliberately NOT
