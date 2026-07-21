@@ -98,12 +98,12 @@ from app.services.connection_manager import dispatch_existing
 from app.services.llm_gate import LLMGate
 
 # Row-lease length for a battle claimed by the reconciler. Long enough to
-# outlast one bounded step (six judge calls at 60s each, queued behind a
-# 3-slot gate), short enough that a worker that dies does not strand the
-# battle for long. Renewed while a step is actually in flight.
+# outlast one bounded step (six judge calls at up to JUDGE_HTTP_TIMEOUT_SECONDS
+# each, queued behind a 3-slot gate), short enough that a worker that dies does
+# not strand the battle for long. Renewed while a step is actually in flight.
 BATTLE_LEASE_SECONDS = 300
 
-# Row-lease for ONE judge run. MUST exceed JUDGE_HTTP_TIMEOUT_SECONDS (60) plus
+# Row-lease for ONE judge run. MUST exceed JUDGE_HTTP_TIMEOUT_SECONDS plus
 # the gate wait, or a live call's row is reclaimed under it and two workers
 # publish for one slot.
 JUDGE_RUN_LEASE_SECONDS = 180
@@ -206,12 +206,13 @@ SILENT_FIGHTER_ERROR = "no submission before deadline"
 # resolution in _generate_demo_answer, never a hardcoded path.
 DEMO_ANSWER_MODEL = "moonshot/kimi-k3"
 
-# Response-length ceiling for the demo opponent's answer call. Deliberately NOT
-# the judge cap (JUDGE_MAX_TOKENS=1200, sized for a short JSON verdict): kimi-k3
-# is a reasoning model, and on a non-trivial battle task it spends ~1200 tokens
-# on reasoning alone before emitting a single character of answer. Under the
-# judge cap the call returned finish_reason='length' with EMPTY content, so the
-# demo side stayed silent (live-repro'd on prod). 8192 gives reasoning (~2000)
+# Response-length ceiling for the demo opponent's answer call. Deliberately
+# LARGER than the judge cap (JUDGE_MAX_TOKENS, sized for reasoning + a short JSON
+# verdict): kimi-k3 is a reasoning model, and on a non-trivial battle task it
+# spends far more tokens on reasoning before emitting a single character of
+# answer. Under the judge cap the call returned finish_reason='length' with EMPTY
+# content, so the demo side stayed silent (live-repro'd on prod). 8192 gives
+# reasoning (~2000)
 # plus a full answer (~2000) ample room to finish naturally (finish_reason=stop);
 # the answer is still capped to MAX_SUBMISSION_CHARS after the fact.
 DEMO_ANSWER_MAX_TOKENS = 8192

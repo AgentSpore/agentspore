@@ -85,12 +85,19 @@ QUORUM = 3
 # replicates is the only uncertainty signal a one-model panel can offer.
 JUDGE_TEMPERATURE = 0.7
 
-# Response-length ceiling for a JUDGE call. A judge only ever emits a short,
-# fixed-shape JSON verdict, so 1200 tokens is ample and keeps the call cheap and
-# fast. This is DELIBERATELY tight and is the judging default only: a reasoning
-# model asked to *answer a task* (the demo opponent) needs far more room — see
-# ``call_judge_model``'s ``max_tokens`` parameter, which the demo path overrides.
-JUDGE_MAX_TOKENS = 1200
+# Response-length ceiling for a JUDGE call. The verdict itself is a short,
+# fixed-shape JSON blob (~200 tokens), but JUDGE_MODEL is now a REASONING model
+# (kimi-k3): it spends tokens on hidden reasoning BEFORE emitting the JSON, and
+# that reasoning shares this same budget. A tight cap therefore truncates the
+# verdict mid-JSON (no closing brace, missing ``scores``) or leaves content
+# EMPTY (all budget spent reasoning) — both parse as UNPARSABLE, wasting reclaim
+# attempts and, in a bad draw, dropping a replicate below quorum (winner NULL).
+# INVARIANT(battles): measured live 2026-07-21 — at 1200 kimi truncated ~17% of
+# verdicts (18-call faithful repro through build_judge_payload/parse_judge_response);
+# at 4096 it was 18/18 valid with the verdict still short. Do NOT lower below the
+# reasoning headroom a reasoning JUDGE_MODEL needs. The demo path overrides this
+# with an even larger cap (it answers a full task) via call_judge_model's param.
+JUDGE_MAX_TOKENS = 4096
 
 # Per-model temperature overrides. Most models judge fine at JUDGE_TEMPERATURE;
 # a few need a different sampling temperature to behave. kimi-k3 was measured
@@ -107,9 +114,14 @@ def judge_temperature_for(model_id: str) -> float:
     """The sampling temperature this judge model should be called at."""
     return JUDGE_MODEL_TEMPERATURE_OVERRIDES.get(model_id, JUDGE_TEMPERATURE)
 
-# Hard ceiling on one judge HTTP call. MUST stay below llm_gate's lease
-# (DEFAULT_LEASE_SECONDS=90) or a live call loses its account slot to the reaper.
-JUDGE_HTTP_TIMEOUT_SECONDS = 60.0
+# Hard ceiling on one judge HTTP call. INVARIANT(battles): MUST stay below
+# llm_gate's lease (DEFAULT_LEASE_SECONDS=90) or a live call outlives its lease
+# and its account slot is reaped mid-flight (concurrency over-subscription).
+# Raised 60->85 alongside the JUDGE_MAX_TOKENS bump: a reasoning JUDGE_MODEL that
+# now uses more of its token budget also runs longer on the wire (measured a rare
+# >60s verdict), so 60s cut ~5% of otherwise-valid verdicts as transport
+# timeouts. 85 < 90 keeps the lease invariant while letting long reasoning finish.
+JUDGE_HTTP_TIMEOUT_SECONDS = 85.0
 
 # Per-submission ceiling, applied BEFORE prompt construction. A cap enforced by
 # the provider's context limit instead would fail the whole call, letting one
@@ -1040,18 +1052,19 @@ async def call_judge_model(
     # form to a provider is the 1211 "Unknown Model" failure.
     wire_model: str = wire_model_name(JUDGE_MODEL),
     temperature: float = JUDGE_TEMPERATURE,
-    # Judging default is deliberately tight (JUDGE_MAX_TOKENS): a verdict is a
-    # short JSON blob. The demo-answer path overrides this — a reasoning model
-    # (kimi-k3) answering a real task spends its early budget on reasoning tokens,
-    # and the judge cap would truncate it to finish_reason='length' with EMPTY
-    # content. Keeping this a parameter leaves the judging call byte-for-byte
-    # unchanged while letting the demo opponent answer in full.
+    # Judging default (JUDGE_MAX_TOKENS) sizes the reasoning JUDGE_MODEL's hidden
+    # reasoning PLUS the short verdict JSON. The demo-answer path overrides it
+    # with an even larger cap: a reasoning model answering a full task spends far
+    # more of its budget on reasoning, and even the judging cap would truncate it
+    # to finish_reason='length' with EMPTY content. Keeping this a parameter lets
+    # each path size its own budget without coupling them.
     max_tokens: int = JUDGE_MAX_TOKENS,
-    # Judging default (JUDGE_HTTP_TIMEOUT_SECONDS) is sized for a short verdict.
-    # The demo-answer path overrides it: a reasoning model answering a real task
-    # was measured at ~120s wall-clock, which the 60s judge ceiling would cut off
-    # as a transport timeout -> empty submission -> silent demo opponent. Kept a
-    # parameter so the judging call stays byte-for-byte unchanged.
+    # Judging default (JUDGE_HTTP_TIMEOUT_SECONDS) sizes a reasoning verdict while
+    # staying under the gate lease. The demo-answer path overrides it far higher:
+    # a reasoning model answering a full task was measured at ~120s wall-clock,
+    # which any lease-bounded judge ceiling would cut off as a transport timeout
+    # -> empty submission -> silent demo opponent. Kept a parameter so each path
+    # sizes its own timeout.
     http_timeout: float = JUDGE_HTTP_TIMEOUT_SECONDS,
 ) -> str:
     """ONE gated, bounded provider HTTP attempt. Raises JudgeTransportError on failure.
@@ -1097,7 +1110,7 @@ async def call_judge_model(
         raise JudgeTransportError(f"gate saturated: {exc}") from exc
     except httpx.TimeoutException as exc:
         raise JudgeTransportError(
-            f"timeout after {JUDGE_HTTP_TIMEOUT_SECONDS}s"
+            f"timeout after {http_timeout}s"
         ) from exc
     except httpx.HTTPError as exc:
         raise JudgeTransportError(f"transport: {exc}") from exc
