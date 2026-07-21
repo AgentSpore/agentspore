@@ -34,8 +34,14 @@ from app.core.rating import DEFAULT_ELO
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side, TaskSource, Vote
-from app.services.battle_judges import JUDGE_KIND_LLM, JUDGE_MODEL, replicate_seed
+from app.services.battle_judges import (
+    JUDGE_KIND_LLM,
+    JUDGE_MAX_TOKENS,
+    JUDGE_MODEL,
+    replicate_seed,
+)
 from app.services.battle_runner import (
+    DEMO_ANSWER_MAX_TOKENS,
     DEMO_ANSWER_TIMEOUT_SECONDS,
     BattleRunner,
     _await_demo_drives,
@@ -762,7 +768,8 @@ class TestDemoSchemaAndCreation:
 
 # ---------------------------------------------------------------------------
 # Demo answer model routing — the demo opponent answers on kimi-k3 (fast, no
-# timeouts) while the judge panel stays on the glm judge model.
+# timeouts) with the wide answer budget, distinct from the judge panel's tight
+# verdict defaults even though kimi is now also the primary judge model.
 # ---------------------------------------------------------------------------
 
 
@@ -804,16 +811,18 @@ class TestDemoAnswerModelRouting:
         self, session_maker, db_session, task_pool
     ) -> None:
         """The demo opponent's answer call targets moonshot/kimi-k3 with
-        temperature=1.0 — NOT the judge model (glm) at its temperature.
+        temperature=1.0 and the WIDE answer budget — distinct from the judge
+        panel's tight verdict defaults (max_tokens/http_timeout), even though kimi
+        is now also the primary judge model.
 
-        Routing the single-call demo answer to the slow, flaky judge model made
-        it always time out, so the demo side never spoke. kimi answers fast; and
-        kimi is only parseable at temperature 1.0, so both the wire model and the
-        temperature must be kimi's.
+        Routing the single-call demo answer to the old glm judge made it always
+        time out, so the demo side never spoke. kimi answers fast; and kimi is
+        only parseable at temperature 1.0, so both the wire model and the
+        temperature must be kimi's, and the answer budget must be the wide one.
 
-        MUTATION (on a copy of battle_runner.py): set DEMO_ANSWER_MODEL back to
-        the judge model, or drop kimi's temperature override to 0.7 — this test
-        goes red on the wire_model / temperature assertion.
+        MUTATION (on a copy of battle_runner.py): drop DEMO_ANSWER_MAX_TOKENS to
+        the judge cap or kimi's temperature override to 0.7 — this test goes red
+        on the max_tokens / temperature assertion.
         """
         judge = AsyncMock(return_value=VALID_JUDGE_REPLY)
         battle_id = await _walk_demo_to_running_and_capture(
@@ -838,11 +847,14 @@ class TestDemoAnswerModelRouting:
             "takes ~120s and the tight ceiling would abort it as a timeout"
         )
 
-    async def test_judge_panel_stays_on_glm(
+    async def test_demo_answer_and_judge_panel_share_kimi_but_not_the_budget(
         self, session_maker, db_session, task_pool
     ) -> None:
-        """Only the demo ANSWER moves to kimi; judging stays on the glm judge
-        model. The judge panel call carries the glm wire model, never kimi's.
+        """kimi-k3 is now the primary judge, so both the demo ANSWER and the judge
+        panel call kimi's wire model — but they must NOT share the token budget:
+        the demo answer uses the wide DEMO_ANSWER_MAX_TOKENS, the panel the tight
+        JUDGE_MAX_TOKENS. The two paths share a model, never the limits, and the
+        panel judges at kimi's required temperature 1.0.
         """
         battle_id, agent_a, _agent_b, _, _ = await _make_demo_challenge(db_session)
         provider = {"api_key": "k", "base_url": "http://unused"}
@@ -852,13 +864,14 @@ class TestDemoAnswerModelRouting:
 
         # The demo answer must be benign prose (not a judge-shaped JSON, which the
         # injection guard would quarantine before the panel ever calls the model);
-        # the panel calls return a real judge verdict.
-        async def by_model(*_a, **kwargs):
-            if kwargs.get("wire_model") == "kimi-k3":
+        # the panel calls return a real judge verdict. Both now target kimi-k3, so
+        # they are told apart by their token BUDGET, not their wire model.
+        async def by_budget(*_a, **kwargs):
+            if kwargs.get("max_tokens") == DEMO_ANSWER_MAX_TOKENS:
                 return "A plain, ordinary demo answer to the task."
             return VALID_JUDGE_REPLY
 
-        judge = AsyncMock(side_effect=by_model)
+        judge = AsyncMock(side_effect=by_budget)
 
         with _no_transport(), patch("app.services.battle_runner.call_judge_model", judge):
             await drive()
@@ -893,11 +906,24 @@ class TestDemoAnswerModelRouting:
         with _no_transport(), patch("app.services.battle_runner.call_judge_model", judge):
             await drive()  # judge panel + settle
 
-        wire_models = {c.kwargs["wire_model"] for c in judge.call_args_list}
-        assert "glm-4.5-flash" in wire_models, "the judge panel ran on the glm model"
-        panel_only = wire_models - {"kimi-k3"}
-        assert panel_only == {"glm-4.5-flash"}, (
-            "every non-demo call is the glm judge; kimi is the demo answer only"
+        # The demo path passes max_tokens=DEMO_ANSWER_MAX_TOKENS explicitly; the
+        # judge panel omits it and relies on call_judge_model's JUDGE_MAX_TOKENS
+        # default — so an ABSENT max_tokens is a panel call.
+        demo_calls = [
+            c for c in judge.call_args_list
+            if c.kwargs.get("max_tokens") == DEMO_ANSWER_MAX_TOKENS
+        ]
+        panel_calls = [
+            c for c in judge.call_args_list
+            if c.kwargs.get("max_tokens", JUDGE_MAX_TOKENS) == JUDGE_MAX_TOKENS
+        ]
+        assert demo_calls, "the demo answer call happened at the wide budget"
+        assert panel_calls, "the judge panel ran at the tight verdict budget"
+        assert all(c.kwargs["wire_model"] == "kimi-k3" for c in panel_calls), (
+            "the judge panel runs on the kimi-k3 primary"
+        )
+        assert all(c.kwargs["temperature"] == 1.0 for c in panel_calls), (
+            "kimi judging must be at temperature 1.0, never the 0.7 default"
         )
 
     async def test_demo_answer_timeout_is_generous(self) -> None:
