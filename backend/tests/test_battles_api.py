@@ -1632,6 +1632,36 @@ async def test_read_routes_404_on_an_unknown_battle(client):
     assert (await client.get(f"/api/v1/battles/{missing}/judgements")).status_code == 404
 
 
+async def test_read_routes_404_on_a_malformed_battle_id(client):
+    """A non-UUID id is an unknown battle (404), never a 500.
+
+    Without valid_battle_id the raw string reaches the repository's
+    ``WHERE id = :battle_id`` and Postgres raises "invalid input syntax for type
+    uuid", surfacing as an unhandled 500. The detail, submissions and verdict
+    routes must all answer 404 — identical semantics to a valid-but-absent id.
+    """
+    for malformed in ("01e2cdab", "not-a-uuid", "875bbafb"):
+        assert (await client.get(f"/api/v1/battles/{malformed}")).status_code == 404
+        assert (await client.get(f"/api/v1/battles/{malformed}/submissions")).status_code == 404
+        assert (await client.get(f"/api/v1/battles/{malformed}/judgements")).status_code == 404
+
+
+async def test_mutating_route_404_on_a_malformed_battle_id(client):
+    """The guard covers mutating routes too, not only the reads.
+
+    decline authenticates as a real owner here (get_current_user overridden), so
+    a 401 cannot mask the result: with auth satisfied, the malformed id is the
+    only thing that can produce the 404. Before the fix this reached repo.get and
+    raised an unhandled 500.
+    """
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=str(uuid.uuid4()))
+    try:
+        resp = await client.post("/api/v1/battles/01e2cdab/decline")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+    assert resp.status_code == 404
+
+
 # ── D: the public battle DTO must not leak the ownership graph ─────────────
 
 

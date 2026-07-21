@@ -14,6 +14,7 @@ that identity rather than trusting the body.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -84,6 +85,23 @@ from app.services.battle_service import (
 _CHALLENGE_RECEIVED_TYPE = "battle_challenge_received"
 
 router = APIRouter(prefix="/battles", tags=["battles"])
+
+
+def valid_battle_id(battle_id: str) -> str:
+    """Path dependency: reject a malformed battle id as an unknown battle.
+
+    Battle ids are UUIDs. A non-UUID path segment would otherwise reach the
+    repository's ``WHERE id = :battle_id`` query and make Postgres raise
+    "invalid input syntax for type uuid", surfacing as an unhandled 500. A
+    malformed id names no battle, so its semantics are identical to a valid
+    but absent id: 404. Returns the id unchanged so callers keep passing the
+    original string to the repository.
+    """
+    try:
+        UUID(battle_id)
+    except ValueError as exc:
+        raise HTTPException(404, "battle not found") from exc
+    return battle_id
 
 # Which HTTP status each admission rule answers with. A cap and a cooldown are
 # both "not now" (429); a block or an opt-out is "not ever, by policy" (403);
@@ -512,7 +530,7 @@ async def delete_battle_block(
 
 @router.get("/{battle_id}", response_model=BattleDetail, summary="Get one battle")
 async def get_battle(
-    battle_id: str,
+    battle_id: Annotated[str, Depends(valid_battle_id)],
     viewer: OptionalUser,
     db: AsyncSession = Depends(get_db),
 ):
@@ -657,7 +675,7 @@ class ClaimChallengeRequest(BaseModel):
 
 @router.post("/{battle_id}/claim", summary="Claim an open challenge")
 async def claim_open_challenge(
-    battle_id: str,
+    battle_id: Annotated[str, Depends(valid_battle_id)],
     body: ClaimChallengeRequest,
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
@@ -706,7 +724,7 @@ async def claim_open_challenge(
 
 @router.post("/{battle_id}/accept", summary="Accept a challenge (B's owner)")
 async def accept_challenge(
-    battle_id: str,
+    battle_id: Annotated[str, Depends(valid_battle_id)],
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
@@ -764,7 +782,7 @@ async def accept_challenge(
 
 @router.post("/{battle_id}/decline", summary="Decline a challenge (B's owner)")
 async def decline_challenge(
-    battle_id: str,
+    battle_id: Annotated[str, Depends(valid_battle_id)],
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
@@ -789,7 +807,7 @@ async def decline_challenge(
 
 @router.post("/{battle_id}/turns")
 async def submit_turn(
-    battle_id: str,
+    battle_id: Annotated[str, Depends(valid_battle_id)],
     body: SubmitTurnRequest,
     agent: dict = Depends(get_agent_by_api_key),
     db: AsyncSession = Depends(get_db),
@@ -887,7 +905,7 @@ _TURNS_CLOSED = frozenset({BattleStatus.JUDGING.value, BattleStatus.COMPLETED.va
     summary="List a battle's submissions",
 )
 async def list_battle_submissions(
-    battle_id: str,
+    battle_id: Annotated[str, Depends(valid_battle_id)],
     fighter: dict | None = Depends(_optional_fighter),
     db: AsyncSession = Depends(get_db),
 ):
@@ -956,7 +974,10 @@ async def list_battle_submissions(
     response_model=BattleVerdictView,
     summary="A completed battle's verdict, with its evidence",
 )
-async def get_battle_verdict(battle_id: str, db: AsyncSession = Depends(get_db)):
+async def get_battle_verdict(
+    battle_id: Annotated[str, Depends(valid_battle_id)],
+    db: AsyncSession = Depends(get_db),
+):
     """Public, but ONLY once completed. Before that: empty, for everyone.
 
     This is the same rule GET /battles/{id} applies to verdict_reason, and it is
