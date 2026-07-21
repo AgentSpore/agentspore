@@ -46,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.rating import RatingChange, apply_battle_result
+from app.core.redis_client import get_redis
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository, ReservationConflictError
 from app.schemas.battles import (
@@ -1911,12 +1912,19 @@ async def _claim_demo_drive(gate, battle_id: str) -> bool:
     Fail-open on a missing/unreachable Redis: if the shared lock cannot be
     consulted we let the drive proceed rather than silence the demo opponent (the
     very defect this feature fixes). A Redis outage also breaks the LLM gate, so
-    the duplicate-pay window it opens is narrow. ``gate`` is the LLMGate; its
-    ``_redis`` is the shared client. ``gate is None`` (unit tests) means a single
-    process — the in-process guard already suffices.
+    the duplicate-pay window it opens is narrow. The claim uses the shared
+    ``get_redis`` singleton (same client as the leader lock); if it is not
+    initialised — unit tests, or Redis down — we fail open. ``gate`` is retained
+    for signature stability but no longer consulted for the client.
     """
-    redis = getattr(gate, "_redis", None)
-    if redis is None:
+    try:
+        redis = await get_redis()
+    except Exception as exc:  # noqa: BLE001 — fail-open, see docstring
+        logger.warning(
+            "battle {} demo-drive claim: redis unavailable, proceeding: {}",
+            battle_id,
+            exc,
+        )
         return True
     try:
         got = await redis.set(
