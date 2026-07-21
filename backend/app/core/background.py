@@ -61,7 +61,9 @@ from sqlalchemy import text
 
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
+from app.repositories.mixer_repo import MixerRepository
 from app.services.github_service import get_github_service
+from app.services.mixer_service import MixerService
 
 # Extend the lease only while we still own it: compare-and-expire, so a
 # task whose lease already expired (and was taken by another worker)
@@ -455,8 +457,15 @@ class MixerCleanupTask(ScheduledTask):
 
     async def run_once(self) -> None:
         async with async_session_maker() as db:
-            from app.services.mixer_service import get_mixer_service
-            svc = get_mixer_service(db)
+            # Build the service directly. `get_mixer_service` is a FastAPI-DI
+            # factory: called outside a request its `repo=Depends(...)` default is
+            # the Depends marker, not a repository, so `cleanup_expired` would blow
+            # up on `self.repo.get_expired_sessions()`.
+            # Build the service directly. `get_mixer_service` is a FastAPI-DI
+            # factory: called outside a request its `repo=Depends(...)` default is
+            # the Depends marker, not a repository, so `cleanup_expired` would blow
+            # up on `self.repo.get_expired_sessions()`.
+            svc = MixerService(db, MixerRepository(db))
             count = await svc.cleanup_expired()
             await db.commit()
             if count:
