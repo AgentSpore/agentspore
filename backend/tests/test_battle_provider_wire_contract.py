@@ -174,7 +174,7 @@ def test_roster_primary_carries_a_platform_id_and_a_bare_wire_name(runner):
     assert primary.model_id == JUDGE_MODEL
     assert "/" not in primary.wire_model
     assert primary.wire_model == wire_model_name(JUDGE_MODEL)
-    assert primary.provider == "zai"
+    assert primary.provider == JUDGE_MODEL.split("/", 1)[0] == "moonshot"
 
 
 def test_every_extra_roster_entry_is_stripped_too(monkeypatch, runner):
@@ -251,32 +251,38 @@ def test_kimis_wire_name_drops_the_provider_prefix():
 # -- per-model judge temperature ---------------------------------------------
 
 
-def test_glm_keeps_the_default_temperature_kimi_overrides_to_one():
-    """kimi-k3 was measured to only parse at temperature 1.0; glm stays at 0.7."""
-    assert judge_temperature_for(JUDGE_MODEL) == JUDGE_TEMPERATURE == 0.7
-    assert judge_temperature_for(MOONSHOT_MODEL) == 1.0
+GLM_MODEL = "zai/glm-4.5-flash"
+
+
+def test_kimi_the_primary_overrides_to_one_glm_keeps_the_default():
+    """kimi-k3 (now the PRIMARY judge, JUDGE_MODEL) was measured to only parse at
+    temperature 1.0; the glm second model stays at the 0.7 default."""
+    assert JUDGE_MODEL == MOONSHOT_MODEL
+    assert judge_temperature_for(JUDGE_MODEL) == 1.0
+    assert judge_temperature_for(GLM_MODEL) == JUDGE_TEMPERATURE == 0.7
 
 
 def test_the_roster_carries_each_models_temperature(monkeypatch, runner):
     """The roster builder stamps the per-model temperature onto every JudgeModel,
-    so glm is called at 0.7 and kimi at 1.0 without any per-call branching."""
+    so kimi (primary) is called at 1.0 and glm at 0.7 without any per-call
+    branching."""
     monkeypatch.setattr(
         battle_runner_module,
         "get_settings",
-        lambda: SimpleNamespace(battle_judge_models=[JUDGE_MODEL, MOONSHOT_MODEL]),
+        lambda: SimpleNamespace(battle_judge_models=[JUDGE_MODEL, GLM_MODEL]),
     )
 
     class _StubService:
         @staticmethod
         def resolve_provider(_model_id):
-            return {"base_url": "https://moonshot.invalid/v1", "api_key": "unused"}
+            return {"base_url": "https://glm.invalid/v1", "api_key": "unused"}
 
     monkeypatch.setattr(openrouter_service, "OpenRouterService", _StubService)
 
     roster = runner._resolve_judge_roster("https://stub.invalid/v1", "unused")
     by_id = {m.model_id: m for m in roster}
-    assert by_id[JUDGE_MODEL].temperature == 0.7
-    assert by_id[MOONSHOT_MODEL].temperature == 1.0
+    assert by_id[JUDGE_MODEL].temperature == 1.0
+    assert by_id[GLM_MODEL].temperature == 0.7
 
 
 @pytest.mark.asyncio
