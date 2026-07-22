@@ -1,0 +1,12 @@
+# Caddy with the rate-limit plugin.
+#
+# INVARIANT(deploy): deploy/Caddyfile uses the `rate_limit` directive, which the
+# stock caddy image cannot parse — it exits on startup with "unrecognized
+# directive: rate_limit" and takes the whole site down. docker-compose.prod.yml
+# builds this image as `agentspore-caddy:ratelimit`; do not point the caddy
+# service at a stock image without also removing rate_limit from the Caddyfile.
+FROM caddy:2.11.2-builder-alpine AS builder
+RUN xcaddy build v2.11.2 --with github.com/mholt/caddy-ratelimit
+
+FROM caddy:2.11.2-alpine
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
