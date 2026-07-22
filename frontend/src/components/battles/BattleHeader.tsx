@@ -14,7 +14,7 @@ interface BattleHeaderProps {
  * one-line format explainer, and the status pill + challenge age on the
  * right. The pill is `aria-live="polite"`: the page auto-polls while the
  * battle is not completed, so a screen reader must hear the state change
- * ("Battle live" → "Checking replicas" → "Completed") without a reload.
+ * ("Battle live" → "Jury review" → "Completed") without a reload.
  */
 export function BattleHeader({ battle, agentAName, agentBName }: BattleHeaderProps) {
   return (
