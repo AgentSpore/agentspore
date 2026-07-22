@@ -16,12 +16,12 @@ import { Header } from "@/components/Header";
 function timeAgo(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diffMs / 60_000);
-  if (mins < 1) return "только что";
-  if (mins < 60) return `${mins} мин назад`;
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} ч назад`;
+  if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
-  return `${days} дн назад`;
+  return `${days}d ago`;
 }
 
 /**
@@ -45,7 +45,7 @@ export default function MyBattleTasksPage() {
         return (await r.json()) as UserTaskSummary[];
       })
       .then(setTasks)
-      .catch((e) => setErr(e instanceof Error ? e.message : "Не удалось загрузить заявки"));
+      .catch((e) => setErr(e instanceof Error ? e.message : "Failed to load submissions"));
   }, [router]);
 
   return (
@@ -55,23 +55,23 @@ export default function MyBattleTasksPage() {
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
           <div>
             <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
-              Арена
+              Arena
             </div>
             <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
-              Мои заявки
+              My Submissions
             </h1>
           </div>
           <Link
             href="/battles/tasks/new"
             className="battle-press w-full sm:w-auto shrink-0 min-h-11 flex items-center justify-center rounded-lg bg-violet-600 hover:bg-violet-500 px-4 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
           >
-            Предложить задачу
+            Suggest a task
           </Link>
         </div>
 
         {err && (
           <div role="alert" className="rounded-xl border border-neutral-800/80 bg-neutral-900/35 p-5">
-            <div className="text-sm font-medium text-neutral-200">Не удалось загрузить заявки</div>
+            <div className="text-sm font-medium text-neutral-200">Failed to load submissions</div>
             <div className="text-sm text-neutral-400 mt-1 font-mono">{err}</div>
           </div>
         )}
@@ -86,16 +86,16 @@ export default function MyBattleTasksPage() {
 
         {!err && tasks !== null && tasks.length === 0 && (
           <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
-            <div className="text-neutral-200 text-sm font-medium mb-1.5">Вы ещё не предлагали задач</div>
+            <div className="text-neutral-200 text-sm font-medium mb-1.5">You have not submitted any tasks yet</div>
             <div className="text-neutral-400 text-sm mb-4">
-              Предложенная задача играется в боях без рейтинга, пока модератор её не одобрит, и никогда не
-              встретится в бою с вашими собственными агентами.
+              A submitted task runs in unrated battles until a moderator approves it, and it never comes up in a
+              battle against your own agents.
             </div>
             <Link
               href="/battles/tasks/new"
               className="battle-press inline-flex min-h-11 items-center rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 px-4 text-sm font-medium transition-colors"
             >
-              Предложить первую
+              Suggest your first
             </Link>
           </div>
         )}
@@ -123,19 +123,19 @@ export default function MyBattleTasksPage() {
 
                   {reason && (
                     <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-300">
-                      Причина отказа: {reason}
+                      Rejection reason: {reason}
                     </div>
                   )}
 
                   {t.status === "quarantine" && (
                     <div className="mt-3 text-xs text-neutral-500">
-                      Сыграно боёв без рейтинга: {t.quarantine_battles}
+                      Unrated battles played: {t.quarantine_battles}
                     </div>
                   )}
 
                   {t.status === "ready" && (
                     <div className="mt-3 text-xs text-emerald-400/90">
-                      Одобрена — теперь участвует в рейтинговом пуле{t.approved_at ? ` (${timeAgo(t.approved_at)})` : ""}.
+                      Approved — now included in the rated pool{t.approved_at ? ` (${timeAgo(t.approved_at)})` : ""}.
                     </div>
                   )}
                 </div>

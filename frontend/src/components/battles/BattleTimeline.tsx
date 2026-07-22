@@ -19,7 +19,7 @@ const DOT_CLASS: Record<TimelineRow["dot"], string> = {
 function fmtTime(ts: string): string {
   const d = new Date(ts);
   if (!Number.isFinite(d.getTime())) return "—";
-  return d.toLocaleTimeString("ru-RU");
+  return d.toLocaleTimeString("en-US");
 }
 
 /**
@@ -40,23 +40,23 @@ export function BattleTimeline({
 }) {
   const rows: TimelineRow[] = [];
 
-  const filterText = `${battle.task_category_filter ?? "любая категория"}, ${
-    battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "любая сложность"
+  const filterText = `${battle.task_category_filter ?? "any category"}, ${
+    battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "any difficulty"
   }`;
 
   rows.push({
     ts: battle.challenged_at,
     dot: "neutral",
-    title: "Вызов отправлен",
-    sub: `${agentAName} вызвал ${agentBName} · фильтр: ${filterText}`,
+    title: "Challenge sent",
+    sub: `${agentAName} challenged ${agentBName} · filter: ${filterText}`,
   });
 
   if (battle.agent_b_accepted_at) {
     rows.push({
       ts: battle.agent_b_accepted_at,
       dot: "b",
-      title: "Вызов принят",
-      sub: `${agentBName} подтвердил участие`,
+      title: "Challenge accepted",
+      sub: `${agentBName} confirmed participation`,
     });
   }
 
@@ -64,8 +64,8 @@ export function BattleTimeline({
     rows.push({
       ts: battle.queued_at,
       dot: "neutral",
-      title: "Бой в очереди",
-      sub: "обе стороны подтвердили готовность",
+      title: "Battle queued",
+      sub: "both sides confirmed readiness",
     });
   }
 
@@ -73,10 +73,10 @@ export function BattleTimeline({
     rows.push({
       ts: battle.started_at,
       dot: "live",
-      title: "Бой запущен",
+      title: "Battle started",
       sub: battle.deadline_at
-        ? `задача выдана обеим сторонам · дедлайн ${fmtTime(battle.deadline_at)}`
-        : "задача выдана обеим сторонам",
+        ? `task released to both sides · deadline ${fmtTime(battle.deadline_at)}`
+        : "task released to both sides",
     });
   }
 
@@ -84,8 +84,8 @@ export function BattleTimeline({
     rows.push({
       ts: battle.ended_at ?? battle.started_at ?? battle.challenged_at,
       dot: "live",
-      title: "Ответы зафиксированы, запущена проверка реплик",
-      sub: "3 реплики × 2 порядка подачи (A→B и B→A)",
+      title: "Replies locked in, jury review started",
+      sub: "3 replicas × 2 submission orders (A→B and B→A)",
     });
   }
 
@@ -97,22 +97,22 @@ export function BattleTimeline({
     rows.push({
       ts: battle.ended_at,
       dot: "ok",
-      title: battle.winner === null ? "Бой завершён без кворума" : "Вердикт вынесен, Elo пересчитан",
+      title: battle.winner === null ? "Battle finished without quorum" : "Verdict reached, Elo updated",
       sub: eloText ?? undefined,
     });
   }
 
   if (battle.status === "declined") {
-    rows.push({ ts: battle.ended_at ?? battle.challenged_at, dot: "neutral", title: "Вызов отклонён" });
+    rows.push({ ts: battle.ended_at ?? battle.challenged_at, dot: "neutral", title: "Challenge declined" });
   } else if (battle.status === "expired") {
-    rows.push({ ts: battle.ended_at ?? battle.challenged_at, dot: "neutral", title: "Вызов истёк" });
+    rows.push({ ts: battle.ended_at ?? battle.challenged_at, dot: "neutral", title: "Challenge expired" });
   } else if (battle.status === "aborted") {
-    rows.push({ ts: battle.ended_at ?? battle.challenged_at, dot: "neutral", title: "Бой прерван" });
+    rows.push({ ts: battle.ended_at ?? battle.challenged_at, dot: "neutral", title: "Battle aborted" });
   }
 
   return (
-    <section aria-label="Таймлайн">
-      <SectionHead title="Таймлайн" className="mb-2.5" />
+    <section aria-label="Timeline">
+      <SectionHead title="Timeline" className="mb-2.5" />
       <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/35 px-5 py-1.5">
         <div className="flex flex-col">
           {rows.map((row, i) => (
