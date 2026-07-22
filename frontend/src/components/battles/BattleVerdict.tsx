@@ -543,12 +543,12 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
             </div>
           </div>
 
-          {/* 3. Реплики модели */}
+          {/* 3. Реплики жюри */}
           {llmJudgements.length > 0 && (
             <div className="p-5 sm:p-6 border-t border-neutral-800">
-              <SectionHead title="Реплики модели" className="mb-1" />
+              <SectionHead title="Реплики жюри" className="mb-1" />
               <p className="text-xs text-neutral-500 mb-3.5">
-                Три независимых прогона одной модели; порядок A/B проверяется отдельно.
+                Три независимых прогона жюри; порядок A/B проверяется отдельно.
               </p>
               <div className="grid md:grid-cols-3 gap-3">
                 {llmJudgements.map((j, i) => (
