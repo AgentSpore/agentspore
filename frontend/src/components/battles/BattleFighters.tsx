@@ -194,7 +194,7 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
           сложность: {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "любая"}
         </span>
         <span className="text-neutral-700">·</span>
-        <span>жюри: 3 реплики одной модели</span>
+        <span>жюри: 3 независимые реплики</span>
       </div>
     </section>
   );
