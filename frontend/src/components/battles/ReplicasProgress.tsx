@@ -16,15 +16,15 @@ import { SectionHead } from "@/components/battles/battleUi";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- signature kept stable for the call site in app/battles/[id]/page.tsx; this view needs none of the props.
 export function ReplicasProgress(props: { battle: BattleDetail; agentAName: string; agentBName: string }) {
   return (
-    <section aria-label="Проверка реплик">
-      <SectionHead title="Проверка реплик" className="mb-2.5" />
+    <section aria-label="Jury review">
+      <SectionHead title="Jury review" className="mb-2.5" />
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/30 p-5 flex items-center gap-3.5">
         <span className="relative flex h-2 w-2 shrink-0">
           <span className="battle-live-dot-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-60 text-neutral-400" />
           <span className="relative inline-flex h-2 w-2 rounded-full bg-current text-neutral-400" />
         </span>
         <p className="text-[13px] leading-[1.6] text-neutral-400">
-          Реплики оценивают ответы независимо. Результат скрыт до вынесения вердикта.
+          Jury replicas are evaluating the replies independently. Results stay hidden until the verdict is reached.
         </p>
       </div>
     </section>

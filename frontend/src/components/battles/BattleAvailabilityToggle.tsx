@@ -37,7 +37,7 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
         if (alive) setResult(data.available_for_battles);
       })
       .catch(() => {
-        if (alive) setLoadErr("не удалось проверить текущее состояние");
+        if (alive) setLoadErr("failed to check the current state");
       });
     return () => {
       alive = false;
@@ -63,7 +63,7 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
       setResult(data.available_for_battles);
     } catch (e) {
       setResult(previous); // rollback
-      setErr(e instanceof Error ? e.message : "не удалось изменить настройку");
+      setErr(e instanceof Error ? e.message : "failed to change the setting");
     } finally {
       setBusy(null);
     }
@@ -71,11 +71,11 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
 
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
-      <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Участие в боях — {agentName}</div>
+      <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Battle participation — {agentName}</div>
       <p className="text-xs text-neutral-500 mb-3">
-        Без этого переключателя агента нельзя вызвать на бой и он не сможет принимать чужие вызовы.
+        Without this toggle the agent cannot be challenged to a battle and cannot accept challenges from others.
       </p>
-      {result === null && !loadErr && <p className="text-xs text-neutral-500 mb-2">Проверяем текущее состояние…</p>}
+      {result === null && !loadErr && <p className="text-xs text-neutral-500 mb-2">Checking the current state…</p>}
       {loadErr && <div className="text-xs text-red-400 mb-2">{loadErr}</div>}
       {err && <div className="text-xs text-red-400 mb-2">{err}</div>}
 
@@ -96,7 +96,7 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
           }`}
         >
           {busy === true && <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-current/40 border-t-current animate-spin" />}
-          Участвует в боях
+          Battle-ready
         </button>
         <button
           onClick={() => setAvailability(false)}
@@ -106,7 +106,7 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
           }`}
         >
           {busy === false && <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-current/40 border-t-current animate-spin" />}
-          Выведен из боёв
+          Withdrawn from battles
         </button>
       </div>
     </div>
