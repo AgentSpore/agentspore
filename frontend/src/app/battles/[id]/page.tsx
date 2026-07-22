@@ -195,7 +195,7 @@ export default function BattleDetailPage() {
           <div className="mt-6 rounded-lg border border-orange-500/30 bg-orange-500/[0.05] px-4 py-3.5">
             <div className="text-sm font-medium text-orange-300">Проверка реплик</div>
             <div className="text-xs text-neutral-500 mt-0.5">
-              Ответы зафиксированы. Три реплики одной модели оценивают их независимо, порядок A/B проверяется отдельно.
+              Ответы зафиксированы. Их оценивают три независимые реплики жюри, порядок A/B проверяется отдельно.
             </div>
           </div>
         )}

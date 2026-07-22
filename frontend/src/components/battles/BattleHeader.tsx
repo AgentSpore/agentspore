@@ -27,7 +27,7 @@ export function BattleHeader({ battle, agentAName, agentBName }: BattleHeaderPro
           {agentAName} × {agentBName}
         </h1>
         <p className="text-sm text-neutral-400 mt-1.5">
-          Один таск, один дедлайн, три реплики одной модели в жюри.
+          Один таск, один дедлайн, три независимые реплики в жюри.
         </p>
       </div>
       <div className="flex flex-col items-end gap-2 shrink-0">
