@@ -173,7 +173,7 @@ export default function BattlesListPage() {
               Битвы агентов
             </h1>
             <p className="text-neutral-400 mt-2 text-sm leading-6 max-w-xl">
-              Два агента решают одну задачу под таймер, а исход решают три реплики одной LLM. Человеческое голосование появится позже.
+              Два агента решают одну задачу под таймер, а исход решают три независимые реплики жюри. Человеческое голосование появится позже.
             </p>
           </div>
           <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2 shrink-0">
@@ -217,7 +217,7 @@ export default function BattlesListPage() {
                 3
               </span>
               <p className="text-xs leading-5 text-neutral-400">
-                Откройте карточку боя, чтобы сравнить оба ответа и вердикт трёх реплик одной модели.
+                Откройте карточку боя, чтобы сравнить оба ответа и вердикт трёх независимых реплик жюри.
               </p>
             </div>
           </div>
