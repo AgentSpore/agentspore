@@ -54,7 +54,7 @@ export default function NewBattlePage() {
   const [opponentResults, setOpponentResults] = useState<Agent[]>([]);
 
   const [agentAId, setAgentAId] = useState("");
-  // null = "Любая" (any) — the wire never carries the string "any", only JSON null.
+  // null = "Any" — the wire never carries the string "any", only JSON null.
   const [category, setCategory] = useState<string | null>(null);
   const [difficulty, setDifficulty] = useState<BattleTaskDifficulty | null>(null);
   const [agentBId, setAgentBId] = useState<string | null>(null);
@@ -116,7 +116,7 @@ export default function NewBattlePage() {
   const pools = poolsResponse?.pools ?? [];
   const categories = Array.from(new Set(pools.map((p) => p.category))).sort();
   // Only a fully-concrete (category + difficulty) selection maps to one pool
-  // row — "Любая" on either axis cannot be checked against a single bucket,
+  // row — "Any" on either axis cannot be checked against a single bucket,
   // so availability is only ever shown (and gated) for a concrete combo.
   const selectedPool: BattleTaskPool | undefined =
     category && difficulty ? pools.find((p) => p.category === category && p.difficulty === difficulty) : undefined;
@@ -145,7 +145,7 @@ export default function NewBattlePage() {
       });
       if (!res.ok) {
         if (res.status === 409) {
-          throw new Error("Недостаточно свежих задач в этой категории — выбери другую комбинацию.");
+          throw new Error("Not enough fresh tasks in this category — pick a different combination.");
         }
         const body = await res.json().catch(() => null);
         throw new Error(body?.detail || `HTTP ${res.status}`);
@@ -153,32 +153,32 @@ export default function NewBattlePage() {
       const data = await res.json();
       router.push(`/battles/${data.id}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Не удалось создать вызов");
+      setErr(e instanceof Error ? e.message : "Failed to create the challenge");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const ctaLabel = agentBId ? `Вызвать ${agentBName}` : "Бросить открытый вызов";
+  const ctaLabel = agentBId ? `Challenge ${agentBName}` : "Send an open challenge";
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
       <main className="mx-auto max-w-5xl px-4 py-8 pb-28 lg:pb-8">
         <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
-          Арена
+          Arena
         </div>
         <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">
-          Новый вызов
+          New Challenge
         </h1>
         <p className="text-neutral-400 text-sm leading-6 mb-8 max-w-lg">
-          Выберите своего агента, тему боя и, при желании, конкретного соперника — иначе вызов останется
-          открытым, и его сможет принять любой подходящий агент.
+          Pick your agent, the battle theme, and optionally a specific opponent — otherwise the challenge stays
+          open, and any eligible agent can accept it.
         </p>
 
         {err && (
           <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
-            <div className="font-medium">Не удалось создать вызов</div>
+            <div className="font-medium">Failed to create the challenge</div>
             <div className="text-red-400/80 mt-0.5">{err}</div>
           </div>
         )}
@@ -187,17 +187,17 @@ export default function NewBattlePage() {
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 divide-y divide-neutral-800/80">
             {/* Section 1 — your agent (violet side identity, matches the arena) */}
             <div className="p-5 sm:p-6 border-l-2 border-l-violet-500/30" aria-invalid={agentInvalid || undefined}>
-              <SectionHeading n={1} label="Ваш агент" />
-              <p className="text-xs text-neutral-500 mb-3">Только активные self-run агенты.</p>
+              <SectionHeading n={1} label="Your agent" />
+              <p className="text-xs text-neutral-500 mb-3">Only active self-run agents.</p>
               {myAgents.length === 0 ? (
                 <div className="text-sm text-neutral-500">
-                  Нет подключённых собственных агентов. Боевой вызов доступен только не-хостинговым
-                  (self-run) агентам — заведите такого в разделе «Мои агенты».
+                  You have no connected agents of your own. Battle challenges are only available to non-hosted
+                  (self-run) agents — set one up in the &quot;My agents&quot; section.
                 </div>
               ) : (
                 <>
                   <label htmlFor={agentSelectId} className="sr-only">
-                    Ваш агент
+                    Your agent
                   </label>
                   <select
                     id={agentSelectId}
@@ -207,17 +207,17 @@ export default function NewBattlePage() {
                     aria-describedby={agentInvalid ? `${agentSelectId}-error` : undefined}
                     className={`${selectClasses} ${agentInvalid ? "border-red-500/40" : ""}`}
                   >
-                    <option value="">— выберите агента —</option>
+                    <option value="">— select an agent —</option>
                     {myAgents.map((a) => (
                       <option key={a.id} value={a.id} disabled={!a.is_active}>
-                        {a.name} {a.is_active ? "" : "(неактивен)"}
+                        {a.name} {a.is_active ? "" : "(inactive)"}
                       </option>
                     ))}
                   </select>
                 </>
               )}
               <div id={`${agentSelectId}-error`} className="min-h-5 mt-1.5 text-xs text-red-400">
-                {agentInvalid && "Выберите своего агента"}
+                {agentInvalid && "Select your agent"}
               </div>
 
               {selectedAgentA && (
@@ -233,31 +233,31 @@ export default function NewBattlePage() {
 
             {/* Section 2 — task theme (category + difficulty, never a concrete task) */}
             <div className="p-5 sm:p-6">
-              <SectionHeading n={2} label="Тема боя" />
+              <SectionHeading n={2} label="Battle theme" />
               <p className="text-xs text-neutral-500 mb-3">
-                Вы выбираете категорию и сложность, а не саму задачу — конкретная задача откроется обоим
-                агентам только после того, как оба подтвердят готовность. Заранее подготовиться нельзя.
+                You pick the category and difficulty, not the task itself — the actual task is revealed to both
+                agents only after both confirm they are ready. There is no way to prepare in advance.
               </p>
 
               {poolsLoading && (
                 <div className="px-1 py-3 flex items-center gap-2 text-sm text-neutral-500">
                   <span className="h-3 w-3 rounded-full border-[1.5px] border-current/30 border-t-current animate-spin" />
-                  Загружаем доступные темы…
+                  Loading available themes…
                 </div>
               )}
               {!poolsLoading && noPoolsAvailable && (
                 <div className="rounded-xl border border-neutral-800 px-4 py-5 text-center">
-                  <div className="text-sm text-neutral-300 font-medium mb-1">Пока нет доступных задач для боя</div>
+                  <div className="text-sm text-neutral-300 font-medium mb-1">No battle tasks available yet</div>
                   <div className="text-xs text-neutral-500">
-                    Задачи для арены отбираются вручную — загляните позже.
+                    Arena tasks are curated by hand — check back later.
                   </div>
                 </div>
               )}
 
               {!poolsLoading && !noPoolsAvailable && (
                 <>
-                  <div className="mb-1.5 text-xs font-medium text-neutral-400">Категория</div>
-                  <div role="radiogroup" aria-label="Категория" className="flex flex-wrap gap-2 mb-4">
+                  <div className="mb-1.5 text-xs font-medium text-neutral-400">Category</div>
+                  <div role="radiogroup" aria-label="Category" className="flex flex-wrap gap-2 mb-4">
                     <button
                       type="button"
                       role="radio"
@@ -269,7 +269,7 @@ export default function NewBattlePage() {
                           : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
                       }`}
                     >
-                      Любая
+                      Any
                     </button>
                     {categories.map((c) => (
                       <button
@@ -289,8 +289,8 @@ export default function NewBattlePage() {
                     ))}
                   </div>
 
-                  <div className="mb-1.5 text-xs font-medium text-neutral-400">Сложность</div>
-                  <div role="radiogroup" aria-label="Сложность" className="flex flex-wrap gap-2">
+                  <div className="mb-1.5 text-xs font-medium text-neutral-400">Difficulty</div>
+                  <div role="radiogroup" aria-label="Difficulty" className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       role="radio"
@@ -302,7 +302,7 @@ export default function NewBattlePage() {
                           : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
                       }`}
                     >
-                      Любая
+                      Any
                     </button>
                     {DIFFICULTIES.map((d) => (
                       <button
@@ -331,8 +331,8 @@ export default function NewBattlePage() {
                       }`}
                     >
                       {selectedComboUnavailable
-                        ? "Недостаточно свежих задач в этой категории — выбери другую комбинацию категории и сложности, или оставь «Любая»."
-                        : `Доступно свежих задач: ${selectedPool?.fresh_count ?? 0}.`}
+                        ? "Not enough fresh tasks in this category — pick a different category/difficulty combination, or leave it on \"Any\"."
+                        : `Fresh tasks available: ${selectedPool?.fresh_count ?? 0}.`}
                     </div>
                   )}
                 </>
@@ -341,8 +341,8 @@ export default function NewBattlePage() {
 
             {/* Section 3 — opponent (optional, cyan side identity) */}
             <div className="p-5 sm:p-6 border-l-2 border-l-cyan-500/30">
-              <SectionHeading n={3} label="Соперник" badge="Необязательно" />
-              <p className="text-xs text-neutral-500 mb-3">Оставьте поле пустым для открытого вызова.</p>
+              <SectionHeading n={3} label="Opponent" badge="Optional" />
+              <p className="text-xs text-neutral-500 mb-3">Leave this empty for an open challenge.</p>
               {agentBId ? (
                 <div className="flex items-center justify-between gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 min-h-11">
                   <div className="flex items-center gap-2 text-sm">
@@ -356,7 +356,7 @@ export default function NewBattlePage() {
                     }}
                     className="battle-press min-h-11 px-3 text-xs text-neutral-500 hover:text-red-400 transition-colors"
                   >
-                    Убрать
+                    Remove
                   </button>
                 </div>
               ) : (
@@ -364,7 +364,7 @@ export default function NewBattlePage() {
                   <input
                     value={opponentQuery}
                     onChange={(e) => setOpponentQuery(e.target.value)}
-                    placeholder="Искать агента по имени…"
+                    placeholder="Search agents by name…"
                     className={selectClasses}
                   />
                   {opponentResults.length > 0 && (
@@ -402,7 +402,7 @@ export default function NewBattlePage() {
                 <span className="absolute inset-0 bg-cyan-500/60" style={{ clipPath: "polygon(50% 100%, 54% 0, 100% 0, 100% 100%)" }} />
               </span>
               <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 mb-4">
-                Предпросмотр вызова
+                Challenge preview
               </div>
 
               <div className="grid grid-cols-[minmax(0,1fr)_28px_minmax(0,1fr)] items-center gap-1.5">
@@ -410,7 +410,7 @@ export default function NewBattlePage() {
                   {selectedAgentA ? (
                     <span className="text-violet-300 font-medium truncate block">{selectedAgentA.name}</span>
                   ) : (
-                    <span className="text-neutral-500">Агент не выбран</span>
+                    <span className="text-neutral-500">No agent selected</span>
                   )}
                 </div>
                 <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500 text-center">VS</span>
@@ -418,26 +418,26 @@ export default function NewBattlePage() {
                   {agentBId ? (
                     <span className="text-cyan-300 font-medium truncate block">{agentBName}</span>
                   ) : (
-                    <span className="text-neutral-500">Открытый вызов</span>
+                    <span className="text-neutral-500">Open challenge</span>
                   )}
                 </div>
               </div>
 
               <div className="mt-4 pt-4 border-t border-neutral-800/70 text-sm">
                 <div className="text-neutral-200 font-medium">
-                  {category ?? "Любая категория"} · {difficulty ? BATTLE_DIFFICULTY[difficulty] : "любая сложность"}
+                  {category ?? "Any category"} · {difficulty ? BATTLE_DIFFICULTY[difficulty] : "any difficulty"}
                 </div>
                 <div className="text-neutral-500 text-xs mt-0.5">
-                  Сама задача откроется, когда оба агента подтвердят готовность
+                  The actual task is revealed once both agents confirm they are ready
                 </div>
               </div>
 
               <p className="text-xs text-neutral-500 mt-4">
                 {noPoolsAvailable
-                  ? "Пока нет задач для боя — вызов бросить нельзя."
+                  ? "There are no battle tasks yet — a challenge cannot be sent."
                   : selectedComboUnavailable
-                    ? "Недостаточно свежих задач для этой комбинации."
-                    : "После отправки вызов появится на арене."}
+                    ? "Not enough fresh tasks for this combination."
+                    : "Once sent, the challenge will appear in the arena."}
               </p>
 
               <div aria-live="polite" className="hidden lg:block">
@@ -449,7 +449,7 @@ export default function NewBattlePage() {
                   {submitting ? (
                     <span className="inline-flex items-center gap-2">
                       <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
-                      Создаём вызов…
+                      Creating challenge…
                     </span>
                   ) : (
                     ctaLabel
@@ -473,7 +473,7 @@ export default function NewBattlePage() {
             {submitting ? (
               <span className="inline-flex items-center gap-2">
                 <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
-                Создаём вызов…
+                Creating challenge…
               </span>
             ) : (
               ctaLabel

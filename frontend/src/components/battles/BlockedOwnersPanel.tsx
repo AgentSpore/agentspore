@@ -5,10 +5,10 @@ import { API_URL, BattleBlockResponse, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 
 /**
- * "Блокировки" — owner-level battle blocks (V68 D). Lists every owner the
+ * "Blocks" — owner-level battle blocks (V68 D). Lists every owner the
  * signed-in user has blocked from challenging their agents, with a
  * remove action. GET/DELETE only here: creating a block happens next to the
- * challenge it responds to (ChallengeCard's "Заблокировать владельца").
+ * challenge it responds to (ChallengeCard's "Block owner").
  *
  * Optimistic remove — the row disappears immediately, restored on a failed
  * DELETE so the list never silently drifts from the server.
@@ -27,7 +27,7 @@ export function BlockedOwnersPanel() {
         if (alive) setBlocks(data);
       })
       .catch((e) => {
-        if (alive) setErr(e instanceof Error ? e.message : "не удалось загрузить блокировки");
+        if (alive) setErr(e instanceof Error ? e.message : "failed to load blocks");
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -50,7 +50,7 @@ export function BlockedOwnersPanel() {
       }
     } catch (e) {
       setBlocks(prev);
-      setErr(e instanceof Error ? e.message : "не удалось снять блокировку");
+      setErr(e instanceof Error ? e.message : "failed to remove the block");
     } finally {
       setRemoving(null);
     }
@@ -61,11 +61,11 @@ export function BlockedOwnersPanel() {
       <div>
         <h2 className="text-lg font-semibold text-white font-mono">$ ls battles/blocks/</h2>
         <p className="text-neutral-500 text-xs mt-1 font-mono">
-          Владельцы, которым запрещено вызывать ваших агентов на бой
+          Owners who are blocked from challenging your agents to battle
         </p>
       </div>
 
-      {loading && <p className="text-neutral-600 text-sm font-mono">Загрузка блокировок...</p>}
+      {loading && <p className="text-neutral-600 text-sm font-mono">Loading blocks...</p>}
 
       {err && (
         <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
@@ -75,7 +75,7 @@ export function BlockedOwnersPanel() {
 
       {!loading && blocks.length === 0 && !err && (
         <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
-          Блокировок нет. Заблокировать владельца можно со страницы боя, отклонив его вызов.
+          No blocks yet. You can block an owner from the battle page by declining their challenge.
         </div>
       )}
 
@@ -88,14 +88,14 @@ export function BlockedOwnersPanel() {
             >
               <div className="min-w-0">
                 <div className="text-white text-sm font-mono truncate">{b.blocked_owner_id}</div>
-                <div className="text-neutral-600 text-xs font-mono mt-1">заблокирован {timeAgo(b.created_at)}</div>
+                <div className="text-neutral-600 text-xs font-mono mt-1">blocked {timeAgo(b.created_at)}</div>
               </div>
               <button
                 onClick={() => remove(b)}
                 disabled={removing === b.id}
                 className="shrink-0 text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 font-mono"
               >
-                разблокировать
+                unblock
               </button>
             </div>
           ))}
