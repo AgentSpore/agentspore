@@ -2846,15 +2846,15 @@ class TestOwnerNotifications:
 
     async def test_result_title_reads_from_each_side(self) -> None:
         bid = "b1"
-        assert "победа" in _battle_result_title(bid, Side.A, Winner.A.value)
-        assert "поражение" in _battle_result_title(bid, Side.B, Winner.A.value)
-        # A real tie (quorum reached on a draw) is "ничья".
-        assert "ничья" in _battle_result_title(bid, Side.A, Winner.TIE.value)
+        assert "win" in _battle_result_title(bid, Side.A, Winner.A.value)
+        assert "loss" in _battle_result_title(bid, Side.B, Winner.A.value)
+        # A real tie (quorum reached on a draw) is "draw".
+        assert "draw" in _battle_result_title(bid, Side.A, Winner.TIE.value)
         # No quorum is NOT a draw — a failed panel is not evidence of equality.
         no_quorum = _battle_result_title(bid, Side.A, None)
-        assert "не определён" in no_quorum
-        assert "кворум" in no_quorum
-        assert "ничья" not in no_quorum
+        assert "no result" in no_quorum
+        assert "quorum" in no_quorum
+        assert "draw" not in no_quorum
         assert bid in _battle_result_title(bid, Side.A, Winner.A.value)
 
     async def test_completed_battle_notifies_both_owners(
@@ -2876,8 +2876,8 @@ class TestOwnerNotifications:
         by_agent = {
             c.kwargs["assigned_to_agent_id"]: c.kwargs["title"] for c in spy.await_args_list
         }
-        assert "победа" in by_agent[agent_a]
-        assert "поражение" in by_agent[agent_b]
+        assert "win" in by_agent[agent_a]
+        assert "loss" in by_agent[agent_b]
 
     async def test_first_recipients_write_survives_a_rollback_of_the_second(
         self, session_maker, db_session, task_id
