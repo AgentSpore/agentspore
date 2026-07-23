@@ -23,7 +23,7 @@ interface AgentIdentityProps {
   /** null = no agent on this side yet (open challenge). */
   agentId: string | null | undefined;
   size?: "sm" | "md" | "lg" | "xl";
-  /** Show the "Сторона A/B" eyebrow label above the name. */
+  /** Show the "Side A/B" eyebrow label above the name. */
   showSideLabel?: boolean;
   className?: string;
 }
@@ -44,13 +44,13 @@ const NAME_TEXT: Record<NonNullable<AgentIdentityProps["size"]>, string> = {
 
 /**
  * Avatar + side-tinted name for one fighter. Honest about the unknowns:
- * `agentId === null` renders "открытый вызов" (no agent assigned yet), and a
+ * `agentId === null` renders "open challenge" (no agent assigned yet), and a
  * still-resolving name renders the same "…" placeholder useAgentNames/the
  * rest of the app already uses — never a fabricated name.
  */
 export function AgentIdentity({ side, name, agentId, size = "md", showSideLabel, className = "" }: AgentIdentityProps) {
   const isOpen = agentId === null || agentId === undefined;
-  const display = isOpen ? "открытый вызов" : name || "…";
+  const display = isOpen ? "open challenge" : name || "…";
 
   return (
     <div className={`flex items-center gap-2 min-w-0 ${className}`}>
@@ -64,7 +64,7 @@ export function AgentIdentity({ side, name, agentId, size = "md", showSideLabel,
       <div className="min-w-0">
         {showSideLabel && (
           <div className={`text-[10px] font-mono uppercase tracking-wider ${SIDE_LABEL_TEXT[side]}`}>
-            Сторона {side.toUpperCase()}
+            Side {side.toUpperCase()}
           </div>
         )}
         <div className={`truncate ${NAME_TEXT[size]} ${isOpen ? "text-neutral-500 italic" : SIDE_TEXT[side]}`}>

@@ -2,12 +2,12 @@ import { BattleDetail, BattleStatus } from "@/lib/api";
 
 type StageState = "completed" | "current" | "future";
 
-const STAGES = ["Вызов", "Принят", "Готовность", "Бой", "Реплики", "Вердикт"] as const;
+const STAGES = ["Challenge", "Accepted", "Ready", "Battle", "Replies", "Verdict"] as const;
 
 const TERMINAL_LABEL: Partial<Record<BattleStatus, string>> = {
-  declined: "Отклонён",
-  expired: "Истёк",
-  aborted: "Прерван",
+  declined: "Declined",
+  expired: "Expired",
+  aborted: "Aborted",
 };
 
 /**
@@ -28,7 +28,7 @@ function stageStates(battle: BattleDetail): StageState[] {
   const verdictDone = status === "completed";
 
   const states: StageState[] = [
-    "completed", // Вызов — always completed once the battle is loaded
+    "completed", // Challenge — always completed once the battle is loaded
     terminal ? (accepted ? "completed" : "future") : accepted ? "completed" : "current",
     terminal ? "future" : ready ? "completed" : accepted ? "current" : "future",
     terminal ? "future" : fightDone ? "completed" : inFight ? "current" : ready ? "current" : "future",
@@ -95,7 +95,7 @@ export function BattleStepper({ battle }: { battle: BattleDetail }) {
       {/* Mobile — compact label + dot row */}
       <div className="sm:hidden">
         <div className="text-xs text-neutral-400 mb-2">
-          Этап {Math.max(1, currentIndex + 1)} из {STAGES.length} ·{" "}
+          Step {Math.max(1, currentIndex + 1)} of {STAGES.length} ·{" "}
           <span className="text-orange-300 font-medium">{STAGES[Math.max(0, currentIndex)]}</span>
         </div>
         <div className="flex items-center gap-1">

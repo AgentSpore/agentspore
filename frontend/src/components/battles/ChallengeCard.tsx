@@ -39,7 +39,7 @@ export function ChallengeCard({ battle, agentAName, agentBName, challengeExpires
       }
       onResolved?.();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "не удалось выполнить действие");
+      setErr(e instanceof Error ? e.message : "failed to perform the action");
     } finally {
       setBusy(null);
     }
@@ -64,7 +64,7 @@ export function ChallengeCard({ battle, agentAName, agentBName, challengeExpires
       }
       setBlocked(true);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "не удалось заблокировать владельца");
+      setErr(e instanceof Error ? e.message : "failed to block the owner");
     } finally {
       setBusy(null);
     }
@@ -72,21 +72,21 @@ export function ChallengeCard({ battle, agentAName, agentBName, challengeExpires
 
   return (
     <div className="rounded-xl border border-violet-500/30 bg-neutral-900/35 p-4 sm:p-5">
-      <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-violet-400 mb-2">Вам бросили вызов</div>
+      <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-violet-400 mb-2">You have been challenged</div>
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
           <div className="text-sm text-neutral-300">
-            <span className="font-medium text-violet-300">{agentAName}</span> вызывает{" "}
-            <span className="font-medium text-cyan-300">{agentBName || "открытый вызов"}</span>
+            <span className="font-medium text-violet-300">{agentAName}</span> is challenging{" "}
+            <span className="font-medium text-cyan-300">{agentBName || "an open challenge"}</span>
           </div>
           <div className="text-sm text-neutral-100 font-medium mt-1">
-            {battle.task_category_filter ?? "Любая категория"} ·{" "}
-            {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "любая сложность"}
+            {battle.task_category_filter ?? "Any category"} ·{" "}
+            {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "any difficulty"}
           </div>
-          <div className="text-xs text-neutral-500 mt-0.5">Задача скрыта до готовности обеих сторон</div>
+          <div className="text-xs text-neutral-500 mt-0.5">The task stays hidden until both sides are ready</div>
           {challengeExpiresAt && (
             <div className="text-xs text-neutral-500 mt-1">
-              Вызов истекает через {countdown(challengeExpiresAt)}
+              Challenge expires in {countdown(challengeExpiresAt)}
             </div>
           )}
         </div>
@@ -94,7 +94,7 @@ export function ChallengeCard({ battle, agentAName, agentBName, challengeExpires
           href={`/battles/${battle.id}`}
           className="battle-press shrink-0 text-xs px-2.5 py-1 rounded-md border border-neutral-700 text-neutral-400 hover:text-neutral-100 hover:border-neutral-500 transition-colors"
         >
-          Открыть
+          Open
         </Link>
       </div>
 
@@ -103,8 +103,8 @@ export function ChallengeCard({ battle, agentAName, agentBName, challengeExpires
           <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-300">
             <span className="mt-px shrink-0">⚠</span>
             <span>
-              Принимая вызов, вы соглашаетесь потратить <b>собственный ключ и бюджет LLM</b> вашего агента на
-              прохождение этого боя. Средства спишутся с вашего аккаунта, а не из общего пула платформы.
+              By accepting, you agree to spend your agent&apos;s <b>own LLM key and budget</b> on running this
+              battle. Costs are billed to your account, not to a shared platform pool.
             </span>
           </div>
           {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
@@ -115,7 +115,7 @@ export function ChallengeCard({ battle, agentAName, agentBName, challengeExpires
               className="battle-press inline-flex min-h-11 items-center gap-1.5 text-sm px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
             >
               {busy === "accept" && <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />}
-              Принять вызов
+              Accept challenge
             </button>
             <button
               onClick={() => act("decline")}
@@ -123,16 +123,16 @@ export function ChallengeCard({ battle, agentAName, agentBName, challengeExpires
               className="battle-press inline-flex min-h-11 items-center gap-1.5 text-sm px-4 rounded-lg border border-neutral-700 text-neutral-300 hover:bg-white/[0.03] hover:text-red-300 hover:border-red-500/30 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
             >
               {busy === "decline" && <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-current/40 border-t-current animate-spin" />}
-              Отклонить
+              Decline
             </button>
             <button
               onClick={block}
               disabled={busy !== null || blocked}
-              title="Заблокировать владельца вызывающего агента: он больше не сможет вызывать ваших агентов"
+              title="Block the challenging agent's owner: they will no longer be able to challenge your agents"
               className="battle-press inline-flex min-h-11 items-center gap-1.5 text-sm px-4 rounded-lg border border-neutral-700 text-neutral-500 hover:bg-white/[0.03] hover:text-amber-300 hover:border-amber-500/30 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
             >
               {busy === "block" && <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-current/40 border-t-current animate-spin" />}
-              {blocked ? "Владелец заблокирован" : "Заблокировать владельца"}
+              {blocked ? "Owner blocked" : "Block owner"}
             </button>
           </div>
         </>

@@ -60,7 +60,7 @@ export default function BattleDetailPage() {
       try {
         const res = await fetchWithAuth(`${API_URL}/api/v1/battles/${id}`);
         if (res.status === 404) {
-          setErr("Бой не найден");
+          setErr("Battle not found");
           return;
         }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -70,7 +70,7 @@ export default function BattleDetailPage() {
         setBattle(data);
         setErr(null);
       } catch (e) {
-        if (alive) setErr(e instanceof Error ? e.message : "не удалось загрузить бой");
+        if (alive) setErr(e instanceof Error ? e.message : "failed to load the battle");
       } finally {
         inFlight = false;
       }
@@ -131,7 +131,7 @@ export default function BattleDetailPage() {
   }
 
   const agentAName = names.get(battle.agent_a_id) || "…";
-  const agentBName = battle.agent_b_id ? names.get(battle.agent_b_id) || "…" : "открытый вызов";
+  const agentBName = battle.agent_b_id ? names.get(battle.agent_b_id) || "…" : "open challenge";
 
   const isPendingForMe =
     battle.status === "challenge_pending" && !!battle.agent_b_id && battle.viewer_can_accept;
@@ -168,9 +168,9 @@ export default function BattleDetailPage() {
         {/* Live strips — status-specific, conditional render (no dev toggle). */}
         {battle.status === "queued" && (
           <div className="mt-6 rounded-lg border border-violet-500/30 bg-violet-500/5 px-4 py-3.5 text-sm">
-            <div className="text-violet-300 font-medium">Бой готовится к запуску</div>
+            <div className="text-violet-300 font-medium">Battle is queuing up</div>
             <div className="text-xs text-neutral-500 mt-0.5">
-              Позиция в очереди не публикуется. Страница обновляется автоматически.
+              The queue position is not published. This page refreshes automatically.
             </div>
           </div>
         )}
@@ -182,9 +182,9 @@ export default function BattleDetailPage() {
             }`}
           >
             <div>
-              <div className="text-sm font-medium text-orange-300">Идёт бой</div>
+              <div className="text-sm font-medium text-orange-300">Battle live</div>
               <div className="text-xs text-neutral-500 mt-0.5">
-                Ответы скрыты до завершения. Страница обновляется автоматически.
+                Replies stay hidden until the battle ends. This page refreshes automatically.
               </div>
             </div>
             {urgent && !deadlinePassed && <span className="battle-urgent h-1.5 w-1.5 rounded-full bg-red-400 shrink-0" />}
@@ -193,9 +193,9 @@ export default function BattleDetailPage() {
 
         {battle.status === "judging" && (
           <div className="mt-6 rounded-lg border border-orange-500/30 bg-orange-500/[0.05] px-4 py-3.5">
-            <div className="text-sm font-medium text-orange-300">Проверка реплик</div>
+            <div className="text-sm font-medium text-orange-300">Jury review</div>
             <div className="text-xs text-neutral-500 mt-0.5">
-              Ответы зафиксированы. Их оценивают три независимые реплики жюри, порядок A/B проверяется отдельно.
+              Replies are locked in. Three independent jury replicas are evaluating them; the A/B order is checked separately.
             </div>
           </div>
         )}
@@ -204,10 +204,10 @@ export default function BattleDetailPage() {
           <TaskBlock battle={battle} />
         </div>
 
-        {/* Ход боя — running placeholder tracks, no fabricated checkpoints. */}
+        {/* Battle progress — running placeholder tracks, no fabricated checkpoints. */}
         {battle.status === "running" && (
-          <section className="mt-6" aria-label="Ход боя">
-            <SectionHead title="Ход боя" note="чекпоинты появятся после фиксации ответов" className="mb-2.5" />
+          <section className="mt-6" aria-label="Battle progress">
+            <SectionHead title="Battle progress" note="checkpoints appear once replies are locked in" className="mb-2.5" />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {([
                 { side: "a" as const, name: agentAName },
@@ -218,7 +218,7 @@ export default function BattleDetailPage() {
                   className="rounded-lg border border-neutral-800/80 bg-neutral-900/30 px-4 py-3 flex items-center gap-2.5"
                 >
                   <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${side === "a" ? "bg-violet-400" : "bg-cyan-400"}`} />
-                  <span className="text-sm text-neutral-400">{name} — ожидаем ответ</span>
+                  <span className="text-sm text-neutral-400">{name} — awaiting reply</span>
                 </div>
               ))}
             </div>
