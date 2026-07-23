@@ -773,9 +773,9 @@ export interface BattleTaskPoolsResponse {
 }
 
 export const BATTLE_DIFFICULTY: Record<BattleTaskDifficulty, string> = {
-  easy: "Легко",
-  medium: "Средне",
-  hard: "Сложно",
+  easy: "Easy",
+  medium: "Medium",
+  hard: "Hard",
 };
 
 // --- User task submission (V70) --------------------------------------------
@@ -835,33 +835,33 @@ export interface UserTaskSummary {
 export const DAILY_TASK_SUBMISSION_LIMIT = 5;
 
 export const TASK_STATUS: Record<BattleTaskStatus, { label: string; classes: string }> = {
-  draft: { label: "Черновик", classes: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
-  ready: { label: "В рейтинговом пуле", classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
-  retired: { label: "Снята с пула", classes: "bg-neutral-500/10 text-neutral-500 border-neutral-500/30" },
+  draft: { label: "Draft", classes: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
+  ready: { label: "In rated pool", classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
+  retired: { label: "Retired from pool", classes: "bg-neutral-500/10 text-neutral-500 border-neutral-500/30" },
   pending_validation: {
-    label: "На проверке",
+    label: "Under review",
     classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse",
   },
-  quarantine: { label: "Карантин (без рейтинга)", classes: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" },
-  rejected: { label: "Отклонена", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
+  quarantine: { label: "Quarantine (unrated)", classes: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" },
+  rejected: { label: "Rejected", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
 };
 
-// Stable reason codes from battle_task_validator, mapped to Russian prose for
+// Stable reason codes from battle_task_validator, mapped to prose for
 // the submitter. Falls back to the raw code for any value the map does not
 // (yet) cover, so an unmapped reason still shows something instead of nothing.
 export const TASK_REJECTION_REASON: Record<string, string> = {
-  title_empty: "Заголовок пустой",
-  title_too_long: "Заголовок слишком длинный",
-  prompt_too_short: "Текст задачи слишком короткий — он должен быть самодостаточным описанием",
-  prompt_too_long: "Текст задачи слишком длинный",
-  rubric_empty: "Рубрика пуста — нужен хотя бы один критерий",
-  rubric_too_long: "В рубрике слишком много критериев",
-  rubric_item_invalid: "Один из критериев рубрики заполнен некорректно",
-  duplicate_content: "Такая задача уже есть в пуле",
-  injection_in_prompt: "В тексте задачи обнаружена попытка инструктировать судью напрямую",
-  injection_in_rubric: "В рубрике обнаружена попытка инструктировать судью напрямую",
-  llm_rejected: "Автоматическая проверка сочла задачу нерешаемой или неоднозначной",
-  llm_unreadable_response: "Не удалось разобрать ответ проверки — попробуйте отправить снова",
+  title_empty: "Title is empty",
+  title_too_long: "Title is too long",
+  prompt_too_short: "Task text is too short — it must be a self-contained description",
+  prompt_too_long: "Task text is too long",
+  rubric_empty: "Rubric is empty — at least one criterion is required",
+  rubric_too_long: "Rubric has too many criteria",
+  rubric_item_invalid: "One of the rubric criteria is filled in incorrectly",
+  duplicate_content: "This task already exists in the pool",
+  injection_in_prompt: "The task text was found to contain an attempt to instruct the jury directly",
+  injection_in_rubric: "The rubric was found to contain an attempt to instruct the jury directly",
+  llm_rejected: "Automatic review judged the task unsolvable or ambiguous",
+  llm_unreadable_response: "Could not parse the review response — try submitting again",
 };
 
 // Owner-level block (V68 D). blocked_owner_id covers every current and future
@@ -880,21 +880,21 @@ export interface CreateBattleBlockRequest {
 // rated_ineligibility_reason values (backend/app/services/battle_service.py
 // _decide_rated_eligibility, most-specific-first).
 export const RATED_INELIGIBILITY_REASON: Record<string, string> = {
-  demo: "демонстрационный бой — рейтинг не начисляется",
-  same_owner: "оба агента принадлежат одному владельцу",
-  account_unverified: "аккаунт одного из владельцев не верифицирован",
-  account_too_new: "аккаунт одного из владельцев слишком новый",
-  owner_concurrent_quota: "исчерпан лимит одновременных рейтинговых боёв",
-  owner_daily_quota: "исчерпан дневной лимит рейтинговых боёв",
+  demo: "demo battle — no rating applied",
+  same_owner: "both agents belong to the same owner",
+  account_unverified: "one owner's account is not verified",
+  account_too_new: "one owner's account is too new",
+  owner_concurrent_quota: "concurrent rated-battle limit reached",
+  owner_daily_quota: "daily rated-battle limit reached",
 };
 
 // judging_stop_reason values (backend/app/services/battle_budget.py
 // STOP_REASONS + legacy nulls from before V68).
 export const JUDGING_STOP_REASON: Record<string, string> = {
-  owner_budget_exhausted: "исчерпан бюджет судейства владельца",
-  global_budget_exhausted: "исчерпан общий бюджет судейства платформы",
-  battle_attempt_cap: "достигнут лимит попыток судейства для этого боя",
-  injection_suspected: "в ответе замечена попытка повлиять на реплики — бой без рейтинга",
+  owner_budget_exhausted: "owner's judging budget exhausted",
+  global_budget_exhausted: "platform's overall judging budget exhausted",
+  battle_attempt_cap: "judging attempt limit reached for this battle",
+  injection_suspected: "a reply was found attempting to influence the jury replicas — battle is unrated",
 };
 
 // Statuses a spectator should see refresh quickly (challenge is live/moving).
@@ -906,16 +906,16 @@ export const BATTLE_FAST_STATES = new Set<BattleStatus>([
 ]);
 
 export const BATTLE_STATUS: Record<BattleStatus, { label: string; classes: string }> = {
-  challenge_pending: { label: "Вызов отправлен", classes: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
-  accepted: { label: "Принят", classes: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" },
-  reserved: { label: "Резервируется", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
-  queued: { label: "В очереди", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
-  running: { label: "Идёт бой", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
-  judging: { label: "Проверка реплик", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
-  completed: { label: "Завершён", classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
-  declined: { label: "Отклонён", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
-  expired: { label: "Истёк", classes: "bg-neutral-500/10 text-neutral-500 border-neutral-500/30" },
-  aborted: { label: "Прерван", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
+  challenge_pending: { label: "Challenge sent", classes: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
+  accepted: { label: "Accepted", classes: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" },
+  reserved: { label: "Reserving", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
+  queued: { label: "Queued", classes: "bg-violet-500/10 text-violet-300 border-violet-500/30 animate-pulse" },
+  running: { label: "Battle live", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
+  judging: { label: "Jury review", classes: "bg-orange-500/10 text-orange-400 border-orange-500/30 animate-pulse" },
+  completed: { label: "Completed", classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
+  declined: { label: "Declined", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
+  expired: { label: "Expired", classes: "bg-neutral-500/10 text-neutral-500 border-neutral-500/30" },
+  aborted: { label: "Aborted", classes: "bg-red-500/10 text-red-400 border-red-500/30" },
 };
 
 export function countdown(target: string | null | undefined): string {
