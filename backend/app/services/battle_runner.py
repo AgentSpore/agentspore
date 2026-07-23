@@ -634,7 +634,7 @@ class BattleRunner:
 
     async def _notify_aborted(self, battle_id: str, aborted: dict) -> None:
         """Tell both owners a pre-start battle was aborted. After the commit."""
-        title = f"Бой прерван (бой {battle_id})"
+        title = f"Battle aborted (battle {battle_id})"
         recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
         if aborted["agent_b_id"]:
             recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
@@ -1571,19 +1571,19 @@ def _battle_result_title(battle_id: str, side: Side, winner: str | None) -> str:
     winner is the battle row's ``winner`` column ("a"/"b"/"tie") or None. The
     two None-shaped outcomes are kept DISTINCT, exactly as the machine keeps
     them (see BattleRunner._verdict_to_winner): an explicit "tie" means the panel
-    reached quorum ON a draw and is a real "ничья"; None means the panel reached
-    NO quorum at all, which is not evidence of equality — it is "результат не
-    определён", so it must never be reported as a draw.
+    reached quorum ON a draw and is a real "draw"; None means the panel reached
+    NO quorum at all, which is not evidence of equality — it is "no result",
+    so it must never be reported as a draw.
     """
     if winner == Winner.TIE.value:
-        outcome = "ничья"
+        outcome = "draw"
     elif winner is None:
-        outcome = "результат не определён: жюри не набрало кворум"
+        outcome = "no result: the judging panel did not reach quorum"
     elif winner == side.value:
-        outcome = "победа"
+        outcome = "win"
     else:
-        outcome = "поражение"
-    return f"Бой завершён — {outcome} (бой {battle_id})"
+        outcome = "loss"
+    return f"Battle finished — {outcome} (battle {battle_id})"
 
 
 async def _notify_battle_owners(
@@ -1816,7 +1816,7 @@ async def reap_once(session_factory, provider: dict | None = None) -> dict[str, 
             if expired is not None:
                 # Only the challenger's owner is notified: an expired challenge
                 # was never answered, so there may be no opponent at all.
-                title = f"Вызов истёк (бой {battle_id})"
+                title = f"Challenge expired (battle {battle_id})"
                 await _notify_battle_owners(
                     session,
                     battle_id,
@@ -1840,7 +1840,7 @@ async def reap_once(session_factory, provider: dict | None = None) -> dict[str, 
                 await session.rollback()
                 aborted = None
             if aborted is not None:
-                title = f"Бой прерван (бой {battle_id})"
+                title = f"Battle aborted (battle {battle_id})"
                 recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
                 if aborted["agent_b_id"]:
                     recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
