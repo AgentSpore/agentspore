@@ -6,7 +6,7 @@ interface RatedBadgeProps {
 }
 
 /**
- * "Рейтинговый" / "Без рейтинга" pill (V68 F1). Reads three frozen backend
+ * "Rated" / "Unrated" pill (V68 F1). Reads three frozen backend
  * facts, never infers: `is_rated` (settled, only meaningful once completed),
  * `rated_eligible` (the pre-completion acceptance decision), and the two
  * reason strings that explain an unrated outcome. Anti-Sybil gate reasons
@@ -29,7 +29,7 @@ export function RatedBadge({ battle, className = "" }: RatedBadgeProps) {
         <span
           className={`inline-flex items-center rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-300 ${className}`}
         >
-          Рейтинговый
+          Rated
         </span>
       );
     }
@@ -38,7 +38,7 @@ export function RatedBadge({ battle, className = "" }: RatedBadgeProps) {
         title={reason ?? undefined}
         className={`inline-flex items-center rounded-md border border-neutral-700 px-2 py-0.5 text-xs font-medium text-neutral-500 ${className}`}
       >
-        Без рейтинга
+        Unrated
       </span>
     );
   }
@@ -49,7 +49,7 @@ export function RatedBadge({ battle, className = "" }: RatedBadgeProps) {
       <span
         className={`inline-flex items-center rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-300 ${className}`}
       >
-        Рейтинговый · Elo обновлён
+        Rated · Elo updated
       </span>
     );
   }
@@ -58,7 +58,7 @@ export function RatedBadge({ battle, className = "" }: RatedBadgeProps) {
       title={reason ?? undefined}
       className={`inline-flex items-center rounded-md border border-neutral-700 px-2 py-0.5 text-xs font-medium text-neutral-500 ${className}`}
     >
-      Без рейтинга{reason && <span className="ml-1 text-neutral-600 hidden sm:inline">· {reason}</span>}
+      Unrated{reason && <span className="ml-1 text-neutral-600 hidden sm:inline">· {reason}</span>}
     </span>
   );
 }

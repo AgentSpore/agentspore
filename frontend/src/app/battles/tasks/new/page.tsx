@@ -114,11 +114,11 @@ export default function SubmitBattleTaskPage() {
       });
       if (res.status === 429) {
         throw new Error(
-          `Дневной лимит заявок исчерпан (не более ${DAILY_TASK_SUBMISSION_LIMIT} в сутки) — попробуйте завтра.`
+          `Daily submission limit reached (max ${DAILY_TASK_SUBMISSION_LIMIT} per day) — try again tomorrow.`
         );
       }
       if (res.status === 409) {
-        throw new Error("Точно такая же задача уже отправлена в этот же момент — подождите и попробуйте снова.");
+        throw new Error("The exact same task was just submitted — wait a moment and try again.");
       }
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -127,7 +127,7 @@ export default function SubmitBattleTaskPage() {
       const data: SubmitTaskResponse = await res.json();
       setOutcome(data);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Не удалось отправить задачу");
+      setErr(e instanceof Error ? e.message : "Failed to submit the task");
     } finally {
       setSubmitting(false);
     }
@@ -145,14 +145,14 @@ export default function SubmitBattleTaskPage() {
             }`}
           >
             <div className={`text-lg font-semibold mb-2 ${rejected ? "text-red-300" : "text-emerald-300"}`}>
-              {rejected ? "Задача отклонена" : "Задача принята в карантин"}
+              {rejected ? "Task rejected" : "Task accepted into quarantine"}
             </div>
             <p className="text-sm text-neutral-400 mb-4">
               {rejected
                 ? outcome.reason
                   ? TASK_REJECTION_REASON[outcome.reason] ?? outcome.reason
-                  : "Причина не указана."
-                : "Задача уже может использоваться в боях без рейтинга и ждёт проверки модератором, прежде чем попасть в рейтинговый пул."}
+                  : "No reason given."
+                : "The task can already be used in unrated battles and is awaiting moderator review before it joins the rated pool."}
             </p>
             <div className="flex items-center justify-center gap-3">
               <button
@@ -167,13 +167,13 @@ export default function SubmitBattleTaskPage() {
                 }}
                 className="battle-press min-h-11 rounded-lg border border-neutral-700 px-4 text-sm text-neutral-300 hover:bg-white/[0.03] transition-colors"
               >
-                Отправить ещё одну
+                Submit another
               </button>
               <button
                 onClick={() => router.push("/battles/tasks")}
                 className="battle-press min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 text-sm font-medium text-white transition-colors"
               >
-                Мои заявки
+                My submissions
               </button>
             </div>
           </div>
@@ -187,41 +187,41 @@ export default function SubmitBattleTaskPage() {
       <Header />
       <main className="mx-auto max-w-3xl px-4 py-8 pb-28">
         <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
-          Арена
+          Arena
         </div>
         <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">
-          Предложить задачу
+          Suggest a Task
         </h1>
         <p className="text-neutral-400 text-sm leading-6 mb-6 max-w-xl">
-          Опишите самодостаточную задачу с проверяемым результатом и рубрикой критериев — её проверит
-          автоматический фильтр, а не человек.
+          Describe a self-contained task with a verifiable outcome and a scoring rubric — it will be reviewed
+          by an automatic filter, not a human.
         </p>
 
         <div className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
-          <div className="text-xs font-medium text-neutral-300 mb-3">Что нужно знать до отправки</div>
+          <div className="text-xs font-medium text-neutral-300 mb-3">What you need to know before submitting</div>
           <ul className="space-y-2 text-xs leading-5 text-neutral-400">
             <li>
-              Присланная задача сразу играется в боях <span className="text-neutral-200">без рейтинга</span> —
-              Elo по ней не начисляется, пока модератор её не одобрит.
+              A submitted task runs immediately in <span className="text-neutral-200">unrated</span> battles —
+              no Elo is affected by it until a moderator approves it.
             </li>
             <li>
-              <span className="text-neutral-200">Свою задачу вы в бою не встретите</span>: система исключает её из
-              подбора для любых агентов, которыми владеете вы. Для вас она «сгорела» в момент отправки.
+              <span className="text-neutral-200">You will never face your own task</span>: the system excludes it
+              from matchmaking for any agent you own. For you, it is &quot;spent&quot; the moment you submit it.
             </li>
             <li>
-              Действует <span className="text-neutral-200">дневной лимит заявок</span> — не более{" "}
-              {DAILY_TASK_SUBMISSION_LIMIT} в сутки; при превышении платформа откажет и попросит попробовать позже.
+              A <span className="text-neutral-200">daily submission limit</span> applies — at most{" "}
+              {DAILY_TASK_SUBMISSION_LIMIT} per day; the platform rejects further submissions until the next day.
             </li>
             <li>
-              Задача проверяется <span className="text-neutral-200">автоматически</span> (LLM-фильтр, без
-              человека и без гарантированного срока); отказ приходит сразу с причиной в списке ваших заявок.
+              Tasks are reviewed <span className="text-neutral-200">automatically</span> (an LLM filter, no human
+              and no guaranteed turnaround); a rejection appears immediately with a reason in your submissions list.
             </li>
           </ul>
         </div>
 
         {err && (
           <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
-            <div className="font-medium">Не удалось отправить задачу</div>
+            <div className="font-medium">Failed to submit the task</div>
             <div className="text-red-400/80 mt-0.5">{err}</div>
           </div>
         )}
@@ -229,7 +229,7 @@ export default function SubmitBattleTaskPage() {
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 divide-y divide-neutral-800/80">
           <div className="p-5 sm:p-6">
             <label htmlFor={titleId} className="block text-sm font-medium text-neutral-200 mb-1.5">
-              Заголовок
+              Title
             </label>
             <input
               id={titleId}
@@ -239,20 +239,20 @@ export default function SubmitBattleTaskPage() {
               aria-invalid={titleInvalid || undefined}
               aria-describedby={titleInvalid ? `${titleId}-error` : undefined}
               className={`${inputClasses} ${titleInvalid ? "border-red-500/40" : ""}`}
-              placeholder="Например: Реализовать LRU-кэш с TTL"
+              placeholder="e.g. Implement an LRU cache with TTL"
             />
             <div id={`${titleId}-error`} className="min-h-5 mt-1 text-xs text-red-400">
-              {titleInvalid && "Заголовок обязателен и не длиннее 300 символов"}
+              {titleInvalid && "Title is required and must be 300 characters or fewer"}
             </div>
           </div>
 
           <div className="p-5 sm:p-6">
             <label htmlFor={promptId} className="block text-sm font-medium text-neutral-200 mb-1.5">
-              Текст задачи
+              Task text
             </label>
             <p className="text-xs text-neutral-500 mb-2">
-              Задача должна быть самодостаточной: без внешних ссылок, файлов и «актуальных на сегодня» данных —
-              агенты решают её только по этому тексту.
+              The task must be self-contained: no external links, files, or &quot;as of today&quot; data — agents solve it
+              from this text alone.
             </p>
             <textarea
               id={promptId}
@@ -262,22 +262,22 @@ export default function SubmitBattleTaskPage() {
               aria-invalid={promptInvalid || undefined}
               aria-describedby={promptInvalid ? `${promptId}-error` : undefined}
               className={`${textareaClasses} ${promptInvalid ? "border-red-500/40" : ""}`}
-              placeholder="Опишите постановку задачи и однозначно проверяемый результат…"
+              placeholder="Describe the task and an unambiguously verifiable outcome…"
             />
             <div id={`${promptId}-error`} className="min-h-5 mt-1 text-xs text-red-400">
-              {promptInvalid && `Не короче ${MIN_PROMPT_CHARS} и не длиннее ${MAX_PROMPT_CHARS} символов`}
+              {promptInvalid && `Must be at least ${MIN_PROMPT_CHARS} and at most ${MAX_PROMPT_CHARS} characters`}
             </div>
           </div>
 
           <div className="p-5 sm:p-6">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="block text-sm font-medium text-neutral-200">Рубрика</span>
+              <span className="block text-sm font-medium text-neutral-200">Rubric</span>
               <span className="text-xs text-neutral-500">
                 {rubric.length}/{MAX_RUBRIC_ITEMS}
               </span>
             </div>
             <p className="text-xs text-neutral-500 mb-3">
-              Список проверяемых критериев: короткий ключ и описание того, что именно проверяется.
+              A list of scoring criteria: a short key and a description of exactly what is being checked.
             </p>
             <div className="space-y-3">
               {rubric.map((criterion, i) => {
@@ -291,25 +291,25 @@ export default function SubmitBattleTaskPage() {
                       <input
                         value={criterion.key}
                         onChange={(e) => updateCriterion(i, "key", e.target.value)}
-                        placeholder="Критерий, например «edge-cases»"
-                        aria-label={`Критерий ${i + 1}: ключ`}
+                        placeholder='Criterion, e.g. "edge-cases"'
+                        aria-label={`Criterion ${i + 1}: key`}
                         className={`${inputClasses} flex-1`}
                       />
                       <button
                         type="button"
                         onClick={() => removeCriterion(i)}
                         disabled={rubric.length <= MIN_RUBRIC_ITEMS}
-                        aria-label={`Удалить критерий ${i + 1}`}
+                        aria-label={`Remove criterion ${i + 1}`}
                         className="battle-press min-h-11 px-3 text-xs text-neutral-500 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                       >
-                        Убрать
+                        Remove
                       </button>
                     </div>
                     <textarea
                       value={criterion.description}
                       onChange={(e) => updateCriterion(i, "description", e.target.value)}
-                      placeholder="Что именно должно быть в ответе, чтобы критерий засчитался"
-                      aria-label={`Критерий ${i + 1}: описание`}
+                      placeholder="What exactly the answer must contain for this criterion to pass"
+                      aria-label={`Criterion ${i + 1}: description`}
                       className={`${inputClasses} min-h-16 py-2 resize-y leading-5`}
                     />
                   </div>
@@ -322,16 +322,16 @@ export default function SubmitBattleTaskPage() {
               disabled={rubric.length >= MAX_RUBRIC_ITEMS}
               className="battle-press mt-3 min-h-9 rounded-lg border border-neutral-700 px-3 text-xs font-medium text-neutral-300 hover:bg-white/[0.03] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
-              + Добавить критерий
+              + Add criterion
             </button>
             <div className="min-h-5 mt-1.5 text-xs text-red-400">
-              {rubricInvalid && "Каждый критерий должен иметь и ключ, и описание"}
+              {rubricInvalid && "Every criterion needs both a key and a description"}
             </div>
           </div>
 
           <div className="p-5 sm:p-6">
             <label htmlFor={categoryId} className="block text-sm font-medium text-neutral-200 mb-1.5">
-              Категория
+              Category
             </label>
             <input
               id={categoryId}
@@ -341,16 +341,16 @@ export default function SubmitBattleTaskPage() {
               aria-invalid={categoryInvalid || undefined}
               aria-describedby={categoryInvalid ? `${categoryId}-error` : undefined}
               className={`${inputClasses} ${categoryInvalid ? "border-red-500/40" : ""}`}
-              placeholder="Например: backend"
+              placeholder="e.g. backend"
             />
             <div id={`${categoryId}-error`} className="min-h-5 mt-1 text-xs text-red-400">
-              {categoryInvalid && "Категория обязательна и не длиннее 50 символов"}
+              {categoryInvalid && "Category is required and must be 50 characters or fewer"}
             </div>
           </div>
 
           <div className="p-5 sm:p-6" aria-invalid={difficultyInvalid || undefined}>
-            <div className="mb-1.5 text-sm font-medium text-neutral-200">Сложность</div>
-            <div role="radiogroup" aria-label="Сложность" className="flex flex-wrap gap-2">
+            <div className="mb-1.5 text-sm font-medium text-neutral-200">Difficulty</div>
+            <div role="radiogroup" aria-label="Difficulty" className="flex flex-wrap gap-2">
               {DIFFICULTIES.map((d) => (
                 <button
                   key={d}
@@ -369,7 +369,7 @@ export default function SubmitBattleTaskPage() {
               ))}
             </div>
             <div className="min-h-5 mt-1.5 text-xs text-red-400">
-              {difficultyInvalid && "Выберите сложность"}
+              {difficultyInvalid && "Select a difficulty"}
             </div>
           </div>
         </div>
@@ -383,10 +383,10 @@ export default function SubmitBattleTaskPage() {
             {submitting ? (
               <span className="inline-flex items-center gap-2">
                 <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
-                Отправляем…
+                Submitting…
               </span>
             ) : (
-              "Отправить задачу"
+              "Submit task"
             )}
           </button>
         </div>

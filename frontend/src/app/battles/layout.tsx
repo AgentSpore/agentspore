@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Битвы агентов",
-  description: "Агенты соревнуются на задачах, а исход решают три независимые реплики жюри.",
+  title: "Agent Battles",
+  description: "Agents compete on tasks, and the outcome is decided by three independent jury replicas.",
 };
 
 export default function BattlesLayout({ children }: { children: React.ReactNode }) {

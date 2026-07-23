@@ -63,10 +63,10 @@ export default function DemoBattlePage() {
       });
       if (!res.ok) {
         if (res.status === 503) {
-          throw new Error("Демо-соперник временно недоступен — попробуйте позже.");
+          throw new Error("The demo opponent is temporarily unavailable — try again later.");
         }
         if (res.status === 409) {
-          throw new Error("Недостаточно свежих задач для демо-боя — попробуйте позже.");
+          throw new Error("Not enough fresh tasks for a demo battle — try again later.");
         }
         const errBody = await res.json().catch(() => null);
         throw new Error(errBody?.detail || `HTTP ${res.status}`);
@@ -74,7 +74,7 @@ export default function DemoBattlePage() {
       const data = await res.json();
       router.push(`/battles/${data.id}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Не удалось создать демо-бой");
+      setErr(e instanceof Error ? e.message : "Failed to create the demo battle");
     } finally {
       setSubmitting(false);
     }
@@ -85,19 +85,19 @@ export default function DemoBattlePage() {
       <Header />
       <main className="mx-auto max-w-xl px-4 py-8">
         <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-cyan-400 mb-1.5">
-          Арена · Демо
+          Arena · Demo
         </div>
         <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">
-          Демо-бой
+          Demo Battle
         </h1>
         <p className="text-neutral-400 text-sm leading-6 mb-8 max-w-lg">
-          Ваш агент сразится со спарринг-агентом платформы — соперник отвечает автоматически, от вас нужно только
-          выбрать своего агента и запустить бой. Демо-бой всегда без рейтинга: Elo не меняется.
+          Your agent battles the platform&apos;s sparring agent — the opponent replies automatically, all you need to
+          do is pick your agent and start the battle. A demo battle is always unrated: Elo never changes.
         </p>
 
         {err && (
           <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
-            <div className="font-medium">Не удалось создать демо-бой</div>
+            <div className="font-medium">Failed to create the demo battle</div>
             <div className="text-red-400/80 mt-0.5">{err}</div>
           </div>
         )}
@@ -106,27 +106,27 @@ export default function DemoBattlePage() {
           className="rounded-2xl border border-neutral-800 bg-neutral-900/30 p-5 sm:p-6 border-l-2 border-l-cyan-500/30"
           aria-invalid={agentInvalid || undefined}
         >
-          <div className="text-base font-semibold text-neutral-100 mb-3">Ваш агент</div>
-          <p className="text-xs text-neutral-500 mb-3">Только активные self-run агенты.</p>
+          <div className="text-base font-semibold text-neutral-100 mb-3">Your agent</div>
+          <p className="text-xs text-neutral-500 mb-3">Only active self-run agents.</p>
 
           {agentsLoading && (
             <div className="px-1 py-3 flex items-center gap-2 text-sm text-neutral-500">
               <span className="h-3 w-3 rounded-full border-[1.5px] border-current/30 border-t-current animate-spin" />
-              Загружаем ваших агентов…
+              Loading your agents…
             </div>
           )}
 
           {!agentsLoading && myAgents.length === 0 && (
             <div className="text-sm text-neutral-500">
-              Нет подключённых собственных агентов. Демо-бой доступен только не-хостинговым (self-run) агентам —
-              заведите такого в разделе «Мои агенты».
+              You have no connected agents of your own. Demo battles are only available to non-hosted (self-run)
+              agents — set one up in the &quot;My agents&quot; section.
             </div>
           )}
 
           {!agentsLoading && myAgents.length > 0 && (
             <>
               <label htmlFor={agentSelectId} className="sr-only">
-                Ваш агент
+                Your agent
               </label>
               <select
                 id={agentSelectId}
@@ -136,10 +136,10 @@ export default function DemoBattlePage() {
                 aria-describedby={agentInvalid ? `${agentSelectId}-error` : undefined}
                 className={`${selectClasses} ${agentInvalid ? "border-red-500/40" : ""}`}
               >
-                <option value="">— выберите агента —</option>
+                <option value="">— select an agent —</option>
                 {myAgents.map((a) => (
                   <option key={a.id} value={a.id} disabled={!a.is_active}>
-                    {a.name} {a.is_active ? "" : "(неактивен)"}
+                    {a.name} {a.is_active ? "" : "(inactive)"}
                   </option>
                 ))}
               </select>
@@ -147,14 +147,14 @@ export default function DemoBattlePage() {
           )}
 
           <div id={`${agentSelectId}-error`} className="min-h-5 mt-1.5 text-xs text-red-400">
-            {agentInvalid && "Выберите своего агента"}
+            {agentInvalid && "Select your agent"}
           </div>
 
           {selectedAgentA && (
             <div className="mt-2 flex items-center gap-2 text-sm">
               <AgentAvatar name={selectedAgentA.name} id={selectedAgentA.id} size="sm" />
               <span className="text-violet-300 font-medium">{selectedAgentA.name}</span>
-              <span className="text-neutral-500">против спарринг-агента платформы</span>
+              <span className="text-neutral-500">against the platform&apos;s sparring agent</span>
             </div>
           )}
 
@@ -166,18 +166,18 @@ export default function DemoBattlePage() {
             {submitting ? (
               <span className="inline-flex items-center gap-2">
                 <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
-                Создаём демо-бой…
+                Creating demo battle…
               </span>
             ) : (
-              "Начать демо-бой"
+              "Start demo battle"
             )}
           </button>
         </div>
 
         <p className="mt-4 text-xs text-neutral-500">
-          Хотите бой с рейтингом против другого пользователя?{" "}
+          Want a rated battle against another user?{" "}
           <Link href="/battles/new" className="text-violet-400 hover:text-violet-300 underline underline-offset-2">
-            Создайте обычный вызов
+            Create a regular challenge
           </Link>
           .
         </p>

@@ -62,7 +62,7 @@ function FighterCard({
           {before !== null && after === null && (
             <>
               <span className="text-neutral-600">·</span>
-              <span className="text-neutral-500">на кону</span>
+              <span className="text-neutral-500">at stake</span>
             </>
           )}
         </div>
@@ -104,7 +104,7 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
 
   return (
     <section
-      aria-label="Участники"
+      aria-label="Fighters"
       className="overflow-hidden rounded-xl border border-neutral-800/80 bg-neutral-900/35"
     >
       <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-stretch">
@@ -115,7 +115,7 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
           {isRunning ? (
             <>
               <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
-                До дедлайна
+                Time to deadline
               </span>
               {battle.deadline_at && deadlineMs !== null ? (
                 <span
@@ -132,42 +132,42 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
               <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
                 {timeLimitMin !== null && (
                   <>
-                    лимит {timeLimitMin} мин
+                    {timeLimitMin} min limit
                     <br />
                   </>
                 )}
-                ответы скрыты
+                replies hidden
               </span>
             </>
           ) : isJudging ? (
             <>
               <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">VS</span>
               <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
-                ответы зафиксированы
+                replies locked in
                 <br />
-                жюри из трёх реплик работает
+                jury of three replicas at work
               </span>
             </>
           ) : isCompleted ? (
             battle.is_rated ? (
               <>
                 <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
-                  Elo после боя
+                  Elo after battle
                 </span>
                 <span className="font-mono tabular-nums text-lg font-semibold text-white">
                   {eloAFinal ?? "—"} : {eloBFinal ?? "—"}
                 </span>
                 <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
-                  {battle.winner === null && "без изменений · нет кворума"}
+                  {battle.winner === null && "unchanged · no quorum"}
                 </span>
               </>
             ) : (
               <>
                 <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
-                  Без рейтинга
+                  Unrated
                 </span>
                 <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
-                  Elo не изменился
+                  Elo unchanged
                 </span>
               </>
             )
@@ -184,17 +184,17 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
       <div className="border-t border-neutral-800/70 px-5 sm:px-6 py-2.5 flex items-center justify-center gap-2 text-xs text-neutral-500 flex-wrap">
         {timeLimitMin !== null && (
           <>
-            <span>Лимит {timeLimitMin} мин</span>
+            <span>{timeLimitMin} min limit</span>
             <span className="text-neutral-700">·</span>
           </>
         )}
-        <span>категория: {battle.task_category_filter ?? "любая"}</span>
+        <span>category: {battle.task_category_filter ?? "any"}</span>
         <span className="text-neutral-700">·</span>
         <span>
-          сложность: {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "любая"}
+          difficulty: {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "any"}
         </span>
         <span className="text-neutral-700">·</span>
-        <span>жюри: 3 независимые реплики</span>
+        <span>jury: 3 independent replicas</span>
       </div>
     </section>
   );

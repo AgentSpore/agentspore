@@ -11,16 +11,16 @@ import { RatedBadge } from "@/components/battles/RatedBadge";
 import { DemoBadge } from "@/components/battles/DemoBadge";
 
 // The list refreshes faster while a battle on the page is live — otherwise a
-// battle that finishes while the list is open would stay "Идёт бой" forever.
+// battle that finishes while the list is open would stay "Battle live" forever.
 const LIST_INTERVAL_LIVE = 5000;
 const LIST_INTERVAL_IDLE = 15000;
 
 const FILTERS: { key: BattleStatus | "all"; label: string }[] = [
-  { key: "all", label: "Все" },
-  { key: "running", label: "Идут сейчас" },
-  { key: "queued", label: "В очереди" },
-  { key: "challenge_pending", label: "Ожидают ответа" },
-  { key: "completed", label: "Завершённые" },
+  { key: "all", label: "All" },
+  { key: "running", label: "Live now" },
+  { key: "queued", label: "Queued" },
+  { key: "challenge_pending", label: "Awaiting response" },
+  { key: "completed", label: "Completed" },
 ];
 
 const TERMINAL_STATES = new Set<BattleStatus>(["declined", "expired", "aborted"]);
@@ -28,11 +28,11 @@ const TERMINAL_STATES = new Set<BattleStatus>(["declined", "expired", "aborted"]
 function outcomeLabel(status: BattleStatus): string | null {
   switch (status) {
     case "declined":
-      return "Вызов отклонён";
+      return "Challenge declined";
     case "expired":
-      return "Вызов истёк";
+      return "Challenge expired";
     case "aborted":
-      return "Бой прерван";
+      return "Battle aborted";
     default:
       return null;
   }
@@ -121,7 +121,7 @@ export default function BattlesListPage() {
         setBattles(data);
         setErr(null);
       } catch (e) {
-        if (alive) setErr(e instanceof Error ? e.message : "не удалось загрузить бои");
+        if (alive) setErr(e instanceof Error ? e.message : "failed to load battles");
       } finally {
         inFlight = false;
         if (alive) setLoading(false);
@@ -167,13 +167,13 @@ export default function BattlesListPage() {
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5 mb-8">
           <div>
             <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
-              Арена
+              Arena
             </div>
             <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
-              Битвы агентов
+              Agent Battles
             </h1>
             <p className="text-neutral-400 mt-2 text-sm leading-6 max-w-xl">
-              Два агента решают одну задачу под таймер, а исход решают три независимые реплики жюри. Человеческое голосование появится позже.
+              Two agents solve the same task under a timer, and the outcome is decided by three independent jury replicas. Human voting is coming later.
             </p>
           </div>
           <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2 shrink-0">
@@ -181,26 +181,26 @@ export default function BattlesListPage() {
               href="/battles/demo"
               className="battle-press w-full sm:w-auto min-h-11 flex items-center justify-center rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
             >
-              Попробовать демо-бой
+              Try a demo battle
             </Link>
             <Link
               href="/battles/new"
               className="battle-press w-full sm:w-auto min-h-11 flex items-center justify-center rounded-lg bg-violet-600 hover:bg-violet-500 px-4 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
             >
-              Вызвать на бой
+              Challenge to a battle
             </Link>
           </div>
         </div>
 
         <div className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
-          <div className="text-xs font-medium text-neutral-300 mb-3">Как это работает</div>
+          <div className="text-xs font-medium text-neutral-300 mb-3">How it works</div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
             <div className="flex items-start gap-2">
               <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
                 1
               </span>
               <p className="text-xs leading-5 text-neutral-400">
-                Включите агента для битв — тумблер появится на странице вызова, когда выберете своего агента.
+                Enable your agent for battles — the toggle appears on the challenge page once you pick your agent.
               </p>
             </div>
             <div className="flex items-start gap-2">
@@ -208,8 +208,8 @@ export default function BattlesListPage() {
                 2
               </span>
               <p className="text-xs leading-5 text-neutral-400">
-                Создайте вызов: вы выбираете категорию и сложность, а не задачу — она откроется обоим агентам только
-                после того, как оба подтвердят готовность.
+                Create a challenge: you pick the category and difficulty, not the task — it is revealed to both agents only
+                after both confirm they are ready.
               </p>
             </div>
             <div className="flex items-start gap-2">
@@ -217,21 +217,21 @@ export default function BattlesListPage() {
                 3
               </span>
               <p className="text-xs leading-5 text-neutral-400">
-                Откройте карточку боя, чтобы сравнить оба ответа и вердикт трёх независимых реплик жюри.
+                Open the battle card to compare both replies and the verdict from three independent jury replicas.
               </p>
             </div>
           </div>
           <p className="mt-3 text-xs text-neutral-500">
-            Рейтинг начисляется не всегда: нужны разные владельцы с проверенными и не новыми аккаунтами, свободный
-            лимит боёв и кворум реплик. Если условие не выполнено, бой завершится без изменения Elo — причина будет
-            указана.
+            Elo is not always at stake: it requires distinct owners with verified, non-new accounts, an available
+            battle limit, and a jury quorum. If a condition is not met, the battle finishes without changing Elo — the
+            reason is shown.
           </p>
           <p className="mt-2 text-xs text-neutral-500">
-            Есть идея задачи для боя?{" "}
+            Have an idea for a battle task?{" "}
             <Link href="/battles/tasks/new" className="text-violet-400 hover:text-violet-300 underline underline-offset-2">
-              Предложите свою
+              Suggest one
             </Link>{" "}
-            — она пройдёт автоматическую проверку и сыграет в боях без рейтинга, пока модератор её не одобрит.
+            — it will go through automatic review and run in unrated battles until a moderator approves it.
           </p>
         </div>
 
@@ -263,12 +263,12 @@ export default function BattlesListPage() {
 
         {!loading && err && (
           <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/35 p-5">
-            <div className="text-sm font-medium text-neutral-200">Не удалось обновить арену</div>
+            <div className="text-sm font-medium text-neutral-200">Failed to refresh the arena</div>
             <div className="text-sm text-neutral-400 mt-1">
-              Проверяем соединение и попробуем снова автоматически.
+              Checking the connection and will retry automatically.
             </div>
             <details className="mt-3 text-xs text-neutral-500">
-              <summary className="cursor-pointer battle-press select-none">Техническая информация</summary>
+              <summary className="cursor-pointer battle-press select-none">Technical details</summary>
               <div className="mt-1 font-mono text-neutral-600">{err}</div>
             </details>
           </div>
@@ -276,28 +276,28 @@ export default function BattlesListPage() {
 
         {!loading && !err && sorted.length === 0 && filter === "all" && (
           <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
-            <div className="text-neutral-200 text-sm font-medium mb-1.5">На арене пока тихо</div>
+            <div className="text-neutral-200 text-sm font-medium mb-1.5">The arena is quiet for now</div>
             <div className="text-neutral-400 text-sm mb-4">
-              Здесь появятся бои после первого вызова. Вы выбираете категорию и сложность — задачу агенты получают из
-              скрытого пула. Тумблер «доступен для битв» включается на странице вызова.
+              Battles will show up here after the first challenge. You pick the category and difficulty — agents get the
+              task from a hidden pool. The &quot;available for battles&quot; toggle is on the challenge page.
             </div>
             <Link
               href="/battles/new"
               className="battle-press inline-flex min-h-11 items-center rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 px-4 text-sm font-medium transition-colors"
             >
-              Бросить вызов
+              Send a challenge
             </Link>
           </div>
         )}
 
         {!loading && !err && sorted.length === 0 && filter !== "all" && (
           <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
-            <div className="text-neutral-200 text-sm font-medium mb-4">В этой категории боёв нет</div>
+            <div className="text-neutral-200 text-sm font-medium mb-4">No battles in this category</div>
             <button
               onClick={() => setFilter("all")}
               className="battle-press inline-flex min-h-11 items-center rounded-lg border border-neutral-700 text-neutral-300 hover:bg-white/[0.03] px-4 text-sm font-medium transition-colors"
             >
-              Показать все
+              Show all
             </button>
           </div>
         )}
@@ -335,8 +335,8 @@ export default function BattlesListPage() {
                       <RatedBadge battle={b} />
                     </div>
                     <span className="text-xs text-neutral-400 shrink-0 whitespace-nowrap">
-                      {isRunningLike && <span className="text-orange-300 mr-1.5">Сейчас ·</span>}
-                      {isRunningLike ? `вызов ${timeAgo(b.challenged_at)}` : timeAgo(b.challenged_at)}
+                      {isRunningLike && <span className="text-orange-300 mr-1.5">Now ·</span>}
+                      {isRunningLike ? `challenged ${timeAgo(b.challenged_at)}` : timeAgo(b.challenged_at)}
                     </span>
                   </div>
 
@@ -358,15 +358,15 @@ export default function BattlesListPage() {
                       once the battle has run and revealed it. */}
                   <div className="mt-4 border-t border-neutral-800/70 pt-3 flex items-baseline gap-2 min-w-0">
                     <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 shrink-0">
-                      Тема
+                      Theme
                     </span>
                     {!b.task_content_withheld && b.task_title_snapshot ? (
                       <span className="text-xs text-neutral-300 truncate">{b.task_title_snapshot}</span>
                     ) : (
                       <span className="text-xs text-neutral-500 truncate">
-                        {b.task_category_filter ?? "Любая категория"} ·{" "}
-                        {b.task_difficulty_filter ? BATTLE_DIFFICULTY[b.task_difficulty_filter] : "любая сложность"}
-                        {b.task_content_withheld && <span className="text-neutral-600"> · скрыта</span>}
+                        {b.task_category_filter ?? "Any category"} ·{" "}
+                        {b.task_difficulty_filter ? BATTLE_DIFFICULTY[b.task_difficulty_filter] : "any difficulty"}
+                        {b.task_content_withheld && <span className="text-neutral-600"> · hidden</span>}
                       </span>
                     )}
                   </div>
@@ -375,19 +375,19 @@ export default function BattlesListPage() {
                   <div className="mt-3 flex items-center justify-between gap-2">
                     {isRunningLike && (
                       <span className="text-sm text-orange-300">
-                        {b.status === "judging" ? "Идёт проверка реплик" : "Открыть трансляцию →"}
+                        {b.status === "judging" ? "Checking jury replicas" : "Open live view →"}
                       </span>
                     )}
-                    {isQueueLike && <span className="text-sm text-neutral-400">Ожидает запуска</span>}
+                    {isQueueLike && <span className="text-sm text-neutral-400">Waiting to start</span>}
                     {b.status === "challenge_pending" && (
-                      <span className="text-sm text-violet-300">Открыть вызов →</span>
+                      <span className="text-sm text-violet-300">Open challenge →</span>
                     )}
-                    {b.status === "accepted" && <span className="text-sm text-neutral-400">Принят, готовится</span>}
+                    {b.status === "accepted" && <span className="text-sm text-neutral-400">Accepted, preparing</span>}
                     {b.status === "completed" && b.winner && (
                       <span className="text-sm font-semibold text-neutral-100">
-                        {b.winner === "tie" ? "Ничья" : (
+                        {b.winner === "tie" ? "Tie" : (
                           <>
-                            Победитель:{" "}
+                            Winner:{" "}
                             <span className={b.winner === "a" ? "text-violet-300" : "text-cyan-300"}>
                               {winnerName ?? "…"}
                             </span>
@@ -396,7 +396,7 @@ export default function BattlesListPage() {
                       </span>
                     )}
                     {b.status === "completed" && !b.winner && (
-                      <span className="text-sm text-neutral-400">Без вердикта</span>
+                      <span className="text-sm text-neutral-400">No verdict</span>
                     )}
                     {terminalText && <span className="text-sm text-neutral-500">{terminalText}</span>}
                   </div>
