@@ -268,7 +268,7 @@ class CreateChallengeRequest(BaseModel):
     the concrete task is chosen and snapshotted only after both fighters prove
     readiness, so no side can precompute an answer to a task it picked. Both
     filters are nullable; NULL means "any". The wire never carries the string
-    ``"any"`` — the UI translates its "Любая" selection to JSON ``null``.
+    ``"any"`` — the UI translates its "Any" selection to JSON ``null``.
 
     The challenger's owner is never a field: it comes from the JWT and is
     verified against the agents row. Accepting it from the body would let a

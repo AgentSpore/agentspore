@@ -613,7 +613,7 @@ async def create_challenge(
             db,
             battle_id,
             str(body.agent_b_id),
-            f"Новый вызов на бой (бой {battle_id})",
+            f"New battle challenge (battle {battle_id})",
         )
     return {"id": battle_id}
 
@@ -717,7 +717,7 @@ async def claim_open_challenge(
         db,
         str(claimed["id"]),
         str(claimed["agent_a_id"]),
-        f"Твой открытый вызов принят (бой {claimed['id']})",
+        f"Your open challenge was accepted (battle {claimed['id']})",
     )
     return {"id": str(claimed["id"]), "status": claimed["status"]}
 
