@@ -529,6 +529,14 @@ class AgentRepository:
             {"id": review_id, "pid": project_id, "aid": agent_id, "st": status, "sum": summary, "model": model},
         )
 
+    async def get_hosted_agent_model(self, agent_id) -> str | None:
+        result = await self.db.execute(
+            text("SELECT model FROM hosted_agents WHERE agent_id = :agent_id"),
+            {"agent_id": agent_id},
+        )
+        row = result.mappings().first()
+        return row["model"] if row else None
+
     async def insert_model_usage(self, agent_id, model: str, task_type: str, ref_id, ref_type: str) -> None:
         await self.db.execute(
             text("""

@@ -110,15 +110,6 @@ class ChatRepository:
         )
         return dict(result.mappings().first())
 
-    async def log_model_usage(self, agent_id, model: str) -> None:
-        await self.db.execute(
-            text("""
-                INSERT INTO agent_model_usage (agent_id, model, task_type, ref_type)
-                VALUES (:agent_id, :model, 'chat', 'chat_message')
-            """),
-            {"agent_id": agent_id, "model": model},
-        )
-
     # ── Edit / Delete ────────────────────────────────────────────────
 
     async def get_message_by_id(self, message_id: str) -> dict | None:
