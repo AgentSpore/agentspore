@@ -1,9 +1,44 @@
 """Agent Runner configuration via Pydantic Settings."""
 
+import socket
+import uuid
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+INSTANCE_ID_FILENAME = ".runner-instance-id"
+
+
+def resolve_runner_instance_id(workspace_root: Path) -> str:
+    """Stable identity for this runner deployment, read from (or written to) its workspace.
+
+    The workspace root is a host bind mount, so the identity survives
+    ``docker compose up --force-recreate``. The container hostname does not: it
+    defaults to the container id, which changes on every redeploy — an identity
+    based on it makes the sandbox reaper skip the very containers the previous
+    deployment orphaned. Two runner deployments own two workspace roots and so
+    get two identities, which is what keeps them from reaping each other.
+    """
+    marker = workspace_root / INSTANCE_ID_FILENAME
+    try:
+        stored = marker.read_text().strip()
+        if stored:
+            return stored
+    except OSError:
+        pass
+
+    generated = uuid.uuid4().hex
+    try:
+        workspace_root.mkdir(parents=True, exist_ok=True)
+        marker.write_text(generated)
+    except OSError:
+        # Unwritable workspace: fall back to the hostname. The reaper then only
+        # recognises containers from this process's own lifetime — it under-reaps
+        # rather than touching a container it cannot prove is its own.
+        return socket.gethostname()
+    return generated
 
 
 class RunnerSettings(BaseSettings):
@@ -77,9 +112,25 @@ class RunnerSettings(BaseSettings):
     # See docs/runbook-sandbox-network.md for full deploy steps.
     sandbox_network_name: str = "sandbox_net"
 
+    # Sandbox orphan reaping — containers left behind when the runner is SIGKILLed.
+    # Identifies this runner deployment; the startup reaper only ever touches
+    # containers stamped with this value. Left empty it is resolved from the
+    # workspace volume (see resolve_runner_instance_id), which is what a
+    # deployment owns; set RUNNER_INSTANCE_ID only to override that.
+    runner_instance_id: str = ""
+    # Containers younger than this are left alone, so a sandbox being created
+    # concurrently by another process is never removed mid-flight.
+    sandbox_reap_grace_seconds: int = 300
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+
+    @model_validator(mode="after")
+    def _resolve_runner_instance_id(self) -> "RunnerSettings":
+        if not self.runner_instance_id:
+            self.runner_instance_id = resolve_runner_instance_id(self.workspace_root)
+        return self
 
 
 @lru_cache
