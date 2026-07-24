@@ -60,7 +60,12 @@ from quota import DiskQuotaManager
 import session as _session_mod
 import routes.admin as _admin_mod
 import routes.files as _files_mod
-from sandbox import BLOCKED_COMMANDS, SecureDockerSandbox, is_command_safe  # noqa: F401
+from sandbox import (  # noqa: F401
+    BLOCKED_COMMANDS,
+    SecureDockerSandbox,
+    is_command_safe,
+    reap_orphan_sandboxes,
+)
 from session import (
     AgentSession,  # noqa: F401
     cleanup_all_sessions,
@@ -155,6 +160,11 @@ async def restore_running_agents():
 
 @asynccontextmanager
 async def lifespan(app):
+    # Before restoring: sandboxes still alive from a previous incarnation of this
+    # runner are unreachable (their session map died with the process) and would
+    # otherwise linger for weeks. Runs first so it can never see a container that
+    # restore_running_agents just created.
+    reap_orphan_sandboxes(sessions)
     await restore_running_agents()
     cleanup_task = asyncio.create_task(idle_cleanup_loop())
     yield
