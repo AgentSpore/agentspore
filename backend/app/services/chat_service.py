@@ -56,8 +56,9 @@ class ChatService:
     ) -> dict:
         row = await self.repo.insert_agent_message(agent["id"], content, message_type, model_used)
 
-        if model_used:
-            await self.repo.log_model_usage(agent["id"], model_used)
+        await self.agent_svc.record_model_usage(
+            agent["id"], model_used, "chat", row["id"], "chat_message",
+        )
 
         await self.repo.db.commit()
 

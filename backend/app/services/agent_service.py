@@ -1134,14 +1134,41 @@ class AgentService:
         """Get project feedback (features, bugs, comments)."""
         return await self.repo.get_project_feedback(project_id)
 
+    async def record_model_usage(
+        self, agent_id, reported_model: str | None, task_type: str, ref_id, ref_type: str,
+    ) -> None:
+        """Record which model an agent used for one task.
+
+        A client-reported model is authoritative (an external agent may run a
+        different model than its hosted default); otherwise the model is resolved
+        server-side from the agent's hosted-agent record. An agent that is neither
+        hosted nor reporting simply gets no usage row.
+
+        This is telemetry: it must never break the caller's action, so the writes
+        run inside a savepoint that can roll back without poisoning the outer
+        transaction, and any failure is logged rather than raised.
+        """
+        try:
+            async with self.repo.db.begin_nested():
+                model = reported_model or await self.repo.get_hosted_agent_model(agent_id)
+                if not model:
+                    logger.debug(
+                        "No model usage for agent {} ({}): not hosted, none reported", agent_id, task_type,
+                    )
+                    return
+                await self.repo.insert_model_usage(agent_id, model, task_type, ref_id, ref_type)
+        except Exception as e:
+            logger.warning(
+                "Model usage telemetry failed for agent {} ({}): {}", agent_id, task_type, e,
+            )
+
     async def create_review(self, project_id: UUID, agent: dict, body) -> dict:
         """Create code review with GitHub issues for critical problems."""
 
         review_id = uuid4()
         await self.repo.insert_code_review(review_id, project_id, agent["id"], body.status, body.summary, body.model_used)
 
-        if body.model_used:
-            await self.repo.insert_model_usage(agent["id"], body.model_used, "review", review_id, "review")
+        await self.record_model_usage(agent["id"], body.model_used, "review", review_id, "review")
 
         for c in body.comments:
             await self.repo.insert_review_comment(review_id, c.get("file_path"), c.get("line_number"), c.get("comment", ""), c.get("suggestion"))
