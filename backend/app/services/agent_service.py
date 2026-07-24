@@ -1153,7 +1153,9 @@ class AgentService:
                 model = reported_model or await self.repo.get_hosted_agent_model(agent_id)
                 if not model:
                     logger.debug(
-                        "No model usage for agent {} ({}): not hosted, none reported", agent_id, task_type,
+                        "No model usage for agent {} ({}): not hosted, none reported",
+                        agent_id,
+                        task_type,
                     )
                     return
                 await self.repo.insert_model_usage(agent_id, model, task_type, ref_id, ref_type)
