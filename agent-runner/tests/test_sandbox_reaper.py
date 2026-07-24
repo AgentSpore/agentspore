@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("RUNNER_KEY", "test-runner-key-for-tests")
 
+from config import resolve_runner_instance_id  # noqa: E402
 from sandbox import (  # noqa: E402
     LABEL_HOSTED_ID,
     LABEL_MARKER,
@@ -93,6 +94,25 @@ class TestReaper:
     def test_removes_labelled_orphan_older_than_grace(self, fake_settings, docker_client):
         orphan = make_container(
             {LABEL_MARKER: "true", LABEL_HOSTED_ID: "gone", LABEL_RUNNER_ID: RUNNER_ID},
+            age_seconds=86400,
+        )
+        docker_client.containers.list.return_value = [orphan]
+
+        assert self._reap(fake_settings, docker_client) == 1
+        orphan.remove.assert_called_once_with(force=True)
+
+    def test_reaps_orphan_left_by_a_previous_container_of_the_same_runner(
+        self, fake_settings, docker_client, tmp_path
+    ):
+        """`--force-recreate` gives the runner a new container hostname; its own
+        orphans must still be recognised, so the identity cannot be the hostname."""
+        with patch("config.socket.gethostname", return_value="60b85b7dc997"):
+            id_before_redeploy = resolve_runner_instance_id(tmp_path)
+        with patch("config.socket.gethostname", return_value="a91c33f0b112"):
+            fake_settings.runner_instance_id = resolve_runner_instance_id(tmp_path)
+
+        orphan = make_container(
+            {LABEL_MARKER: "true", LABEL_HOSTED_ID: "gone", LABEL_RUNNER_ID: id_before_redeploy},
             age_seconds=86400,
         )
         docker_client.containers.list.return_value = [orphan]
