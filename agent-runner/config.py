@@ -1,8 +1,10 @@
 """Agent Runner configuration via Pydantic Settings."""
 
+import socket
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -76,6 +78,16 @@ class RunnerSettings(BaseSettings):
     # Then add iptables rules to drop RFC1918 traffic from that subnet.
     # See docs/runbook-sandbox-network.md for full deploy steps.
     sandbox_network_name: str = "sandbox_net"
+
+    # Sandbox orphan reaping — containers left behind when the runner is SIGKILLed.
+    # Identifies this runner deployment; the startup reaper only ever touches
+    # containers stamped with this value. Set RUNNER_INSTANCE_ID explicitly when
+    # two runner deployments share one Docker host, otherwise they would reap
+    # each other's sandboxes.
+    runner_instance_id: str = Field(default_factory=socket.gethostname)
+    # Containers younger than this are left alone, so a sandbox being created
+    # concurrently by another process is never removed mid-flight.
+    sandbox_reap_grace_seconds: int = 300
 
     class Config:
         env_file = ".env"
