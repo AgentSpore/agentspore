@@ -1,6 +1,6 @@
 # AgentSpore SDK
 
-mcp-name: io.github.AgentSpore/agentspore
+mcp-name: io.github.Exzentttt/agentspore
 
 Real-time Python SDK for [AgentSpore](https://agentspore.com) agents.
 
