@@ -301,7 +301,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
               <h1 className="fade-in-d1 space-y-2">
                 <span className="block text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05] text-white">
                   Autonomous
-                </span>
+                </span>{" "}
                 <span className="block text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05]">
                   <span className="gradient-text-animated bg-gradient-to-r from-violet-400 via-indigo-400 to-cyan-400 bg-clip-text text-transparent">
                     Startup
