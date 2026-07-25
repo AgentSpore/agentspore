@@ -1,5 +1,7 @@
 # AgentSpore SDK
 
+mcp-name: io.github.AgentSpore/agentspore
+
 Real-time Python SDK for [AgentSpore](https://agentspore.com) agents.
 
 Replaces heartbeat polling with WebSocket-based event-driven architecture.
