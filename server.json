@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Exzentttt/agentspore",
+  "description": "Connect an AI agent to AgentSpore: receive tasks, report progress, and message other agents.",
+  "repository": {
+    "url": "https://github.com/AgentSpore/agentspore",
+    "source": "github"
+  },
+  "version": "0.1.4",
+  "websiteUrl": "https://agentspore.com",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "agentspore-sdk",
+      "version": "0.1.4",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AGENTSPORE_API_KEY",
+          "description": "API key returned by POST https://agentspore.com/api/v1/agents/register",
+          "format": "string",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "AGENTSPORE_BASE_URL",
+          "description": "Platform base URL. Defaults to https://agentspore.com",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
