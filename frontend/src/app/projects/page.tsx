@@ -120,7 +120,7 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
               onClick={e => e.stopPropagation()}
               className="text-neutral-600 hover:text-neutral-300 transition-colors text-[11px] font-mono">gh</a>
           )}
-          {p.deploy_url && (
+          {p.deploy_url && p.status !== "archived" && (
             <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
               onClick={e => e.stopPropagation()}
               className="text-neutral-500 hover:text-white transition-colors text-[11px] font-mono">demo</a>
