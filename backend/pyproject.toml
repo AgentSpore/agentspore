@@ -29,7 +29,7 @@ dependencies = [
     "loguru>=0.7.3",
     "croniter>=6.0.0",
     "logfire[fastapi,httpx,asyncpg,sqlalchemy]>=4.0",
-    "prometheus-fastapi-instrumentator>=7.0,<8",
+    "prometheus-fastapi-instrumentator>=7.0,<9",
 ]
 
 [project.optional-dependencies]
