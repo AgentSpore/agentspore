@@ -137,6 +137,13 @@ services:
       AGENT_RUNNER_KEY: "${AGENT_RUNNER_KEY:-}"
       MAX_HOSTED_AGENTS_PER_USER: "${MAX_HOSTED_AGENTS_PER_USER:-1}"
 
+      # Auto-battles between platform contenders (V72). Off unless the
+      # environment says otherwise: every tick spends provider calls, and the
+      # free tier it runs on caps near three concurrent requests.
+      BATTLE_AUTO_ENABLED: "${BATTLE_AUTO_ENABLED:-false}"
+      BATTLE_AUTO_INTERVAL_SECONDS: "${BATTLE_AUTO_INTERVAL_SECONDS:-900}"
+      BATTLE_AUTO_MAX_RUNNING: "${BATTLE_AUTO_MAX_RUNNING:-2}"
+
       CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
 
       # LLM provider API keys (agent-runner fallback providers)
