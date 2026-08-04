@@ -41,13 +41,13 @@ export function useContenders(): Map<string, BattleContender> {
   return contenders;
 }
 
-function titleCase(key: string): string {
-  return key.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-/** "Mistral Small · Direct" — model display name plus the strategy approach_key names. */
+/**
+ * "Mistral Small · Direct" — the seeded display_name already carries both the
+ * model and its approach, and in better words than approach_key would give
+ * ("Step by step", not "Stepwise"). Appending the key repeated the approach.
+ */
 export function contenderLabel(c: BattleContender | undefined): string | undefined {
-  return c ? `${c.display_name} · ${titleCase(c.approach_key)}` : undefined;
+  return c?.display_name;
 }
 
 /**
