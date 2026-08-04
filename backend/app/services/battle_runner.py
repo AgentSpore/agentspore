@@ -91,6 +91,7 @@ from app.services.battle_judges import (
     rubric_keys,
     sanitize_submission,
     scan_submissions,
+    seed_field_for,
     warn_on_residual_side_label,
     wire_model_name,
 )
@@ -1048,6 +1049,7 @@ class BattleRunner:
                 gate=self.gate,
                 wire_model=wire_model_name(spec.model),
                 temperature=judge_temperature_for(spec.model),
+                seed_field=seed_field_for(spec.model),
                 # A reasoning model answering a real task needs far more room than
                 # the tight judging default, or it truncates to empty content.
                 max_tokens=DEMO_ANSWER_MAX_TOKENS,
@@ -1108,6 +1110,7 @@ class BattleRunner:
             api_key=api_key,
             wire_model=wire_model_name(JUDGE_MODEL),
             temperature=judge_temperature_for(JUDGE_MODEL),
+            seed_field=seed_field_for(JUDGE_MODEL),
         )
         settings = get_settings()
         extra_ids = [m for m in settings.battle_judge_models if m != JUDGE_MODEL]
@@ -1133,6 +1136,7 @@ class BattleRunner:
                     api_key=creds["api_key"],
                     wire_model=wire_model_name(mid),
                     temperature=judge_temperature_for(mid),
+                    seed_field=seed_field_for(mid),
                 )
             )
         return roster
@@ -1413,6 +1417,63 @@ class BattleRunner:
         )
         return await self.settle_battle(battle_id, lease_token, override_verdict=forced)
 
+    async def silent_sides(self, battle_id: str) -> set[Side]:
+        """Sides whose final submission carries no answer at all.
+
+        A side is silent when its final row has empty content — the shape
+        close_deadline writes for a fighter that said nothing before the
+        deadline, and the shape a contender leaves when its answer call failed
+        outright (Mistral answered 422 to every request for days).
+
+        Read from the CONTENT, not from the error string: the same nothing
+        reaches the panel whichever path produced it, and the panel cannot tell
+        an empty answer from a bad one — it scores emptiness against a real
+        answer and returns a tie. Thirteen of twenty-four production
+        auto-battles ended that way, with three contenders on zero wins.
+        """
+        return {
+            Side(str(s["side"]))
+            for s in await self.repo.list_submissions(battle_id)
+            if s["is_final"] and not (s["content"] or "").strip()
+        }
+
+    async def settle_silent_forfeit(
+        self, battle_id: str, lease_token: str, silent: set[Side]
+    ) -> RatingChange | None:
+        """Settle a battle a side never answered. The panel does NOT run.
+
+        The outcome follows the rule the injection path already established
+        (:meth:`settle_injection_disqualified`): when exactly one side is at
+        fault the verdict is FORCED for the clean opponent — a win by default,
+        rated when the battle was rated-eligible and the owners differ — because
+        the panel never ran and there is no honest vote to read. Answering
+        nothing is self-harming, never a way to drag an opponent to a tie.
+
+        Both sides silent is no contest: winner NULL, which is the same shape a
+        no-quorum panel produces and which settle_battle already handles. Either
+        way not one judge call is spent scoring an empty answer.
+        """
+        if silent >= {Side.A, Side.B}:
+            forced = PanelVerdict(
+                winner=None,
+                is_tie=False,
+                reason="no contest: neither side submitted an answer before the deadline",
+                votes=[],
+            )
+        else:
+            loser = next(iter(silent))
+            winner_side = Side.B if loser is Side.A else Side.A
+            forced = PanelVerdict(
+                winner=winner_side,
+                is_tie=False,
+                reason=(
+                    f"forfeit: side {loser.value} submitted no answer before the "
+                    f"deadline; side {winner_side.value} wins by default"
+                ),
+                votes=[],
+            )
+        return await self.settle_battle(battle_id, lease_token, override_verdict=forced)
+
     @staticmethod
     def _half_is_terminal(run: dict | None) -> bool:
         """Can this replicate half produce no further result?
@@ -1585,6 +1646,7 @@ class BattleRunner:
                             gate=self.gate,
                             wire_model=candidate.wire_model,
                             temperature=candidate.temperature,
+                            seed_field=candidate.seed_field,
                         )
                         if candidate is not model:
                             logger.info(
@@ -1823,6 +1885,20 @@ async def _judge_and_settle(
     async with session_factory() as session:
         runner = BattleRunner(session, gate)
         try:
+            # Silence never reaches the panel. A side with no answer forfeits
+            # (settle_silent_forfeit), which is both the honest outcome and the
+            # cheap one: judging an empty submission cost six provider calls to
+            # produce a tie that corrupts the standings.
+            silent = await runner.silent_sides(battle_id)
+            if silent:
+                logger.info(
+                    "battle {} settled by forfeit: side(s) {} never answered",
+                    battle_id,
+                    ",".join(sorted(s.value for s in silent)),
+                )
+                if await runner.settle_silent_forfeit(battle_id, token, silent) is not None:
+                    counts["settled"] += 1
+                return
             await runner.run_judge_panel(battle_id, api_key, base_url, token, budget=budget)
             judgements = await runner.repo.list_judgements(battle_id)
             if len(judgements) >= REPLICATE_COUNT:

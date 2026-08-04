@@ -23,6 +23,7 @@ from app.services.battle_judges import (
     call_judge_model,
     judge_temperature_for,
     replicate_seed,
+    seed_field_for,
     seed_int32,
     wire_model_name,
 )
@@ -194,6 +195,11 @@ def test_every_extra_roster_entry_is_stripped_too(monkeypatch, runner):
     )
 
     class _StubService:
+        # The real service's provider table, because the roster now reads the
+        # per-provider seed field off it (seed_field_for). A double that omits
+        # it is a double of an interface that no longer exists.
+        EXTRA_PROVIDERS = openrouter_service.OpenRouterService.EXTRA_PROVIDERS
+
         @staticmethod
         def resolve_provider(_model_id):
             return {"base_url": "https://other.invalid/v1", "api_key": "unused"}
@@ -273,6 +279,11 @@ def test_the_roster_carries_each_models_temperature(monkeypatch, runner):
     )
 
     class _StubService:
+        # The real service's provider table, because the roster now reads the
+        # per-provider seed field off it (seed_field_for). A double that omits
+        # it is a double of an interface that no longer exists.
+        EXTRA_PROVIDERS = openrouter_service.OpenRouterService.EXTRA_PROVIDERS
+
         @staticmethod
         def resolve_provider(_model_id):
             return {"base_url": "https://glm.invalid/v1", "api_key": "unused"}
@@ -349,3 +360,120 @@ async def test_judge_request_carries_an_int32_seed(capturing_client):
     sent = capturing_client.body["seed"]
     assert isinstance(sent, int)
     assert 0 <= sent <= INT32_MAX
+
+
+# -- the seed field ----------------------------------------------------------
+#
+# The third wire defect of the same family, and the most expensive: the seed key
+# was hardcoded to the OpenAI name with a comment saying it was "passed in case
+# the provider honours it". Mistral does not ignore an unknown body field — it
+# answers 422 `extra_forbidden` and produces nothing, so all three Mistral
+# contenders lost every single request while the rest of the suite stayed green
+# on stubs that accept any body.
+
+
+class _MistralShapedResponse:
+    """Mistral's real answer to an unknown body field, reduced to its shape."""
+
+    status_code = 422
+    text = (
+        '{"object":"error","message":{"detail":[{"type":"extra_forbidden",'
+        '"loc":["body","seed"],"msg":"Extra inputs are not permitted"}]}}'
+    )
+
+    @staticmethod
+    def json():  # pragma: no cover - never reached on a 422
+        raise AssertionError("a 422 body is never parsed for content")
+
+
+class _StrictMistralClient(_CapturingClient):
+    """Accepts `random_seed`, rejects `seed` — exactly as the live API does."""
+
+    async def post(self, _url, **kwargs):
+        self.body = kwargs["json"]
+        if "seed" in self.body:
+            return _MistralShapedResponse()
+        return _CapturingResponse()
+
+
+def test_the_seed_field_is_resolved_per_provider():
+    """Mistral's key is `random_seed`; everyone else keeps the OpenAI name."""
+    assert seed_field_for("mistral/mistral-small-latest") == "random_seed"
+    assert seed_field_for("mistral/mistral-medium-2508") == "random_seed"
+    assert seed_field_for(JUDGE_MODEL) == "seed"
+    assert seed_field_for("zai/glm-4.5-flash") == "seed"
+
+
+@pytest.mark.asyncio
+async def test_a_mistral_call_sends_random_seed_and_never_seed(capturing_client):
+    """The body key follows the provider, and the wrong key is ABSENT.
+
+    Asserting the absence matters as much as the presence: sending both would
+    still be a 422, and a test that only checked for `random_seed` would pass.
+    """
+    await call_judge_model(
+        client=capturing_client,
+        base_url="https://stub.invalid/v1",
+        api_key="unused",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=_OpenGate(),
+        wire_model="mistral-small-latest",
+        seed_field=seed_field_for("mistral/mistral-small-latest"),
+    )
+    assert capturing_client.body["random_seed"] == seed_int32(replicate_seed("battle-1", 0))
+    assert "seed" not in capturing_client.body
+
+
+@pytest.mark.asyncio
+async def test_a_live_shaped_mistral_endpoint_accepts_the_call():
+    """The regression itself: against a client that enforces Mistral's rule, the
+    call succeeds — and fails loudly with the old hardcoded key.
+
+    MUTATION: put `"seed": seed_int32(seed)` back in the body unconditionally.
+    This raises JudgeTransportError carrying the verbatim 422.
+    """
+    client = _StrictMistralClient()
+    answer = await call_judge_model(
+        client=client,
+        base_url="https://stub.invalid/v1",
+        api_key="unused",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=_OpenGate(),
+        wire_model="mistral-small-latest",
+        seed_field=seed_field_for("mistral/mistral-small-latest"),
+    )
+    assert answer == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_takes_no_seed_gets_no_seed_field(capturing_client):
+    """`seed_field=None` omits the field entirely rather than sending a null."""
+    await call_judge_model(
+        client=capturing_client,
+        base_url="https://stub.invalid/v1",
+        api_key="unused",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=_OpenGate(),
+        wire_model="whatever",
+        seed_field=None,
+    )
+    assert "seed" not in capturing_client.body
+    assert "random_seed" not in capturing_client.body
+
+
+@pytest.mark.asyncio
+async def test_the_judge_roster_carries_each_model_s_seed_field(runner):
+    """The panel is on the same code path, so it inherits the same fix.
+
+    No Mistral model is configured as a judge today (settings.battle_judge_models
+    is moonshot + zai), so judges were never losing their seed — but a Mistral
+    judge added tomorrow would have hit the identical 422, silently, as an
+    unexplained run of failed halves.
+    """
+    roster = runner._resolve_judge_roster("https://stub.invalid/v1", "unused")
+    assert roster, "the roster must resolve at least the primary"
+    for entry in roster:
+        assert entry.seed_field == seed_field_for(entry.model_id)
