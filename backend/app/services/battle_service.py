@@ -34,6 +34,7 @@ and may call connection_manager; battle_repo imports nothing from here.
 
 from __future__ import annotations
 
+import random
 from datetime import UTC, date, datetime
 from enum import Enum
 
@@ -1079,6 +1080,90 @@ def _unready_abort_reason(silent_sides: tuple[str, ...], max_generations: int) -
     )
 
 
+class BattleMatchmaker:
+    """Keeps a stream of auto-battles running without a human creating them.
+
+    One tick = at most ONE new battle, and only while fewer than
+    ``battle_auto_max_running`` auto-battles are live. Both bounds are settings
+    with conservative defaults, because the constraint is not taste: the free
+    z.ai flash tier is the only one holding balance and its measured ceiling is
+    about three in-flight requests, while each battle costs two answer calls
+    plus a judge panel. A matchmaker that spawned freely would wedge the page on
+    429s rather than fill it.
+
+    It creates the battle and stops. Starting it, answering both sides, judging
+    and settling all belong to the reconciler, which already owns per-row leases
+    and the retry budget — a second driver would be a second set of claims.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self.session_factory = session_factory
+        self.settings = get_settings()
+
+    async def tick(self) -> str | None:
+        """Create at most one auto-battle. Returns its id, or None.
+
+        None is the ordinary outcome: the cap is reached, the pool is empty,
+        fewer than two contenders are enabled, or the judge breaker is open.
+        Every one of those is a reason to do nothing this tick, not an error.
+        """
+        if await breaker_is_open():
+            logger.info("Matchmaker: judge breaker open — no new auto-battle")
+            return None
+        async with self.session_factory() as session:
+            repo = BattleRepository(session)
+            if await repo.count_active_contender_battles() >= self.settings.battle_auto_max_running:
+                return None
+            pair = self._pick_pair(await repo.list_enabled_contenders())
+            if pair is None:
+                logger.warning("Matchmaker: fewer than two enabled contenders")
+                return None
+            task = await repo.pick_auto_task()
+            if task is None:
+                logger.warning("Matchmaker: no ready task to bind — pool is empty")
+                await session.rollback()
+                return None
+            battle_id = await repo.create_contender_battle(
+                str(pair[0]["id"]), str(pair[1]["id"]), task
+            )
+            if battle_id is None:
+                # The insert matched nothing. Roll back so the task claim
+                # (use_count/last_used_at, taken in this same transaction) is not
+                # spent on a battle that does not exist — and log it, because a
+                # matchmaker that quietly produces nothing is a dead page with no
+                # error anywhere.
+                await session.rollback()
+                logger.warning(
+                    "Matchmaker: battle insert produced no row for {} vs {}",
+                    pair[0]["display_name"],
+                    pair[1]["display_name"],
+                )
+                return None
+            await session.commit()
+        logger.info(
+            "Matchmaker: {} vs {} on '{}' (battle {})",
+            pair[0]["display_name"],
+            pair[1]["display_name"],
+            task["title"],
+            battle_id,
+        )
+        return battle_id
+
+    @staticmethod
+    def _pick_pair(contenders: list[dict]) -> tuple[dict, dict] | None:
+        """Two DIFFERENT contenders, uniformly at random. None if impossible.
+
+        Uniform rather than "the two least recently used": a fixed rotation over
+        a small roster produces the same handful of pairings forever, and the
+        whole point of the roster is that a model under two approaches and an
+        approach under two models both get seen.
+        """
+        if len(contenders) < 2:
+            return None
+        first, second = random.sample(contenders, 2)
+        return first, second
+
+
 def get_battle_service(db: AsyncSession) -> BattleService:
     """Build a BattleService over a request-scoped session."""
     return BattleService(db)
@@ -1088,6 +1173,7 @@ def get_battle_service(db: AsyncSession) -> BattleService:
 # without importing the repository layer directly.
 __all__ = [
     "DAILY_TASK_SUBMISSION_LIMIT",
+    "BattleMatchmaker",
     "BattleService",
     "ChallengeDeniedError",
     "LimiterUnavailableError",

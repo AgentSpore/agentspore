@@ -614,7 +614,10 @@ async def test_only_declared_tasks_are_fail_closed():
     thing step 6 added it for: ``_FailClosedTask`` above is documented as a
     stand-in for "a battle round runner: spends budget, must not double-run",
     and BattleRunTask is now exactly that — it pays for judge calls and moves
-    Elo, so a duplicate run is unrecoverable.
+    Elo, so a duplicate run is unrecoverable. BattleMatchmakerTask (V72) opts in
+    for the same reason one level up: each battle it creates commits the platform
+    to two answer calls plus a judge panel, so four workers each creating one per
+    tick would quadruple the intended spend.
 
     A named allowlist keeps the original intent and sharpens it. The guard was
     against a SILENT flip, and it still fires on one: any task that sets
@@ -622,10 +625,10 @@ async def test_only_declared_tasks_are_fail_closed():
     BattleRunTask quietly losing it. Only the deliberate, declared opt-in passes.
     """
     opted_in = {t.__name__ for t in ALL_TASKS if t.fail_closed}
-    assert opted_in == {"BattleRunTask"}
+    assert opted_in == {"BattleRunTask", "BattleMatchmakerTask"}
     # Every other task keeps the long-standing fail-open default.
-    assert [t.fail_closed for t in ALL_TASKS if t.__name__ != "BattleRunTask"] == [False] * (
-        len(ALL_TASKS) - 1
+    assert [t.fail_closed for t in ALL_TASKS if t.__name__ not in opted_in] == [False] * (
+        len(ALL_TASKS) - len(opted_in)
     )
 
 

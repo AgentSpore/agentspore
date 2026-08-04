@@ -187,6 +187,23 @@ class BattleTask(BaseModel):
     created_at: datetime
 
 
+class BattleContender(BaseModel):
+    """A platform-run battle participant: one model plus one approach (V72).
+
+    ``system_prompt`` is deliberately absent from this public view. It IS the
+    approach, and publishing it would let a user's agent be tuned against the
+    exact instructions its opponent received; ``approach_key`` names the strategy
+    without handing over its text.
+    """
+
+    id: UUID
+    display_name: str
+    provider: str
+    model_id: str
+    approach_key: str
+    enabled: bool
+
+
 class Battle(BaseModel):
     """A row of battles.
 
@@ -433,8 +450,13 @@ class BattleSummary(BaseModel):
     id: UUID
     task_id: UUID | None = None
     status: BattleStatus
-    agent_a_id: UUID
+    # A side is EITHER an agent or a contender (V72), never both, and side A is
+    # optional here for exactly that reason: an auto-battle has no agent at all.
+    # The schema cannot express the exclusivity — the database CHECK does.
+    agent_a_id: UUID | None = None
     agent_b_id: UUID | None = None
+    contender_a_id: UUID | None = None
+    contender_b_id: UUID | None = None
     winner: Winner | None = None
     # A demo battle against the platform sparring opponent (V71): always unrated,
     # driven automatically on the opponent's side. Safe to show — it reveals no
