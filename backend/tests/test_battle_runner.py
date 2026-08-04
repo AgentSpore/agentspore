@@ -1833,6 +1833,11 @@ def _install_two_model_roster(monkeypatch) -> None:
     )
 
     class _StubService:
+        # Mirrors the real service's provider table: the roster reads the
+        # per-provider seed field off it (seed_field_for), so a double without
+        # it doubles an interface that no longer exists.
+        EXTRA_PROVIDERS = openrouter_service.OpenRouterService.EXTRA_PROVIDERS
+
         @staticmethod
         def resolve_provider(_model_id):
             return {"base_url": "https://glm.invalid/v1", "api_key": "unused"}
