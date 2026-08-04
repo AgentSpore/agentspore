@@ -18,6 +18,7 @@ import pytest
 from app.services import battle_runner as battle_runner_module
 from app.services import battle_task_validator, openrouter_service
 from app.services.battle_judges import (
+    JUDGE_HTTP_TIMEOUT_SECONDS,
     JUDGE_MODEL,
     JUDGE_TEMPERATURE,
     call_judge_model,
@@ -477,3 +478,60 @@ async def test_the_judge_roster_carries_each_model_s_seed_field(runner):
     assert roster, "the roster must resolve at least the primary"
     for entry in roster:
         assert entry.seed_field == seed_field_for(entry.model_id)
+
+
+# -- the account the call is gated on ----------------------------------------
+
+
+class _RecordingGate(_OpenGate):
+    """Records which provider the call scoped the gate to."""
+
+    def __init__(self) -> None:
+        self.scoped_to: list[str] = []
+        self.leases: list[int | None] = []
+
+    def for_provider(self, provider: str, lease_seconds: int | None = None):
+        self.scoped_to.append(provider)
+        self.leases.append(lease_seconds)
+        return self
+
+
+@pytest.mark.asyncio
+async def test_the_call_is_gated_on_its_own_provider_account(capturing_client):
+    """Each provider is a separate account, so each gets its own gate.
+
+    MUTATION: drop the `gate.for_provider(provider)` scoping in call_judge_model.
+    `scoped_to` stays empty and this goes red — which is the state that made a
+    Mistral call fail with `no slot on llm_gate:zai:platform`.
+    """
+    gate = _RecordingGate()
+    await call_judge_model(
+        client=capturing_client,
+        base_url="https://stub.invalid/v1",
+        api_key="unused",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=gate,
+        wire_model="mistral-small-latest",
+        provider="mistral",
+    )
+    assert gate.scoped_to == ["mistral"]
+    # The lease must outlast this call's HTTP timeout, or the reaper frees a live
+    # call's slot and the account goes over its cap.
+    assert gate.leases[0] > JUDGE_HTTP_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_a_call_with_no_provider_keeps_the_gate_it_was_given(capturing_client):
+    """Back-compat: an unscoped caller is not silently re-keyed."""
+    gate = _RecordingGate()
+    await call_judge_model(
+        client=capturing_client,
+        base_url="https://stub.invalid/v1",
+        api_key="unused",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=gate,
+        wire_model="glm-4.5-flash",
+    )
+    assert gate.scoped_to == []
