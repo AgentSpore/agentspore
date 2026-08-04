@@ -31,7 +31,7 @@ from app.core.background import BattleMatchmakerTask
 from app.core.config import get_settings
 from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side
-from app.services.battle_judges import REPLICATE_COUNT
+from app.services.battle_judges import REPLICATE_COUNT, JudgeTransportError
 from app.services.battle_runner import (
     _await_demo_drives,
     build_answer_messages,
@@ -478,3 +478,143 @@ class TestOperatorSwitch:
             assert BattleMatchmakerTask().interval_s == 123
         finally:
             settings.battle_auto_interval_seconds = original
+
+
+# ---------------------------------------------------------------------------
+# A side that never answered forfeits — it must never reach the panel.
+# ---------------------------------------------------------------------------
+
+
+async def _fresh_auto_battle(session_maker) -> str:
+    """One new auto-battle, ignoring the concurrency cap.
+
+    Earlier tests in this module leave their battles live, so the default cap of
+    two would refuse the tick — and the cap is not what these tests measure (it
+    has its own test above).
+    """
+    matchmaker = BattleMatchmaker(session_maker)
+    original = matchmaker.settings.battle_auto_max_running
+    matchmaker.settings.battle_auto_max_running = 999
+    try:
+        battle_id = await matchmaker.tick()
+    finally:
+        matchmaker.settings.battle_auto_max_running = original
+    assert battle_id is not None
+    return battle_id
+
+
+async def _drive_to_terminal(drive, session_maker, battle_id: str, answer) -> dict:
+    """Run reconcile passes until this battle is terminal. Returns its row.
+
+    One pass takes ONE step per battle, and the module's earlier tests leave
+    their own battles live in the same claim batch, so a fixed number of passes
+    would be a race rather than a wait. Bounded, so a battle that genuinely
+    cannot settle fails the assertion instead of hanging.
+    """
+    for _ in range(8):
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", answer):
+            await drive()
+            await _await_demo_drives()
+        async with session_maker() as session:
+            row = await BattleRepository(session).get(battle_id)
+        if row["status"] == "completed":
+            return row
+        await _expire_deadline(session_maker, battle_id)
+    return row
+
+
+def _mock_with_failing_prompt(failing_prompts: set[str]) -> AsyncMock:
+    """Provider stub where the named system prompts fail the way Mistral did.
+
+    A 422 on the request body reaches the runner as JudgeTransportError, so that
+    is what the side whose contender is broken raises. Every other call answers
+    normally, and judge calls (identified by the payload's opaque submission
+    labels) answer with a verdict — which is how the test can prove the panel
+    was never called at all.
+    """
+
+    async def reply(**kwargs) -> str:
+        messages = kwargs["messages"]
+        if "submission_alpha" in messages[-1]["content"]:
+            return VALID_JUDGE_REPLY
+        if messages[0]["content"] in failing_prompts:
+            raise JudgeTransportError("HTTP 422: extra_forbidden on body.seed")
+        return PLAIN_ANSWER
+
+    return AsyncMock(side_effect=reply)
+
+
+async def _contender_prompts(session_maker, battle_id: str) -> dict[str, str]:
+    async with session_maker() as session:
+        repo = BattleRepository(session)
+        row = await repo.get(battle_id)
+        return {
+            side: str((await repo.get_contender(str(row[f"contender_{side}_id"])))["system_prompt"])
+            for side in ("a", "b")
+        }
+
+
+async def _expire_deadline(session_maker, battle_id: str) -> None:
+    """Free the running lease and pull the deadline into the past.
+
+    In production the deadline simply arrives; a back-to-back test pass has to
+    say so explicitly. started_at + 1ms keeps the monotonic-timeline CHECKs true.
+    """
+    async with session_maker() as session:
+        await session.execute(
+            text(
+                "UPDATE battles SET lease_token = NULL, lease_expires_at = NULL, "
+                "deadline_at = started_at + INTERVAL '1 millisecond' "
+                "WHERE id = CAST(:b AS UUID)"
+            ),
+            {"b": battle_id},
+        )
+        await session.commit()
+
+
+class TestSilentForfeit:
+    async def test_a_side_that_never_answered_loses_and_the_panel_never_runs(
+        self, session_maker
+    ) -> None:
+        """The production defect: three contenders whose provider rejected every
+        request submitted nothing, and the judges scored that emptiness against a
+        real answer as a TIE — 13 of 24 battles, three contenders on zero wins.
+
+        MUTATION: delete the silent_sides short-circuit in _judge_and_settle. The
+        panel then runs on an empty submission, judgement rows appear and the
+        winner is decided by a model reading nothing — all three assertions go red.
+        """
+        battle_id = await _fresh_auto_battle(session_maker)
+        prompts = await _contender_prompts(session_maker, battle_id)
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        answer = _mock_with_failing_prompt({prompts["b"]})
+
+        row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert row["status"] == "completed"
+        assert row["winner"] == "a", "the side that answered wins by forfeit"
+        assert judgements == [], "no judge ever scored the empty submission"
+        assert "forfeit" in row["verdict_reason"]
+
+    async def test_neither_side_answering_is_no_contest(self, session_maker) -> None:
+        """Both silent is not a tie either — a tie is a substantive verdict, and
+        nobody judged anything. Winner NULL, and still no judge call spent."""
+        battle_id = await _fresh_auto_battle(session_maker)
+        prompts = await _contender_prompts(session_maker, battle_id)
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        answer = _mock_with_failing_prompt({prompts["a"], prompts["b"]})
+
+        row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert row["status"] == "completed"
+        assert row["winner"] is None
+        assert judgements == []
+        assert "no contest" in row["verdict_reason"]
