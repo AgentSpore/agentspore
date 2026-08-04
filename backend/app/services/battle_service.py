@@ -1126,6 +1126,19 @@ class BattleMatchmaker:
             battle_id = await repo.create_contender_battle(
                 str(pair[0]["id"]), str(pair[1]["id"]), task
             )
+            if battle_id is None:
+                # The insert matched nothing. Roll back so the task claim
+                # (use_count/last_used_at, taken in this same transaction) is not
+                # spent on a battle that does not exist — and log it, because a
+                # matchmaker that quietly produces nothing is a dead page with no
+                # error anywhere.
+                await session.rollback()
+                logger.warning(
+                    "Matchmaker: battle insert produced no row for {} vs {}",
+                    pair[0]["display_name"],
+                    pair[1]["display_name"],
+                )
+                return None
             await session.commit()
         logger.info(
             "Matchmaker: {} vs {} on '{}' (battle {})",

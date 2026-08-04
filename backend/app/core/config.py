@@ -154,7 +154,11 @@ class Settings(BaseSettings):
     # flash tier is the only one holding balance and tops out around three
     # in-flight requests, while one battle costs two answer calls plus a judge
     # panel: one new battle per 15 minutes, at most two live at once.
-    battle_auto_enabled: bool = True
+    #
+    # OFF by default: merging must not start spending provider calls in every
+    # environment without an operator saying so, and the frontend cannot render a
+    # contender side yet. Turning it on is a deliberate act.
+    battle_auto_enabled: bool = False
     battle_auto_interval_seconds: int = 900
     battle_auto_max_running: int = 2
 

@@ -27,8 +27,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
+from app.core.background import BattleMatchmakerTask
+from app.core.config import get_settings
 from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side
+from app.services.battle_judges import REPLICATE_COUNT
 from app.services.battle_runner import (
     _await_demo_drives,
     build_answer_messages,
@@ -53,6 +56,30 @@ VALID_JUDGE_REPLY = (
     '{"vote": "submission_alpha", "confidence": 0.9, "reasoning": "ok", '
     '"scores": {"correctness": 1.0, "completeness": 1.0, "clarity": 1.0}}'
 )
+
+# A contender's answer is PROSE, and the provider mock must return prose for the
+# answer calls: replying with the judge JSON above made both submissions look like
+# a forced verdict to the injection detector, which quarantined the battle and
+# settled it with no winner — green on `completed` + unrated, and wrong.
+PLAIN_ANSWER = (
+    "Use a token bucket per API key held in a shared store, refilled at the "
+    "allowed rate, and fail open for a few seconds if the store is unreachable."
+)
+
+
+def _provider_mock() -> AsyncMock:
+    """One provider stub for both call kinds, told apart by the payload.
+
+    The judge payload names the two submissions `submission_alpha`/`beta`; an
+    answer call never does. Discriminating on that is what keeps the mock honest
+    for both paths in a single patch.
+    """
+
+    async def reply(**kwargs) -> str:
+        user = kwargs["messages"][-1]["content"]
+        return VALID_JUDGE_REPLY if "submission_alpha" in user else PLAIN_ANSWER
+
+    return AsyncMock(side_effect=reply)
 
 BASE_SCHEMA = """
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -345,7 +372,7 @@ class TestAutoBattleDrive:
         drive = partial(
             reconcile_once, session_factory=session_maker, gate=None, provider=provider
         )
-        answer = AsyncMock(return_value=VALID_JUDGE_REPLY)
+        answer = _provider_mock()
 
         with _no_transport(), patch("app.services.battle_runner.call_judge_model", answer):
             # >= 1, not == 1: earlier tests in this module left their own
@@ -380,9 +407,20 @@ class TestAutoBattleDrive:
             await drive()
 
         async with session_maker() as session:
-            row = await BattleRepository(session).get(battle_id)
+            repo = BattleRepository(session)
+            row = await repo.get(battle_id)
+            judgements = await repo.list_judgements(battle_id)
         assert row["status"] == "completed", "reached a judged result"
         assert row["is_rated"] is False, "an auto-battle never rates"
+        # 'completed' + is_rated False is ALSO what a fully-failed panel produces,
+        # so those two assertions alone cannot see a judge path that died. These
+        # can: the panel has to have actually voted. Without the NULL-owner fix in
+        # battle_budget.reserve_call, reserve_call raises a DataError on
+        # CAST('None' AS UUID), every half returns an error vote, and all three go
+        # red — no judgement rows, no winner, and a judging_stop_reason.
+        assert len(judgements) == REPLICATE_COUNT, "every replicate voted"
+        assert row["winner"] in {"a", "b", "tie"}, "the panel reached a verdict"
+        assert row["judging_stop_reason"] is None, "judging ran to completion"
 
     async def test_a_side_answers_with_its_own_model_and_prompt(
         self, session_maker
@@ -399,7 +437,7 @@ class TestAutoBattleDrive:
         drive = partial(
             reconcile_once, session_factory=session_maker, gate=None, provider=provider
         )
-        answer = AsyncMock(return_value=VALID_JUDGE_REPLY)
+        answer = _provider_mock()
 
         with _no_transport(), patch("app.services.battle_runner.call_judge_model", answer):
             await drive()
@@ -418,3 +456,25 @@ class TestAutoBattleDrive:
         for contender in sides:
             assert contender["system_prompt"] in systems
             assert contender["model_id"] in models
+
+
+class TestOperatorSwitch:
+    async def test_the_stream_is_off_until_an_operator_turns_it_on(self) -> None:
+        """Merging must not start spending provider calls anywhere by itself."""
+        assert get_settings().battle_auto_enabled is False
+
+    async def test_the_cadence_is_read_live_like_the_kill_switch(self) -> None:
+        """Both halves of the switch must behave the same way.
+
+        MUTATION: turn interval_s back into a class attribute assigned at
+        definition time. It then ignores the changed setting until a restart,
+        while battle_auto_enabled beside it takes effect immediately — and this
+        assertion goes red.
+        """
+        settings = get_settings()
+        original = settings.battle_auto_interval_seconds
+        try:
+            settings.battle_auto_interval_seconds = 123
+            assert BattleMatchmakerTask().interval_s == 123
+        finally:
+            settings.battle_auto_interval_seconds = original

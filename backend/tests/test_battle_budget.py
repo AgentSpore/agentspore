@@ -25,6 +25,7 @@ from test_battle_runner import (
     V66_PATH,
     V67_PATH,
     V68_PATH,
+    V70_PATH,
     V71_PATH,
     V72_PATH,
     TaskSource,
@@ -58,7 +59,8 @@ async def engine(pg_container):
     eng = create_async_engine(async_url, future=True)
     sql = (
         f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};"
-        f"{V67_PATH.read_text()};{V68_PATH.read_text()};{V71_PATH.read_text()};"
+        f"{V67_PATH.read_text()};{V68_PATH.read_text()};{V70_PATH.read_text()};"
+        f"{V71_PATH.read_text()};"
         f"{V72_PATH.read_text()}"
     )
     async with eng.begin() as conn:

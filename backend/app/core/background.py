@@ -598,16 +598,23 @@ class BattleMatchmakerTask(ScheduledTask):
     have throttled the calls is also gone.
 
     The cadence is a setting rather than a constant: it is the rate limit, and an
-    operator hitting 429s must be able to slow it down without a deploy.
+    operator hitting 429s must be able to slow it down. ``interval_s`` is a
+    PROPERTY, not a class attribute, because the base loop re-reads it every
+    cycle — read once at class-definition time it would have needed a restart,
+    while ``battle_auto_enabled`` right beside it took effect live, and the two
+    halves of one switch must behave the same way.
     """
 
     name = "battle_matchmaker"
-    interval_s = get_settings().battle_auto_interval_seconds
     # Crash bound only. A missed tick costs one battle that the next tick
     # creates, so this is generous relative to the reconciler's 60.
     lock_ttl_s = 120
     initial_delay_s = 60
     fail_closed = True
+
+    @property
+    def interval_s(self) -> int:  # type: ignore[override]  # base declares a plain int
+        return get_settings().battle_auto_interval_seconds
 
     async def run_once(self) -> None:
         settings = get_settings()

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import httpx
@@ -273,6 +274,39 @@ def build_answer_messages(
     ]
 
 
+@dataclass(frozen=True)
+class AnswerSpec:
+    """Everything that decides HOW one platform-run side answers.
+
+    ``seed_slot`` is what keeps two sides independent. The provider seed is
+    derived from (battle id, slot), so giving both sides slot 0 made the same
+    model under two different approaches sample in lockstep — which is exactly
+    the pairing the contender roster exists to compare. One slot per side.
+    """
+
+    model: str
+    system_prompt: str
+    seed_slot: int
+
+
+# One seed slot per side, so A and B never share a sampling seed.
+_SEED_SLOT: dict[Side, int] = {Side.A: 0, Side.B: 1}
+
+
+def _agent_sides(battle: dict) -> list[tuple[Side, str]]:
+    """The sides of a battle that are AGENTS, as (side, agent_id).
+
+    Every notification path is addressed to an agent's owner, and a contender
+    side has neither — so it is dropped here rather than stringified into the
+    literal "None", which addressed a notification to nobody.
+    """
+    return [
+        (side, str(battle[f"agent_{side.value}_id"]))
+        for side in (Side.A, Side.B)
+        if battle[f"agent_{side.value}_id"]
+    ]
+
+
 def _outcome_for(side: Side, winner: Winner | None) -> str:
     """Map a verdict onto the counter one fighter's row increments."""
     if winner is Winner.TIE:
@@ -455,20 +489,15 @@ class BattleRunner:
         )
 
         # Best-effort: tell both owners how it ended. The battle is already
-        # completed and durable above; this must not be able to undo it. A
-        # contender side is skipped rather than notified: it has no agent and no
-        # owner, and str(None) would address a notification to nobody.
+        # completed and durable above; this must not be able to undo it.
         await _notify_battle_owners(
             self.db,
             str(battle_id),
             [
-                (
-                    str(completed[f"agent_{side.value}_id"]),
-                    "battle_result",
-                    _battle_result_title(str(battle_id), side, completed["winner"]),
-                )
-                for side in (Side.A, Side.B)
-                if completed[f"agent_{side.value}_id"]
+                (agent_id, "battle_result", _battle_result_title(
+                    str(battle_id), side, completed["winner"]
+                ))
+                for side, agent_id in _agent_sides(completed)
             ],
         )
         return change
@@ -636,10 +665,11 @@ class BattleRunner:
     async def _notify_aborted(self, battle_id: str, aborted: dict) -> None:
         """Tell both owners a pre-start battle was aborted. After the commit."""
         title = f"Battle aborted (battle {battle_id})"
-        recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
-        if aborted["agent_b_id"]:
-            recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
-        await _notify_battle_owners(self.db, battle_id, recipients)
+        await _notify_battle_owners(
+            self.db,
+            battle_id,
+            [(agent_id, "battle_aborted", title) for _, agent_id in _agent_sides(aborted)],
+        )
 
     async def start_queued(self, battle: dict, lease_token: str) -> bool:
         """queued -> running, with BOTH battle_turn rows, in one transaction.
@@ -924,10 +954,12 @@ class BattleRunner:
         contender = await self.repo.get_contender(str(contender_id))
         if contender is None:
             return False
-        model = f"{contender['provider']}/{contender['model_id']}"
-        answer = await self._answer_with_model(
-            current, model, str(contender["system_prompt"]), api_key, base_url
+        spec = AnswerSpec(
+            model=f"{contender['provider']}/{contender['model_id']}",
+            system_prompt=str(contender["system_prompt"]),
+            seed_slot=_SEED_SLOT[side],
         )
+        answer = await self._answer_with_model(current, spec, api_key, base_url)
         if answer is None:
             return False
 
@@ -965,16 +997,14 @@ class BattleRunner:
         degrades to deadline silence).
         """
         return await self._answer_with_model(
-            battle, DEMO_ANSWER_MODEL, _DEMO_ANSWER_SYSTEM, api_key, base_url
+            battle,
+            AnswerSpec(DEMO_ANSWER_MODEL, _DEMO_ANSWER_SYSTEM, _SEED_SLOT[Side.B]),
+            api_key,
+            base_url,
         )
 
     async def _answer_with_model(
-        self,
-        battle: dict,
-        model: str,
-        system_prompt: str,
-        api_key: str,
-        base_url: str,
+        self, battle: dict, spec: AnswerSpec, api_key: str, base_url: str
     ) -> str | None:
         """One gated provider call producing a fighter's answer, or None.
 
@@ -997,13 +1027,13 @@ class BattleRunner:
             # never call the model with no task to answer.
             return None
         rubric = battle.get("task_rubric_snapshot") or []
-        messages = build_answer_messages(system_prompt, str(prompt), rubric)
+        messages = build_answer_messages(spec.system_prompt, str(prompt), rubric)
 
         from app.services.openrouter_service import (  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
             OpenRouterService,
         )
 
-        creds = OpenRouterService().resolve_provider(model)
+        creds = OpenRouterService().resolve_provider(spec.model)
         answer_base_url = creds["base_url"] if creds else base_url
         answer_api_key = creds["api_key"] if creds else api_key
 
@@ -1014,10 +1044,10 @@ class BattleRunner:
                 base_url=answer_base_url,
                 api_key=answer_api_key,
                 messages=messages,
-                seed=replicate_seed(str(battle["id"]), 0),
+                seed=replicate_seed(str(battle["id"]), spec.seed_slot),
                 gate=self.gate,
-                wire_model=wire_model_name(model),
-                temperature=judge_temperature_for(model),
+                wire_model=wire_model_name(spec.model),
+                temperature=judge_temperature_for(spec.model),
                 # A reasoning model answering a real task needs far more room than
                 # the tight judging default, or it truncates to empty content.
                 max_tokens=DEMO_ANSWER_MAX_TOKENS,
@@ -1030,7 +1060,7 @@ class BattleRunner:
             logger.warning(
                 "battle {} answer generation failed on {}: {}",
                 battle["id"],
-                model,
+                spec.model,
                 exc,
             )
             return None
@@ -1503,8 +1533,12 @@ class BattleRunner:
                 judge_run_id=run_id,
                 battle_lease_token=str(battle_lease_token),
                 run_lease_token=run_token,
-                owner_a_user_id=str(battle["agent_a_owner_snapshot"]),
-                owner_b_user_id=str(battle["agent_b_owner_snapshot"]),
+                # Passed RAW, never str()-ed: a contender side has no owner, and
+                # str(None) is the literal "None" — a DataError when the ledger
+                # casts it to UUID. reserve_call charges only the owners that
+                # exist and books the call as kind 'auto' when there are none.
+                owner_a_user_id=battle["agent_a_owner_snapshot"],
+                owner_b_user_id=battle["agent_b_owner_snapshot"],
                 provider=model.provider,
                 model=model.model_id,
             )
@@ -1949,10 +1983,14 @@ async def reap_once(session_factory, provider: dict | None = None) -> dict[str, 
                 aborted = None
             if aborted is not None:
                 title = f"Battle aborted (battle {battle_id})"
-                recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
-                if aborted["agent_b_id"]:
-                    recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
-                await _notify_battle_owners(session, battle_id, recipients)
+                await _notify_battle_owners(
+                    session,
+                    battle_id,
+                    [
+                        (agent_id, "battle_aborted", title)
+                        for _, agent_id in _agent_sides(aborted)
+                    ],
+                )
 
     # Escape hatch: a judging battle whose attempt budget is spent must reach a
     # terminal state, never sit unclaimable in 'judging' forever with its fighters

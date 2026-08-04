@@ -122,6 +122,60 @@ ALTER TABLE battles ADD CONSTRAINT battle_rated_reason_enum CHECK (
     )
 );
 
+-- ---------------------------------------------------------------------------
+-- battle_judge_call_ledger: a third kind of spend, with no owner to charge.
+--
+-- V70 made the ledger kind-discriminated ('judge' | 'validation') and pinned the
+-- shape of each kind with a CHECK. An auto-battle fits neither: it HAS a battle
+-- and a judge run (unlike 'validation'), but no pair of owners (unlike 'judge'),
+-- because both fighters are platform-run models. Writing it as 'judge' would
+-- mean NULL owners against a CHECK that forbids them; charging a stringified
+-- NULL to the owner counters is what the first version did, and it raised a
+-- DataError inside a broad except — the panel died, the battle settled with no
+-- verdict, and because the matchmaker cap counts 'judging' the stuck rows pinned
+-- the stream after two battles.
+--
+-- So 'auto' is its own variant: battle and run required, owners absent. It still
+-- consumes the GLOBAL daily counter and the per-battle attempt cap — the budget
+-- is not bypassed, only the per-owner quota, which has no owner to apply to.
+-- ---------------------------------------------------------------------------
+ALTER TABLE battle_judge_call_ledger
+    DROP CONSTRAINT battle_judge_call_kind_enum,
+    DROP CONSTRAINT battle_judge_call_kind_shape;
+
+ALTER TABLE battle_judge_call_ledger
+    ADD CONSTRAINT battle_judge_call_kind_enum
+        CHECK (kind IN ('judge', 'validation', 'auto')),
+    ADD CONSTRAINT battle_judge_call_kind_shape
+        CHECK (
+            (
+                kind = 'judge'
+                AND battle_id IS NOT NULL
+                AND judge_run_id IS NOT NULL
+                AND owner_a_user_id IS NOT NULL
+                AND owner_b_user_id IS NOT NULL
+                AND submitter_user_id IS NULL
+            )
+            OR
+            (
+                kind = 'validation'
+                AND battle_id IS NULL
+                AND judge_run_id IS NULL
+                AND owner_a_user_id IS NULL
+                AND owner_b_user_id IS NULL
+                AND submitter_user_id IS NOT NULL
+            )
+            OR
+            (
+                kind = 'auto'
+                AND battle_id IS NOT NULL
+                AND judge_run_id IS NOT NULL
+                AND owner_a_user_id IS NULL
+                AND owner_b_user_id IS NULL
+                AND submitter_user_id IS NULL
+            )
+        );
+
 -- The matchmaker's own read: "how many auto-battles are live right now". Partial
 -- on the contender arm so ordinary battles never enter it.
 CREATE INDEX IF NOT EXISTS idx_battles_contender_active
