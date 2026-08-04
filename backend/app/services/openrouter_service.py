@@ -143,6 +143,13 @@ class OpenRouterService:
         "mistral": {
             "base_url": "https://api.mistral.ai/v1",
             "api_key_field": "mistral_api_key",
+            # Mistral calls the sampling seed 'random_seed' and REJECTS the
+            # OpenAI name: an unknown body field is not ignored, it is a 422
+            # (`extra_forbidden` on `body.seed`) that kills the whole request.
+            # Every Mistral answer in production was lost to this. Absent, the
+            # key defaults to 'seed'; None would mean "this provider takes no
+            # seed at all" and the field is then omitted.
+            "seed_field": "random_seed",
         },
         "nebius": {
             "base_url": "https://api.studio.nebius.ai/v1",

@@ -114,6 +114,35 @@ def judge_temperature_for(model_id: str) -> float:
     """The sampling temperature this judge model should be called at."""
     return JUDGE_MODEL_TEMPERATURE_OVERRIDES.get(model_id, JUDGE_TEMPERATURE)
 
+
+# The body key a provider takes its sampling seed under, when it is not the
+# OpenAI-standard 'seed'. The mapping itself lives on the provider table in
+# openrouter_service (EXTRA_PROVIDERS[...]["seed_field"]) — beside the base_url
+# and key field it belongs with — and this is only the lookup.
+DEFAULT_SEED_FIELD = "seed"
+
+
+def seed_field_for(model_id: str) -> str | None:
+    """The request-body key this model's provider wants its seed under.
+
+    ``None`` means the provider takes no seed and the field is omitted entirely.
+
+    Sending the wrong key is not a soft failure. Mistral rejects an unknown body
+    field with ``422 extra_forbidden`` on ``body.seed`` and answers nothing, so
+    every request from all three Mistral contenders was lost — the seed was not
+    "passed in case the provider honours it", it was passed in a form that made
+    the provider refuse the call.
+    """
+    # Local import: openrouter_service pulls in the wider service graph that
+    # imports core.background at its top — the cycle BattleRunTask documents.
+    from app.services.openrouter_service import (  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
+        OpenRouterService,
+    )
+
+    provider = model_id.strip().rsplit("/", 1)[0].lower() if "/" in model_id else ""
+    cfg = OpenRouterService.EXTRA_PROVIDERS.get(provider, {})
+    return cfg.get("seed_field", DEFAULT_SEED_FIELD)
+
 # Hard ceiling on one judge HTTP call. INVARIANT(battles): MUST stay below
 # llm_gate's lease (DEFAULT_LEASE_SECONDS=90) or a live call outlives its lease
 # and its account slot is reaped mid-flight (concurrency over-subscription).
@@ -361,6 +390,10 @@ class JudgeModel:
     # existing model (glm-4.5-flash) is unchanged; the roster builder overrides
     # it per model (kimi-k3 needs 1.0 — see JUDGE_MODEL_TEMPERATURE_OVERRIDES).
     temperature: float = JUDGE_TEMPERATURE
+    # Per-provider seed body key (see seed_field_for). Carried on the roster
+    # entry beside wire_model and temperature, so a fallback rescue sends the
+    # form the RESCUING provider accepts rather than the assigned one's.
+    seed_field: str | None = DEFAULT_SEED_FIELD
 
 
 @dataclass(frozen=True)
@@ -1066,6 +1099,12 @@ async def call_judge_model(
     # -> empty submission -> silent demo opponent. Kept a parameter so each path
     # sizes its own timeout.
     http_timeout: float = JUDGE_HTTP_TIMEOUT_SECONDS,
+    # The body key the seed travels under, from seed_field_for(model_id). A
+    # parameter for the same reason wire_model is one: it is a property of the
+    # model being called, resolved by the caller that knows the platform id.
+    # None omits the seed — the replicate's identity is the seed STRING, which
+    # is recorded regardless of whether any provider ever sees it.
+    seed_field: str | None = DEFAULT_SEED_FIELD,
 ) -> str:
     """ONE gated, bounded provider HTTP attempt. Raises JudgeTransportError on failure.
 
@@ -1075,20 +1114,21 @@ async def call_judge_model(
     This function makes exactly one attempt and either returns the content or
     raises — transient (retryable via reclaim) or ``permanent`` (never retry).
     """
+    body: dict[str, object] = {
+        "model": wire_model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if seed_field is not None:
+        body[seed_field] = seed_int32(seed)
+
     try:
         async with gate.slot():
             response = await client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": wire_model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    # Passed in case the provider honours it; the seed is
-                    # the replicate's identity regardless of whether it does.
-                    "seed": seed_int32(seed),
-                    "max_tokens": max_tokens,
-                },
+                json=body,
                 timeout=http_timeout,
             )
 
