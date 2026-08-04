@@ -32,10 +32,14 @@ from redis.asyncio import Redis
 from testcontainers.redis import RedisContainer
 
 from app.services.llm_gate import (
+    DEFAULT_MAX_CONCURRENCY,
+    ZAI_ACCOUNT_KEY,
     ZAI_MAX_CONCURRENCY,
     GateSlot,
     LLMGate,
     LLMGateTimeoutError,
+    provider_account_key,
+    provider_capacity,
 )
 
 pytestmark = pytest.mark.integration
@@ -278,3 +282,59 @@ class TestBackpressure:
             assert slot.fence >= 1
             assert slot.expires_at > time.time()
         assert await gate.in_flight() == 0
+
+
+# -- the account boundary is the PROVIDER ------------------------------------
+#
+# One shared key made a Mistral call queue behind Z.AI's three slots and fail
+# with `gate saturated: no slot on llm_gate:zai:platform`. The providers are
+# separate accounts with separate rate limits; total platform throughput was
+# capped at three in flight across all of them, and the wrong one starved.
+
+
+def test_each_provider_gets_its_own_key_and_capacity():
+    """Different providers, different keys — and z.ai keeps its measured 3.
+
+    MUTATION: make provider_account_key return one constant. The first
+    assertion goes red.
+    """
+    assert provider_account_key("mistral") != provider_account_key("zai")
+    assert provider_capacity("zai") == ZAI_MAX_CONCURRENCY == 3
+    assert provider_capacity("mistral") == DEFAULT_MAX_CONCURRENCY
+    # The z.ai key is byte-identical to the historical constant, so slots held
+    # across a deploy stay accounted to the same set.
+    assert provider_account_key("zai") == ZAI_ACCOUNT_KEY == "llm_gate:zai:platform"
+
+
+@pytest.mark.asyncio
+async def test_a_full_provider_does_not_block_a_different_one(redis: Redis):
+    """The production symptom, reproduced: saturate z.ai, then call mistral.
+
+    MUTATION: have for_provider ignore its argument and return self. The mistral
+    acquire then finds z.ai's set full and raises LLMGateTimeoutError, which is
+    exactly the log line this fix came from.
+    """
+    base = LLMGate(redis, lease_seconds=30)
+    zai = base.for_provider("zai")
+    held = [await zai.acquire(wait_seconds=1.0) for _ in range(ZAI_MAX_CONCURRENCY)]
+    assert await zai.try_acquire() is None, "z.ai is now full"
+
+    mistral = base.for_provider("mistral")
+    slot = await mistral.acquire(wait_seconds=1.0)
+    assert slot is not None, "a different account must not queue behind z.ai"
+
+    assert await zai.in_flight() == ZAI_MAX_CONCURRENCY
+    assert await mistral.in_flight() == 1
+    await mistral.release(slot)
+    for s in held:
+        await zai.release(s)
+
+
+@pytest.mark.asyncio
+async def test_an_unmeasured_provider_still_holds_a_cap(redis: Redis):
+    """The default is conservative, not absent: the N+1th call is refused."""
+    gate = LLMGate(redis, lease_seconds=30).for_provider("deepseek")
+    held = [await gate.acquire(wait_seconds=1.0) for _ in range(DEFAULT_MAX_CONCURRENCY)]
+    assert await gate.try_acquire() is None
+    for s in held:
+        await gate.release(s)

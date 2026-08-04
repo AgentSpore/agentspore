@@ -67,10 +67,40 @@ from redis.asyncio import Redis
 # 2x500 during the 2026-07-15 migration).
 ZAI_MAX_CONCURRENCY = 3
 
-# The single account every platform-owned call shares. A per-caller key would
-# defeat the entire purpose, so the key is deliberately not parameterised by
-# caller — only by account.
-ZAI_ACCOUNT_KEY = "llm_gate:zai:platform"
+# Concurrency for a provider we have NOT measured. Two, and the reason is that
+# we have exactly one measured number on this platform (three, for z.ai, above)
+# and no basis for claiming any other provider tolerates more. It is a floor to
+# start from, not an observation — replace it per provider the moment a real
+# 429/500-under-parallel-load reading exists, the way ZAI_MAX_CONCURRENCY was.
+DEFAULT_MAX_CONCURRENCY = 2
+
+# Measured per-provider overrides. Only z.ai has one.
+PROVIDER_MAX_CONCURRENCY: dict[str, int] = {"zai": ZAI_MAX_CONCURRENCY}
+
+
+def provider_account_key(provider: str) -> str:
+    """The gate key for one PROVIDER — which is the account boundary.
+
+    A per-caller key would defeat the gate's purpose, so the key is still not
+    parameterised by caller. It must be parameterised by provider: each provider
+    is a separate account with a separate rate limit, and sharing one key made a
+    Mistral call wait on Z.AI's three slots and then fail with
+    ``gate saturated: no slot on llm_gate:zai:platform`` — total platform
+    throughput capped at three in flight across four accounts, with the wrong
+    provider starved.
+
+    z.ai's key is byte-identical to the historical constant, so slots held
+    across a deploy stay accounted to the same set.
+    """
+    return f"llm_gate:{provider}:platform"
+
+
+def provider_capacity(provider: str) -> int:
+    """In-flight calls tolerated by one provider account."""
+    return PROVIDER_MAX_CONCURRENCY.get(provider, DEFAULT_MAX_CONCURRENCY)
+
+
+ZAI_ACCOUNT_KEY = provider_account_key("zai")
 
 # How long a slot survives without renewal. MUST exceed the judge's hard HTTP
 # timeout (JUDGE_HTTP_TIMEOUT_SECONDS in battle_judges.py), or a live call loses
@@ -181,6 +211,20 @@ class LLMGate:
         self._fence_key = f"{key}:fence"
         self._capacity = capacity
         self._lease_seconds = lease_seconds
+
+    def for_provider(self, provider: str) -> LLMGate:
+        """A gate over ONE provider's account, sharing this Redis connection.
+
+        Callers hold a single gate instance built at startup; the provider is
+        only known per call, so scoping happens here rather than at construction.
+        Cheap by design — no I/O, just a rebind of key and capacity.
+        """
+        return LLMGate(
+            self._redis,
+            key=provider_account_key(provider),
+            capacity=provider_capacity(provider),
+            lease_seconds=self._lease_seconds,
+        )
 
     async def _eval(self, script: str, numkeys: int, *args: str) -> Any:
         """Run a Lua script, narrowing redis-py's sync/async union.

@@ -523,35 +523,49 @@ async def _drive_to_terminal(drive, session_maker, battle_id: str, answer) -> di
     return row
 
 
-def _mock_with_failing_prompt(failing_prompts: set[str]) -> AsyncMock:
-    """Provider stub where the named system prompts fail the way Mistral did.
+def _mock_with_failing_side(
+    failing: set[tuple[str, str]], *, error: Exception | None = None
+) -> AsyncMock:
+    """Provider stub where the named contenders produce no usable answer.
 
-    A 422 on the request body reaches the runner as JudgeTransportError, so that
-    is what the side whose contender is broken raises. Every other call answers
-    normally, and judge calls (identified by the payload's opaque submission
-    labels) answer with a verdict — which is how the test can prove the panel
-    was never called at all.
+    A contender is identified by the PAIR (wire model, system prompt), which is
+    what makes it unique — two contenders routinely share one approach prompt
+    (three seeded rows use `stepwise`) or one model (the same model under two
+    approaches), so either field alone silences both sides and the test then
+    measures the wrong outcome.
+
+    Two DIFFERENT failures, because they settle differently. By default the model
+    answers with an empty string — it was asked and produced nothing, which
+    forfeits. With ``error`` the call raises instead: the provider was never
+    reached, which voids.
+
+    Judge calls (identified by the payload's opaque submission labels) always
+    answer with a verdict, so a test can prove the panel was never called.
     """
 
     async def reply(**kwargs) -> str:
         messages = kwargs["messages"]
         if "submission_alpha" in messages[-1]["content"]:
             return VALID_JUDGE_REPLY
-        if messages[0]["content"] in failing_prompts:
-            raise JudgeTransportError("HTTP 422: extra_forbidden on body.seed")
+        if (kwargs["wire_model"], messages[0]["content"]) in failing:
+            if error is not None:
+                raise error
+            return ""
         return PLAIN_ANSWER
 
     return AsyncMock(side_effect=reply)
 
 
-async def _contender_prompts(session_maker, battle_id: str) -> dict[str, str]:
+async def _contender_ident(session_maker, battle_id: str) -> dict[str, tuple[str, str]]:
+    """Each side's (wire model, system prompt) — the pair that names a contender."""
     async with session_maker() as session:
         repo = BattleRepository(session)
         row = await repo.get(battle_id)
-        return {
-            side: str((await repo.get_contender(str(row[f"contender_{side}_id"])))["system_prompt"])
-            for side in ("a", "b")
-        }
+        out = {}
+        for side in ("a", "b"):
+            c = await repo.get_contender(str(row[f"contender_{side}_id"]))
+            out[side] = (str(c["model_id"]), str(c["system_prompt"]))
+        return out
 
 
 async def _expire_deadline(session_maker, battle_id: str) -> None:
@@ -585,12 +599,12 @@ class TestSilentForfeit:
         winner is decided by a model reading nothing — all three assertions go red.
         """
         battle_id = await _fresh_auto_battle(session_maker)
-        prompts = await _contender_prompts(session_maker, battle_id)
+        sides = await _contender_ident(session_maker, battle_id)
         provider = {"api_key": "k", "base_url": "http://unused"}
         drive = partial(
             reconcile_once, session_factory=session_maker, gate=None, provider=provider
         )
-        answer = _mock_with_failing_prompt({prompts["b"]})
+        answer = _mock_with_failing_side({sides["b"]})
 
         row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
         async with session_maker() as session:
@@ -604,12 +618,12 @@ class TestSilentForfeit:
         """Both silent is not a tie either — a tie is a substantive verdict, and
         nobody judged anything. Winner NULL, and still no judge call spent."""
         battle_id = await _fresh_auto_battle(session_maker)
-        prompts = await _contender_prompts(session_maker, battle_id)
+        sides = await _contender_ident(session_maker, battle_id)
         provider = {"api_key": "k", "base_url": "http://unused"}
         drive = partial(
             reconcile_once, session_factory=session_maker, gate=None, provider=provider
         )
-        answer = _mock_with_failing_prompt({prompts["a"], prompts["b"]})
+        answer = _mock_with_failing_side({sides["a"], sides["b"]})
 
         row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
         async with session_maker() as session:
@@ -618,3 +632,111 @@ class TestSilentForfeit:
         assert row["winner"] is None
         assert judgements == []
         assert "no contest" in row["verdict_reason"]
+
+
+class TestUnreachableProviderVoids:
+    async def test_an_upstream_5xx_voids_the_battle_instead_of_forfeiting(
+        self, session_maker
+    ) -> None:
+        """A provider outage must not hand the opponent a win.
+
+        Production: `HTTP 500 {"object":"error","message":"Service unavailable."}`
+        from mistral, and the battle was recorded as a forfeit — a loss for a
+        model that was never asked. Void is the only honest outcome: the side
+        that DID answer keeps no win, because it out-answered nobody.
+
+        MUTATION: drop the `unreachable` branch in settle_silent_forfeit. The
+        winner becomes 'a' and this goes red.
+        """
+        battle_id = await _fresh_auto_battle(session_maker)
+        sides = await _contender_ident(session_maker, battle_id)
+        drive = partial(
+            reconcile_once,
+            session_factory=session_maker,
+            gate=None,
+            provider={"api_key": "k", "base_url": "http://unused"},
+        )
+        answer = _mock_with_failing_side(
+            {sides["b"]},
+            error=JudgeTransportError('HTTP 500: {"message":"Service unavailable."}'),
+        )
+
+        row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert row["status"] == "completed"
+        assert row["winner"] is None, "nobody wins a battle the provider never served"
+        assert row["is_rated"] is False
+        assert judgements == [], "no judge call spent on a battle that cannot be judged"
+        assert "void" in row["verdict_reason"]
+
+    async def test_gate_saturation_voids_too_and_is_not_retried(
+        self, session_maker
+    ) -> None:
+        """A refused gate slot means the model was never asked either.
+
+        It is also the one transient failure the answer path must NOT retry: the
+        bounded wait was already spent against a busy account, so a second
+        attempt just spends another. Exactly one call reaches this side.
+        """
+        battle_id = await _fresh_auto_battle(session_maker)
+        sides = await _contender_ident(session_maker, battle_id)
+        drive = partial(
+            reconcile_once,
+            session_factory=session_maker,
+            gate=None,
+            provider={"api_key": "k", "base_url": "http://unused"},
+        )
+        answer = _mock_with_failing_side(
+            {sides["a"]},
+            error=JudgeTransportError(
+                "gate saturated: no slot on llm_gate:mistral:platform within 20.0s",
+                saturated=True,
+            ),
+        )
+
+        row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+        assert row["status"] == "completed"
+        assert row["winner"] is None
+        assert "void" in row["verdict_reason"]
+        attempts = [
+            c
+            for c in answer.await_args_list
+            if (c.kwargs["wire_model"], c.kwargs["messages"][0]["content"]) == sides["a"]
+        ]
+        assert len(attempts) == 1, "a saturated gate is not retried"
+
+    async def test_a_transient_error_is_retried_once_and_can_still_answer(
+        self, session_maker
+    ) -> None:
+        """One retry rescues an upstream blip, and the battle is judged normally.
+
+        MUTATION: set _ANSWER_ATTEMPTS to 1. The first failure becomes final, the
+        battle voids, and both assertions go red.
+        """
+        battle_id = await _fresh_auto_battle(session_maker)
+        sides = await _contender_ident(session_maker, battle_id)
+        seen: list[tuple[str, str]] = []
+
+        async def flaky(**kwargs) -> str:
+            messages = kwargs["messages"]
+            if "submission_alpha" in messages[-1]["content"]:
+                return VALID_JUDGE_REPLY
+            ident = (kwargs["wire_model"], messages[0]["content"])
+            seen.append(ident)
+            if ident == sides["b"] and seen.count(ident) == 1:
+                raise JudgeTransportError("HTTP 503: upstream connect error")
+            return PLAIN_ANSWER
+
+        answer = AsyncMock(side_effect=flaky)
+        drive = partial(
+            reconcile_once,
+            session_factory=session_maker,
+            gate=None,
+            provider={"api_key": "k", "base_url": "http://unused"},
+        )
+
+        row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+        assert seen.count(sides["b"]) == 2, "failed once, retried once"
+        assert row["status"] == "completed"
+        assert row["winner"] in {"a", "b", "tie"}, "a judged result, not a void"

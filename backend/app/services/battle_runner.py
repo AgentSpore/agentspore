@@ -196,6 +196,19 @@ TASK_BIND_LEASE_SECONDS = 15
 SILENT_FIGHTER_SEQ_NO = 9_999
 SILENT_FIGHTER_ERROR = "no submission before deadline"
 
+# Prefix on the submission error of a side left empty because the PROVIDER could
+# not be reached — an upstream 5xx, a connection timeout, a saturated gate. It is
+# the marker settlement reads to void a battle instead of forfeiting it: a model
+# that was never asked must not be recorded as having lost.
+PROVIDER_UNREACHABLE_ERROR = "provider unreachable"
+
+# Answer-path attempts, total, per side per battle. One retry: enough for an
+# upstream blip (mistral answered 500/503 intermittently), and it adds no
+# CONCURRENT load because the first attempt's gate slot is released before the
+# second asks for one.
+_ANSWER_ATTEMPTS = 2
+_ANSWER_RETRY_BACKOFF_SECONDS = 2.0
+
 # The model the demo opponent answers with. kimi-k3 answers reliably (0 timeouts)
 # where the old glm judge always timed out on a single-call demo answer, so the
 # demo side never spoke. It is now ALSO the primary judge model (JUDGE_MODEL), but
@@ -292,6 +305,15 @@ class AnswerSpec:
 
 # One seed slot per side, so A and B never share a sampling seed.
 _SEED_SLOT: dict[Side, int] = {Side.A: 0, Side.B: 1}
+
+
+def _unreachable_kind(exc: JudgeTransportError) -> str:
+    """Which kind of not-reaching-the-provider this was. Never the raw body."""
+    if exc.saturated:
+        return "gate saturated"
+    if exc.permanent:
+        return "provider refused (permanent)"
+    return "provider error or timeout"
 
 
 def _agent_sides(battle: dict) -> list[tuple[Side, str]]:
@@ -885,7 +907,14 @@ class BattleRunner:
         if already_final:
             return False
 
-        answer = await self._generate_demo_answer(current, api_key, base_url)
+        try:
+            answer = await self._generate_demo_answer(current, api_key, base_url)
+        except JudgeTransportError as exc:
+            # Same distinction the contender path makes: the demo opponent was
+            # never asked, so the battle voids rather than handing the user's
+            # agent a win it did not earn.
+            await self._record_unreachable(battle_id, Side.B, exc)
+            return False
         if answer is None:
             return False
 
@@ -960,7 +989,11 @@ class BattleRunner:
             system_prompt=str(contender["system_prompt"]),
             seed_slot=_SEED_SLOT[side],
         )
-        answer = await self._answer_with_model(current, spec, api_key, base_url)
+        try:
+            answer = await self._answer_with_retry(current, spec, api_key, base_url)
+        except JudgeTransportError as exc:
+            await self._record_unreachable(battle_id, side, exc)
+            return False
         if answer is None:
             return False
 
@@ -980,6 +1013,64 @@ class BattleRunner:
                 contender["display_name"],
             )
         return accepted
+
+    async def _answer_with_retry(
+        self, battle: dict, spec: AnswerSpec, api_key: str, base_url: str
+    ) -> str | None:
+        """One retry on a transient provider failure, then give up.
+
+        Mistral answered 500/503 intermittently and every one of those cost a
+        side its answer. ONE extra attempt after a short backoff is enough for an
+        upstream blip, and it does not multiply CONCURRENT load: the first
+        attempt's gate slot is released before the retry asks for another, so the
+        account still sees one in-flight call from this side, just twice.
+
+        Two failures are NOT retried. A ``permanent`` error is a balance/auth
+        refusal that no backoff can fix, and a ``saturated`` one already spent
+        its bounded wait against a busy account — asking again immediately only
+        spends another.
+        """
+        for attempt in range(_ANSWER_ATTEMPTS):
+            try:
+                return await self._answer_with_model(battle, spec, api_key, base_url)
+            except JudgeTransportError as exc:
+                last = attempt == _ANSWER_ATTEMPTS - 1
+                if last or exc.permanent or exc.saturated:
+                    raise
+                await asyncio.sleep(_ANSWER_RETRY_BACKOFF_SECONDS)
+        return None  # unreachable: the loop either returns or raises
+
+    async def _record_unreachable(
+        self, battle_id: str, side: Side, exc: JudgeTransportError
+    ) -> None:
+        """Mark this side empty BECAUSE the provider could not be reached.
+
+        The row is what carries the distinction to settlement: an empty final
+        whose error starts with PROVIDER_UNREACHABLE_ERROR voids the battle,
+        while an empty final with any other error (or none) is a forfeit. Writing
+        it here rather than leaving the side blank also means the battle stops
+        waiting out its whole deadline for an answer that will never come.
+
+        Only the failure CLASS is stored, never the provider's response body: it
+        is attacker-influenced text that would land in a public verdict.
+        """
+        await self.repo.add_submission(
+            battle_id=battle_id,
+            side=side,
+            seq_no=SILENT_FIGHTER_SEQ_NO,
+            content=None,
+            is_final=True,
+            truncated=True,
+            error=f"{PROVIDER_UNREACHABLE_ERROR}: {_unreachable_kind(exc)}",
+            enforce_deadline=False,
+        )
+        await self.db.commit()
+        logger.warning(
+            "battle {} side {} unreachable provider ({}): battle will be void",
+            battle_id,
+            side.value,
+            _unreachable_kind(exc),
+        )
 
     async def _generate_demo_answer(
         self, battle: dict, api_key: str, base_url: str
@@ -1050,6 +1141,7 @@ class BattleRunner:
                 wire_model=wire_model_name(spec.model),
                 temperature=judge_temperature_for(spec.model),
                 seed_field=seed_field_for(spec.model),
+                provider=spec.model.rsplit("/", 1)[0] if "/" in spec.model else None,
                 # A reasoning model answering a real task needs far more room than
                 # the tight judging default, or it truncates to empty content.
                 max_tokens=DEMO_ANSWER_MAX_TOKENS,
@@ -1059,13 +1151,18 @@ class BattleRunner:
                 http_timeout=DEMO_ANSWER_TIMEOUT_SECONDS,
             )
         except JudgeTransportError as exc:
+            # PROPAGATED, not flattened to None. "We never reached the model" and
+            # "the model produced nothing" are different outcomes — one voids the
+            # battle, the other forfeits it — and returning None for both is what
+            # turned a Mistral 500 into a recorded loss for a model that was
+            # never asked.
             logger.warning(
                 "battle {} answer generation failed on {}: {}",
                 battle["id"],
                 spec.model,
                 exc,
             )
-            return None
+            raise
         finally:
             if self.http is None:
                 await http.aclose()
@@ -1417,43 +1514,70 @@ class BattleRunner:
         )
         return await self.settle_battle(battle_id, lease_token, override_verdict=forced)
 
-    async def silent_sides(self, battle_id: str) -> set[Side]:
-        """Sides whose final submission carries no answer at all.
+    async def silent_sides(self, battle_id: str) -> dict[Side, str]:
+        """Sides whose final submission carries no answer, mapped to WHY.
 
         A side is silent when its final row has empty content — the shape
         close_deadline writes for a fighter that said nothing before the
-        deadline, and the shape a contender leaves when its answer call failed
-        outright (Mistral answered 422 to every request for days).
-
-        Read from the CONTENT, not from the error string: the same nothing
-        reaches the panel whichever path produced it, and the panel cannot tell
-        an empty answer from a bad one — it scores emptiness against a real
-        answer and returns a tie. Thirteen of twenty-four production
-        auto-battles ended that way, with three contenders on zero wins.
+        deadline, and the shape :meth:`_record_unreachable` writes when the
+        provider could not be reached. Emptiness is read from the CONTENT,
+        because that is what would reach the panel; the accompanying ``error``
+        is what separates the two causes, and they settle differently.
         """
         return {
-            Side(str(s["side"]))
+            Side(str(s["side"])): str(s["error"] or "")
             for s in await self.repo.list_submissions(battle_id)
             if s["is_final"] and not (s["content"] or "").strip()
         }
 
     async def settle_silent_forfeit(
-        self, battle_id: str, lease_token: str, silent: set[Side]
+        self, battle_id: str, lease_token: str, silent: dict[Side, str]
     ) -> RatingChange | None:
         """Settle a battle a side never answered. The panel does NOT run.
 
-        The outcome follows the rule the injection path already established
-        (:meth:`settle_injection_disqualified`): when exactly one side is at
-        fault the verdict is FORCED for the clean opponent — a win by default,
-        rated when the battle was rated-eligible and the owners differ — because
-        the panel never ran and there is no honest vote to read. Answering
-        nothing is self-harming, never a way to drag an opponent to a tie.
+        Two different outcomes, decided by WHY the side is empty:
 
-        Both sides silent is no contest: winner NULL, which is the same shape a
-        no-quorum panel produces and which settle_battle already handles. Either
-        way not one judge call is spent scoring an empty answer.
+        * **The provider was never reached** — an upstream 5xx, a timeout, a
+          saturated gate. The battle is VOID: winner NULL, no standings effect.
+          A model that was never asked must not be recorded as having lost, and
+          a transient provider outage handing its opponent a win is worse than
+          the tie this path replaced.
+        * **The model was asked and produced nothing** — forfeit, following the
+          rule the injection path already established
+          (:meth:`settle_injection_disqualified`): the clean opponent wins by
+          default, rated when the battle was rated-eligible and the owners
+          differ. Answering nothing is self-harming, never a way to drag an
+          opponent to a tie.
+
+        Both sides silent is no contest, winner NULL — the same shape, and the
+        same vehicle the void case uses. Either way not one judge call is spent.
+
+        NOTE on the stop reason: ``battles.judging_stop_reason`` is a closed
+        CHECK domain (V68/V69: owner_budget_exhausted, global_budget_exhausted,
+        battle_attempt_cap, same_owner, injection_suspected) and none of them
+        means "provider unreachable". Adding one needs a migration, so the void
+        reason is carried in the public ``verdict_reason`` instead. Nothing is
+        lost for standings — a void battle has no winner, so it cannot rate.
         """
-        if silent >= {Side.A, Side.B}:
+        unreachable = sorted(
+            side.value
+            for side, why in silent.items()
+            if why.startswith(PROVIDER_UNREACHABLE_ERROR)
+        )
+        if unreachable:
+            forced = PanelVerdict(
+                winner=None,
+                is_tie=False,
+                reason=(
+                    f"void: the provider could not be reached for side(s) "
+                    f"{', '.join(unreachable)}; no result is recorded"
+                ),
+                votes=[],
+            )
+            return await self.settle_battle(
+                battle_id, lease_token, override_verdict=forced
+            )
+        if len(silent) >= 2:
             forced = PanelVerdict(
                 winner=None,
                 is_tie=False,
@@ -1647,6 +1771,7 @@ class BattleRunner:
                             wire_model=candidate.wire_model,
                             temperature=candidate.temperature,
                             seed_field=candidate.seed_field,
+                            provider=candidate.provider,
                         )
                         if candidate is not model:
                             logger.info(
@@ -1892,9 +2017,12 @@ async def _judge_and_settle(
             silent = await runner.silent_sides(battle_id)
             if silent:
                 logger.info(
-                    "battle {} settled by forfeit: side(s) {} never answered",
+                    "battle {} settled without judging: empty side(s) {}",
                     battle_id,
-                    ",".join(sorted(s.value for s in silent)),
+                    "; ".join(
+                        f"{side.value}={why or 'no answer'}"
+                        for side, why in sorted(silent.items(), key=lambda kv: kv[0].value)
+                    ),
                 )
                 if await runner.settle_silent_forfeit(battle_id, token, silent) is not None:
                     counts["settled"] += 1

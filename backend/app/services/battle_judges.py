@@ -318,11 +318,19 @@ class JudgeTransportError(Exception):
     ``permanent`` marks a balance/auth failure (z.ai 1113) that no backoff can
     fix: the reclaim loop must not keep retrying it, and the V68 circuit breaker
     opens immediately on it rather than waiting out a transient-failure threshold.
+
+    ``saturated`` marks the one failure that never reached the provider at all:
+    the concurrency gate refused a slot within its bounded wait. It is separated
+    from an ordinary transient error because retrying it immediately just spends
+    another bounded wait against the same busy account.
     """
 
-    def __init__(self, message: str, *, permanent: bool = False) -> None:
+    def __init__(
+        self, message: str, *, permanent: bool = False, saturated: bool = False
+    ) -> None:
         super().__init__(message)
         self.permanent = permanent
+        self.saturated = saturated
 
 
 @dataclass(frozen=True)
@@ -1105,6 +1113,9 @@ async def call_judge_model(
     # None omits the seed — the replicate's identity is the seed STRING, which
     # is recorded regardless of whether any provider ever sees it.
     seed_field: str | None = DEFAULT_SEED_FIELD,
+    # The provider segment of the platform model id. Selects the account this
+    # call is gated on; None keeps the caller's own gate unscoped.
+    provider: str | None = None,
 ) -> str:
     """ONE gated, bounded provider HTTP attempt. Raises JudgeTransportError on failure.
 
@@ -1123,8 +1134,15 @@ async def call_judge_model(
     if seed_field is not None:
         body[seed_field] = seed_int32(seed)
 
+    # The gate is keyed by PROVIDER, which is the account boundary: mistral,
+    # moonshot, deepseek and zai are four accounts with four rate limits, and one
+    # shared key made them contend for z.ai's three measured slots. Scoped here
+    # rather than at the call site so a caller that passes no provider (and every
+    # test that patches this function) keeps the old single-account behaviour.
+    account = gate.for_provider(provider) if provider else gate
+
     try:
-        async with gate.slot():
+        async with account.slot():
             response = await client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
@@ -1146,8 +1164,10 @@ async def call_judge_model(
 
     except LLMGateTimeoutError as exc:
         # The account is saturated. Not a failure of this judge: the caller
-        # leaves the run row 'pending' and the next reconciler reclaims it.
-        raise JudgeTransportError(f"gate saturated: {exc}") from exc
+        # leaves the run row 'pending' and the next reconciler reclaims it. The
+        # model was never asked, so a fighter's answer path must void the battle
+        # rather than read this as "produced nothing".
+        raise JudgeTransportError(f"gate saturated: {exc}", saturated=True) from exc
     except httpx.TimeoutException as exc:
         raise JudgeTransportError(
             f"timeout after {http_timeout}s"
