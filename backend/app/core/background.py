@@ -59,6 +59,7 @@ from uuid import uuid4
 from loguru import logger
 from sqlalchemy import text
 
+from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
 from app.repositories.mixer_repo import MixerRepository
@@ -586,6 +587,46 @@ class BattleRunTask(ScheduledTask):
             logger.info("Battle run: {}", counts)
 
 
+class BattleMatchmakerTask(ScheduledTask):
+    """Creates the auto-battles that keep /battles alive without a human.
+
+    ``fail_closed=True`` for the same reason BattleRunTask is: every battle this
+    creates commits the platform to two answer calls and a judge panel against a
+    provider whose free tier tops out around three concurrent requests. Without
+    Redis there is no leader lock, so four workers would each create a battle per
+    tick — four times the intended rate, at the exact moment the gate that would
+    have throttled the calls is also gone.
+
+    The cadence is a setting rather than a constant: it is the rate limit, and an
+    operator hitting 429s must be able to slow it down. ``interval_s`` is a
+    PROPERTY, not a class attribute, because the base loop re-reads it every
+    cycle — read once at class-definition time it would have needed a restart,
+    while ``battle_auto_enabled`` right beside it took effect live, and the two
+    halves of one switch must behave the same way.
+    """
+
+    name = "battle_matchmaker"
+    # Crash bound only. A missed tick costs one battle that the next tick
+    # creates, so this is generous relative to the reconciler's 60.
+    lock_ttl_s = 120
+    initial_delay_s = 60
+    fail_closed = True
+
+    @property
+    def interval_s(self) -> int:  # type: ignore[override]  # base declares a plain int
+        return get_settings().battle_auto_interval_seconds
+
+    async def run_once(self) -> None:
+        settings = get_settings()
+        if not settings.battle_auto_enabled:
+            return
+        from app.services.battle_service import (  # noqa: PLC0415 (cycle: app.services.battle_service <-> app.core.background)
+            BattleMatchmaker,
+        )
+
+        await BattleMatchmaker(async_session_maker).tick()
+
+
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     HackathonAdvanceTask,
@@ -593,6 +634,7 @@ ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     MixerCleanupTask,
     CronSchedulerTask,
     BattleRunTask,
+    BattleMatchmakerTask,
 )
 
 

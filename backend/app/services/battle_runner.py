@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import httpx
@@ -248,14 +249,16 @@ _DEMO_ANSWER_SYSTEM = (
 )
 
 
-def build_demo_answer_messages(
-    task_prompt: str, rubric: list[dict[str, object]]
+def build_answer_messages(
+    system_prompt: str, task_prompt: str, rubric: list[dict[str, object]]
 ) -> list[dict[str, str]]:
-    """The chat messages for the demo opponent's single answer call.
+    """The chat messages for one platform-produced answer call.
 
-    A system framing plus the task prompt and, when present, the rubric criteria
-    the answer will be judged on — the same rubric the panel scores against, so
-    the demo answer is aimed at the real target rather than guessing at it.
+    ``system_prompt`` is the whole difference between fighters the platform runs
+    for itself: for the demo opponent it is a fixed modest framing, for a
+    contender it is that contender's approach. The user message is the same for
+    both — the task prompt plus, when present, the rubric criteria the answer
+    will be judged on, so the answer is aimed at the real target.
     """
     keys = [
         str(item.get("key"))
@@ -266,8 +269,41 @@ def build_demo_answer_messages(
     if keys:
         user = f"{task_prompt}\n\nYou will be judged on: {', '.join(keys)}."
     return [
-        {"role": "system", "content": _DEMO_ANSWER_SYSTEM},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user},
+    ]
+
+
+@dataclass(frozen=True)
+class AnswerSpec:
+    """Everything that decides HOW one platform-run side answers.
+
+    ``seed_slot`` is what keeps two sides independent. The provider seed is
+    derived from (battle id, slot), so giving both sides slot 0 made the same
+    model under two different approaches sample in lockstep — which is exactly
+    the pairing the contender roster exists to compare. One slot per side.
+    """
+
+    model: str
+    system_prompt: str
+    seed_slot: int
+
+
+# One seed slot per side, so A and B never share a sampling seed.
+_SEED_SLOT: dict[Side, int] = {Side.A: 0, Side.B: 1}
+
+
+def _agent_sides(battle: dict) -> list[tuple[Side, str]]:
+    """The sides of a battle that are AGENTS, as (side, agent_id).
+
+    Every notification path is addressed to an agent's owner, and a contender
+    side has neither — so it is dropped here rather than stringified into the
+    literal "None", which addressed a notification to nobody.
+    """
+    return [
+        (side, str(battle[f"agent_{side.value}_id"]))
+        for side in (Side.A, Side.B)
+        if battle[f"agent_{side.value}_id"]
     ]
 
 
@@ -458,16 +494,10 @@ class BattleRunner:
             self.db,
             str(battle_id),
             [
-                (
-                    str(completed["agent_a_id"]),
-                    "battle_result",
-                    _battle_result_title(str(battle_id), Side.A, completed["winner"]),
-                ),
-                (
-                    str(completed["agent_b_id"]),
-                    "battle_result",
-                    _battle_result_title(str(battle_id), Side.B, completed["winner"]),
-                ),
+                (agent_id, "battle_result", _battle_result_title(
+                    str(battle_id), side, completed["winner"]
+                ))
+                for side, agent_id in _agent_sides(completed)
             ],
         )
         return change
@@ -635,10 +665,11 @@ class BattleRunner:
     async def _notify_aborted(self, battle_id: str, aborted: dict) -> None:
         """Tell both owners a pre-start battle was aborted. After the commit."""
         title = f"Battle aborted (battle {battle_id})"
-        recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
-        if aborted["agent_b_id"]:
-            recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
-        await _notify_battle_owners(self.db, battle_id, recipients)
+        await _notify_battle_owners(
+            self.db,
+            battle_id,
+            [(agent_id, "battle_aborted", title) for _, agent_id in _agent_sides(aborted)],
+        )
 
     async def start_queued(self, battle: dict, lease_token: str) -> bool:
         """queued -> running, with BOTH battle_turn rows, in one transaction.
@@ -869,6 +900,86 @@ class BattleRunner:
             logger.info("battle {} demo opponent submitted its answer", battle_id)
         return accepted
 
+    # -- contender auto-battles (V72) ---------------------------------------
+
+    async def start_contender_battle(self, battle: dict, lease_token: str) -> bool:
+        """queued -> running for a battle whose sides are contenders.
+
+        The agent-side twin (:meth:`start_queued`) also extends reservations and
+        dispatches a ``battle_turn`` event to each fighter. A contender has no
+        reservation to extend and no inbox to receive an event: the platform
+        itself produces its turn, right after this commit. So this is the status
+        transition and nothing else.
+        """
+        battle_id = str(battle["id"])
+        started = await self.repo.start_contender_battle(
+            battle_id=battle_id,
+            lease_token=lease_token,
+            lease_seconds=BATTLE_LEASE_SECONDS,
+        )
+        if started is None:
+            await self.db.rollback()
+            return False
+        await self.db.commit()
+        logger.info("auto-battle {} running until {}", battle_id, started["deadline_at"])
+        return True
+
+    async def drive_contender_submission(
+        self, battle: dict, side: Side, api_key: str, base_url: str
+    ) -> bool:
+        """Produce ONE side's final answer by calling that side's model.
+
+        The contender IS the pair (model, approach), so the call it makes is
+        fully described by its own row: ``model_id`` selects the provider and the
+        wire model, ``system_prompt`` is the approach. Nothing about the battle
+        chooses either — which is what makes two contenders on one task a real
+        comparison rather than one model prompted twice.
+
+        Same no-repeat-spend contract as the demo drive: a side that already
+        carries a final submission returns False WITHOUT calling the provider.
+        """
+        battle_id = str(battle["id"])
+        current = await self.repo.get(battle_id)
+        if current is None or current["status"] != BattleStatus.RUNNING.value:
+            return False
+        contender_id = current[f"contender_{side.value}_id"]
+        if contender_id is None:
+            return False
+        if any(
+            str(s["side"]) == side.value and s["is_final"]
+            for s in await self.repo.list_submissions(battle_id)
+        ):
+            return False
+
+        contender = await self.repo.get_contender(str(contender_id))
+        if contender is None:
+            return False
+        spec = AnswerSpec(
+            model=f"{contender['provider']}/{contender['model_id']}",
+            system_prompt=str(contender["system_prompt"]),
+            seed_slot=_SEED_SLOT[side],
+        )
+        answer = await self._answer_with_model(current, spec, api_key, base_url)
+        if answer is None:
+            return False
+
+        accepted = await self.repo.add_submission(
+            battle_id=battle_id,
+            side=side,
+            seq_no=1,
+            content=answer,
+            is_final=True,
+        )
+        await self.db.commit()
+        if accepted:
+            logger.info(
+                "auto-battle {} side {} answered as {}",
+                battle_id,
+                side.value,
+                contender["display_name"],
+            )
+        return accepted
+
     async def _generate_demo_answer(
         self, battle: dict, api_key: str, base_url: str
     ) -> str | None:
@@ -885,53 +996,80 @@ class BattleRunner:
         MAX_SUBMISSION_CHARS, or None on any transport failure (the caller
         degrades to deadline silence).
         """
+        return await self._answer_with_model(
+            battle,
+            AnswerSpec(DEMO_ANSWER_MODEL, _DEMO_ANSWER_SYSTEM, _SEED_SLOT[Side.B]),
+            api_key,
+            base_url,
+        )
+
+    async def _answer_with_model(
+        self, battle: dict, spec: AnswerSpec, api_key: str, base_url: str
+    ) -> str | None:
+        """One gated provider call producing a fighter's answer, or None.
+
+        The single HTTP path for every answer the platform produces on a
+        fighter's behalf — demo opponent and contender alike. It is
+        :func:`call_judge_model`, the judge's own call shape, rather than a
+        second client: rate limiting (the gate), retries and the wire-name /
+        temperature quirks per model are all already solved there, and a parallel
+        client would have to re-solve them and then drift.
+
+        Credentials are resolved PER MODEL, so a contender on a different
+        provider than the judge brings its own; the judge credentials threaded in
+        are only the fallback for an unconfigured provider. Returns the answer
+        capped to MAX_SUBMISSION_CHARS, or None on any transport failure (the
+        caller degrades to deadline silence).
+        """
         prompt = battle.get("task_prompt_snapshot")
         if not prompt:
             # A running battle is bound by the queued CHECK, so this is defensive:
             # never call the model with no task to answer.
             return None
         rubric = battle.get("task_rubric_snapshot") or []
-        messages = build_demo_answer_messages(str(prompt), rubric)
+        messages = build_answer_messages(spec.system_prompt, str(prompt), rubric)
 
-        # Local import: OpenRouterService pulls in the wider service graph that
-        # imports core.background at its top (same cycle _resolve_judge_roster
-        # documents).
-        from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
+        from app.services.openrouter_service import (  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
+            OpenRouterService,
+        )
 
-        creds = OpenRouterService().resolve_provider(DEMO_ANSWER_MODEL)
-        demo_base_url = creds["base_url"] if creds else base_url
-        demo_api_key = creds["api_key"] if creds else api_key
+        creds = OpenRouterService().resolve_provider(spec.model)
+        answer_base_url = creds["base_url"] if creds else base_url
+        answer_api_key = creds["api_key"] if creds else api_key
 
         http = self.http or httpx.AsyncClient()
         try:
             raw = await call_judge_model(
                 client=http,
-                base_url=demo_base_url,
-                api_key=demo_api_key,
+                base_url=answer_base_url,
+                api_key=answer_api_key,
                 messages=messages,
-                seed=replicate_seed(str(battle["id"]), 0),
+                seed=replicate_seed(str(battle["id"]), spec.seed_slot),
                 gate=self.gate,
-                wire_model=wire_model_name(DEMO_ANSWER_MODEL),
-                temperature=judge_temperature_for(DEMO_ANSWER_MODEL),
+                wire_model=wire_model_name(spec.model),
+                temperature=judge_temperature_for(spec.model),
                 # A reasoning model answering a real task needs far more room than
                 # the tight judging default, or it truncates to empty content.
                 max_tokens=DEMO_ANSWER_MAX_TOKENS,
                 # kimi-k3 answering a real task was measured live at ~120s; the 60s
                 # judging HTTP ceiling would abort it as a transport timeout and
-                # silence the demo side. Match the detached task's own bound.
+                # silence the answering side. Match the detached task's own bound.
                 http_timeout=DEMO_ANSWER_TIMEOUT_SECONDS,
             )
         except JudgeTransportError as exc:
             logger.warning(
-                "battle {} demo answer generation failed: {}", battle["id"], exc
+                "battle {} answer generation failed on {}: {}",
+                battle["id"],
+                spec.model,
+                exc,
             )
             return None
         finally:
             if self.http is None:
                 await http.aclose()
-        # sanitize_submission returns (text, truncated) — the demo answer is
-        # capped like any fighter's, and a truncation flag we do not need here
-        # (the answer is short by construction; the cap is a hostile-input bound).
+        # sanitize_submission returns (text, truncated) — a platform-produced
+        # answer is capped like any fighter's, and a truncation flag we do not
+        # need here (the cap is a hostile-input bound).
         cleaned, _truncated = sanitize_submission(raw)
         return cleaned or None
 
@@ -1395,8 +1533,12 @@ class BattleRunner:
                 judge_run_id=run_id,
                 battle_lease_token=str(battle_lease_token),
                 run_lease_token=run_token,
-                owner_a_user_id=str(battle["agent_a_owner_snapshot"]),
-                owner_b_user_id=str(battle["agent_b_owner_snapshot"]),
+                # Passed RAW, never str()-ed: a contender side has no owner, and
+                # str(None) is the literal "None" — a DataError when the ledger
+                # casts it to UUID. reserve_call charges only the owners that
+                # exist and books the call as kind 'auto' when there are none.
+                owner_a_user_id=battle["agent_a_owner_snapshot"],
+                owner_b_user_id=battle["agent_b_owner_snapshot"],
                 provider=model.provider,
                 model=model.model_id,
             )
@@ -1841,10 +1983,14 @@ async def reap_once(session_factory, provider: dict | None = None) -> dict[str, 
                 aborted = None
             if aborted is not None:
                 title = f"Battle aborted (battle {battle_id})"
-                recipients = [(str(aborted["agent_a_id"]), "battle_aborted", title)]
-                if aborted["agent_b_id"]:
-                    recipients.append((str(aborted["agent_b_id"]), "battle_aborted", title))
-                await _notify_battle_owners(session, battle_id, recipients)
+                await _notify_battle_owners(
+                    session,
+                    battle_id,
+                    [
+                        (agent_id, "battle_aborted", title)
+                        for _, agent_id in _agent_sides(aborted)
+                    ],
+                )
 
     # Escape hatch: a judging battle whose attempt budget is spent must reach a
     # terminal state, never sit unclaimable in 'judging' forever with its fighters
@@ -1896,11 +2042,11 @@ async def reap_once(session_factory, provider: dict | None = None) -> dict[str, 
 _demo_inflight: dict[str, asyncio.Task] = {}
 
 
-def _demo_drive_claim_key(battle_id: str) -> str:
-    return f"battle:demo-drive:{battle_id}"
+def _demo_drive_claim_key(battle_id: str, kind: str = "demo") -> str:
+    return f"battle:{kind}-drive:{battle_id}"
 
 
-async def _claim_demo_drive(gate, battle_id: str) -> bool:
+async def _claim_demo_drive(gate, battle_id: str, kind: str = "demo") -> bool:
     """Win the cross-process right to generate this battle's demo answer.
 
     ``_demo_inflight`` guards only WITHIN one process; uvicorn runs 4 workers, so
@@ -1930,7 +2076,7 @@ async def _claim_demo_drive(gate, battle_id: str) -> bool:
         return True
     try:
         got = await redis.set(
-            _demo_drive_claim_key(battle_id),
+            _demo_drive_claim_key(battle_id, kind),
             "1",
             ex=DEMO_DRIVE_CLAIM_TTL_SECONDS,
             nx=True,
@@ -1978,35 +2124,77 @@ async def _spawn_demo_drive(session_factory, gate, battle: dict, api_key, base_u
     task.add_done_callback(lambda _t, bid=battle_id: _demo_inflight.pop(bid, None))
 
 
-async def _drive_demo_answer(session_factory, gate, battle: dict, api_key, base_url) -> None:
-    """Generate + submit the demo opponent's answer, detached and time-bounded.
+async def _drive_platform_answer(
+    session_factory, gate, battle_id: str, label: str, produce
+) -> None:
+    """Run one detached, time-bounded answer drive. Never propagates.
 
     Opens its OWN short session (invariant: never the reconcile session). Every
     failure — timeout, transport, shutdown cancellation — is swallowed here on
-    purpose: the demo side then falls to close_deadline's silent-fighter path, so
-    the battle is still judged. Never propagates and never touches the reconcile
-    pass.
+    purpose: the side then falls to close_deadline's silent-fighter path, so the
+    battle is still judged. ``produce`` receives the runner and returns the
+    coroutine that generates and submits the answer.
     """
-    battle_id = str(battle["id"])
     try:
         async with session_factory() as session:
-            runner = BattleRunner(session, gate)
             await asyncio.wait_for(
-                runner.drive_demo_submission(battle, api_key, base_url),
+                produce(BattleRunner(session, gate)),
                 timeout=DEMO_ANSWER_TIMEOUT_SECONDS,
             )
     except TimeoutError:
         logger.warning(
-            "battle {} demo answer timed out after {}s — degrading to deadline silence",
+            "battle {} {} answer timed out after {}s — degrading to deadline silence",
             battle_id,
+            label,
             DEMO_ANSWER_TIMEOUT_SECONDS,
         )
     except asyncio.CancelledError:
-        # Process shutdown (or a test tearing the task down). Leave the demo side
-        # to the deadline; do not re-raise into a bare fire-and-forget task.
-        logger.info("battle {} demo drive cancelled", battle_id)
+        # Process shutdown (or a test tearing the task down). Leave the side to
+        # the deadline; do not re-raise into a bare fire-and-forget task.
+        logger.info("battle {} {} drive cancelled", battle_id, label)
     except Exception as exc:
-        logger.warning("battle {} demo drive failed: {}", battle_id, exc)
+        logger.warning("battle {} {} drive failed: {}", battle_id, label, exc)
+
+
+async def _drive_demo_answer(session_factory, gate, battle: dict, api_key, base_url) -> None:
+    """Generate + submit the demo opponent's answer, detached and time-bounded."""
+    await _drive_platform_answer(
+        session_factory,
+        gate,
+        str(battle["id"]),
+        "demo",
+        lambda runner: runner.drive_demo_submission(battle, api_key, base_url),
+    )
+
+
+async def _spawn_contender_drives(session_factory, gate, battle: dict, api_key, base_url) -> None:
+    """Fire-and-forget BOTH contender sides' answers off the reconcile pass.
+
+    Same discipline as the demo drive, once per contender side: an in-process
+    guard, a cross-process Redis claim, a detached task under a hard timeout. The
+    claim is per (battle, side) — the two sides are two separate paid calls, so a
+    single per-battle claim would let one side's win silence the other.
+    """
+    battle_id = str(battle["id"])
+    for side in (Side.A, Side.B):
+        if battle.get(f"contender_{side.value}_id") is None:
+            continue
+        key = f"{battle_id}:{side.value}"
+        if key in _demo_inflight or not await _claim_demo_drive(gate, key, "contender"):
+            continue
+        task = asyncio.create_task(
+            _drive_platform_answer(
+                session_factory,
+                gate,
+                battle_id,
+                f"contender-{side.value}",
+                lambda runner, s=side: runner.drive_contender_submission(
+                    battle, s, api_key, base_url
+                ),
+            )
+        )
+        _demo_inflight[key] = task
+        task.add_done_callback(lambda _t, k=key: _demo_inflight.pop(k, None))
 
 
 async def _await_demo_drives() -> None:
@@ -2144,7 +2332,18 @@ async def reconcile_once(
     #    every other battle. The spawn returns immediately; add_submission inside it
     #    is guarded on status='running' alone (no lease needed), and a failure just
     #    leaves the demo side to the deadline's silence. Provider-gated.
+    #    An auto-battle (V72) takes the contender branch: both of ITS sides are
+    #    platform-run, so it starts without reservations or turn events and then
+    #    spawns one detached answer drive per side.
     for battle in await claim(BattleStatus.QUEUED, POLL_MAX_ATTEMPTS, POLL_LEASE_SECONDS):
+        if battle.get("contender_a_id"):
+            if await step(battle, "start-auto", lambda r, b: r.start_contender_battle(b, token)):
+                counts["started"] += 1
+                if provider is not None:
+                    await _spawn_contender_drives(
+                        session_factory, gate, battle, api_key, base_url
+                    )
+            continue
         if await step(battle, "start", lambda r, b: r.start_queued(b, token)):
             counts["started"] += 1
             if battle.get("is_demo") and provider is not None:

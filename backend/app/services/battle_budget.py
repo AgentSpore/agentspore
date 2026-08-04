@@ -183,15 +183,25 @@ class BattleJudgeBudgetService:
         judge_run_id: str,
         battle_lease_token: str,
         run_lease_token: str,
-        owner_a_user_id: str,
-        owner_b_user_id: str,
+        owner_a_user_id: str | None,
+        owner_b_user_id: str | None,
         provider: str,
         model: str,
     ) -> ReservationResult:
         """Reserve ONE call unit in a short independent transaction, or refuse.
 
+        Owners are NULLABLE because a contender side has none (V72): an
+        auto-battle is fought by two platform-run models, so there is no account
+        to charge and no per-owner quota to consult. Such a call is still
+        reserved — it spends the same provider budget — as ledger kind 'auto',
+        which counts against the global daily counter and the per-battle cap but
+        against nobody's personal quota. Passing ``str(None)`` here instead was a
+        DataError inside a broad except: the panel died, the battle settled with
+        no verdict, and the stuck rows pinned the matchmaker.
+
         Order (all before the provider request):
-          1. lock the global + both owner daily counters (sorted, deadlock-free);
+          1. lock the global + every EXISTING owner's daily counter (sorted,
+             deadlock-free);
           2. UNDER those locks, confirm both the battle lease and the raw
              judge-run lease are still live and owned by the supplied tokens
              (F1: locking first closes the reclaim-while-blocked double-pay race);
@@ -203,7 +213,9 @@ class BattleJudgeBudgetService:
         budget_day = current_budget_day()
         # Distinct owners are mandatory for a rated (paid) panel, but dedupe
         # defensively so a same-owner battle can never double-charge one owner.
-        owners = sorted({str(owner_a_user_id), str(owner_b_user_id)})
+        # A missing owner is dropped, not stringified: an auto-battle has none.
+        owners = sorted({str(o) for o in (owner_a_user_id, owner_b_user_id) if o})
+        kind = "judge" if owners else "auto"
 
         async with self._session_factory() as session, session.begin():
             # Serialise the counters this reservation touches BEFORE validating the
@@ -338,18 +350,20 @@ class BattleJudgeBudgetService:
                         INSERT INTO battle_judge_call_ledger
                             (battle_id, judge_run_id, owner_a_user_id,
                              owner_b_user_id, budget_day, provider_attempt_no,
-                             provider, model, status)
+                             provider, model, status, kind)
                         VALUES (CAST(:battle_id AS UUID), CAST(:run_id AS UUID),
                                 CAST(:owner_a AS UUID), CAST(:owner_b AS UUID),
-                                :day, :attempt_no, :provider, :model, 'reserved')
+                                :day, :attempt_no, :provider, :model, 'reserved',
+                                :kind)
                         RETURNING id
                         """
                     ),
                     {
                         "battle_id": str(battle_id),
                         "run_id": str(judge_run_id),
-                        "owner_a": str(owner_a_user_id),
-                        "owner_b": str(owner_b_user_id),
+                        "owner_a": str(owner_a_user_id) if owner_a_user_id else None,
+                        "owner_b": str(owner_b_user_id) if owner_b_user_id else None,
+                        "kind": kind,
                         "day": budget_day,
                         "attempt_no": attempt_no,
                         "provider": provider,
