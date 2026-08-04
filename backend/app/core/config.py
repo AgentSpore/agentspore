@@ -150,6 +150,13 @@ class Settings(BaseSettings):
     battle_breaker_spike_threshold: int = 100
     battle_breaker_spike_window_seconds: int = 60
     battle_breaker_ttl_seconds: int = 900
+    # Auto-battle stream (V72). Conservative by default because the free z.ai
+    # flash tier is the only one holding balance and tops out around three
+    # in-flight requests, while one battle costs two answer calls plus a judge
+    # panel: one new battle per 15 minutes, at most two live at once.
+    battle_auto_enabled: bool = True
+    battle_auto_interval_seconds: int = 900
+    battle_auto_max_running: int = 2
 
     # Reverse proxy trust — IPs/CIDRs whose X-Forwarded-For header is honoured.
     # Default covers local Caddy (127.0.0.1) and Docker bridge (172.16.0.0/12).

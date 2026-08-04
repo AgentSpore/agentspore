@@ -41,6 +41,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.rating import DEFAULT_ELO
 from app.schemas.battles import BattleStatus, JudgeRunStatus, Side, TaskSource, TaskStatus
 
 
@@ -1418,6 +1419,176 @@ class BattleRepository:
         )
         row = result.first()
         return str(row[0]) if row else None
+
+    # -- contenders and the auto-battle stream (V72) -------------------------
+
+    async def list_enabled_contenders(self) -> list[dict]:
+        """Every contender the matchmaker may field, oldest first.
+
+        ``system_prompt`` is deliberately not selected: the matchmaker only picks
+        a pair, and this is also the row the public route returns — an approach's
+        text must not travel where it does not have to.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT id, display_name, provider, model_id, approach_key, enabled
+                  FROM battle_contenders
+                 WHERE enabled = TRUE
+                 ORDER BY created_at, id
+                """
+            )
+        )
+        return [dict(row) for row in result.mappings()]
+
+    async def get_contender(self, contender_id: str) -> dict | None:
+        """One contender by id, enabled or not — a running battle must finish."""
+        result = await self.db.execute(
+            text(
+                "SELECT * FROM battle_contenders WHERE id = CAST(:cid AS UUID)"
+            ),
+            {"cid": str(contender_id)},
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def count_active_contender_battles(self) -> int:
+        """Auto-battles not yet terminal — the matchmaker's concurrency cap.
+
+        Counts every pre-terminal status, not just 'running': a battle queued a
+        second ago has already committed the platform to two answer calls and one
+        judge panel, so treating it as free would let one tick's battle and the
+        next tick's battle both be in flight against a 3-concurrency provider.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM battles
+                 WHERE contender_a_id IS NOT NULL
+                   AND status IN ('queued', 'running', 'judging')
+                """
+            )
+        )
+        return int(result.scalar_one())
+
+    async def pick_auto_task(self) -> dict | None:
+        """Claim the least recently used ready task for an auto-battle.
+
+        Marks the task used in the SAME statement that returns it, so two
+        matchmaker ticks racing on one pool cannot both draw the same row and
+        run the identical battle twice. Only admin-'generated' tasks are drawn:
+        a user submission is bound by the quarantine rules in admit_to_queue and
+        has no business entering a battle through this path.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battle_tasks
+                   SET use_count = use_count + 1, last_used_at = NOW()
+                 WHERE id = (
+                    SELECT id FROM battle_tasks
+                     WHERE status = 'ready' AND source = 'generated'
+                     ORDER BY last_used_at NULLS FIRST, created_at
+                     LIMIT 1
+                     FOR UPDATE SKIP LOCKED
+                 )
+                RETURNING id, title, prompt, rubric, category, difficulty,
+                          time_limit_seconds
+                """
+            )
+        )
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def create_contender_battle(
+        self, contender_a_id: str, contender_b_id: str, task: dict
+    ) -> str | None:
+        """Insert a ready-to-run contender duel, already queued. No commit.
+
+        An auto-battle skips the whole admission chain rather than reusing it,
+        because every step of that chain answers a question a contender does not
+        pose: consent (the platform owns both sides), reservation (a contender
+        cannot be double-booked — it is a model id, not an agent), and the
+        ready-check handshake (there is no agent to ACK). What it must NOT skip
+        is the task binding, so the row is inserted already bound and already
+        'queued', which is the exact shape battle_task_bound_from_queue requires.
+
+        ``rated_eligible`` is FALSE with reason 'auto': a contender has no owner
+        and no Elo, so this can never move a rating.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                INSERT INTO battles
+                    (contender_a_id, contender_b_id, status,
+                     agent_b_accepted_at, challenge_expires_at, queued_at,
+                     task_id, task_title_snapshot, task_prompt_snapshot,
+                     task_rubric_snapshot, time_limit_seconds_snapshot,
+                     task_category_filter, task_difficulty_filter,
+                     rated_eligible, rated_ineligibility_reason)
+                VALUES
+                    (CAST(:contender_a AS UUID), CAST(:contender_b AS UUID),
+                     'queued', NOW(),
+                     NOW() + make_interval(secs => :ttl), NOW(),
+                     CAST(:task_id AS UUID), :title, :prompt,
+                     CAST(:rubric AS JSONB), :time_limit,
+                     :category, :difficulty,
+                     FALSE, 'auto')
+                RETURNING id
+                """
+            ),
+            {
+                "contender_a": str(contender_a_id),
+                "contender_b": str(contender_b_id),
+                "ttl": int(task["time_limit_seconds"]) * 2,
+                "task_id": str(task["id"]),
+                "title": task["title"],
+                "prompt": task["prompt"],
+                "rubric": json.dumps(task["rubric"], default=str),
+                "time_limit": int(task["time_limit_seconds"]),
+                "category": task["category"],
+                "difficulty": task["difficulty"],
+            },
+        )
+        row = result.first()
+        return str(row[0]) if row else None
+
+    async def start_contender_battle(
+        self, battle_id: str, lease_token: str, lease_seconds: int
+    ) -> dict | None:
+        """queued -> running for a contender duel. No commit.
+
+        The agent-side twin (:meth:`start_if_still_eligible`) re-proves fighter
+        eligibility and both reservations. Neither predicate has a meaning here,
+        and evaluating them would be a guaranteed no-match rather than a check —
+        a contender is not a row in ``agents``. The status CAS and the lease are
+        the whole guard, and they are what make the transition single-winner.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battles
+                   SET status = 'running',
+                       started_at = NOW(),
+                       deadline_at = NOW()
+                           + make_interval(secs => time_limit_seconds_snapshot),
+                       lease_token = CAST(:lease_token AS UUID),
+                       lease_expires_at = NOW()
+                           + make_interval(secs => :lease_seconds),
+                       lease_attempt_count = 1
+                 WHERE id = CAST(:battle_id AS UUID)
+                   AND status = 'queued'
+                   AND contender_a_id IS NOT NULL
+                RETURNING *
+                """
+            ),
+            {
+                "battle_id": str(battle_id),
+                "lease_token": str(lease_token),
+                "lease_seconds": lease_seconds,
+            },
+        )
+        return self._one_or_none(result.mappings().first())
 
     async def find_demo_challenges_pending(self, limit: int) -> list[str]:
         """Ids of demo battles awaiting the platform opponent's auto-accept.
@@ -3629,6 +3800,7 @@ class BattleRepository:
             text(
                 """
                 SELECT b.agent_a_id, b.agent_b_id,
+                       b.contender_a_id, b.contender_b_id,
                        b.agent_a_owner_snapshot, b.agent_b_owner_snapshot,
                        b.rated_eligible, b.judging_stop_reason,
                        -- Backstop for the quarantine pool split (V70). The
@@ -3650,29 +3822,38 @@ class BattleRepository:
             {"battle_id": str(battle_id)},
         )
         row = self._one_or_none(battle.mappings().first())
-        if not row or not row["agent_b_id"]:
+        if not row or not (row["agent_b_id"] or row["contender_b_id"]):
             return None
 
-        ratings = await self.db.execute(
-            text(
-                """
-                SELECT id, battle_elo
-                  FROM agents
-                 WHERE id IN (CAST(:agent_a_id AS UUID), CAST(:agent_b_id AS UUID))
-                 ORDER BY id
-                   FOR UPDATE
-                """
-            ),
-            {"agent_a_id": str(row["agent_a_id"]), "agent_b_id": str(row["agent_b_id"])},
-        )
-        elo_by_agent = {str(r["id"]): r["battle_elo"] for r in ratings.mappings()}
-        if len(elo_by_agent) != 2:
-            return None
+        # Only agent sides are locked and rated. A contender has no agents row to
+        # lock and no Elo to move, so it contributes a placeholder rating that
+        # the caller never writes back: an auto-battle is rated_eligible=FALSE by
+        # construction, so apply_rating is not reached for either side.
+        agent_ids = [
+            str(row[key]) for key in ("agent_a_id", "agent_b_id") if row[key]
+        ]
+        elo_by_agent: dict[str, int] = {}
+        if agent_ids:
+            ratings = await self.db.execute(
+                text(
+                    """
+                    SELECT id, battle_elo
+                      FROM agents
+                     WHERE id = ANY(CAST(:agent_ids AS UUID[]))
+                     ORDER BY id
+                       FOR UPDATE
+                    """
+                ),
+                {"agent_ids": agent_ids},
+            )
+            elo_by_agent = {str(r["id"]): r["battle_elo"] for r in ratings.mappings()}
+            if len(elo_by_agent) != len(agent_ids):
+                return None
 
         return {
             **row,
-            "elo_a": elo_by_agent[str(row["agent_a_id"])],
-            "elo_b": elo_by_agent[str(row["agent_b_id"])],
+            "elo_a": elo_by_agent.get(str(row["agent_a_id"]), DEFAULT_ELO),
+            "elo_b": elo_by_agent.get(str(row["agent_b_id"]), DEFAULT_ELO),
         }
 
     async def apply_rating(self, agent_id: str, new_elo: int, outcome: str) -> bool:

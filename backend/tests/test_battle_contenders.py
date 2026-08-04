@@ -1,0 +1,420 @@
+"""Tests for contender auto-battles (V72) — a continuous stream of battles
+between DIFFERENT MODELS running DIFFERENT APPROACHES, with no human involved.
+
+Integration by necessity, like every other battle test here: the properties
+under test are arbitrated by real SQL against the real V66-V72 migrations on
+testcontainers Postgres — the exactly-one-fighter-per-side CHECK, the seeded
+rows, and the whole queued -> running -> judging -> completed drive. The
+provider is mocked at ``battle_judges.call_judge_model``, which is the one call
+path both contender answers and the judge panel go through.
+
+What each test falsifies is stated on it.
+"""
+
+from __future__ import annotations
+
+import uuid
+from contextlib import contextmanager
+from functools import partial
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import pytest
+import pytest_asyncio
+from conftest import split_sql_statements
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from testcontainers.postgres import PostgresContainer
+
+from app.repositories.battle_repo import BattleRepository
+from app.schemas.battles import Side
+from app.services.battle_runner import (
+    _await_demo_drives,
+    build_answer_messages,
+    reconcile_once,
+)
+from app.services.battle_service import BattleMatchmaker
+from app.services.connection_manager import DeliveryResult
+
+MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
+_MIG_FILES = [
+    "V65__agent_events.sql",
+    "V66__battles.sql",
+    "V67__battle_task_secrecy.sql",
+    "V68__battle_anti_abuse.sql",
+    "V69__battle_injection_stop_reason.sql",
+    "V70__battle_user_tasks.sql",
+    "V71__battle_demo_mode.sql",
+    "V72__battle_contenders.sql",
+]
+
+VALID_JUDGE_REPLY = (
+    '{"vote": "submission_alpha", "confidence": 0.9, "reasoning": "ok", '
+    '"scores": {"correctness": 1.0, "completeness": 1.0, "clarity": 1.0}}'
+)
+
+BASE_SCHEMA = """
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email TEXT NOT NULL,
+    is_verified BOOLEAN NOT NULL DEFAULT TRUE,
+    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS agents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    handle TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_hosted BOOLEAN NOT NULL DEFAULT FALSE,
+    owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+"""
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
+
+
+@pytest.fixture(scope="module")
+def pg_container():
+    with PostgresContainer("postgres:16-alpine") as pg:
+        yield pg
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def engine(pg_container):
+    async_url = pg_container.get_connection_url().replace("psycopg2", "asyncpg")
+    eng = create_async_engine(async_url, future=True)
+    sql = BASE_SCHEMA + ";" + ";".join(
+        (MIGRATIONS / name).read_text() for name in _MIG_FILES
+    )
+    async with eng.begin() as conn:
+        for stmt in split_sql_statements(sql):
+            if stmt.strip():
+                await conn.execute(text(stmt))
+    yield eng
+    await eng.dispose()
+
+
+@pytest.fixture(scope="module")
+def session_maker(engine):
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def db_session(session_maker):
+    async with session_maker() as session:
+        yield session
+
+
+@contextmanager
+def _no_transport():
+    queued = AsyncMock(return_value=DeliveryResult.QUEUED)
+    with (
+        patch("app.services.battle_service.dispatch_existing", queued),
+        patch("app.services.battle_runner.dispatch_existing", queued),
+    ):
+        yield
+
+
+async def _contender_ids(session) -> list[str]:
+    rows = await BattleRepository(session).list_enabled_contenders()
+    return [str(r["id"]) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# The seed: a contender is (model, approach), and both directions exist.
+# ---------------------------------------------------------------------------
+
+
+class TestContenderSeed:
+    async def test_seed_pairs_models_with_approaches_in_both_directions(
+        self, db_session
+    ) -> None:
+        """The seeded roster must show the same model under two approaches AND
+        the same approach under two models — the whole reason the table stores a
+        pair rather than a model id.
+
+        MUTATION: collapse the seed to one row per model. The one-model-two-
+        approaches assertion goes red.
+        """
+        rows = await BattleRepository(db_session).list_enabled_contenders()
+        assert len(rows) >= 5, "at least the five live-verified models"
+
+        by_model: dict[str, set[str]] = {}
+        by_approach: dict[str, set[str]] = {}
+        for row in rows:
+            by_model.setdefault(row["model_id"], set()).add(row["approach_key"])
+            by_approach.setdefault(row["approach_key"], set()).add(row["model_id"])
+
+        assert any(len(v) >= 2 for v in by_model.values()), "one model, two approaches"
+        assert any(len(v) >= 2 for v in by_approach.values()), "one approach, two models"
+        assert len(by_approach) >= 3, "at least three distinct approaches"
+
+    async def test_seed_excludes_the_unusable_providers(self, db_session) -> None:
+        """glm-4.7-flash times out, and groq/nebius/cerebras answer 403 or plain
+        HTML on this server, so none of them may be fielded."""
+        rows = await BattleRepository(db_session).list_enabled_contenders()
+        assert all(r["model_id"] != "glm-4.7-flash" for r in rows)
+        assert all(
+            r["provider"] not in {"groq", "nebius", "cerebras"} for r in rows
+        )
+
+    async def test_seeded_task_pool_is_not_empty(self, db_session) -> None:
+        """The matchmaker must have work on its FIRST tick, not after an operator
+        remembers to generate tasks."""
+        count = await db_session.execute(
+            text(
+                "SELECT COUNT(*) FROM battle_tasks "
+                "WHERE status = 'ready' AND source = 'generated'"
+            )
+        )
+        assert int(count.scalar_one()) >= 20
+
+    async def test_each_contender_carries_its_own_approach_prompt(
+        self, db_session
+    ) -> None:
+        """The approach IS a system prompt, and it is what the answer call sends.
+
+        MUTATION: make ``_answer_with_model`` ignore ``system_prompt`` and use the
+        demo framing instead. ``build_answer_messages`` then stops carrying the
+        contender's text and this assertion goes red.
+        """
+        repo = BattleRepository(db_session)
+        contender = await repo.get_contender((await _contender_ids(db_session))[0])
+        messages = build_answer_messages(
+            str(contender["system_prompt"]), "the task", [{"key": "correctness"}]
+        )
+        assert messages[0] == {
+            "role": "system",
+            "content": contender["system_prompt"],
+        }
+        assert "the task" in messages[1]["content"]
+
+
+# ---------------------------------------------------------------------------
+# The schema: exactly one fighter per side.
+# ---------------------------------------------------------------------------
+
+
+class TestSideExclusivity:
+    async def test_a_side_may_not_hold_both_an_agent_and_a_contender(
+        self, session_maker, db_session
+    ) -> None:
+        """MUTATION: drop battle_side_a_exactly_one_fighter — the insert below
+        succeeds and a battle carries two fighters on one side."""
+        contenders = await _contender_ids(db_session)
+        async with session_maker() as session:
+            uid = str(uuid.uuid4())
+            await session.execute(
+                text(
+                    "INSERT INTO users (id, email) VALUES (CAST(:i AS UUID), :e)"
+                ),
+                {"i": uid, "e": f"o-{uid[:8]}@example.test"},
+            )
+            aid = str(uuid.uuid4())
+            await session.execute(
+                text(
+                    "INSERT INTO agents (id, handle, owner_user_id) "
+                    "VALUES (CAST(:i AS UUID), :h, CAST(:o AS UUID))"
+                ),
+                {"i": aid, "h": f"f-{aid[:8]}", "o": uid},
+            )
+            with pytest.raises(IntegrityError):
+                await session.execute(
+                    text(
+                        "INSERT INTO battles (agent_a_id, contender_a_id, "
+                        "agent_a_owner_snapshot, challenge_expires_at) "
+                        "VALUES (CAST(:a AS UUID), CAST(:c AS UUID), "
+                        "CAST(:o AS UUID), NOW() + INTERVAL '1 hour')"
+                    ),
+                    {"a": aid, "c": contenders[0], "o": uid},
+                )
+            await session.rollback()
+
+    async def test_a_side_may_not_be_empty(self, session_maker) -> None:
+        """A battle with neither an agent nor a contender on side A has no
+        challenger at all."""
+        async with session_maker() as session:
+            with pytest.raises(IntegrityError):
+                await session.execute(
+                    text(
+                        "INSERT INTO battles (challenge_expires_at) "
+                        "VALUES (NOW() + INTERVAL '1 hour')"
+                    )
+                )
+            await session.rollback()
+
+    async def test_one_contender_may_not_fight_itself(
+        self, session_maker, db_session
+    ) -> None:
+        contenders = await _contender_ids(db_session)
+        async with session_maker() as session:
+            with pytest.raises(IntegrityError):
+                await session.execute(
+                    text(
+                        "INSERT INTO battles (contender_a_id, contender_b_id, "
+                        "challenge_expires_at) VALUES (CAST(:c AS UUID), "
+                        "CAST(:c AS UUID), NOW() + INTERVAL '1 hour')"
+                    ),
+                    {"c": contenders[0]},
+                )
+            await session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# The matchmaker: one battle per tick, capped, never starving.
+# ---------------------------------------------------------------------------
+
+
+class TestMatchmaker:
+    async def test_tick_creates_a_bound_queued_battle_between_two_contenders(
+        self, session_maker
+    ) -> None:
+        """One tick produces a battle that is ready to run: two DIFFERENT
+        contenders, a bound task, status 'queued', and unrated.
+
+        MUTATION: have create_contender_battle insert 'challenge_pending' — the
+        status assertion goes red, and nothing would ever drive the battle (the
+        accepted/reserved phases need agents).
+        """
+        battle_id = await BattleMatchmaker(session_maker).tick()
+        assert battle_id is not None
+        async with session_maker() as session:
+            row = await BattleRepository(session).get(battle_id)
+        assert row["status"] == "queued"
+        assert row["contender_a_id"] != row["contender_b_id"]
+        assert row["agent_a_id"] is None and row["agent_b_id"] is None
+        assert row["task_id"] is not None and row["task_prompt_snapshot"]
+        assert row["rated_eligible"] is False
+        assert row["rated_ineligibility_reason"] == "auto"
+
+    async def test_tick_respects_the_concurrency_cap(self, session_maker) -> None:
+        """The cap is the budget: z.ai holds balance only on the free flash tier
+        and tops out near three in-flight requests, so an uncapped matchmaker
+        wedges the page on 429s.
+
+        MUTATION: delete the count_active_contender_battles guard in tick(). The
+        second tick then creates a battle and this goes red.
+        """
+        matchmaker = BattleMatchmaker(session_maker)
+        matchmaker.settings.battle_auto_max_running = 1
+        try:
+            async with session_maker() as session:
+                live = await BattleRepository(session).count_active_contender_battles()
+            assert live >= 1, "the previous test left one live auto-battle"
+            assert await matchmaker.tick() is None
+        finally:
+            matchmaker.settings.battle_auto_max_running = 2
+
+    async def test_two_draws_take_different_tasks(self, session_maker) -> None:
+        """pick_auto_task claims in the same statement it reads, so two ticks
+        cannot bind the same task and run the identical battle twice."""
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            first = await repo.pick_auto_task()
+            second = await repo.pick_auto_task()
+            await session.commit()
+        assert first is not None and second is not None
+        assert first["id"] != second["id"]
+
+
+# ---------------------------------------------------------------------------
+# The drive: both sides answered by their own model, judged, settled unrated.
+# ---------------------------------------------------------------------------
+
+
+class TestAutoBattleDrive:
+    async def test_reconciler_runs_an_auto_battle_to_a_verdict(
+        self, session_maker
+    ) -> None:
+        """End to end with a mocked provider: queued -> running, BOTH contender
+        answers submitted, then judged and completed as unrated.
+
+        MUTATION: remove the contender branch in reconcile_once's queued phase.
+        start_queued then fails on the missing agents and the battle never leaves
+        'queued' — every assertion below goes red.
+        """
+        battle_id = await BattleMatchmaker(session_maker).tick()
+        assert battle_id is not None
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        answer = AsyncMock(return_value=VALID_JUDGE_REPLY)
+
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", answer):
+            # >= 1, not == 1: earlier tests in this module left their own
+            # auto-battles queued, and one pass starts every claimable row.
+            counts = await drive()
+            assert counts["started"] >= 1, counts
+            await _await_demo_drives()
+
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            row = await repo.get(battle_id)
+            subs = await repo.list_submissions(battle_id)
+        assert row["status"] == "running"
+        finals = {str(s["side"]) for s in subs if s["is_final"]}
+        assert finals == {Side.A.value, Side.B.value}, "both models answered"
+        assert all(s["content"] for s in subs if s["is_final"])
+
+        # Both sides are final, so close_deadline closes the battle early rather
+        # than waiting out the wall clock. The running lease taken at the start
+        # must be lapsed first — in production the next tick waits it out.
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET lease_token = NULL, lease_expires_at = NULL "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"b": battle_id},
+            )
+            await session.commit()
+
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", answer):
+            await drive()
+
+        async with session_maker() as session:
+            row = await BattleRepository(session).get(battle_id)
+        assert row["status"] == "completed", "reached a judged result"
+        assert row["is_rated"] is False, "an auto-battle never rates"
+
+    async def test_a_side_answers_with_its_own_model_and_prompt(
+        self, session_maker
+    ) -> None:
+        """The call each side makes is described by ITS contender row — the wire
+        model and the system prompt both come out of it. Two contenders on one
+        task is only a comparison if this holds.
+
+        MUTATION: hardcode DEMO_ANSWER_MODEL in drive_contender_submission. The
+        wire-model assertion goes red.
+        """
+        battle_id = await BattleMatchmaker(session_maker).tick()
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        answer = AsyncMock(return_value=VALID_JUDGE_REPLY)
+
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", answer):
+            await drive()
+            await _await_demo_drives()
+
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            row = await repo.get(battle_id)
+            sides = [
+                await repo.get_contender(str(row[f"contender_{side}_id"]))
+                for side in ("a", "b")
+            ]
+        sent = [call.kwargs for call in answer.await_args_list]
+        systems = {c["messages"][0]["content"] for c in sent}
+        models = " ".join(c["wire_model"] for c in sent)
+        for contender in sides:
+            assert contender["system_prompt"] in systems
+            assert contender["model_id"] in models
