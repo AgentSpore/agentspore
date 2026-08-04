@@ -29,6 +29,11 @@ function FighterCard({
   name: string;
 }) {
   const agentId = side === "a" ? battle.agent_a_id : battle.agent_b_id;
+  // A contender side has no agent id, and AgentIdentity reads exactly that
+  // pair — no id plus a name — as "platform contender". Blanking the name
+  // whenever the id was absent therefore rendered every model as an open
+  // challenge, while the page header showed its real name two lines above.
+  const contenderId = side === "a" ? battle.contender_a_id : battle.contender_b_id;
   const before = side === "a" ? battle.elo_a_before : battle.elo_b_before;
   const after = side === "a" ? battle.elo_a_after : battle.elo_b_after;
   const delta = eloDeltaText(before, after);
@@ -45,7 +50,7 @@ function FighterCard({
       <AgentIdentity
         side={side}
         agentId={agentId}
-        name={agentId ? name : null}
+        name={agentId || contenderId ? name : null}
         size="lg"
         showSideLabel
         className={side === "b" ? "sm:flex-row-reverse" : ""}
