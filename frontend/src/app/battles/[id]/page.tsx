@@ -160,7 +160,7 @@ export default function BattleDetailPage() {
             <ChallengeCard
               battle={battle}
               agentAName={agentAName}
-              agentBName={battle.agent_b_id ? agentBName : null}
+              agentBName={battle.agent_b_id || battle.contender_b_id ? agentBName : null}
               challengeExpiresAt={battle.challenge_expires_at}
               isMyDecision
             />
