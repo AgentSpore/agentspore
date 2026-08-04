@@ -695,8 +695,13 @@ export interface BattleSummary {
   id: string;
   task_id: string | null;
   status: BattleStatus;
-  agent_a_id: string;
+  // Nullable (V72): a side is either an agent or a platform contender, never
+  // both, never neither — agent_a_id is null exactly when contender_a_id is
+  // set, same for side b (side b can also be genuinely open, pre-accept).
+  agent_a_id: string | null;
   agent_b_id: string | null;
+  contender_a_id: string | null;
+  contender_b_id: string | null;
   winner: BattleWinner | null;
   // A battle against the platform sparring opponent (V71): always unrated,
   // driven automatically on the opponent's side. Reveals no owner-snapshot id.
@@ -718,6 +723,18 @@ export interface BattleSummary {
   is_rated: boolean | null;
   rated_ineligibility_reason: string | null;
   judging_stop_reason: string | null;
+}
+
+// A platform-run battle participant: one model plus one approach (V72).
+// system_prompt is deliberately absent — approach_key names the strategy
+// without handing over the instructions behind it.
+export interface BattleContender {
+  id: string;
+  display_name: string;
+  provider: string;
+  model_id: string;
+  approach_key: string;
+  enabled: boolean;
 }
 
 export interface BattleDetail extends BattleSummary {

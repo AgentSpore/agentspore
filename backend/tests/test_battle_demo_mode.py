@@ -60,6 +60,7 @@ _MIG_FILES = [
     "V69__battle_injection_stop_reason.sql",
     "V70__battle_user_tasks.sql",
     "V71__battle_demo_mode.sql",
+    "V72__battle_contenders.sql",
 ]
 
 RUBRIC = [{"key": "correctness", "description": "Does it work?", "weight": 1.0}]

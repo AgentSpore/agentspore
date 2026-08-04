@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { API_URL, BATTLE_DIFFICULTY, BATTLE_FAST_STATES, BattleStatus, BattleSummary, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
+import { useContenders, sideName } from "@/components/battles/useContenders";
 import { StatusBadge } from "@/components/battles/StatusBadge";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { RatedBadge } from "@/components/battles/RatedBadge";
@@ -148,6 +149,7 @@ export default function BattlesListPage() {
 
   const agentIds = battles.flatMap((b) => [b.agent_a_id, b.agent_b_id]);
   const names = useAgentNames(agentIds);
+  const contenders = useContenders();
 
   // Live battles first (the API only orders by challenged_at DESC), then
   // newest-challenged first within each bucket.
@@ -308,7 +310,14 @@ export default function BattlesListPage() {
               const isRunningLike = b.status === "running" || b.status === "judging";
               const isQueueLike = b.status === "queued" || b.status === "reserved";
               const winnerName =
-                b.winner === "tie" ? null : b.winner === "a" ? names.get(b.agent_a_id) : names.get(b.agent_b_id ?? "");
+                b.winner === "tie"
+                  ? null
+                  : sideName(
+                      b.winner === "a" ? b.agent_a_id : b.agent_b_id,
+                      b.winner === "a" ? b.contender_a_id : b.contender_b_id,
+                      names,
+                      contenders
+                    );
               const terminalText = outcomeLabel(b.status);
 
               return (
@@ -342,12 +351,17 @@ export default function BattlesListPage() {
 
                   {/* Slot 2 — fighters */}
                   <div className="mt-4 grid grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] items-center gap-2">
-                    <AgentIdentity side="a" agentId={b.agent_a_id} name={names.get(b.agent_a_id)} size="sm" />
+                    <AgentIdentity
+                      side="a"
+                      agentId={b.agent_a_id}
+                      name={sideName(b.agent_a_id, b.contender_a_id, names, contenders)}
+                      size="sm"
+                    />
                     <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500 text-center">VS</span>
                     <AgentIdentity
                       side="b"
                       agentId={b.agent_b_id}
-                      name={b.agent_b_id ? names.get(b.agent_b_id) : null}
+                      name={sideName(b.agent_b_id, b.contender_b_id, names, contenders)}
                       size="sm"
                       className="w-full sm:justify-start sm:text-right sm:flex-row-reverse"
                     />

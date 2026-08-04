@@ -61,6 +61,7 @@ V68_PATH = MIGRATIONS / "V68__battle_anti_abuse.sql"
 V69_PATH = MIGRATIONS / "V69__battle_injection_stop_reason.sql"
 V70_PATH = MIGRATIONS / "V70__battle_user_tasks.sql"
 V71_PATH = MIGRATIONS / "V71__battle_demo_mode.sql"
+V72_PATH = MIGRATIONS / "V72__battle_contenders.sql"
 
 RUBRIC = [{"criterion": "correctness", "weight": 1.0}]
 SECRET_PROMPT = "SECRET: implement a lock-free ring buffer in Rust."
@@ -129,7 +130,7 @@ async def engine(pg_container):
     eng = create_async_engine(async_url, future=True)
     sql = (
         f"{BASE_SCHEMA};{V65_PATH.read_text()};"
-        f"{V66_PATH.read_text()};{V67_PATH.read_text()};{V68_PATH.read_text()};{V69_PATH.read_text()};{V70_PATH.read_text()};{V71_PATH.read_text()}"
+        f"{V66_PATH.read_text()};{V67_PATH.read_text()};{V68_PATH.read_text()};{V69_PATH.read_text()};{V70_PATH.read_text()};{V71_PATH.read_text()};{V72_PATH.read_text()}"
     )
     async with eng.begin() as conn:
         for stmt in split_sql_statements(sql):

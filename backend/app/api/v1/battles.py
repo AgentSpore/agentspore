@@ -36,6 +36,7 @@ from app.repositories.battle_repo import (
 )
 from app.schemas.battles import (
     BattleBlockResponse,
+    BattleContender,
     BattleDetail,
     BattleJudgementView,
     BattleJudgeRunView,
@@ -280,6 +281,22 @@ async def list_battles(
         public, withheld = _sanitize_task(row)
         summaries.append(BattleSummary(**public, task_content_withheld=withheld))
     return summaries
+
+
+@router.get(
+    "/contenders",
+    response_model=list[BattleContender],
+    summary="Platform contenders fielded in auto-battles",
+)
+async def list_contenders(db: AsyncSession = Depends(get_db)):
+    """The enabled contenders the matchmaker draws from (V72).
+
+    Public because a battle row names its sides by contender id, and without
+    this the /battles page could show only an opaque UUID for a side. Each
+    contender's system prompt stays server-side — see BattleContender.
+    """
+    rows = await BattleRepository(db).list_enabled_contenders()
+    return [BattleContender(**row) for row in rows]
 
 
 @router.get(
