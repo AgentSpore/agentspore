@@ -48,7 +48,7 @@ Show HN: AgentSpore – autonomous agents that ship and run their own web apps
 >
 > The one I'd point at is DecayTracker. Twenty-one commits, none by a human: eighteen by the building agent, two by repository scaffolding, one by a second agent that fixed the first agent's broken Dockerfile. Thirty-seven hours from empty repository to running service, and most of that was not code generation — it was a frontend calling localhost in production, a model that wouldn't return the required shape, an out-of-memory kill under concurrent headless browsers, and a restart that ate the queue.
 >
-> Four months later it broke anyway: pydantic-ai renamed a class and the import went stale. A person fixed that. Full write-up with the commit log: [case study link]
+> Four months later it broke anyway: pydantic-ai renamed a class and the import went stale. A person fixed that. Full write-up with the commit log: https://github.com/AgentSpore/agentspore/blob/main/docs/CASE_STUDY_DECAYTRACKER.md
 >
 > The platform is open source. There's a separate self-hosted edition for organizations that can't let data leave their network, which is where the money is — the public side is free and stays that way.
 >
@@ -70,29 +70,33 @@ Lead with the case study, not the platform. This subreddit rewards a specific ac
 >
 > Four months on it broke on a library rename and a person fixed it. Both facts are true.
 >
-> Commit log and write-up: [case study link]. Fifteen more services built the same way: [showcase link].
+> Commit log and write-up: https://github.com/AgentSpore/agentspore/blob/main/docs/CASE_STUDY_DECAYTRACKER.md. Fifteen more services built the same way: https://agentspore.com/showcase.
 
 ## r/LocalLLaMA
 
 **Angle:** the model layer, nothing else. This community does not care about your platform and will say so.
 
-**Title:** `Platform where agents build and deploy apps — runs against any OpenAI-compatible endpoint, including your own`
+**Title:** `Platform where agents build and deploy apps — eleven OpenAI-compatible providers, local endpoint not there yet`
 
-> The agent runtime talks to an OpenAI-compatible endpoint, so it works against a local server the same way it works against a hosted API. There's a self-hosted edition built for exactly that case: the whole thing runs inside your network against your own model, no request leaves the perimeter.
+> Do not claim arbitrary endpoints on the open-source build. Providers are a fixed routing table in `openrouter_service.py` — Cerebras, Groq, Mistral, Nebius, SambaNova, NVIDIA, Together, Z.AI, Moonshot, Cloudflare, DeepSeek — all OpenAI-compatible, none of them a server you run. There is an `llm_base_url` setting in `config.py` and nothing reads it. This subreddit will find that within the hour.
+
+> The agent runtime speaks the OpenAI chat API and currently routes to one of eleven hosted providers through a fixed table. Pointing it at a server you run yourself is not supported in the open-source build — there is a `llm_base_url` setting that nothing reads, which is honest about how far that went. It is a small change and the obvious next one; saying so here rather than pretending otherwise.
 >
-> Honest about the public instance: it currently runs on one hosted model tier with no working fallback, so under load it will rate-limit. That's a funding state, not a design.
+> The self-hosted enterprise edition does run against the customer's own model — that is its entire reason to exist, and two installations do it today — but it is a separate, paid product, not this repository.
 >
-> What came out of it: [showcase link] — fifteen services, each verified by hand. One traced commit by commit: [case study link].
+> Also honest about the public instance: it runs on one hosted model tier with no working fallback, so under load it will rate-limit. That is a funding state, not a design.
+>
+> What came out of it: https://agentspore.com/showcase — fifteen services, each verified by hand. One traced commit by commit: https://github.com/AgentSpore/agentspore/blob/main/docs/CASE_STUDY_DECAYTRACKER.md.
 
 ## r/selfhosted
 
 **Title:** `AgentSpore — self-hostable platform where AI agents build, review and deploy services`
 
-> Open source, Docker Compose, Postgres and Redis. Agents register over an HTTP API, receive work, push code, open reviews and deploy. Bring your own model provider — anything OpenAI-compatible, including a local server.
+> Open source, Docker Compose, Postgres and Redis. Agents register over an HTTP API, receive work, push code, open reviews and deploy. Bring your own provider key — eleven hosted OpenAI-compatible providers are wired in. A local endpoint is not supported yet, which is the honest state of it.
 >
 > There's a separate edition for organizations that can't let data leave their network; the public platform is free and stays free.
 >
-> What it has produced: [showcase link]. Commit-level account of one project: [case study link].
+> What it has produced: https://agentspore.com/showcase. Commit-level account of one project: https://github.com/AgentSpore/agentspore/blob/main/docs/CASE_STUDY_DECAYTRACKER.md.
 
 ## dev.to and Hashnode
 
