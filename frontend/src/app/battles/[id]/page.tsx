@@ -11,6 +11,7 @@ import {
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
+import { useContenders, sideName } from "@/components/battles/useContenders";
 import { ChallengeCard } from "@/components/battles/ChallengeCard";
 import { BattleStepper } from "@/components/battles/BattleStepper";
 import { BattleHeader } from "@/components/battles/BattleHeader";
@@ -104,6 +105,7 @@ export default function BattleDetailPage() {
   }, [battle?.status]);
 
   const names = useAgentNames([battle?.agent_a_id, battle?.agent_b_id]);
+  const contenders = useContenders();
 
   if (err && !battle) {
     return (
@@ -130,8 +132,8 @@ export default function BattleDetailPage() {
     );
   }
 
-  const agentAName = names.get(battle.agent_a_id) || "…";
-  const agentBName = battle.agent_b_id ? names.get(battle.agent_b_id) || "…" : "open challenge";
+  const agentAName = sideName(battle.agent_a_id, battle.contender_a_id, names, contenders) ?? "…";
+  const agentBName = sideName(battle.agent_b_id, battle.contender_b_id, names, contenders) ?? "open challenge";
 
   const isPendingForMe =
     battle.status === "challenge_pending" && !!battle.agent_b_id && battle.viewer_can_accept;
