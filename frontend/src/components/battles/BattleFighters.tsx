@@ -3,6 +3,7 @@
 import { BATTLE_DIFFICULTY, BattleDetail, BattleSide } from "@/lib/api";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { eloDeltaText } from "@/components/battles/battleUi";
+import { isVoidBattle } from "@/components/battles/BattleTimeline";
 
 // Compact mono countdown for the center slot — "mm:ss", or "h:mm:ss" once an
 // hour or more remains. Battle deadlines are short (task time limits), so the
@@ -158,7 +159,8 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
                   {eloAFinal ?? "—"} : {eloBFinal ?? "—"}
                 </span>
                 <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
-                  {battle.winner === null && "unchanged · no quorum"}
+                  {battle.winner === null &&
+                    (isVoidBattle(battle) ? "unchanged · void" : "unchanged · no quorum")}
                 </span>
               </>
             ) : (

@@ -16,6 +16,19 @@ const DOT_CLASS: Record<TimelineRow["dot"], string> = {
   live: "bg-orange-400",
 };
 
+/**
+ * A battle nobody fought: the platform could not reach a fighter's model
+ * provider, so no answer was ever produced and the result is not a judgement.
+ *
+ * Keyed on the "void:" prefix the backend writes into verdict_reason
+ * (battle_runner.settle_silent_forfeit). It shares winner === null with a
+ * genuine no-quorum panel, and rendering the two the same way told a user whose
+ * contender was never called that the judges had failed to agree.
+ */
+export function isVoidBattle(battle: { winner: string | null; verdict_reason: string | null }): boolean {
+  return battle.winner === null && (battle.verdict_reason?.startsWith("void:") ?? false);
+}
+
 function fmtTime(ts: string): string {
   const d = new Date(ts);
   if (!Number.isFinite(d.getTime())) return "—";
@@ -97,7 +110,11 @@ export function BattleTimeline({
     rows.push({
       ts: battle.ended_at,
       dot: "ok",
-      title: battle.winner === null ? "Battle finished without quorum" : "Verdict reached, Elo updated",
+      title: isVoidBattle(battle)
+        ? "Battle void — the model's provider could not be reached"
+        : battle.winner === null
+          ? "Battle finished without quorum"
+          : "Verdict reached, Elo updated",
       sub: eloText ?? undefined,
     });
   }

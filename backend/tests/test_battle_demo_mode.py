@@ -41,8 +41,10 @@ from app.services.battle_judges import (
     replicate_seed,
 )
 from app.services.battle_runner import (
+    ANSWER_DRIVE_BUDGET_SECONDS,
     DEMO_ANSWER_MAX_TOKENS,
     DEMO_ANSWER_TIMEOUT_SECONDS,
+    PROVIDER_UNREACHABLE_ERROR,
     BattleRunner,
     _await_demo_drives,
     _demo_inflight,
@@ -50,6 +52,7 @@ from app.services.battle_runner import (
 )
 from app.services.battle_service import BattleService
 from app.services.connection_manager import DeliveryResult
+from app.services.llm_gate import DEFAULT_WAIT_SECONDS as GATE_WAIT_SECONDS
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 _MIG_FILES = [
@@ -524,16 +527,22 @@ class TestDemoAutoDrive:
                 t.cancel()
             await _await_demo_drives()
 
-    async def test_demo_timeout_degrades_to_deadline_silence(
+    async def test_demo_timeout_records_unreachable_and_voids(
         self, session_maker, db_session, task_pool
     ) -> None:
-        """When the demo answer call times out, the demo side writes nothing and
-        close_deadline synthesizes silent-fighter, so the battle is still judged.
+        """When the demo answer times out, the demo side is recorded UNREACHABLE
+        and the battle VOIDS. Deliberately rewritten.
 
-        Drives the demo battle to running with the answer call SLOWER than the
-        hard timeout, awaits the detached drive (which gives up), then lapses the
-        deadline and runs one more pass: close_deadline fills the demo side with a
-        truncated silent submission and the battle reaches a verdict.
+        This test previously asserted "timed-out demo answer wrote nothing", and
+        that assertion is why the slow-unreachable defect stayed green: writing
+        nothing is exactly what let close_deadline record a silent fighter, and
+        settlement then took a provider that was never reached for a fighter that
+        answered nothing. Under the void rule that would be a LOSS for a model
+        nobody called, so the old expectation is not something to preserve.
+
+        Drives the demo battle to running with the answer call slower than the
+        drive budget, awaits the detached drive (which gives up), and asserts the
+        drive itself recorded the marker.
         """
         battle_id, agent_a, agent_b, _, _ = await _make_demo_challenge(db_session)
         provider = {"api_key": "k", "base_url": "http://unused"}
@@ -558,14 +567,14 @@ class TestDemoAutoDrive:
             )
             await session.commit()
 
-        # A demo answer call slower than the hard timeout: the detached drive
-        # aborts it and writes nothing.
+        # A demo answer call slower than the whole drive budget: the outer
+        # wait_for gives up, and the drive records WHY the side is empty.
         async def too_slow(*_a, **_k):
             await asyncio.sleep(30)
             return VALID_JUDGE_REPLY
 
         with (
-            patch("app.services.battle_runner.DEMO_ANSWER_TIMEOUT_SECONDS", 0.05),
+            patch("app.services.battle_runner.ANSWER_DRIVE_BUDGET_SECONDS", 0.05),
             _no_transport(),
             patch("app.services.battle_runner.call_judge_model", too_slow),
         ):
@@ -575,7 +584,10 @@ class TestDemoAutoDrive:
         async with session_maker() as session:
             subs = await BattleRepository(session).list_submissions(battle_id)
         demo_finals = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
-        assert demo_finals == [], "timed-out demo answer wrote nothing"
+        assert len(demo_finals) == 1, "the drive recorded the side rather than vanishing"
+        assert demo_finals[0]["error"].startswith(PROVIDER_UNREACHABLE_ERROR), (
+            "a provider that never answered is unreachable, not a silent fighter"
+        )
 
         # User submits, deadline lapses, one more pass -> silent demo side, judged.
         async with session_maker() as session:
@@ -601,10 +613,12 @@ class TestDemoAutoDrive:
         async with session_maker() as session:
             b = await BattleRepository(session).get(battle_id)
             subs = await BattleRepository(session).list_submissions(battle_id)
-        assert b["status"] == "completed", "reached a judged result despite demo timeout"
+        assert b["status"] == "completed", "reached a terminal state despite the timeout"
+        assert b["winner"] is None, "a battle the provider never served has no winner"
+        assert "void" in b["verdict_reason"]
         demo_finals = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
         assert len(demo_finals) == 1 and demo_finals[0]["truncated"] is True, (
-            "demo side is silent-fighter (truncated), not a live answer"
+            "demo side is empty (truncated), not a live answer"
         )
 
     async def test_demo_opponent_never_declines(
@@ -843,8 +857,8 @@ class TestDemoAnswerModelRouting:
             "demo answer uses the wide budget, NOT the judge's 1200 cap that "
             "kimi's reasoning exhausted before emitting any content"
         )
-        assert kwargs["http_timeout"] == 240.0, (
-            "demo answer overrides the 60s judge HTTP ceiling; a full kimi answer "
+        assert kwargs["http_timeout"] == DEMO_ANSWER_TIMEOUT_SECONDS == 180.0, (
+            "demo answer overrides the judge HTTP ceiling; a full kimi answer "
             "takes ~120s and the tight ceiling would abort it as a timeout"
         )
 
@@ -927,11 +941,20 @@ class TestDemoAnswerModelRouting:
             "kimi judging must be at temperature 1.0, never the 0.7 default"
         )
 
-    async def test_demo_answer_timeout_is_generous(self) -> None:
-        """The detached demo answer's hard ceiling is 240s — kimi reasons at the
-        wide DEMO_ANSWER_MAX_TOKENS budget then answers, which the earlier 90s
-        bound could clip, still well inside the ~15-minute battle deadline. The
-        answer is detached, so a longer bound cannot freeze the reconcile pass;
-        it only bounds the background task's lifetime.
+    async def test_demo_answer_timeout_is_generous_and_the_drive_outlasts_it(
+        self,
+    ) -> None:
+        """The PER-ATTEMPT ceiling is 180s — kimi reasons at the wide
+        DEMO_ANSWER_MAX_TOKENS budget then answers (~120s measured), which the
+        earlier 90s bound could clip, still far inside the battle deadline.
+
+        The outer drive budget must be strictly LARGER, and by enough for both
+        attempts: while the two were equal at 240, the outer wait_for cancelled a
+        hung provider at or before httpx raised, so no transport failure was ever
+        recorded and a model that was never reached settled as a LOSS.
         """
-        assert DEMO_ANSWER_TIMEOUT_SECONDS == 240.0
+        assert DEMO_ANSWER_TIMEOUT_SECONDS == 180.0
+        assert ANSWER_DRIVE_BUDGET_SECONDS > DEMO_ANSWER_TIMEOUT_SECONDS
+        # Both attempts plus their gate waits and the backoff must fit.
+        worst_case = 2 * (GATE_WAIT_SECONDS + DEMO_ANSWER_TIMEOUT_SECONDS) + 2.0
+        assert ANSWER_DRIVE_BUDGET_SECONDS >= worst_case
