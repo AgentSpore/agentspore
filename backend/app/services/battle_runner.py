@@ -206,6 +206,10 @@ PROVIDER_UNREACHABLE_ERROR = "provider unreachable"
 # upstream blip (mistral answered 500/503 intermittently), and it adds no
 # CONCURRENT load because the first attempt's gate slot is released before the
 # second asks for one.
+#
+# The wall clock must admit both attempts or the retry is decorative:
+# 2 x (gate wait 20 + http 180) + 2s backoff = 402s, against a 420s drive
+# budget. Change any of the four and redo that sum.
 _ANSWER_ATTEMPTS = 2
 _ANSWER_RETRY_BACKOFF_SECONDS = 2.0
 
@@ -233,23 +237,33 @@ DEMO_ANSWER_MODEL = "moonshot/kimi-k3"
 DEMO_ANSWER_MAX_TOKENS = 8192
 
 # Hard ceiling on the demo opponent's live answer call. The demo answer is the
-# ONLY step in a reconcile pass that awaits a provider, and it now runs detached
-# (see _spawn_demo_drive) so it can never freeze the pass — but a hung provider
-# would still leak a background task forever without this bound. On timeout the
-# task writes nothing and close_deadline degrades the demo side to silent-fighter,
-# so the battle is still judged. 240s comfortably covers a kimi-k3 reasoning +
-# answer at the wider DEMO_ANSWER_MAX_TOKENS budget and still lands well inside
-# the ~15-minute battle deadline.
-DEMO_ANSWER_TIMEOUT_SECONDS = 240.0
+# ONLY step in a reconcile pass that awaits a provider, and it runs detached (see
+# _spawn_demo_drive). PER-ATTEMPT ceiling; ANSWER_DRIVE_BUDGET_SECONDS bounds the
+# whole drive.
+# 180, and it must stay strictly BELOW the outer budget: while the two were both
+# 240, a hung provider was cancelled by the outer wait_for at or before httpx
+# raised, so no transport failure was ever recorded and a model that was never
+# reached settled as a LOSS. A kimi answer measures ~120s, so 180 fits.
+DEMO_ANSWER_TIMEOUT_SECONDS = 180.0
+
+# Hard ceiling on ONE detached drive: gate wait + HTTP, twice, plus the backoff.
+#
+#   2 x (20s gate wait + 180s http) + 2s backoff = 402s worst case
+#
+# 420 is that sum plus headroom, which is what makes the retry reachable at all:
+# at the old budget the second attempt could only run if the first failed FAST,
+# so the slow-failure class it exists for never got one. Still inside the
+# shortest battle deadline (600s), so a drive cannot outlive its battle.
+ANSWER_DRIVE_BUDGET_SECONDS = 420.0
 
 # TTL on the cross-process demo-drive claim (Redis SET NX EX). uvicorn runs 4
 # workers and each holds its OWN in-process _demo_inflight guard, so absent a
 # shared claim up to 4 workers each PAY for the same demo answer. The claim
-# admits exactly one worker per battle; the TTL only has to outlive one drive
-# attempt (timeout + headroom) — it is never released, so the winning drive's
-# final submission (and the already_final short-circuit) prevents any re-pay,
-# and a failed drive is retried only after the TTL lapses, not 4× at once.
-DEMO_DRIVE_CLAIM_TTL_SECONDS = int(DEMO_ANSWER_TIMEOUT_SECONDS) + 30
+# admits exactly one worker per battle; the TTL only has to outlive one whole
+# drive — it is never released, so the winning drive's final submission (and the
+# already_final short-circuit) prevents any re-pay, and a failed drive is retried
+# only after the TTL lapses, not 4x at once.
+DEMO_DRIVE_CLAIM_TTL_SECONDS = int(ANSWER_DRIVE_BUDGET_SECONDS) + 30
 
 
 # The demo opponent's system framing. Deliberately plain: the demo agent is a
@@ -880,9 +894,9 @@ class BattleRunner:
         Idempotent AND no-repeat-spend: if side B already carries a final
         submission this returns False WITHOUT calling the provider, so a battle
         re-polled every reconcile tick spends exactly one answer call, not one
-        per tick. A provider/transport failure returns False and writes nothing —
-        close_deadline then synthesizes silence for the demo side at the deadline,
-        so the battle still reaches a judged result and the demo side never blocks.
+        per tick. A provider/transport failure returns False after RECORDING the
+        side as unreachable, so the battle voids rather than handing the user's
+        agent a win against an opponent that was never asked.
 
         The answer generation call is a FIGHTER's answer, not a judge call, so it
         is budgeted the same way a real fighter's answer is — i.e. not against the
@@ -913,7 +927,7 @@ class BattleRunner:
             # Same distinction the contender path makes: the demo opponent was
             # never asked, so the battle voids rather than handing the user's
             # agent a win it did not earn.
-            await self._record_unreachable(battle_id, Side.B, exc)
+            await self.record_unreachable(battle_id, Side.B, _unreachable_kind(exc))
             return False
         if answer is None:
             return False
@@ -992,7 +1006,7 @@ class BattleRunner:
         try:
             answer = await self._answer_with_retry(current, spec, api_key, base_url)
         except JudgeTransportError as exc:
-            await self._record_unreachable(battle_id, side, exc)
+            await self.record_unreachable(battle_id, side, _unreachable_kind(exc))
             return False
         if answer is None:
             return False
@@ -1040,37 +1054,54 @@ class BattleRunner:
                 await asyncio.sleep(_ANSWER_RETRY_BACKOFF_SECONDS)
         return None  # unreachable: the loop either returns or raises
 
-    async def _record_unreachable(
-        self, battle_id: str, side: Side, exc: JudgeTransportError
-    ) -> None:
+    async def record_unreachable(self, battle_id: str, side: Side, why: str) -> bool:
         """Mark this side empty BECAUSE the provider could not be reached.
 
         The row is what carries the distinction to settlement: an empty final
         whose error starts with PROVIDER_UNREACHABLE_ERROR voids the battle,
         while an empty final with any other error (or none) is a forfeit. Writing
-        it here rather than leaving the side blank also means the battle stops
-        waiting out its whole deadline for an answer that will never come.
+        it also lets the battle finish as soon as the OTHER side is final, rather
+        than waiting out a deadline for an answer that will never come.
+
+        Returns whether the row was actually written. False is REACHABLE and must
+        not be reported as a void: the drive runs detached for minutes, so another
+        worker's close_deadline can already have written the silent-fighter row
+        for this side, and add_submission then refuses ours. The marker is lost
+        and the battle will forfeit — so the disagreement is logged as the race it
+        is, instead of a line claiming an outcome that will not happen.
 
         Only the failure CLASS is stored, never the provider's response body: it
         is attacker-influenced text that would land in a public verdict.
         """
-        await self.repo.add_submission(
+        accepted = await self.repo.add_submission(
             battle_id=battle_id,
             side=side,
             seq_no=SILENT_FIGHTER_SEQ_NO,
             content=None,
             is_final=True,
             truncated=True,
-            error=f"{PROVIDER_UNREACHABLE_ERROR}: {_unreachable_kind(exc)}",
+            error=f"{PROVIDER_UNREACHABLE_ERROR}: {why}",
             enforce_deadline=False,
         )
         await self.db.commit()
-        logger.warning(
-            "battle {} side {} unreachable provider ({}): battle will be void",
-            battle_id,
-            side.value,
-            _unreachable_kind(exc),
-        )
+        if accepted:
+            logger.warning(
+                "battle {} side {} unreachable provider ({}): battle will be void",
+                battle_id,
+                side.value,
+                why,
+            )
+        else:
+            logger.warning(
+                "battle {} side {} unreachable ({}) but the final slot was already "
+                "taken (battle no longer running, or another worker wrote the "
+                "silent-fighter row first) — the void marker is LOST and this "
+                "battle will settle as a forfeit",
+                battle_id,
+                side.value,
+                why,
+            )
+        return accepted
 
     async def _generate_demo_answer(
         self, battle: dict, api_key: str, base_url: str
@@ -1084,11 +1115,13 @@ class BattleRunner:
         api_key are resolved here via OpenRouterService — falling back to the
         judge credentials threaded in only when moonshot is unconfigured. It also
         REQUIRES temperature=1, applied through judge_temperature_for so kimi is
-        not silently sampled wrong. Returns the answer capped to
-        MAX_SUBMISSION_CHARS, or None on any transport failure (the caller
-        degrades to deadline silence).
+        not silently sampled wrong. Goes through the same bounded retry the
+        contender path uses — one failure mode, one behaviour. Returns the answer
+        capped to MAX_SUBMISSION_CHARS, or None when the model answered with
+        nothing; a transport failure PROPAGATES so the caller can tell the two
+        apart.
         """
-        return await self._answer_with_model(
+        return await self._answer_with_retry(
             battle,
             AnswerSpec(DEMO_ANSWER_MODEL, _DEMO_ANSWER_SYSTEM, _SEED_SLOT[Side.B]),
             api_key,
@@ -1110,8 +1143,9 @@ class BattleRunner:
         Credentials are resolved PER MODEL, so a contender on a different
         provider than the judge brings its own; the judge credentials threaded in
         are only the fallback for an unconfigured provider. Returns the answer
-        capped to MAX_SUBMISSION_CHARS, or None on any transport failure (the
-        caller degrades to deadline silence).
+        capped to MAX_SUBMISSION_CHARS, or None when the model answered with
+        nothing. A transport failure RAISES: "never reached" and "produced
+        nothing" settle differently, so they must not share a return value.
         """
         prompt = battle.get("task_prompt_snapshot")
         if not prompt:
@@ -1123,6 +1157,7 @@ class BattleRunner:
 
         from app.services.openrouter_service import (  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
             OpenRouterService,
+            _provider_prefix,
         )
 
         creds = OpenRouterService().resolve_provider(spec.model)
@@ -1141,7 +1176,13 @@ class BattleRunner:
                 wire_model=wire_model_name(spec.model),
                 temperature=judge_temperature_for(spec.model),
                 seed_field=seed_field_for(spec.model),
-                provider=spec.model.rsplit("/", 1)[0] if "/" in spec.model else None,
+                # _provider_prefix, not a hand-rolled split: it is the SAME
+                # helper resolve_provider uses to pick this call's credentials
+                # (it lowercases, strips and partitions on the FIRST slash), so
+                # the account we gate on and the account we authenticate as
+                # cannot disagree. A hand-rolled split let " Zai/glm-4.5" mint a
+                # second slot pool for one account.
+                provider=_provider_prefix(spec.model) or None,
                 # A reasoning model answering a real task needs far more room than
                 # the tight judging default, or it truncates to empty content.
                 max_tokens=DEMO_ANSWER_MAX_TOKENS,
@@ -1519,7 +1560,7 @@ class BattleRunner:
 
         A side is silent when its final row has empty content — the shape
         close_deadline writes for a fighter that said nothing before the
-        deadline, and the shape :meth:`_record_unreachable` writes when the
+        deadline, and the shape :meth:`record_unreachable` writes when the
         provider could not be reached. Emptiness is read from the CONTENT,
         because that is what would reach the panel; the accompanying ``error``
         is what separates the two causes, and they settle differently.
@@ -2328,36 +2369,71 @@ async def _spawn_demo_drive(session_factory, gate, battle: dict, api_key, base_u
     task.add_done_callback(lambda _t, bid=battle_id: _demo_inflight.pop(bid, None))
 
 
-async def _drive_platform_answer(
-    session_factory, gate, battle_id: str, label: str, produce
-) -> None:
-    """Run one detached, time-bounded answer drive. Never propagates.
+@dataclass(frozen=True)
+class DriveTarget:
+    """Which side of which battle a detached drive is answering for."""
 
-    Opens its OWN short session (invariant: never the reconcile session). Every
-    failure — timeout, transport, shutdown cancellation — is swallowed here on
-    purpose: the side then falls to close_deadline's silent-fighter path, so the
-    battle is still judged. ``produce`` receives the runner and returns the
-    coroutine that generates and submits the answer.
+    battle_id: str
+    side: Side
+    label: str
+
+
+async def _drive_platform_answer(session_factory, gate, target: DriveTarget, produce) -> None:
+    """Run one detached, budget-bounded answer drive. Never propagates.
+
+    Opens its OWN short session (invariant: never the reconcile session).
+
+    A drive that runs out of budget, or is cancelled at shutdown, RECORDS the
+    side as unreachable before returning. Swallowing those two silently was the
+    same defect the void mechanism exists to fix, one layer up: the drive wrote
+    nothing, close_deadline then wrote silent-fighter, and a model that was never
+    reached was settled as having lost. They are recorded on a FRESH session,
+    because the one the cancelled work was using may be mid-statement.
+
+    An ordinary exception is still only logged: it is a bug in our own code, not
+    evidence about the provider, and inventing an unreachable verdict from it
+    would void battles for reasons that have nothing to do with reachability.
     """
     try:
         async with session_factory() as session:
             await asyncio.wait_for(
                 produce(BattleRunner(session, gate)),
-                timeout=DEMO_ANSWER_TIMEOUT_SECONDS,
+                timeout=ANSWER_DRIVE_BUDGET_SECONDS,
             )
     except TimeoutError:
         logger.warning(
-            "battle {} {} answer timed out after {}s — degrading to deadline silence",
-            battle_id,
-            label,
-            DEMO_ANSWER_TIMEOUT_SECONDS,
+            "battle {} {} drive exceeded its {}s budget — recording unreachable",
+            target.battle_id,
+            target.label,
+            ANSWER_DRIVE_BUDGET_SECONDS,
         )
+        await _record_drive_unreachable(session_factory, gate, target, "drive budget exceeded")
     except asyncio.CancelledError:
-        # Process shutdown (or a test tearing the task down). Leave the side to
-        # the deadline; do not re-raise into a bare fire-and-forget task.
-        logger.info("battle {} {} drive cancelled", battle_id, label)
+        # Process shutdown (or a test tearing the task down). The model was not
+        # reached, so the side must not settle as a loss.
+        logger.info("battle {} {} drive cancelled", target.battle_id, target.label)
+        await _record_drive_unreachable(session_factory, gate, target, "drive cancelled")
     except Exception as exc:
-        logger.warning("battle {} {} drive failed: {}", battle_id, label, exc)
+        logger.warning("battle {} {} drive failed: {}", target.battle_id, target.label, exc)
+
+
+async def _record_drive_unreachable(
+    session_factory, gate, target: DriveTarget, why: str
+) -> None:
+    """Write the unreachable marker for a drive that never got an answer out.
+
+    Its own session and its own try: this runs on the failure path of a detached
+    task, so it must not be able to raise into one.
+    """
+    try:
+        async with session_factory() as session:
+            await BattleRunner(session, gate).record_unreachable(
+                target.battle_id, target.side, why
+            )
+    except Exception as exc:
+        logger.warning(
+            "battle {} {} could not record unreachable: {}", target.battle_id, target.label, exc
+        )
 
 
 async def _drive_demo_answer(session_factory, gate, battle: dict, api_key, base_url) -> None:
@@ -2365,8 +2441,7 @@ async def _drive_demo_answer(session_factory, gate, battle: dict, api_key, base_
     await _drive_platform_answer(
         session_factory,
         gate,
-        str(battle["id"]),
-        "demo",
+        DriveTarget(str(battle["id"]), Side.B, "demo"),
         lambda runner: runner.drive_demo_submission(battle, api_key, base_url),
     )
 
@@ -2390,8 +2465,7 @@ async def _spawn_contender_drives(session_factory, gate, battle: dict, api_key, 
             _drive_platform_answer(
                 session_factory,
                 gate,
-                battle_id,
-                f"contender-{side.value}",
+                DriveTarget(battle_id, side, f"contender-{side.value}"),
                 lambda runner, s=side: runner.drive_contender_submission(
                     battle, s, api_key, base_url
                 ),

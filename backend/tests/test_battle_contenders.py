@@ -13,6 +13,7 @@ What each test falsifies is stated on it.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from contextlib import contextmanager
 from functools import partial
@@ -33,6 +34,8 @@ from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side
 from app.services.battle_judges import REPLICATE_COUNT, JudgeTransportError
 from app.services.battle_runner import (
+    PROVIDER_UNREACHABLE_ERROR,
+    BattleRunner,
     _await_demo_drives,
     build_answer_messages,
     reconcile_once,
@@ -740,3 +743,99 @@ class TestUnreachableProviderVoids:
         assert seen.count(sides["b"]) == 2, "failed once, retried once"
         assert row["status"] == "completed"
         assert row["winner"] in {"a", "b", "tie"}, "a judged result, not a void"
+
+
+class TestDriveLevelUnreachable:
+    """The layer the other tests skip.
+
+    Every void test above injects its failure at the call_judge_model boundary,
+    so none of them exercises the drive's own failure paths — which is where the
+    void mechanism fails OPEN to a forfeit, and where the slow-unreachable defect
+    lived.
+    """
+
+    async def test_a_provider_that_hangs_past_the_drive_budget_voids(
+        self, session_maker
+    ) -> None:
+        """A hung provider must be recorded by the DRIVE, not left to the deadline.
+
+        MUTATION: drop the _record_drive_unreachable call from the TimeoutError
+        branch. The row never appears, close_deadline writes silent-fighter, and
+        the battle forfeits — the exact defect, restored.
+        """
+        battle_id = await _fresh_auto_battle(session_maker)
+        sides = await _contender_ident(session_maker, battle_id)
+        drive = partial(
+            reconcile_once,
+            session_factory=session_maker,
+            gate=None,
+            provider={"api_key": "k", "base_url": "http://unused"},
+        )
+
+        async def hangs(**kwargs) -> str:
+            if "submission_alpha" in kwargs["messages"][-1]["content"]:
+                return VALID_JUDGE_REPLY
+            if (kwargs["wire_model"], kwargs["messages"][0]["content"]) == sides["b"]:
+                await asyncio.sleep(30)
+            return PLAIN_ANSWER
+
+        answer = AsyncMock(side_effect=hangs)
+        with (
+            patch("app.services.battle_runner.ANSWER_DRIVE_BUDGET_SECONDS", 0.05),
+            _no_transport(),
+            patch("app.services.battle_runner.call_judge_model", answer),
+        ):
+            await drive()
+            await _await_demo_drives()
+
+        async with session_maker() as session:
+            subs = await BattleRepository(session).list_submissions(battle_id)
+        empty_b = [
+            s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]
+        ]
+        assert len(empty_b) == 1, "the drive recorded the hung side"
+        assert empty_b[0]["error"].startswith(PROVIDER_UNREACHABLE_ERROR)
+
+        row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+        assert row["winner"] is None, "a hung provider voids, never forfeits"
+        assert "void" in row["verdict_reason"]
+
+    async def test_a_refused_insert_is_logged_and_not_reported_as_void(
+        self, session_maker
+    ) -> None:
+        """The race: close_deadline already wrote this side's final row.
+
+        add_submission then refuses ours, the void marker is LOST, and the battle
+        settles as a forfeit. That outcome is not what we want but it IS what
+        happens, so the only defensible behaviour is to say so — the defect was a
+        log line asserting "battle will be void" regardless.
+
+        MUTATION: discard the accepted flag again. record_unreachable returns
+        None, the first assertion goes red.
+        """
+        battle_id = await _fresh_auto_battle(session_maker)
+        drive = partial(
+            reconcile_once,
+            session_factory=session_maker,
+            gate=None,
+            provider={"api_key": "k", "base_url": "http://unused"},
+        )
+        answer = _mock_with_failing_side(set())
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", answer):
+            await drive()
+            await _await_demo_drives()
+
+        # Side B already carries a final answer, so the slot is taken — the same
+        # state close_deadline leaves behind when it wins the race.
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            accepted = await runner.record_unreachable(
+                battle_id, Side.B, "provider error or timeout"
+            )
+        assert accepted is False, "the refused insert is reported, not assumed"
+
+        async with session_maker() as session:
+            subs = await BattleRepository(session).list_submissions(battle_id)
+        finals_b = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
+        assert len(finals_b) == 1, "no second final row was created"
+        assert finals_b[0]["content"], "the real answer still stands"

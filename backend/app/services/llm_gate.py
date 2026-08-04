@@ -67,12 +67,13 @@ from redis.asyncio import Redis
 # 2x500 during the 2026-07-15 migration).
 ZAI_MAX_CONCURRENCY = 3
 
-# Concurrency for a provider we have NOT measured. Two, and the reason is that
-# we have exactly one measured number on this platform (three, for z.ai, above)
-# and no basis for claiming any other provider tolerates more. It is a floor to
-# start from, not an observation — replace it per provider the moment a real
-# 429/500-under-parallel-load reading exists, the way ZAI_MAX_CONCURRENCY was.
-DEFAULT_MAX_CONCURRENCY = 2
+# Concurrency for a provider we have NOT measured. Equal to ZAI_MAX_CONCURRENCY
+# so that a keying fix cannot ship a throughput CUT: moonshot carries both
+# JUDGE_MODEL and DEMO_ANSWER_MODEL (kimi-k3) across four workers, so a lower
+# default would move the busiest account onto a tighter cap than the mostly-idle
+# one that was actually measured. A carried-over number, NOT an observation —
+# replace it per provider once a real reading exists.
+DEFAULT_MAX_CONCURRENCY = ZAI_MAX_CONCURRENCY
 
 # Measured per-provider overrides. Only z.ai has one.
 PROVIDER_MAX_CONCURRENCY: dict[str, int] = {"zai": ZAI_MAX_CONCURRENCY}
@@ -91,13 +92,18 @@ def provider_account_key(provider: str) -> str:
 
     z.ai's key is byte-identical to the historical constant, so slots held
     across a deploy stay accounted to the same set.
+
+    NORMALISED here as a second line of defence: a stray space or capital
+    (" Zai/glm-4.5") would otherwise mint a SECOND key for one account — two slot
+    pools, each under the cap, the account over it. The caller normalises with
+    openrouter_service._provider_prefix, the helper its credential lookup uses.
     """
-    return f"llm_gate:{provider}:platform"
+    return f"llm_gate:{provider.strip().lower()}:platform"
 
 
 def provider_capacity(provider: str) -> int:
     """In-flight calls tolerated by one provider account."""
-    return PROVIDER_MAX_CONCURRENCY.get(provider, DEFAULT_MAX_CONCURRENCY)
+    return PROVIDER_MAX_CONCURRENCY.get(provider.strip().lower(), DEFAULT_MAX_CONCURRENCY)
 
 
 ZAI_ACCOUNT_KEY = provider_account_key("zai")
@@ -212,18 +218,23 @@ class LLMGate:
         self._capacity = capacity
         self._lease_seconds = lease_seconds
 
-    def for_provider(self, provider: str) -> LLMGate:
+    def for_provider(self, provider: str, lease_seconds: int | None = None) -> LLMGate:
         """A gate over ONE provider's account, sharing this Redis connection.
 
         Callers hold a single gate instance built at startup; the provider is
         only known per call, so scoping happens here rather than at construction.
         Cheap by design — no I/O, just a rebind of key and capacity.
+
+        ``lease_seconds`` exists because this module's rule — the lease MUST
+        outlast the caller's HTTP timeout — is a property of the CALLER. The
+        default 90 was sized for a judge verdict; the answer path holds a slot for
+        180s, so inheriting 90 let the reaper free a live call's slot.
         """
         return LLMGate(
             self._redis,
             key=provider_account_key(provider),
             capacity=provider_capacity(provider),
-            lease_seconds=self._lease_seconds,
+            lease_seconds=lease_seconds or self._lease_seconds,
         )
 
     async def _eval(self, script: str, numkeys: int, *args: str) -> Any:

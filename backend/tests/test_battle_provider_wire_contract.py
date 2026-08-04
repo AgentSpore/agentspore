@@ -18,6 +18,7 @@ import pytest
 from app.services import battle_runner as battle_runner_module
 from app.services import battle_task_validator, openrouter_service
 from app.services.battle_judges import (
+    JUDGE_HTTP_TIMEOUT_SECONDS,
     JUDGE_MODEL,
     JUDGE_TEMPERATURE,
     call_judge_model,
@@ -487,9 +488,11 @@ class _RecordingGate(_OpenGate):
 
     def __init__(self) -> None:
         self.scoped_to: list[str] = []
+        self.leases: list[int | None] = []
 
-    def for_provider(self, provider: str):
+    def for_provider(self, provider: str, lease_seconds: int | None = None):
         self.scoped_to.append(provider)
+        self.leases.append(lease_seconds)
         return self
 
 
@@ -513,6 +516,9 @@ async def test_the_call_is_gated_on_its_own_provider_account(capturing_client):
         provider="mistral",
     )
     assert gate.scoped_to == ["mistral"]
+    # The lease must outlast this call's HTTP timeout, or the reaper frees a live
+    # call's slot and the account goes over its cap.
+    assert gate.leases[0] > JUDGE_HTTP_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio
