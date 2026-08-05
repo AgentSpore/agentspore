@@ -118,11 +118,38 @@ def _in_final_image(script: str) -> str | None:
     return _locate(stages, len(stages) - 1, script) if stages else None
 
 
+def _unlisted_scripts() -> list[str]:
+    """Everything under backend/scripts/ that the manifest does not require, derived.
+
+    A deny-list would go stale the day someone adds a script; this subtracts the
+    required set from what is actually on disk, so tomorrow's file is covered
+    without anyone remembering it.
+    """
+    found = (BACKEND_DIR / "scripts").rglob("*")
+    on_disk = {
+        p.relative_to(BACKEND_DIR).as_posix()
+        for p in found
+        if p.is_file() and "__pycache__" not in p.parts
+    }
+    return sorted(on_disk - set(MANIFEST))
+
+
 def test_operator_scripts_land_at_their_manifest_path_in_the_final_image() -> None:
     for script, expected in MANIFEST.items():
         actual = _in_final_image(script)
         assert actual == expected, (
             f"{script} must reach the LAST build stage at {expected}, found {actual}"
+        )
+
+
+def test_scripts_outside_the_manifest_never_reach_the_final_image() -> None:
+    """The obvious `COPY scripts/ ...` also ships the red-team injection corpus."""
+    for script in _unlisted_scripts():
+        landing = _in_final_image(script)
+        assert landing is None, (
+            f"{script} is not an operator one-shot yet would ship at {landing}. "
+            f"Narrow the COPY in backend/Dockerfile, or add {script} to MANIFEST "
+            f"with its in-image path if shipping it is deliberate."
         )
 
 
