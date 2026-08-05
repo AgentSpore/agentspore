@@ -1708,10 +1708,15 @@ class TestTransientJudgeErrorNotFrozen:
             )
             await session.commit()
 
-        valid = (
-            '{"vote": "submission_alpha", "confidence": 0.9, "reasoning": "ok", '
-            '"scores": {"correctness": 1.0}}'
-        )
+        # No "scores" key: V67 binding draws from the whole matching task pool,
+        # not just the ones this fixture seeded, so the bound task's rubric (and
+        # therefore parse_judge_response's allowed score keys) is not fixed to a
+        # single "correctness" criterion. A hardcoded scores dict was flaky ~50%
+        # of the time (real prod tasks in the pool carry a 3-key rubric) —
+        # rejected as unparsable and stuck 'failed' forever. Omitting "scores"
+        # keeps the vote valid under any bound rubric, which is what this test
+        # actually verifies.
+        valid = '{"vote": "submission_alpha", "confidence": 0.9, "reasoning": "ok"}'
         async with session_maker() as session:
             runner = BattleRunner(session, gate=None)
             with patch(
@@ -3293,7 +3298,9 @@ class TestUnparsableJudgeReplyIsRetried:
                 "vote": label,
                 "confidence": 0.9,
                 "reasoning": f"{label} is more complete",
-                "scores": {"correctness": 1.0},
+                # No "scores": it is optional, and pool binding may attach any
+                # task's rubric — a hardcoded single key is rejected whenever a
+                # multi-key rubric binds, which is what made a sibling test flake.
             }
         )
 
