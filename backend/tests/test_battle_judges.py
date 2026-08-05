@@ -44,7 +44,7 @@ from app.services.battle_judges import (
     REPLICATE_COUNT,
     CollapsedVote,
     JudgeModel,
-    JudgePanelRecused,
+    JudgePanelRecusedError,
     JudgeRunResult,
     build_judge_messages,
     build_judge_payload,
@@ -874,5 +874,5 @@ class TestJudgeRecusal:
         """Nothing seatable must be raisable as its own failure, never judged
         anyway and never silently completed as judged."""
         assert seatable_judges(self.ROSTER[:1], {"moonshot/kimi-k3"}) == []
-        exc = JudgePanelRecused({"moonshot/kimi-k3"})
+        exc = JudgePanelRecusedError({"moonshot/kimi-k3"})
         assert "moonshot/kimi-k3" in str(exc)

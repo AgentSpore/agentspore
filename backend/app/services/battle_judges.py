@@ -314,7 +314,7 @@ class JudgeInjectionSuspected(Exception):  # noqa: N818 - spec-named, not an *Er
         super().__init__(f"injection suspected: {detail}")
 
 
-class JudgePanelRecused(Exception):
+class JudgePanelRecusedError(Exception):
     """Every roster model is fighting this battle, so no judge may be seated.
 
     Raised INSTEAD of judging with a conflicted panel. The caller settles the
@@ -446,7 +446,7 @@ def seatable_judges(
     three quarters of a four-model roster for one fighter.
 
     An empty result is NOT a degraded panel to run anyway — the caller raises
-    :class:`JudgePanelRecused`.
+    :class:`JudgePanelRecusedError`.
     """
     conflicted = {m.strip().lower() for m in contender_model_ids}
     return [m for m in roster if m.model_id.strip().lower() not in conflicted]

@@ -77,7 +77,7 @@ from app.services.battle_judges import (
     CollapsedVote,
     JudgeInjectionSuspected,
     JudgeModel,
-    JudgePanelRecused,
+    JudgePanelRecusedError,
     JudgeRunResult,
     JudgeTransportError,
     PanelVerdict,
@@ -1391,7 +1391,7 @@ class BattleRunner:
         resolved = self._resolve_judge_roster(base_url, api_key)
         roster = seatable_judges(resolved, fighting)
         if not roster:
-            raise JudgePanelRecused(fighting)
+            raise JudgePanelRecusedError(fighting)
         if len(roster) < len(resolved):
             logger.info(
                 "battle {} judge panel recused {} of {} models (contenders: {})",
@@ -2170,7 +2170,7 @@ async def _judge_and_settle(
                 settled = await runner.settle_injection_flagged(battle_id, token)
             if settled is not None:
                 counts["settled"] += 1
-        except JudgePanelRecused as exc:
+        except JudgePanelRecusedError as exc:
             # Every roster model is fighting this battle. Judging it anyway would
             # let a contender grade itself, so the battle completes at no quorum
             # (unrated, winner NULL) instead of carrying a self-judged verdict.
