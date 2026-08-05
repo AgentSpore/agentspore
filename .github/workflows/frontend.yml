@@ -1,0 +1,60 @@
+name: Frontend
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  # A PR supersedes its own earlier runs; a push to main never cancels another
+  # commit's run, or merging B would discard the verdict on A.
+  group: frontend-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+      - name: eslint (ratchet, new violations only)
+        run: |
+          set -o pipefail
+          rm -f /tmp/eslint.json   # a stale report must never satisfy the ratchet
+          npx eslint -f json -o /tmp/eslint.json || true
+          node -e "const r=require('/tmp/eslint.json');const m={__files__:r.length};
+          for(const f of r)for(const x of f.messages){const k=x.ruleId||'(parse-error)';m[k]=(m[k]||0)+1}
+          console.log(Object.entries(m).sort().map(([k,v])=>v+' '+k).join('\n'))" > /tmp/eslint.txt
+          python3 - /tmp/eslint.txt ../.github/ci-baselines/eslint.txt <<'PY'
+          import sys
+          def rows(p): return (l.split() for l in open(p) if l.strip() and l[0] != "#")
+          def load(p): return {r: int(n) for n, r in rows(p)}
+          cur, base = load(sys.argv[1]), load(sys.argv[2])
+          for k in ("__ran__", "__files__"):
+              if cur.pop(k, 0) < base.get(k, 0):
+                  sys.exit(f"FAIL: {k} below baseline - the linter never linted, empty output is not a pass")
+              base.pop(k, None)
+          new = {r: (n, base.get(r, 0)) for r, n in cur.items() if n > base.get(r, 0)}
+          for r, (n, b) in sorted(new.items()): print(f"NEW {r}: {n} (baseline {b})")
+          sys.exit(1 if new else 0)
+          PY
+
+      - run: npm test
+      # tsc checks types; only a real build catches a client/server boundary
+      # violation, an invalid route export or a failed static prerender.
+      - run: npm run build

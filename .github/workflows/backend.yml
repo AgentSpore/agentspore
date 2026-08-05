@@ -1,0 +1,134 @@
+name: Backend
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  # A PR supersedes its own earlier runs; a push to main never cancels another
+  # commit's run, or merging B would discard the verdict on A.
+  group: backend-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # app/core/config.py aborts at import when secret_key still holds its default
+  # and debug is off. A placeholder, not a credential: no job here reaches a
+  # real service, and nothing in this workflow may depend on a secret.
+  SECRET_KEY: ci-placeholder-value
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --extra dev
+
+      - name: ruff (ratchet, new violations only)
+        run: |
+          set -o pipefail
+          uv run --frozen --extra dev ruff check app --statistics --exit-zero > /tmp/ruff-raw.txt
+          { echo "1 __ran__"
+            awk '$1 ~ /^[0-9]+$/ && NF>=2 {print $1, $2}' /tmp/ruff-raw.txt | sort -k2
+          } > /tmp/ruff.txt
+          python3 - /tmp/ruff.txt ../.github/ci-baselines/ruff.txt <<'PY'
+          import sys
+          def rows(p): return (l.split() for l in open(p) if l.strip() and l[0] != "#")
+          def load(p): return {r: int(n) for n, r in rows(p)}
+          cur, base = load(sys.argv[1]), load(sys.argv[2])
+          for k in ("__ran__", "__files__"):
+              if cur.pop(k, 0) < base.get(k, 0):
+                  sys.exit(f"FAIL: {k} below baseline - the linter never linted, empty output is not a pass")
+              base.pop(k, None)
+          new = {r: (n, base.get(r, 0)) for r, n in cur.items() if n > base.get(r, 0)}
+          for r, (n, b) in sorted(new.items()): print(f"NEW {r}: {n} (baseline {b})")
+          sys.exit(1 if new else 0)
+          PY
+
+      - name: image guards
+        run: |
+          uv run --frozen --extra dev pytest -q \
+            tests/test_image_manifest.py tests/test_dockerfile_reproducible_deps.py
+
+      - name: pytest (full suite, container-backed tier included)
+        env:
+          CI_TIER_OUT: /tmp/tier.json
+        run: |
+          rm -f /tmp/junit.xml /tmp/tier.json   # a stale artifact must never satisfy the gate
+          mkdir -p /tmp/ciplug
+          cat > /tmp/ciplug/ci_tier_plugin.py <<'PY'
+          """Record which tests really started a testcontainers container.
+
+          Textual detection (grepping for a testcontainers import) enrols a file that
+          only mentions it in a docstring and misses a file whose container fixture
+          lives in conftest. This records the truth at runtime instead.
+          """
+          import json, os
+          from testcontainers.core.container import DockerContainer
+          _start = DockerContainer.start
+          STATE = {"modules": set(), "starts": 0}
+
+          def start(self, *a, **kw):
+              STATE["starts"] += 1
+              STATE["modules"].add(os.environ.get("PYTEST_CURRENT_TEST", "").split("::")[0])
+              return _start(self, *a, **kw)
+
+          DockerContainer.start = start
+
+          def pytest_sessionfinish(session):
+              with open(os.environ["CI_TIER_OUT"], "w") as fh:
+                  json.dump({"modules": sorted(STATE["modules"]), "starts": STATE["starts"]}, fh)
+          PY
+          PYTHONPATH=/tmp/ciplug uv run --frozen --extra dev pytest -q \
+            -p ci_tier_plugin --junitxml=/tmp/junit.xml
+
+      - name: assert the container-backed tier actually ran
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - /tmp/junit.xml /tmp/tier.json ../.github/ci-baselines/pg-tier-floor.txt <<'PY'
+          import json, os, re, sys, xml.etree.ElementTree as ET
+          junit, tierfile, floorfile = sys.argv[1:4]
+          if not os.path.exists(junit):
+              sys.exit("FAIL: pytest produced no junit.xml - the suite never ran")
+          floor = {k: int(v) for k, v in (l.split() for l in open(floorfile)
+                                          if l.strip() and l[0] != "#")}
+          state = json.load(open(tierfile)) if os.path.exists(tierfile) else {}
+          tier = {m[:-3].replace("/", ".") for m in state.get("modules", []) if m.endswith(".py")}
+          # Only an unavailable-backend skip is vacuous; an unrelated skip (platform,
+          # optional dep, a flake parked with a ticket) is reported, not failed, so
+          # nobody is ever tempted to weaken this gate to get their PR through.
+          UNAVAILABLE = re.compile(r"testcontainers|asyncpg|docker", re.I)
+          passed, other_skips, vacuous = 0, [], []
+          for tc in ET.parse(junit).iter("testcase"):
+              mod = tc.get("classname", "")
+              if not any(mod == m or mod.startswith(m + ".") for m in tier):
+                  continue
+              if tc.find("failure") is not None or tc.find("error") is not None:
+                  continue
+              sk = tc.find("skipped")
+              if sk is None:
+                  passed += 1
+              elif UNAVAILABLE.search(sk.get("message", "") + sk.get("type", "")):
+                  vacuous.append(f"{mod}::{tc.get('name')}")
+              else:
+                  other_skips.append(f"{mod}::{tc.get('name')}")
+          starts = state.get("starts", 0)
+          print(f"container starts={starts} (floor {floor['container_starts']}), "
+                f"tier modules={len(tier)}, passed={passed} (floor {floor['tier_passed']}), "
+                f"unrelated skips={len(other_skips)}")
+          for s in other_skips: print(f"  skipped (not a backend-availability skip): {s}")
+          for s in vacuous: print(f"  VACUOUS SKIP: {s}")
+          if starts < floor["container_starts"] or passed < floor["tier_passed"] or vacuous:
+              sys.exit("FAIL: container-backed tier did not run - green here would be vacuous")
+          PY
