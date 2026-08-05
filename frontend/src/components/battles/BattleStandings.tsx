@@ -19,17 +19,34 @@ function approachLabel(key: string): string {
 }
 
 /** A tie is half a win: an all-tie record is "never lost", not "never won". */
-function score(r: { wins: number; ties: number; battles: number }): number {
+export function score(r: { wins: number; ties: number; battles: number }): number {
   return r.battles > 0 ? Math.round(((r.wins + 0.5 * r.ties) / r.battles) * 100) : 0;
 }
 
-function ContenderRow({ c, rank }: { c: BattleLeaderboardContender; rank: number }) {
-  // display_name is free text; only where it carries the seed's "model · approach"
-  // shape is its head a model name. Without the separator the whole string may
-  // already spell out the approach the label line states, so fall back to the
-  // structured model_id rather than repeating it.
+/**
+ * display_name is free text; only where it carries the seed's "model · approach"
+ * shape is its head a model name. Without the separator the whole string may
+ * already spell out the approach the label line states, so fall back to the
+ * structured model_id rather than repeating it.
+ */
+export function contenderModelName(c: Pick<BattleLeaderboardContender, "display_name" | "model_id">): string {
   const [head, ...rest] = c.display_name.split("·");
-  const model = rest.length > 0 ? head.trim() : c.model_id;
+  return rest.length > 0 ? head.trim() : c.model_id;
+}
+
+/**
+ * An approach with no results has no score to rank, so it sits after every
+ * measured one rather than being read as a bottom (or top) placement.
+ */
+export function sortApproaches(approaches: readonly BattleApproachRecord[]): BattleApproachRecord[] {
+  return [...approaches].sort((a, b) => {
+    if ((a.battles > 0) !== (b.battles > 0)) return a.battles > 0 ? -1 : 1;
+    return score(b) - score(a);
+  });
+}
+
+function ContenderRow({ c, rank }: { c: BattleLeaderboardContender; rank: number }) {
+  const model = contenderModelName(c);
   return (
     <tr className="border-t border-neutral-800/70">
       <td className="py-2.5 pr-2 align-top text-xs font-mono text-neutral-500 tabular-nums">{rank}</td>
@@ -81,12 +98,7 @@ export function BattleStandings() {
   }
 
   const ranked = [...board.contenders].sort((a, b) => b.elo - a.elo);
-  // An approach with no results has no score to rank, so it sits after every
-  // measured one rather than being read as a bottom (or top) placement.
-  const approaches = [...board.approaches].sort((a, b) => {
-    if ((a.battles > 0) !== (b.battles > 0)) return a.battles > 0 ? -1 : 1;
-    return score(b) - score(a);
-  });
+  const approaches = sortApproaches(board.approaches);
 
   return (
     <section className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
