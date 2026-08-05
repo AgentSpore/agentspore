@@ -565,6 +565,24 @@ class TestStoredReasoningNamesTheVotedSide:
         for prompt in JUDGE_SYSTEM_PROMPTS:
             assert "refer to a submission ONLY by its full label" in prompt
 
+    def test_every_paraphrase_carries_the_same_language_policy(self) -> None:
+        """Language is not a rubric axis, and the three replicates must agree.
+
+        Tasks are posed in any language, so a submission that follows its task
+        into Russian is graded on content alone. Policy that differed between
+        paraphrases would make the verdict depend on which replicate drew which
+        prompt.
+
+        MUTATION: add the language rule to one paraphrase only, or reword it in
+        one of them, and the set below holds two members.
+        """
+        policies = {
+            prompt.split("Reply with ONE JSON object")[0].split("\n\n")[-2]
+            for prompt in JUDGE_SYSTEM_PROMPTS
+        }
+        assert len(policies) == 1
+        assert "not a scoring dimension" in policies.pop()
+
     def test_the_rewrite_never_lengthens_the_text(self) -> None:
         """So the caller's 500-char cap cannot bite earlier than before.
 
