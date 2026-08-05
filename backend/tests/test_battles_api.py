@@ -23,6 +23,7 @@ delivery would be asserting the very confusion this step exists to prevent.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date, timedelta
 from pathlib import Path
@@ -45,7 +46,15 @@ from app.core.database import get_db
 from app.main import app
 from app.repositories.agent_repo import AgentRepository
 from app.repositories.battle_repo import BattleRepository, ChallengeDenial
-from app.schemas.battles import BattleStatus, JudgeKind, PresentedOrder, Side, TaskSource, Vote
+from app.schemas.battles import (
+    TERMINAL_STATUSES,
+    BattleStatus,
+    JudgeKind,
+    PresentedOrder,
+    Side,
+    TaskSource,
+    Vote,
+)
 from app.services import battle_service as battle_service_module
 from app.services import connection_manager as cm
 from app.services.battle_budget import current_budget_day
@@ -2190,3 +2199,132 @@ async def test_accept_preflight_uses_the_canonical_budget_day(
         assert "budget is exhausted" in resp.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+# ── The public feed hides a completed battle that decided nothing ────────────
+
+
+async def _settle(
+    db, battle_id: str, status: BattleStatus, winner: str | None, task_id: str
+) -> None:
+    """Force a battle into a state the runner would take minutes of real work to reach.
+
+    Every timestamp V66 ties to the status has to move with it — consent,
+    queued/started/deadline, ended, finalized — or a CHECK rejects the row.
+    """
+    ran = status in (BattleStatus.RUNNING, BattleStatus.JUDGING, BattleStatus.COMPLETED)
+    await db.execute(
+        text(
+            """
+            UPDATE battles SET
+                status = :s,
+                winner = :w,
+                agent_b_accepted_at = CASE WHEN :consented THEN now() END,
+                queued_at    = CASE WHEN :ran THEN now() END,
+                started_at   = CASE WHEN :ran THEN now() END,
+                deadline_at  = CASE WHEN :ran THEN now() + interval '1 hour' END,
+                ended_at     = CASE WHEN :ended THEN now() END,
+                finalized_at = CASE WHEN :final THEN now() END,
+                is_rated     = CASE WHEN :final THEN FALSE END,
+                task_id                     = CASE WHEN :ran THEN CAST(:task AS UUID) END,
+                task_title_snapshot         = CASE WHEN :ran THEN 'seeded' END,
+                task_prompt_snapshot        = CASE WHEN :ran THEN 'seeded prompt' END,
+                task_rubric_snapshot        = CASE WHEN :ran THEN CAST(:rubric AS JSONB) END,
+                time_limit_seconds_snapshot = CASE WHEN :ran THEN 600 END
+            WHERE id = CAST(:id AS UUID)
+            """
+        ),
+        {
+            "s": status.value,
+            "w": winner,
+            "consented": ran or status is BattleStatus.ACCEPTED,
+            "ran": ran,
+            "ended": status in TERMINAL_STATUSES,
+            "final": status is BattleStatus.COMPLETED,
+            "task": task_id,
+            "rubric": json.dumps(RUBRIC),
+            "id": battle_id,
+        },
+    )
+
+
+async def _feed_ids(client, query: str = "") -> set[str]:
+    resp = await client.get(f"/api/v1/battles?limit=100{query}")
+    assert resp.status_code == 200
+    return {row["id"] for row in resp.json()}
+
+
+async def test_feed_hides_a_completed_battle_with_no_winner(
+    client, db, owner_id, task_id, make_agent
+):
+    """A void / no-quorum / no-contest battle carries no result, so it is not listed.
+
+    Measured on production: 41 of 144 completed battles ended with a NULL
+    winner, so the default feed was a third failure notices. The row is not
+    deleted — only omitted — and the opt-in must bring it straight back.
+    """
+    svc = BattleService(db)
+    decided, undecided = [
+        await svc.create_challenge(
+            task_category=None,
+            task_difficulty=None,
+            agent_a_id=await make_agent(),
+            challenger_owner_user_id=owner_id,
+            agent_b_id=await make_agent(),
+        )
+        for _ in range(2)
+    ]
+    await _settle(db, decided, BattleStatus.COMPLETED, "a", task_id)
+    await _settle(db, undecided, BattleStatus.COMPLETED, None, task_id)
+    await db.commit()
+
+    assert decided in await _feed_ids(client)
+    assert undecided not in await _feed_ids(client)
+
+    # Opt-in brings it back, and the status filter composes with the default.
+    assert undecided in await _feed_ids(client, "&include_undecided=true")
+    completed_only = await _feed_ids(client, "&status=completed")
+    assert decided in completed_only
+    assert undecided not in completed_only
+    assert await _feed_ids(client, "&status=completed&include_undecided=true") >= {
+        decided,
+        undecided,
+    }
+
+    # Hidden from the list is not hidden from the record.
+    detail = await client.get(f"/api/v1/battles/{undecided}")
+    assert detail.status_code == 200
+    assert detail.json()["winner"] is None
+
+
+async def test_feed_keeps_unfinished_battles_and_human_visible_outcomes(
+    client, db, owner_id, task_id, make_agent
+):
+    """Only a completed-with-no-verdict battle is hidden.
+
+    'running' has not produced a result YET, and 'declined'/'expired'/'aborted'
+    are the visible endings of somebody's own challenge — all four also carry a
+    NULL winner, so a filter written on ``winner IS NULL`` alone would swallow
+    them.
+    """
+    svc = BattleService(db)
+    ids = {}
+    for status in (
+        BattleStatus.RUNNING,
+        BattleStatus.DECLINED,
+        BattleStatus.EXPIRED,
+        BattleStatus.ABORTED,
+    ):
+        battle_id = await svc.create_challenge(
+            task_category=None,
+            task_difficulty=None,
+            agent_a_id=await make_agent(),
+            challenger_owner_user_id=owner_id,
+            agent_b_id=await make_agent(),
+        )
+        await _settle(db, battle_id, status, None, task_id)
+        ids[status] = battle_id
+    await db.commit()
+
+    listed = await _feed_ids(client)
+    assert set(ids.values()) <= listed

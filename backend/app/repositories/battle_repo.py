@@ -1636,23 +1636,38 @@ class BattleRepository:
         status: BattleStatus | None = None,
         limit: int = 50,
         offset: int = 0,
+        include_undecided: bool = False,
     ) -> list[dict]:
         """Public battle list, newest challenge first.
 
-        The status filter is a separate statement rather than the usual
+        The status filter is composed rather than written as the usual
         ``(:status IS NULL OR status = :status)`` one-liner. That form is not
         sargable: the OR makes the predicate opaque to the planner, so it
         cannot use an index on status at all — measured, it fell back to
         scanning idx_battles_recent and filtering, which makes
-        idx_battles_status_recent dead weight that only costs writes. Two
-        honest statements let each one use the index built for it.
+        idx_battles_status_recent dead weight that only costs writes. Emitting
+        the predicate only when a status was actually asked for keeps each
+        statement able to use the index built for it.
+
+        ``include_undecided=False`` (the default) additionally drops battles
+        that reached 'completed' with no verdict at all — the void / no-quorum /
+        no-contest outcomes, which carry no result for a reader. The predicate
+        is scoped to 'completed' on purpose: 'declined', 'expired' and 'aborted'
+        also carry a NULL winner, but those are visible outcomes of somebody's
+        own challenge and must stay listed. A tie is a verdict
+        (``winner='tie'``), so it is never undecided. Nothing is deleted and no
+        row becomes unreachable — the detail route still serves any battle by
+        id.
         """
         params: dict[str, Any] = {"limit": limit, "offset": offset}
-        if status is None:
-            where = ""
-        else:
-            where = "WHERE status = :status"
+        clauses: list[str] = []
+        if status is not None:
+            clauses.append("status = :status")
             params["status"] = status.value
+        if not include_undecided:
+            clauses.append("NOT (status = :decided_status AND winner IS NULL)")
+            params["decided_status"] = BattleStatus.COMPLETED.value
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         result = await self.db.execute(
             text(
                 f"""
