@@ -319,8 +319,15 @@ class JudgeInjectionSuspected(Exception):  # noqa: N818 - spec-named, not an *Er
 # and in the commonest recusal the primary model is precisely the one that was
 # barred — attributing the freeze to it reads as "kimi errored" when kimi was
 # never asked. Fits the VARCHAR(120) column.
+# The ``recused: `` prefix is a MACHINE token, deliberately shaped like the
+# ``void: `` one settle_silent_forfeit writes: verdict_reason is the only public
+# field carrying this outcome, and the UI branches on the prefix. Without it a
+# recused battle falls through to the winner-is-null default and is announced as
+# "finished without quorum" — the failed-judges claim this string exists to stop
+# making, since no judge was ever called. Human half unchanged after the colon.
 RECUSED_PANEL_REASON = (
-    "no judge model free of conflict with a contender; no result is recorded"
+    "recused: no judge model free of conflict with a contender; "
+    "no result is recorded"
 )
 RECUSED_JUDGE_REF = "panel/recused"
 

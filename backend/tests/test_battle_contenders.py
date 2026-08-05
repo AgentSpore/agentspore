@@ -1083,7 +1083,12 @@ class TestJudgeRecusal:
         # The freeze is attributed to the panel, never to the barred model:
         # judge_ref is public via GET /battles/{id}/judgements.
         assert {str(j["judge_ref"]) for j in judgements} == {RECUSED_JUDGE_REF}
-        assert "no judge model free of conflict" in (settled["verdict_reason"] or "")
+        # The prefix is a CONTRACT, not prose: verdict_reason is the only public
+        # field carrying this outcome and the UI branches on the token, exactly
+        # as it branches on "void: ". Without it a recused battle renders as
+        # "finished without quorum" — judges blamed for calls never made.
+        assert (settled["verdict_reason"] or "").startswith("recused: ")
+        assert "no judge model free of conflict" in settled["verdict_reason"]
 
         # `is_rated` is the AGENT flag and is False on EVERY auto-battle, so it
         # cannot see a contender ladder that moved. The rating columns can.
