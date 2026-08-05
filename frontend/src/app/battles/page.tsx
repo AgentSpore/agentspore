@@ -154,10 +154,6 @@ export default function BattlesListPage() {
 
   // Live battles first (the API only orders by challenged_at DESC), then
   // newest-challenged first within each bucket.
-  // Same liveness signal the poller uses, as render state: the standings above
-  // the feed refresh on the same cadence as the cards below them.
-  const hasLive = battles.some((b) => BATTLE_FAST_STATES.has(b.status));
-
   const sorted = useMemo(() => {
     return [...battles].sort((a, b) => {
       const aLive = BATTLE_FAST_STATES.has(a.status) ? 0 : 1;
@@ -199,7 +195,7 @@ export default function BattlesListPage() {
           </div>
         </div>
 
-        <BattleStandings intervalMs={hasLive ? LIST_INTERVAL_LIVE : LIST_INTERVAL_IDLE} />
+        <BattleStandings />
 
         <div className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
           <div className="text-xs font-medium text-neutral-300 mb-3">How it works</div>
