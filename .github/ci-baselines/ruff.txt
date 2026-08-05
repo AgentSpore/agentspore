@@ -1,0 +1,15 @@
+# Lint ratchet baseline: highest tolerated count per rule. CI fails when a
+# rule's current count exceeds the number here, so pre-existing debt is
+# grandfathered and new violations are not. Regenerate only after genuinely
+# removing violations:
+#   cd backend && uv run --frozen --extra dev ruff check app --statistics --exit-zero 2>/dev/null \
+#     | awk '$1 ~ /^[0-9]+$/ && NF>=2 {print $1, $2}' | sort -k2 \
+#     > ../.github/ci-baselines/ruff.txt
+441 E501
+41 F401
+1 F541
+4 F841
+43 I001
+11 N806
+2 N818
+1 __ran__
