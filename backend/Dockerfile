@@ -28,6 +28,11 @@ RUN uv sync --no-dev
 # Копируем код приложения
 COPY app/ ./app/
 
+# Operator one-shots run inside the container. The target is NOT ./scripts:
+# deploy/docker-compose.prod.yml bind-mounts the repo-root scripts/ over
+# /app/scripts and would shadow it. Guarded by tests/test_image_manifest.py.
+COPY scripts/backfill_contender_elo.py ./ops_scripts/
+
 # Создаём директорию для Alembic миграций
 RUN mkdir -p alembic/versions
 
