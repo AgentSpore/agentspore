@@ -857,9 +857,10 @@ class TestDemoAnswerModelRouting:
             "demo answer uses the wide budget, NOT the judge's 1200 cap that "
             "kimi's reasoning exhausted before emitting any content"
         )
-        assert kwargs["http_timeout"] == DEMO_ANSWER_TIMEOUT_SECONDS == 180.0, (
-            "demo answer overrides the judge HTTP ceiling; a full kimi answer "
-            "takes ~120s and the tight ceiling would abort it as a timeout"
+        assert kwargs["http_timeout"] == DEMO_ANSWER_TIMEOUT_SECONDS == 240.0, (
+            "demo answer overrides the judge HTTP ceiling; kimi reasons before "
+            "it writes, and at 180s two production calls in one two-hour window "
+            "timed out and voided their battles"
         )
 
     async def test_demo_answer_and_judge_panel_share_kimi_but_not_the_budget(
@@ -953,7 +954,7 @@ class TestDemoAnswerModelRouting:
         hung provider at or before httpx raised, so no transport failure was ever
         recorded and a model that was never reached settled as a LOSS.
         """
-        assert DEMO_ANSWER_TIMEOUT_SECONDS == 180.0
+        assert DEMO_ANSWER_TIMEOUT_SECONDS == 240.0
         assert ANSWER_DRIVE_BUDGET_SECONDS > DEMO_ANSWER_TIMEOUT_SECONDS
         # Both attempts plus their gate waits and the backoff must fit.
         worst_case = 2 * (GATE_WAIT_SECONDS + DEMO_ANSWER_TIMEOUT_SECONDS) + 2.0
