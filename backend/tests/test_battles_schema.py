@@ -48,6 +48,8 @@ V69_PATH = MIGRATIONS / "V69__battle_injection_stop_reason.sql"
 V70_PATH = MIGRATIONS / "V70__battle_user_tasks.sql"
 V71_PATH = MIGRATIONS / "V71__battle_demo_mode.sql"
 V72_PATH = MIGRATIONS / "V72__battle_contenders.sql"
+V73_PATH = MIGRATIONS / "V73__contender_rating.sql"
+V74_PATH = MIGRATIONS / "V74__battle_judge_seat_once.sql"
 
 # Minimal FK targets only. Every battle table's DDL comes from the real V66.
 BASE_SCHEMA = """
@@ -95,7 +97,7 @@ async def engine(pg_container):
     eng = create_async_engine(async_url, future=True)
     sql = (
         f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};"
-        f"{V67_PATH.read_text()};{V68_PATH.read_text()};{V69_PATH.read_text()};{V70_PATH.read_text()};{V71_PATH.read_text()};{V72_PATH.read_text()}"
+        f"{V67_PATH.read_text()};{V68_PATH.read_text()};{V69_PATH.read_text()};{V70_PATH.read_text()};{V71_PATH.read_text()};{V72_PATH.read_text()};{V73_PATH.read_text()};{V74_PATH.read_text()}"
     )
     # One transaction for the whole migration, mirroring Flyway's V__ handling.
     # Statements are applied one at a time because asyncpg refuses multiple
@@ -990,3 +992,88 @@ async def test_an_expired_challenge_cannot_be_armed_or_left_hanging(
     expired = await repo.mark_expired(battle_id)
     assert expired is not None and expired["status"] == BattleStatus.EXPIRED.value
     await db_session.commit()
+
+
+async def test_a_second_llm_vote_for_one_seat_is_refused_under_any_ref(
+    db_session, task_id, agent_ids, owner_id
+):
+    """One replicate seat holds one llm vote, whoever writes it (V74).
+
+    battle_judge_once carries judge_ref, so before V74 a freeze writing under a
+    ref of its own landed a SECOND row for a seat that had already voted — the
+    read-then-write in collapse_open_replicates_to_error was the only thing
+    keeping that from happening, and it is not atomic.
+
+    MUTATION: drop uq_battle_judgements_llm_seat from V74 — the second insert
+    returns an id and the seat carries two votes.
+    """
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    battle_id = await repo._create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_id,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_id,
+    )
+    seed = "seat-0"
+    voted = await repo.upsert_judgement(
+        battle_id=battle_id,
+        judge_kind="llm",
+        judge_ref="moonshotai/kimi-k2",
+        replicate_seed=seed,
+        vote="a",
+        confidence=0.9,
+    )
+    frozen = await repo.upsert_judgement(
+        battle_id=battle_id,
+        judge_kind="llm",
+        judge_ref="panel/recused",
+        replicate_seed=seed,
+        vote="error",
+        reasoning="no impartial judge remained",
+    )
+    await db_session.commit()
+
+    assert voted is not None
+    assert frozen is None, "a freeze under its own ref took a seat that had voted"
+    judgements = await repo.list_judgements(battle_id)
+    assert [(j["vote"], str(j["judge_ref"])) for j in judgements] == [
+        ("a", "moonshotai/kimi-k2")
+    ]
+
+
+async def test_two_humans_still_vote_on_one_seat(
+    db_session, task_id, agent_ids, owner_id
+):
+    """V74 is llm-only on purpose: crowd voting (phase 2) is one vote per USER
+    per seat, so a per-seat cap would leave room for exactly one voter.
+
+    MUTATION: drop `WHERE judge_kind = 'llm'` from V74's index — the second
+    human vote is swallowed and the crowd can never exceed one.
+    """
+    agent_a, agent_b, _ = agent_ids
+    repo = BattleRepository(db_session)
+    battle_id = await repo._create_battle(
+        task_id=task_id,
+        agent_a_id=agent_a,
+        agent_a_owner_snapshot=owner_id,
+        challenge_ttl_seconds=3600,
+        agent_b_id=agent_b,
+        agent_b_owner_snapshot=owner_id,
+    )
+    seed = "seat-0"
+    for voter in (str(uuid.uuid4()), str(uuid.uuid4())):
+        assert (
+            await repo.upsert_judgement(
+                battle_id=battle_id,
+                judge_kind="human",
+                judge_ref=voter,
+                replicate_seed=seed,
+                vote="b",
+            )
+            is not None
+        ), "a second human voter was refused a seat that is not theirs to share"
+    await db_session.commit()
+    assert len(await repo.list_judgements(battle_id)) == 2

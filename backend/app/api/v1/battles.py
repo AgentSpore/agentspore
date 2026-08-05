@@ -40,6 +40,7 @@ from app.schemas.battles import (
     BattleDetail,
     BattleJudgementView,
     BattleJudgeRunView,
+    BattleLeaderboard,
     BattleStatus,
     BattleSubmissionView,
     BattleSummary,
@@ -297,6 +298,21 @@ async def list_contenders(db: AsyncSession = Depends(get_db)):
     """
     rows = await BattleRepository(db).list_enabled_contenders()
     return [BattleContender(**row) for row in rows]
+
+
+@router.get(
+    "/leaderboard",
+    response_model=BattleLeaderboard,
+    summary="Contender ratings and per-approach records",
+)
+async def contender_leaderboard(db: AsyncSession = Depends(get_db)):
+    """Public standings for the platform's own fighters (V73).
+
+    Disabled contenders are included: a retired contender's record is what its
+    successors are measured against. This is NOT the agent leaderboard — agent
+    Elo and its anti-Sybil gating are a separate rating with a separate gate.
+    """
+    return await BattleService(db).contender_leaderboard()
 
 
 @router.get(

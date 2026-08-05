@@ -32,7 +32,13 @@ from app.core.background import BattleMatchmakerTask
 from app.core.config import get_settings
 from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side
-from app.services.battle_judges import REPLICATE_COUNT, JudgeTransportError
+from app.services.battle_judges import (
+    RECUSED_JUDGE_REF,
+    REPLICATE_COUNT,
+    JudgeModel,
+    JudgeTransportError,
+    replicate_seed,
+)
 from app.services.battle_runner import (
     PROVIDER_UNREACHABLE_ERROR,
     BattleRunner,
@@ -53,6 +59,8 @@ _MIG_FILES = [
     "V70__battle_user_tasks.sql",
     "V71__battle_demo_mode.sql",
     "V72__battle_contenders.sql",
+    "V73__contender_rating.sql",
+    "V74__battle_judge_seat_once.sql",
 ]
 
 VALID_JUDGE_REPLY = (
@@ -107,6 +115,22 @@ CREATE TABLE IF NOT EXISTS agents (
 """
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
+
+
+@pytest.fixture(autouse=True)
+def _impartial_judge_roster():
+    """Seat a judge model that fights in no battle, for the whole module.
+
+    Without it the panel's roster is whatever the environment resolves — in a
+    test environment only the primary, kimi-k3, which is ALSO a seeded contender.
+    Every draw that happened to field kimi would then be fully recused and settle
+    with no verdict, making these drive tests depend on the matchmaker's dice.
+    TestJudgeRecusal patches over this with a roster of its own.
+    """
+    with patch.object(
+        BattleRunner, "_resolve_judge_roster", return_value=_roster(["panel/impartial"])
+    ):
+        yield
 
 
 @pytest.fixture(scope="module")
@@ -839,3 +863,248 @@ class TestDriveLevelUnreachable:
         finals_b = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
         assert len(finals_b) == 1, "no second final row was created"
         assert finals_b[0]["content"], "the real answer still stands"
+
+
+# ---------------------------------------------------------------------------
+# Recusal: a model may not judge a battle it is fighting.
+# ---------------------------------------------------------------------------
+
+
+def _roster(model_ids: list[str]) -> list[JudgeModel]:
+    return [
+        JudgeModel(
+            model_id=mid,
+            provider=mid.split("/", 1)[0],
+            base_url="http://unused",
+            api_key="k",
+            wire_model=mid.split("/", 1)[-1],
+        )
+        for mid in model_ids
+    ]
+
+
+def _judge_calls_for(answer, task_prompt: str) -> list[dict]:
+    """The judge calls made for ONE battle.
+
+    Two discriminators, both needed: an answer call never names the opaque
+    labels, and other battles driven by the same reconcile pass judge a
+    different task.
+    """
+    return [
+        call.kwargs
+        for call in answer.await_args_list
+        if "submission_alpha" in call.kwargs["messages"][-1]["content"]
+        and task_prompt[:60] in call.kwargs["messages"][-1]["content"]
+    ]
+
+
+async def _contender_ratings(session_maker, contenders: list[dict]) -> dict:
+    """(elo, wins, losses, ties) per contender id — the ladder, nothing else."""
+    async with session_maker() as session:
+        rows = await BattleRepository(session).list_contender_ratings()
+    wanted = {str(c["id"]) for c in contenders}
+    return {
+        str(r["id"]): (r["elo"], r["wins"], r["losses"], r["ties"])
+        for r in rows
+        if str(r["id"]) in wanted
+    }
+
+
+async def _battle_and_fighters(session_maker) -> tuple[str, dict, list[dict]]:
+    """A new auto-battle, its row and both contender rows."""
+    battle_id = await _fresh_auto_battle(session_maker)
+    async with session_maker() as session:
+        repo = BattleRepository(session)
+        row = await repo.get(battle_id)
+        fighting = [
+            await repo.get_contender(str(row[f"contender_{side}_id"]))
+            for side in ("a", "b")
+        ]
+    return battle_id, row, fighting
+
+
+class TestJudgeRecusal:
+    async def test_a_fighting_model_never_judges_and_the_rest_reach_quorum(
+        self, session_maker
+    ) -> None:
+        """The two contenders are seated on the roster alongside two other
+        models. Neither contender may cast a vote, and the survivors must still
+        fill all three replicates.
+
+        MUTATION: drop the seatable_judges call in run_judge_panel — a contender
+        appears as a replicate's judge_ref and the assertion goes red.
+        """
+        battle_id, row, fighting = await _battle_and_fighters(session_maker)
+        fighting_ids = {f"{c['provider']}/{c['model_id']}" for c in fighting}
+        roster = _roster([*fighting_ids, "mistral/mistral-medium-2508", "deepseek/x"])
+        answer = _provider_mock()
+
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        with patch.object(BattleRunner, "_resolve_judge_roster", return_value=roster):
+            settled = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+
+        assert _judge_calls_for(answer, row["task_prompt_snapshot"]), "the panel ran"
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == REPLICATE_COUNT, "recusal still filled every replicate"
+        assert {str(j["judge_ref"]) for j in judgements} & fighting_ids == set()
+        assert settled["status"] == "completed"
+        assert settled["winner"] in {"a", "b", "tie"}, "quorum was reached"
+
+    async def test_votes_already_cast_by_a_barred_model_cannot_rate(
+        self, session_maker
+    ) -> None:
+        """Three real votes are already persisted when recusal fires — a lease
+        lost after the panel committed, then a later pass finds the roster
+        conflicted. The freeze skips replicates that already carry a row, so
+        those votes SURVIVE and reach quorum; the outcome must still be no
+        result and an untouched ladder, because they were cast by the model that
+        is now barred.
+
+        MUTATION: drop `override_verdict=forced` from settle_panel_recused and
+        let resolve_verdict read the persisted votes — winner becomes 'a' and the
+        contender ladder moves.
+        """
+        battle_id, _row, fighting = await _battle_and_fighters(session_maker)
+        before = await _contender_ratings(session_maker, fighting)
+        answer = _provider_mock()
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+
+        # Walk it to 'judging' with both answers in, then plant the votes the
+        # conflicted panel would have committed before its lease lapsed.
+        with _no_transport(), patch("app.services.battle_runner.call_judge_model", answer):
+            await drive()
+            await _await_demo_drives()
+        await _expire_deadline(session_maker, battle_id)
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            for replicate_no in range(REPLICATE_COUNT):
+                await repo.upsert_judgement(
+                    battle_id=battle_id,
+                    judge_kind="llm",
+                    judge_ref=f"{fighting[0]['provider']}/{fighting[0]['model_id']}",
+                    replicate_seed=replicate_seed(battle_id, replicate_no),
+                    vote="a",
+                    confidence=0.9,
+                )
+            token = str(uuid.uuid4())
+            await session.execute(
+                text(
+                    "UPDATE battles SET status = 'judging', lease_token = :t, "
+                    "lease_expires_at = NOW() + INTERVAL '5 minutes' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"t": token, "b": battle_id},
+            )
+            await session.commit()
+
+        async with session_maker() as session:
+            await BattleRunner(session, None).settle_panel_recused(battle_id, token)
+
+        async with session_maker() as session:
+            settled = await BattleRepository(session).get(battle_id)
+        assert settled["status"] == "completed"
+        assert settled["winner"] is None, "a self-judged verdict was published"
+        # One collapsed vote per replicate, which `len(judgements) >=
+        # REPLICATE_COUNT` relies on. The freeze writes a judge_ref of its own,
+        # so battle_judge_once (V66:486, keyed on judge_ref) would not suppress
+        # it over a real vote — V74's per-seat index does, and the explicit skip
+        # of already-decided seeds keeps the attribution below correct.
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == REPLICATE_COUNT, "the freeze duplicated a replicate"
+        assert {str(j["judge_ref"]) for j in judgements} == {
+            f"{fighting[0]['provider']}/{fighting[0]['model_id']}"
+        }, "a real vote lost its attribution to the model that cast it"
+        assert await _contender_ratings(session_maker, fighting) == before, (
+            "votes from the barred model moved the ladder"
+        )
+
+    async def test_a_recused_settle_without_the_lease_writes_nothing(
+        self, session_maker
+    ) -> None:
+        """A worker whose lease lapsed must not freeze error votes over the live
+        panel of the worker that now owns the battle.
+
+        MUTATION: remove the renew_battle_lease guard — the stale worker commits
+        three terminal error rows and this goes red.
+        """
+        battle_id, _row, fighting = await _battle_and_fighters(session_maker)
+        async with session_maker() as session:
+            await session.execute(
+                text(
+                    "UPDATE battles SET status = 'judging', lease_token = :t, "
+                    "lease_expires_at = NOW() + INTERVAL '5 minutes', "
+                    "started_at = NOW(), deadline_at = NOW() + INTERVAL '1 minute' "
+                    "WHERE id = CAST(:b AS UUID)"
+                ),
+                {"t": str(uuid.uuid4()), "b": battle_id},
+            )
+            await session.commit()
+
+        async with session_maker() as session:
+            outcome = await BattleRunner(session, None).settle_panel_recused(
+                battle_id, str(uuid.uuid4())
+            )
+        assert outcome is None, "a stale worker settled someone else's battle"
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            assert await repo.list_judgements(battle_id) == []
+            assert (await repo.get(battle_id))["status"] == "judging"
+
+    async def test_a_fully_recused_panel_completes_without_a_verdict(
+        self, session_maker
+    ) -> None:
+        """When the roster holds nothing but the two fighters, the battle must
+        land on the existing no-quorum path — not judge itself, and not complete
+        as if it had been judged.
+
+        MUTATION: fall back to the unfiltered roster when nothing is seatable —
+        the no-judge-call assertion and winner=None both go red.
+        """
+        battle_id, row, fighting = await _battle_and_fighters(session_maker)
+        roster = _roster([f"{c['provider']}/{c['model_id']}" for c in fighting])
+        answer = _provider_mock()
+        # Snapshot rather than compare against DEFAULT_ELO: earlier tests in this
+        # module rate their own auto-battles, so these contenders may already
+        # carry history. What must hold is that THIS battle adds none.
+        before = await _contender_ratings(session_maker, fighting)
+
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        with patch.object(BattleRunner, "_resolve_judge_roster", return_value=roster):
+            settled = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+
+        assert _judge_calls_for(answer, row["task_prompt_snapshot"]) == [], (
+            "a fighter was asked to judge its own battle"
+        )
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert settled["status"] == "completed", "the battle is not stranded"
+        assert settled["winner"] is None, "no verdict was invented"
+        assert {str(j["vote"]) for j in judgements} == {"error"}
+        # The freeze is attributed to the panel, never to the barred model:
+        # judge_ref is public via GET /battles/{id}/judgements.
+        assert {str(j["judge_ref"]) for j in judgements} == {RECUSED_JUDGE_REF}
+        # The prefix is a CONTRACT, not prose: verdict_reason is the only public
+        # field carrying this outcome and the UI branches on the token, exactly
+        # as it branches on "void: ". Without it a recused battle renders as
+        # "finished without quorum" — judges blamed for calls never made.
+        assert (settled["verdict_reason"] or "").startswith("recused: ")
+        assert "no judge model free of conflict" in settled["verdict_reason"]
+
+        # `is_rated` is the AGENT flag and is False on EVERY auto-battle, so it
+        # cannot see a contender ladder that moved. The rating columns can.
+        assert await _contender_ratings(session_maker, fighting) == before, (
+            "a recused battle moved the contender ladder"
+        )

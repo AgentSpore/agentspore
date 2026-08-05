@@ -1,16 +1,18 @@
 """The judge panel — three paired replicates over one model.
 
-**What this is, stated honestly.** We have exactly one reliably free model
-(``glm-4.5-flash``; everything else geo-blocks our ASN and the other z.ai models
-are paid). So there is no panel of independent judges to be had. What we run is
-THREE PAIRED STOCHASTIC REPLICATES of one model: three sampling units, each
-scored twice — once with the fighters shown ab, once ba. Six calls, three
-collapsed votes.
+**What this is, stated honestly.** Four providers are reachable from our ASN
+(moonshot, z.ai, mistral, deepseek) and the roster holds one model from each, so
+a replicate is not always the same model as its neighbour. It is still not a
+panel of independent judges: those four are the same four the CONTENDERS use, so
+recusal narrows the roster further, and a replicate assigned one model is a
+sampling unit of that model. What we run is THREE PAIRED STOCHASTIC REPLICATES:
+three sampling units, each scored twice — once with the fighters shown ab, once
+ba. Six calls, three collapsed votes.
 
-These replicates are correlated: they share the model's biases entirely. A
-majority among them is evidence about sampling noise, not about consensus. Any
-user-facing string must therefore say "replicates", never "three judges" —
-calling them judges would sell a diversity we do not have.
+Replicates that share a model share its biases entirely, so a majority among
+them is evidence about sampling noise more than about consensus. Any user-facing
+string must therefore say "replicates", never "three judges" — calling them
+judges would sell an independence we do not have.
 
 **Why paired, and why the pair is ONE vote.** LLM judges have a well-known
 position bias: the same pair of answers can win or lose on presentation order
@@ -314,6 +316,41 @@ class JudgeInjectionSuspected(Exception):  # noqa: N818 - spec-named, not an *Er
         super().__init__(f"injection suspected: {detail}")
 
 
+# The public reason and judge_ref stamped when recusal empties the panel. The
+# judge_ref must NOT be JUDGE_MODEL: it is served by GET /battles/{id}/judgements,
+# and in the commonest recusal the primary model is precisely the one that was
+# barred — attributing the freeze to it reads as "kimi errored" when kimi was
+# never asked. Fits the VARCHAR(120) column.
+# The ``recused: `` prefix is a MACHINE token, deliberately shaped like the
+# ``void: `` one settle_silent_forfeit writes: verdict_reason is the only public
+# field carrying this outcome, and the UI branches on the prefix. Without it a
+# recused battle falls through to the winner-is-null default and is announced as
+# "finished without quorum" — the failed-judges claim this string exists to stop
+# making, since no judge was ever called. Human half unchanged after the colon.
+RECUSED_PANEL_REASON = (
+    "recused: no judge model free of conflict with a contender; "
+    "no result is recorded"
+)
+RECUSED_JUDGE_REF = "panel/recused"
+
+
+class JudgePanelRecusedError(Exception):
+    """Every roster model is fighting this battle, so no judge may be seated.
+
+    Raised INSTEAD of judging with a conflicted panel. The caller settles the
+    battle on the existing no-quorum path (winner=None, rates nothing), which is
+    the honest terminal state: a battle nobody impartial could judge has no
+    verdict, and must not silently complete as if it had one.
+    """
+
+    def __init__(self, contender_model_ids: set[str]) -> None:
+        self.contender_model_ids = sorted(contender_model_ids)
+        super().__init__(
+            "no judge model free of conflict; contenders: "
+            + ", ".join(self.contender_model_ids)
+        )
+
+
 class JudgeTransportError(Exception):
     """The provider call failed. Becomes an ``error`` vote, not an abstention.
 
@@ -387,12 +424,13 @@ class JudgeModel:
     is what is sent as the ``model`` field on the provider request.
 
     The roster is resolved from config (``settings.battle_judge_models``) filtered
-    to providers we actually hold a key for — NEVER a hardcoded model list. When
-    only one entry resolves the panel degrades to prompt-diversity-only, which is
-    the real situation today (RU-ASN geo-blocks every US provider; z.ai
-    glm-4.5-flash is the one reliably free model). That single-model condition is
-    observable after the fact because every replicate's ``judge_ref`` is this
-    ``model_id`` — a homogeneous set means the panel ran single-model.
+    to providers we actually hold a key for — NEVER a hardcoded model list. Four
+    resolve in production, one per provider our ASN can reach (moonshot, z.ai,
+    mistral, deepseek); recusal then removes any of them fighting this battle. A
+    roster that collapses to a single entry degrades the panel to
+    prompt-diversity-only, and that condition is observable after the fact
+    because every replicate's ``judge_ref`` is this ``model_id`` — a homogeneous
+    set means the panel ran single-model.
     """
 
     model_id: str
@@ -408,6 +446,31 @@ class JudgeModel:
     # entry beside wire_model and temperature, so a fallback rescue sends the
     # form the RESCUING provider accepts rather than the assigned one's.
     seed_field: str | None = DEFAULT_SEED_FIELD
+
+
+def seatable_judges(
+    roster: list[JudgeModel], contender_model_ids: set[str]
+) -> list[JudgeModel]:
+    """The roster minus every model that is FIGHTING this battle (recusal).
+
+    The panel's models are also fielded as contenders (V72 seeds kimi-k3 and
+    glm-4.5-flash), so without this a model grades its own submissions. Showing
+    the replies anonymously does not answer it: an LLM judge prefers its own
+    generation STYLE, which survives hiding the authorship, so the fix is the
+    seat and not more anonymisation.
+
+    A conflict is provider+model_id, normalised — not the provider alone. That is
+    the platform's unit of model identity everywhere else (``judge_ref``, the
+    budget ledger's ``model`` column, ``settings.battle_judge_models``), and it is
+    the unit self-preference attaches to: mistral-small fighting says nothing
+    about mistral-medium's weights, while recusing a whole provider would drop
+    three quarters of a four-model roster for one fighter.
+
+    An empty result is NOT a degraded panel to run anyway — the caller raises
+    :class:`JudgePanelRecusedError`.
+    """
+    conflicted = {m.strip().lower() for m in contender_model_ids}
+    return [m for m in roster if m.model_id.strip().lower() not in conflicted]
 
 
 @dataclass(frozen=True)

@@ -5,6 +5,7 @@ import { API_URL, BattleDetail, BattleSide } from "@/lib/api";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { Disclosure } from "@/components/battles/Disclosure";
 import { SIDE_ACCENT, SectionHead, eloDeltaText } from "@/components/battles/battleUi";
+import { isRecusedBattle } from "@/components/battles/BattleTimeline";
 
 // ── Local types ─────────────────────────────────────────────────────────────
 // GET /battles/{id}/judgements and /battles/{id}/submissions exist on the
@@ -345,7 +346,8 @@ interface Props {
  *
  * No-quorum is a REAL completed state (winner NULL), rendered as the outcome
  * of the battle — "outcome undetermined: the jury did not reach quorum" — never as
- * a footnote and never as a "tie".
+ * a footnote and never as a "tie". A recused battle shares winner NULL but not
+ * that sentence: no vote was taken at all, so the jury cannot have failed.
  *
  * Fetches only once the battle has stopped taking turns (judging/completed):
  * the submissions endpoint withholds content earlier, and the judgements
@@ -482,10 +484,14 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                 <>
                   <div className="text-xs text-neutral-500 mb-1">Outcome</div>
                   <div className="text-[22px] leading-7 sm:text-[26px] sm:leading-8 font-semibold tracking-[-0.025em] text-amber-300">
-                    Outcome undetermined: the jury did not reach quorum
+                    {isRecusedBattle(battle)
+                      ? "No result: no judge model was impartial here"
+                      : "Outcome undetermined: the jury did not reach quorum"}
                   </div>
                   <p className="text-[13px] text-neutral-400 mt-2">
-                    Elo does not change; the battle is marked completed with no winner.
+                    {isRecusedBattle(battle)
+                      ? "Every judge model also fights as a contender in this battle, so each was recused and no vote was taken. Elo does not change."
+                      : "Elo does not change; the battle is marked completed with no winner."}
                   </p>
                 </>
               )}
