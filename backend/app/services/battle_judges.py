@@ -314,6 +314,23 @@ class JudgeInjectionSuspected(Exception):  # noqa: N818 - spec-named, not an *Er
         super().__init__(f"injection suspected: {detail}")
 
 
+class JudgePanelRecused(Exception):
+    """Every roster model is fighting this battle, so no judge may be seated.
+
+    Raised INSTEAD of judging with a conflicted panel. The caller settles the
+    battle on the existing no-quorum path (winner=None, rates nothing), which is
+    the honest terminal state: a battle nobody impartial could judge has no
+    verdict, and must not silently complete as if it had one.
+    """
+
+    def __init__(self, contender_model_ids: set[str]) -> None:
+        self.contender_model_ids = sorted(contender_model_ids)
+        super().__init__(
+            "no judge model free of conflict; contenders: "
+            + ", ".join(self.contender_model_ids)
+        )
+
+
 class JudgeTransportError(Exception):
     """The provider call failed. Becomes an ``error`` vote, not an abstention.
 
@@ -408,6 +425,31 @@ class JudgeModel:
     # entry beside wire_model and temperature, so a fallback rescue sends the
     # form the RESCUING provider accepts rather than the assigned one's.
     seed_field: str | None = DEFAULT_SEED_FIELD
+
+
+def seatable_judges(
+    roster: list[JudgeModel], contender_model_ids: set[str]
+) -> list[JudgeModel]:
+    """The roster minus every model that is FIGHTING this battle (recusal).
+
+    The panel's models are also fielded as contenders (V72 seeds kimi-k3 and
+    glm-4.5-flash), so without this a model grades its own submissions. Showing
+    the replies anonymously does not answer it: an LLM judge prefers its own
+    generation STYLE, which survives hiding the authorship, so the fix is the
+    seat and not more anonymisation.
+
+    A conflict is provider+model_id, normalised — not the provider alone. That is
+    the platform's unit of model identity everywhere else (``judge_ref``, the
+    budget ledger's ``model`` column, ``settings.battle_judge_models``), and it is
+    the unit self-preference attaches to: mistral-small fighting says nothing
+    about mistral-medium's weights, while recusing a whole provider would drop
+    three quarters of a four-model roster for one fighter.
+
+    An empty result is NOT a degraded panel to run anyway — the caller raises
+    :class:`JudgePanelRecused`.
+    """
+    conflicted = {m.strip().lower() for m in contender_model_ids}
+    return [m for m in roster if m.model_id.strip().lower() not in conflicted]
 
 
 @dataclass(frozen=True)
