@@ -562,16 +562,22 @@ async def test_list_battles_filters_by_status_and_lists_unfiltered(
     )
     await db.commit()
 
-    pending = await repo.list_battles(status=BattleStatus.CHALLENGE_PENDING, limit=100)
+    pending = await repo.list_battles(
+        status=BattleStatus.CHALLENGE_PENDING, limit=100, include_undecided=True
+    )
     assert battle_id in {str(b["id"]) for b in pending}
     assert {b["status"] for b in pending} == {BattleStatus.CHALLENGE_PENDING.value}
 
-    # The other branch: no WHERE clause at all.
-    unfiltered = await repo.list_battles(limit=100)
+    # The clause-free branch: no status AND no undecided predicate, so the
+    # statement carries no WHERE at all. include_undecided=True is what makes
+    # that branch reachable — the route's default always emits a predicate.
+    unfiltered = await repo.list_battles(limit=100, include_undecided=True)
     assert battle_id in {str(b["id"]) for b in unfiltered}
 
     # A status this battle is not in must not return it.
-    completed = await repo.list_battles(status=BattleStatus.COMPLETED, limit=100)
+    completed = await repo.list_battles(
+        status=BattleStatus.COMPLETED, limit=100, include_undecided=True
+    )
     assert battle_id not in {str(b["id"]) for b in completed}
 
 

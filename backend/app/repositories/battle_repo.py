@@ -1633,10 +1633,11 @@ class BattleRepository:
 
     async def list_battles(
         self,
+        *,
+        include_undecided: bool,
         status: BattleStatus | None = None,
         limit: int = 50,
         offset: int = 0,
-        include_undecided: bool = False,
     ) -> list[dict]:
         """Public battle list, newest challenge first.
 
@@ -1649,9 +1650,15 @@ class BattleRepository:
         the predicate only when a status was actually asked for keeps each
         statement able to use the index built for it.
 
-        ``include_undecided=False`` (the default) additionally drops battles
-        that reached 'completed' with no verdict at all — the void / no-quorum /
-        no-contest outcomes, which carry no result for a reader. The predicate
+        ``include_undecided`` is REQUIRED and keyword-only, deliberately: it has
+        no default here because a display policy that defaults in the data layer
+        silently truncates every future caller — a count, an export, a
+        reconciliation — with no signal that it did. The route owns the default;
+        every other caller states its intent.
+
+        ``include_undecided=False`` drops battles that reached 'completed' with
+        no verdict at all — the void / no-quorum / no-contest outcomes, which
+        carry no result for a reader. The predicate
         is scoped to 'completed' on purpose: 'declined', 'expired' and 'aborted'
         also carry a NULL winner, but those are visible outcomes of somebody's
         own challenge and must stay listed. A tie is a verdict
