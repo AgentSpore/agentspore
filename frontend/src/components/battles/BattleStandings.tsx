@@ -40,18 +40,21 @@ function ContenderRow({ c, rank }: { c: BattleLeaderboardContender; rank: number
 }
 
 function ApproachCard({ a }: { a: BattleApproachRecord }) {
+  const measured = a.battles > 0;
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
       <div className="text-xs font-medium text-neutral-200">{approachLabel(a.approach_key)}</div>
       <div className="mt-1.5 flex items-baseline gap-2">
-        <span className="text-lg font-semibold tabular-nums text-white">{score(a)}%</span>
-        <span className="text-[11px] text-neutral-500">score, a tie counts half</span>
+        <span className="text-lg font-semibold tabular-nums text-white">{measured ? `${score(a)}%` : "—"}</span>
+        <span className="text-[11px] text-neutral-500">
+          {measured ? "score, a tie counts half" : "no results yet"}
+        </span>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-neutral-800">
-        <div className="h-full rounded-full bg-violet-500/70" style={{ width: `${score(a)}%` }} />
+        <div className="h-full rounded-full bg-violet-500/70" style={{ width: measured ? `${score(a)}%` : "0%" }} />
       </div>
       <div className="mt-2 text-[11px] tabular-nums text-neutral-400">
-        {a.wins}–{a.losses}–{a.ties} in {a.battles} decided battles
+        {a.wins}–{a.losses}–{a.ties} in {a.battles} results
       </div>
     </div>
   );
@@ -71,7 +74,12 @@ export function BattleStandings({ intervalMs }: { intervalMs: number }) {
   }
 
   const ranked = [...board.contenders].sort((a, b) => b.elo - a.elo);
-  const approaches = [...board.approaches].sort((a, b) => score(b) - score(a));
+  // An approach with no results has no score to rank, so it sits after every
+  // measured one rather than being read as a bottom (or top) placement.
+  const approaches = [...board.approaches].sort((a, b) => {
+    if ((a.battles > 0) !== (b.battles > 0)) return a.battles > 0 ? -1 : 1;
+    return score(b) - score(a);
+  });
 
   return (
     <section className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
@@ -90,7 +98,7 @@ export function BattleStandings({ intervalMs }: { intervalMs: number }) {
                 <th className="pb-2 pr-3 font-normal">Contender</th>
                 <th className="pb-2 pr-3 text-right font-normal">Elo</th>
                 <th className="pb-2 pr-3 text-right font-normal">W–L–T</th>
-                <th className="pb-2 text-right font-normal">Decided</th>
+                <th className="pb-2 text-right font-normal">Results</th>
               </tr>
             </thead>
             <tbody>
@@ -106,8 +114,8 @@ export function BattleStandings({ intervalMs }: { intervalMs: number }) {
         <div className="mt-5 border-t border-neutral-800/70 pt-4">
           <div className="text-xs font-medium text-neutral-300">By approach</div>
           <p className="mt-1 text-xs text-neutral-500">
-            Every contender using that approach, combined. Counts cover decided battles only — a void or a missing jury
-            quorum leaves no result to score.
+            Every contender using that approach, combined. One decided battle leaves a result on each of its two sides,
+            so these counts run ahead of the number of battles; a void or a missing jury quorum leaves no result at all.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
             {approaches.map((a) => (
