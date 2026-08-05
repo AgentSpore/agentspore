@@ -33,6 +33,7 @@ from app.core.config import get_settings
 from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side
 from app.services.battle_judges import (
+    JUDGE_KIND_LLM,
     RECUSED_JUDGE_REF,
     REPLICATE_COUNT,
     JudgeModel,
@@ -1108,3 +1109,75 @@ class TestJudgeRecusal:
         assert await _contender_ratings(session_maker, fighting) == before, (
             "a recused battle moved the contender ladder"
         )
+
+
+# No application constant exists for it: nothing in app/ writes a human
+# judgement yet. V66:475 is the authority for the literal.
+JUDGE_KIND_HUMAN = "human"
+
+
+class TestHumanSeatDoesNotSuppressTheFreeze:
+    """The `judge_kind == 'llm'` filter in collapse_open_replicates_to_error.
+
+    Nothing in the application writes judge_kind='human' yet — it is reserved
+    for phase 2 — but V66's CHECK already admits it, so the state the filter
+    exists for is constructible directly and the branch is testable today.
+    """
+
+    async def test_a_human_vote_does_not_take_the_llm_seat(
+        self, session_maker
+    ) -> None:
+        """One replicate carries a human vote and no LLM one. The freeze must
+        still write that replicate's terminal LLM error: the two kinds are
+        separate seats under battle_judge_once, and a human row is not a
+        machine judgement.
+
+        MUTATION: drop the `judge_kind == JUDGE_KIND_LLM` filter from
+        `decided` — the human row claims the seat, the LLM error for it is
+        never written, and every count below goes red.
+        """
+        battle_id, _row, _fighting = await _battle_and_fighters(session_maker)
+        human_seed = replicate_seed(battle_id, 0)
+        voter = str(uuid.uuid4())
+
+        async with session_maker() as session:
+            inserted = await BattleRepository(session).upsert_judgement(
+                battle_id=battle_id,
+                judge_kind=JUDGE_KIND_HUMAN,
+                judge_ref=voter,
+                replicate_seed=human_seed,
+                vote="a",
+                confidence=0.5,
+            )
+            await session.commit()
+        assert inserted is not None, "V66 refused a human judgement row"
+
+        async with session_maker() as session:
+            await BattleRunner(session, None).collapse_open_replicates_to_error(
+                battle_id
+            )
+            await session.commit()
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+
+        by_kind = {
+            kind: [j for j in judgements if str(j["judge_kind"]) == kind]
+            for kind in (JUDGE_KIND_LLM, JUDGE_KIND_HUMAN)
+        }
+        assert len(by_kind[JUDGE_KIND_LLM]) == REPLICATE_COUNT, (
+            "the human vote suppressed a replicate's terminal LLM error"
+        )
+        assert {str(j["vote"]) for j in by_kind[JUDGE_KIND_LLM]} == {"error"}
+
+        # The contested seat specifically: exactly one row of each kind, the
+        # human one byte-for-byte as cast.
+        seat = [j for j in judgements if str(j["replicate_seed"]) == human_seed]
+        assert sorted(str(j["judge_kind"]) for j in seat) == [
+            JUDGE_KIND_HUMAN,
+            JUDGE_KIND_LLM,
+        ]
+        human_row = next(j for j in seat if str(j["judge_kind"]) == JUDGE_KIND_HUMAN)
+        assert str(human_row["judge_ref"]) == voter
+        assert str(human_row["vote"]) == "a"
+        assert human_row["reasoning"] is None, "the freeze overwrote a human vote"
