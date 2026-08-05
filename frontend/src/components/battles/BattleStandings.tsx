@@ -13,24 +13,22 @@ function approachLabel(key: string): string {
   return APPROACH_LABELS[key] ?? key;
 }
 
-/** "GLM 4.5 Flash · Step by step" -> the model and its approach, stacked. */
-function splitName(displayName: string): { model: string; approach: string | null } {
-  const [model, ...rest] = displayName.split("·");
-  return { model: model.trim(), approach: rest.length > 0 ? rest.join("·").trim() : null };
-}
-
-function winRate(r: { wins: number; battles: number }): number {
-  return r.battles > 0 ? Math.round((r.wins / r.battles) * 100) : 0;
+/** A tie is half a win: an all-tie record is "never lost", not "never won". */
+function score(r: { wins: number; ties: number; battles: number }): number {
+  return r.battles > 0 ? Math.round(((r.wins + 0.5 * r.ties) / r.battles) * 100) : 0;
 }
 
 function ContenderRow({ c, rank }: { c: BattleLeaderboardContender; rank: number }) {
-  const { model, approach } = splitName(c.display_name);
+  // The model name is display_name minus the approach the seed appends to it;
+  // the approach itself comes from approach_key, the only field with a fixed
+  // vocabulary — display_name is free text an operator can write any way.
+  const model = c.display_name.split("·")[0].trim();
   return (
     <tr className="border-t border-neutral-800/70">
       <td className="py-2.5 pr-2 align-top text-xs font-mono text-neutral-500 tabular-nums">{rank}</td>
       <td className="py-2.5 pr-3 align-top">
         <div className="text-xs font-medium text-neutral-100">{model}</div>
-        {approach && <div className="text-[11px] leading-4 text-cyan-300/80">{approach}</div>}
+        <div className="text-[11px] leading-4 text-cyan-300/80">{approachLabel(c.approach_key)}</div>
       </td>
       <td className="py-2.5 pr-3 text-right align-top text-xs font-semibold tabular-nums text-violet-300">{c.elo}</td>
       <td className="py-2.5 pr-3 text-right align-top text-xs tabular-nums text-neutral-300 whitespace-nowrap">
@@ -46,32 +44,41 @@ function ApproachCard({ a }: { a: BattleApproachRecord }) {
     <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
       <div className="text-xs font-medium text-neutral-200">{approachLabel(a.approach_key)}</div>
       <div className="mt-1.5 flex items-baseline gap-2">
-        <span className="text-lg font-semibold tabular-nums text-white">{winRate(a)}%</span>
-        <span className="text-[11px] text-neutral-500">win rate</span>
+        <span className="text-lg font-semibold tabular-nums text-white">{score(a)}%</span>
+        <span className="text-[11px] text-neutral-500">score, a tie counts half</span>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-neutral-800">
-        <div className="h-full rounded-full bg-violet-500/70" style={{ width: `${winRate(a)}%` }} />
+        <div className="h-full rounded-full bg-violet-500/70" style={{ width: `${score(a)}%` }} />
       </div>
       <div className="mt-2 text-[11px] tabular-nums text-neutral-400">
-        {a.wins}–{a.losses}–{a.ties} in {a.battles} battles
+        {a.wins}–{a.losses}–{a.ties} in {a.battles} decided battles
       </div>
     </div>
   );
 }
 
-export function BattleStandings() {
-  const board = useLeaderboard();
-  if (!board || board.contenders.length === 0) return null;
+export function BattleStandings({ intervalMs }: { intervalMs: number }) {
+  const { board, failure } = useLeaderboard(intervalMs);
+
+  if (!board || board.contenders.length === 0) {
+    if (!failure) return null;
+    return (
+      <section className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
+        <div className="text-xs font-medium text-neutral-300">Platform contender standings</div>
+        <p className="mt-1 text-xs text-neutral-500">Standings are unavailable right now ({failure}).</p>
+      </section>
+    );
+  }
 
   const ranked = [...board.contenders].sort((a, b) => b.elo - a.elo);
-  const approaches = [...board.approaches].sort((a, b) => winRate(b) - winRate(a));
+  const approaches = [...board.approaches].sort((a, b) => score(b) - score(a));
 
   return (
     <section className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
       <div className="text-xs font-medium text-neutral-300">Platform contender standings</div>
       <p className="mt-1 text-xs leading-5 text-neutral-500">
-        Six platform contenders — each a model paired with one answering approach — battle each other around the clock
-        on their own Elo ladder, separate from agent Elo.
+        Platform contenders — each a model paired with one answering approach — battle each other automatically on
+        their own Elo ladder, separate from agent Elo.
       </p>
 
       <div className="mt-4 -mx-4 px-4 sm:mx-0 sm:px-0">
@@ -83,7 +90,7 @@ export function BattleStandings() {
                 <th className="pb-2 pr-3 font-normal">Contender</th>
                 <th className="pb-2 pr-3 text-right font-normal">Elo</th>
                 <th className="pb-2 pr-3 text-right font-normal">W–L–T</th>
-                <th className="pb-2 text-right font-normal">Battles</th>
+                <th className="pb-2 text-right font-normal">Decided</th>
               </tr>
             </thead>
             <tbody>
@@ -98,7 +105,10 @@ export function BattleStandings() {
       {approaches.length > 0 && (
         <div className="mt-5 border-t border-neutral-800/70 pt-4">
           <div className="text-xs font-medium text-neutral-300">By approach</div>
-          <p className="mt-1 text-xs text-neutral-500">Every contender using that approach, combined.</p>
+          <p className="mt-1 text-xs text-neutral-500">
+            Every contender using that approach, combined. Counts cover decided battles only — a void or a missing jury
+            quorum leaves no result to score.
+          </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
             {approaches.map((a) => (
               <ApproachCard key={a.approach_key} a={a} />

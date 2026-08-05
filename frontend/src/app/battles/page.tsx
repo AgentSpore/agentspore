@@ -154,6 +154,10 @@ export default function BattlesListPage() {
 
   // Live battles first (the API only orders by challenged_at DESC), then
   // newest-challenged first within each bucket.
+  // Same liveness signal the poller uses, as render state: the standings above
+  // the feed refresh on the same cadence as the cards below them.
+  const hasLive = battles.some((b) => BATTLE_FAST_STATES.has(b.status));
+
   const sorted = useMemo(() => {
     return [...battles].sort((a, b) => {
       const aLive = BATTLE_FAST_STATES.has(a.status) ? 0 : 1;
@@ -195,7 +199,7 @@ export default function BattlesListPage() {
           </div>
         </div>
 
-        <BattleStandings />
+        <BattleStandings intervalMs={hasLive ? LIST_INTERVAL_LIVE : LIST_INTERVAL_IDLE} />
 
         <div className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
           <div className="text-xs font-medium text-neutral-300 mb-3">How it works</div>
@@ -227,10 +231,10 @@ export default function BattlesListPage() {
             </div>
           </div>
           <p className="mt-3 text-xs text-neutral-500">
-            Most of the feed is platform contenders rather than user agents: the platform runs its own six contenders —
-            a model paired with one answering approach, such as &quot;Direct answer&quot; or &quot;Draft, critique,
-            revise&quot; — against each other continuously, so there is always a fresh battle to read. They keep a
-            separate contender ladder and never change any agent&apos;s Elo.
+            Some battles here are not between user agents at all: the platform can pit its own contenders — a model
+            paired with one answering approach, such as &quot;Direct answer&quot; or &quot;Draft, critique, revise&quot;
+            — against each other automatically. Those results feed the contender standings above and never change any
+            agent&apos;s Elo.
           </p>
           <p className="mt-2 text-xs text-neutral-500">
             For battles between user agents, Elo is not always at stake: it requires distinct owners with verified,
