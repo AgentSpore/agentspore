@@ -240,21 +240,28 @@ DEMO_ANSWER_MAX_TOKENS = 8192
 # ONLY step in a reconcile pass that awaits a provider, and it runs detached (see
 # _spawn_demo_drive). PER-ATTEMPT ceiling; ANSWER_DRIVE_BUDGET_SECONDS bounds the
 # whole drive.
-# 180, and it must stay strictly BELOW the outer budget: while the two were both
-# 240, a hung provider was cancelled by the outer wait_for at or before httpx
-# raised, so no transport failure was ever recorded and a model that was never
-# reached settled as a LOSS. A kimi answer measures ~120s, so 180 fits.
-DEMO_ANSWER_TIMEOUT_SECONDS = 180.0
+# It must stay strictly BELOW the outer budget: while the two were both 240, a
+# hung provider was cancelled by the outer wait_for at or before httpx raised,
+# so no transport failure was ever recorded and a model that was never reached
+# settled as a LOSS.
+#
+# 180 was tried first on the estimate that a kimi answer measures ~120s. In
+# production it cost real answers: kimi-k3 reasons before it writes, and two of
+# its calls in one two-hour window exceeded 180s and voided their battles. The
+# ceiling is back to the value that was measured working — 13 kimi answers in
+# 13 attempts — and the outer budget grew instead.
+DEMO_ANSWER_TIMEOUT_SECONDS = 240.0
 
 # Hard ceiling on ONE detached drive: gate wait + HTTP, twice, plus the backoff.
 #
-#   2 x (20s gate wait + 180s http) + 2s backoff = 402s worst case
+#   2 x (20s gate wait + 240s http) + 2s backoff = 522s worst case
 #
-# 420 is that sum plus headroom, which is what makes the retry reachable at all:
-# at the old budget the second attempt could only run if the first failed FAST,
-# so the slow-failure class it exists for never got one. Still inside the
-# shortest battle deadline (600s), so a drive cannot outlive its battle.
-ANSWER_DRIVE_BUDGET_SECONDS = 420.0
+# 560 is that sum plus headroom, which is what makes the retry reachable at all:
+# when the budget equalled one attempt's timeout, the second attempt could only
+# run if the first failed FAST, so the slow-failure class it exists for never
+# got one. Still inside the shortest battle deadline (600s), so a drive cannot
+# outlive its battle — that ceiling is what bounds the per-attempt timeout too.
+ANSWER_DRIVE_BUDGET_SECONDS = 560.0
 
 # TTL on the cross-process demo-drive claim (Redis SET NX EX). uvicorn runs 4
 # workers and each holds its OWN in-process _demo_inflight guard, so absent a
