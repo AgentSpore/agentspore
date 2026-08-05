@@ -11,6 +11,7 @@ import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { RatedBadge } from "@/components/battles/RatedBadge";
 import { DemoBadge } from "@/components/battles/DemoBadge";
 import { BattleStandings } from "@/components/battles/BattleStandings";
+import { INCLUDE_UNDECIDED_PARAM, countUndecided } from "@/components/battles/undecided";
 
 // The list refreshes faster while a battle on the page is live — otherwise a
 // battle that finishes while the list is open would stay "Battle live" forever.
@@ -91,6 +92,9 @@ function cardStateClasses(status: BattleStatus): string {
 export default function BattlesListPage() {
   const [battles, setBattles] = useState<BattleSummary[]>([]);
   const [filter, setFilter] = useState<BattleStatus | "all">("all");
+  // Off by default, like the API: battles that finished without a verdict are
+  // a minority outcome, and a feed that leads with them reads as a fault log.
+  const [includeUndecided, setIncludeUndecided] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -114,6 +118,7 @@ export default function BattlesListPage() {
       if (isFirst) setLoading(true);
       const params = new URLSearchParams({ limit: "50" });
       if (filter !== "all") params.set("status", filter);
+      if (includeUndecided) params.set(INCLUDE_UNDECIDED_PARAM, "true");
       try {
         const res = await fetch(`${API_URL}/api/v1/battles?${params}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -146,7 +151,7 @@ export default function BattlesListPage() {
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [filter]);
+  }, [filter, includeUndecided]);
 
   const agentIds = battles.flatMap((b) => [b.agent_a_id, b.agent_b_id]);
   const names = useAgentNames(agentIds);
@@ -162,6 +167,8 @@ export default function BattlesListPage() {
       return new Date(b.challenged_at).getTime() - new Date(a.challenged_at).getTime();
     });
   }, [battles]);
+
+  const undecidedCount = countUndecided(battles);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
@@ -246,7 +253,7 @@ export default function BattlesListPage() {
           </p>
         </div>
 
-        <div className="mb-6 -mx-4 px-4 sm:mx-0 sm:px-0">
+        <div className="mb-6 -mx-4 px-4 sm:mx-0 sm:px-0 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
           <div className="inline-flex min-w-full sm:min-w-0 overflow-x-auto overscroll-x-contain rounded-xl border border-neutral-800 bg-neutral-900/40 p-1">
             {FILTERS.map((f) => (
               <button
@@ -262,7 +269,34 @@ export default function BattlesListPage() {
               </button>
             ))}
           </div>
+
+          {/* Separate from the status pills on purpose: those are one exclusive
+              choice, while "finished without a verdict" is an orthogonal fact
+              about a completed battle. Folding it into "Completed" would make
+              that pill mean two things and hide the option on every other. */}
+          <div className="inline-flex min-w-full sm:min-w-0 rounded-xl border border-neutral-800 bg-neutral-900/40 p-1">
+            <button
+              type="button"
+              aria-pressed={includeUndecided}
+              onClick={() => setIncludeUndecided((on) => !on)}
+              className={`battle-press min-h-9 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${
+                includeUndecided
+                  ? "bg-neutral-800 text-cyan-300 shadow-sm"
+                  : "text-neutral-500 hover:text-neutral-300 hover:bg-white/[0.03]"
+              }`}
+            >
+              Include battles without a verdict
+            </button>
+          </div>
         </div>
+
+        {includeUndecided && !loading && !err && (
+          <p className="-mt-3 mb-6 text-xs leading-5 text-neutral-500">
+            {undecidedCount > 0
+              ? `${undecidedCount} ${undecidedCount === 1 ? "battle" : "battles"} here finished without a verdict — the model's provider could not be reached, the jury did not reach quorum, or every judge was recused for conflict. Open one to see which.`
+              : "Nothing to show: every finished battle in this view reached a verdict. Battles end undecided only when a provider cannot be reached, the jury misses quorum, or every judge is recused."}
+          </p>
+        )}
 
         {loading && (
           <div className="space-y-3">
@@ -419,7 +453,7 @@ export default function BattlesListPage() {
                       </span>
                     )}
                     {b.status === "completed" && !b.winner && (
-                      <span className="text-sm text-neutral-400">No verdict</span>
+                      <span className="text-sm text-neutral-400">Finished without a verdict</span>
                     )}
                     {terminalText && <span className="text-sm text-neutral-500">{terminalText}</span>}
                   </div>
