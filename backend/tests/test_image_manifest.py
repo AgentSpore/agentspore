@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import json
 import posixpath
 import re
 from pathlib import Path
@@ -32,6 +33,10 @@ COMPOSE = REPO_ROOT / "deploy" / "docker-compose.prod.yml"
 # Dev-time tools (probe_openrouter_models.py, redteam/) are deliberately absent:
 # they need no production database and have no business in a shipped image.
 MANIFEST = {"scripts/backfill_contender_elo.py": "/app/ops_scripts/backfill_contender_elo.py"}
+
+_COPY_VERBS = {"COPY", "ADD"}
+# A source normalizing to one of these copies the whole build context.
+_CONTEXT_ROOTS = {".", "/", ""}
 
 _MOUNT = re.compile(r"^\s*-\s+[^\s:]+:(?P<target>/[^\s:]+)(?::[a-z,]+)?\s*$", re.MULTILINE)
 
@@ -48,22 +53,49 @@ def _instructions() -> list[tuple[str, str]]:
     return out
 
 
+def _arguments(verb: str, rest: str) -> tuple[list[str], list[str]]:
+    """(flags, paths) of a COPY/ADD, JSON-array form flattened.
+
+    An interpolated path is a hard failure rather than a miss: it is exactly the
+    case this reader cannot resolve, and a silent miss would wave it through.
+    """
+    remainder = rest.strip()
+    flags = []
+    while remainder.startswith("--"):
+        flag, _, remainder = remainder.partition(" ")
+        flags.append(flag)
+        remainder = remainder.strip()
+    if remainder.startswith("["):
+        try:
+            paths = [str(p) for p in json.loads(remainder)]
+        except json.JSONDecodeError as exc:
+            raise AssertionError(f"backend/Dockerfile: unreadable {verb} {rest!r} ({exc})") from exc
+    else:
+        paths = remainder.split()
+    for path in paths:
+        assert "$" not in path, (
+            f"backend/Dockerfile: {verb} names the interpolated path {path!r}, which this "
+            f"reader cannot resolve. Spell the path out, or teach this test the variable."
+        )
+    return flags, paths
+
+
 def _stages() -> list[dict]:
     """One entry per build stage, in order, each carrying its WORKDIR and COPY list."""
     stages: list[dict] = []
     for verb, rest in _instructions():
         if verb == "FROM":
-            parts = rest.split()
-            name = parts[2] if len(parts) > 2 and parts[1].upper() == "AS" else None
+            tokens = [t for t in rest.split() if not t.startswith("--")]
+            name = next(
+                (tokens[i + 1] for i, t in enumerate(tokens[:-1]) if t.upper() == "AS"), None
+            )
             stages.append({"name": name, "workdir": "/", "copies": []})
         elif not stages:
             continue
         elif verb == "WORKDIR":
             stages[-1]["workdir"] = posixpath.normpath(posixpath.join(stages[-1]["workdir"], rest))
-        elif verb == "COPY":
-            args = rest.split()
-            flags = [a for a in args if a.startswith("--")]
-            paths = [a for a in args if not a.startswith("--")]
+        elif verb in _COPY_VERBS:
+            flags, paths = _arguments(verb, rest)
             source_stage = next(
                 (f.split("=", 1)[1] for f in flags if f.startswith("--from=")), None
             )
@@ -72,15 +104,27 @@ def _stages() -> list[dict]:
     return stages
 
 
-def _tail(source: str, candidate: str | None) -> str | None:
+def _stage_index(stages: list[dict], reference: str, limit: int) -> int | None:
+    """Index of the stage a `--from=` names, by ordinal or by name as Docker matches it."""
+    if reference.isdigit():
+        index = int(reference)
+        return index if index < limit else None
+    lowered = reference.lower()
+    return next(
+        (i for i, s in enumerate(stages[:limit]) if (s["name"] or "").lower() == lowered), None
+    )
+
+
+def _tail(source: str, candidate: str) -> str | None:
     """`candidate` relative to `source`, or None when `source` does not cover it.
 
     An empty string means the source names the file itself; anything else means
     the source is a directory, whose CONTENTS land in the destination.
     """
-    if candidate is None:
-        return None
     normalized = source if source.startswith("/") else posixpath.normpath(source)
+    if normalized in _CONTEXT_ROOTS:
+        # `COPY . .` — the whole build context, the shape that ships everything.
+        return candidate.lstrip("/")
     if normalized == candidate:
         return ""
     prefix = normalized.rstrip("/") + "/"
@@ -96,26 +140,26 @@ def _destination(workdir: str, destination: str, name: str, tail: str) -> str:
     return posixpath.normpath(base)
 
 
-def _locate(stages: list[dict], index: int, script: str) -> str | None:
-    """Absolute path of `script` inside stage `index`, or None if it never arrives there."""
-    found = None
+def _locate(stages: list[dict], index: int, script: str) -> list[str]:
+    """Every absolute path `script` occupies inside stage `index`."""
+    landings: list[str] = []
     name = Path(script).name
     for source_stage, source, destination in stages[index]["copies"]:
         if source_stage is None:
-            tail = _tail(source, script)
+            origins = [script]
         else:
-            prior = next(
-                (i for i, s in enumerate(stages[:index]) if s["name"] == source_stage), None
-            )
-            tail = None if prior is None else _tail(source, _locate(stages, prior, script))
-        if tail is not None:
-            found = _destination(stages[index]["workdir"], destination, name, tail)
-    return found
+            prior = _stage_index(stages, source_stage, index)
+            origins = [] if prior is None else _locate(stages, prior, script)
+        for origin in origins:
+            tail = _tail(source, origin)
+            if tail is not None:
+                landings.append(_destination(stages[index]["workdir"], destination, name, tail))
+    return landings
 
 
-def _in_final_image(script: str) -> str | None:
+def _in_final_image(script: str) -> list[str]:
     stages = _stages()
-    return _locate(stages, len(stages) - 1, script) if stages else None
+    return _locate(stages, len(stages) - 1, script) if stages else []
 
 
 def _unlisted_scripts() -> list[str]:
@@ -136,18 +180,18 @@ def _unlisted_scripts() -> list[str]:
 
 def test_operator_scripts_land_at_their_manifest_path_in_the_final_image() -> None:
     for script, expected in MANIFEST.items():
-        actual = _in_final_image(script)
-        assert actual == expected, (
-            f"{script} must reach the LAST build stage at {expected}, found {actual}"
+        landings = _in_final_image(script)
+        assert expected in landings, (
+            f"{script} must reach the LAST build stage at {expected}, found {landings or 'nothing'}"
         )
 
 
 def test_scripts_outside_the_manifest_never_reach_the_final_image() -> None:
     """The obvious `COPY scripts/ ...` also ships the red-team injection corpus."""
     for script in _unlisted_scripts():
-        landing = _in_final_image(script)
-        assert landing is None, (
-            f"{script} is not an operator one-shot yet would ship at {landing}. "
+        landings = _in_final_image(script)
+        assert not landings, (
+            f"{script} is not an operator one-shot yet would ship at {landings}. "
             f"Narrow the COPY in backend/Dockerfile, or add {script} to MANIFEST "
             f"with its in-image path if shipping it is deliberate."
         )
