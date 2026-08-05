@@ -17,10 +17,13 @@
 -- this index to 'human' would cap the crowd at a single voter per seat and
 -- destroy the feature before it ships.
 --
--- battle_judge_once STAYS. The two rules do not overlap: it is the authority
--- for the human kind (one vote per user per seat) and remains the named
--- ON CONFLICT target for other writers, while this index is the authority for
--- the llm kind, where it is strictly narrower.
+-- battle_judge_once STAYS as the authority for the human kind (one vote per
+-- user per seat); this index is the authority for the llm kind, where it is
+-- strictly narrower. NO writer names either one any more: upsert_judgement uses
+-- an untargeted ON CONFLICT DO NOTHING so whichever rule applies can fire and
+-- the insert still returns None. Naming a constraint there would make the OTHER
+-- rule raise instead — which turns a freeze racing a vote into a failed settle.
+-- Do not restore a named target.
 
 -- ---------------------------------------------------------------------------
 -- Existing rows first: a unique index refuses to build over a duplicate, and
@@ -35,14 +38,38 @@
 -- with more than one llm row. The statement is expected to delete nothing; it
 -- is here so that a duplicate created between that check and this deploy is
 -- resolved by a stated rule instead of aborting the migration.
+--
+-- It runs inside a DO block only so that it can RAISE NOTICE what it removed:
+-- a delete against a live table that leaves no trace in the deploy log is
+-- unreviewable after the fact. The keep-oldest rule is right only while the
+-- freeze is the later writer, so if it ever discards a genuine straggler vote,
+-- the operator needs the seat printed to find it.
 -- ---------------------------------------------------------------------------
-DELETE FROM battle_judgements dup
-USING battle_judgements keep
-WHERE dup.judge_kind = 'llm'
-  AND keep.judge_kind = 'llm'
-  AND dup.battle_id = keep.battle_id
-  AND dup.replicate_seed = keep.replicate_seed
-  AND (keep.created_at, keep.id) < (dup.created_at, dup.id);
+DO $collapse_duplicate_seats$
+DECLARE
+    removed INT;
+    seats   TEXT;
+BEGIN
+    WITH dropped AS (
+        DELETE FROM battle_judgements dup
+        USING battle_judgements keep
+        WHERE dup.judge_kind = 'llm'
+          AND keep.judge_kind = 'llm'
+          AND dup.battle_id = keep.battle_id
+          AND dup.replicate_seed = keep.replicate_seed
+          AND (keep.created_at, keep.id) < (dup.created_at, dup.id)
+        RETURNING dup.battle_id, dup.replicate_seed
+    )
+    SELECT count(*), string_agg(battle_id || '/' || replicate_seed, ', ')
+      INTO removed, seats
+      FROM dropped;
+
+    IF removed > 0 THEN
+        RAISE NOTICE 'V74 collapsed % duplicate llm judgement row(s), keeping the oldest per seat: %',
+            removed, seats;
+    END IF;
+END
+$collapse_duplicate_seats$;
 
 -- judge_kind sits in the predicate, not in the key: it is constant across every
 -- row the index covers, so carrying it as a column would add bytes and no
