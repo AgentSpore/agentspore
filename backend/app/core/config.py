@@ -132,11 +132,9 @@ class Settings(BaseSettings):
     # Judge-panel model roster (Track 2 diversity). Ordered candidate model ids;
     # the FIRST is the primary (must be battle_judges.JUDGE_MODEL). Each is kept
     # only if OpenRouterService.resolve_provider finds a usable key, so the panel
-    # picks models from what is actually enabled — never a hardcoded list. When
-    # only one resolves the panel degrades to prompt-diversity-only (the real
-    # case today: RU-ASN geo-blocks every US provider, leaving z.ai). To enable
-    # real model diversity, add a reachable id (e.g. "mistral/mistral-small") AND
-    # set its provider key; do NOT assume a rich model zoo.
+    # picks models from what is actually enabled — never a hardcoded list. An id
+    # whose provider key does not resolve is dropped with a WARNING; if that
+    # leaves one model the panel degrades to prompt-diversity-only.
     #
     # Widened to four alongside judge recusal (seatable_judges): a judge whose
     # model also fights as a contender is recused from that battle, so a
