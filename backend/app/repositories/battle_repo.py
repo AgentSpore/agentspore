@@ -3974,7 +3974,10 @@ class BattleRepository:
                    AND contender_b_id IS NOT NULL
                    AND winner IS NOT NULL
                    AND judging_stop_reason IS NULL
-                 ORDER BY completed_at, id
+                 -- Settlement order, which is the order Elo must be replayed in:
+                 -- the maths is path-dependent. finalized_at is the column
+                 -- settle_battle stamps; battles has no completed_at.
+                 ORDER BY finalized_at, id
                 """
             )
         )
