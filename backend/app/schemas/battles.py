@@ -204,6 +204,48 @@ class BattleContender(BaseModel):
     enabled: bool
 
 
+class ContenderStanding(BaseModel):
+    """One contender's rating record (V73).
+
+    ``battles`` counts DECIDED battles only — wins + losses + ties. A void, a
+    no-contest or a no-quorum battle says nothing about the contender, so
+    counting it would dilute every rate computed from these numbers.
+    """
+
+    id: UUID
+    display_name: str
+    provider: str
+    model_id: str
+    approach_key: str
+    elo: int
+    wins: int
+    losses: int
+    ties: int
+    battles: int
+
+
+class ApproachStanding(BaseModel):
+    """One approach's record, summed over every contender running it."""
+
+    approach_key: str
+    wins: int
+    losses: int
+    ties: int
+    battles: int
+
+
+class BattleLeaderboard(BaseModel):
+    """Contender standings, and the same records rolled up by approach.
+
+    The roll-up is the question the contender roster exists to answer — whether
+    an approach wins across models — and it is computed from the same rows so
+    the two halves can never disagree.
+    """
+
+    contenders: list[ContenderStanding]
+    approaches: list[ApproachStanding]
+
+
 class Battle(BaseModel):
     """A row of battles.
 

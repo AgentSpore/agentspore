@@ -25,8 +25,30 @@ const DOT_CLASS: Record<TimelineRow["dot"], string> = {
  * genuine no-quorum panel, and rendering the two the same way told a user whose
  * contender was never called that the judges had failed to agree.
  */
-export function isVoidBattle(battle: { winner: string | null; verdict_reason: string | null }): boolean {
-  return battle.winner === null && (battle.verdict_reason?.startsWith("void:") ?? false);
+export function isVoidBattle(battle: NoResultBattle): boolean {
+  return hasNoResultReason(battle, "void:");
+}
+
+/**
+ * A battle nobody could judge impartially: every judge model also fights as a
+ * contender here, so each one was recused and too few impartial models were
+ * left to decide. No jury call was ever made, which is not the same as a jury
+ * that failed to agree.
+ *
+ * Keyed on the "recused:" prefix the backend writes into verdict_reason, the
+ * sibling of the "void:" token above.
+ */
+export function isRecusedBattle(battle: NoResultBattle): boolean {
+  return hasNoResultReason(battle, "recused:");
+}
+
+interface NoResultBattle {
+  winner: string | null;
+  verdict_reason: string | null;
+}
+
+function hasNoResultReason(battle: NoResultBattle, prefix: string): boolean {
+  return battle.winner === null && (battle.verdict_reason?.startsWith(prefix) ?? false);
 }
 
 function fmtTime(ts: string): string {
@@ -112,9 +134,11 @@ export function BattleTimeline({
       dot: "ok",
       title: isVoidBattle(battle)
         ? "Battle void — the model's provider could not be reached"
-        : battle.winner === null
-          ? "Battle finished without quorum"
-          : "Verdict reached, Elo updated",
+        : isRecusedBattle(battle)
+          ? "No result — every judge model was conflicted with a contender"
+          : battle.winner === null
+            ? "Battle finished without quorum"
+            : "Verdict reached, Elo updated",
       sub: eloText ?? undefined,
     });
   }

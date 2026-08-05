@@ -52,7 +52,13 @@ from app.repositories.battle_repo import (
     ChallengeDenial,
     ReservationConflictError,
 )
-from app.schemas.battles import BattleStatus, TaskStatus
+from app.schemas.battles import (
+    ApproachStanding,
+    BattleLeaderboard,
+    BattleStatus,
+    ContenderStanding,
+    TaskStatus,
+)
 from app.services.battle_budget import (
     BattleJudgeBudgetService,
     breaker_is_open,
@@ -1062,6 +1068,50 @@ class BattleService:
         if rejected:
             await self.db.commit()
         return rejected
+
+    # -- standings ----------------------------------------------------------
+
+    async def contender_leaderboard(self) -> BattleLeaderboard:
+        """Contender ratings (V73) plus the same records rolled up by approach."""
+        rows = await self.repo.list_contender_ratings()
+        standings = [
+            ContenderStanding(
+                **row, battles=row["wins"] + row["losses"] + row["ties"]
+            )
+            for row in rows
+        ]
+        return BattleLeaderboard(
+            contenders=standings,
+            approaches=_roll_up_by_approach(standings),
+        )
+
+
+def _roll_up_by_approach(standings: list[ContenderStanding]) -> list[ApproachStanding]:
+    """Sum every contender's record into its approach, best record first.
+
+    Elo is deliberately NOT summed or averaged here: a mean of ratings from
+    different opponents is not a rating, and the win record is the honest
+    aggregate the approach comparison needs.
+    """
+    totals: dict[str, list[int]] = {}
+    for row in standings:
+        counters = totals.setdefault(row.approach_key, [0, 0, 0])
+        counters[0] += row.wins
+        counters[1] += row.losses
+        counters[2] += row.ties
+    return sorted(
+        (
+            ApproachStanding(
+                approach_key=key,
+                wins=wins,
+                losses=losses,
+                ties=ties,
+                battles=wins + losses + ties,
+            )
+            for key, (wins, losses, ties) in totals.items()
+        ),
+        key=lambda a: (-a.wins, a.approach_key),
+    )
 
 
 def _unready_abort_reason(silent_sides: tuple[str, ...], max_generations: int) -> str:

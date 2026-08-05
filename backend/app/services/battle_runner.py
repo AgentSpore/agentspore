@@ -73,10 +73,13 @@ from app.services.battle_judges import (
     JUDGE_MODEL,
     JUDGE_SYSTEM_PROMPTS,
     PRESENTED_ORDERS,
+    RECUSED_JUDGE_REF,
+    RECUSED_PANEL_REASON,
     REPLICATE_COUNT,
     CollapsedVote,
     JudgeInjectionSuspected,
     JudgeModel,
+    JudgePanelRecusedError,
     JudgeRunResult,
     JudgeTransportError,
     PanelVerdict,
@@ -91,6 +94,7 @@ from app.services.battle_judges import (
     rubric_keys,
     sanitize_submission,
     scan_submissions,
+    seatable_judges,
     seed_field_for,
     warn_on_residual_side_label,
     wire_model_name,
@@ -472,11 +476,29 @@ class BattleRunner:
             and not judging_stopped
             and not task_in_quarantine
         )
+        # Which ladder this battle belongs to, decided from the row rather than
+        # from a comment. A MIXED battle (agent vs contender) satisfies NEITHER
+        # predicate, so it rates nothing and reaches no rating write — the side
+        # that has no agents row must never reach apply_rating, where its NULL id
+        # becomes the string "None" and the UPDATE dies on CAST('None' AS UUID).
+        contender_pair = bool(
+            fighters["contender_a_id"] and fighters["contender_b_id"]
+        )
+        agent_pair = bool(fighters["agent_a_id"] and fighters["agent_b_id"])
+        # Contender rating (V73) runs on its OWN gate. A contender has no owner,
+        # so the anti-Sybil clauses have nothing to defend against; what remains
+        # is "the panel produced a real result on a task nobody prepared for".
+        if contender_pair:
+            rated = not judging_stopped and not task_in_quarantine
+        elif agent_pair:
+            rated = should_rate
+        else:
+            rated = False
         change = apply_battle_result(
             fighters["elo_a"],
             fighters["elo_b"],
             winner,
-            rated=should_rate,
+            rated=rated,
         )
 
         reason = verdict.reason
@@ -510,7 +532,18 @@ class BattleRunner:
             logger.info("battle {} already finalized by another worker", battle_id)
             return None
 
-        if change.applied:
+        if change.applied and contender_pair:
+            await self.repo.apply_contender_rating(
+                str(fighters["contender_a_id"]),
+                change.a_after,
+                _outcome_for(Side.A, winner),
+            )
+            await self.repo.apply_contender_rating(
+                str(fighters["contender_b_id"]),
+                change.b_after,
+                _outcome_for(Side.B, winner),
+            )
+        elif change.applied and agent_pair:
             await self.repo.apply_rating(
                 str(fighters["agent_a_id"]), change.a_after, _outcome_for(Side.A, winner)
             )
@@ -1222,6 +1255,36 @@ class BattleRunner:
 
     # -- judging ------------------------------------------------------------
 
+    async def _contender_model_ids(self, battle: dict) -> set[str]:
+        """The platform model ids fielded as contenders in this battle.
+
+        Empty for an agent-vs-agent battle: those fighters run on their OWNER's
+        key and no platform judge model is on the mat, so nothing recuses and
+        that path is untouched.
+        """
+        model_ids: set[str] = set()
+        for side in (Side.A, Side.B):
+            contender_id = battle.get(f"contender_{side.value}_id")
+            if contender_id is None:
+                continue
+            contender = await self.repo.get_contender(str(contender_id))
+            if contender is None:
+                # Fail CLOSED: an unknown fighter identity cannot be shown to
+                # conflict with anything, and seating the panel on that silence
+                # is how a model ends up judging itself. Unreachable while the
+                # FK is ON DELETE RESTRICT, which is exactly why it must not be
+                # the case that decides the fairness question by default.
+                logger.warning(
+                    "battle {} side {}: contender {} is unreadable; recusing the "
+                    "whole panel rather than seating it on an unknown fighter",
+                    battle.get("id"),
+                    side.value,
+                    contender_id,
+                )
+                raise JudgePanelRecusedError({f"unreadable contender {contender_id}"})
+            model_ids.add(f"{contender['provider']}/{contender['model_id']}")
+        return model_ids
+
     def _resolve_judge_roster(self, base_url: str, api_key: str) -> list[JudgeModel]:
         """Build the per-replicate model roster from config (Track 2 diversity).
 
@@ -1229,9 +1292,11 @@ class BattleRunner:
         given (base_url/api_key, resolved upstream). Any ADDITIONAL id in
         ``settings.battle_judge_models`` is added only if OpenRouterService
         resolves a usable key for it, so the roster reflects what is actually
-        reachable and never a hardcoded list. In practice only the primary
-        resolves (RU-ASN geo-block), so this returns ``[primary]`` and the panel
-        runs prompt-diversity only — the honest, recorded degraded mode.
+        reachable and never a hardcoded list. Four ids resolve in production, one
+        per reachable provider — moonshot, z.ai, mistral and deepseek all answer
+        there, which the contender ladder demonstrates independently. A roster
+        that collapses to one entry is the degraded mode, not the normal one, and
+        each dropped id is logged below rather than passed over in silence.
 
         ``wire_model`` is the id STRIPPED of its provider prefix. It used to be
         kept equal to ``model_id`` on the claim that this preserved the exact,
@@ -1272,6 +1337,11 @@ class BattleRunner:
         for mid in extra_ids:
             creds = svc.resolve_provider(mid)
             if creds is None:
+                # Silence here is how a panel degrades to one model unnoticed —
+                # and with recusal on top, how it degrades to none.
+                logger.warning(
+                    "judge roster: {} dropped, no provider key resolves for it", mid
+                )
                 continue
             roster.append(
                 JudgeModel(
@@ -1338,10 +1408,12 @@ class BattleRunner:
         # injections before spend and punish an attributable injector. They are
         # NOT independent judges and NOT, on their own, a sufficient gate for rated
         # Elo against a determined adversary:
-        #   * only ONE judge model is reachable (RU-ASN geo-block leaves z.ai), so
-        #     model diversity is DORMANT — the roster degrades to single-model;
-        #   * three fixed paraphrases of ONE public prompt on ONE profileable model
-        #     are correlated samples, not independent verdicts;
+        #   * the reachable providers are also the ones the CONTENDERS use, so
+        #     recusal can cut a four-model roster to two — real diversity, but
+        #     narrower than the roster size suggests, and none of it independent
+        #     of the four providers our ASN can reach at all;
+        #   * three fixed paraphrases of one public prompt remain correlated
+        #     samples on any single replicate's model, not independent verdicts;
         #   * the detector is a LEXICAL, English-biased filter, bypassable by
         #     construction (encoded decode-and-follow payloads, non-English or
         #     Unicode-confusable injections, semantic rubric-gaming with no trigger
@@ -1364,8 +1436,23 @@ class BattleRunner:
             )
             raise JudgeInjectionSuspected(findings)
 
-        # Resolve the per-replicate model roster from config (Track 2 diversity).
-        roster = self._resolve_judge_roster(base_url, api_key)
+        # Resolve the per-replicate model roster from config (Track 2 diversity),
+        # then RECUSE every model that is itself fighting this battle: the roster
+        # models are also seeded contenders, and a judge that grades its own
+        # generation style is not measuring the battle (see seatable_judges).
+        fighting = await self._contender_model_ids(battle)
+        resolved = self._resolve_judge_roster(base_url, api_key)
+        roster = seatable_judges(resolved, fighting)
+        if not roster:
+            raise JudgePanelRecusedError(fighting)
+        if len(roster) < len(resolved):
+            logger.info(
+                "battle {} judge panel recused {} of {} models (contenders: {})",
+                battle_id,
+                len(resolved) - len(roster),
+                len(resolved),
+                ", ".join(sorted(fighting)),
+            )
         if len(roster) == 1:
             logger.info(
                 "battle {} judge panel single-model ({}): prompt-diversity only",
@@ -1453,30 +1540,60 @@ class BattleRunner:
 
         return collapsed
 
-    async def collapse_open_replicates_to_error(self, battle_id: str) -> int:
+    async def collapse_open_replicates_to_error(
+        self,
+        battle_id: str,
+        reason: str = "attempt budget exhausted before a verdict",
+        judge_ref: str = JUDGE_MODEL,
+    ) -> None:
         """Freeze every not-yet-decided replicate as a terminal 'error' vote.
 
         The escape-hatch counterpart to run_judge_panel's per-replicate collapse,
-        called ONLY when the battle's attempt budget is spent — so a replicate
-        with no judgement will never get one, and its silence is now a definitive
-        error rather than a transient throttle. upsert_judgement is
-        ON CONFLICT DO NOTHING, so a replicate that DID reach a real vote keeps it;
-        only the genuinely open ones become 'error'. Error votes leave the quorum
-        denominator (resolve_verdict), so the settle that follows resolves to
-        no-quorum and rates nothing instead of inventing a side or a tie.
+        called only when a replicate with no judgement will never get one — the
+        battle's attempt budget is spent, or no impartial judge remains — so its
+        silence is now definitive rather than a transient throttle. Error votes
+        leave the quorum denominator (resolve_verdict), so the settle that
+        follows resolves to no-quorum and rates nothing instead of inventing a
+        side or a tie.
+
+        One vote per replicate seat is guaranteed by the DATABASE:
+        uq_battle_judgements_llm_seat (V74) is unique on (battle_id,
+        replicate_seed) for the llm kind regardless of ``judge_ref``, so a
+        second row cannot exist even under the ref of its own that this method
+        supplies. The read below is a courtesy, not the guarantee.
+
+        Returns nothing on purpose. A count here would read as a completeness
+        signal it cannot be — 0 means "every replicate had already voted", not
+        "nothing to do" — and no call site has ever needed it.
 
         Does not commit — the caller owns the transaction boundary.
         """
+        # The read and the writes are NOT one atomic step. It no longer matters:
+        # a vote landing in between takes the seat, and V74's unique index makes
+        # the freeze's insert a no-op instead of a second row. Keeping the read
+        # still spares three pointless INSERTs on the common path, and settles
+        # attribution by intent rather than by which writer arrived first.
+        #
+        # judge_kind is filtered: 'human' is reserved for phase 2, and a
+        # replicate carrying only a human row still needs its terminal LLM error
+        # — the two kinds are separate seats under battle_judge_once.
+        decided = {
+            str(j["replicate_seed"])
+            for j in await self.repo.list_judgements(battle_id)
+            if str(j["judge_kind"]) == JUDGE_KIND_LLM
+        }
         for replicate_no in range(REPLICATE_COUNT):
+            seed = replicate_seed(battle_id, replicate_no)
+            if seed in decided:
+                continue
             await self.repo.upsert_judgement(
                 battle_id=battle_id,
                 judge_kind=JUDGE_KIND_LLM,
-                judge_ref=JUDGE_MODEL,
-                replicate_seed=replicate_seed(battle_id, replicate_no),
+                judge_ref=judge_ref,
+                replicate_seed=seed,
                 vote=Vote.ERROR.value,
-                reasoning="attempt budget exhausted before a verdict",
+                reasoning=reason,
             )
-        return REPLICATE_COUNT
 
     async def _stamp_and_settle_unrated(
         self, battle_id: str, lease_token: str, reason: str, log_label: str
@@ -1513,6 +1630,53 @@ class BattleRunner:
         """
         return await self._stamp_and_settle_unrated(
             battle_id, lease_token, reason, "budget-exhausted"
+        )
+
+    async def settle_panel_recused(
+        self, battle_id: str, lease_token: str
+    ) -> RatingChange | None:
+        """Settle a battle no impartial judge remained for. No result recorded.
+
+        The outcome is FORCED (``override_verdict``), not inferred from the
+        persisted votes, for the same reason :meth:`settle_silent_forfeit` forces
+        the void case: the panel never ran, so there is nothing honest to read.
+        Reading them would be worse than merely imprecise — the freeze below
+        SKIPS any replicate that already carries a row, so a vote cast before
+        recusal fired survives untouched, and three such votes reach quorum and
+        move the contender ladder on a verdict cast by the very model this method
+        exists to bar (the contender gate at settle_battle only holds while
+        ``winner`` is None). A forced ``winner=None`` makes that structural
+        instead of circumstantial.
+
+        The lease is re-checked FIRST. Every sibling terminal path proves
+        ownership before writing (``_stamp_and_settle_unrated`` via
+        ``set_judging_stop_reason``), and this one commits judgement rows: a
+        worker whose lease lapsed would otherwise freeze terminal errors for
+        seats the worker that now owns the battle is still judging, leaving the
+        battle carrying both a live panel's votes and a stale one's errors.
+
+        No ``judging_stop_reason`` is stamped — that column is a closed enum
+        (V69) and none of its values means "no impartial judge". The reason
+        travels in the public ``verdict_reason`` instead, exactly as the void
+        path carries its own.
+        """
+        renewed = await self.repo.renew_battle_lease(
+            battle_id, lease_token, BATTLE_LEASE_SECONDS
+        )
+        if not renewed:
+            await self.db.rollback()
+            logger.info("battle {} recusal settle skipped: lease lost", battle_id)
+            return None
+
+        await self.collapse_open_replicates_to_error(
+            battle_id, reason=RECUSED_PANEL_REASON, judge_ref=RECUSED_JUDGE_REF
+        )
+        await self.db.commit()
+        forced = PanelVerdict(
+            winner=None, is_tie=False, reason=RECUSED_PANEL_REASON, votes=[]
+        )
+        return await self.settle_battle(
+            battle_id, lease_token, override_verdict=forced
         )
 
     async def settle_injection_flagged(
@@ -2116,6 +2280,17 @@ async def _judge_and_settle(
                 )
                 settled = await runner.settle_injection_flagged(battle_id, token)
             if settled is not None:
+                counts["settled"] += 1
+        except JudgePanelRecusedError as exc:
+            # Every roster model is fighting this battle. Judging it anyway would
+            # let a contender grade itself, so the battle completes at no quorum
+            # (unrated, winner NULL) instead of carrying a self-judged verdict.
+            logger.warning(
+                "battle {} has no impartial judge ({}): settling at no quorum",
+                battle_id, exc,
+            )
+            await session.rollback()
+            if await runner.settle_panel_recused(battle_id, token) is not None:
                 counts["settled"] += 1
         except JudgeBudgetExhausted as exc:
             # The budget for this period is spent: settle UNRATED now rather than
