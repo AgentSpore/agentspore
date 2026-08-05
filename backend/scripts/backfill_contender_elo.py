@@ -3,7 +3,8 @@
 Every auto-battle before V73 settled with no rating to move, so the columns the
 migration adds open at their defaults and the leaderboard would show a roster of
 identical 1200s that had in fact fought each other dozens of times. This replays
-those battles in ``completed_at`` order through the SAME ``apply_battle_result``
+those battles in ``finalized_at`` order (the column ``settle_battle`` stamps;
+``battles`` has no ``completed_at``) through the SAME ``apply_battle_result``
 the runner uses, so the seeded ratings are the ones the history justifies rather
 than a second, hand-written approximation of the maths.
 

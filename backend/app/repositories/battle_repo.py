@@ -3963,6 +3963,12 @@ class BattleRepository:
         A void, a no-contest and a no-quorum battle all leave ``winner`` NULL or
         a ``judging_stop_reason``, and none of them says anything about either
         contender — the same exclusion the settlement gate makes.
+
+        The quarantine clause is the settlement gate's OTHER half
+        (``battle_runner`` ~line 490: ``not judging_stopped and not
+        task_in_quarantine``). Without it the backfill would rate battles the
+        live path refused to rate, and the replayed ladder would not be the one
+        the runner would have produced.
         """
         result = await self.db.execute(
             text(
@@ -3974,6 +3980,12 @@ class BattleRepository:
                    AND contender_b_id IS NOT NULL
                    AND winner IS NOT NULL
                    AND judging_stop_reason IS NULL
+                   AND NOT COALESCE(
+                           (SELECT t.status = 'quarantine'
+                              FROM battle_tasks t
+                             WHERE t.id = battles.task_id),
+                           FALSE
+                       )
                  -- Settlement order, which is the order Elo must be replayed in:
                  -- the maths is path-dependent. finalized_at is the column
                  -- settle_battle stamps; battles has no completed_at.

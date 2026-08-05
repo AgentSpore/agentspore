@@ -73,6 +73,8 @@ from app.services.battle_judges import (
     JUDGE_MODEL,
     JUDGE_SYSTEM_PROMPTS,
     PRESENTED_ORDERS,
+    RECUSED_JUDGE_REF,
+    RECUSED_PANEL_REASON,
     REPLICATE_COUNT,
     CollapsedVote,
     JudgeInjectionSuspected,
@@ -1266,8 +1268,21 @@ class BattleRunner:
             if contender_id is None:
                 continue
             contender = await self.repo.get_contender(str(contender_id))
-            if contender is not None:
-                model_ids.add(f"{contender['provider']}/{contender['model_id']}")
+            if contender is None:
+                # Fail CLOSED: an unknown fighter identity cannot be shown to
+                # conflict with anything, and seating the panel on that silence
+                # is how a model ends up judging itself. Unreachable while the
+                # FK is ON DELETE RESTRICT, which is exactly why it must not be
+                # the case that decides the fairness question by default.
+                logger.warning(
+                    "battle {} side {}: contender {} is unreadable; recusing the "
+                    "whole panel rather than seating it on an unknown fighter",
+                    battle.get("id"),
+                    side.value,
+                    contender_id,
+                )
+                raise JudgePanelRecusedError({f"unreadable contender {contender_id}"})
+            model_ids.add(f"{contender['provider']}/{contender['model_id']}")
         return model_ids
 
     def _resolve_judge_roster(self, base_url: str, api_key: str) -> list[JudgeModel]:
@@ -1320,6 +1335,11 @@ class BattleRunner:
         for mid in extra_ids:
             creds = svc.resolve_provider(mid)
             if creds is None:
+                # Silence here is how a panel degrades to one model unnoticed —
+                # and with recusal on top, how it degrades to none.
+                logger.warning(
+                    "judge roster: {} dropped, no provider key resolves for it", mid
+                )
                 continue
             roster.append(
                 JudgeModel(
@@ -1517,7 +1537,10 @@ class BattleRunner:
         return collapsed
 
     async def collapse_open_replicates_to_error(
-        self, battle_id: str, reason: str = "attempt budget exhausted before a verdict"
+        self,
+        battle_id: str,
+        reason: str = "attempt budget exhausted before a verdict",
+        judge_ref: str = JUDGE_MODEL,
     ) -> int:
         """Freeze every not-yet-decided replicate as a terminal 'error' vote.
 
@@ -1536,7 +1559,7 @@ class BattleRunner:
             await self.repo.upsert_judgement(
                 battle_id=battle_id,
                 judge_kind=JUDGE_KIND_LLM,
-                judge_ref=JUDGE_MODEL,
+                judge_ref=judge_ref,
                 replicate_seed=replicate_seed(battle_id, replicate_no),
                 vote=Vote.ERROR.value,
                 reasoning=reason,
@@ -1583,19 +1606,48 @@ class BattleRunner:
     async def settle_panel_recused(
         self, battle_id: str, lease_token: str
     ) -> RatingChange | None:
-        """Settle a battle no seatable judge remained for, at no quorum.
+        """Settle a battle no impartial judge remained for. No result recorded.
 
-        Every replicate is frozen as a terminal error, which leaves the quorum
-        denominator, so settle resolves winner=None and rates nothing. No
-        ``judging_stop_reason`` is stamped: that column is a closed enum (V69) and
-        the no-quorum path already completes the battle unrated, so recusal needs
-        no schema change to reach an honest terminal state.
+        The outcome is FORCED (``override_verdict``), not inferred from the
+        persisted votes, for the same reason :meth:`settle_silent_forfeit` forces
+        the void case: the panel never ran, so there is nothing honest to read.
+        Reading them would be worse than merely imprecise — the freeze below is
+        ON CONFLICT DO NOTHING, so a replicate that had already voted keeps its
+        vote, and three such votes reach quorum and move the contender ladder on
+        a verdict cast by the very model this method exists to bar (the
+        contender gate at settle_battle only holds while ``winner`` is None).
+        A forced ``winner=None`` makes that structural instead of circumstantial.
+
+        The lease is re-checked FIRST. Every sibling terminal path proves
+        ownership before writing (``_stamp_and_settle_unrated`` via
+        ``set_judging_stop_reason``), and this one commits judgement rows: a
+        worker whose lease lapsed would otherwise freeze terminal errors over the
+        live panel of the worker that now owns the battle, whose real votes
+        would then be swallowed by the same ON CONFLICT DO NOTHING.
+
+        No ``judging_stop_reason`` is stamped — that column is a closed enum
+        (V69) and none of its values means "no impartial judge". The reason
+        travels in the public ``verdict_reason`` instead, exactly as the void
+        path carries its own.
         """
+        renewed = await self.repo.renew_battle_lease(
+            battle_id, lease_token, BATTLE_LEASE_SECONDS
+        )
+        if not renewed:
+            await self.db.rollback()
+            logger.info("battle {} recusal settle skipped: lease lost", battle_id)
+            return None
+
         await self.collapse_open_replicates_to_error(
-            battle_id, reason="no judge model free of conflict with a contender"
+            battle_id, reason=RECUSED_PANEL_REASON, judge_ref=RECUSED_JUDGE_REF
         )
         await self.db.commit()
-        return await self.settle_battle(battle_id, lease_token)
+        forced = PanelVerdict(
+            winner=None, is_tie=False, reason=RECUSED_PANEL_REASON, votes=[]
+        )
+        return await self.settle_battle(
+            battle_id, lease_token, override_verdict=forced
+        )
 
     async def settle_injection_flagged(
         self, battle_id: str, lease_token: str

@@ -314,6 +314,17 @@ class JudgeInjectionSuspected(Exception):  # noqa: N818 - spec-named, not an *Er
         super().__init__(f"injection suspected: {detail}")
 
 
+# The public reason and judge_ref stamped when recusal empties the panel. The
+# judge_ref must NOT be JUDGE_MODEL: it is served by GET /battles/{id}/judgements,
+# and in the commonest recusal the primary model is precisely the one that was
+# barred — attributing the freeze to it reads as "kimi errored" when kimi was
+# never asked. Fits the VARCHAR(120) column.
+RECUSED_PANEL_REASON = (
+    "no judge model free of conflict with a contender; no result is recorded"
+)
+RECUSED_JUDGE_REF = "panel/recused"
+
+
 class JudgePanelRecusedError(Exception):
     """Every roster model is fighting this battle, so no judge may be seated.
 
