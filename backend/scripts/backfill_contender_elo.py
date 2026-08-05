@@ -18,8 +18,18 @@ first, because the matchmaker keeps settling battles while this runs: without
 the lock a rating written between the reset and the replay is silently
 overwritten by numbers computed from a snapshot that predates it.
 
+From a checkout::
+
     cd backend && uv run python -m scripts.backfill_contender_elo --dry-run
     cd backend && uv run python -m scripts.backfill_contender_elo
+
+Against production, inside the backend container. The module is ``ops_scripts``
+there, not ``scripts``: compose bind-mounts the repo-root ``scripts/`` over
+``/app/scripts``, so the image ships this file next to it instead. ``uv run`` is
+required — a bare ``python`` misses the venv the dependencies live in::
+
+    docker exec agentspore-backend uv run python -m ops_scripts.backfill_contender_elo --dry-run
+    docker exec agentspore-backend uv run python -m ops_scripts.backfill_contender_elo
 """
 
 from __future__ import annotations
