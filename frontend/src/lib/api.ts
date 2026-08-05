@@ -737,6 +737,32 @@ export interface BattleContender {
   enabled: boolean;
 }
 
+export interface BattleLeaderboardContender {
+  id: string;
+  display_name: string;
+  provider: string;
+  model_id: string;
+  approach_key: string;
+  elo: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  battles: number;
+}
+
+export interface BattleApproachRecord {
+  approach_key: string;
+  wins: number;
+  losses: number;
+  ties: number;
+  battles: number;
+}
+
+export interface BattleLeaderboard {
+  contenders: BattleLeaderboardContender[];
+  approaches: BattleApproachRecord[];
+}
+
 export interface BattleDetail extends BattleSummary {
   viewer_can_accept: boolean;
   agent_b_accepted_at: string | null;
