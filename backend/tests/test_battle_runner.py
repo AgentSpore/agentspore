@@ -3298,7 +3298,9 @@ class TestUnparsableJudgeReplyIsRetried:
                 "vote": label,
                 "confidence": 0.9,
                 "reasoning": f"{label} is more complete",
-                "scores": {"correctness": 1.0},
+                # No "scores": it is optional, and pool binding may attach any
+                # task's rubric — a hardcoded single key is rejected whenever a
+                # multi-key rubric binds, which is what made a sibling test flake.
             }
         )
 
