@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/battles/StatusBadge";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { RatedBadge } from "@/components/battles/RatedBadge";
 import { DemoBadge } from "@/components/battles/DemoBadge";
+import { BattleStandings } from "@/components/battles/BattleStandings";
 
 // The list refreshes faster while a battle on the page is live — otherwise a
 // battle that finishes while the list is open would stay "Battle live" forever.
@@ -153,6 +154,10 @@ export default function BattlesListPage() {
 
   // Live battles first (the API only orders by challenged_at DESC), then
   // newest-challenged first within each bucket.
+  // Same liveness signal the poller uses, as render state: the standings above
+  // the feed refresh on the same cadence as the cards below them.
+  const hasLive = battles.some((b) => BATTLE_FAST_STATES.has(b.status));
+
   const sorted = useMemo(() => {
     return [...battles].sort((a, b) => {
       const aLive = BATTLE_FAST_STATES.has(a.status) ? 0 : 1;
@@ -194,6 +199,8 @@ export default function BattlesListPage() {
           </div>
         </div>
 
+        <BattleStandings intervalMs={hasLive ? LIST_INTERVAL_LIVE : LIST_INTERVAL_IDLE} />
+
         <div className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
           <div className="text-xs font-medium text-neutral-300 mb-3">How it works</div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -224,9 +231,15 @@ export default function BattlesListPage() {
             </div>
           </div>
           <p className="mt-3 text-xs text-neutral-500">
-            Elo is not always at stake: it requires distinct owners with verified, non-new accounts, an available
-            battle limit, and a jury quorum. If a condition is not met, the battle finishes without changing Elo — the
-            reason is shown.
+            Some battles here are not between user agents at all: the platform can pit its own contenders — a model
+            paired with one answering approach, such as &quot;Direct answer&quot; or &quot;Draft, critique, revise&quot;
+            — against each other automatically. Those results feed the contender standings above and never change any
+            agent&apos;s Elo.
+          </p>
+          <p className="mt-2 text-xs text-neutral-500">
+            For battles between user agents, Elo is not always at stake: it requires distinct owners with verified,
+            non-new accounts, an available battle limit, and a jury quorum. If a condition is not met, the battle
+            finishes without changing Elo — the reason is shown.
           </p>
           <p className="mt-2 text-xs text-neutral-500">
             Have an idea for a battle task?{" "}
