@@ -132,7 +132,9 @@ async def _agent(session, owner_id: str | None = None) -> str:
     return str(result.scalar_one())
 
 
-async def _judging_battle(session, *, sides: dict, stop_reason: str | None = None) -> str:
+async def _judging_battle(
+    session, *, sides: dict, stop_reason: str | None = None, rated_eligible: bool | None = None
+) -> str:
     """A battle parked in 'judging' with a live lease, ready to settle."""
     columns = ", ".join(sides)
     values = ", ".join(f"CAST(:{key} AS UUID)" for key in sides)
@@ -158,7 +160,9 @@ async def _judging_battle(session, *, sides: dict, stop_reason: str | None = Non
         ),
         {
             **sides,
-            "rated_eligible": bool(sides.get("agent_b_id")),
+            "rated_eligible": (
+                bool(sides.get("agent_b_id")) if rated_eligible is None else rated_eligible
+            ),
             "stop_reason": stop_reason,
             "lease": str(uuid.uuid4()),
         },
@@ -256,6 +260,39 @@ class TestContenderSettlement:
         assert await _elo(db_session, a_id) == before_a
         assert await _elo(db_session, b_id) == before_b
 
+    async def test_a_mixed_agent_vs_contender_battle_rates_nothing(
+        self, session_maker, db_session
+    ) -> None:
+        """The schema admits agent-vs-contender even though no route creates one.
+        Such a battle must settle cleanly and move NEITHER ladder.
+
+        MUTATION: branch the rating writes on ``elif change.applied`` instead of
+        on ``agent_pair``. The contender side has no agents row, apply_rating
+        receives the string "None", and settlement dies on CAST('None' AS UUID).
+        """
+        contender_id = (await _contender_ids(db_session))[0]
+        before = await _elo(db_session, contender_id)
+
+        async with session_maker() as session:
+            agent_id = await _agent(session)
+            await session.commit()
+            battle_id = await _judging_battle(
+                session,
+                sides={"agent_a_id": agent_id, "contender_b_id": contender_id},
+                # The strongest form of the case: every agent-gate clause passes,
+                # so only the pair predicate can stop the rating write.
+                rated_eligible=True,
+            )
+            change = await _settle(session, battle_id, Side.A)
+
+        assert change is not None and not change.applied
+        assert await _elo(db_session, contender_id) == before
+        elo = await db_session.execute(
+            text("SELECT battle_elo FROM agents WHERE id = CAST(:a AS UUID)"),
+            {"a": agent_id},
+        )
+        assert elo.scalar_one() == 1200, "the agent side did not move either"
+
     async def test_agent_vs_agent_still_rates_through_agents_battle_elo(
         self, session_maker, db_session
     ) -> None:
@@ -350,19 +387,32 @@ class TestLeaderboardEndpoint:
         wins = [a["wins"] for a in body["approaches"]]
         assert wins == sorted(wins, reverse=True), "approaches sorted by wins DESC"
 
-    async def test_service_battles_count_excludes_undecided_battles(
-        self, db_session
+    async def test_battles_count_ignores_a_completed_but_undecided_battle(
+        self, session_maker, db_session
     ) -> None:
-        """``battles`` counts decided outcomes only, so a void or no-quorum
-        battle — which increments no counter — never inflates it.
+        """A battle that completed with a ``judging_stop_reason`` exists as a row
+        and moved no rating, so it must not appear in the contender's ``battles``.
 
-        MUTATION: count battles from the battles table instead of the counters.
-        The voided battle above starts being counted and this goes red.
+        MUTATION: count battles from the battles table (a JOIN on contender_a_id)
+        instead of from the counters. The stopped battle inserted here is
+        completed and joins, so the count rises by one and this goes red.
         """
-        board = await BattleService(db_session).contender_leaderboard()
-        assert all(
-            c.battles == c.wins + c.losses + c.ties for c in board.contenders
-        )
-        assert sum(a.battles for a in board.approaches) == sum(
-            c.battles for c in board.contenders
-        )
+        a_id, b_id = (await _contender_ids(db_session))[:2]
+        before = await BattleService(db_session).contender_leaderboard()
+        battles_before = {str(c.id): c.battles for c in before.contenders}
+
+        async with session_maker() as session:
+            battle_id = await _judging_battle(
+                session,
+                sides={"contender_a_id": a_id, "contender_b_id": b_id},
+                stop_reason="battle_attempt_cap",
+            )
+            await _settle(session, battle_id, Side.A)
+
+        row = await BattleRepository(db_session).get(battle_id)
+        assert row["status"] == "completed", "the undecided battle is a real row"
+
+        after = await BattleService(db_session).contender_leaderboard()
+        battles_after = {str(c.id): c.battles for c in after.contenders}
+        assert battles_after[a_id] == battles_before[a_id]
+        assert battles_after[b_id] == battles_before[b_id]

@@ -1529,8 +1529,10 @@ class BattleRepository:
         is the task binding, so the row is inserted already bound and already
         'queued', which is the exact shape battle_task_bound_from_queue requires.
 
-        ``rated_eligible`` is FALSE with reason 'auto': a contender has no owner
-        and no Elo, so this can never move a rating.
+        ``rated_eligible`` is FALSE with reason 'auto': a contender has no owner,
+        so this row can never move AGENT Elo. Since V73 it does move the CONTENDER
+        ladder, which is a separate rating decided by its own gate in
+        ``BattleRunner.settle_battle`` and is not what ``rated_eligible`` means.
         """
         result = await self.db.execute(
             text(
@@ -3901,6 +3903,82 @@ class BattleRepository:
             {"contender_id": str(contender_id), "new_elo": new_elo, "outcome": outcome},
         )
         return result.first() is not None
+
+    async def lock_and_reset_contender_ratings(self) -> None:
+        """Serialise the roster and reset every rating to the column defaults.
+
+        For the V73 backfill, which replays history against a table the live
+        matchmaker is settling into. The LOCK is the whole point and must be the
+        transaction's FIRST statement: without it a battle settling between the
+        reset and the replay's write has its increment silently overwritten by a
+        rating computed from a snapshot that predates it. EXCLUSIVE (not ACCESS
+        EXCLUSIVE) still admits concurrent readers, so the leaderboard keeps
+        answering while the backfill runs.
+
+        ``SET elo = DEFAULT`` rather than a literal: the column default is the
+        authority for a fresh rating, and a second copy of 1200 here is a second
+        place to forget.
+        """
+        await self.db.execute(text("LOCK TABLE battle_contenders IN EXCLUSIVE MODE"))
+        await self.db.execute(
+            text(
+                """
+                UPDATE battle_contenders
+                SET elo = DEFAULT, wins = DEFAULT, losses = DEFAULT, ties = DEFAULT
+                """
+            )
+        )
+
+    async def set_contender_rating(
+        self, contender_id: str, elo: int, wins: int, losses: int, ties: int
+    ) -> bool:
+        """Overwrite one contender's whole rating record. No commit.
+
+        Distinct from :meth:`apply_contender_rating`, which INCREMENTS one
+        counter for one battle. A replay computes the absolute totals, so it must
+        assign them; incrementing from a replay would double-count.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battle_contenders
+                SET elo = :elo, wins = :wins, losses = :losses, ties = :ties
+                WHERE id = CAST(:contender_id AS UUID)
+                RETURNING id
+                """
+            ),
+            {
+                "contender_id": str(contender_id),
+                "elo": elo,
+                "wins": wins,
+                "losses": losses,
+                "ties": ties,
+            },
+        )
+        return result.first() is not None
+
+    async def list_decided_contender_battles(self) -> list[dict]:
+        """Every completed contender-vs-contender battle that produced a result.
+
+        A void, a no-contest and a no-quorum battle all leave ``winner`` NULL or
+        a ``judging_stop_reason``, and none of them says anything about either
+        contender — the same exclusion the settlement gate makes.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT contender_a_id, contender_b_id, winner
+                  FROM battles
+                 WHERE status = 'completed'
+                   AND contender_a_id IS NOT NULL
+                   AND contender_b_id IS NOT NULL
+                   AND winner IS NOT NULL
+                   AND judging_stop_reason IS NULL
+                 ORDER BY completed_at, id
+                """
+            )
+        )
+        return [dict(row) for row in result.mappings()]
 
     async def list_contender_ratings(self) -> list[dict]:
         """Every contender's rating record, disabled ones included (V73).

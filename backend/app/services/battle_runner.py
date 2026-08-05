@@ -472,20 +472,29 @@ class BattleRunner:
             and not judging_stopped
             and not task_in_quarantine
         )
-        # Contender rating (V73) runs on its OWN gate. A contender has no owner,
-        # so none of the anti-Sybil clauses above have anything to defend
-        # against; what remains is "the panel produced a real result". A MIXED
-        # battle (agent vs contender) does not exist today and is not reachable
-        # from any route; if one ever is, both branches are False and neither
-        # rating moves, which is the safe reading of an unmodelled pairing.
+        # Which ladder this battle belongs to, decided from the row rather than
+        # from a comment. A MIXED battle (agent vs contender) satisfies NEITHER
+        # predicate, so it rates nothing and reaches no rating write — the side
+        # that has no agents row must never reach apply_rating, where its NULL id
+        # becomes the string "None" and the UPDATE dies on CAST('None' AS UUID).
         contender_pair = bool(
             fighters["contender_a_id"] and fighters["contender_b_id"]
         )
+        agent_pair = bool(fighters["agent_a_id"] and fighters["agent_b_id"])
+        # Contender rating (V73) runs on its OWN gate. A contender has no owner,
+        # so the anti-Sybil clauses have nothing to defend against; what remains
+        # is "the panel produced a real result on a task nobody prepared for".
+        if contender_pair:
+            rated = not judging_stopped and not task_in_quarantine
+        elif agent_pair:
+            rated = should_rate
+        else:
+            rated = False
         change = apply_battle_result(
             fighters["elo_a"],
             fighters["elo_b"],
             winner,
-            rated=(not judging_stopped) if contender_pair else should_rate,
+            rated=rated,
         )
 
         reason = verdict.reason
@@ -530,7 +539,7 @@ class BattleRunner:
                 change.b_after,
                 _outcome_for(Side.B, winner),
             )
-        elif change.applied:
+        elif change.applied and agent_pair:
             await self.repo.apply_rating(
                 str(fighters["agent_a_id"]), change.a_after, _outcome_for(Side.A, winner)
             )

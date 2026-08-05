@@ -12,36 +12,26 @@ so running it twice produces the same numbers as running it once. Deliberately
 NOT wired into startup — a rating that silently recomputes itself on every deploy
 is a rating nobody can reason about.
 
+The whole run is ONE transaction that takes an EXCLUSIVE lock on the roster
+first, because the matchmaker keeps settling battles while this runs: without
+the lock a rating written between the reset and the replay is silently
+overwritten by numbers computed from a snapshot that predates it.
+
+    cd backend && uv run python -m scripts.backfill_contender_elo --dry-run
     cd backend && uv run python -m scripts.backfill_contender_elo
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 
-from sqlalchemy import text
+from loguru import logger
 
 from app.core.database import async_session_maker
 from app.core.rating import DEFAULT_ELO, apply_battle_result
+from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Winner
-
-_RESET_SQL = """
-UPDATE battle_contenders SET elo = 1200, wins = 0, losses = 0, ties = 0
-"""
-
-# Decided contender-vs-contender battles only. A void, a no-contest and a
-# no-quorum battle all leave winner NULL or a judging_stop_reason, and none of
-# them says anything about either contender.
-_HISTORY_SQL = """
-SELECT contender_a_id, contender_b_id, winner
-  FROM battles
- WHERE status = 'completed'
-   AND contender_a_id IS NOT NULL
-   AND contender_b_id IS NOT NULL
-   AND winner IS NOT NULL
-   AND judging_stop_reason IS NULL
- ORDER BY completed_at, id
-"""
 
 
 class ContenderRecord:
@@ -87,41 +77,43 @@ def _outcome(winner: Winner, *, is_a: bool) -> str:
     return "win" if won else "loss"
 
 
-async def main() -> None:
-    async with async_session_maker() as session:
-        await session.execute(text(_RESET_SQL))
-        rows = [dict(r) for r in (await session.execute(text(_HISTORY_SQL))).mappings()]
-        records = replay(rows)
-        for contender_id, record in records.items():
-            await session.execute(
-                text(
-                    """
-                    UPDATE battle_contenders
-                    SET elo = :elo, wins = :wins, losses = :losses, ties = :ties
-                    WHERE id = CAST(:id AS UUID)
-                    """
-                ),
-                {
-                    "id": contender_id,
-                    "elo": record.elo,
-                    "wins": record.wins,
-                    "losses": record.losses,
-                    "ties": record.ties,
-                },
-            )
-        await session.commit()
-
-    print(f"replayed {len(rows)} decided contender battles")
-    for contender_id, record in sorted(
-        records.items(), key=lambda kv: -kv[1].elo
-    ):
-        print(
-            f"  {contender_id}  elo={record.elo}  "
-            f"W/L/T={record.wins}/{record.losses}/{record.ties}"
+def _report(records: dict[str, ContenderRecord], battle_count: int) -> None:
+    logger.info("replayed {} decided contender battles", battle_count)
+    for contender_id, record in sorted(records.items(), key=lambda kv: -kv[1].elo):
+        logger.info(
+            "  {}  elo={}  W/L/T={}/{}/{}",
+            contender_id, record.elo, record.wins, record.losses, record.ties,
         )
     if not records:
-        print("  no contender battles to replay — every contender stays at 1200")
+        logger.info("  nothing to replay — every contender stays at {}", DEFAULT_ELO)
+
+
+async def backfill(*, dry_run: bool) -> dict[str, ContenderRecord]:
+    """Reset, replay and persist, or roll back when ``dry_run``."""
+    async with async_session_maker() as session:
+        repo = BattleRepository(session)
+        await repo.lock_and_reset_contender_ratings()
+        battles = await repo.list_decided_contender_battles()
+        records = replay(battles)
+        for contender_id, record in records.items():
+            await repo.set_contender_rating(
+                contender_id, record.elo, record.wins, record.losses, record.ties
+            )
+        _report(records, len(battles))
+        if dry_run:
+            await session.rollback()
+            logger.warning("dry run — rolled back, nothing was written")
+        else:
+            await session.commit()
+            logger.info("committed")
+        return records
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the resulting ratings and roll back without writing",
+    )
+    asyncio.run(backfill(dry_run=parser.parse_args().dry_run))
