@@ -53,6 +53,7 @@ _MIG_FILES = [
     "V70__battle_user_tasks.sql",
     "V71__battle_demo_mode.sql",
     "V72__battle_contenders.sql",
+    "V73__contender_rating.sql",
 ]
 
 VALID_JUDGE_REPLY = (
