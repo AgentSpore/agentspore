@@ -19,11 +19,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Установка uv через pip (ghcr.io заблокирован в России)
 RUN pip install --no-cache-dir uv
 
-# Копируем файлы зависимостей
-COPY pyproject.toml ./
+# Dependency manifest AND the lockfile: without uv.lock in the context every
+# build re-resolves against the network and can pin different versions.
+COPY pyproject.toml uv.lock ./
 
-# Устанавливаем зависимости (без --frozen, так как uv.lock может не существовать)
-RUN uv sync --no-dev
+# --locked: install exactly what uv.lock pins, and FAIL if the lockfile has
+# drifted from pyproject.toml. --frozen would use a stale lock silently; a bare
+# `uv sync` would rewrite it in-image, which is the non-reproducible behaviour.
+RUN uv sync --locked --no-dev
 
 # Копируем код приложения
 COPY app/ ./app/
@@ -43,5 +46,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Запуск через uv
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Start from the baked venv directly. `uv run` would re-check the environment on
+# every container start — a network-touching step on the boot path. Same form as
+# the operator one-shot documented in scripts/backfill_contender_elo.py.
+CMD ["/app/.venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
