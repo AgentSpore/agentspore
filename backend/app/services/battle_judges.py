@@ -1,16 +1,18 @@
 """The judge panel — three paired replicates over one model.
 
-**What this is, stated honestly.** We have exactly one reliably free model
-(``glm-4.5-flash``; everything else geo-blocks our ASN and the other z.ai models
-are paid). So there is no panel of independent judges to be had. What we run is
-THREE PAIRED STOCHASTIC REPLICATES of one model: three sampling units, each
-scored twice — once with the fighters shown ab, once ba. Six calls, three
-collapsed votes.
+**What this is, stated honestly.** Four providers are reachable from our ASN
+(moonshot, z.ai, mistral, deepseek) and the roster holds one model from each, so
+a replicate is not always the same model as its neighbour. It is still not a
+panel of independent judges: those four are the same four the CONTENDERS use, so
+recusal narrows the roster further, and a replicate assigned one model is a
+sampling unit of that model. What we run is THREE PAIRED STOCHASTIC REPLICATES:
+three sampling units, each scored twice — once with the fighters shown ab, once
+ba. Six calls, three collapsed votes.
 
-These replicates are correlated: they share the model's biases entirely. A
-majority among them is evidence about sampling noise, not about consensus. Any
-user-facing string must therefore say "replicates", never "three judges" —
-calling them judges would sell a diversity we do not have.
+Replicates that share a model share its biases entirely, so a majority among
+them is evidence about sampling noise more than about consensus. Any user-facing
+string must therefore say "replicates", never "three judges" — calling them
+judges would sell an independence we do not have.
 
 **Why paired, and why the pair is ONE vote.** LLM judges have a well-known
 position bias: the same pair of answers can win or lose on presentation order
@@ -422,12 +424,13 @@ class JudgeModel:
     is what is sent as the ``model`` field on the provider request.
 
     The roster is resolved from config (``settings.battle_judge_models``) filtered
-    to providers we actually hold a key for — NEVER a hardcoded model list. When
-    only one entry resolves the panel degrades to prompt-diversity-only, which is
-    the real situation today (RU-ASN geo-blocks every US provider; z.ai
-    glm-4.5-flash is the one reliably free model). That single-model condition is
-    observable after the fact because every replicate's ``judge_ref`` is this
-    ``model_id`` — a homogeneous set means the panel ran single-model.
+    to providers we actually hold a key for — NEVER a hardcoded model list. Four
+    resolve in production, one per provider our ASN can reach (moonshot, z.ai,
+    mistral, deepseek); recusal then removes any of them fighting this battle. A
+    roster that collapses to a single entry degrades the panel to
+    prompt-diversity-only, and that condition is observable after the fact
+    because every replicate's ``judge_ref`` is this ``model_id`` — a homogeneous
+    set means the panel ran single-model.
     """
 
     model_id: str

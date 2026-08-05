@@ -1010,6 +1010,17 @@ class TestJudgeRecusal:
             settled = await BattleRepository(session).get(battle_id)
         assert settled["status"] == "completed"
         assert settled["winner"] is None, "a self-judged verdict was published"
+        # One collapsed vote per replicate, which upsert_judgement promises and
+        # `len(judgements) >= REPLICATE_COUNT` relies on. The freeze writes a
+        # judge_ref of its own, so ON CONFLICT DO NOTHING (keyed on judge_ref,
+        # V66:486) does NOT suppress it over a real vote — only the explicit skip
+        # of already-decided seeds does.
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == REPLICATE_COUNT, "the freeze duplicated a replicate"
+        assert {str(j["judge_ref"]) for j in judgements} == {
+            f"{fighting[0]['provider']}/{fighting[0]['model_id']}"
+        }, "a real vote lost its attribution to the model that cast it"
         assert await _contender_ratings(session_maker, fighting) == before, (
             "votes from the barred model moved the ladder"
         )

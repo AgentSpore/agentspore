@@ -1292,9 +1292,11 @@ class BattleRunner:
         given (base_url/api_key, resolved upstream). Any ADDITIONAL id in
         ``settings.battle_judge_models`` is added only if OpenRouterService
         resolves a usable key for it, so the roster reflects what is actually
-        reachable and never a hardcoded list. In practice only the primary
-        resolves (RU-ASN geo-block), so this returns ``[primary]`` and the panel
-        runs prompt-diversity only — the honest, recorded degraded mode.
+        reachable and never a hardcoded list. Four ids resolve in production, one
+        per reachable provider — moonshot, z.ai, mistral and deepseek all answer
+        there, which the contender ladder demonstrates independently. A roster
+        that collapses to one entry is the degraded mode, not the normal one, and
+        each dropped id is logged below rather than passed over in silence.
 
         ``wire_model`` is the id STRIPPED of its provider prefix. It used to be
         kept equal to ``model_id`` on the claim that this preserved the exact,
@@ -1406,10 +1408,12 @@ class BattleRunner:
         # injections before spend and punish an attributable injector. They are
         # NOT independent judges and NOT, on their own, a sufficient gate for rated
         # Elo against a determined adversary:
-        #   * only ONE judge model is reachable (RU-ASN geo-block leaves z.ai), so
-        #     model diversity is DORMANT — the roster degrades to single-model;
-        #   * three fixed paraphrases of ONE public prompt on ONE profileable model
-        #     are correlated samples, not independent verdicts;
+        #   * the reachable providers are also the ones the CONTENDERS use, so
+        #     recusal can cut a four-model roster to two — real diversity, but
+        #     narrower than the roster size suggests, and none of it independent
+        #     of the four providers our ASN can reach at all;
+        #   * three fixed paraphrases of one public prompt remain correlated
+        #     samples on any single replicate's model, not independent verdicts;
         #   * the detector is a LEXICAL, English-biased filter, bypassable by
         #     construction (encoded decode-and-follow payloads, non-English or
         #     Unicode-confusable injections, semantic rubric-gaming with no trigger
@@ -1545,26 +1549,47 @@ class BattleRunner:
         """Freeze every not-yet-decided replicate as a terminal 'error' vote.
 
         The escape-hatch counterpart to run_judge_panel's per-replicate collapse,
-        called ONLY when the battle's attempt budget is spent — so a replicate
-        with no judgement will never get one, and its silence is now a definitive
-        error rather than a transient throttle. upsert_judgement is
-        ON CONFLICT DO NOTHING, so a replicate that DID reach a real vote keeps it;
-        only the genuinely open ones become 'error'. Error votes leave the quorum
-        denominator (resolve_verdict), so the settle that follows resolves to
-        no-quorum and rates nothing instead of inventing a side or a tie.
+        called only when a replicate with no judgement will never get one — the
+        battle's attempt budget is spent, or no impartial judge remains — so its
+        silence is now definitive rather than a transient throttle. Error votes
+        leave the quorum denominator (resolve_verdict), so the settle that
+        follows resolves to no-quorum and rates nothing instead of inventing a
+        side or a tie.
+
+        Already-voted replicates are skipped by an explicit READ, not by
+        upsert_judgement's ON CONFLICT DO NOTHING. That clause suppresses on the
+        battle_judge_once key (V66:486), which includes ``judge_ref`` — so it
+        only protects a row written under the SAME ref, and this method's ref is
+        caller-supplied. The recusal path passes a ref of its own, under which a
+        real vote does not conflict, and the insert would land a SECOND row for
+        one replicate_seed: six rows for three replicates, breaking the one
+        collapsed vote per replicate rule that upsert_judgement's docstring
+        promises and that ``len(judgements) >= REPLICATE_COUNT`` relies on. The
+        skip also keeps a real vote attributed to the model that actually cast
+        it, which no ref choice here could do.
+
+        Returns the number of replicates actually frozen.
 
         Does not commit — the caller owns the transaction boundary.
         """
+        decided = {
+            str(j["replicate_seed"]) for j in await self.repo.list_judgements(battle_id)
+        }
+        frozen = 0
         for replicate_no in range(REPLICATE_COUNT):
+            seed = replicate_seed(battle_id, replicate_no)
+            if seed in decided:
+                continue
             await self.repo.upsert_judgement(
                 battle_id=battle_id,
                 judge_kind=JUDGE_KIND_LLM,
                 judge_ref=judge_ref,
-                replicate_seed=replicate_seed(battle_id, replicate_no),
+                replicate_seed=seed,
                 vote=Vote.ERROR.value,
                 reasoning=reason,
             )
-        return REPLICATE_COUNT
+            frozen += 1
+        return frozen
 
     async def _stamp_and_settle_unrated(
         self, battle_id: str, lease_token: str, reason: str, log_label: str
