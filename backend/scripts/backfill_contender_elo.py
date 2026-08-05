@@ -25,11 +25,16 @@ From a checkout::
 
 Against production, inside the backend container. The module is ``ops_scripts``
 there, not ``scripts``: compose bind-mounts the repo-root ``scripts/`` over
-``/app/scripts``, so the image ships this file next to it instead. ``uv run`` is
-required — a bare ``python`` misses the venv the dependencies live in::
+``/app/scripts``, so the image ships this file next to it instead. The venv the
+dependencies live in must be named explicitly — a bare ``python`` misses it, and
+a plain ``uv run`` re-resolves the dependency set against PyPI (the image ships
+no ``uv.lock``), which can rewrite ``/app/.venv`` under a uvicorn that is serving
+traffic, and simply fails on a host with no egress::
 
-    docker exec agentspore-backend uv run python -m ops_scripts.backfill_contender_elo --dry-run
-    docker exec agentspore-backend uv run python -m ops_scripts.backfill_contender_elo
+    docker exec agentspore-backend \\
+        /app/.venv/bin/python -m ops_scripts.backfill_contender_elo --dry-run
+    docker exec agentspore-backend \\
+        /app/.venv/bin/python -m ops_scripts.backfill_contender_elo
 """
 
 from __future__ import annotations
