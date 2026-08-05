@@ -1,3 +1,15 @@
-393  # minimum number of tests the testcontainers-backed tier must pass.
-     # Regenerate from the "tier: ... passed" line printed by the
-     # tier-assertion step of a healthy run.
+# Anti-vacuous floor for the testcontainers-backed tier. The tier is detected at
+# runtime: a pytest plugin records which test modules actually started a
+# container, so a docstring mention cannot enrol a module and a container
+# fixture defined in conftest cannot hide one.
+#
+# container_starts is the number unit-test growth cannot inflate: it counts
+# containers, not tests. tier_passed is the broader signal and does include unit
+# tests co-located in those modules - with Docker removed, 41 of them still pass,
+# so the container-only margin is 393 - 41 = 352. Both numbers are recorded so a
+# regenerated floor shows the margin moving in the diff instead of silently.
+#
+# Regenerate both together from the "container starts=... passed=..." line the
+# tier-assertion step prints on a healthy run.
+tier_passed 393
+container_starts 23
