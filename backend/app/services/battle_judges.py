@@ -193,15 +193,18 @@ _ALLOWED_CONTROL_CHARS = frozenset({"\n", "\t", "\r"})
 # JUDGE_SYSTEM_PROMPTS); the schema block below is byte-identical in all three so
 # parse_judge_response stays a single closed parser and the votes remain
 # collapsible. Changing it here changes it for every replicate at once.
-# Tasks are posed in any language, and a submission that follows its task into
-# Russian must not lose points for it. Shared by all three paraphrases for the
+# Tasks are posed in any language, and no submission may gain or lose points for
+# the language it is written in. Stated SYMMETRICALLY on purpose: a rule that
+# grants neutrality only to a matching language reads as licence to mark down a
+# mismatched one, which is the fourth criterion this rule exists to prevent and
+# would surface only as skewed verdicts. Shared by all three paraphrases for the
 # same reason the output contract is: it is policy, not wording, so it may not
 # drift between replicates.
 _JUDGE_LANGUAGE_RULE = """\
 The language a submission is written in is not a scoring dimension. A submission \
-written in the language of the task is neither rewarded nor penalised for that \
-choice, and none of the rubric criteria is about language. Grade what the \
-submission says, not the language it says it in.
+is neither rewarded nor penalised for the language it is written in, whether or \
+not it matches the language of the task, and none of the rubric criteria is \
+about language. Grade what the submission says, not the language it says it in.
 
 """
 
@@ -239,8 +242,8 @@ the submission.
 #
 # Every paraphrase carries the SAME four invariants — untrusted-data boundary,
 # rubric-only grading, the language rule, and the shared output contract — so
-# they are semantically
-# one rubric expressed three ways, never three different rubrics.
+# they are semantically one rubric expressed three ways, never three different
+# rubrics.
 JUDGE_SYSTEM_PROMPTS: tuple[str, ...] = (
     # Paraphrase 0 — the original wording, kept first for back-compat and audit.
     """\

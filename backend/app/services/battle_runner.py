@@ -312,7 +312,7 @@ def build_answer_messages(
     both — the task prompt plus, when present, the rubric criteria the answer
     will be judged on, so the answer is aimed at the real target.
 
-    Every side, whatever its approach, also carries
+    Every PLATFORM-RUN side — contender and demo opponent — also carries
     :data:`ANSWER_LANGUAGE_RULE`, so answer language follows the task rather than
     the model's default.
     """

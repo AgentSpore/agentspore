@@ -266,7 +266,7 @@ class TestContenderSeed:
         for contender_id in await _contender_ids(db_session):
             contender = await repo.get_contender(contender_id)
             stored = str(contender["system_prompt"])
-            assert "language" not in stored.lower()
+            assert ANSWER_LANGUAGE_RULE not in stored
             messages = build_answer_messages(stored, "задача", [])
             assert ANSWER_LANGUAGE_RULE in messages[0]["content"]
 
@@ -503,9 +503,9 @@ class TestAutoBattleDrive:
         models = " ".join(c["wire_model"] for c in sent)
         for contender in sides:
             stored = str(contender["system_prompt"])
-            assert any(s.startswith(stored) for s in systems), (
-                "the approach prompt leads the system message; "
-                "ANSWER_LANGUAGE_RULE is appended after it"
+            assert f"{stored}\n\n{ANSWER_LANGUAGE_RULE}" in systems, (
+                "the approach prompt leads the system message, "
+                "with ANSWER_LANGUAGE_RULE appended after it"
             )
             assert contender["model_id"] in models
 
@@ -601,7 +601,10 @@ def _mock_with_failing_side(
     """
 
     def _is_failing(wire_model: str, system: str) -> bool:
-        return any(wire_model == m and system.startswith(p) for m, p in failing)
+        return any(
+            wire_model == m and system == f"{p}\n\n{ANSWER_LANGUAGE_RULE}"
+            for m, p in failing
+        )
 
     async def reply(**kwargs) -> str:
         messages = kwargs["messages"]
@@ -624,7 +627,7 @@ def _is_side(ident: tuple[str, str], side: tuple[str, str]) -> bool:
     recognising the side, and the assertions that count a side's calls then read
     zero and pass for the wrong reason.
     """
-    return ident[0] == side[0] and ident[1].startswith(side[1])
+    return ident == (side[0], f"{side[1]}\n\n{ANSWER_LANGUAGE_RULE}")
 
 
 async def _contender_ident(session_maker, battle_id: str) -> dict[str, tuple[str, str]]:
