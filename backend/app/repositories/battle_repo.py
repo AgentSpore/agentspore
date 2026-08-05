@@ -118,6 +118,22 @@ SUBMISSION_LOCK_NAMESPACE = 0x62_74_6C_35  # "btl5"
 MINIMUM_TASK_POOL = 20
 TASK_REUSE_COOLDOWN_DAYS = 30
 
+# Settlement reads each side's rating from whichever table holds it. Both are
+# whole statements rather than fragments so nothing is ever interpolated into
+# SQL at call time. ORDER BY id is the same deadlock rule in both.
+_LOCK_AGENT_ELO_SQL = """
+    SELECT id, battle_elo AS elo FROM agents
+     WHERE id = ANY(CAST(:ids AS UUID[]))
+     ORDER BY id
+       FOR UPDATE
+"""
+_LOCK_CONTENDER_ELO_SQL = """
+    SELECT id, elo FROM battle_contenders
+     WHERE id = ANY(CAST(:ids AS UUID[]))
+     ORDER BY id
+       FOR UPDATE
+"""
+
 # An agent is eligible to fight only while all four hold. Hosted agents are
 # excluded because their inference is paid by the platform, not by an owner who
 # opted in. Rendered once and interpolated into the statements below so the rule
@@ -3825,36 +3841,85 @@ class BattleRepository:
         if not row or not (row["agent_b_id"] or row["contender_b_id"]):
             return None
 
-        # Only agent sides are locked and rated. A contender has no agents row to
-        # lock and no Elo to move, so it contributes a placeholder rating that
-        # the caller never writes back: an auto-battle is rated_eligible=FALSE by
-        # construction, so apply_rating is not reached for either side.
+        # Each side's rating is read from whichever table holds it — agents for
+        # an agent side, battle_contenders for a contender side (V73). Both are
+        # locked FOR UPDATE for the same reason and in the same id order.
         agent_ids = [
             str(row[key]) for key in ("agent_a_id", "agent_b_id") if row[key]
         ]
-        elo_by_agent: dict[str, int] = {}
-        if agent_ids:
-            ratings = await self.db.execute(
-                text(
-                    """
-                    SELECT id, battle_elo
-                      FROM agents
-                     WHERE id = ANY(CAST(:agent_ids AS UUID[]))
-                     ORDER BY id
-                       FOR UPDATE
-                    """
-                ),
-                {"agent_ids": agent_ids},
-            )
-            elo_by_agent = {str(r["id"]): r["battle_elo"] for r in ratings.mappings()}
-            if len(elo_by_agent) != len(agent_ids):
-                return None
+        contender_ids = [
+            str(row[key]) for key in ("contender_a_id", "contender_b_id") if row[key]
+        ]
+        elo_by_agent = await self._lock_elo(_LOCK_AGENT_ELO_SQL, agent_ids)
+        if elo_by_agent is None:
+            return None
+        elo_by_contender = await self._lock_elo(_LOCK_CONTENDER_ELO_SQL, contender_ids)
+        if elo_by_contender is None:
+            return None
 
-        return {
-            **row,
-            "elo_a": elo_by_agent.get(str(row["agent_a_id"]), DEFAULT_ELO),
-            "elo_b": elo_by_agent.get(str(row["agent_b_id"]), DEFAULT_ELO),
-        }
+        def rating(side: str) -> int:
+            agent_elo = elo_by_agent.get(str(row[f"agent_{side}_id"]))
+            if agent_elo is not None:
+                return agent_elo
+            return elo_by_contender.get(str(row[f"contender_{side}_id"]), DEFAULT_ELO)
+
+        return {**row, "elo_a": rating("a"), "elo_b": rating("b")}
+
+    async def _lock_elo(self, sql: str, ids: list[str]) -> dict[str, int] | None:
+        """Lock the named rows and read their rating. None = a row is missing.
+
+        A missing row means the caller cannot settle honestly, which is why this
+        is distinguished from "no ids asked for" (an empty dict).
+        """
+        if not ids:
+            return {}
+        result = await self.db.execute(text(sql), {"ids": ids})
+        elo_by_id = {str(r["id"]): r["elo"] for r in result.mappings()}
+        return elo_by_id if len(elo_by_id) == len(ids) else None
+
+    async def apply_contender_rating(
+        self, contender_id: str, new_elo: int, outcome: str
+    ) -> bool:
+        """Write one contender's post-battle rating and counter (V73). No commit.
+
+        The contender mirror of :meth:`apply_rating`, deliberately separate: the
+        two ratings answer different questions and must never be writable
+        through one call that guesses which table the id belongs to.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                UPDATE battle_contenders
+                SET elo = :new_elo,
+                    wins = wins + CASE WHEN :outcome = 'win' THEN 1 ELSE 0 END,
+                    losses = losses + CASE WHEN :outcome = 'loss' THEN 1 ELSE 0 END,
+                    ties = ties + CASE WHEN :outcome = 'tie' THEN 1 ELSE 0 END
+                WHERE id = CAST(:contender_id AS UUID)
+                RETURNING id
+                """
+            ),
+            {"contender_id": str(contender_id), "new_elo": new_elo, "outcome": outcome},
+        )
+        return result.first() is not None
+
+    async def list_contender_ratings(self) -> list[dict]:
+        """Every contender's rating record, disabled ones included (V73).
+
+        A retired contender's history is still history, so ``enabled`` is not a
+        filter here — unlike :meth:`list_enabled_contenders`, which answers the
+        different question of who may still be fielded.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT id, display_name, provider, model_id, approach_key,
+                       elo, wins, losses, ties
+                  FROM battle_contenders
+                 ORDER BY elo DESC, display_name
+                """
+            )
+        )
+        return [dict(row) for row in result.mappings()]
 
     async def apply_rating(self, agent_id: str, new_elo: int, outcome: str) -> bool:
         """Write one fighter's post-battle rating and counter. No commit.
