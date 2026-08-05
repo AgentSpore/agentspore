@@ -175,6 +175,10 @@ services:
         condition: service_healthy
     volumes:
       - ../skill.md:/app/skill.md:ro
+      # Operator-local, git-ignored (/scripts/ in .gitignore) — absent from a fresh
+      # checkout by design. It occupies /app/scripts, which is why backend/Dockerfile
+      # ships the operator one-shots as /app/ops_scripts instead. Repointing or
+      # removing this mount means revisiting that COPY and the manifest test.
       - ../scripts:/app/scripts:ro
       - backend_logs:/app/logs
     networks:
