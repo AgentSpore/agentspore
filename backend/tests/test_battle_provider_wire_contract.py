@@ -180,12 +180,13 @@ def test_roster_primary_carries_a_platform_id_and_a_bare_wire_name(runner):
 
 
 def test_every_extra_roster_entry_is_stripped_too(monkeypatch, runner):
-    """The dormant multi-provider path carries the same mine, so it is covered.
+    """The extra-roster path carries the same mine, so it is covered too.
 
-    An extra id only enters the roster when a key resolves for it, which never
-    happens today (RU-ASN geo-block). Stubbing the resolver is the only way to
-    reach the second constructor at all — and an untested constructor is exactly
-    where the prefixed id survived the first time.
+    Four ids resolve in production, one per reachable provider, so this
+    constructor is live rather than dormant. The resolver is stubbed here for
+    hermeticity — the test must not depend on which provider keys the
+    environment happens to hold — and an untested constructor is exactly where
+    the prefixed id survived the first time.
     """
     extra = "openrouter/some-vendor/some-model"
 

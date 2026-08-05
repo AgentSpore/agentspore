@@ -959,9 +959,10 @@ class TestJudgeRecusal:
     ) -> None:
         """Three real votes are already persisted when recusal fires — a lease
         lost after the panel committed, then a later pass finds the roster
-        conflicted. The freeze is ON CONFLICT DO NOTHING, so those votes SURVIVE
-        and reach quorum; the outcome must still be no result and an untouched
-        ladder, because they were cast by the model that is now barred.
+        conflicted. The freeze skips replicates that already carry a row, so
+        those votes SURVIVE and reach quorum; the outcome must still be no
+        result and an untouched ladder, because they were cast by the model that
+        is now barred.
 
         MUTATION: drop `override_verdict=forced` from settle_panel_recused and
         let resolve_verdict read the persisted votes — winner becomes 'a' and the

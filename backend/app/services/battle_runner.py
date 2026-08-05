@@ -1545,7 +1545,7 @@ class BattleRunner:
         battle_id: str,
         reason: str = "attempt budget exhausted before a verdict",
         judge_ref: str = JUDGE_MODEL,
-    ) -> int:
+    ) -> None:
         """Freeze every not-yet-decided replicate as a terminal 'error' vote.
 
         The escape-hatch counterpart to run_judge_panel's per-replicate collapse,
@@ -1568,14 +1568,29 @@ class BattleRunner:
         skip also keeps a real vote attributed to the model that actually cast
         it, which no ref choice here could do.
 
-        Returns the number of replicates actually frozen.
+        Returns nothing on purpose. A count here would read as a completeness
+        signal it cannot be — 0 means "every replicate had already voted", not
+        "nothing to do" — and no call site has ever needed it.
 
         Does not commit — the caller owns the transaction boundary.
         """
+        # The read and the writes below are NOT one atomic step, so a concurrent
+        # insert between them could still land a second row for one seat. The
+        # bound: every caller holds the battle lease (this method is reached only
+        # from a terminal settle path that renewed or CAS-checked it), so a
+        # second writer on the same battle is already the exceptional case, and
+        # both freeze paths force winner=None or stamp a judging_stop_reason —
+        # an extra row can therefore make the judgement list untidy, never the
+        # verdict wrong. Not worth an advisory lock or an upsert restructure.
+        #
+        # judge_kind is filtered: 'human' is reserved for phase 2, and a
+        # replicate carrying only a human row still needs its terminal LLM error
+        # — the two kinds are separate seats under battle_judge_once.
         decided = {
-            str(j["replicate_seed"]) for j in await self.repo.list_judgements(battle_id)
+            str(j["replicate_seed"])
+            for j in await self.repo.list_judgements(battle_id)
+            if str(j["judge_kind"]) == JUDGE_KIND_LLM
         }
-        frozen = 0
         for replicate_no in range(REPLICATE_COUNT):
             seed = replicate_seed(battle_id, replicate_no)
             if seed in decided:
@@ -1588,8 +1603,6 @@ class BattleRunner:
                 vote=Vote.ERROR.value,
                 reasoning=reason,
             )
-            frozen += 1
-        return frozen
 
     async def _stamp_and_settle_unrated(
         self, battle_id: str, lease_token: str, reason: str, log_label: str
@@ -1636,19 +1649,20 @@ class BattleRunner:
         The outcome is FORCED (``override_verdict``), not inferred from the
         persisted votes, for the same reason :meth:`settle_silent_forfeit` forces
         the void case: the panel never ran, so there is nothing honest to read.
-        Reading them would be worse than merely imprecise — the freeze below is
-        ON CONFLICT DO NOTHING, so a replicate that had already voted keeps its
-        vote, and three such votes reach quorum and move the contender ladder on
-        a verdict cast by the very model this method exists to bar (the
-        contender gate at settle_battle only holds while ``winner`` is None).
-        A forced ``winner=None`` makes that structural instead of circumstantial.
+        Reading them would be worse than merely imprecise — the freeze below
+        SKIPS any replicate that already carries a row, so a vote cast before
+        recusal fired survives untouched, and three such votes reach quorum and
+        move the contender ladder on a verdict cast by the very model this method
+        exists to bar (the contender gate at settle_battle only holds while
+        ``winner`` is None). A forced ``winner=None`` makes that structural
+        instead of circumstantial.
 
         The lease is re-checked FIRST. Every sibling terminal path proves
         ownership before writing (``_stamp_and_settle_unrated`` via
         ``set_judging_stop_reason``), and this one commits judgement rows: a
-        worker whose lease lapsed would otherwise freeze terminal errors over the
-        live panel of the worker that now owns the battle, whose real votes
-        would then be swallowed by the same ON CONFLICT DO NOTHING.
+        worker whose lease lapsed would otherwise freeze terminal errors for
+        seats the worker that now owns the battle is still judging, leaving the
+        battle carrying both a live panel's votes and a stale one's errors.
 
         No ``judging_stop_reason`` is stamped — that column is a closed enum
         (V69) and none of its values means "no impartial judge". The reason
