@@ -1,0 +1,3 @@
+393  # minimum number of tests the testcontainers-backed tier must pass.
+     # Regenerate from the "tier: ... passed" line printed by the
+     # tier-assertion step of a healthy run.

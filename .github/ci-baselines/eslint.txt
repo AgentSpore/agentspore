@@ -1,0 +1,15 @@
+# Lint ratchet baseline: highest tolerated count per rule. CI fails when a
+# rule's current count exceeds the number here, so pre-existing debt is
+# grandfathered and new violations are not. Regenerate only after genuinely
+# removing violations:
+#   run the first two commands of the eslint step in .github/workflows/ci.yml
+#   from frontend/, redirecting the node output here instead of /tmp/eslint.txt
+2 @typescript-eslint/no-explicit-any
+5 @typescript-eslint/no-unused-expressions
+12 @typescript-eslint/no-unused-vars
+4 react-hooks/exhaustive-deps
+2 react-hooks/purity
+1 react-hooks/refs
+15 react-hooks/set-state-in-effect
+4 react/jsx-no-comment-textnodes
+5 react/no-unescaped-entities

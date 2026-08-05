@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # app/core/config.py aborts at import when secret_key still holds its default
+  # and debug is off. This is a placeholder, not a credential: no job in this
+  # workflow talks to a real service, and nothing here may depend on a secret.
+  SECRET_KEY: ci-placeholder-value
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --extra dev
+
+      - name: ruff (ratchet, new violations only)
+        run: |
+          uv run --frozen --extra dev ruff check app --statistics --exit-zero 2>/dev/null \
+            | awk '$1 ~ /^[0-9]+$/ && NF>=2 {print $1, $2}' | sort -k2 > /tmp/ruff.txt
+          python3 - /tmp/ruff.txt ../.github/ci-baselines/ruff.txt <<'PY'
+          import sys
+          def rows(p): return (l.split() for l in open(p) if l.strip() and l[0] != "#")
+          def load(p): return {r: int(n) for n, r in rows(p)}
+          cur, base = load(sys.argv[1]), load(sys.argv[2])
+          new = {r: (n, base.get(r, 0)) for r, n in cur.items() if n > base.get(r, 0)}
+          for r, (n, b) in sorted(new.items()): print(f"NEW {r}: {n} (baseline {b})")
+          sys.exit(1 if new else 0)
+          PY
+
+      - name: image guards
+        run: |
+          uv run --frozen --extra dev pytest -q \
+            tests/test_image_manifest.py tests/test_dockerfile_reproducible_deps.py
+
+      - name: pytest (full suite, container-backed tier included)
+        run: uv run --frozen --extra dev pytest -q --junitxml=/tmp/junit.xml
+
+      - name: assert the container-backed tier actually ran
+        if: always()
+        run: |
+          python3 - /tmp/junit.xml ../.github/ci-baselines/pg-tier-floor.txt <<'PY'
+          import glob, re, sys, xml.etree.ElementTree as ET
+          IMPORT_RE = re.compile(r"^[ \t]*(from|import) testcontainers", re.M)
+          tier = {p[:-3].replace("/", ".") for p in glob.glob("tests/*.py")
+                  if IMPORT_RE.search(open(p, encoding="utf-8").read())}
+          if not tier:
+              sys.exit("FAIL: no container-backed test file detected - detector is broken")
+          passed = skipped = 0
+          for tc in ET.parse(sys.argv[1]).iter("testcase"):
+              mod = tc.get("classname", "")
+              if not any(mod == m or mod.startswith(m + ".") for m in tier):
+                  continue
+              kinds = {c.tag for c in tc}
+              if kinds & {"failure", "error"}:
+                  continue
+              skipped += "skipped" in kinds
+              passed += "skipped" not in kinds
+          floor = int(open(sys.argv[2]).read().split()[0])
+          print(f"tier: {len(tier)} files, {passed} passed, {skipped} skipped, floor {floor}")
+          if skipped or passed < floor:
+              sys.exit("FAIL: container-backed tier did not run - green here would be vacuous")
+          PY
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+      - name: eslint (ratchet, new violations only)
+        run: |
+          npx eslint -f json -o /tmp/eslint.json || true
+          node -e "const r=require('/tmp/eslint.json');const m={};
+          for(const f of r)for(const x of f.messages){const k=x.ruleId||'(parse-error)';m[k]=(m[k]||0)+1}
+          console.log(Object.entries(m).sort().map(([k,v])=>v+' '+k).join('\n'))" > /tmp/eslint.txt
+          python3 - /tmp/eslint.txt ../.github/ci-baselines/eslint.txt <<'PY'
+          import sys
+          def rows(p): return (l.split() for l in open(p) if l.strip() and l[0] != "#")
+          def load(p): return {r: int(n) for n, r in rows(p)}
+          cur, base = load(sys.argv[1]), load(sys.argv[2])
+          new = {r: (n, base.get(r, 0)) for r, n in cur.items() if n > base.get(r, 0)}
+          for r, (n, b) in sorted(new.items()): print(f"NEW {r}: {n} (baseline {b})")
+          sys.exit(1 if new else 0)
+          PY
+
+      - run: npm test
