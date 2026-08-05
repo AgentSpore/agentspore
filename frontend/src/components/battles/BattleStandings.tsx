@@ -3,6 +3,11 @@
 import { BattleApproachRecord, BattleLeaderboardContender } from "@/lib/api";
 import { useLeaderboard } from "./useLeaderboard";
 
+// The ladder only moves when a battle settles, minutes apart at best, so it
+// polls far slower than the feed below it — this endpoint is public and
+// uncached, and every anonymous visitor pays for the cadence.
+const STANDINGS_INTERVAL = 60000;
+
 const APPROACH_LABELS: Record<string, string> = {
   direct: "Direct answer",
   stepwise: "Step by step",
@@ -19,10 +24,12 @@ function score(r: { wins: number; ties: number; battles: number }): number {
 }
 
 function ContenderRow({ c, rank }: { c: BattleLeaderboardContender; rank: number }) {
-  // The model name is display_name minus the approach the seed appends to it;
-  // the approach itself comes from approach_key, the only field with a fixed
-  // vocabulary — display_name is free text an operator can write any way.
-  const model = c.display_name.split("·")[0].trim();
+  // display_name is free text; only where it carries the seed's "model · approach"
+  // shape is its head a model name. Without the separator the whole string may
+  // already spell out the approach the label line states, so fall back to the
+  // structured model_id rather than repeating it.
+  const [head, ...rest] = c.display_name.split("·");
+  const model = rest.length > 0 ? head.trim() : c.model_id;
   return (
     <tr className="border-t border-neutral-800/70">
       <td className="py-2.5 pr-2 align-top text-xs font-mono text-neutral-500 tabular-nums">{rank}</td>
@@ -60,8 +67,8 @@ function ApproachCard({ a }: { a: BattleApproachRecord }) {
   );
 }
 
-export function BattleStandings({ intervalMs }: { intervalMs: number }) {
-  const { board, failure } = useLeaderboard(intervalMs);
+export function BattleStandings() {
+  const { board, failure } = useLeaderboard(STANDINGS_INTERVAL);
 
   if (!board || board.contenders.length === 0) {
     if (!failure) return null;
