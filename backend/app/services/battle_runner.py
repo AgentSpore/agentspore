@@ -288,6 +288,19 @@ _DEMO_ANSWER_SYSTEM = (
 )
 
 
+# Tasks are posed in whatever language their author wrote them in, and an answer
+# in a different language is useless to the reader who submitted the task. The
+# rule lives HERE rather than in each contender's stored system_prompt because
+# the approaches are seeded rows in battle_contenders: a row written before this
+# rule existed, or added by an operator later, still gets it. Appended after the
+# approach so the approach stays the fighter's whole identity.
+ANSWER_LANGUAGE_RULE = (
+    "Write your answer in the same language as the task. A task posed in "
+    "Russian is answered in Russian, a task posed in English is answered in "
+    "English. This applies to the whole answer, headings included."
+)
+
+
 def build_answer_messages(
     system_prompt: str, task_prompt: str, rubric: list[dict[str, object]]
 ) -> list[dict[str, str]]:
@@ -298,6 +311,10 @@ def build_answer_messages(
     contender it is that contender's approach. The user message is the same for
     both — the task prompt plus, when present, the rubric criteria the answer
     will be judged on, so the answer is aimed at the real target.
+
+    Every side, whatever its approach, also carries
+    :data:`ANSWER_LANGUAGE_RULE`, so answer language follows the task rather than
+    the model's default.
     """
     keys = [
         str(item.get("key"))
@@ -308,7 +325,7 @@ def build_answer_messages(
     if keys:
         user = f"{task_prompt}\n\nYou will be judged on: {', '.join(keys)}."
     return [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": f"{system_prompt}\n\n{ANSWER_LANGUAGE_RULE}"},
         {"role": "user", "content": user},
     ]
 

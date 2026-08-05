@@ -41,6 +41,7 @@ from app.services.battle_judges import (
     replicate_seed,
 )
 from app.services.battle_runner import (
+    ANSWER_LANGUAGE_RULE,
     PROVIDER_UNREACHABLE_ERROR,
     BattleRunner,
     _await_demo_drives,
@@ -244,11 +245,30 @@ class TestContenderSeed:
         messages = build_answer_messages(
             str(contender["system_prompt"]), "the task", [{"key": "correctness"}]
         )
-        assert messages[0] == {
-            "role": "system",
-            "content": contender["system_prompt"],
-        }
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"].startswith(str(contender["system_prompt"]))
         assert "the task" in messages[1]["content"]
+
+    async def test_every_seeded_approach_is_told_to_follow_the_task_language(
+        self, db_session
+    ) -> None:
+        """Tasks are posed in any language; the answer must follow the task.
+
+        The seeded approaches say nothing about language — asserted below, so
+        this cannot be satisfied by editing a row — yet every side's system
+        message carries the rule. That is what makes it hold for approaches
+        seeded before the rule existed and for any row an operator adds later.
+
+        MUTATION: drop the append in ``build_answer_messages`` and every
+        contender loses the rule at once.
+        """
+        repo = BattleRepository(db_session)
+        for contender_id in await _contender_ids(db_session):
+            contender = await repo.get_contender(contender_id)
+            stored = str(contender["system_prompt"])
+            assert "language" not in stored.lower()
+            messages = build_answer_messages(stored, "задача", [])
+            assert ANSWER_LANGUAGE_RULE in messages[0]["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +502,11 @@ class TestAutoBattleDrive:
         systems = {c["messages"][0]["content"] for c in sent}
         models = " ".join(c["wire_model"] for c in sent)
         for contender in sides:
-            assert contender["system_prompt"] in systems
+            stored = str(contender["system_prompt"])
+            assert any(s.startswith(stored) for s in systems), (
+                "the approach prompt leads the system message; "
+                "ANSWER_LANGUAGE_RULE is appended after it"
+            )
             assert contender["model_id"] in models
 
 
@@ -569,19 +593,38 @@ def _mock_with_failing_side(
 
     Judge calls (identified by the payload's opaque submission labels) always
     answer with a verdict, so a test can prove the panel was never called.
+
+    The stored prompt is matched as a PREFIX, not for equality: the answer path
+    appends ANSWER_LANGUAGE_RULE to it, so an equality match silently stops
+    recognising the side and every forfeit assertion in this module then passes
+    on a battle where nobody forfeited.
     """
+
+    def _is_failing(wire_model: str, system: str) -> bool:
+        return any(wire_model == m and system.startswith(p) for m, p in failing)
 
     async def reply(**kwargs) -> str:
         messages = kwargs["messages"]
         if "submission_alpha" in messages[-1]["content"]:
             return VALID_JUDGE_REPLY
-        if (kwargs["wire_model"], messages[0]["content"]) in failing:
+        if _is_failing(kwargs["wire_model"], messages[0]["content"]):
             if error is not None:
                 raise error
             return ""
         return PLAIN_ANSWER
 
     return AsyncMock(side_effect=reply)
+
+
+def _is_side(ident: tuple[str, str], side: tuple[str, str]) -> bool:
+    """Does this (wire model, system message) belong to the named contender?
+
+    The system message is matched as a PREFIX because the answer path appends
+    ANSWER_LANGUAGE_RULE to the stored approach prompt. An equality match stops
+    recognising the side, and the assertions that count a side's calls then read
+    zero and pass for the wrong reason.
+    """
+    return ident[0] == side[0] and ident[1].startswith(side[1])
 
 
 async def _contender_ident(session_maker, battle_id: str) -> dict[str, tuple[str, str]]:
@@ -730,7 +773,7 @@ class TestUnreachableProviderVoids:
         attempts = [
             c
             for c in answer.await_args_list
-            if (c.kwargs["wire_model"], c.kwargs["messages"][0]["content"]) == sides["a"]
+            if _is_side((c.kwargs["wire_model"], c.kwargs["messages"][0]["content"]), sides["a"])
         ]
         assert len(attempts) == 1, "a saturated gate is not retried"
 
@@ -752,7 +795,7 @@ class TestUnreachableProviderVoids:
                 return VALID_JUDGE_REPLY
             ident = (kwargs["wire_model"], messages[0]["content"])
             seen.append(ident)
-            if ident == sides["b"] and seen.count(ident) == 1:
+            if _is_side(ident, sides["b"]) and sum(1 for s in seen if _is_side(s, sides["b"])) == 1:
                 raise JudgeTransportError("HTTP 503: upstream connect error")
             return PLAIN_ANSWER
 
@@ -765,7 +808,7 @@ class TestUnreachableProviderVoids:
         )
 
         row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
-        assert seen.count(sides["b"]) == 2, "failed once, retried once"
+        assert sum(1 for s in seen if _is_side(s, sides["b"])) == 2, "failed once, retried once"
         assert row["status"] == "completed"
         assert row["winner"] in {"a", "b", "tie"}, "a judged result, not a void"
 
@@ -800,7 +843,7 @@ class TestDriveLevelUnreachable:
         async def hangs(**kwargs) -> str:
             if "submission_alpha" in kwargs["messages"][-1]["content"]:
                 return VALID_JUDGE_REPLY
-            if (kwargs["wire_model"], kwargs["messages"][0]["content"]) == sides["b"]:
+            if _is_side((kwargs["wire_model"], kwargs["messages"][0]["content"]), sides["b"]):
                 await asyncio.sleep(30)
             return PLAIN_ANSWER
 
