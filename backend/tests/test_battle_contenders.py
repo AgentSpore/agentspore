@@ -32,7 +32,7 @@ from app.core.background import BattleMatchmakerTask
 from app.core.config import get_settings
 from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side
-from app.services.battle_judges import REPLICATE_COUNT, JudgeTransportError
+from app.services.battle_judges import REPLICATE_COUNT, JudgeModel, JudgeTransportError
 from app.services.battle_runner import (
     PROVIDER_UNREACHABLE_ERROR,
     BattleRunner,
@@ -108,6 +108,22 @@ CREATE TABLE IF NOT EXISTS agents (
 """
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
+
+
+@pytest.fixture(autouse=True)
+def _impartial_judge_roster():
+    """Seat a judge model that fights in no battle, for the whole module.
+
+    Without it the panel's roster is whatever the environment resolves — in a
+    test environment only the primary, kimi-k3, which is ALSO a seeded contender.
+    Every draw that happened to field kimi would then be fully recused and settle
+    with no verdict, making these drive tests depend on the matchmaker's dice.
+    TestJudgeRecusal patches over this with a roster of its own.
+    """
+    with patch.object(
+        BattleRunner, "_resolve_judge_roster", return_value=_roster(["panel/impartial"])
+    ):
+        yield
 
 
 @pytest.fixture(scope="module")
@@ -840,3 +856,114 @@ class TestDriveLevelUnreachable:
         finals_b = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
         assert len(finals_b) == 1, "no second final row was created"
         assert finals_b[0]["content"], "the real answer still stands"
+
+
+# ---------------------------------------------------------------------------
+# Recusal: a model may not judge a battle it is fighting.
+# ---------------------------------------------------------------------------
+
+
+def _roster(model_ids: list[str]) -> list[JudgeModel]:
+    return [
+        JudgeModel(
+            model_id=mid,
+            provider=mid.split("/", 1)[0],
+            base_url="http://unused",
+            api_key="k",
+            wire_model=mid.split("/", 1)[-1],
+        )
+        for mid in model_ids
+    ]
+
+
+def _judge_calls_for(answer, task_prompt: str) -> list[dict]:
+    """The judge calls made for ONE battle.
+
+    Two discriminators, both needed: an answer call never names the opaque
+    labels, and other battles driven by the same reconcile pass judge a
+    different task.
+    """
+    return [
+        call.kwargs
+        for call in answer.await_args_list
+        if "submission_alpha" in call.kwargs["messages"][-1]["content"]
+        and task_prompt[:60] in call.kwargs["messages"][-1]["content"]
+    ]
+
+
+async def _battle_and_fighters(session_maker) -> tuple[str, dict, list[dict]]:
+    """A new auto-battle, its row and both contender rows."""
+    battle_id = await _fresh_auto_battle(session_maker)
+    async with session_maker() as session:
+        repo = BattleRepository(session)
+        row = await repo.get(battle_id)
+        fighting = [
+            await repo.get_contender(str(row[f"contender_{side}_id"]))
+            for side in ("a", "b")
+        ]
+    return battle_id, row, fighting
+
+
+class TestJudgeRecusal:
+    async def test_a_fighting_model_never_judges_and_the_rest_reach_quorum(
+        self, session_maker
+    ) -> None:
+        """The two contenders are seated on the roster alongside two other
+        models. Neither contender may cast a vote, and the survivors must still
+        fill all three replicates.
+
+        MUTATION: drop the seatable_judges call in run_judge_panel — a contender
+        appears as a replicate's judge_ref and the assertion goes red.
+        """
+        battle_id, row, fighting = await _battle_and_fighters(session_maker)
+        fighting_ids = {f"{c['provider']}/{c['model_id']}" for c in fighting}
+        roster = _roster([*fighting_ids, "mistral/mistral-medium-2508", "deepseek/x"])
+        answer = _provider_mock()
+
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        with patch.object(BattleRunner, "_resolve_judge_roster", return_value=roster):
+            settled = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+
+        assert _judge_calls_for(answer, row["task_prompt_snapshot"]), "the panel ran"
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == REPLICATE_COUNT, "recusal still filled every replicate"
+        assert {str(j["judge_ref"]) for j in judgements} & fighting_ids == set()
+        assert settled["status"] == "completed"
+        assert settled["winner"] in {"a", "b", "tie"}, "quorum was reached"
+
+    async def test_a_fully_recused_panel_completes_without_a_verdict(
+        self, session_maker
+    ) -> None:
+        """When the roster holds nothing but the two fighters, the battle must
+        land on the existing no-quorum path — not judge itself, and not complete
+        as if it had been judged.
+
+        MUTATION: fall back to the unfiltered roster when nothing is seatable —
+        the no-judge-call assertion and winner=None both go red.
+        """
+        battle_id, row, fighting = await _battle_and_fighters(session_maker)
+        roster = _roster([f"{c['provider']}/{c['model_id']}" for c in fighting])
+        answer = _provider_mock()
+
+        provider = {"api_key": "k", "base_url": "http://unused"}
+        drive = partial(
+            reconcile_once, session_factory=session_maker, gate=None, provider=provider
+        )
+        with patch.object(BattleRunner, "_resolve_judge_roster", return_value=roster):
+            settled = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+
+        assert _judge_calls_for(answer, row["task_prompt_snapshot"]) == [], (
+            "a fighter was asked to judge its own battle"
+        )
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert settled["status"] == "completed", "the battle is not stranded"
+        assert settled["winner"] is None, "no verdict was invented"
+        assert settled["is_rated"] is False
+        assert {str(j["vote"]) for j in judgements} == {"error"}

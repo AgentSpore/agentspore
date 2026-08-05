@@ -137,7 +137,20 @@ class Settings(BaseSettings):
     # case today: RU-ASN geo-blocks every US provider, leaving z.ai). To enable
     # real model diversity, add a reachable id (e.g. "mistral/mistral-small") AND
     # set its provider key; do NOT assume a rich model zoo.
-    battle_judge_models: list[str] = ["moonshot/kimi-k3", "zai/glm-4.5-flash"]
+    #
+    # Widened to four alongside judge recusal (seatable_judges): a judge whose
+    # model also fights as a contender is recused from that battle, so a
+    # two-model roster empties the panel whenever the two contenders ARE those
+    # two models. All four ids below are reachable from the production ASN.
+    # Worst case — both sides are roster models — leaves two seatable, and the
+    # panel round-robins models across its three replicates, so quorum still
+    # holds.
+    battle_judge_models: list[str] = [
+        "moonshot/kimi-k3",
+        "zai/glm-4.5-flash",
+        "mistral/mistral-medium-2508",
+        "deepseek/deepseek-v4-flash",
+    ]
     battle_judge_owner_daily_call_limit: int = 60
     battle_judge_global_daily_call_limit: int = 10_000
     battle_judge_max_attempts_per_battle: int = 12

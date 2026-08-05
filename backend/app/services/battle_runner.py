@@ -77,6 +77,7 @@ from app.services.battle_judges import (
     CollapsedVote,
     JudgeInjectionSuspected,
     JudgeModel,
+    JudgePanelRecusedError,
     JudgeRunResult,
     JudgeTransportError,
     PanelVerdict,
@@ -91,6 +92,7 @@ from app.services.battle_judges import (
     rubric_keys,
     sanitize_submission,
     scan_submissions,
+    seatable_judges,
     seed_field_for,
     warn_on_residual_side_label,
     wire_model_name,
@@ -1251,6 +1253,23 @@ class BattleRunner:
 
     # -- judging ------------------------------------------------------------
 
+    async def _contender_model_ids(self, battle: dict) -> set[str]:
+        """The platform model ids fielded as contenders in this battle.
+
+        Empty for an agent-vs-agent battle: those fighters run on their OWNER's
+        key and no platform judge model is on the mat, so nothing recuses and
+        that path is untouched.
+        """
+        model_ids: set[str] = set()
+        for side in (Side.A, Side.B):
+            contender_id = battle.get(f"contender_{side.value}_id")
+            if contender_id is None:
+                continue
+            contender = await self.repo.get_contender(str(contender_id))
+            if contender is not None:
+                model_ids.add(f"{contender['provider']}/{contender['model_id']}")
+        return model_ids
+
     def _resolve_judge_roster(self, base_url: str, api_key: str) -> list[JudgeModel]:
         """Build the per-replicate model roster from config (Track 2 diversity).
 
@@ -1393,8 +1412,23 @@ class BattleRunner:
             )
             raise JudgeInjectionSuspected(findings)
 
-        # Resolve the per-replicate model roster from config (Track 2 diversity).
-        roster = self._resolve_judge_roster(base_url, api_key)
+        # Resolve the per-replicate model roster from config (Track 2 diversity),
+        # then RECUSE every model that is itself fighting this battle: the roster
+        # models are also seeded contenders, and a judge that grades its own
+        # generation style is not measuring the battle (see seatable_judges).
+        fighting = await self._contender_model_ids(battle)
+        resolved = self._resolve_judge_roster(base_url, api_key)
+        roster = seatable_judges(resolved, fighting)
+        if not roster:
+            raise JudgePanelRecusedError(fighting)
+        if len(roster) < len(resolved):
+            logger.info(
+                "battle {} judge panel recused {} of {} models (contenders: {})",
+                battle_id,
+                len(resolved) - len(roster),
+                len(resolved),
+                ", ".join(sorted(fighting)),
+            )
         if len(roster) == 1:
             logger.info(
                 "battle {} judge panel single-model ({}): prompt-diversity only",
@@ -1482,7 +1516,9 @@ class BattleRunner:
 
         return collapsed
 
-    async def collapse_open_replicates_to_error(self, battle_id: str) -> int:
+    async def collapse_open_replicates_to_error(
+        self, battle_id: str, reason: str = "attempt budget exhausted before a verdict"
+    ) -> int:
         """Freeze every not-yet-decided replicate as a terminal 'error' vote.
 
         The escape-hatch counterpart to run_judge_panel's per-replicate collapse,
@@ -1503,7 +1539,7 @@ class BattleRunner:
                 judge_ref=JUDGE_MODEL,
                 replicate_seed=replicate_seed(battle_id, replicate_no),
                 vote=Vote.ERROR.value,
-                reasoning="attempt budget exhausted before a verdict",
+                reasoning=reason,
             )
         return REPLICATE_COUNT
 
@@ -1543,6 +1579,23 @@ class BattleRunner:
         return await self._stamp_and_settle_unrated(
             battle_id, lease_token, reason, "budget-exhausted"
         )
+
+    async def settle_panel_recused(
+        self, battle_id: str, lease_token: str
+    ) -> RatingChange | None:
+        """Settle a battle no seatable judge remained for, at no quorum.
+
+        Every replicate is frozen as a terminal error, which leaves the quorum
+        denominator, so settle resolves winner=None and rates nothing. No
+        ``judging_stop_reason`` is stamped: that column is a closed enum (V69) and
+        the no-quorum path already completes the battle unrated, so recusal needs
+        no schema change to reach an honest terminal state.
+        """
+        await self.collapse_open_replicates_to_error(
+            battle_id, reason="no judge model free of conflict with a contender"
+        )
+        await self.db.commit()
+        return await self.settle_battle(battle_id, lease_token)
 
     async def settle_injection_flagged(
         self, battle_id: str, lease_token: str
@@ -2145,6 +2198,17 @@ async def _judge_and_settle(
                 )
                 settled = await runner.settle_injection_flagged(battle_id, token)
             if settled is not None:
+                counts["settled"] += 1
+        except JudgePanelRecusedError as exc:
+            # Every roster model is fighting this battle. Judging it anyway would
+            # let a contender grade itself, so the battle completes at no quorum
+            # (unrated, winner NULL) instead of carrying a self-judged verdict.
+            logger.warning(
+                "battle {} has no impartial judge ({}): settling at no quorum",
+                battle_id, exc,
+            )
+            await session.rollback()
+            if await runner.settle_panel_recused(battle_id, token) is not None:
                 counts["settled"] += 1
         except JudgeBudgetExhausted as exc:
             # The budget for this period is spent: settle UNRATED now rather than
