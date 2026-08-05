@@ -264,18 +264,32 @@ def _readiness_view(battle: dict) -> ReadinessView:
 @router.get("", response_model=list[BattleSummary], summary="List battles")
 async def list_battles(
     status: BattleStatus | None = None,
+    include_undecided: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     """Public battle list, newest first.
 
+    FILTERED BY DEFAULT: battles that reached 'completed' without a verdict —
+    the provider-unreachable void, no-quorum and no-contest outcomes — are
+    omitted unless ``include_undecided=true`` is passed. Such a battle is only
+    hidden here: its row stays in the database, still counts for rating and
+    history, and is still served in full by GET /battles/{id}. A running or
+    judging battle is never hidden, and neither is a 'declined', 'expired' or
+    'aborted' challenge, which is an outcome its owner must be able to see.
+    The flag composes with ``status``: ``status=completed`` alone lists only
+    completed battles that produced a winner or a tie.
+
     Every row is sanitised through the same reveal-status gate the detail route
     uses (V67): a bound-but-queued battle must not leak its task id or title
     before it runs, so the list cannot become a pre-fetch side channel either.
     """
     rows = await BattleRepository(db).list_battles(
-        status=status, limit=limit, offset=offset
+        status=status,
+        limit=limit,
+        offset=offset,
+        include_undecided=include_undecided,
     )
     summaries: list[BattleSummary] = []
     for row in rows:
