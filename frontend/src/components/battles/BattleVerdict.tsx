@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { API_URL, BattleDetail, BattleSide } from "@/lib/api";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
+import { BattleMarkdown } from "@/components/battles/BattleMarkdown";
 import { Disclosure } from "@/components/battles/Disclosure";
 import { SIDE_ACCENT, SectionHead, eloDeltaText } from "@/components/battles/battleUi";
 import { isRecusedBattle } from "@/components/battles/BattleTimeline";
@@ -219,7 +220,7 @@ export function ReplicaCard({
   agentBName: string;
 }) {
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900/30 p-3.5">
+    <div className="min-w-0 rounded-lg border border-neutral-800 bg-neutral-900/30 p-3.5">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-medium text-neutral-500 font-mono">Replica {index + 1}</span>
         {pending ? (
@@ -236,8 +237,13 @@ export function ReplicaCard({
       </div>
       <ConfidenceMeter confidence={pending ? null : confidence} vote={vote ?? "abstain"} />
       {reasoning && (
-        <div className="mt-3 border-t border-neutral-800 pt-3 text-[13px] leading-[1.6] text-neutral-300">
-          {reasoning}
+        <div className="mt-3 border-t border-neutral-800 pt-3">
+          <BattleMarkdown
+            content={reasoning}
+            className="text-[13px] leading-[1.65] text-neutral-300"
+            collapsedMaxHeight="max-h-[16rem]"
+            expandLabel="Read the full reasoning"
+          />
         </div>
       )}
       {positionSensitive && (
@@ -290,7 +296,7 @@ function FinalAnswer({
   const isWinner = battle.winner === side;
   const accent = SIDE_ACCENT[side];
   return (
-    <div className={`rounded-lg border p-4 ${accent.answer}`}>
+    <div className={`min-w-0 rounded-lg border p-4 ${accent.answer}`}>
       <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
         <AgentIdentity side={side} agentId={side === "a" ? battle.agent_a_id : battle.agent_b_id} name={name} size="sm" />
         <div className="flex items-center gap-1.5">
@@ -316,12 +322,12 @@ function FinalAnswer({
         </div>
       ) : (
         <>
-          {/* Clamped to ~10 lines (15rem at text-[13px]/1.65) — prod answers
-              can exceed 400 words, so the full text lives behind an expander
-              instead of pushing the replicas below the fold. */}
-          <div className="text-[13px] leading-[1.65] text-neutral-200 whitespace-pre-wrap max-h-[15rem] overflow-y-auto">
-            {sub.content}
-          </div>
+          <BattleMarkdown
+            content={sub.content ?? ""}
+            className="text-[14px] leading-[1.7] text-neutral-200"
+            collapsedMaxHeight="max-h-[28rem]"
+            expandLabel="Read the full answer"
+          />
           {sub.truncated && <div className="text-xs text-amber-400 mt-2">Reply truncated at the limit</div>}
         </>
       )}
@@ -578,7 +584,9 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                 {humanJudgements.map((j) => (
                   <div key={j.replicate_seed} className="rounded-md border border-neutral-800 p-2.5">
                     <VoteChip vote={j.vote} agentAName={agentAName} agentBName={agentBName} />
-                    {j.reasoning && <div className="text-xs text-neutral-500 mt-2 leading-relaxed">{j.reasoning}</div>}
+                    {j.reasoning && (
+                      <BattleMarkdown content={j.reasoning} className="mt-2 text-xs leading-[1.65] text-neutral-400" />
+                    )}
                   </div>
                 ))}
               </div>
@@ -613,7 +621,9 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                             {run.confidence !== null && (
                               <div className="text-neutral-500 mt-1">Confidence: {Math.round(run.confidence * 100)}%</div>
                             )}
-                            {run.reasoning && <div className="text-neutral-500 mt-1 leading-relaxed">{run.reasoning}</div>}
+                            {run.reasoning && (
+                              <BattleMarkdown content={run.reasoning} className="mt-1 text-neutral-500 leading-[1.65]" />
+                            )}
                           </div>
                         ))}
                       </div>
