@@ -60,6 +60,7 @@ _MIG_FILES = [
     "V71__battle_demo_mode.sql",
     "V72__battle_contenders.sql",
     "V73__contender_rating.sql",
+    "V74__battle_judge_seat_once.sql",
 ]
 
 VALID_JUDGE_REPLY = (
@@ -1011,11 +1012,11 @@ class TestJudgeRecusal:
             settled = await BattleRepository(session).get(battle_id)
         assert settled["status"] == "completed"
         assert settled["winner"] is None, "a self-judged verdict was published"
-        # One collapsed vote per replicate, which upsert_judgement promises and
-        # `len(judgements) >= REPLICATE_COUNT` relies on. The freeze writes a
-        # judge_ref of its own, so ON CONFLICT DO NOTHING (keyed on judge_ref,
-        # V66:486) does NOT suppress it over a real vote — only the explicit skip
-        # of already-decided seeds does.
+        # One collapsed vote per replicate, which `len(judgements) >=
+        # REPLICATE_COUNT` relies on. The freeze writes a judge_ref of its own,
+        # so battle_judge_once (V66:486, keyed on judge_ref) would not suppress
+        # it over a real vote — V74's per-seat index does, and the explicit skip
+        # of already-decided seeds keeps the attribution below correct.
         async with session_maker() as session:
             judgements = await BattleRepository(session).list_judgements(battle_id)
         assert len(judgements) == REPLICATE_COUNT, "the freeze duplicated a replicate"

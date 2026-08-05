@@ -3755,7 +3755,7 @@ class BattleRepository:
         scores: dict[str, Any] | None = None,
         position_sensitive: bool = False,
     ) -> str | None:
-        """Store one COLLAPSED vote. None = this replicate already voted.
+        """Store one COLLAPSED vote. None = this seat already holds a vote.
 
         The unique key without presented_order is what caps three paired
         replicates at three collapsed votes: the two halves of a pair can
@@ -3764,6 +3764,12 @@ class BattleRepository:
         Human votes (phase 2) reuse this with judge_kind='human' and
         judge_ref=user_id, which gives one vote per user per battle for free —
         a second attempt returns None, and the API answers 409.
+
+        ON CONFLICT names no target because two rules now apply and either may
+        fire: battle_judge_once (V66:486, per judge_ref) and the llm-only
+        uq_battle_judgements_llm_seat (V74, per replicate seat regardless of
+        ref). Naming one would let the other raise instead of returning None,
+        which would turn a freeze racing a vote into a failed settle.
         """
         result = await self.db.execute(
             text(
@@ -3775,7 +3781,7 @@ class BattleRepository:
                     (CAST(:battle_id AS UUID), :judge_kind, :judge_ref,
                      :replicate_seed, :vote, :confidence, :reasoning,
                      CAST(:scores AS JSONB), :position_sensitive)
-                ON CONFLICT ON CONSTRAINT battle_judge_once DO NOTHING
+                ON CONFLICT DO NOTHING
                 RETURNING id
                 """
             ),

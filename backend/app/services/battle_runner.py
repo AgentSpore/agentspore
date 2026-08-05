@@ -1556,17 +1556,11 @@ class BattleRunner:
         follows resolves to no-quorum and rates nothing instead of inventing a
         side or a tie.
 
-        Already-voted replicates are skipped by an explicit READ, not by
-        upsert_judgement's ON CONFLICT DO NOTHING. That clause suppresses on the
-        battle_judge_once key (V66:486), which includes ``judge_ref`` — so it
-        only protects a row written under the SAME ref, and this method's ref is
-        caller-supplied. The recusal path passes a ref of its own, under which a
-        real vote does not conflict, and the insert would land a SECOND row for
-        one replicate_seed: six rows for three replicates, breaking the one
-        collapsed vote per replicate rule that upsert_judgement's docstring
-        promises and that ``len(judgements) >= REPLICATE_COUNT`` relies on. The
-        skip also keeps a real vote attributed to the model that actually cast
-        it, which no ref choice here could do.
+        One vote per replicate seat is guaranteed by the DATABASE:
+        uq_battle_judgements_llm_seat (V74) is unique on (battle_id,
+        replicate_seed) for the llm kind regardless of ``judge_ref``, so a
+        second row cannot exist even under the ref of its own that this method
+        supplies. The read below is a courtesy, not the guarantee.
 
         Returns nothing on purpose. A count here would read as a completeness
         signal it cannot be — 0 means "every replicate had already voted", not
@@ -1574,14 +1568,11 @@ class BattleRunner:
 
         Does not commit — the caller owns the transaction boundary.
         """
-        # The read and the writes below are NOT one atomic step, so a concurrent
-        # insert between them could still land a second row for one seat. The
-        # bound: every caller holds the battle lease (this method is reached only
-        # from a terminal settle path that renewed or CAS-checked it), so a
-        # second writer on the same battle is already the exceptional case, and
-        # both freeze paths force winner=None or stamp a judging_stop_reason —
-        # an extra row can therefore make the judgement list untidy, never the
-        # verdict wrong. Not worth an advisory lock or an upsert restructure.
+        # The read and the writes are NOT one atomic step. It no longer matters:
+        # a vote landing in between takes the seat, and V74's unique index makes
+        # the freeze's insert a no-op instead of a second row. Keeping the read
+        # still spares three pointless INSERTs on the common path, and settles
+        # attribution by intent rather than by which writer arrived first.
         #
         # judge_kind is filtered: 'human' is reserved for phase 2, and a
         # replicate carrying only a human row still needs its terminal LLM error

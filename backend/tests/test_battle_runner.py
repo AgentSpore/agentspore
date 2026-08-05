@@ -82,6 +82,7 @@ V70_PATH = MIGRATIONS / "V70__battle_user_tasks.sql"
 V71_PATH = MIGRATIONS / "V71__battle_demo_mode.sql"
 V72_PATH = MIGRATIONS / "V72__battle_contenders.sql"
 V73_PATH = MIGRATIONS / "V73__contender_rating.sql"
+V74_PATH = MIGRATIONS / "V74__battle_judge_seat_once.sql"
 
 RUBRIC = [{"key": "correctness", "description": "Does it work?", "weight": 1.0}]
 
@@ -124,7 +125,7 @@ async def engine(pg_container):
     eng = create_async_engine(async_url, future=True)
     sql = (
         f"{BASE_SCHEMA};{V65_PATH.read_text()};{V66_PATH.read_text()};"
-        f"{V67_PATH.read_text()};{V68_PATH.read_text()};{V69_PATH.read_text()};{V70_PATH.read_text()};{V71_PATH.read_text()};{V72_PATH.read_text()};{V73_PATH.read_text()}"
+        f"{V67_PATH.read_text()};{V68_PATH.read_text()};{V69_PATH.read_text()};{V70_PATH.read_text()};{V71_PATH.read_text()};{V72_PATH.read_text()};{V73_PATH.read_text()};{V74_PATH.read_text()}"
     )
     async with eng.begin() as conn:
         for stmt in split_sql_statements(sql):
