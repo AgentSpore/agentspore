@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { isRecusedBattle, isVoidBattle } from "./BattleTimeline";
@@ -12,18 +13,47 @@ import { isRecusedBattle, isVoidBattle } from "./BattleTimeline";
 const RECUSED_REASON = "recused: no judge model free of conflict with a contender; no result is recorded";
 const VOID_REASON = "void: the provider could not be reached for side(s) agent-b; no result is recorded";
 
-function backendSource(relative: string): string {
-  return readFileSync(fileURLToPath(new URL(`../../../../backend/app/services/${relative}`, import.meta.url)), "utf8");
+/**
+ * Walk up to the repo root instead of a fixed depth: the frontend ships as its
+ * own Docker context with no backend/ beside it, and a hardcoded path would
+ * fail there as ENOENT — a missing file dressed up as a drift.
+ */
+function findBackendServices(): string | null {
+  let dir = fileURLToPath(new URL(".", import.meta.url));
+  for (let up = 0; up < 8; up += 1) {
+    const candidate = join(dir, "backend", "app", "services");
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
 }
+
+const BACKEND_SERVICES = findBackendServices();
 
 /** Both literals are split across lines in Python; match the half carrying the prefix. */
 function assertBackendEmits(file: string, head: string) {
-  expect(backendSource(file), `${file} no longer emits: ${head}`).toContain(head);
+  if (BACKEND_SERVICES === null) throw new Error("backend sources not found — this block should have been skipped");
+  const source = readFileSync(join(BACKEND_SERVICES, file), "utf8");
+  expect(source, `${file} no longer emits: ${head}`).toContain(head);
 }
 
-describe("isVoidBattle", () => {
-  it("matches the literal battle_runner.settle_silent_forfeit writes", () => {
+// The drift guard needs the backend sources; a frontend-only checkout reports
+// these as skipped rather than green, so an absent backend can never read as a
+// passing contract.
+describe.skipIf(BACKEND_SERVICES === null)("backend verdict_reason contract", () => {
+  it("battle_runner.settle_silent_forfeit still writes the void prefix", () => {
     assertBackendEmits("battle_runner.py", "void: the provider could not be reached for side(s) ");
+  });
+
+  it("battle_judges.RECUSED_PANEL_REASON still carries the recused prefix", () => {
+    assertBackendEmits("battle_judges.py", "recused: no judge model free of conflict with a contender; ");
+  });
+});
+
+describe("isVoidBattle", () => {
+  it("matches the reason battle_runner.settle_silent_forfeit writes", () => {
     expect(isVoidBattle({ winner: null, verdict_reason: VOID_REASON })).toBe(true);
   });
 
@@ -39,8 +69,7 @@ describe("isVoidBattle", () => {
 });
 
 describe("isRecusedBattle", () => {
-  it("matches the literal battle_judges.RECUSED_PANEL_REASON carries", () => {
-    assertBackendEmits("battle_judges.py", "recused: no judge model free of conflict with a contender; ");
+  it("matches the reason battle_judges.RECUSED_PANEL_REASON carries", () => {
     expect(isRecusedBattle({ winner: null, verdict_reason: RECUSED_REASON })).toBe(true);
   });
 
