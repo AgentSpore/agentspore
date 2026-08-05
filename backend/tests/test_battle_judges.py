@@ -44,6 +44,7 @@ from app.services.battle_judges import (
     REPLICATE_COUNT,
     CollapsedVote,
     JudgeModel,
+    JudgePanelRecusedError,
     JudgeRunResult,
     build_judge_messages,
     build_judge_payload,
@@ -55,6 +56,7 @@ from app.services.battle_judges import (
     resolve_verdict,
     rubric_keys,
     sanitize_submission,
+    seatable_judges,
     warn_on_residual_side_label,
 )
 from app.services.battle_runner import BattleRunner
@@ -801,3 +803,76 @@ class TestJudgeBudgetInvariants:
         # The headroom above is justified ONLY because the default judge is a
         # reasoning model. If JUDGE_MODEL ever changes, re-derive the limits.
         assert JUDGE_MODEL == "moonshot/kimi-k3"
+
+
+def _judge(model_id: str) -> JudgeModel:
+    return JudgeModel(
+        model_id=model_id,
+        provider=model_id.split("/", 1)[0],
+        base_url="http://unused",
+        api_key="k",
+        wire_model=model_id.split("/", 1)[-1],
+    )
+
+
+class TestJudgeRecusal:
+    """A model may not judge a battle it is fighting in.
+
+    Both roster models are also fielded as contenders (V72 seeds Kimi K3 and
+    GLM 4.5 Flash), and an LLM judge shows self-preference for its own
+    generation style even when authorship is hidden. Anonymity does not fix
+    that, so the seat does.
+    """
+
+    ROSTER = [
+        _judge("moonshot/kimi-k3"),
+        _judge("zai/glm-4.5-flash"),
+        _judge("mistral/mistral-medium-2508"),
+        _judge("deepseek/deepseek-v4-flash"),
+    ]
+
+    def test_a_fighting_model_loses_its_seat(self) -> None:
+        """MUTATION: return the roster unfiltered — kimi judges its own battle."""
+        seated = seatable_judges(self.ROSTER, {"moonshot/kimi-k3", "zai/glm-4.5-flash"})
+        assert [m.model_id for m in seated] == [
+            "mistral/mistral-medium-2508",
+            "deepseek/deepseek-v4-flash",
+        ]
+
+    def test_the_conflict_is_the_model_not_the_provider(self) -> None:
+        """mistral-small fighting must not unseat mistral-medium: provider-wide
+        recusal would starve the panel for no bias gain — the self-preference is
+        a property of the weights, and the platform's unit of model identity is
+        provider/model_id (judge_ref, budget ledger, config roster)."""
+        seated = seatable_judges(self.ROSTER, {"mistral/mistral-small-latest"})
+        assert "mistral/mistral-medium-2508" in [m.model_id for m in seated]
+
+    def test_case_and_spacing_do_not_smuggle_a_seat_back(self) -> None:
+        seated = seatable_judges(self.ROSTER, {" Moonshot/Kimi-K3 "})
+        assert "moonshot/kimi-k3" not in [m.model_id for m in seated]
+
+    def test_an_agent_battle_seats_the_whole_roster(self) -> None:
+        """Agent-vs-agent battles field no platform model, so nothing recuses."""
+        assert seatable_judges(self.ROSTER, set()) == self.ROSTER
+
+    def test_recusal_to_the_minimum_still_fills_every_replicate(self) -> None:
+        """Worst case for this roster: both contenders are roster models, two
+        models remain. Replicates are assigned round-robin over what is seated,
+        so all three still run and quorum is still reachable."""
+        seated = seatable_judges(self.ROSTER, {"moonshot/kimi-k3", "zai/glm-4.5-flash"})
+        assigned = [seated[i % len(seated)] for i in range(REPLICATE_COUNT)]
+        assert len(assigned) == REPLICATE_COUNT >= QUORUM
+        verdict = resolve_verdict(
+            [
+                CollapsedVote(replicate_seed=str(i), vote=Vote.A)
+                for i in range(REPLICATE_COUNT)
+            ]
+        )
+        assert verdict.winner is Side.A
+
+    def test_an_empty_panel_is_a_recusal_not_a_quiet_verdict(self) -> None:
+        """Nothing seatable must be raisable as its own failure, never judged
+        anyway and never silently completed as judged."""
+        assert seatable_judges(self.ROSTER[:1], {"moonshot/kimi-k3"}) == []
+        exc = JudgePanelRecusedError({"moonshot/kimi-k3"})
+        assert "moonshot/kimi-k3" in str(exc)

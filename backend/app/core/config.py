@@ -132,12 +132,23 @@ class Settings(BaseSettings):
     # Judge-panel model roster (Track 2 diversity). Ordered candidate model ids;
     # the FIRST is the primary (must be battle_judges.JUDGE_MODEL). Each is kept
     # only if OpenRouterService.resolve_provider finds a usable key, so the panel
-    # picks models from what is actually enabled — never a hardcoded list. When
-    # only one resolves the panel degrades to prompt-diversity-only (the real
-    # case today: RU-ASN geo-blocks every US provider, leaving z.ai). To enable
-    # real model diversity, add a reachable id (e.g. "mistral/mistral-small") AND
-    # set its provider key; do NOT assume a rich model zoo.
-    battle_judge_models: list[str] = ["moonshot/kimi-k3", "zai/glm-4.5-flash"]
+    # picks models from what is actually enabled — never a hardcoded list. An id
+    # whose provider key does not resolve is dropped with a WARNING; if that
+    # leaves one model the panel degrades to prompt-diversity-only.
+    #
+    # Widened to four alongside judge recusal (seatable_judges): a judge whose
+    # model also fights as a contender is recused from that battle, so a
+    # two-model roster empties the panel whenever the two contenders ARE those
+    # two models. All four ids below are reachable from the production ASN.
+    # Worst case — both sides are roster models — leaves two seatable, and the
+    # panel round-robins models across its three replicates, so quorum still
+    # holds.
+    battle_judge_models: list[str] = [
+        "moonshot/kimi-k3",
+        "zai/glm-4.5-flash",
+        "mistral/mistral-medium-2508",
+        "deepseek/deepseek-v4-flash",
+    ]
     battle_judge_owner_daily_call_limit: int = 60
     battle_judge_global_daily_call_limit: int = 10_000
     battle_judge_max_attempts_per_battle: int = 12
