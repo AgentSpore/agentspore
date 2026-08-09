@@ -337,3 +337,36 @@ class TestAgenticContenderUsesItsOwnCredentials:
         assert req.provider_base_url == ""
         assert req.fallback_base_url == "https://openrouter.ai/api/v1"
         assert req.fallback_api_key == "fallback-key"
+
+    async def test_wire_model_keeps_its_provider_prefix(self, session_maker) -> None:
+        """agent-runner passes a provider-prefixed id through untouched, but
+        silently rewrites a BARE one to the head of its own fallback chain — a
+        dead nemotron slug that answers 401. Stripping the prefix here (as the
+        model path correctly does) voided every agentic side in production while
+        the log blamed the provider.
+
+        MUTATION: wrap the wire_model argument in wire_model_name() again — the
+        prefix disappears and this goes red.
+        """
+        battle_id, _a, _b = await _running_battle(session_maker, agentic_side_b=True)
+        captured = {}
+
+        async def fake_run_agentic_answer(request, on_step):
+            captured["request"] = request
+            await on_step(AgentStep(2, "an answer", True))
+            return "an answer"
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.run_agentic_answer",
+                side_effect=fake_run_agentic_answer,
+            ):
+                await runner.drive_contender_submission(
+                    await runner.repo.get(battle_id), Side.B, "k", "https://example.test/v1"
+                )
+            await session.commit()
+
+        assert "/" in captured["request"].wire_model, (
+            f"wire_model must stay provider-prefixed, got {captured['request'].wire_model!r}"
+        )
