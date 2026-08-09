@@ -133,6 +133,14 @@ class TestSecureDockerSandboxSpawn:
         kwargs = self._invoke()
         assert "ALL" in kwargs.get("cap_drop", [])
 
+    def test_user_installs_are_pointed_at_the_writable_workspace(self):
+        """read_only=True makes ~/.local unwritable, so pip --user fails outright
+        unless PYTHONUSERBASE points somewhere the agent can actually write.
+        Without this an agent cannot install a library it needs for the task."""
+        kwargs = self._invoke()
+        env = kwargs.get("environment", {})
+        assert env.get("PYTHONUSERBASE") == "/workspace/.local"
+
     def test_no_cap_add_net_raw(self):
         """NET_RAW was removed — must not appear in cap_add."""
         kwargs = self._invoke()
