@@ -52,7 +52,9 @@ from app.services.battle_judges import (
     REPLICATE_COUNT,
     JudgeRunResult,
     JudgeTransportError,
+    judge_temperature_for,
     replicate_seed,
+    wire_model_name,
 )
 from app.services.battle_runner import (
     BATTLE_LEASE_SECONDS,
@@ -1828,8 +1830,8 @@ def _install_two_model_roster(monkeypatch) -> None:
     The second model's provider is stubbed so both roster entries resolve — in CI
     the real resolver would drop it, so the diversity + fallback paths are only
     reachable by stubbing the config and the provider resolver, the same seam the
-    wire-contract suite uses. JUDGE_MODEL is kimi (the primary), so the second
-    model must be a DIFFERENT id or the roster collapses to single-model.
+    wire-contract suite uses. The second model must be a DIFFERENT id from
+    JUDGE_MODEL (the primary) or the roster collapses to single-model.
     """
     monkeypatch.setattr(
         battle_runner_module,
@@ -1882,21 +1884,20 @@ class TestJudgeRosterFallback:
         assert {j["judge_ref"] for j in judgements} == {JUDGE_MODEL, _ROSTER_SECOND_MODEL}
         assert all(j["vote"] == "a" for j in judgements)
 
-    async def test_the_primary_replicate_judges_on_kimi_at_temperature_one(
+    async def test_the_primary_replicate_judges_on_the_primary_model(
         self, monkeypatch, session_maker, db_session, task_id
     ) -> None:
-        """The owner's choice: kimi-k3 is the PRIMARY judge. On a single-model
-        roster every replicate — the first included — calls the kimi wire model at
-        temperature 1.0, never the glm default at 0.7.
+        """On a single-model roster, every replicate — the first included — calls
+        JUDGE_MODEL's own wire model at JUDGE_MODEL's own required temperature,
+        never a stale hardcoded id or the plain 0.7 default.
 
-        MUTATION (on a copy): revert JUDGE_MODEL to glm-4.5-flash, or drop kimi's
-        temperature override to 0.7 — the wire_model / temperature assertion goes
-        red.
+        MUTATION (on a copy): hardcode wire_model/temperature to a different
+        model's values in the roster builder — the assertion goes red.
         """
         battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
         await _set_final_answers(session_maker, battle_id, _WINNER_MARKER, "the other answer")
         # Force a single-model roster (only the primary) so every replicate is the
-        # primary and no glm entry can absorb the assertion.
+        # primary and no second entry can absorb the assertion.
         monkeypatch.setattr(
             battle_runner_module,
             "get_settings",
@@ -1911,11 +1912,21 @@ class TestJudgeRosterFallback:
 
         assert recorder.await_count > 0, "the panel actually called the judge model"
         first = recorder.call_args_list[0]
-        assert first.kwargs["wire_model"] == "kimi-k3", "the primary is the kimi wire model"
-        assert first.kwargs["temperature"] == 1.0, "kimi judging is at temperature 1.0"
-        # Every call in a single-model kimi roster is kimi at 1.0.
-        assert all(c.kwargs["wire_model"] == "kimi-k3" for c in recorder.call_args_list)
-        assert all(c.kwargs["temperature"] == 1.0 for c in recorder.call_args_list)
+        assert first.kwargs["wire_model"] == wire_model_name(JUDGE_MODEL), (
+            "the primary replicate uses the primary judge's own wire model"
+        )
+        assert first.kwargs["temperature"] == judge_temperature_for(JUDGE_MODEL), (
+            "the primary replicate uses the primary judge's own temperature"
+        )
+        # Every call in a single-model roster is the primary at its own temperature.
+        assert all(
+            c.kwargs["wire_model"] == wire_model_name(JUDGE_MODEL)
+            for c in recorder.call_args_list
+        )
+        assert all(
+            c.kwargs["temperature"] == judge_temperature_for(JUDGE_MODEL)
+            for c in recorder.call_args_list
+        )
 
     async def test_a_dead_assigned_model_falls_back_and_reaches_a_winner(
         self, monkeypatch, session_maker, db_session, task_id
