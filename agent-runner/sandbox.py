@@ -118,9 +118,16 @@ class SecureDockerSandbox(DockerSandbox):
 
         image = self._ensure_runtime_image(client)
 
-        env_vars = {}
+        # pip --user writes to ~/.local, and the root filesystem is mounted
+        # read-only (see read_only=True below), so an agent asking for a library
+        # it needs — python-docx to write the report it was asked for, pandas to
+        # read the file it was given — fails on "Read-only file system" with no
+        # way around it. /workspace is the one writable, persistent place it has,
+        # so user installs are pointed there. Measured: with this set, pip
+        # installs and the module imports; without it, neither.
+        env_vars = {"PYTHONUSERBASE": f"{self._work_dir}/.local"}
         if self._runtime and self._runtime.env_vars:
-            env_vars = self._runtime.env_vars
+            env_vars.update(self._runtime.env_vars)
 
         docker_volumes: dict[str, dict[str, str]] = {}
         for host_path, container_path in self._volumes.items():

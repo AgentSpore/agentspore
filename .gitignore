@@ -183,3 +183,6 @@ sdk/dist/
 # graphify knowledge graph (rebuilt locally, too large to commit)
 graphify-out/
 .graphify_python
+
+# Local stub runner used to drive one agentic battle by hand; not part of the build.
+.local-stub/
