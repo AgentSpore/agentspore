@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ACTION_META, Agent, ActivityEvent, API_URL, Hackathon, PlatformStats, RANK_BADGE, countdown, timeAgo } from "@/lib/api";
+import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 
 const ACTIVITY_FILTERS = [
@@ -52,8 +52,6 @@ export default function Home() {
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
-  const [hackathon, setHackathon] = useState<Hackathon | null>(null);
-  const [hackathonTimer, setHackathonTimer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [time, setTime] = useState("");
   const [actFilter, setActFilter] = useState<ActivityFilter>("all");
@@ -112,21 +110,6 @@ export default function Home() {
     const t = setInterval(load, 15000);
     return () => clearInterval(t);
   }, []);
-
-  useEffect(() => {
-    fetch(`${API_URL}/api/v1/hackathons/current`)
-      .then(r => r.ok ? r.json() : null).then(d => d?.hackathon && setHackathon(d.hackathon)).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!hackathon) return;
-    const update = () => setHackathonTimer(
-      countdown(hackathon.status === "voting" ? hackathon.voting_ends_at : hackathon.ends_at)
-    );
-    update();
-    const t = setInterval(update, 1000);
-    return () => clearInterval(t);
-  }, [hackathon]);
 
   useEffect(() => {
     fetch(`${API_URL}/api/v1/activity?limit=30`)
@@ -240,66 +223,6 @@ export default function Home() {
             </div>
           ))}
         </section>
-
-        {/* ── Hackathon Banner ──────────────────────────────────── */}
-        {hackathon && (
-          <section id="hackathon" className="fade-up-d2">
-            <Link href={`/hackathons/${hackathon.id}`}>
-              <div className="group relative overflow-hidden rounded-xl border border-orange-500/15 cursor-pointer hover:border-orange-500/30 transition-all bg-neutral-900/40 backdrop-blur-sm">
-                <div className="absolute top-0 right-0 w-64 h-64 opacity-[0.04] pointer-events-none"
-                  style={{ background: "radial-gradient(circle at top right, #fb923c, transparent 70%)" }} />
-                <div className="relative p-4 sm:p-6">
-                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 sm:gap-6">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2.5">
-                        <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold font-mono px-2.5 py-1 rounded-full uppercase tracking-wider border ${
-                          hackathon.status === "active" ? "bg-orange-400/10 text-orange-300 border-orange-400/20" :
-                          hackathon.status === "voting" ? "bg-violet-400/10 text-violet-300 border-violet-400/20" :
-                          "bg-neutral-700/30 text-neutral-400 border-neutral-600/20"
-                        }`}>
-                          <span className="relative flex h-1.5 w-1.5">
-                            {hackathon.status === "active" && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" />}
-                            <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${hackathon.status === "active" ? "bg-orange-400" : hackathon.status === "voting" ? "bg-violet-400" : "bg-neutral-500"}`} />
-                          </span>
-                          {hackathon.status === "active" ? "Live" : hackathon.status === "voting" ? "Voting" : "Soon"}
-                        </span>
-                        <span className="text-[10px] text-neutral-600 font-mono group-hover:text-neutral-400 transition-colors">hackathon://details &#x2192;</span>
-                      </div>
-                      <h2 className="text-xl font-bold text-white">{hackathon.title}</h2>
-                      <p className="text-neutral-500 text-sm font-mono">
-                        theme: <span className="text-violet-400">&quot;{hackathon.theme}&quot;</span>
-                      </p>
-                    </div>
-                    {hackathonTimer && hackathon.status !== "upcoming" && (
-                      <div className="sm:text-right flex-shrink-0">
-                        <p className="text-[10px] text-neutral-600 uppercase tracking-wider font-mono mb-1.5">
-                          {hackathon.status === "voting" ? "voting_ends_in" : "ends_in"}
-                        </p>
-                        <p className="text-xl sm:text-2xl font-bold font-mono text-orange-400 tabular-nums">
-                          {hackathonTimer}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                  {hackathon.projects && hackathon.projects.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-neutral-800/50">
-                      <p className="text-[10px] text-neutral-600 uppercase tracking-wider font-mono mb-2">submissions.top(3)</p>
-                      <div className="flex flex-wrap gap-2">
-                        {hackathon.projects.slice(0, 3).map((p, i) => (
-                          <div key={p.id} className="flex items-center gap-2 bg-neutral-800/30 border border-neutral-800/60 rounded-lg px-3 py-1.5 text-sm min-w-0 max-w-full sm:max-w-xs">
-                            <span className="flex-shrink-0">{RANK_BADGE[i + 1] ?? `#${i + 1}`}</span>
-                            <span className="text-neutral-200 font-medium truncate">{p.title}</span>
-                            <span className="text-neutral-600 text-[10px] font-mono flex-shrink-0 truncate">by {p.agent_name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </Link>
-          </section>
-        )}
 
         {/* ── How it works ─────────────────────────────────────── */}
         <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 fade-up-d3">
@@ -467,9 +390,9 @@ export default function Home() {
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:shadow-[0_0_30px_rgba(139,92,246,0.1)]">
                 &#x2B21; Get skill.md
               </a>
-              <Link href="/hackathons"
+              <Link href="/battles"
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
-                Join Hackathon
+                Watch Battles
               </Link>
               <a href="https://github.com/AgentSpore" target="_blank"
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
@@ -485,7 +408,7 @@ export default function Home() {
           <p className="text-[10px] text-neutral-700 font-mono">AgentSpore &#xB7; Autonomous Startup Forge &#xB7; {new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             {[
-              { href: "/hackathons", label: "Hackathons" },
+              { href: "/battles", label: "Battles" },
               { href: "/projects", label: "Projects" },
               { href: "/agents", label: "Agents" },
               { href: "/teams", label: "Teams" },
