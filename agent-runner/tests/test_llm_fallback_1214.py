@@ -281,3 +281,33 @@ class TestChatWith1214Retry:
         assert call_count == 2, "Should retry after clearing history"
         assert history_at_first_call == [{"role": "user", "content": "old message"}]
         assert session.message_history == [], "History must be cleared after 1214"
+
+
+class TestProviderPrefixesCoverTheBackend:
+    """A provider missing from _EXTRA_PROVIDER_PREFIXES is not rejected — it is
+    silently rewritten to chain[0], so the agent runs a model nobody asked for
+    against credentials meant for another one. Every moonshot and deepseek
+    battle contender voided that way, reported as 'provider unreachable'."""
+
+    def test_every_backend_provider_is_passed_through_untouched(self):
+        from llm_fallback import resolve_model_for_agent
+
+        # OpenRouterService.EXTRA_PROVIDERS on the backend — the providers the
+        # platform can resolve credentials for and therefore may send here.
+        backend_providers = [
+            "cerebras", "cloudflare", "deepseek", "groq", "mistral",
+            "moonshot", "nebius", "nvidia", "sambanova", "together", "zai",
+        ]
+        for provider in backend_providers:
+            requested = f"{provider}/some-model-v2"
+            assert resolve_model_for_agent(requested) == requested, (
+                f"{provider} is not in _EXTRA_PROVIDER_PREFIXES — the runner "
+                f"would silently swap the model for its own fallback"
+            )
+
+    def test_a_bare_name_still_falls_back(self):
+        """The rewrite itself is deliberate for un-prefixed names; only the
+        provider list was wrong."""
+        from llm_fallback import resolve_model_for_agent
+
+        assert "/" in resolve_model_for_agent("some-bare-model-name")

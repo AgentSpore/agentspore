@@ -131,8 +131,30 @@ def _load_provider_chain() -> list[tuple[str, str]]:
     return [parse_chain_entry(e) for e in entries]
 
 
+# A prefix here means "the caller resolved this provider itself and passed its
+# base_url, so leave the name alone". A provider MISSING from this set is not
+# rejected — it is silently rewritten to chain[0] below, and the agent then runs
+# a model nobody asked for against credentials meant for another one. That is how
+# every moonshot and deepseek battle contender voided: the runner answered 401,
+# and the platform recorded it as "provider unreachable".
+#
+# Keep this in step with OpenRouterService.EXTRA_PROVIDERS on the backend, which
+# is the set of providers the platform can resolve credentials for.
 _EXTRA_PROVIDER_PREFIXES: frozenset[str] = frozenset(
-    {"cerebras/", "groq/", "gemini/", "mistral/", "nebius/", "sambanova/", "zai/", "cloudflare/", "together/"}
+    {
+        "cerebras/",
+        "cloudflare/",
+        "deepseek/",
+        "gemini/",
+        "groq/",
+        "mistral/",
+        "moonshot/",
+        "nebius/",
+        "nvidia/",
+        "sambanova/",
+        "together/",
+        "zai/",
+    }
 )
 
 
