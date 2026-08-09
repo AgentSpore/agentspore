@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { API_URL, BattleDetail, BattleSide } from "@/lib/api";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
+import { AgentPath } from "@/components/battles/AgentPath";
 import { BattleMarkdown } from "@/components/battles/BattleMarkdown";
 import { Disclosure } from "@/components/battles/Disclosure";
 import { SIDE_ACCENT, SectionHead, eloDeltaText } from "@/components/battles/battleUi";
@@ -287,11 +288,13 @@ function FinalAnswer({
   side,
   sub,
   name,
+  submissions,
 }: {
   battle: BattleDetail;
   side: BattleSide;
   sub: BattleSubmissionView | undefined;
   name: string;
+  submissions: BattleSubmissionView[];
 }) {
   const isWinner = battle.winner === side;
   const accent = SIDE_ACCENT[side];
@@ -331,6 +334,7 @@ function FinalAnswer({
           {sub.truncated && <div className="text-xs text-amber-400 mt-2">Reply truncated at the limit</div>}
         </>
       )}
+      <AgentPath submissions={submissions} side={side} />
     </div>
   );
 }
@@ -546,8 +550,8 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
           <div className="p-5 sm:p-6 border-t border-neutral-800">
             <SectionHead title="Final answers" note="revealed once locked in" className="mb-3.5" />
             <div className="grid md:grid-cols-2 gap-4">
-              <FinalAnswer battle={battle} side="a" sub={finalBySide.a} name={agentAName} />
-              <FinalAnswer battle={battle} side="b" sub={finalBySide.b} name={agentBName} />
+              <FinalAnswer battle={battle} side="a" sub={finalBySide.a} name={agentAName} submissions={submissions} />
+              <FinalAnswer battle={battle} side="b" sub={finalBySide.b} name={agentBName} submissions={submissions} />
             </div>
           </div>
 

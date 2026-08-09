@@ -58,6 +58,13 @@ from app.schemas.battles import (
     Vote,
     Winner,
 )
+from app.services.agentic_answer import (
+    TIMEOUT_PARTIAL_MARKER,
+    AgenticAnswerRequest,
+    AgenticDriveError,
+    AgentStep,
+    run_agentic_answer,
+)
 from app.services.battle_budget import (
     STOP_REASONS,
     BattleJudgeBudgetService,
@@ -72,6 +79,8 @@ from app.services.battle_judges import (
     JUDGE_KIND_LLM,
     JUDGE_MODEL,
     JUDGE_SYSTEM_PROMPTS,
+    MAX_PATH_CHARS,
+    MAX_SUBMISSION_CHARS,
     PRESENTED_ORDERS,
     RECUSED_JUDGE_REF,
     RECUSED_PANEL_REASON,
@@ -89,6 +98,7 @@ from app.services.battle_judges import (
     collapse_pair,
     judge_temperature_for,
     parse_judge_response,
+    render_agentic_path,
     replicate_seed,
     resolve_verdict,
     rubric_keys,
@@ -266,6 +276,13 @@ DEMO_ANSWER_TIMEOUT_SECONDS = 240.0
 # got one. Still inside the shortest battle deadline (600s), so a drive cannot
 # outlive its battle — that ceiling is what bounds the per-attempt timeout too.
 ANSWER_DRIVE_BUDGET_SECONDS = 560.0
+
+# Sandbox start+stop measured under 1s (SPEC's 311ms container floor plus
+# DeepAgent init headroom); 30s margin, subtracted from ANSWER_DRIVE_BUDGET_
+# SECONDS so the number told to the agent is a promise the outer wait_for can
+# keep — the full 560s while start/stop are still pending would let the
+# agent's own soft deadline outrun the hard outer cutoff.
+AGENTIC_SANDBOX_OVERHEAD_SECONDS = 30.0
 
 # TTL on the cross-process demo-drive claim (Redis SET NX EX). uvicorn runs 4
 # workers and each holds its OWN in-process _demo_inflight guard, so absent a
@@ -1055,6 +1072,18 @@ class BattleRunner:
         contender = await self.repo.get_contender(str(contender_id))
         if contender is None:
             return False
+
+        if contender.get("execution_mode") == "agent":
+            accepted = await self._drive_agentic_submission(
+                current, side, contender, api_key, base_url
+            )
+            if accepted:
+                logger.info(
+                    "auto-battle {} side {} answered as {}",
+                    battle_id, side.value, contender["display_name"],
+                )
+            return accepted
+
         spec = AnswerSpec(
             model=f"{contender['provider']}/{contender['model_id']}",
             system_prompt=str(contender["system_prompt"]),
@@ -1067,13 +1096,8 @@ class BattleRunner:
             return False
         if answer is None:
             return False
-
         accepted = await self.repo.add_submission(
-            battle_id=battle_id,
-            side=side,
-            seq_no=1,
-            content=answer,
-            is_final=True,
+            battle_id=battle_id, side=side, seq_no=1, content=answer, is_final=True
         )
         await self.db.commit()
         if accepted:
@@ -1084,6 +1108,81 @@ class BattleRunner:
                 contender["display_name"],
             )
         return accepted
+
+    async def _drive_agentic_submission(
+        self, battle: dict, side: Side, contender: dict, api_key: str, base_url: str
+    ) -> bool:
+        """Answer via a sandboxed agent instead of one HTTP call.
+
+        Persists each path step as it arrives (never buffered to the end — a
+        dead battle must still show what happened). A soft-deadline cutoff is a
+        THIRD outcome, not a success: content is whatever draft the agent
+        buffered (possibly empty — see AgentStep docstring), so an empty-handed
+        timeout reads as silence to settlement (silent_sides / forfeit) exactly
+        like a model contender that answered nothing, rather than as a real,
+        gradeable answer. It is still distinct from record_unreachable — the
+        agent DID run, unlike a side that was never reached at all.
+
+        A step write can lose a race with close_deadline's silent-fighter row
+        (add_submission's monotonic seq_no check then refuses every later
+        write) — detected via its bool return and stopping the drive rather
+        than silently discarding steps into a battle that moved on.
+        """
+        battle_id = str(battle["id"])
+        write_failed = False
+        final_written = False
+
+        async def on_step(step: AgentStep) -> None:
+            nonlocal write_failed, final_written
+            if write_failed:
+                return
+            accepted = await self.repo.add_submission(
+                battle_id=battle_id,
+                side=side,
+                seq_no=step.seq_no,
+                content=step.content,
+                is_final=step.is_final,
+                truncated=step.timed_out,
+                error=TIMEOUT_PARTIAL_MARKER if step.timed_out else None,
+            )
+            await self.db.commit()
+            if not accepted:
+                write_failed = True
+                logger.warning(
+                    "battle {} side {} agentic step lost a race (seq_no {}) — "
+                    "battle likely moved on; stopping the drive",
+                    battle_id, side.value, step.seq_no,
+                )
+                return
+            final_written = final_written or step.is_final
+
+        from app.services.openrouter_service import (  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
+            OpenRouterService,
+        )
+
+        model = f"{contender['provider']}/{contender['model_id']}"
+        creds = OpenRouterService().resolve_provider(model)
+        request = AgenticAnswerRequest(
+            battle_id=battle_id,
+            side_value=side.value,
+            task_prompt=str(battle.get("task_prompt_snapshot") or ""),
+            system_prompt=str(contender["system_prompt"]),
+            wire_model=wire_model_name(model),
+            provider_base_url=creds["base_url"] if creds else "",
+            provider_api_key=creds["api_key"] if creds else "",
+            fallback_base_url=base_url,
+            fallback_api_key=api_key,
+            max_steps=int(contender.get("max_steps") or 12),
+            answer_seconds=ANSWER_DRIVE_BUDGET_SECONDS - AGENTIC_SANDBOX_OVERHEAD_SECONDS,
+        )
+        try:
+            await run_agentic_answer(request, on_step)
+        except AgenticDriveError as exc:
+            logger.warning("battle {} side {} agentic drive failed: {}", battle_id, side.value, exc)
+            if not final_written:
+                await self.record_unreachable(battle_id, side, "agentic drive failed")
+            return False
+        return final_written and not write_failed
 
     async def _answer_with_retry(
         self, battle: dict, spec: AnswerSpec, api_key: str, base_url: str
@@ -1272,6 +1371,38 @@ class BattleRunner:
 
     # -- judging ------------------------------------------------------------
 
+    async def _judge_view_by_side(
+        self, battle: dict, submissions: list[dict], final_by_side: dict[str, str | None]
+    ) -> tuple[dict[str, str | None], int]:
+        """What the judge reads per side, and the max_chars to apply.
+
+        The path replaces the final answer ONLY when BOTH sides are agentic:
+        the seeded rubric has no path axes yet (SPEC "Judging — the panel sees
+        the path", point 1), so judging one side's whole path against the
+        other's bare final answer would score apples against oranges on three
+        answer-only axes. A mixed battle (agent vs model) falls back to
+        final-answer-only for both — unchanged behaviour — until path axes
+        exist. Truncation is a single number (MAX_PATH_CHARS or
+        MAX_SUBMISSION_CHARS) applied identically to both sides by the caller.
+        """
+        agentic_sides: dict[str, list[dict]] = {}
+        for side in (Side.A, Side.B):
+            contender_id = battle.get(f"contender_{side.value}_id")
+            if contender_id is None:
+                continue
+            contender = await self.repo.get_contender(str(contender_id))
+            if contender is not None and contender.get("execution_mode") == "agent":
+                agentic_sides[side.value] = [
+                    s for s in submissions if str(s["side"]) == side.value
+                ]
+        if len(agentic_sides) < 2:
+            return dict(final_by_side), MAX_SUBMISSION_CHARS
+
+        view = dict(final_by_side)
+        for side_value, side_steps in agentic_sides.items():
+            view[side_value] = render_agentic_path(side_steps) or None
+        return view, MAX_PATH_CHARS
+
     async def _contender_model_ids(self, battle: dict) -> set[str]:
         """The platform model ids fielded as contenders in this battle.
 
@@ -1415,6 +1546,9 @@ class BattleRunner:
 
         submissions = await self.repo.list_submissions(battle_id)
         final_by_side = {str(s["side"]): s["content"] for s in submissions if s["is_final"]}
+        judge_view_by_side, judge_max_chars = await self._judge_view_by_side(
+            battle, submissions, final_by_side
+        )
         rubric = battle["task_rubric_snapshot"] or []
         allowed = rubric_keys(rubric)
 
@@ -1439,12 +1573,16 @@ class BattleRunner:
         # classifier. Until then, treat automated injection defense as one layer,
         # with the judge-as-untrusted-data instruction and quorum behind it.
         #
-        # Injection scan runs BEFORE any paid call. Raising here lets
-        # _judge_and_settle attribute and settle (disqualify one injector, or UNRATE
-        # if both) instead of spending budget. Deterministic on the stored finals,
-        # so every judging pass re-detects and the settle is idempotent. Only the
+        # Injection scan runs BEFORE any paid call, over judge_view_by_side —
+        # what the panel ACTUALLY reads, not just final_by_side. An agentic
+        # side's path can include tool_result text pulled from outside the
+        # model (web fetch, file read), and that text reaches the panel
+        # unscanned if only the final answer is checked — the protection is
+        # not removed, just outrun by widening what the judge sees without
+        # widening what gets scanned. Deterministic on the stored rows, so
+        # every judging pass re-detects and the settle is idempotent. Only the
         # matched pattern classes and the offending side are logged — never text.
-        findings = scan_submissions(final_by_side)
+        findings = scan_submissions(judge_view_by_side)
         if findings:
             logger.warning(
                 "battle {} quarantined: injection shapes in submission(s) [{}]",
@@ -1503,13 +1641,14 @@ class BattleRunner:
                         order=order,
                         rubric=rubric,
                         allowed=allowed,
-                        submission_a=final_by_side.get(Side.A.value),
-                        submission_b=final_by_side.get(Side.B.value),
+                        submission_a=judge_view_by_side.get(Side.A.value),
+                        submission_b=judge_view_by_side.get(Side.B.value),
                         model=model,
                         fallbacks=fallbacks,
                         system_prompt=system_prompt,
                         battle_lease_token=lease_token,
                         budget=budget,
+                        max_chars=judge_max_chars,
                     )
                 )
                 renewed = await self.repo.renew_battle_lease(
@@ -1860,6 +1999,7 @@ class BattleRunner:
         battle_lease_token: str | None = None,
         budget: BattleJudgeBudgetService | None = None,
         fallbacks: list[JudgeModel] | None = None,
+        max_chars: int = MAX_SUBMISSION_CHARS,
     ) -> JudgeRunResult:
         """One raw run: claim the slot, reserve a budget unit, call, write back.
 
@@ -1969,6 +2109,7 @@ class BattleRunner:
             submission_a=submission_a,
             submission_b=submission_b,
             presented_order=order,
+            max_chars=max_chars,
         )
         messages = build_judge_messages(payload, system_prompt=system_prompt)
 

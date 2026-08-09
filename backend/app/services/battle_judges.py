@@ -534,6 +534,28 @@ def sanitize_submission(
     return cleaned, False
 
 
+# Ceiling on a rendered PATH (steps + final answer) shown to the judge. Larger
+# than MAX_SUBMISSION_CHARS (an answer-only cap): a path with tool calls and
+# results is far bigger than one answer. The ONE place this cap is applied is
+# build_judge_payload's own max_chars — render_agentic_path does NOT truncate,
+# or the two caps silently fight (the smaller always wins downstream and the
+# other becomes a dead number, exactly the bug this comment now guards
+# against). Callers pass max_chars=MAX_PATH_CHARS to build_judge_payload
+# whenever either side's view came from render_agentic_path, so truncation
+# stays a single explicit decision, applied identically to both sides.
+MAX_PATH_CHARS = 24_000
+
+
+def render_agentic_path(steps: list[dict]) -> str:
+    """Render one side's recorded path (non-final steps + final answer),
+    UNTRUNCATED — truncation happens once, in build_judge_payload.
+
+    ``steps`` is that side's ``battle_submissions`` rows, oldest first.
+    """
+    lines = [str(s.get("content") or "") for s in steps if s.get("content")]
+    return "\n".join(lines)
+
+
 def wire_model_name(model_id: str) -> str:
     """The provider-facing model name for a platform model id.
 
