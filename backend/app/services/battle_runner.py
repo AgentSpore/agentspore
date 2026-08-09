@@ -229,15 +229,17 @@ _ANSWER_RETRY_BACKOFF_SECONDS = 2.0
 
 # The model the demo opponent answers with. kimi-k3 answers reliably (0 timeouts)
 # where the old glm judge always timed out on a single-call demo answer, so the
-# demo side never spoke. It is now ALSO the primary judge model (JUDGE_MODEL), but
-# this constant is kept SEPARATE on purpose: the demo path answers a full task and
-# so overrides the tight judging defaults with a much wider token budget
-# (DEMO_ANSWER_MAX_TOKENS) and a longer HTTP timeout — a FULL task answer was
-# measured live at ~120s, whereas a short judge verdict is ~7s (do not size the
-# demo timeouts off the verdict figure). kimi has its OWN provider (moonshot)
-# credentials and REQUIRES temperature=1 — both flow through the per-model
-# resolution in _generate_demo_answer, never a hardcoded path.
-DEMO_ANSWER_MODEL = "moonshot/kimi-k3"
+# demo side never spoke. This constant is kept SEPARATE from JUDGE_MODEL on
+# purpose: the demo path answers a full task and so overrides the tight judging
+# defaults with a much wider token budget (DEMO_ANSWER_MAX_TOKENS) and a longer
+# HTTP timeout — a FULL task answer was measured live at ~120s, whereas a short
+# judge verdict is ~7s (do not size the demo timeouts off the verdict figure).
+#
+# Was kimi-k3 until the moonshot account was suspended for insufficient balance:
+# every demo battle then answered 429 and voided. mistral-small-latest replaces
+# it — reachable, paid for, and cheap enough for a path that exists to give a
+# visitor something to watch.
+DEMO_ANSWER_MODEL = "mistral/mistral-small-latest"
 
 # Response-length ceiling for the demo opponent's answer call. Deliberately
 # LARGER than the judge cap (JUDGE_MAX_TOKENS, sized for reasoning + a short JSON

@@ -176,7 +176,7 @@ def test_roster_primary_carries_a_platform_id_and_a_bare_wire_name(runner):
     assert primary.model_id == JUDGE_MODEL
     assert "/" not in primary.wire_model
     assert primary.wire_model == wire_model_name(JUDGE_MODEL)
-    assert primary.provider == JUDGE_MODEL.split("/", 1)[0] == "moonshot"
+    assert primary.provider == JUDGE_MODEL.split("/", 1)[0]
 
 
 def test_every_extra_roster_entry_is_stripped_too(monkeypatch, runner):
@@ -262,22 +262,24 @@ def test_kimis_wire_name_drops_the_provider_prefix():
 GLM_MODEL = "zai/glm-4.5-flash"
 
 
-def test_kimi_the_primary_overrides_to_one_glm_keeps_the_default():
-    """kimi-k3 (now the PRIMARY judge, JUDGE_MODEL) was measured to only parse at
-    temperature 1.0; the glm second model stays at the 0.7 default."""
-    assert JUDGE_MODEL == MOONSHOT_MODEL
-    assert judge_temperature_for(JUDGE_MODEL) == 1.0
+def test_kimi_overrides_to_one_glm_keeps_the_default():
+    """kimi-k3 was measured to only parse at temperature 1.0 and stays pinned in
+    JUDGE_MODEL_TEMPERATURE_OVERRIDES even though it is no longer the primary
+    judge (moonshot is suspended); a model absent from the override table, like
+    glm, falls through to JUDGE_TEMPERATURE."""
+    assert judge_temperature_for(MOONSHOT_MODEL) == 1.0
     assert judge_temperature_for(GLM_MODEL) == JUDGE_TEMPERATURE == 0.7
 
 
 def test_the_roster_carries_each_models_temperature(monkeypatch, runner):
-    """The roster builder stamps the per-model temperature onto every JudgeModel,
-    so kimi (primary) is called at 1.0 and glm at 0.7 without any per-call
-    branching."""
+    """The roster builder stamps the per-model temperature onto every JudgeModel
+    via judge_temperature_for, so an overridden model (kimi, at 1.0) and a
+    default-temperature model (JUDGE_MODEL itself, at 0.7) both come out right
+    without any per-call branching."""
     monkeypatch.setattr(
         battle_runner_module,
         "get_settings",
-        lambda: SimpleNamespace(battle_judge_models=[JUDGE_MODEL, GLM_MODEL]),
+        lambda: SimpleNamespace(battle_judge_models=[JUDGE_MODEL, MOONSHOT_MODEL]),
     )
 
     class _StubService:
@@ -288,14 +290,14 @@ def test_the_roster_carries_each_models_temperature(monkeypatch, runner):
 
         @staticmethod
         def resolve_provider(_model_id):
-            return {"base_url": "https://glm.invalid/v1", "api_key": "unused"}
+            return {"base_url": "https://moonshot.invalid/v1", "api_key": "unused"}
 
     monkeypatch.setattr(openrouter_service, "OpenRouterService", _StubService)
 
     roster = runner._resolve_judge_roster("https://stub.invalid/v1", "unused")
     by_id = {m.model_id: m for m in roster}
-    assert by_id[JUDGE_MODEL].temperature == 1.0
-    assert by_id[GLM_MODEL].temperature == 0.7
+    assert by_id[JUDGE_MODEL].temperature == judge_temperature_for(JUDGE_MODEL) == 0.7
+    assert by_id[MOONSHOT_MODEL].temperature == 1.0
 
 
 @pytest.mark.asyncio
@@ -399,10 +401,15 @@ class _StrictMistralClient(_CapturingClient):
 
 
 def test_the_seed_field_is_resolved_per_provider():
-    """Mistral's key is `random_seed`; everyone else keeps the OpenAI name."""
+    """Mistral's key is `random_seed`; everyone else keeps the OpenAI name.
+
+    JUDGE_MODEL is itself a mistral model now, so it is asserted alongside its
+    siblings rather than as the "everyone else" example — GLM (zai) plays that
+    role instead.
+    """
     assert seed_field_for("mistral/mistral-small-latest") == "random_seed"
     assert seed_field_for("mistral/mistral-medium-2508") == "random_seed"
-    assert seed_field_for(JUDGE_MODEL) == "seed"
+    assert seed_field_for(JUDGE_MODEL) == "random_seed"
     assert seed_field_for("zai/glm-4.5-flash") == "seed"
 
 
@@ -470,10 +477,9 @@ async def test_a_provider_that_takes_no_seed_gets_no_seed_field(capturing_client
 async def test_the_judge_roster_carries_each_model_s_seed_field(runner):
     """The panel is on the same code path, so it inherits the same fix.
 
-    No Mistral model is configured as a judge today (settings.battle_judge_models
-    is moonshot + zai), so judges were never losing their seed — but a Mistral
-    judge added tomorrow would have hit the identical 422, silently, as an
-    unexplained run of failed halves.
+    The roster (settings.battle_judge_models) now carries five mistral entries
+    plus zai/glm-4.5-flash, so this exercises the real production mix: every
+    mistral entry must resolve `random_seed`, glm must resolve `seed`.
     """
     roster = runner._resolve_judge_roster("https://stub.invalid/v1", "unused")
     assert roster, "the roster must resolve at least the primary"

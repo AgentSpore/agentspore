@@ -63,15 +63,20 @@ from loguru import logger
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.llm_gate import LLMGate, LLMGateTimeoutError
 
-# The PRIMARY judge model. glm-4.5-flash (the one reliably free model) is fast to
-# call but flaky as a judge: ~2/3 of its replies parse and a whole battle's
-# panel drifts to ~8 minutes on its retries. kimi-k3 was measured live as a judge
-# at ~7s with 0 timeouts and a clean parseable verdict, so it is promoted to
-# primary and glm stays in the roster as the second model (fallback + diversity).
-# kimi is a PAID model on moonshot — that per-battle cost is a deliberate,
-# owner-accepted trade for a reliable verdict. kimi requires temperature=1.0,
-# pinned in JUDGE_MODEL_TEMPERATURE_OVERRIDES below.
-JUDGE_MODEL = "moonshot/kimi-k3"
+# The PRIMARY judge model, and it must stay the first entry of
+# settings.battle_judge_models.
+#
+# It was kimi-k3, chosen on measurement: ~7s, no timeouts, clean parseable
+# verdicts, against glm-4.5-flash whose replies parsed about two thirds of the
+# time and dragged a panel to ~8 minutes on retries. That trade was paid for
+# deliberately — and then the moonshot account was suspended for insufficient
+# balance, so the most reliable judge became the one that answers 429 every time.
+#
+# mistral-large-latest takes over: reachable, paid for, and verified live to
+# return strict JSON. glm stays in the roster for provider diversity — it is the
+# only non-mistral judge left, and a panel drawn from one provider shares that
+# provider's blind spots.
+JUDGE_MODEL = "mistral/mistral-large-latest"
 JUDGE_KIND_LLM = "llm"
 
 # Three replicates x two orders = six calls, three collapsed votes.

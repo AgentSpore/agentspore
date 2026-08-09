@@ -136,18 +136,28 @@ class Settings(BaseSettings):
     # whose provider key does not resolve is dropped with a WARNING; if that
     # leaves one model the panel degrades to prompt-diversity-only.
     #
-    # Widened to four alongside judge recusal (seatable_judges): a judge whose
-    # model also fights as a contender is recused from that battle, so a
-    # two-model roster empties the panel whenever the two contenders ARE those
-    # two models. All four ids below are reachable from the production ASN.
-    # Worst case — both sides are roster models — leaves two seatable, and the
-    # panel round-robins models across its three replicates, so quorum still
-    # holds.
+    # EVERY roster model judges (owner decision, 2026-08-09), which is what keeps
+    # a panel seatable at all: a judge whose model also fights is recused from
+    # that battle, so a small roster empties the panel exactly when its own two
+    # models meet. Six judges minus the two on the mat still leaves four for
+    # three replicates — quorum by construction rather than by luck.
+    #
+    # moonshot and deepseek are GONE, and not for a reason a retry fixes: 429
+    # "account suspended due to insufficient balance" and 402 respectively,
+    # measured by generating a completion from the production host. Listing
+    # models answers 200 for both, which is why the outage stayed invisible
+    # until a battle needed a token — probe with a completion, never a catalogue
+    # read.
+    #
+    # Each id below was verified live to complete a request AND to return strict
+    # JSON, which is the judge contract.
     battle_judge_models: list[str] = [
-        "moonshot/kimi-k3",
-        "zai/glm-4.5-flash",
+        "mistral/mistral-large-latest",
+        "mistral/magistral-small-latest",
+        "mistral/ministral-14b-latest",
         "mistral/mistral-medium-2508",
-        "deepseek/deepseek-v4-flash",
+        "mistral/mistral-small-latest",
+        "zai/glm-4.5-flash",
     ]
     battle_judge_owner_daily_call_limit: int = 60
     battle_judge_global_daily_call_limit: int = 10_000
