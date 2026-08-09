@@ -106,8 +106,12 @@ async def test_persists_steps_as_they_arrive_and_returns_final_reply(monkeypatch
     assert recorded[1].content.startswith("[tool_result]")
     assert recorded[-1].content == "the final answer"
     assert not any(s.timed_out for s in recorded)
-    # seq_no strictly increasing
-    assert [s.seq_no for s in recorded] == sorted(s.seq_no for s in recorded)
+    # STRICTLY increasing, not merely sorted: battle_submissions is keyed
+    # (battle_id, side, seq_no), so two steps sharing a number collide and the
+    # second write is refused. A sorted-only assertion passes [2, 3, 3] happily,
+    # which is exactly the shape that lost the final answer in the first live run.
+    seq_nos = [s.seq_no for s in recorded]
+    assert seq_nos == sorted(set(seq_nos)), f"seq_no must be unique per side: {seq_nos}"
     assert start_calls and stop_calls  # container started AND stopped
 
 
