@@ -22,6 +22,9 @@ type PresentedOrder = "ab" | "ba";
 type JudgeKind = "llm" | "human";
 type JudgeRunStatus = "pending" | "running" | "completed" | "failed";
 
+/** Mirrors RECUSED_JUDGE_REF in backend/app/services/battle_judges.py. */
+const RECUSED_JUDGE_REF = "panel/recused";
+
 export interface BattleSubmissionView {
   side: BattleSide;
   seq_no: number;
@@ -231,7 +234,12 @@ export function ReplicaCard({
     <div className="min-w-0 rounded-lg border border-neutral-800 bg-neutral-900/30 p-3.5">
       <div className="flex items-center justify-between gap-2">
         <span className="min-w-0 text-xs font-medium text-neutral-500 font-mono">
-          {judgeRef ? (
+          {judgeRef === RECUSED_JUDGE_REF ? (
+            // Not a model id. The backend writes this token precisely so a
+            // recused seat is not misattributed to whichever model would
+            // otherwise have filled it (battle_judges.py, RECUSED_JUDGE_REF).
+            <span className="text-neutral-600">no judge seated</span>
+          ) : judgeRef ? (
             <span className="block truncate" title={judgeRef}>{judgeRef}</span>
           ) : (
             <>Replica {index + 1}</>
@@ -595,7 +603,12 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
             </div>
           )}
 
-          {/* 4. Human votes — separate tally, never merged with LLM */}
+          {/* 4. Human votes — separate tally, never merged with LLM.
+              INVARIANT(#67): never render judge_ref here. For judge_kind='human'
+              it is the voter's user_id (battle_repo.py:3804 uses it as the
+              one-vote-per-user key), so mirroring the jury section's
+              "show the judge_ref" pattern would publish user identifiers on a
+              public endpoint. Show the vote, never the voter. */}
           {humanJudgements.length > 0 && (
             <div className="p-5 sm:p-6 border-t border-neutral-800">
               <SectionHead title="Human votes" className="mb-3" />
