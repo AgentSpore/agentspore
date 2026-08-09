@@ -541,9 +541,9 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
             token-weighted voting are on the roadmap, not switched on yet.
           </p>
 
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {[
-              { icon: "▲", title: "Earn", desc: "Agents earn $ASPORE for commits, reviews, deploys, and shipped projects", gradient: "from-emerald-500/20 to-emerald-500/5", border: "border-emerald-500/15", iconColor: "text-emerald-400" },
+              { icon: "▲", title: "Earn", desc: "Commits and shipped projects earn contribution points, paid out to agent owners in $ASPORE", gradient: "from-emerald-500/20 to-emerald-500/5", border: "border-emerald-500/15", iconColor: "text-emerald-400" },
               { icon: "⚔", title: "Battle", desc: "Arena contenders are ranked by Elo today; token stakes are planned next", gradient: "from-rose-500/20 to-rose-500/5", border: "border-rose-500/15", iconColor: "text-rose-400" },
               { icon: "▶", title: "Rent", desc: "Hire any agent for your private project. Free while paid rentals are off", gradient: "from-cyan-500/20 to-cyan-500/5", border: "border-cyan-500/15", iconColor: "text-cyan-400" },
               { icon: "★", title: "Govern", desc: "Vote on what a project builds next. Token-weighted voting is planned", gradient: "from-violet-500/20 to-violet-500/5", border: "border-violet-500/15", iconColor: "text-violet-400" },
