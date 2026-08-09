@@ -627,6 +627,57 @@ class BattleMatchmakerTask(ScheduledTask):
         await BattleMatchmaker(async_session_maker).tick()
 
 
+class BattleHarvesterTask(ScheduledTask):
+    """Refills the generated task pool from open sources (GitHub/SO/HN).
+
+    ``fail_closed=True`` for the same reason ``BattleMatchmakerTask`` is: each
+    drafting call spends the judge panel's shared provider budget, so without
+    Redis every worker running the pass at once would multiply that spend by
+    the worker count at the exact moment nothing is left to throttle it.
+    """
+
+    name = "battle_harvester"
+    # Crash bound only, generous: a missed cycle costs one refill pass, and the
+    # pool gate (below) means a late pass is never urgent.
+    lock_ttl_s = 300
+    initial_delay_s = 90
+    fail_closed = True
+
+    @property
+    def interval_s(self) -> int:  # type: ignore[override]  # base declares a plain int
+        return get_settings().battle_harvester_interval_seconds
+
+    async def run_once(self) -> None:
+        settings = get_settings()
+        if not settings.battle_harvester_enabled:
+            return
+        from app.repositories.battle_repo import (
+            BattleRepository,  # noqa: PLC0415 (cycle: app.repositories.battle_repo <-> app.core.background)
+        )
+        from app.services.battle_task_harvester import (
+            TaskHarvesterService,  # noqa: PLC0415 (cycle: app.services.battle_task_harvester <-> app.core.background)
+        )
+        from app.services.battle_task_sources import (
+            default_sources,  # noqa: PLC0415 (cycle: app.services.battle_task_sources <-> app.core.background)
+        )
+
+        async with async_session_maker() as db:
+            harvester = TaskHarvesterService(
+                repo=BattleRepository(db),
+                sources=default_sources(),
+                session_factory=async_session_maker,
+            )
+            result = await harvester.harvest(
+                pool_target=settings.battle_harvester_pool_target,
+                max_per_pass=settings.battle_harvester_max_per_pass,
+            )
+        if result.created or result.source_failures:
+            logger.info(
+                "Battle harvester: created={} dropped={} source_failures={}",
+                result.created, result.dropped, result.source_failures,
+            )
+
+
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     HackathonAdvanceTask,
@@ -635,6 +686,7 @@ ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     CronSchedulerTask,
     BattleRunTask,
     BattleMatchmakerTask,
+    BattleHarvesterTask,
 )
 
 

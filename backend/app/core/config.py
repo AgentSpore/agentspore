@@ -195,6 +195,21 @@ class Settings(BaseSettings):
     battle_auto_interval_seconds: int = 600
     battle_auto_max_running: int = 1
 
+    # Task harvester — pulls topics from open sources (GitHub/StackExchange/HN,
+    # all reachable without a key) and drafts them into battle tasks. OFF by
+    # default: it spends the SAME judge-panel budget as validation and judging,
+    # so an operator must opt in deliberately, same posture as battle_auto_enabled.
+    battle_harvester_enabled: bool = False
+    battle_harvester_interval_seconds: int = 1800
+    # Refill target for source='generated' READY tasks. Below MINIMUM_TASK_POOL
+    # (20, battle_repo.py) a category/difficulty filter can fail to admit a
+    # rated challenge at all, so the default sits comfortably above it.
+    battle_harvester_pool_target: int = 40
+    # Ceiling per cycle, independent of how far under target the pool is: one
+    # drafting call costs the same judge-panel budget as one judging call, and a
+    # pool crater must not let a single pass spend it all.
+    battle_harvester_max_per_pass: int = 5
+
     # Reverse proxy trust — IPs/CIDRs whose X-Forwarded-For header is honoured.
     # Default covers local Caddy (127.0.0.1) and Docker bridge (172.16.0.0/12).
     # Override in prod: TRUSTED_PROXY_IPS=172.18.0.0/16 (or exact Caddy container IP).
