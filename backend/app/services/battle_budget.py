@@ -492,6 +492,76 @@ class BattleJudgeBudgetService:
             granted=True, ledger_id=str(ledger_id), provider_attempt_no=1
         )
 
+    async def reserve_harvest_call(
+        self,
+        *,
+        provider: str,
+        model: str,
+    ) -> ReservationResult:
+        """Reserve ONE call unit for the task harvester, or refuse.
+
+        Same budget, same lock namespace, same counters as every other call
+        here, for the reason spelled out in ``reserve_validation_call``: a
+        second mechanism with its own counters means the global daily cap is
+        not a cap.
+
+        Differs in having no owner. A harvested topic originates in an open
+        source rather than an account, so there is nobody whose
+        ``battle_judge_owner_daily_call_limit`` could bound it and nobody to
+        charge without misattributing the spend to a real user's quota. Only
+        the global counter applies, and the ledger row is written with
+        ``kind='harvest'`` and every identifying column NULL (the V78
+        ``battle_judge_call_kind_shape`` arm). The global cap is the one that
+        matters here: it is what stops a runaway harvester.
+        """
+        settings = get_settings()
+        budget_day = current_budget_day()
+
+        async with self._session_factory() as session, session.begin():
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:ns, :key)"),
+                {"ns": BUDGET_LOCK_NAMESPACE, "key": _GLOBAL_LOCK_KEY},
+            )
+
+            global_used = await self._counter_value(
+                session, "battle_judge_global_daily_usage", budget_day, None
+            )
+            if global_used >= settings.battle_judge_global_daily_call_limit:
+                return ReservationResult(granted=False, reason="global_budget_exhausted")
+
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO battle_judge_global_daily_usage
+                        (budget_day, reserved_calls)
+                    VALUES (:day, 1)
+                    ON CONFLICT (budget_day)
+                    DO UPDATE SET reserved_calls =
+                        battle_judge_global_daily_usage.reserved_calls + 1
+                    """
+                ),
+                {"day": budget_day},
+            )
+
+            ledger_id = (
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO battle_judge_call_ledger
+                            (kind, budget_day, provider_attempt_no,
+                             provider, model, status)
+                        VALUES ('harvest', :day, 1, :provider, :model, 'reserved')
+                        RETURNING id
+                        """
+                    ),
+                    {"day": budget_day, "provider": provider, "model": model},
+                )
+            ).scalar_one()
+
+        return ReservationResult(
+            granted=True, ledger_id=str(ledger_id), provider_attempt_no=1
+        )
+
     async def settle_call(
         self,
         ledger_id: str,
