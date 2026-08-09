@@ -170,8 +170,20 @@ class Settings(BaseSettings):
     # environment without an operator saying so, and the frontend cannot render a
     # contender side yet. Turning it on is a deliberate act.
     battle_auto_enabled: bool = False
-    battle_auto_interval_seconds: int = 900
-    battle_auto_max_running: int = 2
+    # Sized for AGENTIC contenders (V75), which is a different cost shape from the
+    # one-call contenders these defaults were first written for. An agentic side
+    # spends a provider call per step, so one battle is now tens of calls rather
+    # than two: a live run against Mistral hit HTTP 429 after a SINGLE battle.
+    #
+    # Hence one at a time. Throughput comes from ticking more often, not from
+    # running battles in parallel — a second concurrent battle does not finish
+    # sooner, it just makes both sides compete for the same rate limit and voids
+    # them together. The worst case a tick must clear is two answer drives at
+    # ANSWER_DRIVE_BUDGET_SECONDS (560s) plus the judge panel, so 600s leaves the
+    # cadence just ahead of a battle that runs to its ceiling while staying far
+    # below the 900s that was tuned for cheap single calls.
+    battle_auto_interval_seconds: int = 600
+    battle_auto_max_running: int = 1
 
     # Reverse proxy trust — IPs/CIDRs whose X-Forwarded-For header is honoured.
     # Default covers local Caddy (127.0.0.1) and Docker bridge (172.16.0.0/12).
