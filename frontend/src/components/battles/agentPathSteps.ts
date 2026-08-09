@@ -35,3 +35,18 @@ export function parseStepLine(line: string): ParsedStep {
 export function agentPathSteps(submissions: BattleSubmissionView[], side: BattleSubmissionView["side"]): BattleSubmissionView[] {
   return submissions.filter((s) => s.side === side && !s.is_final).sort((a, b) => a.seq_no - b.seq_no);
 }
+
+/**
+ * How much of a tool argument or result to show before collapsing it.
+ *
+ * A `write_file` argument carries the whole file it writes: one step measured
+ * 1620 characters inside a 3600-character path, so rendering every value in
+ * full buries the other sixteen steps under one of them. Below this threshold a
+ * value renders as-is — a collapsed two-line argument is harder to read than
+ * the argument itself.
+ */
+export const LONG_VALUE_CHARS = 220;
+
+export function isLongValue(value: string): boolean {
+  return value.length > LONG_VALUE_CHARS;
+}

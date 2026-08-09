@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BattleSubmissionView } from "./BattleVerdict";
-import { agentPathSteps, parseStepLine } from "./agentPathSteps";
+import { LONG_VALUE_CHARS, agentPathSteps, isLongValue, parseStepLine } from "./agentPathSteps";
 
 function sub(over: Partial<BattleSubmissionView>): BattleSubmissionView {
   return {
@@ -56,5 +56,21 @@ describe("agentPathSteps", () => {
   it("is empty for a single-row (non-agentic) side", () => {
     const submissions = [sub({ side: "a", seq_no: 1, is_final: true, content: "one answer" })];
     expect(agentPathSteps(submissions, "a")).toEqual([]);
+  });
+});
+
+describe("isLongValue", () => {
+  it("leaves an ordinary argument alone", () => {
+    expect(isLongValue('{"path": "notes.md"}')).toBe(false);
+  });
+
+  it("collapses a value that carries a whole file", () => {
+    // The measured case: one write_file argument was 1620 chars inside a
+    // 3600-char path, so rendering it in full buries every other step.
+    expect(isLongValue("x".repeat(1620))).toBe(true);
+  });
+
+  it("keeps the preview shorter than the value it stands for", () => {
+    expect(LONG_VALUE_CHARS).toBeLessThan(1620);
   });
 });
