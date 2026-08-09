@@ -1,7 +1,13 @@
 "use client";
 
 import { BattleSubmissionView } from "./BattleVerdict";
-import { ParsedStep, agentPathSteps, parseStepLine } from "./agentPathSteps";
+import {
+  LONG_VALUE_CHARS,
+  ParsedStep,
+  agentPathSteps,
+  isLongValue,
+  parseStepLine,
+} from "./agentPathSteps";
 import { Disclosure } from "@/components/battles/Disclosure";
 
 const KIND_LABEL: Record<ParsedStep["kind"], string> = {
@@ -10,15 +16,30 @@ const KIND_LABEL: Record<ParsedStep["kind"], string> = {
   raw: "Step",
 };
 
+function StepValue({ value }: { value: string }) {
+  const className = "mt-0.5 whitespace-pre-wrap break-words text-neutral-500";
+  if (!isLongValue(value)) {
+    return <div className={className}>{value}</div>;
+  }
+  return (
+    <details className="mt-0.5 group">
+      <summary className="cursor-pointer list-none text-neutral-500 hover:text-neutral-300 group-open:hidden">
+        <span className="whitespace-pre-wrap break-words">{value.slice(0, LONG_VALUE_CHARS)}…</span>
+        <span className="ml-1 text-xs text-neutral-600">show all {value.length} chars</span>
+      </summary>
+      <div className={className}>{value}</div>
+    </details>
+  );
+}
+
 function StepLine({ step }: { step: ParsedStep }) {
   if (step.kind === "raw") {
     return <div className="whitespace-pre-wrap break-words text-neutral-300">{step.text}</div>;
   }
-  const value = step.kind === "tool_call" ? step.args : step.output;
   return (
     <div>
       <span className="font-mono text-neutral-200">{step.tool}</span>
-      <div className="mt-0.5 whitespace-pre-wrap break-words text-neutral-500">{value}</div>
+      <StepValue value={step.kind === "tool_call" ? step.args : step.output} />
     </div>
   );
 }
