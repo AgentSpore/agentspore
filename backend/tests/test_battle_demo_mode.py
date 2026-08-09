@@ -38,11 +38,14 @@ from app.services.battle_judges import (
     JUDGE_KIND_LLM,
     JUDGE_MAX_TOKENS,
     JUDGE_MODEL,
+    judge_temperature_for,
     replicate_seed,
+    wire_model_name,
 )
 from app.services.battle_runner import (
     ANSWER_DRIVE_BUDGET_SECONDS,
     DEMO_ANSWER_MAX_TOKENS,
+    DEMO_ANSWER_MODEL,
     DEMO_ANSWER_TIMEOUT_SECONDS,
     PROVIDER_UNREACHABLE_ERROR,
     BattleRunner,
@@ -824,22 +827,20 @@ async def _walk_demo_to_running_and_capture(session_maker, db_session, judge) ->
 
 
 class TestDemoAnswerModelRouting:
-    async def test_demo_answer_routes_to_kimi_at_temperature_one(
+    async def test_demo_answer_routes_to_its_configured_model(
         self, session_maker, db_session, task_pool
     ) -> None:
-        """The demo opponent's answer call targets moonshot/kimi-k3 with
-        temperature=1.0 and the WIDE answer budget — distinct from the judge
-        panel's tight verdict defaults (max_tokens/http_timeout), even though kimi
-        is now also the primary judge model.
+        """The demo opponent's answer call targets DEMO_ANSWER_MODEL's wire name
+        and temperature, with the WIDE answer budget — distinct from the judge
+        panel's tight verdict defaults (max_tokens/http_timeout).
 
-        Routing the single-call demo answer to the old glm judge made it always
-        time out, so the demo side never spoke. kimi answers fast; and kimi is
-        only parseable at temperature 1.0, so both the wire model and the
-        temperature must be kimi's, and the answer budget must be the wide one.
+        DEMO_ANSWER_MODEL and JUDGE_MODEL are independent settings; this only
+        pins DEMO_ANSWER_MODEL's own wire routing, not which model it currently
+        happens to be.
 
         MUTATION (on a copy of battle_runner.py): drop DEMO_ANSWER_MAX_TOKENS to
-        the judge cap or kimi's temperature override to 0.7 — this test goes red
-        on the max_tokens / temperature assertion.
+        the judge cap or the demo model's temperature override — this test goes
+        red on the max_tokens / temperature assertion.
         """
         judge = AsyncMock(return_value=VALID_JUDGE_REPLY)
         battle_id = await _walk_demo_to_running_and_capture(
@@ -853,26 +854,28 @@ class TestDemoAnswerModelRouting:
 
         assert judge.await_count == 1, "exactly the demo answer call, no judge panel yet"
         _, kwargs = judge.call_args
-        assert kwargs["wire_model"] == "kimi-k3", "demo answer routed to kimi-k3"
-        assert kwargs["temperature"] == 1.0, "kimi requires temperature 1.0"
+        assert kwargs["wire_model"] == wire_model_name(DEMO_ANSWER_MODEL), (
+            "demo answer routed to its configured model's wire name"
+        )
+        assert kwargs["temperature"] == judge_temperature_for(DEMO_ANSWER_MODEL), (
+            "demo answer uses the demo model's required temperature"
+        )
         assert kwargs["max_tokens"] == 8192, (
-            "demo answer uses the wide budget, NOT the judge's 1200 cap that "
-            "kimi's reasoning exhausted before emitting any content"
+            "demo answer uses the wide budget, NOT the judge's tight verdict cap"
         )
         assert kwargs["http_timeout"] == DEMO_ANSWER_TIMEOUT_SECONDS == 240.0, (
-            "demo answer overrides the judge HTTP ceiling; kimi reasons before "
-            "it writes, and at 180s two production calls in one two-hour window "
-            "timed out and voided their battles"
+            "demo answer overrides the judge HTTP ceiling for a full-task answer, "
+            "not a short verdict"
         )
 
-    async def test_demo_answer_and_judge_panel_share_kimi_but_not_the_budget(
+    async def test_demo_answer_and_judge_panel_have_independent_budgets(
         self, session_maker, db_session, task_pool
     ) -> None:
-        """kimi-k3 is now the primary judge, so both the demo ANSWER and the judge
-        panel call kimi's wire model — but they must NOT share the token budget:
-        the demo answer uses the wide DEMO_ANSWER_MAX_TOKENS, the panel the tight
-        JUDGE_MAX_TOKENS. The two paths share a model, never the limits, and the
-        panel judges at kimi's required temperature 1.0.
+        """DEMO_ANSWER_MODEL and JUDGE_MODEL are different models today (mistral
+        small vs. mistral large), so the demo ANSWER and the judge panel call
+        different wire names — and even if they ever coincided again, they must
+        NOT share the token budget: the demo answer uses the wide
+        DEMO_ANSWER_MAX_TOKENS, the panel the tight JUDGE_MAX_TOKENS.
         """
         battle_id, agent_a, _agent_b, _, _ = await _make_demo_challenge(db_session)
         provider = {"api_key": "k", "base_url": "http://unused"}
@@ -882,8 +885,9 @@ class TestDemoAnswerModelRouting:
 
         # The demo answer must be benign prose (not a judge-shaped JSON, which the
         # injection guard would quarantine before the panel ever calls the model);
-        # the panel calls return a real judge verdict. Both now target kimi-k3, so
-        # they are told apart by their token BUDGET, not their wire model.
+        # the panel calls return a real judge verdict. Told apart by their token
+        # BUDGET (the field the production code actually branches on), not by
+        # wire model — that stays true whichever models occupy the two roles.
         async def by_budget(*_a, **kwargs):
             if kwargs.get("max_tokens") == DEMO_ANSWER_MAX_TOKENS:
                 return "A plain, ordinary demo answer to the task."
@@ -937,12 +941,13 @@ class TestDemoAnswerModelRouting:
         ]
         assert demo_calls, "the demo answer call happened at the wide budget"
         assert panel_calls, "the judge panel ran at the tight verdict budget"
-        assert all(c.kwargs["wire_model"] == "kimi-k3" for c in panel_calls), (
-            "the judge panel runs on the kimi-k3 primary"
-        )
-        assert all(c.kwargs["temperature"] == 1.0 for c in panel_calls), (
-            "kimi judging must be at temperature 1.0, never the 0.7 default"
-        )
+        assert all(
+            c.kwargs["wire_model"] == wire_model_name(JUDGE_MODEL) for c in panel_calls
+        ), "the judge panel runs on the primary judge model"
+        assert all(
+            c.kwargs["temperature"] == judge_temperature_for(JUDGE_MODEL)
+            for c in panel_calls
+        ), "panel calls use the primary judge model's required temperature"
 
     async def test_demo_answer_timeout_is_generous_and_the_drive_outlasts_it(
         self,
