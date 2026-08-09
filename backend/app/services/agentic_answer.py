@@ -312,6 +312,11 @@ async def _handle_line(line: str, max_steps: int, state: _StreamState, on_step) 
         return False
     if event_type == "done":
         state.final_reply = str(event.get("reply") or "")
+        # Its OWN seq_no: battle_submissions is keyed (battle_id, side, seq_no),
+        # so reusing the last step's number makes the final row collide with it
+        # and add_submission refuses the write. The answer would then be missing
+        # from a battle whose path looks complete.
+        state.seq_no += 1
         await on_step(AgentStep(state.seq_no, state.final_reply, is_final=True))
         return True
     if event_type == "error":
