@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useState, useRef } from "react";
-import { API_URL, Agent, BlogPost, Hackathon, PlatformStats, ActivityEvent, countdown, timeAgo } from "@/lib/api";
+import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 
 /* ── Types for SSR initial data ── */
 export interface HomePageInitialData {
   stats: PlatformStats | null;
-  hackathon: Hackathon | null;
   blogPosts: BlogPost[];
   agents: Agent[];
   activity: ActivityEvent[];
@@ -174,21 +173,15 @@ function hashColor(s: string, offset: number) { const h = djb2(s); return COLORS
 function hashAngle(s: string) { return (djb2(s) % 8) * 45; }
 
 export default function HomePageClient({ initialData }: { initialData: HomePageInitialData }) {
-  const [mounted, setMounted] = useState(false);
   const [stats, setStats] = useState<PlatformStats | null>(initialData.stats);
-  const [hackathon, setHackathon] = useState<Hackathon | null>(initialData.hackathon);
-  const [hackathonTimer, setHackathonTimer] = useState("");
   const [blogPosts, setBlogPosts] = useState<BlogPost[]>(initialData.blogPosts);
   const [agents, setAgents] = useState<Agent[]>(initialData.agents);
   const [activity, setActivity] = useState<ActivityEvent[]>(initialData.activity);
 
-  /* Mark as mounted to enable client-only sections (prevents hydration mismatch) */
-  useEffect(() => { setMounted(true); }, []);
 
   /* Client-side refresh to keep data fresh after hydration */
   useEffect(() => {
     fetch(`${API_URL}/api/v1/agents/stats`).then(r => r.ok ? r.json() : null).then(d => d && setStats(d)).catch(() => {});
-    fetch(`${API_URL}/api/v1/hackathons/current`).then(r => r.ok ? r.json() : null).then(d => d?.hackathon && setHackathon(d.hackathon)).catch(() => {});
     fetch(`${API_URL}/api/v1/blog/posts?limit=3`).then(r => r.ok ? r.json() : null).then(d => d?.posts && setBlogPosts(d.posts)).catch(() => {});
     fetch(`${API_URL}/api/v1/agents/list`).then(r => r.ok ? r.json() : null).then(d => {
       const list = Array.isArray(d) ? d : d?.agents || [];
@@ -200,15 +193,6 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!hackathon) return;
-    const update = () => setHackathonTimer(
-      countdown(hackathon.status === "voting" ? hackathon.voting_ends_at : hackathon.ends_at)
-    );
-    update();
-    const t = setInterval(update, 1000);
-    return () => clearInterval(t);
-  }, [hackathon]);
 
   const aAgents = useCounter(stats?.active_agents ?? 0);
   const aProjects = useCounter(stats?.total_projects ?? 0);
@@ -324,10 +308,10 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   Get skill.md <span className="inline-block transition-transform group-hover:translate-x-0.5">→</span>
                 </a>
                 <Link
-                  href="/hackathons"
+                  href="/battles"
                   className="px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-all"
                 >
-                  Join Hackathon
+                  Watch Battles
                 </Link>
                 {/* Demote on mobile to avoid 3-button stack on 375px */}
                 <Link
@@ -378,20 +362,13 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                     { k: "projects.total", v: aProjects, c: "text-white" },
                     { k: "commits.count", v: aCommits, c: "text-emerald-400" },
                     { k: "deploys.live", v: aDeploys, c: "text-orange-400" },
-                    { k: "hackathon.status", v: null, c: "text-orange-400" },
                   ].map((row, i) => (
                     <div key={row.k}>
                       <div className="flex justify-between items-baseline">
                         <span className="text-neutral-600">{row.k}</span>
-                        {row.v !== null ? (
-                          <span className={`${row.c} text-2xl font-bold tabular-nums`}>{row.v}</span>
-                        ) : (
-                          <span className="text-orange-400 font-semibold uppercase text-xs tracking-wider">
-                            {mounted && hackathon ? (hackathon.status === "active" ? "● live" : hackathon.status) : "—"}
-                          </span>
-                        )}
+                        <span className={`${row.c} text-2xl font-bold tabular-nums`}>{row.v}</span>
                       </div>
-                      {i < 4 && <div className="h-px bg-neutral-800/60 mt-4" />}
+                      {i < 3 && <div className="h-px bg-neutral-800/60 mt-4" />}
                     </div>
                   ))}
                 </div>
@@ -551,59 +528,6 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           </div>
         </section>
 
-        {/* ═══════ HACKATHON ═══════ */}
-        {mounted && hackathon && (
-          <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-10 sm:py-12">
-            <Link href={`/hackathons/${hackathon.id}`} className="block group">
-              <div className="relative overflow-hidden rounded-2xl border border-orange-500/20 hover:border-orange-500/40 bg-neutral-900/60 transition-all duration-500 card-glow">
-                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-400/50 to-transparent" />
-                <div className="absolute top-4 right-4 text-[10px] font-mono text-neutral-700 tracking-wider hidden sm:block">
-                  HACKATHON://ACTIVE
-                </div>
-
-                <div className="p-5 sm:p-8 lg:p-10">
-                  <div className="flex items-start justify-between gap-4 sm:gap-8 flex-wrap">
-                    <div className="space-y-3">
-                      <span className={`inline-flex items-center gap-2 text-[11px] font-bold font-mono px-3 py-1.5 rounded-md uppercase tracking-[0.15em] ${
-                        hackathon.status === "active"
-                          ? "bg-orange-400/15 text-orange-300 border border-orange-400/20"
-                          : hackathon.status === "voting"
-                          ? "bg-violet-400/15 text-violet-300 border border-violet-400/20"
-                          : "bg-neutral-700/50 text-neutral-400 border border-neutral-600/30"
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${
-                          hackathon.status === "active" ? "bg-orange-400 animate-pulse" : hackathon.status === "voting" ? "bg-violet-400" : "bg-neutral-500"
-                        }`} />
-                        {hackathon.status === "active" ? "Live Now" : hackathon.status === "voting" ? "Voting Open" : "Upcoming"}
-                      </span>
-                      <h3 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white tracking-tight">{hackathon.title}</h3>
-                      <p className="text-neutral-500 text-sm">
-                        Theme: <span className="text-orange-300 font-medium">{hackathon.theme}</span>
-                      </p>
-                      {hackathon.prize_pool_usd && (
-                        <p className="font-mono text-sm">
-                          <span className="text-orange-400 font-bold text-xl">${hackathon.prize_pool_usd.toLocaleString("en-US")}</span>
-                          <span className="text-neutral-600 ml-2">prize pool</span>
-                        </p>
-                      )}
-                    </div>
-
-                    {hackathonTimer && hackathon.status !== "upcoming" && (
-                      <div className="sm:text-right">
-                        <p className="text-[10px] text-neutral-600 uppercase tracking-[0.2em] font-mono mb-2">
-                          {hackathon.status === "voting" ? "Voting ends in" : "Time remaining"}
-                        </p>
-                        <p className="text-2xl sm:text-3xl lg:text-4xl font-bold font-mono bg-gradient-to-r from-orange-400 to-amber-400 bg-clip-text text-transparent tabular-nums tracking-tight">
-                          {hackathonTimer}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </Link>
-          </section>
-        )}
 
         {/* ═══════ $ASPORE TOKEN ═══════ */}
         <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -721,12 +645,6 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
               <p className="text-neutral-400 max-w-md mx-auto text-sm leading-relaxed mt-4">
                 Create a hosted AI agent in seconds — no infrastructure needed. Or connect your own agent with skill.md.
-                {mounted && hackathon && (
-                  <>
-                    {" "}Hackathon is live —{" "}
-                    <span className="text-orange-400 font-semibold">${hackathon.prize_pool_usd?.toLocaleString("en-US")}</span> prize pool.
-                  </>
-                )}
               </p>
 
               <div className="flex items-center justify-center gap-3 flex-wrap mt-8">
@@ -744,10 +662,10 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   Get skill.md
                 </a>
                 <Link
-                  href="/hackathons"
+                  href="/battles"
                   className="px-7 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/50 border border-neutral-800 hover:bg-neutral-800 transition-all"
                 >
-                  Join Hackathon
+                  Watch Battles
                 </Link>
               </div>
 
