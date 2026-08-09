@@ -10,14 +10,17 @@ themselves, which already have their own suites.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.schemas.battles import TaskStatus
 from app.services.battle_task_harvester import TaskHarvesterService, TopicSource
 from app.services.battle_task_validator import (
+    REASON_DUPLICATE_CONTENT,
     REASON_PROMPT_TOO_SHORT,
     CheapFilterVerdict,
+    ValidationTransportError,
     ValidationVerdict,
 )
 
@@ -60,6 +63,16 @@ def source():
     return src
 
 
+@pytest.fixture(autouse=True)
+def closed_breaker():
+    """Default: provider healthy. The open-breaker path is its own test."""
+    with patch(
+        "app.services.battle_task_harvester.breaker_is_open",
+        AsyncMock(return_value=False),
+    ):
+        yield
+
+
 @pytest.fixture
 def harvester(repo, source):
     service = TaskHarvesterService(
@@ -87,6 +100,51 @@ class TestHarvestPass:
 
         assert result.created == 1
         repo.create_task.assert_awaited_once()
+
+    async def test_accepted_task_lands_in_quarantine_not_ready(self, harvester, repo):
+        """Same status an accepted HUMAN submission gets (battle_service).
+
+        A harvested topic is attacker-influenceable public text and the
+        validator's keyword scanner cannot see semantic injection, so READY
+        here would be a lighter bar for untrusted input than for a trusted
+        submitter — the opposite of what the module claims.
+        """
+        await harvester.harvest(pool_target=5, max_per_pass=3)
+
+        assert repo.create_task.await_args.kwargs["status"] == TaskStatus.QUARANTINE
+
+    async def test_open_breaker_skips_the_pass(self, harvester, source):
+        with patch(
+            "app.services.battle_task_harvester.breaker_is_open",
+            AsyncMock(return_value=True),
+        ):
+            result = await harvester.harvest(pool_target=5, max_per_pass=3)
+
+        assert result.created == 0
+        source.fetch_topics.assert_not_awaited()
+
+    async def test_validator_transport_failure_drops_only_that_topic(
+        self, harvester, repo, source
+    ):
+        """A provider outage on one topic must not discard the topics after it."""
+        source.fetch_topics = AsyncMock(return_value=[_topic("A"), _topic("B")])
+        harvester.draft_task = AsyncMock(
+            side_effect=[_drafted_task("A"), _drafted_task("B")]
+        )
+        harvester.run_validator = AsyncMock(
+            side_effect=[
+                ValidationTransportError("provider 502"),
+                (
+                    CheapFilterVerdict(passed=True),
+                    ValidationVerdict(verdict="accept", reasons=[]),
+                ),
+            ]
+        )
+
+        result = await harvester.harvest(pool_target=5, max_per_pass=3)
+
+        assert result.created == 1
+        assert result.dropped == 1
 
     async def test_skips_when_pool_already_at_target(self, harvester, repo, source):
         repo.count_ready_generated_tasks = AsyncMock(return_value=5)
@@ -118,13 +176,28 @@ class TestHarvestPass:
         assert result.source_failures == 1
 
     async def test_duplicate_content_is_dropped_not_inserted(self, harvester, repo):
+        """The dedup flag must reach the cheap filters and stop the insert.
+
+        Restoring the real run_validator here (the previous shape of this test)
+        proved nothing: with no provider configured it returns
+        'no_validation_provider' and created == 0 whether content_key_exists is
+        True or False, so deleting the dedup check entirely left it green.
+        Asserting on the reason ties the outcome to dedup specifically.
+        """
         repo.content_key_exists = AsyncMock(return_value=True)
         harvester.run_validator = TaskHarvesterService.run_validator.__get__(harvester)
 
-        result = await harvester.harvest(pool_target=5, max_per_pass=3)
+        outcome = await harvester._process_topic(_topic())
 
-        assert result.created == 0
+        assert outcome == "rejected"
         repo.create_task.assert_not_awaited()
+        repo.content_key_exists.assert_awaited_once()
+        cheap, verdict = await harvester.run_validator(
+            _drafted_task(), duplicate_exists=True
+        )
+        assert not cheap.passed
+        assert cheap.reason == REASON_DUPLICATE_CONTENT
+        assert verdict is None
 
     async def test_validator_rejection_is_dropped_not_inserted(self, harvester, repo):
         harvester.run_validator = AsyncMock(

@@ -652,13 +652,15 @@ class BattleHarvesterTask(ScheduledTask):
         if not settings.battle_harvester_enabled:
             return
         from app.repositories.battle_repo import (
-            BattleRepository,  # noqa: PLC0415 (cycle: app.repositories.battle_repo <-> app.core.background)
+            # Deferred like every other task here: this module loads at
+            # startup and must not drag the battle stack in with it.
+            BattleRepository,  # noqa: PLC0415
         )
         from app.services.battle_task_harvester import (
-            TaskHarvesterService,  # noqa: PLC0415 (cycle: app.services.battle_task_harvester <-> app.core.background)
+            TaskHarvesterService,  # noqa: PLC0415
         )
         from app.services.battle_task_sources import (
-            default_sources,  # noqa: PLC0415 (cycle: app.services.battle_task_sources <-> app.core.background)
+            default_sources,  # noqa: PLC0415
         )
 
         async with async_session_maker() as db:
@@ -671,6 +673,12 @@ class BattleHarvesterTask(ScheduledTask):
                 pool_target=settings.battle_harvester_pool_target,
                 max_per_pass=settings.battle_harvester_max_per_pass,
             )
+            # BattleRepository.create_task does not commit (see its docstring);
+            # the submission path in api/v1/battles.py commits after it, and so
+            # must this one. Without it the session rolls back on close, every
+            # harvested task is discarded, and the pass still reports created=N
+            # while spending the provider budget again on the next cycle.
+            await db.commit()
         if result.created or result.source_failures:
             logger.info(
                 "Battle harvester: created={} dropped={} source_failures={}",
