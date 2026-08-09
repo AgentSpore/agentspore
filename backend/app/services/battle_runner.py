@@ -1167,7 +1167,13 @@ class BattleRunner:
             side_value=side.value,
             task_prompt=str(battle.get("task_prompt_snapshot") or ""),
             system_prompt=str(contender["system_prompt"]),
-            wire_model=wire_model_name(model),
+            # The PREFIXED id, unlike the model path which strips it. agent-runner
+            # runs the name through resolve_model_for_agent, which returns a
+            # provider-prefixed id untouched but silently rewrites a bare one to
+            # the head of its own fallback chain — today a dead nemotron slug that
+            # answers 401. Every agentic side voided that way in production, and
+            # the log blamed the provider rather than the name we sent it.
+            wire_model=model,
             provider_base_url=creds["base_url"] if creds else "",
             provider_api_key=creds["api_key"] if creds else "",
             fallback_base_url=base_url,
