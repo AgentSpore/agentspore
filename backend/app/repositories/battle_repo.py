@@ -810,6 +810,23 @@ class BattleRepository:
         )
         return str(result.scalar_one())
 
+    async def count_ready_generated_tasks(self) -> int:
+        """How many admin/harvester-minted tasks are currently bindable.
+
+        Unlike :meth:`list_task_pools` this is not bucketed by category or
+        cooldown — the harvester's refill target is a single platform-wide
+        number, not a per-filter one, so the plain count is what it needs.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM battle_tasks
+                WHERE source = 'generated' AND status = 'ready'
+                """
+            )
+        )
+        return int(result.scalar_one())
+
     # -- user submissions (V70) ---------------------------------------------
 
     async def create_submission(
