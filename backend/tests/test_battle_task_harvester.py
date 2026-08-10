@@ -9,13 +9,19 @@ themselves, which already have their own suites.
 
 from __future__ import annotations
 
+from collections import Counter
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.schemas.battles import TaskStatus
-from app.services.battle_task_harvester import TaskHarvesterService, TopicSource
+from app.services.battle_task_harvester import (
+    DRAFT_LANGUAGES,
+    TaskHarvesterService,
+    TopicSource,
+    _language_for,
+)
 from app.services.battle_task_validator import (
     REASON_DUPLICATE_CONTENT,
     REASON_PROMPT_TOO_SHORT,
@@ -230,6 +236,68 @@ class TestHarvestPass:
         assert seen == [VALIDATION_MODEL]
         assert cheap.reason == "no_validation_provider"
         assert verdict is None
+
+    async def test_the_pool_is_not_all_one_language(self):
+        """A battle follows its task's language, so a one-language pool is a
+        one-language feed. Asserting the SHARE, not just the spread: a test
+        that only counts distinct values passes against any weighting, which
+        leaves the documented 'English keeps the largest share' unverified."""
+        counted = Counter(_language_for(_topic(f"topic {i}")) for i in range(400))
+
+        assert set(counted) == {"English", "Russian"}
+        assert counted["English"] > counted["Russian"]
+        # Neither language may collapse to a rounding error.
+        assert min(counted.values()) > 400 * 0.25
+
+    async def test_only_languages_the_validator_can_screen_are_drafted(self):
+        """The deterministic filters in battle_task_validator key on English
+        and Russian alternations. A third language would pass both by
+        construction, leaving only the LLM verdict between untrusted source
+        text and the pool — so the tuple itself is the safety boundary."""
+        assert set(DRAFT_LANGUAGES) == {"English", "Russian"}
+
+    async def test_a_topic_always_drafts_into_the_same_language(self):
+        """Keyed on the topic, not drawn at random: a rerun after a transport
+        failure must not produce a second, differently-worded version."""
+        topic = _topic("Race condition in the scheduler")
+
+        assert _language_for(topic) == _language_for(topic)
+
+    async def test_the_drafting_call_names_the_language(self, harvester):
+        """The rule is useless if the model is never told which language."""
+        topic = _topic("Cache stampede on cold start")
+        captured: dict = {}
+
+        class _Resp:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"choices": [{"message": {"content": '{"title": null}'}}]}
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                return False
+
+            async def post(self, _url, **kwargs):
+                captured.update(kwargs["json"])
+                return _Resp()
+
+        with (
+            patch.object(
+                OpenRouterService,
+                "resolve_provider",
+                lambda _s, _m: {"base_url": "http://x", "api_key": "k"},
+            ),
+            patch("app.services.battle_task_harvester.httpx.AsyncClient", _Client),
+        ):
+            await TaskHarvesterService.draft_task(harvester, topic)
+
+        user_message = captured["messages"][-1]["content"]
+        assert f"Language for this task: {_language_for(topic)}" in user_message
 
     async def test_validator_rejection_is_dropped_not_inserted(self, harvester, repo):
         harvester.run_validator = AsyncMock(
