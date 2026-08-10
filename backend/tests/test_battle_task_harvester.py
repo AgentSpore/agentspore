@@ -9,6 +9,7 @@ themselves, which already have their own suites.
 
 from __future__ import annotations
 
+from collections import Counter
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +17,7 @@ import pytest
 
 from app.schemas.battles import TaskStatus
 from app.services.battle_task_harvester import (
+    DRAFT_LANGUAGES,
     TaskHarvesterService,
     TopicSource,
     _language_for,
@@ -237,12 +239,22 @@ class TestHarvestPass:
 
     async def test_the_pool_is_not_all_one_language(self):
         """A battle follows its task's language, so a one-language pool is a
-        one-language feed. Checked over many titles rather than one, because a
-        single sample says nothing about the spread."""
-        picked = {_language_for(_topic(f"topic {i}")) for i in range(60)}
+        one-language feed. Asserting the SHARE, not just the spread: a test
+        that only counts distinct values passes against any weighting, which
+        leaves the documented 'English keeps the largest share' unverified."""
+        counted = Counter(_language_for(_topic(f"topic {i}")) for i in range(400))
 
-        assert len(picked) >= 4
-        assert "English" in picked
+        assert set(counted) == {"English", "Russian"}
+        assert counted["English"] > counted["Russian"]
+        # Neither language may collapse to a rounding error.
+        assert min(counted.values()) > 400 * 0.25
+
+    async def test_only_languages_the_validator_can_screen_are_drafted(self):
+        """The deterministic filters in battle_task_validator key on English
+        and Russian alternations. A third language would pass both by
+        construction, leaving only the LLM verdict between untrusted source
+        text and the pool — so the tuple itself is the safety boundary."""
+        assert set(DRAFT_LANGUAGES) == {"English", "Russian"}
 
     async def test_a_topic_always_drafts_into_the_same_language(self):
         """Keyed on the topic, not drawn at random: a rerun after a transport

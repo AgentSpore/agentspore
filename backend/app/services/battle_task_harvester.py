@@ -59,7 +59,14 @@ from app.services.openrouter_service import OpenRouterService
 DRAFT_MODEL = "mistral/mistral-small-latest"
 DRAFT_TEMPERATURE = 0.3
 DRAFT_HTTP_TIMEOUT_SECONDS = 30.0
-DRAFT_MAX_TOKENS = 1_500
+# Sized for the longest task the prompt asks for, in the least token-dense
+# language it can be written in. Measured against the live provider: a
+# 2803-character Russian draft cost 879 completion tokens (~3.2 chars/token,
+# against ~4 for English), so a 3000-character one needs ~950 plus the JSON
+# envelope. The old 1500 would have held, but only just — and a truncated
+# reply is not an error here, it is a missing closing brace, which
+# parse_draft_response reports as "the model declined".
+DRAFT_MAX_TOKENS = 2_500
 
 class TopicSource(Protocol):
     """A source of raw topics. No obligation beyond returning title + summary."""
@@ -129,12 +136,17 @@ If the topic cannot be turned into a solvable, self-contained task, answer \
 # mixed feed — and it exercises the contenders somewhere other than English.
 # English keeps the largest share because most source topics arrive in it and a
 # translated task reads worse than a native one.
+# English and Russian ONLY, and the restriction is a safety boundary rather
+# than a preference: battle_task_validator's deterministic filters
+# (detect_missing_artifact, detect_infeasible_search) key on English and
+# Russian alternations, so a task drafted in any other language passes both
+# terminal checks by construction and reaches the pool on the LLM verdict
+# alone. Widening this tuple REQUIRES widening those alternations first —
+# otherwise the harvester quietly routes untrusted topics around the two
+# checks that do not depend on a model's judgement.
 DRAFT_LANGUAGES = (
     "English", "English", "English",
     "Russian", "Russian",
-    "Spanish",
-    "German",
-    "French",
 )
 
 
@@ -402,7 +414,19 @@ class TaskHarvesterService:
                     "rate-limited" if response.status_code == 429 else "failed",
                 )
                 return None
-            raw = str(response.json()["choices"][0]["message"]["content"])
+            choice = response.json()["choices"][0]
+            if choice.get("finish_reason") == "length":
+                # A truncated reply loses its closing brace, so the JSON parse
+                # below fails and the topic reads as "the model declined" —
+                # indistinguishable from a genuine refusal, after both budget
+                # units are already spent. Name it instead.
+                logger.warning(
+                    "harvester draft call truncated at max_tokens={}; raise it or shorten "
+                    "the prompt's length target",
+                    DRAFT_MAX_TOKENS,
+                )
+                return None
+            raw = str(choice["message"]["content"])
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
             # Type first: httpx timeout exceptions carry an EMPTY str(), so
             # "draft call failed: " with nothing after it was the whole log

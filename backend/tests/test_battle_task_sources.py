@@ -6,6 +6,8 @@ one flavour.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from app.services.battle_task_sources import GitHubIssueSource, default_sources
 
 
@@ -39,6 +41,22 @@ class TestDefaultSources:
         b = default_sources(rotation=1)[0]._params(5)["q"]
 
         assert a != b
+
+    def test_the_default_rotation_follows_the_clock(self):
+        """The production path takes no argument, so pinning it would be silent.
+
+        Every other test here passes `rotation=` explicitly; mutating the
+        default to a constant — the exact pinned-query regression this change
+        fixes — left all of them green.
+        """
+        with patch("app.services.battle_task_sources.time.time", return_value=0.0):
+            first = default_sources()[0]._params(5)["q"]
+        with patch("app.services.battle_task_sources.time.time", return_value=1800.0):
+            second = default_sources()[0]._params(5)["q"]
+
+        assert first != second
+        assert first == GitHubIssueSource(query_index=0)._params(5)["q"]
+        assert second == GitHubIssueSource(query_index=1)._params(5)["q"]
 
     def test_all_three_sources_are_listed(self):
         assert [s.name for s in default_sources(rotation=0)] == [
