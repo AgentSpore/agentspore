@@ -19,10 +19,12 @@ from app.services.battle_task_harvester import TaskHarvesterService, TopicSource
 from app.services.battle_task_validator import (
     REASON_DUPLICATE_CONTENT,
     REASON_PROMPT_TOO_SHORT,
+    VALIDATION_MODEL,
     CheapFilterVerdict,
     ValidationTransportError,
     ValidationVerdict,
 )
+from app.services.openrouter_service import OpenRouterService
 
 GOOD_RUBRIC = [
     {"key": "correctness", "description": "The answer is correct.", "weight": 1.0},
@@ -197,6 +199,36 @@ class TestHarvestPass:
         )
         assert not cheap.passed
         assert cheap.reason == REASON_DUPLICATE_CONTENT
+        assert verdict is None
+
+    async def test_validator_provider_is_resolved_from_the_model_it_sends(self, harvester):
+        """The base_url and the wire model name must come from the SAME id.
+
+        validate_with_llm sends VALIDATION_MODEL, so resolving the provider by
+        DRAFT_MODEL pairs one provider's endpoint with another's model name.
+        That stays silent while both ids share a prefix and becomes HTTP 400
+        'Invalid model' the moment they diverge, which is how it reached
+        production: the harvester drafted fine and every validation failed.
+        """
+        harvester.run_validator = TaskHarvesterService.run_validator.__get__(harvester)
+        seen: list[str] = []
+        # The two ids point at the same model today, which would make this test
+        # pass against the broken code too. Forcing them apart is what gives it
+        # teeth — and is exactly the state production was in.
+        with (
+            patch("app.services.battle_task_harvester.DRAFT_MODEL", "other/draft-model"),
+            patch.object(
+                OpenRouterService,
+                "resolve_provider",
+                lambda _self, model: seen.append(model) or None,
+            ),
+        ):
+            cheap, verdict = await harvester.run_validator(
+                _drafted_task(), duplicate_exists=False
+            )
+
+        assert seen == [VALIDATION_MODEL]
+        assert cheap.reason == "no_validation_provider"
         assert verdict is None
 
     async def test_validator_rejection_is_dropped_not_inserted(self, harvester, repo):
