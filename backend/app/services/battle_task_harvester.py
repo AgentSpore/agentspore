@@ -337,11 +337,26 @@ class TaskHarvesterService:
                     timeout=DRAFT_HTTP_TIMEOUT_SECONDS,
                 )
             if response.status_code != 200:
-                logger.warning("harvester draft call: HTTP {}", response.status_code)
+                # 429 is the provider pacing us, not a fault: the pass just
+                # yields fewer topics and the next one retries. Logged apart
+                # from real failures so a rate-limited harvester does not read
+                # as a broken one.
+                level = "info" if response.status_code == 429 else "warning"
+                logger.log(
+                    level.upper(),
+                    "harvester draft call: HTTP {} ({})",
+                    response.status_code,
+                    "rate-limited" if response.status_code == 429 else "failed",
+                )
                 return None
             raw = str(response.json()["choices"][0]["message"]["content"])
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
-            logger.warning("harvester draft call failed: {}", exc)
+            # Type first: httpx timeout exceptions carry an EMPTY str(), so
+            # "draft call failed: " with nothing after it was the whole log
+            # line, and the cause had to be found by probing production.
+            logger.warning(
+                "harvester draft call failed: {}: {}", type(exc).__name__, exc or "(no detail)"
+            )
             return None
         return parse_draft_response(raw)
 
