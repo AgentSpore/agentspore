@@ -42,6 +42,7 @@ from app.schemas.battles import TaskSource, TaskStatus
 from app.services.battle_budget import BattleJudgeBudgetService, breaker_is_open
 from app.services.battle_judges import wire_model_name
 from app.services.battle_task_validator import (
+    VALIDATION_MODEL,
     CheapFilterVerdict,
     ValidationTransportError,
     ValidationVerdict,
@@ -284,7 +285,12 @@ class TaskHarvesterService:
         if not cheap.passed:
             return cheap, None
 
-        provider = OpenRouterService().resolve_provider(DRAFT_MODEL)
+        # Resolve from VALIDATION_MODEL, not DRAFT_MODEL: validate_with_llm
+        # sends the former, so resolving the latter pairs one provider's
+        # base_url with another provider's model name. That mismatch is
+        # invisible while both ids share a prefix and becomes HTTP 400
+        # "Invalid model" the moment they diverge — as they did here.
+        provider = OpenRouterService().resolve_provider(VALIDATION_MODEL)
         if provider is None:
             return CheapFilterVerdict(passed=False, reason="no_validation_provider"), None
 
