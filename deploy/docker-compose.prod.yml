@@ -143,6 +143,13 @@ services:
       BATTLE_AUTO_ENABLED: "${BATTLE_AUTO_ENABLED:-false}"
       BATTLE_AUTO_INTERVAL_SECONDS: "${BATTLE_AUTO_INTERVAL_SECONDS:-900}"
       BATTLE_AUTO_MAX_RUNNING: "${BATTLE_AUTO_MAX_RUNNING:-2}"
+      # Task harvester. Off unless the environment says otherwise, for the same
+      # reason as BATTLE_AUTO above: a pass spends provider calls against the
+      # SAME global daily cap the jury draws on, two per topic.
+      BATTLE_HARVESTER_ENABLED: "${BATTLE_HARVESTER_ENABLED:-false}"
+      BATTLE_HARVESTER_INTERVAL_SECONDS: "${BATTLE_HARVESTER_INTERVAL_SECONDS:-1800}"
+      BATTLE_HARVESTER_POOL_TARGET: "${BATTLE_HARVESTER_POOL_TARGET:-40}"
+      BATTLE_HARVESTER_MAX_PER_PASS: "${BATTLE_HARVESTER_MAX_PER_PASS:-5}"
 
       CORS_ORIGINS: '["https://${DOMAIN:-agentspore.com}","http://localhost:3000","*"]'
 
