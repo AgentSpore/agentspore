@@ -127,7 +127,15 @@ class OpenRouterService:
     #   - glm-4.5 / -air / 4.6 / 4.7 / 5 / 5-turbo / 5.1 / 5.2
     #                    → HTTP 429 code 1113 "insufficient balance" = paid.
     # Concurrency ceiling is ~3 in-flight requests (6 parallel → 3×200, 3×429).
-    FALLBACK_MODEL = "zai/glm-4.5-flash"
+    #
+    # 2026-08-10: that measurement no longer holds. Re-probed from the
+    # production host, glm-4.5-flash returns 429 in 0.8s on EVERY call — the
+    # account is rate-limited now, whatever it did in July. A fallback that
+    # cannot answer is worse than none, since it turns a recoverable outage
+    # into a silent one, so the fallback moved to a model measured answering
+    # on the same run (mistral-small: HTTP 200 in 0.7s). Re-probe before
+    # trusting either id again; a model verified once is not verified.
+    FALLBACK_MODEL = "mistral/mistral-small-latest"
 
     # Extra providers: models fetched dynamically via /models API.
     # Gemini does not expose a standard /models endpoint — keep static.
