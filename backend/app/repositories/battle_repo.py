@@ -1697,7 +1697,14 @@ class BattleRepository:
                 f"""
                 SELECT * FROM battles
                 {where}
-                ORDER BY challenged_at DESC
+                -- id breaks ties, and the tiebreaker is what makes OFFSET
+                -- safe: challenged_at is NOT unique (V66 defaults it to NOW(),
+                -- and one auto-battle pass stamps several rows in the same
+                -- tick), so without it Postgres may order equal timestamps
+                -- differently between the offset=0 and offset=100 requests of
+                -- one paginated window — the same battle served twice, another
+                -- never served at all. A single-request list hid this.
+                ORDER BY challenged_at DESC, id DESC
                 LIMIT :limit OFFSET :offset
                 """
             ),
