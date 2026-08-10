@@ -9,6 +9,12 @@ import { INCLUDE_UNDECIDED_PARAM } from "@/components/battles/undecided";
 export const PAGE_SIZE = 25;
 export const MAX_LIMIT = 100;
 
+export interface BattleWindow {
+  rows: BattleSummary[];
+  /** The API ran out of rows inside this window, so there is nothing behind it. */
+  exhausted: boolean;
+}
+
 /**
  * Fetch the first `pages * PAGE_SIZE` battles, in as few requests as allowed.
  *
@@ -20,20 +26,24 @@ export async function fetchWindow(
   pages: number,
   filter: BattleStatus | "all",
   includeUndecided: boolean,
-): Promise<BattleSummary[]> {
+): Promise<BattleWindow> {
   const wanted = PAGE_SIZE * pages;
-  const out: BattleSummary[] = [];
-  while (out.length < wanted) {
-    const ask = Math.min(MAX_LIMIT, wanted - out.length);
-    const params = new URLSearchParams({ limit: String(ask), offset: String(out.length) });
+  const rows: BattleSummary[] = [];
+  while (rows.length < wanted) {
+    const ask = Math.min(MAX_LIMIT, wanted - rows.length);
+    const params = new URLSearchParams({ limit: String(ask), offset: String(rows.length) });
     if (filter !== "all") params.set("status", filter);
     if (includeUndecided) params.set(INCLUDE_UNDECIDED_PARAM, "true");
     const res = await fetch(`${API_URL}/api/v1/battles?${params}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const chunk: BattleSummary[] = await res.json();
-    out.push(...chunk);
-    // A chunk shorter than asked for is the only proof there is nothing behind it.
-    if (chunk.length < ask) break;
+    rows.push(...chunk);
+    // A chunk shorter than asked for is the only proof there is nothing behind
+    // it, and it is proof only this loop holds — a caller comparing
+    // rows.length against the window size cannot tell "exactly full" from
+    // "full and more behind", and would leave a dead "Show more" button on a
+    // list whose size happens to be a multiple of PAGE_SIZE.
+    if (chunk.length < ask) return { rows, exhausted: true };
   }
-  return out;
+  return { rows, exhausted: false };
 }
