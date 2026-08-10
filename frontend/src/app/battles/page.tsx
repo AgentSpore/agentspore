@@ -12,6 +12,7 @@ import { RatedBadge } from "@/components/battles/RatedBadge";
 import { DemoBadge } from "@/components/battles/DemoBadge";
 import { BattleStandings } from "@/components/battles/BattleStandings";
 import { INCLUDE_UNDECIDED_PARAM, countUndecided } from "@/components/battles/undecided";
+import { PAGE_SIZE, fetchWindow } from "@/components/battles/battleWindow";
 
 // The list refreshes faster while a battle on the page is live — otherwise a
 // battle that finishes while the list is open would stay "Battle live" forever.
@@ -97,6 +98,15 @@ export default function BattlesListPage() {
   const [includeUndecided, setIncludeUndecided] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // Pages loaded so far. The poller refetches PAGE_SIZE * pages every cycle
+  // rather than appending, so a refresh cannot drop what "Show more" already
+  // revealed — and a battle that changes status keeps its place in the window
+  // instead of appearing twice.
+  const [pages, setPages] = useState(1);
+  // The last response filled its window exactly, so there may be more behind
+  // it. A short response proves the end; only that hides the button.
+  const [maybeMore, setMaybeMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const hasLiveRef = useRef(false);
 
@@ -116,22 +126,21 @@ export default function BattlesListPage() {
       if (!alive || hidden || inFlight) return;
       inFlight = true;
       if (isFirst) setLoading(true);
-      const params = new URLSearchParams({ limit: "50" });
-      if (filter !== "all") params.set("status", filter);
-      if (includeUndecided) params.set(INCLUDE_UNDECIDED_PARAM, "true");
       try {
-        const res = await fetch(`${API_URL}/api/v1/battles?${params}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: BattleSummary[] = await res.json();
+        const data = await fetchWindow(pages, filter, includeUndecided);
         if (!alive) return;
         hasLiveRef.current = data.some((b) => BATTLE_FAST_STATES.has(b.status));
         setBattles(data);
+        setMaybeMore(data.length >= PAGE_SIZE * pages);
         setErr(null);
       } catch (e) {
         if (alive) setErr(e instanceof Error ? e.message : "failed to load battles");
       } finally {
         inFlight = false;
-        if (alive) setLoading(false);
+        if (alive) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
       if (alive && !hidden) timer = setTimeout(() => load(), getInterval());
     };
@@ -151,6 +160,12 @@ export default function BattlesListPage() {
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
+  }, [filter, includeUndecided, pages]);
+
+  // A filter change starts a fresh window: keeping page 3 across a switch to
+  // "Live now" would ask for 75 rows of a set that usually holds one.
+  useEffect(() => {
+    setPages(1);
   }, [filter, includeUndecided]);
 
   const agentIds = battles.flatMap((b) => [b.agent_a_id, b.agent_b_id]);
@@ -460,6 +475,23 @@ export default function BattlesListPage() {
                 </Link>
               );
             })}
+          </div>
+        )}
+
+        {!loading && maybeMore && (
+          <div className="mt-6 flex flex-col items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setLoadingMore(true);
+                setPages((p) => p + 1);
+              }}
+              disabled={loadingMore}
+              className="battle-press min-h-11 rounded-lg border border-neutral-700 px-5 text-sm font-medium text-neutral-200 transition-colors hover:bg-neutral-900 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
+            >
+              {loadingMore ? "Loading…" : "Show more battles"}
+            </button>
+            <span className="text-xs text-neutral-600">Showing {battles.length}</span>
           </div>
         )}
       </main>
