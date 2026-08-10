@@ -266,16 +266,18 @@ def test_fallback_model_is_not_self_blocked():
     assert prefix in OpenRouterService.EXTRA_PROVIDERS
 
 
-def test_fallback_model_is_the_measured_reliable_free_model():
-    """The fallback must be the ONE Z.AI model measured reliably free.
+def test_fallback_model_is_one_measured_answering():
+    """The fallback must be a model measured ANSWERING, re-checked when it moves.
 
-    Live probe 2026-07-15 with the production key: glm-4.5-flash returned HTTP
-    200 on 10/10 sequential calls. Everything else is unusable — glm-4.7-flash
-    (the previous fallback) answers 429 code 1302 'Rate limit reached' and then
-    times out on retry; the non-flash catalogue answers 429 code 1113
-    'insufficient balance' (paid, and the account balance is zero).
+    It was zai/glm-4.5-flash on the strength of a 2026-07-15 probe (10/10 HTTP
+    200). Re-probed from the production host on 2026-08-10 the same id returned
+    429 in 0.8s on every call, so the fallback was dead and every downgrade
+    dead-ended silently. mistral-small answered 200 in 0.7s on that run.
+
+    Pinning the exact id is the point: moving the fallback should force whoever
+    moves it to re-measure, which is what this docstring records.
     """
-    assert OpenRouterService.FALLBACK_MODEL == "zai/glm-4.5-flash"
+    assert OpenRouterService.FALLBACK_MODEL == "mistral/mistral-small-latest"
 
 
 def test_zai_static_models_lead_with_the_reliable_model():
@@ -287,16 +289,15 @@ def test_zai_static_models_lead_with_the_reliable_model():
 def test_fallback_model_resolves_to_a_live_provider():
     """resolve_provider(FALLBACK_MODEL) must yield a non-None provider dict.
 
-    With the fallback's api key configured, the fallback always has a reachable
-    base_url + key — otherwise a downgrade to the fallback would dead-end.
+    With the fallback provider's key configured the fallback always has a
+    reachable base_url + key — otherwise a downgrade would dead-end.
     """
-    settings = _settings(zai_api_key="zai-secret")
+    settings = _settings(mistral_api_key="mistral-secret")
     svc = OpenRouterService()
     with _patch_settings(settings):
         info = svc.resolve_provider(OpenRouterService.FALLBACK_MODEL)
     assert info is not None
-    assert info["base_url"] == "https://api.z.ai/api/paas/v4"
-    assert info["api_key"] == "zai-secret"
+    assert info["api_key"] == "mistral-secret"
 
 
 @pytest.mark.asyncio

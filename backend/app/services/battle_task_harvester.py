@@ -50,9 +50,11 @@ from app.services.battle_task_validator import (
 )
 from app.services.openrouter_service import OpenRouterService
 
-# Same model the submission validator uses: cheap, and already verified live to
-# return strict JSON (battle_judges.py roster notes).
-DRAFT_MODEL = "zai/glm-4.5-flash"
+# Cheap, and answering: measured from the production host, zai/glm-4.5-flash
+# (the original choice) returns 429 in 0.8s on every call while this one
+# returns 200 in 0.7s. The first live harvester pass drafted nothing at all
+# because of it — the account is rate-limited, not the platform.
+DRAFT_MODEL = "mistral/mistral-small-latest"
 DRAFT_TEMPERATURE = 0.3
 DRAFT_HTTP_TIMEOUT_SECONDS = 30.0
 DRAFT_MAX_TOKENS = 1_500
