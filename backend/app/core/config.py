@@ -157,7 +157,10 @@ class Settings(BaseSettings):
         "mistral/ministral-14b-latest",
         "mistral/mistral-medium-2508",
         "mistral/mistral-small-latest",
-        "zai/glm-4.5-flash",
+        # zai/glm-4.5-flash removed 2026-08-10: measured from the production
+        # host it returns 429 in 0.8s on every completion, so its seat on the
+        # panel was never filled. Today's ledger confirms it — 613 judge calls
+        # across five mistral models and not one to zai.
     ]
     battle_judge_owner_daily_call_limit: int = 60
     battle_judge_global_daily_call_limit: int = 10_000
