@@ -50,7 +50,13 @@ from app.services.battle_judges import (
 # it currently resolves the same way: the two jobs have different prompts and
 # different failure costs, and pinning them to one constant would make changing
 # the judge silently change validation too.
-VALIDATION_MODEL = "zai/glm-4.5-flash"
+# Measured from the production host on 2026-08-10: zai/glm-4.5-flash (the
+# original) returns 429 in 0.8s on every call, this one returns 200 in 0.7s.
+# The id is BOTH the wire model and the key the caller resolves a provider
+# from, so a caller that resolves its own provider (the harvester does) and
+# leaves this default in place sends a zai model name to a mistral base_url —
+# HTTP 400 "Invalid model", which is exactly how the drift surfaced.
+VALIDATION_MODEL = "mistral/mistral-small-latest"
 VALIDATION_TEMPERATURE = 0.0
 VALIDATION_HTTP_TIMEOUT_SECONDS = 60.0
 # Raised from 800 after a live measurement: the validation model reasons before it
