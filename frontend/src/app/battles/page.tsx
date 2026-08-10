@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { API_URL, BATTLE_DIFFICULTY, BATTLE_FAST_STATES, BattleStatus, BattleSummary, timeAgo } from "@/lib/api";
+import { BATTLE_DIFFICULTY, BATTLE_FAST_STATES, BattleStatus, BattleSummary, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { useAgentNames } from "@/components/battles/useAgentNames";
 import { useContenders, sideName } from "@/components/battles/useContenders";
@@ -11,7 +11,8 @@ import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { RatedBadge } from "@/components/battles/RatedBadge";
 import { DemoBadge } from "@/components/battles/DemoBadge";
 import { BattleStandings } from "@/components/battles/BattleStandings";
-import { INCLUDE_UNDECIDED_PARAM, countUndecided } from "@/components/battles/undecided";
+import { countUndecided } from "@/components/battles/undecided";
+import { PAGE_SIZE, fetchWindow } from "@/components/battles/battleWindow";
 
 // The list refreshes faster while a battle on the page is live — otherwise a
 // battle that finishes while the list is open would stay "Battle live" forever.
@@ -97,6 +98,15 @@ export default function BattlesListPage() {
   const [includeUndecided, setIncludeUndecided] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // Pages loaded so far. The poller refetches PAGE_SIZE * pages every cycle
+  // rather than appending, so a refresh cannot drop what "Show more" already
+  // revealed — and a battle that changes status keeps its place in the window
+  // instead of appearing twice.
+  const [pages, setPages] = useState(1);
+  // The last response filled its window exactly, so there may be more behind
+  // it. A short response proves the end; only that hides the button.
+  const [maybeMore, setMaybeMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const hasLiveRef = useRef(false);
 
@@ -113,25 +123,34 @@ export default function BattlesListPage() {
     const getInterval = () => (hasLiveRef.current ? LIST_INTERVAL_LIVE : LIST_INTERVAL_IDLE);
 
     const load = async (isFirst = false) => {
-      if (!alive || hidden || inFlight) return;
+      // A "Show more" click on a hidden tab bumps `pages` and re-runs this
+      // effect, but the guard below returns before the finally block, so the
+      // spinner would stay on until the tab came back. Clear it here instead.
+      if (!alive || hidden || inFlight) {
+        if (alive && hidden) setLoadingMore(false);
+        return;
+      }
       inFlight = true;
       if (isFirst) setLoading(true);
-      const params = new URLSearchParams({ limit: "50" });
-      if (filter !== "all") params.set("status", filter);
-      if (includeUndecided) params.set(INCLUDE_UNDECIDED_PARAM, "true");
       try {
-        const res = await fetch(`${API_URL}/api/v1/battles?${params}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: BattleSummary[] = await res.json();
+        const { rows, exhausted } = await fetchWindow(pages, filter, includeUndecided);
         if (!alive) return;
-        hasLiveRef.current = data.some((b) => BATTLE_FAST_STATES.has(b.status));
-        setBattles(data);
+        // Only the FIRST page drives the fast interval. A live battle sitting
+        // on page 6 would otherwise pin the 5s cycle on a 150-row refetch the
+        // viewer is not even looking at — and a wider window makes finding one
+        // more likely, so the cost would grow exactly as it should not.
+        hasLiveRef.current = rows.slice(0, PAGE_SIZE).some((b) => BATTLE_FAST_STATES.has(b.status));
+        setBattles(rows);
+        setMaybeMore(!exhausted);
         setErr(null);
       } catch (e) {
         if (alive) setErr(e instanceof Error ? e.message : "failed to load battles");
       } finally {
         inFlight = false;
-        if (alive) setLoading(false);
+        if (alive) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
       if (alive && !hidden) timer = setTimeout(() => load(), getInterval());
     };
@@ -151,7 +170,7 @@ export default function BattlesListPage() {
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [filter, includeUndecided]);
+  }, [filter, includeUndecided, pages]);
 
   const agentIds = battles.flatMap((b) => [b.agent_a_id, b.agent_b_id]);
   const names = useAgentNames(agentIds);
@@ -258,7 +277,13 @@ export default function BattlesListPage() {
             {FILTERS.map((f) => (
               <button
                 key={f.key}
-                onClick={() => setFilter(f.key)}
+                onClick={() => {
+                  // Reset the window with the filter, in the same event: a
+                  // separate reset effect would let the poller fire once with
+                  // the new filter and the OLD page count first.
+                  setPages(1);
+                  setFilter(f.key);
+                }}
                 className={`battle-press min-h-9 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${
                   filter === f.key
                     ? "bg-neutral-800 text-violet-300 shadow-sm"
@@ -278,7 +303,10 @@ export default function BattlesListPage() {
             <button
               type="button"
               aria-pressed={includeUndecided}
-              onClick={() => setIncludeUndecided((on) => !on)}
+              onClick={() => {
+                setPages(1);
+                setIncludeUndecided((on) => !on);
+              }}
               className={`battle-press min-h-9 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${
                 includeUndecided
                   ? "bg-neutral-800 text-cyan-300 shadow-sm"
@@ -339,7 +367,10 @@ export default function BattlesListPage() {
           <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
             <div className="text-neutral-200 text-sm font-medium mb-4">No battles in this category</div>
             <button
-              onClick={() => setFilter("all")}
+              onClick={() => {
+                setPages(1);
+                setFilter("all");
+              }}
               className="battle-press inline-flex min-h-11 items-center rounded-lg border border-neutral-700 text-neutral-300 hover:bg-white/[0.03] px-4 text-sm font-medium transition-colors"
             >
               Show all
@@ -460,6 +491,28 @@ export default function BattlesListPage() {
                 </Link>
               );
             })}
+          </div>
+        )}
+
+        {!loading && maybeMore && (
+          <div className="mt-6 flex flex-col items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setLoadingMore(true);
+                setPages((p) => p + 1);
+              }}
+              disabled={loadingMore}
+              aria-busy={loadingMore}
+              className="battle-press min-h-11 rounded-lg border border-neutral-700 px-5 text-sm font-medium text-neutral-200 transition-colors hover:bg-neutral-900 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
+            >
+              {loadingMore ? "Loading…" : "Show more battles"}
+            </button>
+            {/* Announced, because appending 25 rows below a button that keeps
+                focus is otherwise a silent change for a screen reader. */}
+            <span aria-live="polite" className="text-xs text-neutral-600">
+              Showing {battles.length}
+            </span>
           </div>
         )}
       </main>
