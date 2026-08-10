@@ -211,6 +211,12 @@ def rubric_texts(rubric: list[dict[str, Any]]) -> list[str]:
 # is INTRODUCED ("переведите текст: «...»"), a quoted term is not ("выбрав
 # «выполнен»"). That distinction is typographic convention in both languages,
 # which is why it survives translation instead of being three special cases.
+# INVARIANT(#78): these alternations are English+Russian only, and that bounds
+# which languages a task may be DRAFTED in. battle_task_harvester.DRAFT_LANGUAGES
+# is restricted to the same two for this reason — a task in a third language
+# matches nothing here, so both deterministic filters pass by construction and
+# only the LLM verdict stands between untrusted source text and the pool.
+# Adding a language to the harvester without adding it here removes a check.
 _ARTIFACT_NOUNS_RU = (
     r"текст\w*|отзыв\w*|стать\w+|код\w*|документ\w*|фрагмент\w*|письм\w+"
     r"|таблиц\w+|данны\w+|диалог\w*|лог\w*|файл\w*|отрывк?\w*|сообщени\w+"
