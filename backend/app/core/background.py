@@ -686,6 +686,54 @@ class BattleHarvesterTask(ScheduledTask):
             )
 
 
+class HostedAgentReconcileTask(ScheduledTask):
+    """Corrects hosted-agent rows that claim running with no container behind them.
+
+    get_hosted_agent already probes the runner, but only for the one agent an
+    owner opens. Measured on production: three rows had claimed running since
+    19 July, updated_at never advancing past started_at, while the runner host
+    had zero hosted containers — nobody had opened those pages in three weeks,
+    so nothing ever ran the probe. The dashboard and the public agent list both
+    read that status, so the platform was advertising agents that do not exist.
+
+    fail_closed stays False: a pass only moves a row from running to stopped
+    after the runner explicitly said the agent is not there, and repeating that
+    correction is idempotent.
+    """
+
+    name = "hosted_agent_reconcile"
+    interval_s = 900
+    # Crash bound. A stale row is wrong but harmless for a few minutes, and the
+    # pass is cheap: one probe per running agent, none when there are none.
+    lock_ttl_s = 300
+    initial_delay_s = 120
+
+    async def run_once(self) -> None:
+        from app.repositories.hosted_agent_repo import (
+            HostedAgentRepository,  # noqa: PLC0415 (cycle: app.services.hosted_agent_service <-> app.core.connection_manager)
+        )
+        from app.services.agent_service import (
+            AgentService,  # noqa: PLC0415 (cycle: app.services.hosted_agent_service <-> app.core.connection_manager)
+        )
+        from app.services.hosted_agent_service import (
+            HostedAgentService,  # noqa: PLC0415 (cycle: app.services.hosted_agent_service <-> app.core.connection_manager)
+        )
+        from app.services.openrouter_service import (
+            OpenRouterService,  # noqa: PLC0415 (cycle: app.services.hosted_agent_service <-> app.core.connection_manager)
+        )
+
+        async with async_session_maker() as db:
+            svc = HostedAgentService(
+                repo=HostedAgentRepository(db),
+                agent_service=AgentService(db),
+                openrouter=OpenRouterService(),
+            )
+            corrected = await svc.reconcile_running_agents()
+            await db.commit()
+        if corrected:
+            logger.info("Hosted agent reconcile: corrected={}", corrected)
+
+
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     HackathonAdvanceTask,
@@ -695,6 +743,7 @@ ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     BattleRunTask,
     BattleMatchmakerTask,
     BattleHarvesterTask,
+    HostedAgentReconcileTask,
 )
 
 

@@ -8,6 +8,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
+
 import httpx
 import logfire
 from croniter import croniter
@@ -513,6 +514,48 @@ class HostedAgentService:
                 await self._notify_status(hosted, "stopped")
                 logger.warning("Agent {} was dead on runner — auto-corrected to stopped", hosted_id)
         return hosted
+
+    async def reconcile_running_agents(self, *, min_age_seconds: float = 120.0) -> int:
+        """Correct rows that say running while the runner has no such container.
+
+        The same probe get_hosted_agent already runs, applied to every running
+        row instead of only the one an owner happens to open. Without it a row
+        whose container died while the runner was down stays 'running' forever:
+        measured on production, three rows had claimed running since 19 July
+        with updated_at never advancing past started_at, while the runner host
+        had zero hosted containers.
+
+        ``min_age_seconds`` skips agents that have only just started — a runner
+        answers 'crashed' for the first seconds of a container's life while the
+        sandbox is still being built, and reaping on that answer would kill
+        every agent at the moment it starts.
+
+        Returns the number of rows corrected. A runner that cannot be reached
+        corrects nothing: soft_get_status returns None on a network error, and
+        a transient blip must not flip every agent to stopped.
+        """
+        if not self.runner_url:
+            return 0
+
+        now = datetime.now(timezone.utc)
+        corrected = 0
+        for hosted in await self.repo.list_running():
+            started = hosted.get("started_at")
+            if started is not None and (now - started).total_seconds() < min_age_seconds:
+                continue
+            status_data = await self._rc.soft_get_status(str(hosted["id"]), timeout=3)
+            if status_data is None or status_data.get("status") == "running":
+                continue
+            await self.repo.update_status(str(hosted["id"]), "stopped")
+            hosted["status"] = "stopped"
+            await self._notify_status(hosted, "stopped")
+            corrected += 1
+            logger.warning(
+                "hosted agent {} claimed running but the runner reports {} — corrected",
+                hosted["id"],
+                status_data.get("status") or "no such agent",
+            )
+        return corrected
 
     async def list_my_agents(self, user_id: str) -> list[dict]:
         """List all hosted agents owned by the given user."""
