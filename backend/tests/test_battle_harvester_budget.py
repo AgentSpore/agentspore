@@ -23,9 +23,12 @@ from test_battle_runner import (
     V70_PATH,
     V71_PATH,
     V72_PATH,
+    RUBRIC,
 )
 from testcontainers.postgres import PostgresContainer
 
+from app.repositories.battle_repo import BattleRepository
+from app.schemas.battles import TaskSource, TaskStatus
 from app.services.battle_budget import BattleJudgeBudgetService
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -155,3 +158,42 @@ class TestHarvestReservation:
                 )
             ).scalar_one()
         assert after == before + 1
+
+
+class TestPoolCount:
+    """The refill gate must see the harvester's own output.
+
+    Counting only 'ready' made the gate blind to quarantine, which is where
+    the harvester actually inserts: measured on production, 288 quarantined
+    tasks piled up in a day while the gate still read 50 and kept drafting,
+    spending 1091 provider calls to refill a pool that was already full.
+    """
+
+    async def test_quarantined_tasks_count_towards_the_pool(self, session_maker):
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            before = await repo.count_pooled_generated_tasks()
+            await repo.create_task(
+                source=TaskSource.GENERATED, category="general", title="Q",
+                prompt="Parse this thoroughly." * 5, rubric=RUBRIC,
+                time_limit_seconds=600, status=TaskStatus.QUARANTINE,
+            )
+            await session.commit()
+            after = await repo.count_pooled_generated_tasks()
+
+        assert after == before + 1
+
+    async def test_rejected_tasks_do_not_count(self, session_maker):
+        """Only what can still reach a battle is pool; a refusal is not."""
+        async with session_maker() as session:
+            repo = BattleRepository(session)
+            before = await repo.count_pooled_generated_tasks()
+            await repo.create_task(
+                source=TaskSource.GENERATED, category="general", title="R",
+                prompt="Parse this thoroughly." * 5, rubric=RUBRIC,
+                time_limit_seconds=600, status=TaskStatus.REJECTED,
+            )
+            await session.commit()
+            after = await repo.count_pooled_generated_tasks()
+
+        assert after == before

@@ -58,7 +58,7 @@ def _drafted_task(title: str = "Fix an off-by-one paginator bug") -> dict:
 def repo():
     repo = AsyncMock()
     repo.content_key_exists = AsyncMock(return_value=False)
-    repo.count_ready_generated_tasks = AsyncMock(return_value=0)
+    repo.count_pooled_generated_tasks = AsyncMock(return_value=0)
     repo.create_task = AsyncMock(return_value="task-1")
     return repo
 
@@ -155,7 +155,7 @@ class TestHarvestPass:
         assert result.dropped == 1
 
     async def test_skips_when_pool_already_at_target(self, harvester, repo, source):
-        repo.count_ready_generated_tasks = AsyncMock(return_value=5)
+        repo.count_pooled_generated_tasks = AsyncMock(return_value=5)
 
         result = await harvester.harvest(pool_target=5, max_per_pass=3)
 
