@@ -68,11 +68,13 @@ function ModerationRowHeader({
 export function ModerationRow({
   task,
   busy,
+  failed,
   onApprove,
   onReject,
 }: {
   task: ModerationTaskView;
   busy: boolean;
+  failed: boolean;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -81,6 +83,11 @@ export function ModerationRow({
   return (
     <div className="rounded-xl border border-neutral-800 bg-neutral-900/35 p-4 sm:p-5">
       <ModerationRowHeader task={task} busy={busy} onApprove={onApprove} onReject={onReject} />
+      {failed && (
+        <div role="status" className="mt-2 text-xs text-red-300">
+          That action did not go through. The task is unchanged — try again.
+        </div>
+      )}
 
       <Disclosure label="Show prompt" openLabel="Collapse prompt" className="mt-3">
         <div className="text-sm text-neutral-300 whitespace-pre-wrap leading-[1.65] mt-2">

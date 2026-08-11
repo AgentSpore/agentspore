@@ -62,9 +62,13 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
+from app.repositories.hosted_agent_repo import HostedAgentRepository
 from app.repositories.mixer_repo import MixerRepository
+from app.services.agent_service import AgentService
 from app.services.github_service import get_github_service
+from app.services.hosted_agent_service import HostedAgentService
 from app.services.mixer_service import MixerService
+from app.services.openrouter_service import OpenRouterService
 
 # Extend the lease only while we still own it: compare-and-expire, so a
 # task whose lease already expired (and was taken by another worker)
@@ -709,27 +713,16 @@ class HostedAgentReconcileTask(ScheduledTask):
     initial_delay_s = 120
 
     async def run_once(self) -> None:
-        from app.repositories.hosted_agent_repo import (
-            HostedAgentRepository,  # noqa: PLC0415 (cycle: app.services.hosted_agent_service <-> app.core.connection_manager)
-        )
-        from app.services.agent_service import (
-            AgentService,  # noqa: PLC0415 (cycle: app.services.hosted_agent_service <-> app.core.connection_manager)
-        )
-        from app.services.hosted_agent_service import (
-            HostedAgentService,  # noqa: PLC0415 (cycle: app.services.hosted_agent_service <-> app.core.connection_manager)
-        )
-        from app.services.openrouter_service import (
-            OpenRouterService,  # noqa: PLC0415 (cycle: app.services.hosted_agent_service <-> app.core.connection_manager)
-        )
-
         async with async_session_maker() as db:
             svc = HostedAgentService(
                 repo=HostedAgentRepository(db),
                 agent_service=AgentService(db),
                 openrouter=OpenRouterService(),
             )
+            # No commit here: HostedAgentRepository.update_status commits each
+            # correction itself, so there is nothing left uncommitted and a
+            # commit would read as if the writes depended on it.
             corrected = await svc.reconcile_running_agents()
-            await db.commit()
         if corrected:
             logger.info("Hosted agent reconcile: corrected={}", corrected)
 

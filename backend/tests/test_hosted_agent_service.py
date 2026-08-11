@@ -608,6 +608,61 @@ async def test_unreachable_runner_corrects_nothing(create_svc_factory):
 
     assert corrected == 0
     svc.repo.update_status.assert_not_awaited()
+    # Every row must be probed: an implementation that gave up after the first
+    # unreachable answer would also return 0 and pass the assertions above.
+    assert svc._rc.soft_get_status.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_row_with_no_timestamps_is_left_alone(create_svc_factory):
+    """An unknown age is YOUNG, not ancient.
+
+    A row can be marked running before started_at is written; reaping on a
+    missing timestamp would kill exactly the agent that is starting.
+    """
+    row = _running_row("h1", None)
+    row.pop("updated_at", None)
+    svc = _reconcile_svc(create_svc_factory, [row], [{"status": "not_found"}])
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 0
+    svc._rc.soft_get_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_recent_restart_is_not_reaped(create_svc_factory):
+    """updated_at moves on a restart, started_at does not.
+
+    The stop-then-start path leaves the row saying running with a started_at
+    from days ago while the container is rebuilt; probing there reaps an agent
+    that is coming back.
+    """
+    row = _running_row("h1", datetime.now(timezone.utc) - timedelta(days=7))
+    row["updated_at"] = datetime.now(timezone.utc) - timedelta(seconds=5)
+    svc = _reconcile_svc(create_svc_factory, [row], [{"status": "not_found"}])
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 0
+    svc._rc.soft_get_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_notify_fault_does_not_truncate_the_sweep(create_svc_factory):
+    """The row is already corrected and committed when notify runs."""
+    old = datetime.now(timezone.utc) - timedelta(days=7)
+    svc = _reconcile_svc(
+        create_svc_factory,
+        [_running_row("h1", old), _running_row("h2", old)],
+        [{"status": "not_found"}, {"status": "not_found"}],
+    )
+    svc._notify_status = AsyncMock(side_effect=RuntimeError("websocket gone"))
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 2
+    assert svc.repo.update_status.await_count == 2
 
 
 @pytest.mark.asyncio

@@ -3,10 +3,10 @@
 import { Header } from "@/components/Header";
 import { ModerationRow } from "@/components/battles/ModerationRow";
 import { ModerationQueueStatus } from "@/components/battles/ModerationQueueStatus";
-import { useModerationQueue } from "@/components/battles/useModerationQueue";
+import { MODERATION_PAGE_LIMIT, useModerationQueue } from "@/components/battles/useModerationQueue";
 
 export default function ModerationQueuePage() {
-  const { state, tasks, pendingId, approve, reject } = useModerationQueue();
+  const { state, tasks, pendingId, failedId, approve, reject, refetch } = useModerationQueue();
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
@@ -25,15 +25,20 @@ export default function ModerationQueuePage() {
           </p>
         </div>
 
-        <ModerationQueueStatus state={state} isEmpty={tasks.length === 0} />
+        <ModerationQueueStatus state={state} isEmpty={tasks.length === 0} onRetry={refetch} />
 
         {state === "ready" && tasks.length > 0 && (
           <div className="space-y-3">
+            <div className="text-xs text-neutral-500">
+              {tasks.length} awaiting review
+              {tasks.length === MODERATION_PAGE_LIMIT && " (oldest first; more behind these)"}
+            </div>
             {tasks.map((t) => (
               <ModerationRow
                 key={t.id}
                 task={t}
                 busy={pendingId === t.id}
+                failed={failedId === t.id}
                 onApprove={() => approve(t.id)}
                 onReject={() => reject(t.id)}
               />

@@ -541,14 +541,28 @@ class HostedAgentService:
         corrected = 0
         for hosted in await self.repo.list_running():
             started = hosted.get("started_at")
-            if started is not None and (now - started).total_seconds() < min_age_seconds:
+            # An unknown age is treated as YOUNG, not ancient: a row can be
+            # marked running before started_at is written, and reaping on a
+            # missing timestamp would kill exactly the agent that is starting.
+            # updated_at moves on every restart, started_at does not: the
+            # stop-then-start path leaves a window where the row says running
+            # with a started_at from days ago while the container is being
+            # rebuilt. Taking the later of the two keeps the reaper out of it.
+            stamps = [t for t in (started, hosted.get("updated_at")) if t is not None]
+            if not stamps or (now - max(stamps)).total_seconds() < min_age_seconds:
                 continue
             status_data = await self._rc.soft_get_status(str(hosted["id"]), timeout=3)
             if status_data is None or status_data.get("status") == "running":
                 continue
             await self.repo.update_status(str(hosted["id"]), "stopped")
             hosted["status"] = "stopped"
-            await self._notify_status(hosted, "stopped")
+            try:
+                await self._notify_status(hosted, "stopped")
+            except Exception as exc:  # noqa: BLE001 - a delivery fault, not ours
+                # The row is already corrected and committed. A websocket or
+                # Redis fault must not abort the sweep and leave every later
+                # row stale for another cycle.
+                logger.warning("hosted agent {} status notify failed: {}", hosted["id"], exc)
             corrected += 1
             logger.warning(
                 "hosted agent {} claimed running but the runner reports {} — corrected",
