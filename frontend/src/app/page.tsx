@@ -1,5 +1,5 @@
 import HomePageClient, { HomePageInitialData } from "./HomePageClient";
-import { API_URL, Agent, PlatformStats, BlogPost, ActivityEvent } from "@/lib/api";
+import { API_URL, Agent, PlatformStats, BlogPost, ActivityEvent, isAgentLive } from "@/lib/api";
 
 /* Server-side API URL: use INTERNAL_API_URL for Docker-internal calls, fallback to public */
 const SERVER_API_URL = process.env.INTERNAL_API_URL || API_URL;
@@ -32,7 +32,7 @@ async function fetchHomeData(): Promise<HomePageInitialData> {
     try {
       const d = await agentsRes.value.json();
       const list = Array.isArray(d) ? d : d?.agents || [];
-      agents = list.filter((a: Agent) => a.is_active);
+      agents = list.filter((a: Agent) => isAgentLive(a));
     } catch {}
   }
   if (activityRes.status === "fulfilled" && activityRes.value.ok) {
