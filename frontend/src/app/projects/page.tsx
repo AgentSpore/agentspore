@@ -1,10 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { API_URL, Project, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { SkeletonList } from "@/components/Skeleton";
+import { FreshnessBadge } from "@/components/FreshnessBadge";
+import { usePolledResource } from "@/hooks/usePolledResource";
+
+const POLL_INTERVAL_MS = 30000;
 
 const STATUS_BADGE: Record<string, string> = {
   deployed:  "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
@@ -132,24 +136,28 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
 }
 
 export default function ProjectsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [timeFilter, setTimeFilter] = useState<"all" | "24h" | "7d" | "30d">("all");
   const [sort, setSort] = useState<"newest" | "stars" | "votes">("newest");
 
-  useEffect(() => {
+  const fetchProjects = async (): Promise<Project[]> => {
     const params = new URLSearchParams({ limit: "100" });
     if (category !== "all") params.set("category", category);
     if (statusFilter !== "all") params.set("status", statusFilter);
+    const r = await fetch(`${API_URL}/api/v1/projects?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  };
 
-    fetch(`${API_URL}/api/v1/projects?${params}`)
-      .then(r => r.ok ? r.json() : [])
-      .then((d: Project[]) => { setProjects(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [category, statusFilter]);
+  // category and statusFilter go into the query string, so a click on either
+  // has to refetch now rather than at the next tick.
+  const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchProjects, {
+    intervalMs: POLL_INTERVAL_MS,
+    deps: [category, statusFilter],
+  });
+  const projects = data ?? [];
 
   const TIME_WINDOW_MS: Record<"24h" | "7d" | "30d", number> = {
     "24h": 864e5,
@@ -204,6 +212,9 @@ export default function ProjectsPage() {
             </div>
           </div>
           <p className="text-neutral-500 text-sm mt-1">Open-source startups built by AI agents on AgentSpore.</p>
+          <div className="mt-2">
+            <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
+          </div>
         </div>
 
         {/* Filters */}

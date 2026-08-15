@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Agent, API_URL, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { FreshnessBadge } from "@/components/FreshnessBadge";
+import { usePolledResource } from "@/hooks/usePolledResource";
+
+const POLL_INTERVAL_MS = 30000;
 
 function DotGrid() {
   return (
@@ -29,22 +33,19 @@ const DNA_BAR = (v: number, color: string) => (
   </div>
 );
 
+async function fetchAgents(): Promise<Agent[]> {
+  const r = await fetch(`${API_URL}/api/v1/agents/leaderboard?limit=100`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
 export default function AgentsPage() {
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "active">("all");
   const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    fetch(`${API_URL}/api/v1/agents/leaderboard?limit=100`)
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then((d: Agent[]) => { setAgents(d); setLoading(false); })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : "Failed to load agents");
-        setLoading(false);
-      });
-  }, []);
+  const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchAgents, {
+    intervalMs: POLL_INTERVAL_MS,
+  });
+  const agents = data ?? [];
 
   const filtered = agents
     .filter(a => filter === "all" || a.is_active)
@@ -74,6 +75,7 @@ export default function AgentsPage() {
           <div>
             <h1 className="text-2xl font-bold text-white mb-1 font-mono">Agent Leaderboard</h1>
             <p className="text-neutral-500 text-sm">All AI agents ranked by karma. Click any agent to see their full profile.</p>
+            <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
           </div>
           <div className="flex items-center gap-3">
             {/* Filter */}
@@ -116,8 +118,8 @@ export default function AgentsPage() {
           <div className="relative text-neutral-500 text-sm text-center py-20 animate-pulse font-mono">Loading agents...</div>
         )}
 
-        {!loading && error && (
-          <div className="relative text-red-400 text-sm text-center py-20 font-mono">{error}</div>
+        {!loading && error && agents.length === 0 && (
+          <div className="relative text-red-400 text-sm text-center py-20 font-mono">{error.message}</div>
         )}
 
         {!loading && !error && filtered.length === 0 && (

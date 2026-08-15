@@ -1,9 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { API_URL, ExternalAgentItem, HostedAgentListItem, HOSTED_STATUS, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { FreshnessBadge } from "@/components/FreshnessBadge";
+import { usePolledResource } from "@/hooks/usePolledResource";
+
+const POLL_INTERVAL_MS = 30000;
+
+interface HostedAgentsData {
+  hostedAgents: HostedAgentListItem[];
+  externalAgents: ExternalAgentItem[];
+}
 
 function DotGrid() {
   return (
@@ -31,28 +39,30 @@ function modelShort(id: string): string {
   return base.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
-export default function HostedAgentsPage() {
-  const [hostedAgents, setHostedAgents] = useState<HostedAgentListItem[]>([]);
-  const [externalAgents, setExternalAgents] = useState<ExternalAgentItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+async function fetchHostedAgentsData(): Promise<HostedAgentsData> {
+  const headers = authHeaders();
+  // An expired token answers 401 on both: swallowing that into [] would leave
+  // the badge reporting fresh while the page renders the "you have no agents"
+  // empty state, which is the failure this indicator exists to make visible.
+  const [hostedAgents, externalAgents] = await Promise.all([
+    fetch(`${API_URL}/api/v1/hosted-agents`, { headers }).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<HostedAgentListItem[]>;
+    }),
+    fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers }).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<ExternalAgentItem[]>;
+    }),
+  ]);
+  return { hostedAgents, externalAgents };
+}
 
-  useEffect(() => {
-    const headers = authHeaders();
-    Promise.all([
-      fetch(`${API_URL}/api/v1/hosted-agents`, { headers }).then(r => r.ok ? r.json() as Promise<HostedAgentListItem[]> : []),
-      fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers }).then(r => r.ok ? r.json() as Promise<ExternalAgentItem[]> : []),
-    ])
-      .then(([hosted, external]) => {
-        setHostedAgents(hosted);
-        setExternalAgents(external);
-        setLoading(false);
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : "Failed to load");
-        setLoading(false);
-      });
-  }, []);
+export default function HostedAgentsPage() {
+  const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchHostedAgentsData, {
+    intervalMs: POLL_INTERVAL_MS,
+  });
+  const hostedAgents = data?.hostedAgents ?? [];
+  const externalAgents = data?.externalAgents ?? [];
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white relative">
@@ -65,6 +75,9 @@ export default function HostedAgentsPage() {
             <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Platform</p>
             <h1 className="text-2xl font-medium font-mono text-white tracking-tight">My Agents</h1>
             <p className="text-xs text-neutral-500 mt-1 font-mono">AI agents running on AgentSpore infrastructure</p>
+            <div className="mt-2">
+              <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
+            </div>
           </div>
           <Link href="/hosted-agents/new"
             className="inline-flex items-center gap-2 px-4 py-2 text-xs font-mono bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors self-start shrink-0">
@@ -78,9 +91,9 @@ export default function HostedAgentsPage() {
           </div>
         )}
 
-        {error && (
+        {!loading && error && hostedAgents.length === 0 && externalAgents.length === 0 && (
           <div className="text-center py-20">
-            <p className="text-red-400/80 text-sm font-mono">{error}</p>
+            <p className="text-red-400/80 text-sm font-mono">{error.message}</p>
             <p className="text-neutral-600 text-xs mt-2 font-mono">Sign in to manage your hosted agents</p>
           </div>
         )}
