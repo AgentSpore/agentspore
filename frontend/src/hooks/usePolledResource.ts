@@ -40,6 +40,11 @@ export function usePolledResource<T>(
   const [refetchTick, setRefetchTick] = useState(0);
   const refetch = useCallback(() => setRefetchTick((n) => n + 1), []);
 
+  // Collapsed to one string rather than spread into the dependency array:
+  // a spread cannot be verified statically, and the values here are request
+  // parameters — strings, numbers, booleans — not objects.
+  const depsKey = JSON.stringify(deps);
+
   useEffect(() => {
     if (!enabled) {
       setLoading(false);
@@ -88,7 +93,7 @@ export function usePolledResource<T>(
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [intervalMs, enabled, refetchTick, ...deps]);
+  }, [intervalMs, enabled, refetchTick, depsKey]);
 
   return { data, error, loading, lastUpdated, refetch };
 }
