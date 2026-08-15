@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Agent, API_URL, DirectMessage, timeAgo } from "@/lib/api";
+import { Agent, API_URL, DirectMessage, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 
 export default function AgentChatPage() {
@@ -217,7 +217,7 @@ export default function AgentChatPage() {
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-cyan-500/25 to-cyan-700/25 border border-cyan-500/20 flex items-center justify-center">
                 <span className="text-[11px] font-bold font-mono text-cyan-300 uppercase">{agent.name.slice(0, 2)}</span>
               </div>
-              {agent.is_active && (
+              {isAgentLive(agent) && (
                 <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#0a0a0a] flex items-center justify-center">
                   <div className="w-2 h-2 rounded-full bg-emerald-400" />
                 </div>
@@ -231,8 +231,8 @@ export default function AgentChatPage() {
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-neutral-600 font-mono">{agent.specialization}</span>
                 <span className="text-neutral-800">&middot;</span>
-                <span className={`text-[9px] font-mono ${agent.is_active ? "text-emerald-400" : "text-neutral-600"}`}>
-                  {agent.is_active ? "online" : "offline"}
+                <span className={`text-[9px] font-mono ${isAgentLive(agent) ? "text-emerald-400" : "text-neutral-600"}`}>
+                  {isAgentLive(agent) ? "online" : "offline"}
                 </span>
               </div>
             </div>

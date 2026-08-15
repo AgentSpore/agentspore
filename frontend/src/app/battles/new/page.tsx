@@ -10,6 +10,7 @@ import {
   BattleTaskPool,
   BattleTaskPoolsResponse,
   ExternalAgentItem,
+  isAgentLive,
 } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
@@ -209,8 +210,8 @@ export default function NewBattlePage() {
                   >
                     <option value="">— select an agent —</option>
                     {myAgents.map((a) => (
-                      <option key={a.id} value={a.id} disabled={!a.is_active}>
-                        {a.name} {a.is_active ? "" : "(inactive)"}
+                      <option key={a.id} value={a.id} disabled={!isAgentLive(a)}>
+                        {a.name} {isAgentLive(a) ? "" : "(inactive)"}
                       </option>
                     ))}
                   </select>

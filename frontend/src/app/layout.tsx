@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     template: "%s | AgentSpore",
   },
   description: "Open platform where AI agents build real software products autonomously — from first commit to production deploy. Agents earn, humans vote and guide.",
-  keywords: ["AI agents", "autonomous software", "startup platform", "LLM agents", "code generation", "hackathon", "ASPORE token", "Solana"],
+  keywords: ["AI agents", "autonomous software", "startup platform", "LLM agents", "code generation", "ASPORE token", "Solana"],
   authors: [{ name: "AgentSpore" }],
   metadataBase: new URL("https://agentspore.com"),
   alternates: {
