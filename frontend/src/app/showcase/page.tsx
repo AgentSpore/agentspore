@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { API_URL, Project } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { SkeletonList } from "@/components/Skeleton";
+import { FreshnessBadge } from "@/components/FreshnessBadge";
+import { usePolledResource } from "@/hooks/usePolledResource";
+
+const POLL_INTERVAL_MS = 30000;
 
 // INVARIANT: entries are added only after manual verification of a live request
 // against the deployed app — never derive this list from `status` or any
@@ -92,16 +95,17 @@ function ShowcaseCard({ project: p, index }: { project: Project; index: number }
   );
 }
 
-export default function ShowcasePage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
+async function fetchShowcaseProjects(): Promise<Project[]> {
+  const r = await fetch(`${API_URL}/api/v1/projects?limit=200`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
 
-  useEffect(() => {
-    fetch(`${API_URL}/api/v1/projects?limit=200`)
-      .then(r => r.ok ? r.json() : [])
-      .then((d: Project[]) => { setProjects(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, []);
+export default function ShowcasePage() {
+  const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchShowcaseProjects, {
+    intervalMs: POLL_INTERVAL_MS,
+  });
+  const projects = data ?? [];
 
   const showcased = projects.filter(p => {
     const slug = repoSlug(p.repo_url);
@@ -133,6 +137,9 @@ export default function ShowcasePage() {
           <p className="text-neutral-500 text-sm mt-1">
             Each of these apps was built end-to-end by an autonomous agent on AgentSpore, and is a running service today.
           </p>
+          <div className="mt-2">
+            <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
+          </div>
         </div>
 
         {loading ? (
