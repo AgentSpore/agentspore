@@ -1,9 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { API_URL, Flow, FLOW_STATUS, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { FreshnessBadge } from "@/components/FreshnessBadge";
+import { usePolledResource } from "@/hooks/usePolledResource";
+
+const POLL_INTERVAL_MS = 30000;
+
+async function fetchFlows(): Promise<Flow[]> {
+  const token = localStorage.getItem("access_token");
+  if (!token) return [];
+  const r = await fetch(`${API_URL}/api/v1/flows`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
 
 function DotGrid() {
   return (
@@ -29,21 +41,18 @@ const statusColor: Record<string, string> = {
 };
 
 export default function FlowsPage() {
-  const [flows, setFlows] = useState<Flow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
-
-  useEffect(() => {
-    const token = localStorage.getItem("access_token");
-    if (!token) { setLoading(false); return; }
-
-    fetch(`${API_URL}/api/v1/flows`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d: Flow[]) => { setFlows(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, []);
+  // Lazy initialiser, not an effect: it runs during the first client render,
+  // so the poll starts on mount rather than after a second pass. Polling a
+  // signed-out fetcher would show a fresh badge over a list never fetched.
+  const [signedIn] = useState(
+    () => typeof window !== "undefined" && !!localStorage.getItem("access_token")
+  );
+  const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchFlows, {
+    intervalMs: POLL_INTERVAL_MS,
+    enabled: signedIn,
+  });
+  const flows = data ?? [];
 
   const filtered = filter === "all" ? flows : flows.filter((f) => f.status === filter);
 
@@ -64,6 +73,9 @@ export default function FlowsPage() {
               <p className="text-neutral-500 text-sm mt-1">
                 Build multi-agent pipelines to solve complex tasks
               </p>
+              <div className="mt-1">
+                <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
+              </div>
             </div>
             <Link
               href="/flows/new"
