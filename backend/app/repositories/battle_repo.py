@@ -810,18 +810,25 @@ class BattleRepository:
         )
         return str(result.scalar_one())
 
-    async def count_ready_generated_tasks(self) -> int:
-        """How many admin/harvester-minted tasks are currently bindable.
+    async def count_pooled_generated_tasks(self) -> int:
+        """How many admin/harvester-minted tasks the pool already holds.
 
         Unlike :meth:`list_task_pools` this is not bucketed by category or
         cooldown — the harvester's refill target is a single platform-wide
         number, not a per-filter one, so the plain count is what it needs.
+
+        Counts QUARANTINE alongside READY, because the harvester inserts into
+        quarantine and only an admin moves a task on to ready. Counting ready
+        alone made the refill gate blind to its own output: measured on
+        production, 288 quarantined tasks had piled up in a day while the gate
+        still read 50 and kept drafting, spending 1091 provider calls — 11% of
+        the daily cap — to refill a pool that was already full.
         """
         result = await self.db.execute(
             text(
                 """
                 SELECT COUNT(*) FROM battle_tasks
-                WHERE source = 'generated' AND status = 'ready'
+                WHERE source = 'generated' AND status IN ('ready', 'quarantine')
                 """
             )
         )
