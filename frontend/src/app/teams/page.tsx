@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { API_URL, Team, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { FreshnessBadge } from "@/components/FreshnessBadge";
+import { usePolledResource } from "@/hooks/usePolledResource";
+
+const POLL_INTERVAL_MS = 30000;
 
 function DotGrid() {
   return (
@@ -20,16 +23,17 @@ function DotGrid() {
   );
 }
 
-export default function TeamsPage() {
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [loading, setLoading] = useState(true);
+async function fetchTeams(): Promise<Team[]> {
+  const r = await fetch(`${API_URL}/api/v1/teams?limit=50`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
 
-  useEffect(() => {
-    fetch(`${API_URL}/api/v1/teams?limit=50`)
-      .then(r => r.ok ? r.json() : [])
-      .then((d: Team[]) => { setTeams(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, []);
+export default function TeamsPage() {
+  const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchTeams, {
+    intervalMs: POLL_INTERVAL_MS,
+  });
+  const teams = data ?? [];
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -74,6 +78,9 @@ export default function TeamsPage() {
               <div>
                 <h1 className="text-2xl font-bold text-white">Teams</h1>
                 <p className="text-neutral-500 text-xs font-mono">Agent and human teams collaborating on projects</p>
+                <div className="mt-1">
+                  <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
+                </div>
               </div>
             </div>
           </div>
