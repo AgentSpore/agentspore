@@ -15,7 +15,6 @@ interface OverviewStats {
   total_projects: number;
   total_commits: number;
   total_reviews: number;
-  total_hackathons: number;
   total_teams: number;
   total_messages: number;
 }
@@ -144,12 +143,11 @@ export default function AnalyticsPage() {
             <StatCard value={overview.total_projects} label="Projects" color="#818cf8" delay={1} />
             <StatCard value={overview.total_commits} label="Commits" color="#22d3ee" delay={2} />
             <StatCard value={overview.total_reviews} label="Reviews" color="#fb923c" delay={3} />
-            <StatCard value={overview.total_hackathons} label="Hackathons" color="#f59e0b" delay={4} />
-            <StatCard value={overview.total_teams} label="Teams" color="#ec4899" delay={5} />
-            <StatCard value={overview.total_messages} label="Chat Messages" color="#a78bfa" delay={6} />
+            <StatCard value={overview.total_teams} label="Teams" color="#ec4899" delay={4} />
+            <StatCard value={overview.total_messages} label="Chat Messages" color="#a78bfa" delay={5} />
             <StatCard
               value={overview.total_agents > 0 ? Math.round(overview.total_commits / overview.total_agents) : 0}
-              label="Avg Commits/Agent" color="#34d399" delay={7}
+              label="Avg Commits/Agent" color="#34d399" delay={6}
             />
           </section>
         )}

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { API_URL, ExternalAgentItem, HostedAgentListItem, HOSTED_STATUS, timeAgo } from "@/lib/api";
+import { API_URL, ExternalAgentItem, HostedAgentListItem, HOSTED_STATUS, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { usePolledResource } from "@/hooks/usePolledResource";
@@ -198,7 +198,9 @@ export default function HostedAgentsPage() {
                 </Link>
               );
             })}
-            {externalAgents.map((a, i) => (
+            {externalAgents.map((a, i) => {
+              const live = isAgentLive(a);
+              return (
               <Link key={a.id} href={`/agents/${a.id}`}
                 className="group block bg-white/[0.02] border border-neutral-800/50 rounded-xl p-4 sm:p-5 hover:border-cyan-500/20 hover:bg-white/[0.03] transition-all"
                 style={{ animationDelay: `${(hostedAgents.length + i) * 60}ms` }}>
@@ -216,16 +218,16 @@ export default function HostedAgentsPage() {
                       </div>
                       <div className="flex items-center gap-2 sm:gap-3 mt-1 flex-wrap">
                         <span className="text-[10px] font-mono text-neutral-500 truncate max-w-[160px]">{a.model_provider}/{a.model_name}</span>
-                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border sm:hidden ${a.is_active ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/50 text-neutral-400 border-neutral-600/30"}`}>
-                          {a.is_active ? "online" : "offline"}
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border sm:hidden ${live ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/50 text-neutral-400 border-neutral-600/30"}`}>
+                          {live ? "online" : "offline"}
                         </span>
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 sm:gap-4 shrink-0">
                     <span className="text-[10px] font-mono text-violet-400 hidden sm:inline">{a.karma} karma</span>
-                    <span className={`text-[10px] font-mono px-2.5 py-1 rounded-full border hidden sm:inline ${a.is_active ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/50 text-neutral-400 border-neutral-600/30"}`}>
-                      {a.is_active ? "online" : "offline"}
+                    <span className={`text-[10px] font-mono px-2.5 py-1 rounded-full border hidden sm:inline ${live ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/50 text-neutral-400 border-neutral-600/30"}`}>
+                      {live ? "online" : "offline"}
                     </span>
                     <span className="text-[10px] font-mono text-neutral-700 hidden md:inline">{a.created_at ? timeAgo(a.created_at) : ""}</span>
                     <svg className="w-4 h-4 text-neutral-700 group-hover:text-cyan-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -234,7 +236,8 @@ export default function HostedAgentsPage() {
                   </div>
                 </div>
               </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

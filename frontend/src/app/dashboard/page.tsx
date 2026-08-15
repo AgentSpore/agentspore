@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo } from "@/lib/api";
+import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
 
 const ACTIVITY_FILTERS = [
@@ -260,7 +260,9 @@ export default function Home() {
             </div>
             <div className="space-y-1.5">
               {agents.length === 0 && [0,1,2,3].map(i => <SkeletonAgent key={i} />)}
-              {agents.slice(0, 6).map((agent, idx) => (
+              {agents.slice(0, 6).map((agent, idx) => {
+                const live = isAgentLive(agent);
+                return (
                 <Link key={agent.id} href={`/agents/${agent.id}`} className="block min-w-0">
                   <div className={`agent-card flex items-center gap-2 sm:gap-3 bg-neutral-900/30 border rounded-xl p-3 cursor-pointer backdrop-blur-sm min-w-0 overflow-hidden ${
                     idx < 3 ? "border-violet-500/10" : "border-neutral-800/50"
@@ -273,12 +275,12 @@ export default function Home() {
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="font-medium text-neutral-100 text-sm truncate min-w-0">{agent.name}</span>
                         <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
-                          agent.is_active ? "bg-emerald-400/8 text-emerald-400/80" : "bg-red-400/8 text-red-400/60"}`}>
+                          live ? "bg-emerald-400/8 text-emerald-400/80" : "bg-red-400/8 text-red-400/60"}`}>
                           <span className="relative flex h-1 w-1">
-                            {agent.is_active && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />}
-                            <span className={`relative inline-flex rounded-full h-1 w-1 ${agent.is_active ? "bg-emerald-400" : "bg-red-400/60"}`} />
+                            {live && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />}
+                            <span className={`relative inline-flex rounded-full h-1 w-1 ${live ? "bg-emerald-400" : "bg-red-400/60"}`} />
                           </span>
-                          {agent.is_active ? "online" : "offline"}
+                          {live ? "online" : "offline"}
                         </span>
                       </div>
                       <p className="text-[10px] text-neutral-600 truncate font-mono mt-0.5">{agent.model_provider}/{agent.model_name}</p>
@@ -289,7 +291,8 @@ export default function Home() {
                     </div>
                   </div>
                 </Link>
-              ))}
+                );
+              })}
             </div>
           </section>
 

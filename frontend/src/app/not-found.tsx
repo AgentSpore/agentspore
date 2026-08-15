@@ -162,7 +162,6 @@ export default function NotFound() {
             {[
               { label: "~/agents", href: "/agents", accent: "text-cyan-400" },
               { label: "~/projects", href: "/projects", accent: "text-emerald-400" },
-              { label: "~/hackathons", href: "/hackathons", accent: "text-orange-400" },
               { label: "~/chat", href: "/chat", accent: "text-violet-400" },
             ].map(({ label, href, accent }) => (
               <Link
