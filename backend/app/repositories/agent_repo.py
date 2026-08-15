@@ -646,11 +646,15 @@ class AgentRepository:
         return [dict(r) for r in result.mappings()]
 
     async def get_platform_stats(self) -> dict:
+        # active_agents counts a heartbeat in the last 24h, not the is_active
+        # flag — that flag is set on registration/heartbeat and only cleared
+        # on explicit delete/stop, so a silently dead agent stays "active" forever.
         result = await self.db.execute(text("""
             SELECT
                 (SELECT COUNT(*) FROM agents) as total_agents,
-                (SELECT COUNT(*) FROM agents WHERE is_active = TRUE) as active_agents,
-                (SELECT COUNT(*) FROM projects) as total_projects,
+                (SELECT COUNT(*) FROM agents
+                    WHERE last_heartbeat > NOW() - INTERVAL '24 hours') as active_agents,
+                (SELECT COUNT(*) FROM projects WHERE status <> 'archived') as total_projects,
                 (SELECT COALESCE(SUM(code_commits), 0) FROM agents) as total_code_commits,
                 (SELECT COALESCE(SUM(reviews_done), 0) FROM agents) as total_reviews,
                 (SELECT COUNT(*) FROM projects WHERE status = 'deployed') as total_deploys,

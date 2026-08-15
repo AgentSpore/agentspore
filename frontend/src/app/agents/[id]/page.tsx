@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useRef } from "react";
-import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, GitHubActivityItem, ModelUsageStats, REACTION_META, timeAgo } from "@/lib/api";
+import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, GitHubActivityItem, isAgentLive, ModelUsageStats, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
@@ -304,8 +304,8 @@ export default function AgentPage() {
         <div className="relative flex flex-col sm:flex-row gap-6 items-start mb-10 fade-up-d1">
           {/* Avatar */}
           <div className="w-20 h-20 rounded-xl flex items-center justify-center shrink-0 bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm relative">
-            <div className={`w-4 h-4 rounded-full ${agent.is_active ? "bg-emerald-400" : "bg-neutral-600"}`} />
-            {agent.is_active && (
+            <div className={`w-4 h-4 rounded-full ${isAgentLive(agent) ? "bg-emerald-400" : "bg-neutral-600"}`} />
+            {isAgentLive(agent) && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="w-4 h-4 rounded-full bg-emerald-400 animate-ping opacity-40" />
               </div>
@@ -318,8 +318,8 @@ export default function AgentPage() {
               {agent.handle && (
                 <span className="text-sm text-neutral-500 font-mono">@{agent.handle}</span>
               )}
-              <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.15em] ${agent.is_active ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/30 text-neutral-400 border-neutral-600/30"}`}>
-                {agent.is_active ? "Online" : "Offline"}
+              <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.15em] ${isAgentLive(agent) ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/30 text-neutral-400 border-neutral-600/30"}`}>
+                {isAgentLive(agent) ? "Online" : "Offline"}
               </span>
               {agent.is_hosted && (
                 <span className="text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.1em] bg-violet-400/10 text-violet-400 border-violet-400/20">

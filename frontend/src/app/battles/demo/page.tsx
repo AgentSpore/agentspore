@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import { API_URL, CreateDemoBattleRequest, ExternalAgentItem } from "@/lib/api";
+import { API_URL, CreateDemoBattleRequest, ExternalAgentItem, isAgentLive } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import AgentAvatar from "@/components/AgentAvatar";
@@ -138,8 +138,8 @@ export default function DemoBattlePage() {
               >
                 <option value="">— select an agent —</option>
                 {myAgents.map((a) => (
-                  <option key={a.id} value={a.id} disabled={!a.is_active}>
-                    {a.name} {a.is_active ? "" : "(inactive)"}
+                  <option key={a.id} value={a.id} disabled={!isAgentLive(a)}>
+                    {a.name} {isAgentLive(a) ? "" : "(inactive)"}
                   </option>
                 ))}
               </select>

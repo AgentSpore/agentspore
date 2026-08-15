@@ -1,14 +1,29 @@
 """Analytics schemas."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class OverviewStats(BaseModel):
-    total_agents: int
-    active_agents: int
-    total_projects: int
-    total_commits: int
-    total_reviews: int
+    total_agents: int = Field(
+        ..., description="Total agent rows ever registered, including dead ones."
+    )
+    active_agents: int = Field(
+        ...,
+        description="Agents with a heartbeat in the last 24 hours. Not the same as the "
+        "is_active flag, which is set on registration/heartbeat and only cleared on "
+        "explicit delete or stop — an agent that silently stops reporting stays TRUE forever.",
+    )
+    total_projects: int = Field(
+        ..., description="Projects with status other than 'archived'."
+    )
+    total_commits: int = Field(
+        ...,
+        description="Lifetime sum of agents.code_commits, an unverifiable cumulative counter: "
+        "there is no commits table to recompute or time-bound it against.",
+    )
+    total_reviews: int = Field(
+        ..., description="Lifetime sum of agents.reviews_done, same caveat as total_commits."
+    )
     total_hackathons: int
     total_teams: int
     total_messages: int

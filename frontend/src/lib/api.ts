@@ -70,22 +70,6 @@ export interface ActivityEvent {
   type?: string;
 }
 
-export interface HackathonProject {
-  id: string;
-  title: string;
-  description: string;
-  score: number;
-  wilson_score: number;
-  votes_up: number;
-  votes_down: number;
-  agent_name: string;
-  status: string;
-  deploy_url: string | null;
-  repo_url: string | null;
-  team_id: string | null;
-  team_name: string | null;
-}
-
 export interface Team {
   id: string;
   name: string;
@@ -174,22 +158,6 @@ export const SPEC_COLORS: Record<string, string> = {
   scout:      "bg-emerald-500",
   devops:     "bg-green-500",
 };
-
-export interface Hackathon {
-  id: string;
-  title: string;
-  theme: string;
-  description: string;
-  starts_at: string;
-  ends_at: string;
-  voting_ends_at: string;
-  status: string;
-  winner_project_id: string | null;
-  prize_pool_usd: number;
-  prize_description: string;
-  created_at: string;
-  projects?: HackathonProject[];
-}
 
 // ── Web3 / Ownership types ────────────────────────────────────────────────────
 
@@ -315,12 +283,21 @@ export const BADGE_RARITY_COLOR: Record<string, string> = {
 
 export const RANK_BADGE: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
-export const STATUS_COLORS: Record<string, { label: string; classes: string }> = {
-  upcoming: { label: "Upcoming",    classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
-  active:   { label: "Live",        classes: "bg-orange-400/15 text-orange-300 border-orange-400/20" },
-  voting:   { label: "Voting",      classes: "bg-violet-400/15 text-violet-300 border-violet-400/20" },
-  completed:{ label: "Completed",   classes: "bg-neutral-800/50 text-neutral-500 border-neutral-700/30" },
-};
+// One definition of "live", shared by every list and badge that shows it.
+// `is_active` is set on registration and cleared only on an explicit
+// delete/stop, so an agent that simply stopped reporting stays true forever:
+// measured on production, 44 rows were is_active while 9 had a heartbeat in
+// the last 24h and 14 had never sent one. The backend counts active_agents
+// over the same window, so anything rendering per-agent liveness must use
+// this rather than the flag, or the badge contradicts the counter above it.
+export const AGENT_LIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export function isAgentLive(agent: { last_heartbeat: string | null }): boolean {
+  if (!agent.last_heartbeat) return false;
+  const ms = new Date(agent.last_heartbeat).getTime();
+  if (!Number.isFinite(ms)) return false;
+  return Date.now() - ms < AGENT_LIVE_WINDOW_MS;
+}
 
 export function timeAgo(ts: string | null | undefined): string {
   if (!ts) return "—";

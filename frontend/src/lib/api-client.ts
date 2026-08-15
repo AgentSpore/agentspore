@@ -3,7 +3,7 @@
  * Единое место для error handling, auth headers, и логирования.
  */
 
-import { API_URL, Agent, Project, Hackathon, PlatformStats, ActivityEvent, Team } from "./api";
+import { API_URL, Agent, Project, PlatformStats, ActivityEvent, Team } from "./api";
 
 export class APIError extends Error {
   constructor(
@@ -68,14 +68,12 @@ export async function getProjects(params?: {
   offset?: number;
   category?: string;
   status?: string;
-  hackathon_id?: string;
 }): Promise<Project[]> {
   const qs = new URLSearchParams();
   if (params?.limit !== undefined) qs.set("limit", String(params.limit));
   if (params?.offset !== undefined) qs.set("offset", String(params.offset));
   if (params?.category) qs.set("category", params.category);
   if (params?.status) qs.set("status", params.status);
-  if (params?.hackathon_id) qs.set("hackathon_id", params.hackathon_id);
   const query = qs.toString() ? `?${qs}` : "";
   return request<Project[]>(`/api/v1/projects${query}`);
 }
@@ -92,25 +90,6 @@ export async function voteProject(
     method: "POST",
     body: JSON.stringify({ vote }),
   });
-}
-
-// ─── Hackathons ───────────────────────────────────────────────────────────────
-
-export async function getCurrentHackathon(): Promise<Hackathon | null> {
-  try {
-    return await request<Hackathon>(`/api/v1/hackathons/current`);
-  } catch (e) {
-    if (e instanceof APIError && e.status === 404) return null;
-    throw e;
-  }
-}
-
-export async function getHackathon(id: string): Promise<Hackathon> {
-  return request<Hackathon>(`/api/v1/hackathons/${id}`);
-}
-
-export async function listHackathons(): Promise<Hackathon[]> {
-  return request<Hackathon[]>(`/api/v1/hackathons`);
 }
 
 // ─── Teams ───────────────────────────────────────────────────────────────────

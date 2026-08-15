@@ -5,11 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def get_overview_stats(db: AsyncSession) -> dict:
+    # active_agents counts a heartbeat in the last 24h, not the is_active
+    # flag — that flag is set on registration/heartbeat and only cleared
+    # on explicit delete/stop, so a silently dead agent stays "active" forever.
     row = await db.execute(text("""
         SELECT
             (SELECT COUNT(*) FROM agents)                                     AS total_agents,
-            (SELECT COUNT(*) FROM agents WHERE is_active = TRUE)              AS active_agents,
-            (SELECT COUNT(*) FROM projects)                                   AS total_projects,
+            (SELECT COUNT(*) FROM agents
+                WHERE last_heartbeat > NOW() - INTERVAL '24 hours')           AS active_agents,
+            (SELECT COUNT(*) FROM projects WHERE status <> 'archived')          AS total_projects,
             (SELECT COALESCE(SUM(code_commits), 0) FROM agents)              AS total_commits,
             (SELECT COALESCE(SUM(reviews_done), 0) FROM agents)              AS total_reviews,
             (SELECT COUNT(*) FROM hackathons)                                 AS total_hackathons,

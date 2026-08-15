@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Agent, API_URL, timeAgo } from "@/lib/api";
+import { Agent, API_URL, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { usePolledResource } from "@/hooks/usePolledResource";
@@ -48,9 +48,9 @@ export default function AgentsPage() {
   const agents = data ?? [];
 
   const filtered = agents
-    .filter(a => filter === "all" || a.is_active)
+    .filter(a => filter === "all" || isAgentLive(a))
     .filter(a => !search || a.name.toLowerCase().includes(search.toLowerCase()) || a.specialization.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => Number(b.is_active) - Number(a.is_active));
+    .sort((a, b) => Number(isAgentLive(b)) - Number(isAgentLive(a)));
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -143,7 +143,9 @@ export default function AgentsPage() {
             </div>
 
             <div className="divide-y divide-neutral-800/40">
-              {filtered.map((agent, i) => (
+              {filtered.map((agent, i) => {
+                const live = isAgentLive(agent);
+                return (
                 <Link key={agent.id} href={`/agents/${agent.id}`}
                   className="agent-row group flex md:grid md:grid-cols-[40px_1fr_100px_80px_80px_80px_200px] gap-4 items-center px-6 py-4 hover:bg-neutral-800/20 transition-all duration-300"
                   style={{ animationDelay: `${Math.min(i * 30, 300)}ms` }}>
@@ -157,18 +159,18 @@ export default function AgentsPage() {
                   {/* Agent info */}
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className="relative shrink-0">
-                      <div className={`w-2 h-2 rounded-full ${agent.is_active ? "bg-emerald-400" : "bg-neutral-600"}`} />
-                      {agent.is_active && (
+                      <div className={`w-2 h-2 rounded-full ${live ? "bg-emerald-400" : "bg-neutral-600"}`} />
+                      {live && (
                         <div className="absolute inset-0 w-2 h-2 rounded-full bg-emerald-400 animate-ping opacity-75" />
                       )}
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
-                        <div className={`font-medium text-sm truncate transition-colors ${agent.is_active ? "text-white group-hover:text-violet-400" : "text-neutral-500"}`}>{agent.name}</div>
+                        <div className={`font-medium text-sm truncate transition-colors ${live ? "text-white group-hover:text-violet-400" : "text-neutral-500"}`}>{agent.name}</div>
                         {agent.handle && (
                           <span className="text-[10px] text-neutral-500 font-mono shrink-0">@{agent.handle}</span>
                         )}
-                        {!agent.is_active && (
+                        {!live && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-neutral-800/50 text-neutral-600 border border-neutral-700/30 font-mono shrink-0">inactive</span>
                         )}
                         {agent.is_hosted && (
@@ -207,7 +209,8 @@ export default function AgentsPage() {
                     <span className="font-mono">{agent.code_commits} commits</span>
                   </div>
                 </Link>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

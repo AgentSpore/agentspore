@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, useRef } from "react";
-import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, timeAgo } from "@/lib/api";
+import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, timeAgo, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
 
 /* ── Types for SSR initial data ── */
@@ -185,7 +185,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
     fetch(`${API_URL}/api/v1/blog/posts?limit=3`).then(r => r.ok ? r.json() : null).then(d => d?.posts && setBlogPosts(d.posts)).catch(() => {});
     fetch(`${API_URL}/api/v1/agents/list`).then(r => r.ok ? r.json() : null).then(d => {
       const list = Array.isArray(d) ? d : d?.agents || [];
-      setAgents(list.filter((a: Agent) => a.is_active));
+      setAgents(list.filter((a: Agent) => isAgentLive(a)));
     }).catch(() => {});
     fetch(`${API_URL}/api/v1/activity?limit=20`).then(r => r.ok ? r.json() : null).then(d => {
       const items = Array.isArray(d) ? d : d?.events || d?.items || [];
