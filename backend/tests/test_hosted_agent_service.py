@@ -6,6 +6,7 @@ No real DB or runner required; all external deps are mocked.
 from __future__ import annotations
 
 from collections import OrderedDict
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -547,3 +548,140 @@ async def test_default_agent_yaml_single_source():
     assert "/workspace/.deep/skills" in yaml_content
     # Deterministic — calling twice returns identical content
     assert yaml_content == HostedAgentService._default_agent_yaml()
+
+
+# ── Ghost-row reconciliation ───────────────────────────────────────────────────
+
+
+def _running_row(hosted_id: str, started_at) -> dict:
+    return {"id": hosted_id, "agent_id": f"a-{hosted_id}", "status": "running",
+            "started_at": started_at, "owner_user_id": "u1"}
+
+
+def _reconcile_svc(create_svc_factory, rows, status_replies, runner_url="http://runner"):
+    svc = create_svc_factory(runner_url=runner_url)
+    svc.repo.list_running = AsyncMock(return_value=rows)
+    svc.repo.update_status = AsyncMock()
+    svc._rc = AsyncMock()
+    svc._rc.soft_get_status = AsyncMock(side_effect=status_replies)
+    svc._notify_status = AsyncMock()
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_reconcile_corrects_a_row_the_runner_does_not_know(create_svc_factory):
+    """The ghost this exists for: three production rows claimed running since
+    19 July while the runner host had zero hosted containers, because the
+    per-agent probe only fires when an owner opens that agent's page."""
+    old = datetime.now(timezone.utc) - timedelta(days=7)
+    svc = _reconcile_svc(create_svc_factory, [_running_row("h1", old)], [{"status": "not_found"}])
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 1
+    svc.repo.update_status.assert_awaited_once_with("h1", "stopped")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_leaves_a_live_agent_alone(create_svc_factory):
+    old = datetime.now(timezone.utc) - timedelta(days=7)
+    svc = _reconcile_svc(create_svc_factory, [_running_row("h1", old)], [{"status": "running"}])
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 0
+    svc.repo.update_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unreachable_runner_corrects_nothing(create_svc_factory):
+    """soft_get_status returns None on a network error. Treating that as 'dead'
+    would stop every hosted agent on the platform during one runner blip."""
+    old = datetime.now(timezone.utc) - timedelta(days=7)
+    svc = _reconcile_svc(
+        create_svc_factory,
+        [_running_row("h1", old), _running_row("h2", old)],
+        [None, None],
+    )
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 0
+    svc.repo.update_status.assert_not_awaited()
+    # Every row must be probed: an implementation that gave up after the first
+    # unreachable answer would also return 0 and pass the assertions above.
+    assert svc._rc.soft_get_status.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_row_with_no_timestamps_is_left_alone(create_svc_factory):
+    """An unknown age is YOUNG, not ancient.
+
+    A row can be marked running before started_at is written; reaping on a
+    missing timestamp would kill exactly the agent that is starting.
+    """
+    row = _running_row("h1", None)
+    row.pop("updated_at", None)
+    svc = _reconcile_svc(create_svc_factory, [row], [{"status": "not_found"}])
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 0
+    svc._rc.soft_get_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_recent_restart_is_not_reaped(create_svc_factory):
+    """updated_at moves on a restart, started_at does not.
+
+    The stop-then-start path leaves the row saying running with a started_at
+    from days ago while the container is rebuilt; probing there reaps an agent
+    that is coming back.
+    """
+    row = _running_row("h1", datetime.now(timezone.utc) - timedelta(days=7))
+    row["updated_at"] = datetime.now(timezone.utc) - timedelta(seconds=5)
+    svc = _reconcile_svc(create_svc_factory, [row], [{"status": "not_found"}])
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 0
+    svc._rc.soft_get_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_notify_fault_does_not_truncate_the_sweep(create_svc_factory):
+    """The row is already corrected and committed when notify runs."""
+    old = datetime.now(timezone.utc) - timedelta(days=7)
+    svc = _reconcile_svc(
+        create_svc_factory,
+        [_running_row("h1", old), _running_row("h2", old)],
+        [{"status": "not_found"}, {"status": "not_found"}],
+    )
+    svc._notify_status = AsyncMock(side_effect=RuntimeError("websocket gone"))
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 2
+    assert svc.repo.update_status.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_just_started_agent_is_not_probed(create_svc_factory):
+    """A runner answers 'crashed' for the first seconds of a container's life
+    while the sandbox is still being built; reaping on that answer would kill
+    every agent at the moment it starts."""
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=5)
+    svc = _reconcile_svc(create_svc_factory, [_running_row("h1", fresh)], [{"status": "crashed"}])
+
+    corrected = await svc.reconcile_running_agents()
+
+    assert corrected == 0
+    svc._rc.soft_get_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_no_runner_configured_is_a_no_op(create_svc_factory):
+    svc = _reconcile_svc(create_svc_factory, [_running_row("h1", None)], [], runner_url="")
+
+    assert await svc.reconcile_running_agents() == 0
+    svc.repo.list_running.assert_not_awaited()

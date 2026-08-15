@@ -62,9 +62,13 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
+from app.repositories.hosted_agent_repo import HostedAgentRepository
 from app.repositories.mixer_repo import MixerRepository
+from app.services.agent_service import AgentService
 from app.services.github_service import get_github_service
+from app.services.hosted_agent_service import HostedAgentService
 from app.services.mixer_service import MixerService
+from app.services.openrouter_service import OpenRouterService
 
 # Extend the lease only while we still own it: compare-and-expire, so a
 # task whose lease already expired (and was taken by another worker)
@@ -686,6 +690,43 @@ class BattleHarvesterTask(ScheduledTask):
             )
 
 
+class HostedAgentReconcileTask(ScheduledTask):
+    """Corrects hosted-agent rows that claim running with no container behind them.
+
+    get_hosted_agent already probes the runner, but only for the one agent an
+    owner opens. Measured on production: three rows had claimed running since
+    19 July, updated_at never advancing past started_at, while the runner host
+    had zero hosted containers — nobody had opened those pages in three weeks,
+    so nothing ever ran the probe. The dashboard and the public agent list both
+    read that status, so the platform was advertising agents that do not exist.
+
+    fail_closed stays False: a pass only moves a row from running to stopped
+    after the runner explicitly said the agent is not there, and repeating that
+    correction is idempotent.
+    """
+
+    name = "hosted_agent_reconcile"
+    interval_s = 900
+    # Crash bound. A stale row is wrong but harmless for a few minutes, and the
+    # pass is cheap: one probe per running agent, none when there are none.
+    lock_ttl_s = 300
+    initial_delay_s = 120
+
+    async def run_once(self) -> None:
+        async with async_session_maker() as db:
+            svc = HostedAgentService(
+                repo=HostedAgentRepository(db),
+                agent_service=AgentService(db),
+                openrouter=OpenRouterService(),
+            )
+            # No commit here: HostedAgentRepository.update_status commits each
+            # correction itself, so there is nothing left uncommitted and a
+            # commit would read as if the writes depended on it.
+            corrected = await svc.reconcile_running_agents()
+        if corrected:
+            logger.info("Hosted agent reconcile: corrected={}", corrected)
+
+
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     HackathonAdvanceTask,
@@ -695,6 +736,7 @@ ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     BattleRunTask,
     BattleMatchmakerTask,
     BattleHarvesterTask,
+    HostedAgentReconcileTask,
 )
 
 
