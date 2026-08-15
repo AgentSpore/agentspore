@@ -112,6 +112,61 @@ describe("usePolledResource", () => {
     expect(calls).toBe(2); // immediate refetch on focus
   });
 
+  it("removes the visibilitychange listener on unmount", async () => {
+    // `alive` already blocks a leaked listener's fetch, so counting fetches
+    // cannot see this leak — the listener itself has to be observed. Each
+    // leaked one retains the whole effect closure for the life of the tab.
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    const addSpy = vi.spyOn(document, "addEventListener").mockImplementation((t, h, o) => {
+      if (t === "visibilitychange") added.push(h);
+      return EventTarget.prototype.addEventListener.call(document, t, h, o);
+    });
+    const removeSpy = vi.spyOn(document, "removeEventListener").mockImplementation((t, h, o) => {
+      if (t === "visibilitychange") removed.push(h);
+      return EventTarget.prototype.removeEventListener.call(document, t, h, o);
+    });
+
+    const fetcher = vi.fn(async () => 1);
+    const { unmount } = renderHook(() => usePolledResource(fetcher, { intervalMs: 1000 }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    unmount();
+
+    expect(added.length).toBeGreaterThan(0);
+    expect(removed).toEqual(added);
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
+
+  it("a fetch resolving after unmount does not reschedule the loop", async () => {
+    let release: (v: string) => void = () => {};
+    const fetcher = vi.fn(() => new Promise<string>((r) => { release = r; }));
+
+    const { unmount } = renderHook(() => usePolledResource(fetcher, { intervalMs: 1000 }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+
+    unmount();
+    await act(async () => { release("late"); await vi.advanceTimersByTimeAsync(5000); });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts the loop when a declared dep changes", async () => {
+    const seen: string[] = [];
+    const { rerender } = renderHook(
+      ({ q }: { q: string }) =>
+        usePolledResource(async () => { seen.push(q); return q; }, {
+          intervalMs: 10000,
+          deps: [q],
+        }),
+      { initialProps: { q: "all" } }
+    );
+    await waitFor(() => expect(seen).toEqual(["all"]));
+
+    // A server-side filter change must refetch now, not at the next tick.
+    await act(async () => { rerender({ q: "building" }); await vi.advanceTimersByTimeAsync(0); });
+    expect(seen).toEqual(["all", "building"]);
+  });
+
   it("an inline (identity-changing) fetcher does not restart the loop", async () => {
     let calls = 0;
     const { rerender } = renderHook(

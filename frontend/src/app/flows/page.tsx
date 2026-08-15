@@ -42,8 +42,15 @@ const statusColor: Record<string, string> = {
 
 export default function FlowsPage() {
   const [filter, setFilter] = useState<string>("all");
+  // Lazy initialiser, not an effect: it runs during the first client render,
+  // so the poll starts on mount rather than after a second pass. Polling a
+  // signed-out fetcher would show a fresh badge over a list never fetched.
+  const [signedIn] = useState(
+    () => typeof window !== "undefined" && !!localStorage.getItem("access_token")
+  );
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchFlows, {
     intervalMs: POLL_INTERVAL_MS,
+    enabled: signedIn,
   });
   const flows = data ?? [];
 

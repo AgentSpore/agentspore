@@ -41,9 +41,18 @@ function modelShort(id: string): string {
 
 async function fetchHostedAgentsData(): Promise<HostedAgentsData> {
   const headers = authHeaders();
+  // An expired token answers 401 on both: swallowing that into [] would leave
+  // the badge reporting fresh while the page renders the "you have no agents"
+  // empty state, which is the failure this indicator exists to make visible.
   const [hostedAgents, externalAgents] = await Promise.all([
-    fetch(`${API_URL}/api/v1/hosted-agents`, { headers }).then(r => r.ok ? r.json() as Promise<HostedAgentListItem[]> : []),
-    fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers }).then(r => r.ok ? r.json() as Promise<ExternalAgentItem[]> : []),
+    fetch(`${API_URL}/api/v1/hosted-agents`, { headers }).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<HostedAgentListItem[]>;
+    }),
+    fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers }).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<ExternalAgentItem[]>;
+    }),
   ]);
   return { hostedAgents, externalAgents };
 }

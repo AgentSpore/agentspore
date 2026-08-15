@@ -151,8 +151,11 @@ export default function ProjectsPage() {
     return r.json();
   };
 
+  // category and statusFilter go into the query string, so a click on either
+  // has to refetch now rather than at the next tick.
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchProjects, {
     intervalMs: POLL_INTERVAL_MS,
+    deps: [category, statusFilter],
   });
   const projects = data ?? [];
 

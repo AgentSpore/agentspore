@@ -3,6 +3,12 @@ import { useEffect, useRef, useState, useCallback } from "react";
 interface PolledResourceOptions {
   intervalMs: number;
   enabled?: boolean;
+  // Anything the fetcher closes over that changes the REQUEST — a server-side
+  // filter, a page number — must be listed here. The fetcher itself is read
+  // through a ref and deliberately does not restart the loop, so without this
+  // a filter change would only take effect at the next tick, up to intervalMs
+  // later. Values the fetcher does not send to the server do not belong here.
+  deps?: unknown[];
 }
 
 interface PolledResourceState<T> {
@@ -19,7 +25,7 @@ export function usePolledResource<T>(
   fetcher: () => Promise<T>,
   opts: PolledResourceOptions
 ): PolledResourceState<T> {
-  const { intervalMs, enabled = true } = opts;
+  const { intervalMs, enabled = true, deps = [] } = opts;
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,6 +56,10 @@ export function usePolledResource<T>(
       inFlight = true;
       try {
         const result = await fetcherRef.current();
+        // GUARD: no test defends this line. React 19 dropped the
+        // setState-after-unmount warning and the reschedule below carries its
+        // own `alive` check, so deleting this changes nothing a test can see —
+        // it only stops three no-op writes into a dead component. Keep it.
         if (!alive) return;
         setData(result);
         setLastUpdated(Date.now());
@@ -78,7 +88,7 @@ export function usePolledResource<T>(
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [intervalMs, enabled, refetchTick]);
+  }, [intervalMs, enabled, refetchTick, ...deps]);
 
   return { data, error, loading, lastUpdated, refetch };
 }
