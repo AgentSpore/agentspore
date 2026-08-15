@@ -68,6 +68,7 @@ DRAFT_HTTP_TIMEOUT_SECONDS = 30.0
 # parse_draft_response reports as "the model declined".
 DRAFT_MAX_TOKENS = 2_500
 
+
 class TopicSource(Protocol):
     """A source of raw topics. No obligation beyond returning title + summary."""
 
@@ -131,11 +132,11 @@ If the topic cannot be turned into a solvable, self-contained task, answer \
 {"title": null} instead."""
 
 
-# The pool should not be one language. A battle follows the language its task
-# was written in (battle_runner.ANSWER_LANGUAGE_RULE), so a mixed pool gives a
-# mixed feed — and it exercises the contenders somewhere other than English.
-# English keeps the largest share because most source topics arrive in it and a
-# translated task reads worse than a native one.
+# The pool should not be one language: a battle follows the language its task
+# was written in (battle_runner.ANSWER_LANGUAGE_RULE), so a single-language pool
+# is a single-language feed. English keeps the largest share because most source
+# topics arrive in it and a translated task reads worse than a native one.
+#
 # English and Russian ONLY, and the restriction is a safety boundary rather
 # than a preference: battle_task_validator's deterministic filters
 # (detect_missing_artifact, detect_infeasible_search) key on English and
@@ -229,7 +230,7 @@ class TaskHarvesterService:
             logger.info("harvester: provider breaker open, skipping this pass")
             return HarvestResult()
 
-        current = await self.repo.count_ready_generated_tasks()
+        current = await self.repo.count_pooled_generated_tasks()
         room = pool_target - current
         if room <= 0:
             return HarvestResult()

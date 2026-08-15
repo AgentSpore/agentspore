@@ -872,6 +872,32 @@ export interface UserTaskSummary {
   created_at: string;
 }
 
+// One rubric criterion as returned to a moderator — same key/description as
+// RubricCriterion plus the weight the judge panel applies.
+export interface ModerationRubricCriterion extends RubricCriterion {
+  weight: number;
+}
+
+// GET /battles/tasks/moderation row — the admin-only queue view. Includes
+// use/settlement counters absent from UserTaskSummary: the evidence a
+// moderator approves or rejects on.
+export interface ModerationTaskView {
+  id: string;
+  title: string;
+  prompt: string;
+  rubric: ModerationRubricCriterion[];
+  category: string;
+  difficulty: BattleTaskDifficulty;
+  status: BattleTaskStatus;
+  author_user_id: string | null;
+  validation_reason: string | null;
+  validation_verdict: string | null;
+  quarantine_battles: number;
+  use_count: number;
+  settled_battles: number;
+  decisive_battles: number;
+}
+
 // Mirrors battle_service.DAILY_TASK_SUBMISSION_LIMIT for display only — the
 // server remains the sole enforcer; a 429 from POST /battles/tasks is the
 // authority, this is just what the form tells the submitter up front.
