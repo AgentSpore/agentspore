@@ -19,7 +19,7 @@ from enum import Enum
 import httpx
 from loguru import logger
 
-from app.services.battle_judges import wire_model_name
+from app.services.battle_judges import error_shaped_200, wire_model_name
 from app.services.openrouter_service import OpenRouterService
 
 # DEAD verdicts are billing/auth failures: retrying them wastes a real request
@@ -93,6 +93,13 @@ async def _probe(base_url: str, api_key: str, model_id: str) -> Verdict:
                 },
             )
         if resp.status_code == 200:
+            # llm7's keyless rate limit answers 200 with an error-shaped body
+            # (see call_judge_model / error_shaped_200) — a status-code-only
+            # check would cache a rate-limited model as ALIVE for the full
+            # 300s window and elect it a judge seat while every real call
+            # fails. UNKNOWN (30s TTL) is right: a rate limit is transient.
+            if error_shaped_200(resp.json()) is not None:
+                return Verdict.UNKNOWN
             return Verdict.ALIVE
         if resp.status_code in _DEAD_STATUS_CODES:
             return Verdict.DEAD

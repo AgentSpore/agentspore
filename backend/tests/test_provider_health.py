@@ -44,9 +44,10 @@ def _patch_settings(settings: Settings):
         yield
 
 
-def _resp(status_code: int) -> MagicMock:
+def _resp(status_code: int, body: dict | None = None) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status_code
+    resp.json = MagicMock(return_value=body if body is not None else {"choices": [{}]})
     return resp
 
 
@@ -216,6 +217,36 @@ async def test_billing_failure_is_cached_as_dead_not_unknown():
 
     entry = provider_health._cache["mistral/mistral-small-latest"]
     assert entry.verdict is Verdict.DEAD
+
+
+@pytest.mark.asyncio
+async def test_200_shaped_rate_limit_is_unknown_not_alive():
+    """llm7's keyless rate limit answers HTTP 200 with an error body — the
+    exact shape call_judge_model was taught to detect. _probe must classify
+    it UNKNOWN (transient, 30s TTL), not ALIVE (300s TTL): caching a rate-
+    limited model as alive elects it primary judge seat for five minutes
+    while every real call raises JudgeTransportError (review finding 2).
+    """
+    settings = _settings(mistral_api_key="m-key", zai_api_key="z-key")
+    rate_limited = _resp(
+        200, body={"error": {"message": "Rate limit exceeded. Retry after 1 seconds."}}
+    )
+    get_mock = AsyncMock(side_effect=[rate_limited, _resp(200)])
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.post = get_mock
+
+    with _patch_settings(settings), patch("httpx.AsyncClient", return_value=client):
+        chosen = await pick_live_model(
+            ["mistral/mistral-small-latest", "zai/glm-4.5-flash"]
+        )
+
+    assert chosen == "zai/glm-4.5-flash"
+    entry = provider_health._cache["mistral/mistral-small-latest"]
+    assert entry.verdict is Verdict.UNKNOWN
+    ttl_remaining = entry.expires_at - time.time()
+    assert ttl_remaining < 60  # UNKNOWN's 30s TTL, not ALIVE's 300s
 
 
 @pytest.mark.asyncio

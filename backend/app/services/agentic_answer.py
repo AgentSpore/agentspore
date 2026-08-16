@@ -124,11 +124,18 @@ class AgenticAnswerRequest:
         battle_runner._answer_with_model. Without this an OpenRouter contender
         starts with no provider and voids every battle it enters, reported as
         "unreachable" rather than as the misconfiguration it is.
+
+        Branches on ``provider_base_url``, NOT on the key: a resolved keyless
+        provider (llm7, key_optional) has a real base_url and a legitimately
+        empty api_key, a state the old `key or fallback_key` idiom could not
+        express — it fell through and sent the CALLER's credential (a
+        different provider's key) to the resolved provider's host. Only the
+        genuinely unresolved case (base_url empty, as resolve_provider()
+        returns for OpenRouter) falls back to the caller's own pair.
         """
-        return (
-            self.provider_base_url or self.fallback_base_url,
-            self.provider_api_key or self.fallback_api_key,
-        )
+        if self.provider_base_url:
+            return (self.provider_base_url, self.provider_api_key)
+        return (self.fallback_base_url, self.fallback_api_key)
 
 
 @dataclass(frozen=True)
