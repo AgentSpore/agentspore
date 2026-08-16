@@ -166,20 +166,24 @@ class Settings(BaseSettings):
     # six-model roster — the exact single-provider outage the INVARIANT above
     # warns about. llm7 needs no key/signup/payment and was verified live
     # (strict-JSON judge contract) from the same host, so it becomes the second
-    # provider. The mistral entries stay listed: a billing top-up brings them
-    # back with no code change, and seatable_judges only drops what is actually
-    # fighting.
+    # provider.
+    #
+    # 2026-08-17: the five mistral ids are REMOVED, not kept for a future top-up.
+    # Keeping them cost real quorum: seatable_judges only drops models that are
+    # FIGHTING, so a 402-dead id stays seatable, and the panel spent one of its
+    # twelve per-battle attempts on each before a live judge could retry. Live
+    # battles settled on "no quorum: 2 valid of 3 required (1 errored)". A dead
+    # seat is not a free placeholder. Restoring them after a top-up is a one-line
+    # edit, and re-verifying with a COMPLETION (never a catalogue read) is the
+    # precondition for it either way.
+    # llm7/mistral-Nemo-Instruct-2407 is a DIFFERENT account (keyless llm7) and
+    # is unaffected by mistral's billing.
     battle_judge_models: list[str] = [
         "zai/glm-4.5-flash",
         "llm7/DeepSeek-V4-Flash-0731",
         "llm7/codestral-latest",
         "llm7/gemini-3.1-flash-lite",
         "llm7/mistral-Nemo-Instruct-2407",
-        "mistral/mistral-large-latest",
-        "mistral/magistral-small-latest",
-        "mistral/ministral-14b-latest",
-        "mistral/mistral-medium-2508",
-        "mistral/mistral-small-latest",
     ]
     battle_judge_owner_daily_call_limit: int = 60
     battle_judge_global_daily_call_limit: int = 10_000

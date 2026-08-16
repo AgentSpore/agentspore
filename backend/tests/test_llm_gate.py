@@ -345,3 +345,79 @@ async def test_an_unmeasured_provider_still_holds_a_cap(redis: Redis):
     assert await gate.try_acquire() is None
     for s in held:
         await gate.release(s)
+
+
+# -- minimum spacing between calls to one account ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_llm7_spaces_consecutive_calls_apart(redis: Redis):
+    """llm7's keyless limit is ~1 req/8s and is per-ACCOUNT, not per model.
+
+    Concurrency 1 bounds how many calls are in flight; it does NOT bound how
+    fast they follow one another, and the gate releases its slot the instant a
+    call returns. So the judge panel's fallback loop tried DeepSeek-V4, took a
+    429, and tried gemini-3.1-flash-lite IN THE SAME SECOND — 22:27:51 twice in
+    production, both 429, quorum lost.
+
+    MUTATION: drop the pace wait from acquire() and the elapsed gap collapses to
+    ~0, which is exactly the burst that produced the 429s.
+    """
+    gate = LLMGate(redis, lease_seconds=30).for_provider("llm7", min_interval_seconds=0.4)
+
+    first = await gate.acquire(wait_seconds=5.0)
+    await gate.release(first)
+
+    started = time.monotonic()
+    second = await gate.acquire(wait_seconds=5.0)
+    elapsed = time.monotonic() - started
+    await gate.release(second)
+
+    assert elapsed >= 0.35, (
+        f"consecutive llm7 calls were {elapsed:.3f}s apart — the account is "
+        "rate-limited per ACCOUNT, so back-to-back calls 429 each other"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pacing_is_per_account_not_global(redis: Redis):
+    """Two PACED providers must not share one queue of departure slots.
+
+    Each provider is a separate account with a separate rate limit, so llm7's
+    spacing must not delay a different paced account. Both gates are paced here
+    deliberately: an unpaced gate returns before it ever reads a pace key, so it
+    could not detect a mis-keyed marker at all.
+
+    MUTATION: key the marker on a constant instead of the account
+    (`self._pace_key = "llm_gate:global:pace"`) and this goes red — the second
+    provider inherits the first's queue and waits an interval it does not owe.
+    """
+    base = LLMGate(redis, lease_seconds=30)
+    llm7 = base.for_provider("llm7", min_interval_seconds=2.0)
+    other = base.for_provider("deepseek", min_interval_seconds=2.0)
+
+    # Two llm7 departures park ITS marker a full interval in the future.
+    await llm7.release(await llm7.acquire(wait_seconds=5.0))
+    await llm7.release(await llm7.acquire(wait_seconds=5.0))
+
+    # deepseek's own marker is untouched, so its first departure is immediate.
+    started = time.monotonic()
+    slot = await other.acquire(wait_seconds=5.0)
+    elapsed = time.monotonic() - started
+    await other.release(slot)
+
+    assert elapsed < 0.5, (
+        f"a different account waited {elapsed:.3f}s behind llm7's pace queue"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unpaced_provider_keeps_its_previous_speed(redis: Redis):
+    """Pacing is opt-in per provider: zai's measured 3-concurrent behaviour is
+    unchanged, so this fix cannot ship a throughput cut to a healthy account.
+    """
+    gate = LLMGate(redis, lease_seconds=30).for_provider("zai")
+    started = time.monotonic()
+    for _ in range(3):
+        await gate.release(await gate.acquire(wait_seconds=5.0))
+    assert time.monotonic() - started < 0.5

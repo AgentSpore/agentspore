@@ -1251,6 +1251,21 @@ async def client(session_maker):
     app.dependency_overrides.clear()
 
 
+@pytest_asyncio.fixture(loop_scope="module")
+async def restore_contender_roster(db_session):
+    """Re-enable everything this class retires.
+
+    engine/session_maker are module-scoped and nothing truncates between tests,
+    so a committed `enabled = FALSE` would leak into every test that runs after
+    this class — TestContenderSeed's `len(rows) >= 5` floor gets closer with
+    each one. Retiring a contender IS the behaviour under test, so the row must
+    be really disabled and really committed; the cleanup belongs here.
+    """
+    yield
+    await db_session.execute(text("UPDATE battle_contenders SET enabled = TRUE"))
+    await db_session.commit()
+
+
 class TestRetiredContenderNames:
     """V79 disabled eight dead contenders so the matchmaker stops drawing them.
 
@@ -1261,7 +1276,7 @@ class TestRetiredContenderNames:
     """
 
     async def test_roster_resolves_a_disabled_contender_name(
-        self, db_session
+        self, db_session, restore_contender_roster
     ) -> None:
         """MUTATION: put ``WHERE enabled = TRUE`` back into list_contenders and
         the disabled row drops out of the map, so its name resolves to nothing.
@@ -1294,7 +1309,7 @@ class TestRetiredContenderNames:
         )
 
     async def test_roster_route_returns_disabled_contenders_with_the_flag(
-        self, client, db_session
+        self, client, db_session, restore_contender_roster
     ) -> None:
         """The public route is what the frontend actually calls.
 

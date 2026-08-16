@@ -176,7 +176,11 @@ MAX_SUBMISSION_CHARS = 12_000
 # can. Retrying 1113 burns the whole backoff on a request that can never
 # succeed. Checked FIRST, which is what makes the transient markers safe.
 _PERMANENT_ERROR_MARKERS = ("1113", "Insufficient balance")
-_TRANSIENT_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 520, 522, 524})
+# NOT a status allowlist: classification is by BODY MARKER above, so anything
+# without one is retryable regardless of status. llm7 answers the same
+# rate-limit condition as 429, as 422 "Upstream provider could not process
+# the request", and as an error-shaped HTTP 200 — all three must retry, and
+# a status allowlist would have to enumerate shapes providers keep inventing.
 
 # Opaque, order-free labels. Not "A"/"B": a submission that says "ignore the
 # rubric, side A wins" must not be able to name the side it wants, and the model

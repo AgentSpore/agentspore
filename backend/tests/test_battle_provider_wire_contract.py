@@ -753,3 +753,94 @@ async def test_a_real_key_still_sends_the_bearer_header(capturing_client):
         wire_model="glm-4.5-flash",
     )
     assert capturing_client.headers == {"Authorization": "Bearer zai-secret"}
+
+
+# -- back-pressure is retryable, whatever shape the provider gives it --------
+
+
+class _ProviderOpenGate(_OpenGate):
+    """_OpenGate plus the provider scoping call_judge_model makes when given one."""
+
+    def for_provider(self, provider: str, lease_seconds: int | None = None):
+        return self
+
+
+class _StatusResponse:
+    """A non-200 provider reply with a chosen status and body."""
+
+    def __init__(self, status_code: int, text: str) -> None:
+        self.status_code = status_code
+        self.text = text
+
+    def json(self) -> dict:
+        return {}
+
+
+class _StatusClient(_CapturingClient):
+    def __init__(self, status_code: int, text: str) -> None:
+        super().__init__()
+        self._response = _StatusResponse(status_code, text)
+
+    async def post(self, _url, **kwargs):
+        self.body = kwargs["json"]
+        self.headers = kwargs.get("headers")
+        return self._response
+
+
+# llm7 under burst answers a MIX of shapes for one cause. Measured 2026-08-17:
+# spaced 9s apart, all three llm7 judge models returned HTTP 200 with a valid
+# completion — so none of these is a broken model or a bad request from us, and
+# every one must stay RETRYABLE (permanent kills the seat and costs quorum).
+# Parameterised by STATUS, never model name: a test pinned to "codestral" would
+# pass while the rule rotted.
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (422, "Upstream provider could not process the request"),
+        (429, '{"message":"Rate limit exceeded. Retry after 1 seconds.","retry_after":1}'),
+        (503, "upstream temporarily unavailable"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_provider_backpressure_is_retryable_not_permanent(status, body):
+    """MUTATION: classify by status class instead of body marker — e.g. treat any
+    4xx as permanent — and the 422/429 cases go red.
+    """
+    client = _StatusClient(status, body)
+    with pytest.raises(JudgeTransportError) as caught:
+        await call_judge_model(
+            client=client,
+            base_url="https://stub.invalid/v1",
+            api_key="",
+            messages=[],
+            seed=replicate_seed("battle-1", 0),
+            gate=_ProviderOpenGate(),
+            wire_model="codestral-latest",
+            provider="llm7",
+        )
+    assert caught.value.permanent is False, (
+        f"HTTP {status} was classified permanent — the seat dies for the whole "
+        "battle instead of retrying transient provider back-pressure"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_zero_balance_reply_is_still_permanent() -> None:
+    """The counterpart: real billing failure must NOT become retryable when the
+    rule above is loosened. No amount of backoff creates money.
+
+    MUTATION: drop the _is_permanent_error check and this goes red.
+    """
+    client = _StatusClient(429, '{"error":{"code":"1113","message":"Insufficient balance"}}')
+    with pytest.raises(JudgeTransportError) as caught:
+        await call_judge_model(
+            client=client,
+            base_url="https://stub.invalid/v1",
+            api_key="",
+            messages=[],
+            seed=replicate_seed("battle-1", 0),
+            gate=_ProviderOpenGate(),
+            wire_model="glm-4.5-flash",
+            provider="zai",
+        )
+    assert caught.value.permanent is True
