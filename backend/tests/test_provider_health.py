@@ -220,6 +220,28 @@ async def test_billing_failure_is_cached_as_dead_not_unknown():
 
 
 @pytest.mark.asyncio
+async def test_probe_sends_no_authorization_header_for_a_blank_key():
+    """_probe builds its OWN headers dict — a separate call site from
+    call_judge_model that needed the same fix independently, or a keyless
+    provider (llm7) can never be probed at all (h11 rejects `Bearer `)."""
+    captured_kwargs: dict = {}
+
+    async def _post(_url, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _resp(200)
+
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.post = _post
+
+    with patch("httpx.AsyncClient", return_value=client):
+        await provider_health._probe("https://api.llm7.io/v1", "", "llm7/DeepSeek-V4-Flash-0731")
+
+    assert "Authorization" not in captured_kwargs["headers"]
+
+
+@pytest.mark.asyncio
 async def test_200_shaped_rate_limit_is_unknown_not_alive():
     """llm7's keyless rate limit answers HTTP 200 with an error body — the
     exact shape call_judge_model was taught to detect. _probe must classify
