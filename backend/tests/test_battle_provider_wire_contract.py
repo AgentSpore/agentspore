@@ -21,6 +21,7 @@ from app.services.battle_judges import (
     JUDGE_HTTP_TIMEOUT_SECONDS,
     JUDGE_MODEL,
     JUDGE_TEMPERATURE,
+    JudgeTransportError,
     call_judge_model,
     judge_temperature_for,
     replicate_seed,
@@ -100,6 +101,13 @@ def test_the_platform_model_id_is_prefixed_and_its_wire_name_is_not():
     assert "/" not in wire_model_name(JUDGE_MODEL)
 
 
+def test_wire_model_name_keeps_a_colon_in_the_catalogue_id():
+    """llm7 ids can carry a colon (gpt-oss:20b): only the FIRST '/' is the
+    provider-prefix separator, so rsplit('/', 1) must not touch it."""
+    assert wire_model_name("llm7/gpt-oss:20b") == "gpt-oss:20b"
+    assert wire_model_name("llm7/DeepSeek-V4-Flash-0731") == "DeepSeek-V4-Flash-0731"
+
+
 @pytest.mark.asyncio
 async def test_validator_sends_the_wire_name_not_the_platform_id(
     monkeypatch, capturing_client
@@ -169,8 +177,12 @@ def test_roster_primary_carries_a_platform_id_and_a_bare_wire_name(runner):
     This is the seam the 1211 came through: ``JudgeModel`` documents the two
     fields as different things, and the roster used to fill both with the same
     prefixed id — so the type looked correct while the request was not.
+
+    Only the primary (roster[0]) is asserted on: since llm7 needs no key,
+    settings.battle_judge_models now resolves several extra entries in this
+    real-service test, not just the primary.
     """
-    (primary,) = runner._resolve_judge_roster("https://stub.invalid/v1", "unused")
+    primary = runner._resolve_judge_roster("https://stub.invalid/v1", "unused")[0]
 
     assert "/" in primary.model_id
     assert primary.model_id == JUDGE_MODEL
@@ -542,3 +554,52 @@ async def test_a_call_with_no_provider_keeps_the_gate_it_was_given(capturing_cli
         wire_model="glm-4.5-flash",
     )
     assert gate.scoped_to == []
+
+
+# -- an HTTP-200 body that is actually a rate-limit error (llm7) -------------
+#
+# llm7's keyless rate limit (~1 req/8s) returns HTTP 200 with an error-shaped
+# JSON body instead of a 429: {"error": {"message": "Rate limit exceeded. Retry
+# after 1 seconds."}}. call_judge_model's 200 branch reads
+# response.json()["choices"][0]["message"]["content"] unconditionally, so this
+# body raises an unhandled KeyError instead of JudgeTransportError — the one
+# exception type every caller (battle_runner's fallback loop, the reclaim loop)
+# knows how to retry. An uncaught KeyError crashes the judge run instead of
+# being treated as retryable.
+
+
+class _RateLimitedShapedResponse:
+    """llm7's real reply to a burst, reduced to its shape: HTTP 200, error body."""
+
+    status_code = 200
+    text = '{"error":{"message":"Rate limit exceeded. Retry after 1 seconds."}}'
+
+    @staticmethod
+    def json():
+        return {"error": {"message": "Rate limit exceeded. Retry after 1 seconds."}}
+
+
+class _RateLimitedClient(_CapturingClient):
+    async def post(self, _url, **kwargs):
+        self.body = kwargs["json"]
+        return _RateLimitedShapedResponse()
+
+
+@pytest.mark.asyncio
+async def test_a_200_shaped_rate_limit_error_is_retryable_not_a_crash():
+    """MUTATION: read content unconditionally on status_code == 200 (no 'error'
+    key check). This test raises KeyError instead of failing an assertion —
+    itself proof the current code has no seam to catch this shape.
+    """
+    with pytest.raises(JudgeTransportError) as exc_info:
+        await call_judge_model(
+            client=_RateLimitedClient(),
+            base_url="https://stub.invalid/v1",
+            api_key="",
+            messages=[],
+            seed=replicate_seed("battle-1", 0),
+            gate=_OpenGate(),
+            wire_model="DeepSeek-V4-Flash-0731",
+        )
+    assert exc_info.value.permanent is False
+    assert "Rate limit exceeded" in str(exc_info.value)

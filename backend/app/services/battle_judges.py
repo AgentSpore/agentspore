@@ -1273,7 +1273,17 @@ async def call_judge_model(
             )
 
             if response.status_code == 200:
-                return str(response.json()["choices"][0]["message"]["content"])
+                payload = response.json()
+                # llm7's keyless rate limit answers HTTP 200 with an error-shaped
+                # body ({"error": {"message": "Rate limit exceeded..."}}) instead
+                # of a 429. Unconditionally indexing "choices" would raise a bare
+                # KeyError here — a type no caller catches — instead of the
+                # retryable JudgeTransportError the reclaim loop and the
+                # fallback-model loop both know how to handle.
+                error = payload.get("error") if isinstance(payload, dict) else None
+                if error is not None:
+                    raise JudgeTransportError(f"HTTP 200 error body: {error}")
+                return str(payload["choices"][0]["message"]["content"])
 
             body = response.text[:500]
             last_error = f"HTTP {response.status_code}: {body}"

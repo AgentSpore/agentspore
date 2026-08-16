@@ -941,13 +941,17 @@ class TestDemoAnswerModelRouting:
         ]
         assert demo_calls, "the demo answer call happened at the wide budget"
         assert panel_calls, "the judge panel ran at the tight verdict budget"
-        assert all(
-            c.kwargs["wire_model"] == wire_model_name(JUDGE_MODEL) for c in panel_calls
-        ), "the judge panel runs on the primary judge model"
+        # The panel is a multi-model roster by design (Track 2 diversity,
+        # _resolve_judge_roster) — not every call runs the primary model, only
+        # the ones the roster actually assigned to it. Scoped to those.
+        primary_calls = [
+            c for c in panel_calls if c.kwargs["wire_model"] == wire_model_name(JUDGE_MODEL)
+        ]
+        assert primary_calls, "the primary judge model sits at least one seat"
         assert all(
             c.kwargs["temperature"] == judge_temperature_for(JUDGE_MODEL)
-            for c in panel_calls
-        ), "panel calls use the primary judge model's required temperature"
+            for c in primary_calls
+        ), "primary-model panel calls use its required temperature"
 
     async def test_demo_answer_timeout_is_generous_and_the_drive_outlasts_it(
         self,
