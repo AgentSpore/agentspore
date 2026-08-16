@@ -151,16 +151,22 @@ class Settings(BaseSettings):
     #
     # Each id below was verified live to complete a request AND to return strict
     # JSON, which is the judge contract.
+    # INVARIANT(judge-roster): keep more than one PROVIDER here. An all-mistral
+    # panel went silent on 2026-08-16 when that account hit 402 — zero verdicts
+    # for five days and 144 finished battles nobody judged, while the roster
+    # still looked healthy because every id in it was individually valid.
+    #
+    # zai/glm-4.5-flash was dropped 2026-08-10 for returning 429 on every
+    # completion; measured again 2026-08-16 from the production host it answers
+    # 200. A model verified once is not verified, and a single-provider panel
+    # turns one billing failure into a total outage.
     battle_judge_models: list[str] = [
+        "zai/glm-4.5-flash",
         "mistral/mistral-large-latest",
         "mistral/magistral-small-latest",
         "mistral/ministral-14b-latest",
         "mistral/mistral-medium-2508",
         "mistral/mistral-small-latest",
-        # zai/glm-4.5-flash removed 2026-08-10: measured from the production
-        # host it returns 429 in 0.8s on every completion, so its seat on the
-        # panel was never filled. Today's ledger confirms it — 613 judge calls
-        # across five mistral models and not one to zai.
     ]
     battle_judge_owner_daily_call_limit: int = 60
     battle_judge_global_daily_call_limit: int = 10_000

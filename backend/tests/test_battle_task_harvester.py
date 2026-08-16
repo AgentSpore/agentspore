@@ -25,7 +25,6 @@ from app.services.battle_task_harvester import (
 from app.services.battle_task_validator import (
     REASON_DUPLICATE_CONTENT,
     REASON_PROMPT_TOO_SHORT,
-    VALIDATION_MODEL,
     CheapFilterVerdict,
     ValidationTransportError,
     ValidationVerdict,
@@ -210,19 +209,22 @@ class TestHarvestPass:
     async def test_validator_provider_is_resolved_from_the_model_it_sends(self, harvester):
         """The base_url and the wire model name must come from the SAME id.
 
-        validate_with_llm sends VALIDATION_MODEL, so resolving the provider by
-        DRAFT_MODEL pairs one provider's endpoint with another's model name.
-        That stays silent while both ids share a prefix and becomes HTTP 400
-        'Invalid model' the moment they diverge, which is how it reached
-        production: the harvester drafted fine and every validation failed.
+        validate_with_llm now sends whichever model pick_live_model resolved,
+        so resolving the provider from anything else pairs one provider's
+        endpoint with another's model name. That stays silent while both ids
+        share a prefix and becomes HTTP 400 'Invalid model' the moment they
+        diverge, which is how it reached production originally.
         """
         harvester.run_validator = TaskHarvesterService.run_validator.__get__(harvester)
         seen: list[str] = []
-        # The two ids point at the same model today, which would make this test
-        # pass against the broken code too. Forcing them apart is what gives it
-        # teeth — and is exactly the state production was in.
+        # The picked id is deliberately NOT VALIDATION_MODEL, which would make
+        # this test pass against the broken code too. Forcing them apart is
+        # what gives it teeth.
         with (
-            patch("app.services.battle_task_harvester.DRAFT_MODEL", "other/draft-model"),
+            patch(
+                "app.services.battle_task_harvester.pick_live_model",
+                AsyncMock(return_value="other/picked-model"),
+            ),
             patch.object(
                 OpenRouterService,
                 "resolve_provider",
@@ -233,7 +235,7 @@ class TestHarvestPass:
                 _drafted_task(), duplicate_exists=False
             )
 
-        assert seen == [VALIDATION_MODEL]
+        assert seen == ["other/picked-model"]
         assert cheap.reason == "no_validation_provider"
         assert verdict is None
 
@@ -287,6 +289,10 @@ class TestHarvestPass:
                 return _Resp()
 
         with (
+            patch(
+                "app.services.battle_task_harvester.pick_live_model",
+                AsyncMock(return_value="zai/glm-4.5-flash"),
+            ),
             patch.object(
                 OpenRouterService,
                 "resolve_provider",

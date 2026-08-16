@@ -51,12 +51,26 @@ from app.services.battle_task_validator import (
     validate_with_llm,
 )
 from app.services.openrouter_service import OpenRouterService
+from app.services.provider_health import pick_live_model
 
-# Cheap, and answering: measured from the production host, zai/glm-4.5-flash
-# (the original choice) returns 429 in 0.8s on every call while this one
-# returns 200 in 0.7s. The first live harvester pass drafted nothing at all
-# because of it — the account is rate-limited, not the platform.
-DRAFT_MODEL = "mistral/mistral-small-latest"
+# Ordered candidates, cheapest/most-reliable first. A hardcoded single model
+# goes stale the moment its provider runs dry (mistral 402, zai 429 — both
+# happened within one week), so the caller no longer trusts DRAFT_MODEL alone:
+# `pick_live_model` probes this list and returns whichever answers. DRAFT_MODEL
+# stays as the head of the list — and the module's public default — because
+# other code may still import and log it.
+DRAFT_MODEL_CANDIDATES = (
+    "zai/glm-4.5-flash",
+    "mistral/mistral-small-latest",
+)
+DRAFT_MODEL = DRAFT_MODEL_CANDIDATES[0]
+
+# Same rationale as DRAFT_MODEL_CANDIDATES: probe zai first, fall back to the
+# current VALIDATION_MODEL rather than trust either as a permanent constant.
+VALIDATION_MODEL_CANDIDATES = (
+    "zai/glm-4.5-flash",
+    VALIDATION_MODEL,
+)
 DRAFT_TEMPERATURE = 0.3
 DRAFT_HTTP_TIMEOUT_SECONDS = 30.0
 # Sized for the longest task the prompt asks for, in the least token-dense
@@ -341,12 +355,12 @@ class TaskHarvesterService:
         if not cheap.passed:
             return cheap, None
 
-        # Resolve from VALIDATION_MODEL, not DRAFT_MODEL: validate_with_llm
-        # sends the former, so resolving the latter pairs one provider's
-        # base_url with another provider's model name. That mismatch is
-        # invisible while both ids share a prefix and becomes HTTP 400
-        # "Invalid model" the moment they diverge — as they did here.
-        provider = OpenRouterService().resolve_provider(VALIDATION_MODEL)
+        # Resolve creds and the model TOGETHER from the same liveness pick:
+        # validate_with_llm now sends whichever model this resolves, so a
+        # mismatched pair (one provider's base_url, another's model name) is
+        # no longer possible by construction.
+        model_id = await pick_live_model(list(VALIDATION_MODEL_CANDIDATES))
+        provider = OpenRouterService().resolve_provider(model_id)
         if provider is None:
             return CheapFilterVerdict(passed=False, reason="no_validation_provider"), None
 
@@ -369,6 +383,7 @@ class TaskHarvesterService:
                 category=draft["category"],
                 difficulty=draft["difficulty"],
                 time_limit_seconds=draft["time_limit_seconds"],
+                model=model_id,
             )
         finally:
             await self.settle_budget(reservation.ledger_id, succeeded=verdict is not None)
@@ -376,7 +391,8 @@ class TaskHarvesterService:
 
     async def draft_task(self, topic: dict[str, str]) -> dict[str, Any] | None:
         """One LLM call: turn a topic into a self-contained task, or None."""
-        provider = OpenRouterService().resolve_provider(DRAFT_MODEL)
+        model_id = await pick_live_model(list(DRAFT_MODEL_CANDIDATES))
+        provider = OpenRouterService().resolve_provider(model_id)
         if provider is None:
             return None
         language = _language_for(topic)
@@ -395,7 +411,7 @@ class TaskHarvesterService:
                     f"{provider['base_url'].rstrip('/')}/chat/completions",
                     headers={"Authorization": f"Bearer {provider['api_key']}"},
                     json={
-                        "model": wire_model_name(DRAFT_MODEL),
+                        "model": wire_model_name(model_id),
                         "messages": messages,
                         "temperature": DRAFT_TEMPERATURE,
                         "max_tokens": DRAFT_MAX_TOKENS,
