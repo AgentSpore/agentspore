@@ -289,7 +289,11 @@ class TaskHarvesterService:
 
     async def _process_topic(self, topic: dict[str, str]) -> str:
         """Draft one topic and insert it if it survives validation. Returns an outcome tag."""
-        reservation = await self.reserve_budget()
+        # Pick before reserving: the ledger row names the account that gets
+        # charged, so writing the static constant there while the request goes
+        # to the fallback would make the only record of the spend wrong.
+        model_id = await pick_live_model(list(DRAFT_MODEL_CANDIDATES))
+        reservation = await self.reserve_budget(model_id)
         if not reservation.granted:
             logger.warning("harvester: draft budget exhausted, stopping this pass")
             return "budget_exhausted"
@@ -299,7 +303,7 @@ class TaskHarvesterService:
         # does not swallow would otherwise strand the row 'reserved' forever.
         draft: dict[str, Any] | None = None
         try:
-            draft = await self.draft_task(topic)
+            draft = await self.draft_task(topic, model_id)
         finally:
             await self.settle_budget(reservation.ledger_id, succeeded=draft is not None)
         if draft is None:
@@ -368,7 +372,7 @@ class TaskHarvesterService:
         # unreserved it would spend against the daily cap without appearing in
         # the ledger, so the global counter would under-count real spend by
         # half — the submission path reserves this call for the same reason.
-        reservation = await self.reserve_budget()
+        reservation = await self.reserve_budget(model_id)
         if not reservation.granted:
             return CheapFilterVerdict(passed=False, reason="validation_budget_exhausted"), None
 
@@ -389,9 +393,12 @@ class TaskHarvesterService:
             await self.settle_budget(reservation.ledger_id, succeeded=verdict is not None)
         return cheap, verdict
 
-    async def draft_task(self, topic: dict[str, str]) -> dict[str, Any] | None:
+    async def draft_task(
+        self, topic: dict[str, str], model_id: str | None = None
+    ) -> dict[str, Any] | None:
         """One LLM call: turn a topic into a self-contained task, or None."""
-        model_id = await pick_live_model(list(DRAFT_MODEL_CANDIDATES))
+        if model_id is None:
+            model_id = await pick_live_model(list(DRAFT_MODEL_CANDIDATES))
         provider = OpenRouterService().resolve_provider(model_id)
         if provider is None:
             return None
@@ -454,7 +461,7 @@ class TaskHarvesterService:
             return None
         return parse_draft_response(raw)
 
-    async def reserve_budget(self) -> _Reservation:
+    async def reserve_budget(self, model: str | None = None) -> _Reservation:
         """Reserve one 'harvest' call unit, delegating to the one budget owner.
 
         BattleJudgeBudgetService owns every write to the judge-call ledger and
@@ -465,8 +472,9 @@ class TaskHarvesterService:
         read the budget day via ``date.today()`` rather than
         ``current_budget_day()`` — the split that once made the cap fall open.
         """
+        model_id = model or DRAFT_MODEL
         result = await self._budget.reserve_harvest_call(
-            provider=DRAFT_MODEL.split("/")[0], model=DRAFT_MODEL
+            provider=model_id.split("/")[0], model=model_id
         )
         return _Reservation(granted=result.granted, ledger_id=result.ledger_id)
 

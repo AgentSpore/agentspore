@@ -360,3 +360,25 @@ class TestHarvestPass:
         # call would also exhaust the side_effect list and raise StopIteration.
         assert harvester.reserve_budget.await_count == 2
         assert harvester.draft_task.await_count == 1
+
+
+class TestLedgerNamesTheModelActuallyUsed:
+    """The ledger row is the only record of which account was charged."""
+
+    @pytest.mark.asyncio
+    async def test_reservation_and_request_use_the_same_picked_model(
+        self, harvester, repo, source
+    ):
+        # zai is dead today, so the pick falls back to mistral. Reserving under
+        # the static constant would bill the ledger to zai for a call mistral
+        # served — the next outage investigation would read the wrong account.
+        picked = "mistral/mistral-small-latest"
+        with patch(
+            "app.services.battle_task_harvester.pick_live_model",
+            AsyncMock(return_value=picked),
+        ):
+            await harvester.harvest(pool_target=5, max_per_pass=1)
+
+        harvester.reserve_budget.assert_awaited()
+        assert harvester.reserve_budget.await_args.args[0] == picked
+        assert harvester.draft_task.await_args.args[1] == picked
