@@ -1821,7 +1821,10 @@ def _glm_dead_kimi_votes(**kwargs):
     return _vote_marker_side(**kwargs)
 
 
-_ROSTER_SECOND_MODEL = "zai/glm-4.5-flash"
+# Must differ from JUDGE_MODEL or the roster collapses to single-model and the
+# fallback path under test is never reached (the fixture below says so, and
+# this constant silently violated it the day JUDGE_MODEL moved to zai).
+_ROSTER_SECOND_MODEL = "llm7/codestral-latest"
 
 
 def _install_two_model_roster(monkeypatch) -> None:

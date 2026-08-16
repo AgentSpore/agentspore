@@ -33,6 +33,7 @@ from testcontainers.redis import RedisContainer
 
 from app.services.llm_gate import (
     DEFAULT_MAX_CONCURRENCY,
+    PROVIDER_MIN_INTERVAL_SECONDS,
     ZAI_ACCOUNT_KEY,
     ZAI_MAX_CONCURRENCY,
     GateSlot,
@@ -421,3 +422,71 @@ async def test_an_unpaced_provider_keeps_its_previous_speed(redis: Redis):
     for _ in range(3):
         await gate.release(await gate.acquire(wait_seconds=5.0))
     assert time.monotonic() - started < 0.5
+
+
+@pytest.mark.asyncio
+async def test_the_last_bounded_out_claimant_returns_its_departure(redis: Redis):
+    """A caller that gives up returns the departure it claimed, so the marker
+    does not walk forward while the account is idle.
+
+    Scoped to what the rollback can actually guarantee. It is a
+    compare-and-set on the exact value written, so it only rewinds the LAST
+    claim: an earlier claimant finds the marker already moved past its own value
+    and correctly declines to rewind, because rewinding would discard a claim a
+    later caller is still sleeping on. Under CONCURRENT claimants the marker can
+    therefore retain the intermediate claims — bounded by how many callers fit
+    the account's capacity, not unbounded.
+
+    On the paced provider in production (llm7, capacity 1) that residue cannot
+    arise at all: pacing runs while HOLDING the concurrency slot, so claims are
+    serialised and this rollback is the only one in play.
+
+    MUTATION: delete the _PACE_ROLLBACK_LUA call in _await_pace and the marker
+    keeps the abandoned departure, so the assertion below goes red.
+    """
+    interval = 2.0
+    gate = LLMGate(redis, lease_seconds=30).for_provider(
+        "deepseek", min_interval_seconds=interval
+    )
+    # First caller departs now and arms the marker one interval ahead.
+    await gate.release(await gate.acquire(wait_seconds=5.0))
+    armed = float(await redis.get(f"{gate._key}:pace"))
+
+    # Second caller cannot absorb the interval, so it must give the claim back.
+    with pytest.raises(LLMGateTimeoutError):
+        await gate.acquire(wait_seconds=0.2)
+
+    after = float(await redis.get(f"{gate._key}:pace"))
+    assert after == pytest.approx(armed, abs=0.01), (
+        f"marker moved {after - armed:.1f}s on a caller that never departed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_real_llm7_interval_is_what_production_uses(redis: Redis):
+    """Pinned to the production figure, not a test-only value: the other pacing
+    tests shrink the interval for speed, so nothing else would notice the table
+    being edited."""
+    assert PROVIDER_MIN_INTERVAL_SECONDS["llm7"] == 8.0
+    gate = LLMGate(redis, lease_seconds=30).for_provider("llm7")
+    await gate.release(await gate.acquire(wait_seconds=1.0))
+    started = time.monotonic()
+    with pytest.raises(LLMGateTimeoutError):
+        await gate.acquire(wait_seconds=1.0)
+    assert time.monotonic() - started < 1.5, "a bounded-out caller slept anyway"
+
+
+@pytest.mark.asyncio
+async def test_a_bounded_out_caller_leaves_no_slot_held(redis: Redis):
+    """Pacing runs while HOLDING the concurrency slot, so the timeout path must
+    release it — otherwise one bounded-out caller parks a capacity-1 account.
+
+    MUTATION: drop the `await self.release(slot)` in acquire's except branch and
+    in_flight stays 1 with nobody running.
+    """
+    gate = LLMGate(redis, lease_seconds=30).for_provider("llm7")
+    with pytest.raises(LLMGateTimeoutError):
+        # First call departs immediately and arms the marker; second cannot fit.
+        await gate.release(await gate.acquire(wait_seconds=1.0))
+        await gate.acquire(wait_seconds=1.0)
+    assert await gate.in_flight() == 0, "a bounded-out caller kept its slot"

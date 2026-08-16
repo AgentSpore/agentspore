@@ -443,14 +443,16 @@ class _StrictMistralClient(_CapturingClient):
 def test_the_seed_field_is_resolved_per_provider():
     """Mistral's key is `random_seed`; everyone else keeps the OpenAI name.
 
-    JUDGE_MODEL is itself a mistral model now, so it is asserted alongside its
-    siblings rather than as the "everyone else" example — GLM (zai) plays that
-    role instead.
+    Asserted against provider ids directly rather than through JUDGE_MODEL: the
+    rule is a property of the PROVIDER, and pinning it to whichever model is
+    currently primary made this test fail the day that constant moved off
+    mistral, which said nothing about the rule it is meant to protect.
     """
     assert seed_field_for("mistral/mistral-small-latest") == "random_seed"
     assert seed_field_for("mistral/mistral-medium-2508") == "random_seed"
-    assert seed_field_for(JUDGE_MODEL) == "random_seed"
+    assert seed_field_for("mistral/mistral-large-latest") == "random_seed"
     assert seed_field_for("zai/glm-4.5-flash") == "seed"
+    assert seed_field_for("llm7/codestral-latest") == "seed"
 
 
 @pytest.mark.asyncio

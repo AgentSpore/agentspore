@@ -106,6 +106,11 @@ PROVIDER_MIN_INTERVAL_SECONDS: dict[str, float] = {
 _PACE_KEY_TTL_SECONDS = 60
 
 
+def _as_text(value: Any) -> str:
+    """Lua strings arrive as bytes from redis-py; compare and resend as text."""
+    return value.decode() if isinstance(value, bytes) else str(value)
+
+
 def provider_min_interval(provider: str) -> float:
     """Seconds an account requires between departures. 0.0 = unpaced."""
     return PROVIDER_MIN_INTERVAL_SECONDS.get(provider.strip().lower(), 0.0)
@@ -187,15 +192,47 @@ return 0
 # would compute the same instant and depart together, re-creating the burst
 # across processes. INCR gives N callers N distinct slots.
 #
-# KEYS[1] = pace key. ARGV = now, min interval, key ttl.
+# ``now`` comes from redis.call('TIME'), never from the caller: the marker is an
+# absolute instant compared across workers, and each worker's own time.time()
+# carries its host's clock skew. A worker 5s fast would push the marker 5s ahead
+# of everyone else's frame; one 5s slow would read nxt < now and depart at once,
+# collapsing the spacing. Redis is the one clock all workers already share.
+#
+# The TTL tracks the furthest promised departure rather than a flat constant: a
+# deep queue can push the VALUE minutes ahead, and a key that expired while the
+# instant it held was still in the future would let the next arrival read 0 and
+# depart alongside callers still sleeping on earlier claims — the same-second
+# burst this exists to prevent.
+#
+# KEYS[1] = pace key. ARGV = min interval, minimum ttl.
 # Returns milliseconds to wait before departing (0 = go now).
 _PACE_LUA = """
-local now = tonumber(ARGV[1])
-local interval = tonumber(ARGV[2])
+local t = redis.call('TIME')
+local now = tonumber(t[1]) + tonumber(t[2]) / 1000000
+local interval = tonumber(ARGV[1])
 local nxt = tonumber(redis.call('GET', KEYS[1]) or '0')
 if nxt < now then nxt = now end
-redis.call('SET', KEYS[1], nxt + interval, 'EX', tonumber(ARGV[3]))
-return math.floor((nxt - now) * 1000)
+local departs_at = nxt + interval
+local ttl = math.ceil(departs_at - now) + tonumber(ARGV[2])
+redis.call('SET', KEYS[1], departs_at, 'EX', ttl)
+-- wait_ms, the value written (to roll back), the value it replaced (to restore)
+return {math.floor((nxt - now) * 1000),
+        tostring(redis.call('GET', KEYS[1])),
+        tostring(nxt)}
+"""
+
+# Roll back a claim this caller will not use: only if the marker is still the
+# exact value we wrote, so a later claimant that already moved it past ours is
+# never rewound. Without this, every caller that times out leaves its departure
+# consumed and ratchets the marker further forward while the account sits idle.
+#
+# KEYS[1] = pace key. ARGV = the value we wrote, the value to restore, ttl.
+_PACE_ROLLBACK_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    redis.call('SET', KEYS[1], ARGV[2], 'EX', tonumber(ARGV[3]))
+    return 1
+end
+return 0
 """
 
 # Release: drop THIS token only.
@@ -345,10 +382,20 @@ class LLMGate:
         same caller can starve indefinitely while the account stays busy.
         """
         deadline = time.time() + wait_seconds
-        await self._await_pace(deadline)
         while True:
             slot = await self.try_acquire()
             if slot is not None:
+                # Pace AFTER the slot, not before: a caller that paced first
+                # could burn its whole budget waiting for a departure and then
+                # still fail to get a slot, having consumed a departure nobody
+                # used. Holding the slot while pacing also makes the interval do
+                # double duty as the account's real spacing — nothing else can
+                # depart on a capacity-1 account while we hold it.
+                try:
+                    await self._await_pace(deadline)
+                except LLMGateTimeoutError:
+                    await self.release(slot)
+                    raise
                 return slot
             if time.time() >= deadline:
                 raise LLMGateTimeoutError(
@@ -364,27 +411,33 @@ class LLMGate:
         Claims the slot BEFORE waiting on it, so two workers get two different
         departure times instead of both reading the same one.
 
-        A claim past ``deadline`` raises rather than sleeping: the bounded wait
-        is what stops a coroutine outliving the row lease it works for, so this
-        raises the timeout a saturated account raises and the run stays
-        'pending' for the reconciler.
+        A claim past ``deadline`` is rolled back and raises: the bounded wait is
+        what stops a coroutine outliving the row lease it works for. The
+        rollback is what keeps repeated timeouts from ratcheting the marker ever
+        further forward while the account sits idle — each caller that will not
+        depart returns the departure it claimed.
         """
         if self._min_interval <= 0:
             return
-        wait_ms = int(
+        wait_ms, claimed, previous = await self._eval(
+            _PACE_LUA,
+            1,
+            self._pace_key,
+            str(self._min_interval),
+            str(_PACE_KEY_TTL_SECONDS),
+        )
+        wait_seconds = int(wait_ms) / 1000.0
+        if wait_seconds <= 0:
+            return
+        if time.time() + wait_seconds > deadline:
             await self._eval(
-                _PACE_LUA,
+                _PACE_ROLLBACK_LUA,
                 1,
                 self._pace_key,
-                str(time.time()),
-                str(self._min_interval),
+                _as_text(claimed),
+                _as_text(previous),
                 str(_PACE_KEY_TTL_SECONDS),
             )
-        )
-        if wait_ms <= 0:
-            return
-        wait_seconds = wait_ms / 1000.0
-        if time.time() + wait_seconds > deadline:
             raise LLMGateTimeoutError(
                 f"pace wait {wait_seconds:.1f}s on {self._key} exceeds the "
                 f"caller's remaining budget (min interval {self._min_interval}s)"
