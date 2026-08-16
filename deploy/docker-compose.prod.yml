@@ -166,6 +166,7 @@ services:
       CLOUDFLARE_API_KEY: "${CLOUDFLARE_API_KEY:-}"
       CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID:-}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      LLM7_API_KEY: "${LLM7_API_KEY:-}"
     dns:
       - 8.8.8.8
       - 1.1.1.1

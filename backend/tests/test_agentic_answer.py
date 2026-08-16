@@ -182,6 +182,34 @@ async def test_openrouter_contender_uses_fallback_creds_when_provider_empty(monk
 
 
 @pytest.mark.asyncio
+async def test_keyless_provider_never_borrows_the_fallback_credential(monkeypatch):
+    """llm7 resolves with a real base_url and a legitimately EMPTY api_key
+    (key_optional). The `or` idiom that is correct for the OpenRouter case
+    (both fields empty) is WRONG here: it would fall through to the caller's
+    own judge/platform credential and send it to api.llm7.io, an unrelated
+    third-party host (CRITICAL finding 1).
+    """
+    starts: list[dict] = []
+    events = [{"type": "done", "reply": "ok", "tool_calls": [], "thinking": None}]
+    transport = httpx.MockTransport(_handler(events, [], [], starts))
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=transport))
+
+    async def on_step(step: AgentStep) -> None:
+        pass
+
+    request = _request(
+        provider_base_url="https://api.llm7.io/v1",
+        provider_api_key="",
+        fallback_api_key="pk-platform-judge-key",
+    )
+    await run_agentic_answer(request, on_step)
+
+    assert starts[0]["provider_base_url"] == "https://api.llm7.io/v1"
+    assert starts[0]["provider_api_key"] == ""
+    assert starts[0]["provider_api_key"] != "pk-platform-judge-key"
+
+
+@pytest.mark.asyncio
 async def test_soft_deadline_never_puts_the_marker_string_in_content(monkeypatch):
     """A stream that never sends 'done' before the soft deadline still leaves
     every step already persisted, plus one synthetic timed_out step whose

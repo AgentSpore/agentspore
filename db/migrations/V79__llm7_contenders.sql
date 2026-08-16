@@ -15,6 +15,22 @@
 -- under the judge-style prompt; two more (gpt-oss:20b, minimax-m2.7) returned
 -- finish_reason='length' with empty/truncated content at the same token cap
 -- and are deliberately NOT seeded here.
+--
+-- execution_mode is deliberately left at its DDL default ('model'), NOT
+-- 'agent' as V77 set for its mistral rows. llm7's keyless rate limit is
+-- ~1 req/8s; a 12-step agentic drive would spend most of that budget on tool
+-- calls that never reach a gradeable final answer. These four rows judge on
+-- the final answer only, same as any model-mode vs model-mode pairing.
+-- Consequence for Elo comparability: a battle that draws the agentic zai
+-- contender against one of these already judges final-answer-only for BOTH
+-- sides (battle_runner._build_judge_view falls back unless BOTH sides are
+-- agentic), so these rows do not create a new judging regime — they simply
+-- never trigger the path-view branch themselves.
+--
+-- Disabling a contender (below) only stops future matchmaker draws — a battle
+-- already holding one of these ids keeps it via get_contender, which reads by
+-- id regardless of `enabled` (battle_repo.py) so an in-flight battle can
+-- still finish and settle its Elo normally.
 
 -- ---------------------------------------------------------------------------
 -- Retire every mistral contender: the account now returns 402 on every call,

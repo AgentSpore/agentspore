@@ -101,11 +101,19 @@ def test_the_platform_model_id_is_prefixed_and_its_wire_name_is_not():
     assert "/" not in wire_model_name(JUDGE_MODEL)
 
 
-def test_wire_model_name_keeps_a_colon_in_the_catalogue_id():
-    """llm7 ids can carry a colon (gpt-oss:20b): only the FIRST '/' is the
-    provider-prefix separator, so rsplit('/', 1) must not touch it."""
-    assert wire_model_name("llm7/gpt-oss:20b") == "gpt-oss:20b"
-    assert wire_model_name("llm7/DeepSeek-V4-Flash-0731") == "DeepSeek-V4-Flash-0731"
+def test_wire_model_name_strips_only_the_platform_prefix_from_static_models():
+    """wire_model_name splits on the LAST '/' (rsplit('/', 1)) — the provider
+    prefix is everything BEFORE that split point. Asserted over the actual
+    llm7 static_models (openrouter_service.py), none of which carry a colon:
+    gpt-oss:20b was deliberately excluded from that list (finish_reason=
+    'length', empty content at the judging token cap) and must not be pinned
+    here as if it were a live id."""
+    for model_id in openrouter_service.OpenRouterService.EXTRA_PROVIDERS["llm7"][
+        "static_models"
+    ]:
+        platform_id = f"llm7/{model_id}"
+        assert wire_model_name(platform_id) == model_id
+        assert "/" not in wire_model_name(platform_id)
 
 
 @pytest.mark.asyncio
@@ -603,3 +611,82 @@ async def test_a_200_shaped_rate_limit_error_is_retryable_not_a_crash():
         )
     assert exc_info.value.permanent is False
     assert "Rate limit exceeded" in str(exc_info.value)
+
+
+class _BenignErrorKeyResponse:
+    """A REAL completion that also happens to carry a benign 'error': null/{}
+    alongside real choices — must NOT be discarded as transient (review
+    finding 5: the guard must key on absence of a completion, not presence of
+    an 'error' key)."""
+
+    status_code = 200
+    text = "unused"
+
+    @staticmethod
+    def json():
+        return {
+            # Non-null but empty — a provider that always includes this key.
+            # The old guard (`error is not None`) would discard this as
+            # transient even though a real completion sits right next to it.
+            "error": {},
+            "choices": [{"message": {"content": "a real answer"}}],
+        }
+
+
+class _BenignErrorClient(_CapturingClient):
+    async def post(self, _url, **kwargs):
+        self.body = kwargs["json"]
+        return _BenignErrorKeyResponse()
+
+
+@pytest.mark.asyncio
+async def test_a_benign_error_key_alongside_real_choices_is_not_discarded():
+    """MUTATION: guard on `payload.get("error") is not None` (the old,
+    over-broad check) instead of gating on the ABSENCE of choices. Against
+    this payload — a non-null empty "error" beside a real completion — the
+    old guard fires and discards a valid answer as transient; the positive
+    signal (`not payload.get("choices")`) does not.
+    """
+    answer = await call_judge_model(
+        client=_BenignErrorClient(),
+        base_url="https://stub.invalid/v1",
+        api_key="",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=_OpenGate(),
+        wire_model="DeepSeek-V4-Flash-0731",
+    )
+    assert answer == "a real answer"
+
+
+class _PermanentErrorShapedResponse:
+    """A 200-shaped body carrying a genuine balance/auth failure, not a rate
+    limit — must be classified permanent so it is never retried forever."""
+
+    status_code = 200
+    text = "unused"
+
+    @staticmethod
+    def json():
+        return {"error": {"message": "Insufficient balance", "code": "1113"}}
+
+
+class _PermanentErrorClient(_CapturingClient):
+    async def post(self, _url, **kwargs):
+        self.body = kwargs["json"]
+        return _PermanentErrorShapedResponse()
+
+
+@pytest.mark.asyncio
+async def test_a_permanent_error_in_a_200_body_is_never_retried():
+    with pytest.raises(JudgeTransportError) as exc_info:
+        await call_judge_model(
+            client=_PermanentErrorClient(),
+            base_url="https://stub.invalid/v1",
+            api_key="",
+            messages=[],
+            seed=replicate_seed("battle-1", 0),
+            gate=_OpenGate(),
+            wire_model="DeepSeek-V4-Flash-0731",
+        )
+    assert exc_info.value.permanent is True

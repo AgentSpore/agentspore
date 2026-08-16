@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
+from app.core.config import get_settings
 from app.core.rating import DEFAULT_ELO
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.battle_repo import BattleRepository
@@ -942,16 +943,22 @@ class TestDemoAnswerModelRouting:
         assert demo_calls, "the demo answer call happened at the wide budget"
         assert panel_calls, "the judge panel ran at the tight verdict budget"
         # The panel is a multi-model roster by design (Track 2 diversity,
-        # _resolve_judge_roster) — not every call runs the primary model, only
-        # the ones the roster actually assigned to it. Scoped to those.
+        # _resolve_judge_roster), so calls run several DIFFERENT models, each
+        # with its OWN required temperature (JUDGE_MODEL_TEMPERATURE_OVERRIDES
+        # exists because a wrong temperature is a measured behaviour failure —
+        # review finding 6). Every call's wire_model resolves back to a
+        # platform id via the real roster; assert against THAT model's
+        # temperature, not the primary's alone.
+        wire_to_model = {wire_model_name(m): m for m in get_settings().battle_judge_models}
         primary_calls = [
             c for c in panel_calls if c.kwargs["wire_model"] == wire_model_name(JUDGE_MODEL)
         ]
         assert primary_calls, "the primary judge model sits at least one seat"
-        assert all(
-            c.kwargs["temperature"] == judge_temperature_for(JUDGE_MODEL)
-            for c in primary_calls
-        ), "primary-model panel calls use its required temperature"
+        for c in panel_calls:
+            model_id = wire_to_model[c.kwargs["wire_model"]]
+            assert c.kwargs["temperature"] == judge_temperature_for(model_id), (
+                f"panel call to {model_id} used the wrong temperature"
+            )
 
     async def test_demo_answer_timeout_is_generous_and_the_drive_outlasts_it(
         self,
