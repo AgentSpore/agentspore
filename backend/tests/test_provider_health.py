@@ -7,6 +7,7 @@ asymmetry, and the TTL cache.
 
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -63,7 +64,7 @@ async def test_dead_candidate_falls_through_to_second():
     client = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
-    client.get = get_mock
+    client.post = get_mock
 
     with _patch_settings(settings), patch("httpx.AsyncClient", return_value=client):
         chosen = await pick_live_model(
@@ -81,7 +82,7 @@ async def test_missing_api_key_skipped_without_network_call():
     client = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
-    client.get = get_mock
+    client.post = get_mock
 
     with _patch_settings(settings), patch("httpx.AsyncClient", return_value=client):
         chosen = await pick_live_model(
@@ -95,16 +96,27 @@ async def test_missing_api_key_skipped_without_network_call():
 
 @pytest.mark.asyncio
 async def test_alive_verdict_cached_within_ttl_no_second_probe():
-    settings = _settings(mistral_api_key="m-key")
+    # BOTH keys set: with zai unconfigured it is skipped without a probe, so
+    # dropping the cached-ALIVE return would still land on mistral via the
+    # fallback and the mutation would stay invisible.
+    settings = _settings(mistral_api_key="m-key", zai_api_key="z-key")
     get_mock = AsyncMock(return_value=_resp(200))
     client = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
-    client.get = get_mock
+    client.post = get_mock
 
+    # Two candidates, not one: with a single candidate the fallback returns the
+    # same string even when the cached-ALIVE branch is deleted, so the test
+    # would pass with the guard gone. With two, dropping that branch skips the
+    # cached-alive first candidate and probes the second instead.
     with _patch_settings(settings), patch("httpx.AsyncClient", return_value=client):
-        first = await pick_live_model(["mistral/mistral-small-latest"])
-        second = await pick_live_model(["mistral/mistral-small-latest"])
+        first = await pick_live_model(
+            ["mistral/mistral-small-latest", "zai/glm-4.5-flash"]
+        )
+        second = await pick_live_model(
+            ["mistral/mistral-small-latest", "zai/glm-4.5-flash"]
+        )
 
     assert first == second == "mistral/mistral-small-latest"
     assert get_mock.call_count == 1
@@ -117,7 +129,7 @@ async def test_all_dead_returns_first_candidate_and_logs_warning():
     client = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
-    client.get = get_mock
+    client.post = get_mock
 
     with (
         _patch_settings(settings),
@@ -141,7 +153,7 @@ async def test_network_timeout_does_not_permanently_blacklist():
 
     # First call: timeout (UNKNOWN, short TTL). Second call, after the UNKNOWN
     # TTL has elapsed: the provider answers 200.
-    client.get = AsyncMock(side_effect=httpx.ConnectTimeout("timed out"))
+    client.post = AsyncMock(side_effect=httpx.ConnectTimeout("timed out"))
     with _patch_settings(settings), patch("httpx.AsyncClient", return_value=client):
         first = await pick_live_model(["mistral/mistral-small-latest"])
     assert first == "mistral/mistral-small-latest"  # sole candidate, fallback path
@@ -151,7 +163,7 @@ async def test_network_timeout_does_not_permanently_blacklist():
     provider_health._cache["mistral/mistral-small-latest"] = provider_health._CacheEntry(
         verdict=Verdict.UNKNOWN, expires_at=0.0
     )
-    client.get = AsyncMock(return_value=_resp(200))
+    client.post = AsyncMock(return_value=_resp(200))
     with _patch_settings(settings), patch("httpx.AsyncClient", return_value=client):
         second = await pick_live_model(["mistral/mistral-small-latest"])
     assert second == "mistral/mistral-small-latest"
@@ -169,7 +181,7 @@ async def test_mutation_ttl_ignored_would_fail_cache_test(monkeypatch):
     client = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
-    client.get = get_mock
+    client.post = get_mock
 
     # Simulate the guard's absence: force _cached_verdict to always miss.
     monkeypatch.setattr(provider_health, "_cached_verdict", lambda model_id: None)
@@ -197,10 +209,39 @@ async def test_billing_failure_is_cached_as_dead_not_unknown():
     client = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
-    client.get = get_mock
+    client.post = get_mock
 
     with _patch_settings(settings), patch("httpx.AsyncClient", return_value=client):
         await pick_live_model(["mistral/mistral-small-latest", "zai/glm-4.5-flash"])
 
     entry = provider_health._cache["mistral/mistral-small-latest"]
     assert entry.verdict is Verdict.DEAD
+
+
+@pytest.mark.asyncio
+async def test_dead_is_cached_far_longer_than_unknown():
+    """The three TTL constants exist for this ratio; assert it directly.
+
+    Nothing else measures it: the timeout test overwrites the cache entry by
+    hand, so it proves expiry handling, not the durations. Collapsing the
+    TTLs to one value would ship green — and then a billing failure gets
+    re-probed every 30s, spending real requests on an account out of credit.
+    """
+    settings = _settings(mistral_api_key="m-key")
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+
+    client.post = AsyncMock(return_value=_resp(402))
+    with _patch_settings(settings), patch("httpx.AsyncClient", return_value=client):
+        await pick_live_model(["mistral/mistral-small-latest"])
+    dead_ttl = provider_health._cache["mistral/mistral-small-latest"].expires_at - time.time()
+
+    provider_health._cache.clear()
+    client.post = AsyncMock(side_effect=httpx.ConnectTimeout("timed out"))
+    with _patch_settings(settings), patch("httpx.AsyncClient", return_value=client):
+        await pick_live_model(["mistral/mistral-small-latest"])
+    unknown_ttl = provider_health._cache["mistral/mistral-small-latest"].expires_at - time.time()
+
+    assert dead_ttl > unknown_ttl * 2
+    assert unknown_ttl < 60

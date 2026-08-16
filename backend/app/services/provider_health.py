@@ -19,6 +19,7 @@ from enum import Enum
 import httpx
 from loguru import logger
 
+from app.services.battle_judges import wire_model_name
 from app.services.openrouter_service import OpenRouterService
 
 # DEAD verdicts are billing/auth failures: retrying them wastes a real request
@@ -69,13 +70,27 @@ def _store_verdict(model_id: str, verdict: Verdict) -> None:
     _cache[model_id] = _CacheEntry(verdict=verdict, expires_at=time.time() + ttl)
 
 
-async def _probe(base_url: str, api_key: str) -> Verdict:
-    """One cheap liveness check: GET /models. Never raises."""
+async def _probe(base_url: str, api_key: str, model_id: str) -> Verdict:
+    """One cheap liveness check: a one-token completion. Never raises.
+
+    Not GET /models. config.py records why: moonshot and deepseek both
+    answered 200 there while refusing every completion (429 "insufficient
+    balance", 402), so the catalogue read kept an outage invisible until a
+    battle needed a token. It is also blind in the other direction —
+    measured 2026-08-16, z.ai's catalogue does not list glm-4.5-flash at
+    all (openrouter_service.py:181-187) while the model completes normally,
+    so a catalogue verdict is about a different model than the one asked for.
+    """
     try:
         async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_SECONDS) as client:
-            resp = await client.get(
-                f"{base_url.rstrip('/')}/models",
+            resp = await client.post(
+                f"{base_url.rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": wire_model_name(model_id),
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                },
             )
         if resp.status_code == 200:
             return Verdict.ALIVE
@@ -111,7 +126,7 @@ async def pick_live_model(candidates: list[str]) -> str:
                 return model_id
             continue
 
-        verdict = await _probe(creds["base_url"], creds["api_key"])
+        verdict = await _probe(creds["base_url"], creds["api_key"], model_id)
         _store_verdict(model_id, verdict)
         verdicts[model_id] = verdict.value
         if verdict is Verdict.ALIVE:
