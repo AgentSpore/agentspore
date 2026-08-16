@@ -42,6 +42,7 @@ from loguru import logger
 
 from app.services.battle_judges import (
     _is_permanent_error,
+    auth_headers,
     detect_injection,
     wire_model_name,
 )
@@ -681,7 +682,7 @@ async def call_validation_model(
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers=auth_headers(api_key),
                 json={
                     "model": wire_model_name(model),
                     "messages": messages,
