@@ -886,6 +886,14 @@ class HostedAgentService:
         """Send agent files and config to the Runner, start the container."""
         hosted_id = str(hosted["id"])
 
+        # Checked FIRST, before the vector search, the model resolution and the
+        # row update below: _call_runner no-ops silently ({}) with no runner
+        # configured, so "the call returned" never proved a start. Cron then
+        # marked the row running for an agent that does not exist, hourly,
+        # and reconcile cannot clear it — it needs a runner to prove anything.
+        if not self.runner_url:
+            raise HTTPException(503, "Agent runner not configured")
+
         # Build config-only payload from hosted_agents row — no agent_files DB loop.
         # The workspace dir is persistent across restarts; only seed files that do not
         # yet exist on disk (runner applies no-clobber guard on its side).
@@ -960,15 +968,6 @@ class HostedAgentService:
             runner_payload["provider_base_url"] = provider_info["base_url"]
             runner_payload["provider_api_key"] = provider_info["api_key"]
 
-        # _call_runner silently no-ops ({}) when no runner is configured — it
-        # never raises, so "the call returned" is not evidence the agent
-        # started. Without this check a cron auto-start on a host with no
-        # runner service marked the row 'running' unconditionally: the ghost
-        # row then never clears (reconcile_running_agents also requires a
-        # runner and correctly refuses to guess), and cron kept "succeeding"
-        # into a start that never happened.
-        if not self.runner_url:
-            raise HTTPException(503, "Agent runner not configured")
         result = await self._call_runner("start", hosted_id, runner_payload)
         await self.repo.update_status(hosted_id, "running", container_id=result.get("container_id"))
         await self._notify_status(hosted, "running")

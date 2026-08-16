@@ -71,6 +71,14 @@ VALIDATION_MODEL_CANDIDATES = (
     "zai/glm-4.5-flash",
     VALIDATION_MODEL,
 )
+# How deep the unreviewed backlog may get, as a multiple of pool_target,
+# before drafting stops. The harvester inserts QUARANTINE and only an admin
+# moves a task to ready, so its own output can never close the ready gate;
+# without a ceiling a stalled moderation queue drafts forever. Four passes'
+# worth of pool is enough that approving the backlog refills ready several
+# times over — the tasks already exist, they only need approving.
+QUARANTINE_BACKLOG_FACTOR = 4
+
 DRAFT_TEMPERATURE = 0.3
 DRAFT_HTTP_TIMEOUT_SECONDS = 30.0
 # Sized for the longest task the prompt asks for, in the least token-dense
@@ -258,6 +266,24 @@ class TaskHarvesterService:
                 "harvester: skipping pass, pool full (ready={} pooled={} target={})",
                 ready,
                 pooled,
+                pool_target,
+            )
+            return HarvestResult()
+
+        # Gating on ready alone fixes the jam but opens the other end: the
+        # harvester only ever writes QUARANTINE, so its own output never raises
+        # ready and it would keep drafting every cycle while moderation is
+        # behind — measured, that is ~240 new quarantined tasks and ~480
+        # provider calls a day into a queue nobody is reading. Stop once the
+        # unreviewed backlog is deep enough to refill the pool several times
+        # over: the tasks to run already exist, they just need approving.
+        quarantined = pooled - ready
+        if quarantined >= pool_target * QUARANTINE_BACKLOG_FACTOR:
+            logger.warning(
+                "harvester: skipping pass, {} tasks await moderation "
+                "(ready={} target={}) — approve at /battles/moderation",
+                quarantined,
+                ready,
                 pool_target,
             )
             return HarvestResult()

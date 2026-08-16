@@ -546,9 +546,9 @@ class BattleRunTask(ScheduledTask):
     fail_closed = True
 
     async def run_once(self) -> None:
-        # Local imports: battle_runner -> battle_judges -> llm_gate pulls in the
-        # service layer, which imports this core module at its top. Same cycle
-        # CronSchedulerTask documents above.
+        # Deferred, like every task in this module: background.py loads at
+        # startup and must not drag the whole battle stack in with it. Not a
+        # cycle — no service or repository imports this module at top level.
         from app.services.battle_judges import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
             JUDGE_MODEL,
         )
@@ -651,7 +651,7 @@ class BattleMatchmakerTask(ScheduledTask):
         settings = get_settings()
         if not settings.battle_auto_enabled:
             return
-        from app.services.battle_service import (  # noqa: PLC0415 (cycle: app.services.battle_service <-> app.core.background)
+        from app.services.battle_service import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
             BattleMatchmaker,
         )
 
