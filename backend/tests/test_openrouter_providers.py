@@ -24,6 +24,7 @@ _BLANK_PROVIDER_KEYS = {
     "cloudflare_api_key": "",
     "cloudflare_account_id": "",
     "deepseek_api_key": "",
+    "llm7_api_key": "",
 }
 
 
@@ -167,7 +168,9 @@ async def test_cloudflare_skipped_without_account_id():
     urls: list[str] = []
     with _patch_settings(settings), _patch_models_fetch(urls, resp):
         models = await svc._extra_provider_models()
-    assert models == []
+    # llm7 needs no key, so it always contributes its static models — the
+    # assertion below is scoped to cloudflare, the provider under test.
+    assert not any(m["provider"] == "cloudflare" for m in models)
     assert urls == []  # provider not fetched at all
 
 
@@ -185,7 +188,9 @@ async def test_provider_models_fetch_failure_returns_empty():
     mock_client.get = _boom
     with _patch_settings(settings), patch("httpx.AsyncClient", return_value=mock_client):
         models = await svc._extra_provider_models()
-    assert models == []
+    # llm7 needs no key, so it always contributes its static models — the
+    # assertion below is scoped to cerebras, the provider under test.
+    assert not any(m["provider"] == "cerebras" for m in models)
 
 
 @pytest.mark.asyncio
@@ -198,7 +203,7 @@ async def test_provider_models_unexpected_shape_returns_empty():
     urls: list[str] = []
     with _patch_settings(settings), _patch_models_fetch(urls, resp):
         models = await svc._extra_provider_models()
-    assert models == []
+    assert not any(m["provider"] == "cerebras" for m in models)
 
 
 # ── resolve_model: extra-provider passthrough must never hit the fallback ─────
@@ -336,6 +341,57 @@ def test_resolve_provider_deepseek_none_when_key_unset():
     svc = OpenRouterService()
     with _patch_settings(_settings()):
         assert svc.resolve_provider("deepseek/deepseek-chat") is None
+
+
+# ── llm7 (keyless, key_optional) ─────────────────────────────────────────────
+
+
+def test_resolve_provider_llm7_resolves_with_no_key():
+    """The one provider that must activate with an EMPTY api_key.
+
+    Every other provider treats a blank key as 'not configured' and returns
+    None (see test_resolve_provider_deepseek_none_when_key_unset just above) —
+    that is exactly the path llm7 must NOT take, since it needs no key at all.
+    """
+    svc = OpenRouterService()
+    with _patch_settings(_settings()):
+        info = svc.resolve_provider("llm7/DeepSeek-V4-Flash-0731")
+    assert info == {"base_url": "https://api.llm7.io/v1", "api_key": ""}
+
+
+def test_resolve_provider_llm7_uses_the_optional_token_when_set():
+    settings = _settings(llm7_api_key="llm7-secret")
+    svc = OpenRouterService()
+    with _patch_settings(settings):
+        info = svc.resolve_provider("llm7/codestral-latest")
+    assert info == {"base_url": "https://api.llm7.io/v1", "api_key": "llm7-secret"}
+
+
+@pytest.mark.asyncio
+async def test_is_allowed_llm7_needs_no_key():
+    svc = OpenRouterService()
+    with _patch_settings(_settings()):
+        assert await svc.is_allowed("llm7/gemini-3.1-flash-lite") is True
+
+
+@pytest.mark.asyncio
+async def test_llm7_serves_static_models_without_a_fetch():
+    settings = _settings()
+    svc = OpenRouterService()
+    resp = _mock_models_response(["should-not-be-fetched"])
+    urls: list[str] = []
+    with _patch_settings(settings), _patch_models_fetch(urls, resp):
+        models = await svc._extra_provider_models()
+    ids = {m["id"] for m in models}
+    assert "llm7/DeepSeek-V4-Flash-0731" in ids
+    assert "llm7/codestral-latest" in ids
+    assert "llm7/gemini-3.1-flash-lite" in ids
+    assert "llm7/mistral-Nemo-Instruct-2407" in ids
+    # The excluded (finish_reason='length', empty content at judging cap) models
+    # are never listed as usable.
+    assert "llm7/gpt-oss:20b" not in ids
+    assert "llm7/minimax-m2.7" not in ids
+    assert urls == []  # no key required means no /models fetch either
 
 
 @pytest.mark.asyncio
