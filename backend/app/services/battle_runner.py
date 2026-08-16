@@ -279,6 +279,35 @@ DEMO_ANSWER_MAX_TOKENS = 8192
 # 13 attempts — and the outer budget grew instead.
 DEMO_ANSWER_TIMEOUT_SECONDS = 240.0
 
+# How long an ANSWER call waits for a slot on its provider's account. Distinct
+# from the gate's DEFAULT_WAIT_SECONDS (20s) for one reason: that number was
+# derived for the JUDGE panel, which is SEQUENTIAL — six calls, each waiting at
+# most one pace interval, so 8s < 20s held with room to spare. The answer path is
+# CONCURRENT: _spawn_contender_drives fires both sides as detached tasks, so on a
+# capacity-1 account (llm7) the second claimant does not wait one pace interval,
+# it waits out the first side's ENTIRE in-flight call.
+#
+# Measured on production (v1.28.2, two-hour window): 12 battles ended, 2 reached
+# a verdict, 9 recorded "provider unreachable". One battle's log, in order: side
+# a "unreachable provider (gate saturated)", side b answered 6s later, battle
+# settled without judging. Side b won the slot; side a was bounced at 20s and its
+# battle voided. With four llm7 contenders in the pool, most battles are
+# llm7-vs-llm7, which is why this was the DOMINANT failure and not an edge case.
+#
+# The arithmetic, stated because getting it wrong is what shipped the defect:
+#   second claimant's worst case = first side's whole call + one pace interval
+#                                = DEMO_ANSWER_TIMEOUT_SECONDS(240) + 8 = 248s
+# so the wait must be >= 248. The ceiling is the drive's own budget: one attempt
+# is gate wait + HTTP, and it must fit ANSWER_DRIVE_BUDGET_SECONDS(560) or the
+# detached wait_for kills the call mid-flight —
+#   250 + 240 = 490 <= 560, leaving 70s of headroom.
+# Widening is safe against the ACCOUNT because it does not touch pace or
+# capacity: llm7 still departs at most once per 8s with one call in flight. A
+# longer wait costs a coroutine sitting idle, never a second concurrent request.
+# The two sides' drive budgets run in PARALLEL (one wait_for per detached task),
+# so they do not sum against each other.
+ANSWER_GATE_WAIT_SECONDS = 250.0
+
 # Hard ceiling on ONE detached drive: gate wait + HTTP, twice, plus the backoff.
 #
 #   2 x (20s gate wait + 240s http) + 2s backoff = 522s worst case
@@ -1369,6 +1398,10 @@ class BattleRunner:
                 # judging HTTP ceiling would abort it as a transport timeout and
                 # silence the answering side. Match the detached task's own bound.
                 http_timeout=DEMO_ANSWER_TIMEOUT_SECONDS,
+                # Both sides of a battle run as CONCURRENT detached drives, so on
+                # a capacity-1 account the loser must outwait the winner's whole
+                # call — the judge default (20s) bounced it and voided the battle.
+                gate_wait_seconds=ANSWER_GATE_WAIT_SECONDS,
             )
         except JudgeTransportError as exc:
             # PROPAGATED, not flattened to None. "We never reached the model" and
