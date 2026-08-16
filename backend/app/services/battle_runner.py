@@ -1441,11 +1441,16 @@ class BattleRunner:
             model_ids.add(f"{contender['provider']}/{contender['model_id']}")
         return model_ids
 
-    def _resolve_judge_roster(self, base_url: str, api_key: str) -> list[JudgeModel]:
+    def _resolve_judge_roster(
+        self, base_url: str, api_key: str, primary_model_id: str = JUDGE_MODEL
+    ) -> list[JudgeModel]:
         """Build the per-replicate model roster from config (Track 2 diversity).
 
-        The primary entry is always JUDGE_MODEL with the credentials this pass was
-        given (base_url/api_key, resolved upstream). Any ADDITIONAL id in
+        The primary entry is ``primary_model_id`` (the model
+        ``pick_live_model`` chose as reachable this pass) with the credentials
+        this pass was given (base_url/api_key, resolved for that same model
+        upstream). It defaults to JUDGE_MODEL only so callers that already pin
+        a model (tests, the wire-contract suite) are unaffected. Any ADDITIONAL id in
         ``settings.battle_judge_models`` is added only if OpenRouterService
         resolves a usable key for it, so the roster reflects what is actually
         reachable and never a hardcoded list. Four ids resolve in production, one
@@ -1470,16 +1475,16 @@ class BattleRunner:
         accepts now.
         """
         primary = JudgeModel(
-            model_id=JUDGE_MODEL,
-            provider=JUDGE_MODEL.split("/", 1)[0],
+            model_id=primary_model_id,
+            provider=primary_model_id.split("/", 1)[0],
             base_url=base_url,
             api_key=api_key,
-            wire_model=wire_model_name(JUDGE_MODEL),
-            temperature=judge_temperature_for(JUDGE_MODEL),
-            seed_field=seed_field_for(JUDGE_MODEL),
+            wire_model=wire_model_name(primary_model_id),
+            temperature=judge_temperature_for(primary_model_id),
+            seed_field=seed_field_for(primary_model_id),
         )
         settings = get_settings()
-        extra_ids = [m for m in settings.battle_judge_models if m != JUDGE_MODEL]
+        extra_ids = [m for m in settings.battle_judge_models if m != primary_model_id]
         if not extra_ids:
             return [primary]
 
@@ -1519,6 +1524,7 @@ class BattleRunner:
         base_url: str,
         lease_token: str,
         budget: BattleJudgeBudgetService | None = None,
+        primary_model_id: str = JUDGE_MODEL,
     ) -> list[CollapsedVote]:
         """Run three paired replicates and persist the collapsed votes.
 
@@ -1604,7 +1610,7 @@ class BattleRunner:
         # models are also seeded contenders, and a judge that grades its own
         # generation style is not measuring the battle (see seatable_judges).
         fighting = await self._contender_model_ids(battle)
-        resolved = self._resolve_judge_roster(base_url, api_key)
+        resolved = self._resolve_judge_roster(base_url, api_key, primary_model_id)
         roster = seatable_judges(resolved, fighting)
         if not roster:
             raise JudgePanelRecusedError(fighting)
@@ -2374,6 +2380,7 @@ async def _judge_and_settle(
     base_url: str,
     counts: dict[str, int],
     budget: BattleJudgeBudgetService | None = None,
+    primary_model_id: str = JUDGE_MODEL,
 ) -> None:
     """Run the panel, then settle IFF every replicate reached a terminal vote.
 
@@ -2405,7 +2412,14 @@ async def _judge_and_settle(
                 if await runner.settle_silent_forfeit(battle_id, token, silent) is not None:
                     counts["settled"] += 1
                 return
-            await runner.run_judge_panel(battle_id, api_key, base_url, token, budget=budget)
+            await runner.run_judge_panel(
+                battle_id,
+                api_key,
+                base_url,
+                token,
+                budget=budget,
+                primary_model_id=primary_model_id,
+            )
             judgements = await runner.repo.list_judgements(battle_id)
             if len(judgements) >= REPLICATE_COUNT:
                 if await runner.settle_battle(battle_id, token) is not None:
@@ -2853,8 +2867,13 @@ async def reconcile_once(
     Phases run oldest-first and independently, so a battle stuck waiting for an
     ACK cannot delay one that is ready to start.
 
-    ``provider`` (``{"api_key", "base_url"}`` or ``None``) is the ONLY paid
-    dependency, and it gates ONLY the judge panel. Every other phase — arm,
+    ``provider`` (``{"api_key", "base_url", "model_id"}`` or ``None``) is the
+    ONLY paid dependency, and it gates ONLY the judge panel. ``model_id`` is
+    the primary judge model these credentials were resolved for (chosen live
+    by ``pick_live_model`` upstream) and is passed through to
+    ``_resolve_judge_roster`` as the panel's primary seat; it defaults to
+    JUDGE_MODEL so a caller that omits it (existing tests) is unaffected.
+    Every other phase — arm,
     admit, start, close_deadline (running -> judging is FREE), and the whole
     reaper — is DB-only and MUST run every pass regardless. So a provider outage
     (key unset/rotated/geo-blocked) does NOT freeze the lifecycle or stop
@@ -2875,6 +2894,9 @@ async def reconcile_once(
     token = str(uuid.uuid4())
     api_key = provider["api_key"] if provider is not None else None
     base_url = provider["base_url"] if provider is not None else None
+    primary_model_id = (
+        provider.get("model_id", JUDGE_MODEL) if provider is not None else JUDGE_MODEL
+    )
     # Only the paid judge phases need the budget ledger; it shares the reconciler
     # session factory but opens its own short transactions per reservation.
     budget = BattleJudgeBudgetService(session_factory) if provider is not None else None
@@ -2991,7 +3013,15 @@ async def reconcile_once(
         counts["judged"] += 1
         if provider is not None:
             await _judge_and_settle(
-                session_factory, gate, battle_id, token, api_key, base_url, counts, budget
+                session_factory,
+                gate,
+                battle_id,
+                token,
+                api_key,
+                base_url,
+                counts,
+                budget,
+                primary_model_id,
             )
 
     # 5. judging -> completed. Resume battles stranded in judging by a crash
@@ -3005,7 +3035,15 @@ async def reconcile_once(
     if provider is not None:
         for battle in await claim(BattleStatus.JUDGING, RUNNING_MAX_ATTEMPTS, BATTLE_LEASE_SECONDS):
             await _judge_and_settle(
-                session_factory, gate, str(battle["id"]), token, api_key, base_url, counts, budget
+                session_factory,
+                gate,
+                str(battle["id"]),
+                token,
+                api_key,
+                base_url,
+                counts,
+                budget,
+                primary_model_id,
             )
 
     counts.update(await reap_once(session_factory, provider))

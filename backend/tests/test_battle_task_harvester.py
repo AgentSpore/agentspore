@@ -58,6 +58,7 @@ def repo():
     repo = AsyncMock()
     repo.content_key_exists = AsyncMock(return_value=False)
     repo.count_pooled_generated_tasks = AsyncMock(return_value=0)
+    repo.count_ready_generated_tasks = AsyncMock(return_value=0)
     repo.create_task = AsyncMock(return_value="task-1")
     return repo
 
@@ -154,11 +155,58 @@ class TestHarvestPass:
         assert result.dropped == 1
 
     async def test_skips_when_pool_already_at_target(self, harvester, repo, source):
-        repo.count_pooled_generated_tasks = AsyncMock(return_value=5)
+        repo.count_ready_generated_tasks = AsyncMock(return_value=5)
 
         result = await harvester.harvest(pool_target=5, max_per_pass=3)
 
         assert result.created == 0
+        source.fetch_topics.assert_not_awaited()
+
+    async def test_drafts_when_ready_short_despite_large_quarantine_backlog(
+        self, harvester, repo, source
+    ) -> None:
+        """A quarantine backlog must not jam refill: only READY gates it.
+
+        The backlog here is below QUARANTINE_BACKLOG_FACTOR * pool_target, so
+        the ceiling that stops runaway drafting does not apply — that bound is
+        covered by test_stops_drafting_once_the_backlog_is_deep.
+        """
+        repo.count_ready_generated_tasks = AsyncMock(return_value=1)
+        repo.count_pooled_generated_tasks = AsyncMock(return_value=9)
+        harvester.draft_task = AsyncMock(return_value=_drafted_task())
+        harvester.run_validator = AsyncMock(
+            return_value=(
+                CheapFilterVerdict(passed=True),
+                ValidationVerdict(verdict="accept", reasons=[]),
+            )
+        )
+
+        result = await harvester.harvest(pool_target=5, max_per_pass=3)
+
+        assert result.created == 1
+        source.fetch_topics.assert_awaited()
+
+    async def test_stops_drafting_once_the_backlog_is_deep(
+        self, harvester, repo, source
+    ) -> None:
+        """Gating on ready alone has no self-closing path — bound it.
+
+        The harvester only ever inserts QUARANTINE and only an admin promotes
+        to ready, so its own output never raises the number this gate reads.
+        Without the ceiling a stalled moderation queue drafts every cycle
+        forever: measured against the shipped defaults that is ~240 tasks and
+        ~480 provider calls a day, drawn from the same daily ledger the judge
+        panel spends from.
+        """
+        repo.count_ready_generated_tasks = AsyncMock(return_value=1)
+        # 4x pool_target of unreviewed work already waiting.
+        repo.count_pooled_generated_tasks = AsyncMock(return_value=1 + 5 * 4)
+        harvester.draft_task = AsyncMock(return_value=_drafted_task())
+
+        result = await harvester.harvest(pool_target=5, max_per_pass=3)
+
+        assert result.created == 0
+        harvester.draft_task.assert_not_awaited()
         source.fetch_topics.assert_not_awaited()
 
     async def test_stops_at_max_per_pass(self, harvester, repo, source):

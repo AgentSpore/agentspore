@@ -817,18 +817,42 @@ class BattleRepository:
         cooldown — the harvester's refill target is a single platform-wide
         number, not a per-filter one, so the plain count is what it needs.
 
-        Counts QUARANTINE alongside READY, because the harvester inserts into
-        quarantine and only an admin moves a task on to ready. Counting ready
-        alone made the refill gate blind to its own output: measured on
-        production, 288 quarantined tasks had piled up in a day while the gate
-        still read 50 and kept drafting, spending 1091 provider calls — 11% of
-        the daily cap — to refill a pool that was already full.
+        Counts QUARANTINE alongside READY: an unmoderated backlog is still
+        platform spend that happened, and this total is what callers report
+        alongside the refill decision so the backlog stays visible. It is
+        NOT what gates refill any more — see :meth:`count_ready_generated_tasks`.
         """
         result = await self.db.execute(
             text(
                 """
                 SELECT COUNT(*) FROM battle_tasks
                 WHERE source = 'generated' AND status IN ('ready', 'quarantine')
+                """
+            )
+        )
+        return int(result.scalar_one())
+
+    async def count_ready_generated_tasks(self) -> int:
+        """How many admin/harvester-minted tasks are READY to be played now.
+
+        The harvester's refill gate reads THIS, not the pooled total: counting
+        quarantine alongside ready made the gate blind to its own output once
+        moderation fell behind — measured on production, 288 quarantined tasks
+        piled up in a day while ready sat at 50 short of target, and the gate
+        (reading pooled=338 against a target of 60) went permanently negative
+        and silently stopped drafting, even though the pool players actually
+        draw from (ready) never filled. Quarantine review is a separate,
+        unbounded backlog; it must not be able to jam the ready refill forever.
+        Total spend per pass is still capped by ``max_per_pass`` and the daily
+        provider budget ledger, so this does not reopen the double-spend the
+        pooled count was introduced to close — it only stops counting
+        unmoderated rows as "already have enough".
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT COUNT(*) FROM battle_tasks
+                WHERE source = 'generated' AND status = 'ready'
                 """
             )
         )
