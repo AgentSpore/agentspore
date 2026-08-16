@@ -304,13 +304,19 @@ async def list_battles(
     summary="Platform contenders fielded in auto-battles",
 )
 async def list_contenders(db: AsyncSession = Depends(get_db)):
-    """The enabled contenders the matchmaker draws from (V72).
+    """Every contender, retired ones included, each carrying ``enabled`` (V72).
 
     Public because a battle row names its sides by contender id, and without
-    this the /battles page could show only an opaque UUID for a side. Each
-    contender's system prompt stays server-side — see BattleContender.
+    this the /battles page could show only an opaque UUID for a side. Retired
+    contenders must be here: V79 disabled eight of them, and while an enabled
+    filter correctly stopped the matchmaker fielding them, it also erased their
+    names from the 1821 finished battles they had already fought. A retired
+    fighter's name is part of the record; only its eligibility to be fielded
+    ends. Callers that want only ACTIVE fighters filter on ``enabled``.
+
+    Each contender's system prompt stays server-side — see BattleContender.
     """
-    rows = await BattleRepository(db).list_enabled_contenders()
+    rows = await BattleRepository(db).list_contenders()
     return [BattleContender(**row) for row in rows]
 
 
