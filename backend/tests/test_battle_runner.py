@@ -1928,6 +1928,40 @@ class TestJudgeRosterFallback:
             for c in recorder.call_args_list
         )
 
+    async def test_run_judge_panel_seats_the_live_primary_not_the_stale_default(
+        self, monkeypatch, session_maker, db_session, task_id
+    ) -> None:
+        """JUDGE_MODEL (mistral) is dead; run_judge_panel is handed a DIFFERENT
+        primary_model_id (what pick_live_model chose) and must seat THAT as the
+        primary, with the panel still spanning more than one provider.
+
+        MUTATION: revert _resolve_judge_roster to hardcode JUDGE_MODEL instead
+        of using primary_model_id — every call reverts to mistral's wire_model
+        and the first assertion goes red.
+        """
+        battle_id, _, _, token = await _battle_in_judging(db_session, task_id, votes=[])
+        await _set_final_answers(session_maker, battle_id, _WINNER_MARKER, "the other answer")
+        _install_two_model_roster(monkeypatch)
+        live_primary = _ROSTER_SECOND_MODEL  # "zai/glm-4.5-flash" — not JUDGE_MODEL
+
+        recorder = AsyncMock(side_effect=_vote_marker_side)
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch("app.services.battle_runner.call_judge_model", recorder):
+                await runner.run_judge_panel(
+                    battle_id, "k", "http://u", token, primary_model_id=live_primary
+                )
+
+        assert recorder.await_count > 0
+        assert recorder.call_args_list[0].kwargs["wire_model"] == wire_model_name(live_primary)
+
+        async with session_maker() as session:
+            judgements = await BattleRepository(session).list_judgements(battle_id)
+        assert len(judgements) == 3
+        # Panel-diversity invariant untouched by the liveness pick: replicates
+        # still span both roster models, never collapsed to one provider.
+        assert {j["judge_ref"] for j in judgements} == {live_primary, JUDGE_MODEL}
+
     async def test_a_dead_assigned_model_falls_back_and_reaches_a_winner(
         self, monkeypatch, session_maker, db_session, task_id
     ) -> None:

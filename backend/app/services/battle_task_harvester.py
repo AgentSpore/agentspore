@@ -244,9 +244,22 @@ class TaskHarvesterService:
             logger.info("harvester: provider breaker open, skipping this pass")
             return HarvestResult()
 
-        current = await self.repo.count_pooled_generated_tasks()
-        room = pool_target - current
+        # Gate on READY, not the pooled (ready+quarantine) total: a quarantine
+        # backlog is unmoderated spend, not usable pool, and gating refill on it
+        # jams drafting forever once moderation falls behind (see
+        # count_ready_generated_tasks). Pooled is still fetched here purely to
+        # report it — an early return with no numbers is what made this take
+        # hours to find on production.
+        ready = await self.repo.count_ready_generated_tasks()
+        pooled = await self.repo.count_pooled_generated_tasks()
+        room = pool_target - ready
         if room <= 0:
+            logger.info(
+                "harvester: skipping pass, pool full (ready={} pooled={} target={})",
+                ready,
+                pooled,
+                pool_target,
+            )
             return HarvestResult()
 
         budget = min(room, max_per_pass)

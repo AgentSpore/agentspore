@@ -58,6 +58,7 @@ def repo():
     repo = AsyncMock()
     repo.content_key_exists = AsyncMock(return_value=False)
     repo.count_pooled_generated_tasks = AsyncMock(return_value=0)
+    repo.count_ready_generated_tasks = AsyncMock(return_value=0)
     repo.create_task = AsyncMock(return_value="task-1")
     return repo
 
@@ -154,12 +155,31 @@ class TestHarvestPass:
         assert result.dropped == 1
 
     async def test_skips_when_pool_already_at_target(self, harvester, repo, source):
-        repo.count_pooled_generated_tasks = AsyncMock(return_value=5)
+        repo.count_ready_generated_tasks = AsyncMock(return_value=5)
 
         result = await harvester.harvest(pool_target=5, max_per_pass=3)
 
         assert result.created == 0
         source.fetch_topics.assert_not_awaited()
+
+    async def test_drafts_when_ready_short_despite_large_quarantine_backlog(
+        self, harvester, repo, source
+    ) -> None:
+        """A big quarantine backlog must not jam refill: only READY gates it."""
+        repo.count_ready_generated_tasks = AsyncMock(return_value=1)
+        repo.count_pooled_generated_tasks = AsyncMock(return_value=500)
+        harvester.draft_task = AsyncMock(return_value=_drafted_task())
+        harvester.run_validator = AsyncMock(
+            return_value=(
+                CheapFilterVerdict(passed=True),
+                ValidationVerdict(verdict="accept", reasons=[]),
+            )
+        )
+
+        result = await harvester.harvest(pool_target=5, max_per_pass=3)
+
+        assert result.created == 1
+        source.fetch_topics.assert_awaited()
 
     async def test_stops_at_max_per_pass(self, harvester, repo, source):
         source.fetch_topics = AsyncMock(
