@@ -306,6 +306,13 @@ def test_each_provider_gets_its_own_key_and_capacity():
     assert provider_account_key("zai") == ZAI_ACCOUNT_KEY == "llm_gate:zai:platform"
 
 
+def test_llm7_capacity_matches_its_measured_rate_limit():
+    """llm7's keyless rate limit is ~1 req/8s (measured live) — DEFAULT_MAX_CONCURRENCY
+    (3) would admit 3 concurrent calls to an account that answers 200-shaped
+    rate-limit errors well before that (review finding 4)."""
+    assert provider_capacity("llm7") == 1
+
+
 @pytest.mark.asyncio
 async def test_a_full_provider_does_not_block_a_different_one(redis: Redis):
     """The production symptom, reproduced: saturate z.ai, then call mistral.

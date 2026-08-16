@@ -1612,6 +1612,15 @@ class BattleRunner:
         fighting = await self._contender_model_ids(battle)
         resolved = self._resolve_judge_roster(base_url, api_key, primary_model_id)
         roster = seatable_judges(resolved, fighting)
+        # Unconditional (not just on recusal/degeneration below): the same
+        # models are seeded as both contenders and judges, so the post-recusal
+        # floor shrinks every time a contender fights — this is the one line
+        # that makes that floor observable per battle instead of inferred from
+        # the roster size in config.
+        logger.debug(
+            "battle {} seatable judges: {} of {} resolved",
+            battle_id, len(roster), len(resolved),
+        )
         if not roster:
             raise JudgePanelRecusedError(fighting)
         if len(roster) < len(resolved):

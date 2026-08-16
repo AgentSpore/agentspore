@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     cloudflare_api_key: str = ""
     cloudflare_account_id: str = ""
     deepseek_api_key: str = ""  # paid (escalation fallback) — DeepSeek direct API, OpenAI-compatible
+    llm7_api_key: str = ""  # optional — llm7.io works keyless; a token only raises the rate limit
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
@@ -160,8 +161,20 @@ class Settings(BaseSettings):
     # completion; measured again 2026-08-16 from the production host it answers
     # 200. A model verified once is not verified, and a single-provider panel
     # turns one billing failure into a total outage.
+    # 2026-08-16: mistral now returns 402 on every completion (measured live from
+    # production), leaving zai/glm-4.5-flash as the sole survivor of the prior
+    # six-model roster — the exact single-provider outage the INVARIANT above
+    # warns about. llm7 needs no key/signup/payment and was verified live
+    # (strict-JSON judge contract) from the same host, so it becomes the second
+    # provider. The mistral entries stay listed: a billing top-up brings them
+    # back with no code change, and seatable_judges only drops what is actually
+    # fighting.
     battle_judge_models: list[str] = [
         "zai/glm-4.5-flash",
+        "llm7/DeepSeek-V4-Flash-0731",
+        "llm7/codestral-latest",
+        "llm7/gemini-3.1-flash-lite",
+        "llm7/mistral-Nemo-Instruct-2407",
         "mistral/mistral-large-latest",
         "mistral/magistral-small-latest",
         "mistral/ministral-14b-latest",

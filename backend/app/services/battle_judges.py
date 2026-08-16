@@ -1195,6 +1195,30 @@ def _is_permanent_error(message: str) -> bool:
     return any(marker in message for marker in _PERMANENT_ERROR_MARKERS)
 
 
+def error_shaped_200(payload: object) -> str | None:
+    """Detect an HTTP-200 body that is actually an error (llm7's rate limit).
+
+    llm7's keyless rate limit answers HTTP 200 with ``{"error": {"message":
+    "Rate limit exceeded..."}}`` instead of a 429 — the status code alone says
+    nothing. The POSITIVE signal is the absence of a completion, not the mere
+    presence of an "error" key: a real completion can legally carry a benign
+    ``"error": null`` or ``"error": {}`` alongside real ``choices``, and that
+    must not be discarded as transient.
+
+    Returns the error text (for ``_is_permanent_error`` and logging) when the
+    payload has no usable completion, else None. Shared by ``call_judge_model``
+    and ``provider_health._probe`` so the two call sites cannot drift apart.
+    """
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("choices"):
+        return None
+    error = payload.get("error")
+    if error is None:
+        return None
+    return str(error)
+
+
 async def call_judge_model(
     client: httpx.AsyncClient,
     base_url: str,
@@ -1273,7 +1297,21 @@ async def call_judge_model(
             )
 
             if response.status_code == 200:
-                return str(response.json()["choices"][0]["message"]["content"])
+                payload = response.json()
+                # llm7's keyless rate limit answers HTTP 200 with an error-shaped
+                # body instead of a 429. Unconditionally indexing "choices" would
+                # raise a bare KeyError here — a type no caller catches — instead
+                # of the retryable JudgeTransportError the reclaim loop and the
+                # fallback-model loop both know how to handle.
+                error_text = error_shaped_200(payload)
+                if error_text is not None:
+                    if _is_permanent_error(error_text):
+                        raise JudgeTransportError(
+                            f"permanent provider error (HTTP 200 body): {error_text}",
+                            permanent=True,
+                        )
+                    raise JudgeTransportError(f"HTTP 200 error body: {error_text}")
+                return str(payload["choices"][0]["message"]["content"])
 
             body = response.text[:500]
             last_error = f"HTTP {response.status_code}: {body}"

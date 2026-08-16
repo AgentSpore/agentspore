@@ -209,6 +209,29 @@ class OpenRouterService:
             "static_models": ["deepseek-chat"],
             "paid": True,
         },
+        "llm7": {
+            # No signup, no payment, no API key required (verified live from
+            # production 2026-08-16). key_optional lets _resolve_provider_cfg
+            # activate this provider with an empty api_key — every other extra
+            # provider treats a blank key as "not configured" and returns None,
+            # which would wrongly disable the one provider that needs none. An
+            # optional free email-obtained token (LLM7_API_KEY) raises the
+            # keyless ~1 req/8s rate limit to ~120 RPM; absent, it still works.
+            "base_url": "https://api.llm7.io/v1",
+            "api_key_field": "llm7_api_key",
+            "key_optional": True,
+            # llm7's catalogue is large and mixes free/paid/broken models; only
+            # these four were verified live to return finish_reason='stop' with
+            # real content. gpt-oss:20b and minimax-m2.7 return finish='length'
+            # with empty/truncated content at the judging token cap and are
+            # deliberately excluded.
+            "static_models": [
+                "DeepSeek-V4-Flash-0731",
+                "codestral-latest",
+                "gemini-3.1-flash-lite",
+                "mistral-Nemo-Instruct-2407",
+            ],
+        },
     }
 
     # Gemini kept static — no standard /models endpoint.
@@ -243,7 +266,7 @@ class OpenRouterService:
         account id are set.
         """
         api_key = getattr(settings, cfg["api_key_field"], "")
-        if not api_key:
+        if not api_key and not cfg.get("key_optional"):
             return None
         base_url = cfg["base_url"]
         account_field = cfg.get("account_id_field")

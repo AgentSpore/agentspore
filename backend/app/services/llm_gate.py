@@ -75,8 +75,15 @@ ZAI_MAX_CONCURRENCY = 3
 # replace it per provider once a real reading exists.
 DEFAULT_MAX_CONCURRENCY = ZAI_MAX_CONCURRENCY
 
-# Measured per-provider overrides. Only z.ai has one.
-PROVIDER_MAX_CONCURRENCY: dict[str, int] = {"zai": ZAI_MAX_CONCURRENCY}
+# Measured per-provider overrides.
+PROVIDER_MAX_CONCURRENCY: dict[str, int] = {
+    "zai": ZAI_MAX_CONCURRENCY,
+    # llm7's keyless rate limit is ~1 req/8s (measured live, provider_health.py
+    # module docstring / battle_judges.py error_shaped_200). DEFAULT_MAX_CONCURRENCY
+    # (3) would admit 3 concurrent calls to an account this slow — a single
+    # in-flight slot is the honest cap, not a carried-over guess.
+    "llm7": 1,
+}
 
 
 def provider_account_key(provider: str) -> str:
