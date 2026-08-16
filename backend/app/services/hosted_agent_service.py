@@ -886,6 +886,14 @@ class HostedAgentService:
         """Send agent files and config to the Runner, start the container."""
         hosted_id = str(hosted["id"])
 
+        # Checked FIRST, before the vector search, the model resolution and the
+        # row update below: _call_runner no-ops silently ({}) with no runner
+        # configured, so "the call returned" never proved a start. Cron then
+        # marked the row running for an agent that does not exist, hourly,
+        # and reconcile cannot clear it — it needs a runner to prove anything.
+        if not self.runner_url:
+            raise HTTPException(503, "Agent runner not configured")
+
         # Build config-only payload from hosted_agents row — no agent_files DB loop.
         # The workspace dir is persistent across restarts; only seed files that do not
         # yet exist on disk (runner applies no-clobber guard on its side).

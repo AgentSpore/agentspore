@@ -546,14 +546,32 @@ class BattleRunTask(ScheduledTask):
     fail_closed = True
 
     async def run_once(self) -> None:
-        # Local imports: battle_runner -> battle_judges -> llm_gate pulls in the
-        # service layer, which imports this core module at its top. Same cycle
-        # CronSchedulerTask documents above.
-        from app.services.battle_judges import JUDGE_MODEL  # noqa: PLC0415
-        from app.services.battle_runner import reconcile_once  # noqa: PLC0415
-        from app.services.llm_gate import LLMGate  # noqa: PLC0415
-        from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
+        # Deferred, like every task in this module: background.py loads at
+        # startup and must not drag the whole battle stack in with it. Not a
+        # cycle — no service or repository imports this module at top level.
+        from app.services.battle_judges import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
+            JUDGE_MODEL,
+        )
+        from app.services.battle_runner import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
+            reconcile_once,
+        )
+        from app.services.llm_gate import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
+            LLMGate,
+        )
+        from app.services.openrouter_service import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
+            OpenRouterService,
+        )
+        from app.services.provider_health import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
+            pick_live_model,
+        )
 
+        # The primary seat is whichever configured judge model actually answers
+        # THIS pass (pick_live_model probes/caches — see that module), not a
+        # hardcoded JUDGE_MODEL: a dead-but-keyed primary (mistral 402) used to
+        # resolve credentials fine and then fail every judge call, so "has a
+        # key" was never the right gate — "answers" is.
+        candidates = get_settings().battle_judge_models or [JUDGE_MODEL]
+        primary_model_id = await pick_live_model(candidates)
         # resolve_provider() reads the key itself and returns None when it is
         # unset, so this covers both "no credentials" and "unknown provider" —
         # no separate settings lookup needed. A None provider does NOT skip the
@@ -562,7 +580,16 @@ class BattleRunTask(ScheduledTask):
         # every pass, so a provider outage never freezes battles or cleanup — it
         # only defers scoring. Passing provider (possibly None) lets reconcile
         # gate just the judging phase.
-        provider = OpenRouterService().resolve_provider(JUDGE_MODEL)
+        creds = OpenRouterService().resolve_provider(primary_model_id)
+        provider = (
+            {
+                "api_key": creds["api_key"],
+                "base_url": creds["base_url"],
+                "model_id": primary_model_id,
+            }
+            if creds is not None
+            else None
+        )
         # Circuit breaker (V68 B5): while open, treat the provider as absent so
         # the paid judge phases are skipped this pass, exactly like a missing
         # provider — the free lifecycle transitions and the reaper still run, and
@@ -584,7 +611,7 @@ class BattleRunTask(ScheduledTask):
             # observable even when no free phase advanced this pass.
             logger.warning(
                 "Battle run (lifecycle ran, judging skipped: no usable provider for {}): {}",
-                JUDGE_MODEL,
+                primary_model_id,
                 counts,
             )
         elif any(counts.values()):
@@ -624,7 +651,7 @@ class BattleMatchmakerTask(ScheduledTask):
         settings = get_settings()
         if not settings.battle_auto_enabled:
             return
-        from app.services.battle_service import (  # noqa: PLC0415 (cycle: app.services.battle_service <-> app.core.background)
+        from app.services.battle_service import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
             BattleMatchmaker,
         )
 

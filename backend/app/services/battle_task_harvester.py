@@ -71,6 +71,14 @@ VALIDATION_MODEL_CANDIDATES = (
     "zai/glm-4.5-flash",
     VALIDATION_MODEL,
 )
+# How deep the unreviewed backlog may get, as a multiple of pool_target,
+# before drafting stops. The harvester inserts QUARANTINE and only an admin
+# moves a task to ready, so its own output can never close the ready gate;
+# without a ceiling a stalled moderation queue drafts forever. Four passes'
+# worth of pool is enough that approving the backlog refills ready several
+# times over — the tasks already exist, they only need approving.
+QUARANTINE_BACKLOG_FACTOR = 4
+
 DRAFT_TEMPERATURE = 0.3
 DRAFT_HTTP_TIMEOUT_SECONDS = 30.0
 # Sized for the longest task the prompt asks for, in the least token-dense
@@ -244,9 +252,40 @@ class TaskHarvesterService:
             logger.info("harvester: provider breaker open, skipping this pass")
             return HarvestResult()
 
-        current = await self.repo.count_pooled_generated_tasks()
-        room = pool_target - current
+        # Gate on READY, not the pooled (ready+quarantine) total: a quarantine
+        # backlog is unmoderated spend, not usable pool, and gating refill on it
+        # jams drafting forever once moderation falls behind (see
+        # count_ready_generated_tasks). Pooled is still fetched here purely to
+        # report it — an early return with no numbers is what made this take
+        # hours to find on production.
+        ready = await self.repo.count_ready_generated_tasks()
+        pooled = await self.repo.count_pooled_generated_tasks()
+        room = pool_target - ready
         if room <= 0:
+            logger.info(
+                "harvester: skipping pass, pool full (ready={} pooled={} target={})",
+                ready,
+                pooled,
+                pool_target,
+            )
+            return HarvestResult()
+
+        # Gating on ready alone fixes the jam but opens the other end: the
+        # harvester only ever writes QUARANTINE, so its own output never raises
+        # ready and it would keep drafting every cycle while moderation is
+        # behind — measured, that is ~240 new quarantined tasks and ~480
+        # provider calls a day into a queue nobody is reading. Stop once the
+        # unreviewed backlog is deep enough to refill the pool several times
+        # over: the tasks to run already exist, they just need approving.
+        quarantined = pooled - ready
+        if quarantined >= pool_target * QUARANTINE_BACKLOG_FACTOR:
+            logger.warning(
+                "harvester: skipping pass, {} tasks await moderation "
+                "(ready={} target={}) — approve at /battles/moderation",
+                quarantined,
+                ready,
+                pool_target,
+            )
             return HarvestResult()
 
         budget = min(room, max_per_pass)
