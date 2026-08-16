@@ -19,7 +19,7 @@ from enum import Enum
 import httpx
 from loguru import logger
 
-from app.services.battle_judges import error_shaped_200, wire_model_name
+from app.services.battle_judges import auth_headers, error_shaped_200, wire_model_name
 from app.services.openrouter_service import OpenRouterService
 
 # DEAD verdicts are billing/auth failures: retrying them wastes a real request
@@ -85,7 +85,7 @@ async def _probe(base_url: str, api_key: str, model_id: str) -> Verdict:
         async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_SECONDS) as client:
             resp = await client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers=auth_headers(api_key),
                 json={
                     "model": wire_model_name(model_id),
                     "messages": [{"role": "user", "content": "ping"}],

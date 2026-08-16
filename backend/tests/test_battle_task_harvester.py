@@ -353,6 +353,49 @@ class TestHarvestPass:
         user_message = captured["messages"][-1]["content"]
         assert f"Language for this task: {_language_for(topic)}" in user_message
 
+    async def test_drafting_sends_no_authorization_header_for_a_blank_key(
+        self, harvester
+    ):
+        """Same call site pattern as the judge/validator paths: an empty
+        resolved api_key (llm7, key_optional) must omit the header, not send
+        it empty — `Bearer ` is illegal and httpx/h11 refuse to send it."""
+        topic = _topic("Backpressure on a slow consumer")
+        captured_kwargs: dict = {}
+
+        class _Resp:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"choices": [{"message": {"content": '{"title": null}'}}]}
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                return False
+
+            async def post(self, _url, **kwargs):
+                captured_kwargs.update(kwargs)
+                return _Resp()
+
+        with (
+            patch(
+                "app.services.battle_task_harvester.pick_live_model",
+                AsyncMock(return_value="llm7/DeepSeek-V4-Flash-0731"),
+            ),
+            patch.object(
+                OpenRouterService,
+                "resolve_provider",
+                lambda _s, _m: {"base_url": "https://api.llm7.io/v1", "api_key": ""},
+            ),
+            patch("app.services.battle_task_harvester.httpx.AsyncClient", _Client),
+        ):
+            await TaskHarvesterService.draft_task(harvester, topic)
+
+        assert "Authorization" not in captured_kwargs["headers"]
+
     async def test_validator_rejection_is_dropped_not_inserted(self, harvester, repo):
         harvester.run_validator = AsyncMock(
             return_value=(

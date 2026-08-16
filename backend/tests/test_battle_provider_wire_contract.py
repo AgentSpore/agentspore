@@ -22,6 +22,7 @@ from app.services.battle_judges import (
     JUDGE_MODEL,
     JUDGE_TEMPERATURE,
     JudgeTransportError,
+    auth_headers,
     call_judge_model,
     judge_temperature_for,
     replicate_seed,
@@ -51,10 +52,11 @@ class _CapturingResponse:
 
 
 class _CapturingClient:
-    """Records the JSON body of the single POST the code under test makes."""
+    """Records the JSON body and headers of the single POST under test."""
 
     def __init__(self) -> None:
         self.body: dict | None = None
+        self.headers: dict | None = None
 
     async def __aenter__(self):
         return self
@@ -64,6 +66,7 @@ class _CapturingClient:
 
     async def post(self, _url, **kwargs):
         self.body = kwargs["json"]
+        self.headers = kwargs.get("headers")
         return _CapturingResponse()
 
 
@@ -135,6 +138,23 @@ async def test_validator_sends_the_wire_name_not_the_platform_id(
     assert sent == wire_model_name(VALIDATION_MODEL)
     assert "/" not in sent
     assert sent != VALIDATION_MODEL
+
+
+@pytest.mark.asyncio
+async def test_validator_sends_no_authorization_header_for_a_blank_key(
+    monkeypatch, capturing_client
+):
+    """Same call site, same bug class: call_validation_model builds its own
+    headers dict, so it needed the same auth_headers fix independently."""
+    monkeypatch.setattr(
+        battle_task_validator.httpx,
+        "AsyncClient",
+        lambda *a, **k: capturing_client,
+    )
+    await battle_task_validator.call_validation_model(
+        base_url="https://api.llm7.io/v1", api_key="", messages=[]
+    )
+    assert "Authorization" not in (capturing_client.headers or {})
 
 
 def test_the_stored_verdict_keeps_the_platform_id():
@@ -690,3 +710,46 @@ async def test_a_permanent_error_in_a_200_body_is_never_retried():
             wire_model="DeepSeek-V4-Flash-0731",
         )
     assert exc_info.value.permanent is True
+
+
+# -- a keyless provider must send NO Authorization header at all -------------
+#
+# api_key="" produced `Bearer ` — h11/httpx REJECT that as an illegal header
+# value before any network I/O, so the request never left the process
+# (production: every llm7 battle voided "provider unreachable"). Asserting
+# `api_key == ""` would pass on the broken code; the only real check is the
+# HEADERS DICT itself.
+
+
+def test_auth_headers_omits_the_key_entirely_when_blank():
+    """The unit-level version of the same guard: {} not {"Authorization": "Bearer "}."""
+    assert auth_headers("") == {}
+    assert auth_headers("real-key") == {"Authorization": "Bearer real-key"}
+
+
+@pytest.mark.asyncio
+async def test_keyless_provider_sends_no_authorization_header(capturing_client):
+    await call_judge_model(
+        client=capturing_client,
+        base_url="https://api.llm7.io/v1",
+        api_key="",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=_OpenGate(),
+        wire_model="DeepSeek-V4-Flash-0731",
+    )
+    assert "Authorization" not in (capturing_client.headers or {})
+
+
+@pytest.mark.asyncio
+async def test_a_real_key_still_sends_the_bearer_header(capturing_client):
+    await call_judge_model(
+        client=capturing_client,
+        base_url="https://api.z.ai/api/paas/v4",
+        api_key="zai-secret",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=_OpenGate(),
+        wire_model="glm-4.5-flash",
+    )
+    assert capturing_client.headers == {"Authorization": "Bearer zai-secret"}
