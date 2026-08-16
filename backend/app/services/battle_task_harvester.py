@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.schemas.battles import TaskSource, TaskStatus
 from app.services.battle_budget import BattleJudgeBudgetService, breaker_is_open
-from app.services.battle_judges import wire_model_name
+from app.services.battle_judges import auth_headers, wire_model_name
 from app.services.battle_task_validator import (
     VALIDATION_MODEL,
     CheapFilterVerdict,
@@ -455,7 +455,7 @@ class TaskHarvesterService:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{provider['base_url'].rstrip('/')}/chat/completions",
-                    headers={"Authorization": f"Bearer {provider['api_key']}"},
+                    headers=auth_headers(provider["api_key"]),
                     json={
                         "model": wire_model_name(model_id),
                         "messages": messages,

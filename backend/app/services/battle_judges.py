@@ -1195,6 +1195,17 @@ def _is_permanent_error(message: str) -> bool:
     return any(marker in message for marker in _PERMANENT_ERROR_MARKERS)
 
 
+def auth_headers(api_key: str) -> dict[str, str]:
+    """Authorization header for a provider call, or {} when there is no key.
+
+    A keyless provider (llm7) resolves with api_key="". ``Bearer `` (trailing
+    space, no token) is NOT a benign no-op: h11/httpx reject it as an illegal
+    header value before any network I/O — every llm7 battle voided as
+    "provider unreachable" in production until this was shared here.
+    """
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
 def error_shaped_200(payload: object) -> str | None:
     """Detect an HTTP-200 body that is actually an error (llm7's rate limit).
 
@@ -1291,7 +1302,7 @@ async def call_judge_model(
         async with account.slot():
             response = await client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers=auth_headers(api_key),
                 json=body,
                 timeout=http_timeout,
             )
