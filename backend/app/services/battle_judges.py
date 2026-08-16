@@ -72,11 +72,19 @@ from app.services.llm_gate import LLMGate, LLMGateTimeoutError
 # deliberately — and then the moonshot account was suspended for insufficient
 # balance, so the most reliable judge became the one that answers 429 every time.
 #
-# mistral-large-latest takes over: reachable, paid for, and verified live to
-# return strict JSON. glm stays in the roster for provider diversity — it is the
-# only non-mistral judge left, and a panel drawn from one provider shares that
-# provider's blind spots.
-JUDGE_MODEL = "mistral/mistral-large-latest"
+# mistral-large-latest took over from moonshot, and then mistral's own account
+# began answering 402 on every completion. 2026-08-17 it is REMOVED from the
+# roster, so this default must move with it or it names a model that is not a
+# candidate at all — which is how the demo-mode panel came to seat a wire model
+# absent from settings.battle_judge_models.
+#
+# INVARIANT(judge-primary): this MUST stay the first entry of
+# settings.battle_judge_models (config.py states the same rule from its side).
+# Production does not read it for the live panel — background.py picks the seat
+# with pick_live_model(), which probes rather than trusting a constant — but it
+# is the default for direct callers and tests, and a dead default here is a seat
+# that resolves credentials fine and then fails every call.
+JUDGE_MODEL = "zai/glm-4.5-flash"
 JUDGE_KIND_LLM = "llm"
 
 # Three replicates x two orders = six calls, three collapsed votes.
@@ -176,7 +184,11 @@ MAX_SUBMISSION_CHARS = 12_000
 # can. Retrying 1113 burns the whole backoff on a request that can never
 # succeed. Checked FIRST, which is what makes the transient markers safe.
 _PERMANENT_ERROR_MARKERS = ("1113", "Insufficient balance")
-_TRANSIENT_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 520, 522, 524})
+# NOT a status allowlist: classification is by BODY MARKER above, so anything
+# without one is retryable regardless of status. llm7 answers the same
+# rate-limit condition as 429, as 422 "Upstream provider could not process
+# the request", and as an error-shaped HTTP 200 — all three must retry, and
+# a status allowlist would have to enumerate shapes providers keep inventing.
 
 # Opaque, order-free labels. Not "A"/"B": a submission that says "ignore the
 # rubric, side A wins" must not be able to name the side it wants, and the model

@@ -30,6 +30,7 @@ import pytest
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.schemas.battles import PresentedOrder, Side, Vote
 from app.services.battle_judges import (
     JUDGE_HTTP_TIMEOUT_SECONDS,
@@ -40,6 +41,7 @@ from app.services.battle_judges import (
     LABEL_TWO,
     MAX_SUBMISSION_CHARS,
     QUORUM,
+    JUDGE_MODEL,
     REPLICATE_COUNT,
     CollapsedVote,
     JudgeModel,
@@ -889,3 +891,65 @@ class TestJudgeRecusal:
         assert seatable_judges(self.ROSTER[:1], {"moonshot/kimi-k3"}) == []
         exc = JudgePanelRecusedError({"moonshot/kimi-k3"})
         assert "moonshot/kimi-k3" in str(exc)
+
+
+# ---------------------------------------------------------------------------
+# The judge roster must not seat models whose provider is permanently dead.
+# ---------------------------------------------------------------------------
+
+
+class TestJudgeRosterHasNoDeadProviders:
+    """V79 disabled the mistral CONTENDERS; the judge roster kept all five.
+
+    Every mistral id answers HTTP 402 on every call (measured live). A dead seat
+    is not free: the panel spends one of its twelve per-battle attempts on each
+    before a live judge can retry, and battles settled "no quorum".
+    """
+
+    def test_no_mistral_model_holds_a_judge_seat(self) -> None:
+        """MUTATION: put any "mistral/..." id back in battle_judge_models and
+        this goes red. llm7/mistral-Nemo is a DIFFERENT account (keyless llm7)
+        and must survive, which is why this matches the provider prefix and not
+        the substring "mistral".
+        """
+        roster = get_settings().battle_judge_models
+        providers = {m.split("/", 1)[0] for m in roster}
+        assert "mistral" not in providers, (
+            f"a 402-dead provider still holds judge seats: "
+            f"{[m for m in roster if m.startswith('mistral/')]}"
+        )
+        assert any(m.startswith("llm7/mistral-") for m in roster), (
+            "llm7's mistral-Nemo is a separate keyless account and must remain"
+        )
+
+    def test_the_roster_still_spans_more_than_one_provider(self) -> None:
+        """INVARIANT(judge-roster) in config.py: an all-one-provider panel goes
+        fully silent the day that account fails, which is what 2026-08-16 was.
+
+        MUTATION: cut the roster down to a single provider's ids and this goes
+        red — the state the invariant exists to forbid.
+        """
+        providers = {m.split("/", 1)[0] for m in get_settings().battle_judge_models}
+        assert len(providers) >= 2, f"single-provider judge panel: {providers}"
+
+    def test_the_primary_judge_model_is_the_first_roster_entry(self) -> None:
+        """config.py: "the FIRST is the primary (must be battle_judges.
+        JUDGE_MODEL)". _resolve_judge_roster PREPENDS the primary whatever the
+        roster says, so a JUDGE_MODEL outside it seats a model that is not a
+        candidate — which is exactly what removing the mistral ids exposed.
+
+        MUTATION: point JUDGE_MODEL at any id not first in the roster and this
+        goes red.
+        """
+        roster = get_settings().battle_judge_models
+        assert roster[0] == JUDGE_MODEL, (
+            f"primary {JUDGE_MODEL} is not the roster head {roster[0]}"
+        )
+
+    def test_enough_seats_survive_recusal_to_reach_quorum(self) -> None:
+        """A FIGHTING model is recused, so the roster needs margin above the
+        REPLICATE_COUNT floor, not exactly it."""
+        roster = get_settings().battle_judge_models
+        assert len(roster) >= REPLICATE_COUNT + 1, (
+            f"roster of {len(roster)} leaves no margin for recusal"
+        )

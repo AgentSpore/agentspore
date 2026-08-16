@@ -86,6 +86,36 @@ PROVIDER_MAX_CONCURRENCY: dict[str, int] = {
 }
 
 
+# Minimum seconds between two DEPARTURES on one account. 8.0 for llm7 is the
+# provider's keyless figure (~1 req/8s, per-ACCOUNT, shared by all its seats).
+#
+# The budget it fits (all read, none assumed): DEFAULT_WAIT_SECONDS 20s bounds
+# ONE acquire and is the binding limit; JUDGE_HTTP_TIMEOUT_SECONDS 85s is per
+# call and unaffected by waits BETWEEN calls; BATTLE_LEASE_SECONDS 300s is
+# renewed after every half. A panel is REPLICATE_COUNT(3) x PRESENTED_ORDERS(2)
+# = 6 SEQUENTIAL calls, so waits do not stack: each acquire waits at most one
+# interval (8 < 20) and the panel adds ~48s against that renewed 300s lease.
+# INVARIANT(llm7-pace): were the panel made CONCURRENT, the Nth claimant would
+# wait N*8s and blow the 20s ceiling — raise pace and concurrency together.
+PROVIDER_MIN_INTERVAL_SECONDS: dict[str, float] = {
+    "llm7": 8.0,
+}
+
+# How long an account's pace marker outlives its last departure. Only needs to
+# span one interval; the TTL exists so an idle provider's key does not persist.
+_PACE_KEY_TTL_SECONDS = 60
+
+
+def _as_text(value: Any) -> str:
+    """Lua strings arrive as bytes from redis-py; compare and resend as text."""
+    return value.decode() if isinstance(value, bytes) else str(value)
+
+
+def provider_min_interval(provider: str) -> float:
+    """Seconds an account requires between departures. 0.0 = unpaced."""
+    return PROVIDER_MIN_INTERVAL_SECONDS.get(provider.strip().lower(), 0.0)
+
+
 def provider_account_key(provider: str) -> str:
     """The gate key for one PROVIDER — which is the account boundary.
 
@@ -148,6 +178,59 @@ if redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[3]) then
     local fence = redis.call('INCR', KEYS[2])
     redis.call('ZADD', KEYS[1], ARGV[2], ARGV[4])
     return fence
+end
+return 0
+"""
+
+# Pace: claim the next departure slot for an account, or report the wait.
+#
+# Concurrency and RATE are different limits and only the first had a mechanism
+# here: capacity 1 admits a call the instant the previous one returns, which
+# fired two llm7 429s inside one second (22:27:51).
+#
+# A claim, not a read-then-sleep: two workers that both READ "last departure"
+# would compute the same instant and depart together, re-creating the burst
+# across processes. INCR gives N callers N distinct slots.
+#
+# ``now`` comes from redis.call('TIME'), never from the caller: the marker is an
+# absolute instant compared across workers, and each worker's own time.time()
+# carries its host's clock skew. A worker 5s fast would push the marker 5s ahead
+# of everyone else's frame; one 5s slow would read nxt < now and depart at once,
+# collapsing the spacing. Redis is the one clock all workers already share.
+#
+# The TTL tracks the furthest promised departure rather than a flat constant: a
+# deep queue can push the VALUE minutes ahead, and a key that expired while the
+# instant it held was still in the future would let the next arrival read 0 and
+# depart alongside callers still sleeping on earlier claims — the same-second
+# burst this exists to prevent.
+#
+# KEYS[1] = pace key. ARGV = min interval, minimum ttl.
+# Returns milliseconds to wait before departing (0 = go now).
+_PACE_LUA = """
+local t = redis.call('TIME')
+local now = tonumber(t[1]) + tonumber(t[2]) / 1000000
+local interval = tonumber(ARGV[1])
+local nxt = tonumber(redis.call('GET', KEYS[1]) or '0')
+if nxt < now then nxt = now end
+local departs_at = nxt + interval
+local ttl = math.ceil(departs_at - now) + tonumber(ARGV[2])
+redis.call('SET', KEYS[1], departs_at, 'EX', ttl)
+-- wait_ms, the value written (to roll back), the value it replaced (to restore)
+return {math.floor((nxt - now) * 1000),
+        tostring(redis.call('GET', KEYS[1])),
+        tostring(nxt)}
+"""
+
+# Roll back a claim this caller will not use: only if the marker is still the
+# exact value we wrote, so a later claimant that already moved it past ours is
+# never rewound. Without this, every caller that times out leaves its departure
+# consumed and ratchets the marker further forward while the account sits idle.
+#
+# KEYS[1] = pace key. ARGV = the value we wrote, the value to restore, ttl.
+_PACE_ROLLBACK_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    redis.call('SET', KEYS[1], ARGV[2], 'EX', tonumber(ARGV[3]))
+    return 1
 end
 return 0
 """
@@ -218,14 +301,22 @@ class LLMGate:
         key: str = ZAI_ACCOUNT_KEY,
         capacity: int = ZAI_MAX_CONCURRENCY,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        min_interval_seconds: float = 0.0,
     ) -> None:
         self._redis = redis
         self._key = key
         self._fence_key = f"{key}:fence"
+        self._pace_key = f"{key}:pace"
         self._capacity = capacity
         self._lease_seconds = lease_seconds
+        self._min_interval = min_interval_seconds
 
-    def for_provider(self, provider: str, lease_seconds: int | None = None) -> LLMGate:
+    def for_provider(
+        self,
+        provider: str,
+        lease_seconds: int | None = None,
+        min_interval_seconds: float | None = None,
+    ) -> LLMGate:
         """A gate over ONE provider's account, sharing this Redis connection.
 
         Callers hold a single gate instance built at startup; the provider is
@@ -236,12 +327,21 @@ class LLMGate:
         outlast the caller's HTTP timeout — is a property of the CALLER. The
         default 90 was sized for a judge verdict; the answer path holds a slot for
         180s, so inheriting 90 let the reaper free a live call's slot.
+
+        ``min_interval_seconds`` overrides the provider's measured pace, for a
+        caller whose own deadline cannot absorb it (see PROVIDER_MIN_INTERVAL).
         """
+        interval = (
+            provider_min_interval(provider)
+            if min_interval_seconds is None
+            else min_interval_seconds
+        )
         return LLMGate(
             self._redis,
             key=provider_account_key(provider),
             capacity=provider_capacity(provider),
             lease_seconds=lease_seconds or self._lease_seconds,
+            min_interval_seconds=interval,
         )
 
     async def _eval(self, script: str, numkeys: int, *args: str) -> Any:
@@ -285,6 +385,17 @@ class LLMGate:
         while True:
             slot = await self.try_acquire()
             if slot is not None:
+                # Pace AFTER the slot, not before: a caller that paced first
+                # could burn its whole budget waiting for a departure and then
+                # still fail to get a slot, having consumed a departure nobody
+                # used. Holding the slot while pacing also makes the interval do
+                # double duty as the account's real spacing — nothing else can
+                # depart on a capacity-1 account while we hold it.
+                try:
+                    await self._await_pace(deadline)
+                except LLMGateTimeoutError:
+                    await self.release(slot)
+                    raise
                 return slot
             if time.time() >= deadline:
                 raise LLMGateTimeoutError(
@@ -293,6 +404,45 @@ class LLMGate:
             await asyncio.sleep(
                 secrets.SystemRandom().uniform(_RETRY_MIN_SECONDS, _RETRY_MAX_SECONDS)
             )
+
+    async def _await_pace(self, deadline: float) -> None:
+        """Hold until this account's next departure slot. No-op when unpaced.
+
+        Claims the slot BEFORE waiting on it, so two workers get two different
+        departure times instead of both reading the same one.
+
+        A claim past ``deadline`` is rolled back and raises: the bounded wait is
+        what stops a coroutine outliving the row lease it works for. The
+        rollback is what keeps repeated timeouts from ratcheting the marker ever
+        further forward while the account sits idle — each caller that will not
+        depart returns the departure it claimed.
+        """
+        if self._min_interval <= 0:
+            return
+        wait_ms, claimed, previous = await self._eval(
+            _PACE_LUA,
+            1,
+            self._pace_key,
+            str(self._min_interval),
+            str(_PACE_KEY_TTL_SECONDS),
+        )
+        wait_seconds = int(wait_ms) / 1000.0
+        if wait_seconds <= 0:
+            return
+        if time.time() + wait_seconds > deadline:
+            await self._eval(
+                _PACE_ROLLBACK_LUA,
+                1,
+                self._pace_key,
+                _as_text(claimed),
+                _as_text(previous),
+                str(_PACE_KEY_TTL_SECONDS),
+            )
+            raise LLMGateTimeoutError(
+                f"pace wait {wait_seconds:.1f}s on {self._key} exceeds the "
+                f"caller's remaining budget (min interval {self._min_interval}s)"
+            )
+        await asyncio.sleep(wait_seconds)
 
     async def release(self, slot: GateSlot) -> bool:
         """Free this exact slot. False = it had already been reaped."""

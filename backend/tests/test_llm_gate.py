@@ -33,6 +33,7 @@ from testcontainers.redis import RedisContainer
 
 from app.services.llm_gate import (
     DEFAULT_MAX_CONCURRENCY,
+    PROVIDER_MIN_INTERVAL_SECONDS,
     ZAI_ACCOUNT_KEY,
     ZAI_MAX_CONCURRENCY,
     GateSlot,
@@ -345,3 +346,147 @@ async def test_an_unmeasured_provider_still_holds_a_cap(redis: Redis):
     assert await gate.try_acquire() is None
     for s in held:
         await gate.release(s)
+
+
+# -- minimum spacing between calls to one account ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_llm7_spaces_consecutive_calls_apart(redis: Redis):
+    """llm7's keyless limit is ~1 req/8s and is per-ACCOUNT, not per model.
+
+    Concurrency 1 bounds how many calls are in flight; it does NOT bound how
+    fast they follow one another, and the gate releases its slot the instant a
+    call returns. So the judge panel's fallback loop tried DeepSeek-V4, took a
+    429, and tried gemini-3.1-flash-lite IN THE SAME SECOND — 22:27:51 twice in
+    production, both 429, quorum lost.
+
+    MUTATION: drop the pace wait from acquire() and the elapsed gap collapses to
+    ~0, which is exactly the burst that produced the 429s.
+    """
+    gate = LLMGate(redis, lease_seconds=30).for_provider("llm7", min_interval_seconds=0.4)
+
+    first = await gate.acquire(wait_seconds=5.0)
+    await gate.release(first)
+
+    started = time.monotonic()
+    second = await gate.acquire(wait_seconds=5.0)
+    elapsed = time.monotonic() - started
+    await gate.release(second)
+
+    assert elapsed >= 0.35, (
+        f"consecutive llm7 calls were {elapsed:.3f}s apart — the account is "
+        "rate-limited per ACCOUNT, so back-to-back calls 429 each other"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pacing_is_per_account_not_global(redis: Redis):
+    """Two PACED providers must not share one queue of departure slots.
+
+    Each provider is a separate account with a separate rate limit, so llm7's
+    spacing must not delay a different paced account. Both gates are paced here
+    deliberately: an unpaced gate returns before it ever reads a pace key, so it
+    could not detect a mis-keyed marker at all.
+
+    MUTATION: key the marker on a constant instead of the account
+    (`self._pace_key = "llm_gate:global:pace"`) and this goes red — the second
+    provider inherits the first's queue and waits an interval it does not owe.
+    """
+    base = LLMGate(redis, lease_seconds=30)
+    llm7 = base.for_provider("llm7", min_interval_seconds=2.0)
+    other = base.for_provider("deepseek", min_interval_seconds=2.0)
+
+    # Two llm7 departures park ITS marker a full interval in the future.
+    await llm7.release(await llm7.acquire(wait_seconds=5.0))
+    await llm7.release(await llm7.acquire(wait_seconds=5.0))
+
+    # deepseek's own marker is untouched, so its first departure is immediate.
+    started = time.monotonic()
+    slot = await other.acquire(wait_seconds=5.0)
+    elapsed = time.monotonic() - started
+    await other.release(slot)
+
+    assert elapsed < 0.5, (
+        f"a different account waited {elapsed:.3f}s behind llm7's pace queue"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unpaced_provider_keeps_its_previous_speed(redis: Redis):
+    """Pacing is opt-in per provider: zai's measured 3-concurrent behaviour is
+    unchanged, so this fix cannot ship a throughput cut to a healthy account.
+    """
+    gate = LLMGate(redis, lease_seconds=30).for_provider("zai")
+    started = time.monotonic()
+    for _ in range(3):
+        await gate.release(await gate.acquire(wait_seconds=5.0))
+    assert time.monotonic() - started < 0.5
+
+
+@pytest.mark.asyncio
+async def test_the_last_bounded_out_claimant_returns_its_departure(redis: Redis):
+    """A caller that gives up returns the departure it claimed, so the marker
+    does not walk forward while the account is idle.
+
+    Scoped to what the rollback can actually guarantee. It is a
+    compare-and-set on the exact value written, so it only rewinds the LAST
+    claim: an earlier claimant finds the marker already moved past its own value
+    and correctly declines to rewind, because rewinding would discard a claim a
+    later caller is still sleeping on. Under CONCURRENT claimants the marker can
+    therefore retain the intermediate claims — bounded by how many callers fit
+    the account's capacity, not unbounded.
+
+    On the paced provider in production (llm7, capacity 1) that residue cannot
+    arise at all: pacing runs while HOLDING the concurrency slot, so claims are
+    serialised and this rollback is the only one in play.
+
+    MUTATION: delete the _PACE_ROLLBACK_LUA call in _await_pace and the marker
+    keeps the abandoned departure, so the assertion below goes red.
+    """
+    interval = 2.0
+    gate = LLMGate(redis, lease_seconds=30).for_provider(
+        "deepseek", min_interval_seconds=interval
+    )
+    # First caller departs now and arms the marker one interval ahead.
+    await gate.release(await gate.acquire(wait_seconds=5.0))
+    armed = float(await redis.get(f"{gate._key}:pace"))
+
+    # Second caller cannot absorb the interval, so it must give the claim back.
+    with pytest.raises(LLMGateTimeoutError):
+        await gate.acquire(wait_seconds=0.2)
+
+    after = float(await redis.get(f"{gate._key}:pace"))
+    assert after == pytest.approx(armed, abs=0.01), (
+        f"marker moved {after - armed:.1f}s on a caller that never departed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_real_llm7_interval_is_what_production_uses(redis: Redis):
+    """Pinned to the production figure, not a test-only value: the other pacing
+    tests shrink the interval for speed, so nothing else would notice the table
+    being edited."""
+    assert PROVIDER_MIN_INTERVAL_SECONDS["llm7"] == 8.0
+    gate = LLMGate(redis, lease_seconds=30).for_provider("llm7")
+    await gate.release(await gate.acquire(wait_seconds=1.0))
+    started = time.monotonic()
+    with pytest.raises(LLMGateTimeoutError):
+        await gate.acquire(wait_seconds=1.0)
+    assert time.monotonic() - started < 1.5, "a bounded-out caller slept anyway"
+
+
+@pytest.mark.asyncio
+async def test_a_bounded_out_caller_leaves_no_slot_held(redis: Redis):
+    """Pacing runs while HOLDING the concurrency slot, so the timeout path must
+    release it — otherwise one bounded-out caller parks a capacity-1 account.
+
+    MUTATION: drop the `await self.release(slot)` in acquire's except branch and
+    in_flight stays 1 with nobody running.
+    """
+    gate = LLMGate(redis, lease_seconds=30).for_provider("llm7")
+    with pytest.raises(LLMGateTimeoutError):
+        # First call departs immediately and arms the marker; second cannot fit.
+        await gate.release(await gate.acquire(wait_seconds=1.0))
+        await gate.acquire(wait_seconds=1.0)
+    assert await gate.in_flight() == 0, "a bounded-out caller kept its slot"
