@@ -720,8 +720,15 @@ async def validate_with_llm(
     category: str,
     difficulty: str,
     time_limit_seconds: int,
+    model: str = VALIDATION_MODEL,
 ) -> ValidationVerdict:
-    """One LLM call and its parsed verdict. The caller reserves the budget first."""
+    """One LLM call and its parsed verdict. The caller reserves the budget first.
+
+    ``model`` defaults to VALIDATION_MODEL for the existing (submission) caller;
+    a caller that already resolved a different live candidate — and therefore
+    holds credentials for THAT provider, not VALIDATION_MODEL's — passes it
+    explicitly so the wire model name matches the base_url it is sent to.
+    """
     messages = build_validation_messages(
         title=title,
         prompt=prompt,
@@ -731,7 +738,7 @@ async def validate_with_llm(
         time_limit_seconds=time_limit_seconds,
     )
     raw = await call_validation_model(
-        base_url=base_url, api_key=api_key, messages=messages
+        base_url=base_url, api_key=api_key, messages=messages, model=model
     )
     verdict = parse_validation_response(raw)
     logger.debug("task validation verdict: {}", verdict.verdict)
