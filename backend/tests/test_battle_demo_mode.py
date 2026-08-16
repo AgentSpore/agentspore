@@ -266,10 +266,25 @@ async def _to_judging(
 
 @contextmanager
 def _no_transport():
+    """Stub every outward call these tests must not really make.
+
+    That includes the demo answer's LIVENESS PROBE: the model is resolved per
+    call by pick_live_model, which is a real HTTP request to whichever provider
+    heads the candidate list. Left unstubbed it makes this suite depend on the
+    machine's network and on today's provider billing — a candidate that is
+    unreachable from the test host silently shifts the answer to the next one.
+    Pinned to the head of the list so wire-routing assertions have one known
+    answer; that a DEAD head is skipped is covered separately, against the
+    picker itself, in test_dead_model_liveness_paths.py.
+    """
     queued = AsyncMock(return_value=DeliveryResult.QUEUED)
     with (
         patch("app.services.battle_service.dispatch_existing", queued),
         patch("app.services.battle_runner.dispatch_existing", queued),
+        patch(
+            "app.services.battle_runner.pick_live_model",
+            AsyncMock(return_value=DEMO_ANSWER_MODEL),
+        ),
     ):
         yield
 
@@ -836,8 +851,9 @@ class TestDemoAnswerModelRouting:
         panel's tight verdict defaults (max_tokens/http_timeout).
 
         DEMO_ANSWER_MODEL and JUDGE_MODEL are independent settings; this only
-        pins DEMO_ANSWER_MODEL's own wire routing, not which model it currently
-        happens to be.
+        pins the wire routing of whichever model was picked, not which model
+        gets picked (liveness decides that — see _no_transport, which pins the
+        pick so this assertion has one known answer).
 
         MUTATION (on a copy of battle_runner.py): drop DEMO_ANSWER_MAX_TOKENS to
         the judge cap or the demo model's temperature override — this test goes
@@ -872,9 +888,8 @@ class TestDemoAnswerModelRouting:
     async def test_demo_answer_and_judge_panel_have_independent_budgets(
         self, session_maker, db_session, task_pool
     ) -> None:
-        """DEMO_ANSWER_MODEL and JUDGE_MODEL are different models today (mistral
-        small vs. mistral large), so the demo ANSWER and the judge panel call
-        different wire names — and even if they ever coincided again, they must
+        """The demo ANSWER and the judge panel are independently configured, so they
+        may call different wire names — and even if they ever coincided again, they must
         NOT share the token budget: the demo answer uses the wide
         DEMO_ANSWER_MAX_TOKENS, the panel the tight JUDGE_MAX_TOKENS.
         """

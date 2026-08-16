@@ -112,6 +112,7 @@ from app.services.battle_judges import (
 from app.services.battle_service import BattleService
 from app.services.connection_manager import dispatch_existing
 from app.services.llm_gate import LLMGate
+from app.services.provider_health import pick_live_model
 
 # Row-lease length for a battle claimed by the reconciler. Long enough to
 # outlast one bounded step (six judge calls at up to JUDGE_HTTP_TIMEOUT_SECONDS
@@ -227,19 +228,29 @@ PROVIDER_UNREACHABLE_ERROR = "provider unreachable"
 _ANSWER_ATTEMPTS = 2
 _ANSWER_RETRY_BACKOFF_SECONDS = 2.0
 
-# The model the demo opponent answers with. kimi-k3 answers reliably (0 timeouts)
-# where the old glm judge always timed out on a single-call demo answer, so the
-# demo side never spoke. This constant is kept SEPARATE from JUDGE_MODEL on
-# purpose: the demo path answers a full task and so overrides the tight judging
-# defaults with a much wider token budget (DEMO_ANSWER_MAX_TOKENS) and a longer
-# HTTP timeout — a FULL task answer was measured live at ~120s, whereas a short
-# judge verdict is ~7s (do not size the demo timeouts off the verdict figure).
+# The models the demo opponent may answer with, best-first. These stay SEPARATE
+# from JUDGE_MODEL on purpose: the demo path answers a full task and so overrides
+# the tight judging defaults with a much wider token budget
+# (DEMO_ANSWER_MAX_TOKENS) and a longer HTTP timeout — a FULL task answer was
+# measured live at ~120s, whereas a short judge verdict is ~7s (do not size the
+# demo timeouts off the verdict figure).
 #
-# Was kimi-k3 until the moonshot account was suspended for insufficient balance:
-# every demo battle then answered 429 and voided. mistral-small-latest replaces
-# it — reachable, paid for, and cheap enough for a path that exists to give a
-# visitor something to watch.
-DEMO_ANSWER_MODEL = "mistral/mistral-small-latest"
+# A LIST resolved per call by pick_live_model, not one constant: the constant
+# form failed twice in a week the same way — the named account kept valid
+# credentials (so "has a key" said nothing) and refused every completion (kimi
+# 429, then mistral 402), voiding every demo battle with no verdict.
+#
+# Ordered by ANSWER LATENCY, the demo path's real constraint: one call must fit
+# inside DEMO_ANSWER_TIMEOUT_SECONDS, and a model that reasons before it writes
+# has already cost real answers here (kimi exceeded 180s twice in one window).
+# Flash-tier first; the llm7 ids are a DIFFERENT account, so one provider's
+# billing cannot take the whole list down (the judge roster's INVARIANT).
+DEMO_ANSWER_MODEL_CANDIDATES = (
+    "zai/glm-4.5-flash",
+    "llm7/gemini-3.1-flash-lite",
+    "llm7/mistral-Nemo-Instruct-2407",
+)
+DEMO_ANSWER_MODEL = DEMO_ANSWER_MODEL_CANDIDATES[0]
 
 # Response-length ceiling for the demo opponent's answer call. Deliberately
 # LARGER than the judge cap (JUDGE_MAX_TOKENS, sized for reasoning + a short JSON
@@ -1273,21 +1284,25 @@ class BattleRunner:
         """One gated provider call producing the demo opponent's answer, or None.
 
         Reuses the judge's exact call shape (:func:`call_judge_model`) but routes
-        to DEMO_ANSWER_MODEL (kimi-k3) rather than the judge model: kimi answers
-        fast and reliably inside the deadline where a single glm call always
-        timed out. kimi is a distinct provider (moonshot), so its OWN base_url /
-        api_key are resolved here via OpenRouterService — falling back to the
-        judge credentials threaded in only when moonshot is unconfigured. It also
-        REQUIRES temperature=1, applied through judge_temperature_for so kimi is
-        not silently sampled wrong. Goes through the same bounded retry the
-        contender path uses — one failure mode, one behaviour. Returns the answer
-        capped to MAX_SUBMISSION_CHARS, or None when the model answered with
-        nothing; a transport failure PROPAGATES so the caller can tell the two
-        apart.
+        to a demo answer model rather than the judge model, because the two jobs
+        have different latency and token profiles (see the constants above).
+
+        WHICH model is decided per call by :func:`pick_live_model`, not by a
+        constant: a dead-but-keyed id resolves credentials fine and then refuses
+        every completion, which is how this path voided every demo battle twice.
+        Credentials and the temperature quirk are resolved downstream from the
+        picked id in ``_answer_with_model``, with the judge credentials threaded
+        in here only as the fallback for an unconfigured provider.
+
+        Goes through the same bounded retry the contender path uses. Returns the
+        answer capped to MAX_SUBMISSION_CHARS, or None when the model answered
+        with nothing; a transport failure PROPAGATES so the caller can tell the
+        two apart.
         """
+        model = await pick_live_model(list(DEMO_ANSWER_MODEL_CANDIDATES))
         return await self._answer_with_retry(
             battle,
-            AnswerSpec(DEMO_ANSWER_MODEL, _DEMO_ANSWER_SYSTEM, _SEED_SLOT[Side.B]),
+            AnswerSpec(model, _DEMO_ANSWER_SYSTEM, _SEED_SLOT[Side.B]),
             api_key,
             base_url,
         )
