@@ -1505,6 +1505,31 @@ class BattleRepository:
         )
         return [dict(row) for row in result.mappings()]
 
+    async def list_contenders(self) -> list[dict]:
+        """Every contender that ever fought, retired ones included.
+
+        Answers the UI's question — "whose name is this id?" — which
+        :meth:`list_enabled_contenders` cannot: that one answers the
+        matchmaker's question of who may still be fielded, and its ``enabled``
+        filter erased retired fighters' names from the battles they had already
+        fought. ``enabled`` rides along so a caller that needs the roster of
+        ACTIVE fighters can still tell the two apart.
+
+        ``system_prompt`` is deliberately not selected, as in the enabled-only
+        query: this row reaches a public route, and an approach's text must not
+        travel where it does not have to.
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT id, display_name, provider, model_id, approach_key, enabled
+                  FROM battle_contenders
+                 ORDER BY created_at, id
+                """
+            )
+        )
+        return [dict(row) for row in result.mappings()]
+
     async def get_contender(self, contender_id: str) -> dict | None:
         """One contender by id, enabled or not — a running battle must finish."""
         result = await self.db.execute(
