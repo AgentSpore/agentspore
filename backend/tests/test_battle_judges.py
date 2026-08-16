@@ -41,6 +41,7 @@ from app.services.battle_judges import (
     LABEL_TWO,
     MAX_SUBMISSION_CHARS,
     QUORUM,
+    JUDGE_MODEL,
     REPLICATE_COUNT,
     CollapsedVote,
     JudgeModel,
@@ -930,6 +931,20 @@ class TestJudgeRosterHasNoDeadProviders:
         """
         providers = {m.split("/", 1)[0] for m in get_settings().battle_judge_models}
         assert len(providers) >= 2, f"single-provider judge panel: {providers}"
+
+    def test_the_primary_judge_model_is_the_first_roster_entry(self) -> None:
+        """config.py: "the FIRST is the primary (must be battle_judges.
+        JUDGE_MODEL)". _resolve_judge_roster PREPENDS the primary whatever the
+        roster says, so a JUDGE_MODEL outside it seats a model that is not a
+        candidate — which is exactly what removing the mistral ids exposed.
+
+        MUTATION: point JUDGE_MODEL at any id not first in the roster and this
+        goes red.
+        """
+        roster = get_settings().battle_judge_models
+        assert roster[0] == JUDGE_MODEL, (
+            f"primary {JUDGE_MODEL} is not the roster head {roster[0]}"
+        )
 
     def test_enough_seats_survive_recusal_to_reach_quorum(self) -> None:
         """A FIGHTING model is recused, so the roster needs margin above the
