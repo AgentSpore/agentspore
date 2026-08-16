@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 from conftest import split_sql_statements
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -30,6 +31,8 @@ from testcontainers.postgres import PostgresContainer
 
 from app.core.background import BattleMatchmakerTask
 from app.core.config import get_settings
+from app.core.database import get_db
+from app.main import app
 from app.repositories.battle_repo import BattleRepository
 from app.schemas.battles import Side
 from app.services.battle_judges import (
@@ -1227,3 +1230,113 @@ class TestHumanSeatDoesNotSuppressTheFreeze:
         assert str(human_row["judge_ref"]) == voter
         assert str(human_row["vote"]) == "a"
         assert human_row["reasoning"] is None, "the freeze overwrote a human vote"
+
+
+# ---------------------------------------------------------------------------
+# Retiring a contender must not erase its name from the battles it fought.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def client(session_maker):
+    """The real app with only the DB swapped. The roster route is public."""
+
+    async def override_get_db():
+        async with session_maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def restore_contender_roster(db_session):
+    """Re-enable everything this class retires.
+
+    engine/session_maker are module-scoped and nothing truncates between tests,
+    so a committed `enabled = FALSE` would leak into every test that runs after
+    this class — TestContenderSeed's `len(rows) >= 5` floor gets closer with
+    each one. Retiring a contender IS the behaviour under test, so the row must
+    be really disabled and really committed; the cleanup belongs here.
+    """
+    yield
+    await db_session.execute(text("UPDATE battle_contenders SET enabled = TRUE"))
+    await db_session.commit()
+
+
+class TestRetiredContenderNames:
+    """V79 disabled eight dead contenders so the matchmaker stops drawing them.
+
+    The roster route was the frontend's only id -> name lookup and filtered on
+    ``enabled``, so 3088 contender references across 1821 finished battles lost
+    their fighters' names and rendered as a placeholder. A retired fighter's
+    name is part of the record; only its eligibility to be fielded ends.
+    """
+
+    async def test_roster_resolves_a_disabled_contender_name(
+        self, db_session, restore_contender_roster
+    ) -> None:
+        """MUTATION: put ``WHERE enabled = TRUE`` back into list_contenders and
+        the disabled row drops out of the map, so its name resolves to nothing.
+        """
+        repo = BattleRepository(db_session)
+        enabled = await repo.list_enabled_contenders()
+        retired_id = str(enabled[0]["id"])
+        retired_name = enabled[0]["display_name"]
+        assert retired_name, "fixture precondition: the seed carries a name"
+
+        await db_session.execute(
+            text(
+                "UPDATE battle_contenders SET enabled = FALSE "
+                "WHERE id = CAST(:cid AS UUID)"
+            ),
+            {"cid": retired_id},
+        )
+        await db_session.commit()
+
+        # The matchmaker's question is unchanged: it must not field this row.
+        still_fieldable = {str(r["id"]) for r in await repo.list_enabled_contenders()}
+        assert retired_id not in still_fieldable
+
+        # The UI's question is different: the name must still resolve.
+        roster = {str(r["id"]): r for r in await repo.list_contenders()}
+        assert retired_id in roster, "a retired fighter vanished from the roster"
+        assert roster[retired_id]["display_name"] == retired_name
+        assert roster[retired_id]["enabled"] is False, (
+            "the roster must mark who is retired, or the caller cannot tell"
+        )
+
+    async def test_roster_route_returns_disabled_contenders_with_the_flag(
+        self, client, db_session, restore_contender_roster
+    ) -> None:
+        """The public route is what the frontend actually calls.
+
+        MUTATION: restore the enabled filter in the route's repository call and
+        the retired id disappears from the response body.
+        """
+        repo = BattleRepository(db_session)
+        enabled = await repo.list_enabled_contenders()
+        retired_id = str(enabled[0]["id"])
+        retired_name = enabled[0]["display_name"]
+
+        await db_session.execute(
+            text(
+                "UPDATE battle_contenders SET enabled = FALSE "
+                "WHERE id = CAST(:cid AS UUID)"
+            ),
+            {"cid": retired_id},
+        )
+        await db_session.commit()
+
+        res = await client.get("/api/v1/battles/contenders")
+        assert res.status_code == 200
+        body = {row["id"]: row for row in res.json()}
+
+        assert retired_id in body, "the route still hides retired fighters"
+        assert body[retired_id]["display_name"] == retired_name
+        assert body[retired_id]["enabled"] is False
+        assert "system_prompt" not in body[retired_id], (
+            "an approach's text must not travel with the roster"
+        )
