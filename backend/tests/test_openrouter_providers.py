@@ -271,18 +271,22 @@ def test_fallback_model_is_not_self_blocked():
     assert prefix in OpenRouterService.EXTRA_PROVIDERS
 
 
-def test_fallback_model_is_one_measured_answering():
-    """The fallback must be a model measured ANSWERING, re-checked when it moves.
+def test_fallback_is_a_list_that_spans_accounts_not_a_single_id():
+    """The fallback must not be a single id, whatever that id is today.
 
-    It was zai/glm-4.5-flash on the strength of a 2026-07-15 probe (10/10 HTTP
-    200). Re-probed from the production host on 2026-08-10 the same id returned
-    429 in 0.8s on every call, so the fallback was dead and every downgrade
-    dead-ended silently. mistral-small answered 200 in 0.7s on that run.
+    History: zai/glm-4.5-flash (2026-07-15, 10/10 HTTP 200) went 429 on every
+    call by 2026-08-10; its replacement mistral-small went 402 by 2026-08-17.
+    This test used to pin the exact id so that moving it forced a re-measure —
+    but that only froze whichever model had died most recently, and the pin
+    itself went red each time instead of the code degrading.
 
-    Pinning the exact id is the point: moving the fallback should force whoever
-    moves it to re-measure, which is what this docstring records.
+    So the assertion moved up a level: what must hold is that more than one
+    ACCOUNT can serve the fallback, so one billing failure cannot take the
+    whole path down. Which ids they are is free to change without a test edit.
     """
-    assert OpenRouterService.FALLBACK_MODEL == "mistral/mistral-small-latest"
+    candidates = OpenRouterService.FALLBACK_MODEL_CANDIDATES
+    assert len(candidates) >= 2
+    assert len({_provider_prefix(m) for m in candidates}) >= 2
 
 
 def test_zai_static_models_lead_with_the_reliable_model():
@@ -291,26 +295,44 @@ def test_zai_static_models_lead_with_the_reliable_model():
     assert static[0] == "glm-4.5-flash"
 
 
-def test_fallback_model_resolves_to_a_live_provider():
-    """resolve_provider(FALLBACK_MODEL) must yield a non-None provider dict.
+def test_the_chosen_fallback_always_resolves_to_a_provider():
+    """The id resolve_model hands back must have a reachable base_url + key.
 
-    With the fallback provider's key configured the fallback always has a
-    reachable base_url + key — otherwise a downgrade would dead-end.
+    Asserting this about the LIST HEAD would prove nothing now that the head
+    is skipped when unavailable; the guarantee belongs to whatever the
+    selection actually returns.
     """
     settings = _settings(mistral_api_key="mistral-secret")
     svc = OpenRouterService()
     with _patch_settings(settings):
-        info = svc.resolve_provider(OpenRouterService.FALLBACK_MODEL)
+        chosen = svc._pick_available_fallback()
+        info = svc.resolve_provider(chosen)
     assert info is not None
-    assert info["api_key"] == "mistral-secret"
+    assert info["base_url"]
+
+
+def test_a_keyless_fallback_survives_a_host_with_no_provider_keys():
+    """With nothing configured the selection must still land somewhere usable.
+
+    Measured: zai and mistral resolve to None without keys, llm7 resolves
+    keyless. Without that anchor an unconfigured deployment has no fallback.
+    """
+    svc = OpenRouterService()
+    with _patch_settings(_settings()):
+        chosen = svc._pick_available_fallback()
+        assert svc.resolve_provider(chosen) is not None
 
 
 @pytest.mark.asyncio
 async def test_resolve_model_blocked_openrouter_falls_back():
-    """Only genuinely blocked OpenRouter models are swapped for the fallback."""
+    """Only genuinely blocked OpenRouter models are swapped for the fallback.
+
+    The result is whichever candidate is available, not a fixed id — see
+    test_fallback_is_a_list_that_spans_accounts_not_a_single_id.
+    """
     svc = OpenRouterService()
     blocked = next(iter(OpenRouterService.BLOCKED_MODELS))
-    assert await svc.resolve_model(blocked) == OpenRouterService.FALLBACK_MODEL
+    assert await svc.resolve_model(blocked) in OpenRouterService.FALLBACK_MODEL_CANDIDATES
 
 
 def test_resolve_provider_zai_robust_to_casing_and_whitespace():
