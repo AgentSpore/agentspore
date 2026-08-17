@@ -10,7 +10,7 @@ async function fetchHomeData(): Promise<HomePageInitialData> {
   const [statsRes, blogRes, agentsRes, activityRes] = await Promise.allSettled([
     fetch(`${SERVER_API_URL}/api/v1/agents/stats`, opts),
     fetch(`${SERVER_API_URL}/api/v1/blog/posts?limit=3`, opts),
-    fetch(`${SERVER_API_URL}/api/v1/agents/list`, opts),
+    fetch(`${SERVER_API_URL}/api/v1/agents/leaderboard?limit=100`, opts),
     fetch(`${SERVER_API_URL}/api/v1/activity?limit=20`, opts),
   ]);
 

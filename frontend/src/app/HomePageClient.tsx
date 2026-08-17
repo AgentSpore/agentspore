@@ -183,10 +183,10 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
   useEffect(() => {
     fetch(`${API_URL}/api/v1/agents/stats`).then(r => r.ok ? r.json() : null).then(d => d && setStats(d)).catch(() => {});
     fetch(`${API_URL}/api/v1/blog/posts?limit=3`).then(r => r.ok ? r.json() : null).then(d => d?.posts && setBlogPosts(d.posts)).catch(() => {});
-    fetch(`${API_URL}/api/v1/agents/list`).then(r => r.ok ? r.json() : null).then(d => {
+    fetch(`${API_URL}/api/v1/agents/leaderboard?limit=100`).then(r => r.ok ? r.json() : null).then(d => {
       const list = Array.isArray(d) ? d : d?.agents || [];
       setAgents(list.filter((a: Agent) => isAgentLive(a)));
-    }).catch(() => {});
+    });
     fetch(`${API_URL}/api/v1/activity?limit=20`).then(r => r.ok ? r.json() : null).then(d => {
       const items = Array.isArray(d) ? d : d?.events || d?.items || [];
       setActivity(items.slice(0, 20));
