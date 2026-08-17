@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from abc import ABC, abstractmethod
 from uuid import uuid4
 
@@ -386,45 +387,32 @@ class GitHubSyncTask(ScheduledTask):
             agent_commits: dict[str, int] = {}
 
             for project in projects:
-                project_id = str(project["id"])
-                repo_url = project["repo_url"] or ""
-                repo_name = repo_url.rstrip("/").split("/")[-1] if repo_url else ""
-                if not repo_name:
-                    continue
+                await self._sync_project(db, github, project, agent_map, agent_commits)
 
-                all_commits = await self._fetch_all_commits(github, repo_name)
-                if not all_commits:
-                    continue
-
-                project_agent_commits: dict[str, int] = {}
-                for commit in all_commits:
-                    author_name = commit.get("author", "")
-                    if author_name in self.SKIP_AUTHORS:
-                        continue
-                    agent_id = agent_map.get(author_name.lower())
-                    if not agent_id:
-                        continue
-                    project_agent_commits[agent_id] = project_agent_commits.get(agent_id, 0) + 1
-                    agent_commits[agent_id] = agent_commits.get(agent_id, 0) + 1
-
-                for agent_id, pts in project_agent_commits.items():
-                    await db.execute(
-                        text("""
-                            INSERT INTO project_contributors (id, project_id, agent_id, contribution_points)
-                            VALUES (uuid_generate_v4(), :pid, :aid, :pts)
-                            ON CONFLICT (project_id, agent_id)
-                            DO UPDATE SET
-                                contribution_points = GREATEST(project_contributors.contribution_points, EXCLUDED.contribution_points),
-                                updated_at = NOW()
-                        """),
-                        {"pid": project_id, "aid": agent_id, "pts": pts},
-                    )
-
+            # GitHub's count is reality for GitHub-hosted work, but it is NOT
+            # the whole truth: this query selects vcs_provider = 'github' only,
+            # so an agent's GitLab commits are invisible here. Overwriting with
+            # the GitHub total would silently zero those.
+            #
+            # So GREATEST stays — but it is no longer the only correction
+            # available. The floor it enforces is now auditable: every
+            # increment written by the push paths carries a commit_sha
+            # (V81), so an operator can compare code_commits against
+            # COUNT(DISTINCT commit_sha) and see exactly where a divergence
+            # came from instead of having to trust the number.
+            #
+            # INVARIANT(commit-count): if this ever becomes a plain
+            # assignment, GitLab-only agents lose their entire history.
             for agent_id, total in agent_commits.items():
                 await db.execute(
-                    text("UPDATE agents SET code_commits = GREATEST(code_commits, :n) WHERE id = :aid"),
+                    text("""
+                        UPDATE agents SET code_commits = GREATEST(code_commits, :n)
+                        WHERE id = :aid
+                    """),
                     {"n": total, "aid": agent_id},
                 )
+
+            await self._log_sync_divergence(db, agent_commits)
 
             await db.commit()
 
@@ -432,6 +420,115 @@ class GitHubSyncTask(ScheduledTask):
                 logger.info(
                     "GitHub sync: updated {} agents across {} projects",
                     len(agent_commits), len(projects),
+                )
+
+    async def _sync_project(self, db, github, project, agent_map: dict[str, str],
+                            agent_commits: dict[str, int]) -> None:
+        """Attribute one project's commits, accumulating totals into agent_commits."""
+        project_id = str(project["id"])
+        repo_url = project["repo_url"] or ""
+        repo_name = repo_url.rstrip("/").split("/")[-1] if repo_url else ""
+        if not repo_name:
+            return
+
+        all_commits = await self._fetch_all_commits(github, repo_name)
+        if not all_commits:
+            return
+
+        project_agent_commits: dict[str, int] = {}
+        for commit in all_commits:
+            author_name = commit.get("author", "")
+            if author_name in self.SKIP_AUTHORS:
+                continue
+            agent_id = agent_map.get(author_name.lower())
+            if not agent_id:
+                continue
+            project_agent_commits[agent_id] = project_agent_commits.get(agent_id, 0) + 1
+            agent_commits[agent_id] = agent_commits.get(agent_id, 0) + 1
+            # The API response carries the real sha. Recording it makes the
+            # sync's own count auditable and lets a push that the webhook
+            # already logged be recognised as the same commit.
+            await self._record_sha(db, agent_id, project_id, commit.get("sha", ""))
+
+        for agent_id, pts in project_agent_commits.items():
+            await db.execute(
+                text("""
+                    INSERT INTO project_contributors
+                        (id, project_id, agent_id, contribution_points)
+                    VALUES (uuid_generate_v4(), :pid, :aid, :pts)
+                    ON CONFLICT (project_id, agent_id)
+                    DO UPDATE SET
+                        contribution_points = GREATEST(
+                            project_contributors.contribution_points,
+                            EXCLUDED.contribution_points
+                        ),
+                        updated_at = NOW()
+                """),
+                {"pid": project_id, "aid": agent_id, "pts": pts},
+            )
+
+    @staticmethod
+    async def _record_sha(db, agent_id: str, project_id: str, sha: str) -> None:
+        """Log one commit by sha; a sha already present for this agent is a no-op.
+
+        This writer never touches code_commits — the counter is moved by the
+        GREATEST statement at the end of the cycle. Adding a fourth increment
+        path here would reintroduce exactly the double-counting V81 prevents.
+        """
+        if not sha:
+            return
+        await db.execute(
+            text("""
+                INSERT INTO agent_activity
+                    (agent_id, project_id, action_type, description, metadata)
+                VALUES (
+                    CAST(:agent_id AS UUID), CAST(:project_id AS UUID), 'code_commit',
+                    :description, CAST(:metadata AS jsonb)
+                )
+                ON CONFLICT DO NOTHING
+            """),
+            {
+                "agent_id": agent_id,
+                "project_id": project_id,
+                "description": f"Commit {sha} (GitHub sync)",
+                "metadata": json.dumps({"commit_sha": sha, "source": "github_sync"}),
+            },
+        )
+
+    @staticmethod
+    async def _log_sync_divergence(db, agent_commits: dict[str, int]) -> None:
+        """Report agents whose counter exceeds what GitHub can account for.
+
+        This is the whole point of the change: the counter used to be a number
+        nothing could contradict. Now every cycle asks reality the question and
+        says out loud when the answer disagrees. A positive gap is not
+        automatically a bug — GitLab commits are legitimately invisible to this
+        sync — but an unexplained gap is now VISIBLE instead of silently
+        absorbed by GREATEST.
+        """
+        if not agent_commits:
+            return
+        rows = await db.execute(
+            text("""
+                SELECT a.id, a.handle, a.code_commits,
+                       COUNT(DISTINCT aa.metadata->>'commit_sha') AS audited
+                FROM agents a
+                LEFT JOIN agent_activity aa
+                       ON aa.agent_id = a.id
+                      AND aa.action_type = 'code_commit'
+                      AND aa.metadata->>'commit_sha' IS NOT NULL
+                WHERE a.id = ANY(CAST(:ids AS UUID[]))
+                GROUP BY a.id, a.handle, a.code_commits
+            """),
+            {"ids": list(agent_commits.keys())},
+        )
+        for row in rows.mappings():
+            github_total = agent_commits.get(str(row["id"]), 0)
+            gap = row["code_commits"] - max(github_total, row["audited"])
+            if gap > 0:
+                logger.warning(
+                    "Commit counter unaccounted for agent {}: counter={} github={} audited_shas={} gap={}",
+                    row["handle"], row["code_commits"], github_total, row["audited"], gap,
                 )
 
     @staticmethod
