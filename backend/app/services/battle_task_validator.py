@@ -51,13 +51,23 @@ from app.services.battle_judges import (
 # it currently resolves the same way: the two jobs have different prompts and
 # different failure costs, and pinning them to one constant would make changing
 # the judge silently change validation too.
-# Measured from the production host on 2026-08-10: zai/glm-4.5-flash (the
-# original) returns 429 in 0.8s on every call, this one returns 200 in 0.7s.
-# The id is BOTH the wire model and the key the caller resolves a provider
-# from, so a caller that resolves its own provider (the harvester does) and
-# leaves this default in place sends a zai model name to a mistral base_url —
-# HTTP 400 "Invalid model", which is exactly how the drift surfaced.
-VALIDATION_MODEL = "mistral/mistral-small-latest"
+# The id is BOTH the wire model and the key a caller resolves a provider from,
+# so a caller that resolves its own provider must resolve it from the id it
+# actually sends. Pairing one provider's base_url with another's wire name is
+# HTTP 400 "Invalid model", which is exactly how that drift surfaced.
+#
+# 2026-08-17: a LIST, resolved per call by pick_live_model. mistral began
+# answering 402 on every completion; the harvester probed liveness and degraded,
+# but the SUBMISSION path resolved this constant directly, so a user's task was
+# validated against a dead account. The candidates live HERE, not in a caller:
+# the harvester kept its own copy, and two lists is how one of them goes stale.
+# More than one PROVIDER, per the judge roster's INVARIANT.
+VALIDATION_MODEL_CANDIDATES = (
+    "zai/glm-4.5-flash",
+    "llm7/DeepSeek-V4-Flash-0731",
+    "llm7/mistral-Nemo-Instruct-2407",
+)
+VALIDATION_MODEL = VALIDATION_MODEL_CANDIDATES[0]
 VALIDATION_TEMPERATURE = 0.0
 VALIDATION_HTTP_TIMEOUT_SECONDS = 60.0
 # Raised from 800 after a live measurement: the validation model reasons before it

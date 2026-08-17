@@ -61,7 +61,7 @@ import httpx
 from loguru import logger
 
 from app.schemas.battles import PresentedOrder, Side, Vote
-from app.services.llm_gate import LLMGate, LLMGateTimeoutError
+from app.services.llm_gate import DEFAULT_WAIT_SECONDS, LLMGate, LLMGateTimeoutError
 
 # The PRIMARY judge model, and it must stay the first entry of
 # settings.battle_judge_models.
@@ -1278,6 +1278,15 @@ async def call_judge_model(
     # The provider segment of the platform model id. Selects the account this
     # call is gated on; None keeps the caller's own gate unscoped.
     provider: str | None = None,
+    # How long to wait for a slot on that account. The judging default suits a
+    # SEQUENTIAL panel, where each acquire waits at most one pace interval. The
+    # answer path overrides it because it is CONCURRENT — both sides of a battle
+    # contend for the same account, so the loser must outwait a whole in-flight
+    # answer, not an interval (ANSWER_GATE_WAIT_SECONDS, with the arithmetic).
+    # A parameter for the same reason max_tokens and http_timeout are: each path
+    # sizes its own bound instead of the two sharing one number that can only be
+    # right for one of them.
+    gate_wait_seconds: float = DEFAULT_WAIT_SECONDS,
 ) -> str:
     """ONE gated, bounded provider HTTP attempt. Raises JudgeTransportError on failure.
 
@@ -1311,7 +1320,7 @@ async def call_judge_model(
     )
 
     try:
-        async with account.slot():
+        async with account.slot(wait_seconds=gate_wait_seconds):
             response = await client.post(
                 f"{base_url.rstrip('/')}/chat/completions",
                 headers=auth_headers(api_key),

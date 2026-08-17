@@ -95,8 +95,25 @@ PROVIDER_MAX_CONCURRENCY: dict[str, int] = {
 # renewed after every half. A panel is REPLICATE_COUNT(3) x PRESENTED_ORDERS(2)
 # = 6 SEQUENTIAL calls, so waits do not stack: each acquire waits at most one
 # interval (8 < 20) and the panel adds ~48s against that renewed 300s lease.
-# INVARIANT(llm7-pace): were the panel made CONCURRENT, the Nth claimant would
-# wait N*8s and blow the 20s ceiling — raise pace and concurrency together.
+# INVARIANT(llm7-pace): this pacing is load-bearing — llm7's keyless 429 burst
+# without it is real and measured. Do NOT relax the interval or raise capacity
+# above 1 to fix a starvation symptom; widen the WAIT of the starved caller.
+#
+# The concurrent case predicted here HAPPENED, and it is worse than the estimate
+# above. Measured on production (v1.28.2, two-hour window): 12 battles ended, 2
+# reached a verdict, 9 recorded "provider unreachable" — the dominant failure.
+# The answer path (battle_runner._spawn_contender_drives) fires BOTH sides of a
+# battle as detached tasks, so on this capacity-1 account the second claimant
+# does not wait N*8s as guessed; it waits out the first side's ENTIRE in-flight
+# call (up to 240s), which no 20s ceiling can absorb. One side answered, the
+# other was bounced "gate saturated", and the battle voided.
+#
+# Fixed by giving the ANSWER path its own bound (ANSWER_GATE_WAIT_SECONDS, 250s
+# = 240 + one interval) rather than by touching pace or capacity, so the account
+# still sees at most one call per 8s. The lesson generalises past llm7: a wait
+# ceiling derived for a SEQUENTIAL caller is not valid for a CONCURRENT one, and
+# DEFAULT_WAIT_SECONDS below is the judge panel's number. Any new concurrent
+# caller on a paced account must re-derive its own wait and say so.
 PROVIDER_MIN_INTERVAL_SECONDS: dict[str, float] = {
     "llm7": 8.0,
 }
