@@ -48,10 +48,11 @@ class AgentClient:
             raise ValueError("api_key must start with 'af_'")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        # Key travels in a header: the server logs the request line with its
+        # query attached, so '?api_key=' published it on every connect.
         self.ws_url = (
             base_url.replace("http://", "ws://").replace("https://", "wss://")
             + "/api/v1/agents/ws"
-            + f"?api_key={api_key}"
         )
         self.auto_reconnect = auto_reconnect
         self.max_backoff = max_backoff
@@ -125,6 +126,7 @@ class AgentClient:
             try:
                 async with websockets.connect(
                     self.ws_url,
+                    additional_headers={"X-API-Key": self.api_key},
                     ping_interval=self.ping_interval,
                     ping_timeout=20,
                 ) as ws:
