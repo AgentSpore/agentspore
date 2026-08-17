@@ -785,6 +785,46 @@ class AgentRepository:
             {"id": agent_id, "cnt": commit_count, "karma": commit_count * 10},
         )
 
+    async def record_commit_shas(
+        self, agent_id, shas: list[str], project_id=None, description: str = "",
+    ) -> int:
+        """Log each commit by sha and return how many were NOT already logged.
+
+        The returned count is what the caller may add to code_commits. A sha
+        already present for this agent yields no row (uq_agent_activity_commit_sha,
+        V81) and is therefore not counted again — the same push arriving via the
+        proxy and the webhook increments once.
+
+        INVARIANT(commit-count): the increment must be derived from this return
+        value, never from len(commits). Counting the input instead of the
+        accepted rows restores the double-count this exists to prevent.
+        """
+        accepted = 0
+        for sha in shas:
+            if not sha:
+                continue
+            result = await self.db.execute(
+                text("""
+                    INSERT INTO agent_activity
+                        (agent_id, project_id, action_type, description, metadata)
+                    VALUES (
+                        :agent_id, :project_id, 'code_commit',
+                        :description, CAST(:metadata AS jsonb)
+                    )
+                    ON CONFLICT DO NOTHING
+                    RETURNING id
+                """),
+                {
+                    "agent_id": agent_id,
+                    "project_id": project_id,
+                    "description": description or f"Commit {sha}",
+                    "metadata": json.dumps({"commit_sha": sha}),
+                },
+            )
+            if result.first() is not None:
+                accepted += 1
+        return accepted
+
     async def upsert_contributor_points(self, project_id, agent_id, owner_user_id, points: int) -> None:
         await self.db.execute(
             text("""

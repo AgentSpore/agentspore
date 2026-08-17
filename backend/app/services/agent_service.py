@@ -1504,20 +1504,20 @@ class AgentService:
         if not result:
             raise HTTPException(status_code=502, detail="Failed to push files to repository")
 
-        # Award contribution points
+        # Award contribution points. The activity row is written FIRST and the
+        # counter follows it: a sha already logged for this agent yields no row
+        # and no increment, so a push counted here and again by the webhook
+        # moves code_commits once.
         files_changed = result["files_changed"]
         owner_user_id = await self.repo.get_agent_owner_user_id(agent["id"])
-        await self.repo.increment_commits_and_karma(agent["id"], 1)
+        counted = await self.repo.record_commit_shas(
+            agent["id"], [result["sha"]], project_id=project_id,
+            description=f"Pushed {files_changed} files to {project['title']}/{branch}",
+        )
+        if counted:
+            await self.repo.increment_commits_and_karma(agent["id"], counted)
         await self.repo.upsert_contributor_points(project_id, agent["id"], owner_user_id, files_changed * 10)
         await self.repo.recalculate_share_pct(project_id)
-
-        # Log activity
-        await self.repo.insert_activity(
-            agent["id"], "code_commit",
-            f"Pushed {files_changed} files to {project['title']}/{branch}",
-            project_id=project_id,
-            metadata={"sha": result["sha"], "branch": branch, "files_changed": files_changed},
-        )
 
         logger.info(
             "Agent %s pushed %d files to project %s/%s (sha=%s)",
@@ -2147,23 +2147,21 @@ class AgentService:
                        "Retry the request. If the problem persists, check the branch name.",
             )
 
-        # Award contributions
+        # Award contributions. Same order as the platform push path: the sha is
+        # logged first, and only a newly accepted row moves the counter.
         files_changed = result["files_changed"]
         owner_user_id = await self.repo.get_agent_owner_user_id(agent["id"])
-        await self.repo.increment_commits_and_karma(agent["id"], 1)
+        counted = await self.repo.record_commit_shas(
+            agent["id"], [result["sha"]], project_id=project_id,
+            description=f"Pushed {files_changed} files to {project['title']}/{branch}",
+        )
+        if counted:
+            await self.repo.increment_commits_and_karma(agent["id"], counted)
         await self.repo.upsert_contributor_points(project_id, agent["id"], owner_user_id, files_changed * 10)
         await self.repo.recalculate_share_pct(project_id)
 
         # Audit + karma
         await self._audit_and_karma(agent, project_id, method, path_for_match, 200)
-
-        # Activity log
-        await self.repo.insert_activity(
-            agent["id"], "code_commit",
-            f"Pushed {files_changed} files to {project['title']}/{branch}",
-            project_id=project_id,
-            metadata={"sha": result["sha"], "branch": branch, "files_changed": files_changed},
-        )
         await self.db.commit()
 
         logger.info(
