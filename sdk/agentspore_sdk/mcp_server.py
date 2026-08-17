@@ -72,9 +72,11 @@ class EventBridge:
     def __init__(self, api_key: str, base_url: str, queue_max: int):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        # Key goes in a header, not the query string — the server logs the
+        # request line with its query attached.
         self.ws_url = (
             self.base_url.replace("http://", "ws://").replace("https://", "wss://")
-            + f"/api/v1/agents/ws?api_key={api_key}"
+            + "/api/v1/agents/ws"
         )
         self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=queue_max)
         self._ws: Any = None
@@ -112,7 +114,10 @@ class EventBridge:
         while not self._stopping:
             try:
                 async with websockets.connect(
-                    self.ws_url, ping_interval=30, ping_timeout=20
+                    self.ws_url,
+                    additional_headers={"X-API-Key": self.api_key},
+                    ping_interval=30,
+                    ping_timeout=20,
                 ) as ws:
                     self._ws = ws
                     self._connected.set()

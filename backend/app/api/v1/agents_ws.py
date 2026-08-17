@@ -36,7 +36,7 @@ async def authenticate_ws(
     """Authenticate an agent by API key for WebSocket connection.
 
     WebSocket can't easily use FastAPI's Depends + Header injection,
-    so we accept api_key via query param OR Sec-WebSocket-Protocol subprotocol.
+    so the key arrives via header, subprotocol, or (deprecated) query param.
     Returns agent dict or None if invalid.
     """
     if not api_key:
@@ -44,6 +44,43 @@ async def authenticate_ws(
     key_hash = AgentService.hash_api_key(api_key)
     agent = await AgentRepository(db).get_agent_by_api_key_hash(key_hash)
     return agent
+
+
+# Subprotocol form: "agentspore.v1.key.<API_KEY>". The Sec-WebSocket-Protocol
+# header is not part of the request LINE, so it never lands in an access log,
+# and unlike a bare Authorization header it is settable from a browser
+# WebSocket, whose constructor exposes no other header.
+_KEY_SUBPROTOCOL_PREFIX = "agentspore.v1.key."
+
+
+def extract_ws_key(ws: WebSocket, api_key: str | None) -> tuple[str | None, str]:
+    """Return (key, transport) from the safest source the client offered.
+
+    Order is preference, not fallback quality: header and subprotocol are both
+    log-safe, the query string is not. Reading the query LAST means an agent
+    that has been updated stops being reported as deprecated even if it still
+    appends the parameter.
+    """
+    header_key = ws.headers.get("x-api-key")
+    if header_key:
+        return header_key, "header"
+
+    authorization = ws.headers.get("authorization") or ""
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip(), "bearer"
+
+    for offered in _offered_subprotocols(ws):
+        if offered.startswith(_KEY_SUBPROTOCOL_PREFIX):
+            return offered[len(_KEY_SUBPROTOCOL_PREFIX) :], "subprotocol"
+
+    if api_key:
+        return api_key, "query"
+    return None, "none"
+
+
+def _offered_subprotocols(ws: WebSocket) -> list[str]:
+    raw = ws.headers.get("sec-websocket-protocol") or ""
+    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 @router.websocket("/ws")
@@ -54,7 +91,17 @@ async def agent_websocket(
 ):
     """WebSocket endpoint for agents.
 
-    Auth: api_key as query param OR X-API-Key header (some clients support headers in WS).
+    Auth, in order of preference (all three are accepted):
+        1. ``X-API-Key`` header, or ``Authorization: Bearer <key>``
+        2. ``Sec-WebSocket-Protocol: agentspore.v1.key.<key>`` subprotocol
+        3. ``?api_key=`` query parameter — DEPRECATED, see below
+
+    The query parameter still works so agents already deployed in the field
+    keep connecting, but it is logged as deprecated and named per agent. Its
+    value is scrubbed from every log sink by app.core.logging: uvicorn writes
+    the request line WITH the query string, so this form used to publish the
+    agent's key into the container log on every connect.
+
     Protocol: JSON messages, one per frame.
 
     Server → Agent events:
@@ -73,11 +120,7 @@ async def agent_websocket(
         {"type": "status", "status", "current_task"}
         {"type": "pong"}
     """
-    # 1. Try query param first
-    key = api_key
-    # 2. Try header (some clients send it during handshake)
-    if not key:
-        key = ws.headers.get("x-api-key") or ws.headers.get("X-API-Key")
+    key, transport = extract_ws_key(ws, api_key)
 
     agent = await authenticate_ws(key, db)
     if not agent:
@@ -90,6 +133,18 @@ async def agent_websocket(
     try:
         await manager.connect(agent_id, ws)
         logger.info("Agent {} ({}) connected via WebSocket", agent.get("name"), agent_id)
+        if transport == "query":
+            # Names the agent so remaining query-string clients can be updated.
+            # The key is redacted from the uvicorn line by app.core.logging, so
+            # this is the only remaining signal the old path was used.
+            logger.warning(
+                "Agent {} ({}) authenticated via DEPRECATED api_key query "
+                "parameter; send the key as the X-API-Key header or the "
+                "'{}<key>' subprotocol instead",
+                agent.get("name"),
+                agent_id,
+                _KEY_SUBPROTOCOL_PREFIX,
+            )
 
         # Send hello with capabilities
         await ws.send_json({

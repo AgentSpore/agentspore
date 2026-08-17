@@ -135,7 +135,25 @@ class OpenRouterService:
     # into a silent one, so the fallback moved to a model measured answering
     # on the same run (mistral-small: HTTP 200 in 0.7s). Re-probe before
     # trusting either id again; a model verified once is not verified.
-    FALLBACK_MODEL = "mistral/mistral-small-latest"
+    # 2026-08-17: mistral-small answers 402, dying exactly as its two
+    # predecessors did. A third constant would only queue up a fourth outage,
+    # so this is a candidate list spanning more than one account, resolved at
+    # call time — the shape the battle paths use. It ends on llm7, which is
+    # keyless and so still resolves when no provider keys are configured.
+    #
+    # INVARIANT(fallback-liveness): resolve by CONFIGURED CREDENTIALS, never a
+    # network probe. pick_live_model sends real inference, which llm_gate.py:35
+    # forbids in this module, and resolve_model sits on the per-message chat
+    # path where an 8s cold probe would be user-visible latency.
+    FALLBACK_MODEL_CANDIDATES: tuple[str, ...] = (
+        "zai/glm-4.5-flash",
+        "llm7/DeepSeek-V4-Flash-0731",
+        "llm7/mistral-Nemo-Instruct-2407",
+    )
+
+    # Retained so existing callers/tests keep a single-id handle on the head of
+    # the list. Prefer resolve_model(), which skips unavailable candidates.
+    FALLBACK_MODEL = FALLBACK_MODEL_CANDIDATES[0]
 
     # Extra providers: models fetched dynamically via /models API.
     # Gemini does not expose a standard /models endpoint — keep static.
@@ -372,8 +390,15 @@ class OpenRouterService:
                 data = resp.json()
         except Exception as e:
             logger.warning("Failed to fetch OpenRouter models: {}", e)
+            # Label derived from the id: the previous entry hardcoded a zai
+            # name beside a mistral id once the constant moved without it.
+            offline = self._pick_available_fallback()
             fallback = self._cache or [
-                {"id": self.FALLBACK_MODEL, "name": "GLM 4.5 Flash — free", "provider": "zai"}
+                {
+                    "id": offline,
+                    "name": offline.split("/", 1)[-1],
+                    "provider": _provider_prefix(offline),
+                }
             ]
             return fallback + extra
 
@@ -475,9 +500,27 @@ class OpenRouterService:
         if prefix in self.EXTRA_PROVIDERS or prefix == "gemini":
             return model_id
         if model_id in self.BLOCKED_MODELS:
-            logger.warning("Model {} blocked; falling back to {}", model_id, self.FALLBACK_MODEL)
-            return self.FALLBACK_MODEL
+            fallback = self._pick_available_fallback()
+            logger.warning("Model {} blocked; falling back to {}", model_id, fallback)
+            return fallback
         return model_id
+
+    def _pick_available_fallback(self) -> str:
+        """First fallback candidate whose provider has usable credentials.
+
+        No network call — see the INVARIANT on FALLBACK_MODEL_CANDIDATES. When
+        nothing resolves, returns the head anyway so the caller makes a real
+        request and surfaces a real upstream error, the same deliberate
+        degradation pick_live_model uses.
+        """
+        for candidate in self.FALLBACK_MODEL_CANDIDATES:
+            if self.resolve_provider(candidate) is not None:
+                return candidate
+        logger.warning(
+            "no fallback candidate has configured credentials; using {}",
+            self.FALLBACK_MODEL_CANDIDATES[0],
+        )
+        return self.FALLBACK_MODEL_CANDIDATES[0]
 
     async def get_context_length(self, model_id: str) -> int:
         """Get context window size for a model (default 128K)."""
@@ -491,6 +534,10 @@ class OpenRouterService:
                 return m.get("context_length", 128_000)
         return 128_000
 
+
+# Module-level handle on the candidate list, mirroring how the battle paths
+# expose theirs (DEMO_ANSWER_MODEL_CANDIDATES / VALIDATION_MODEL_CANDIDATES).
+FALLBACK_MODEL_CANDIDATES = OpenRouterService.FALLBACK_MODEL_CANDIDATES
 
 # Singleton
 _instance: OpenRouterService | None = None
