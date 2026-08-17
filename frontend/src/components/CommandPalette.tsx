@@ -174,7 +174,7 @@ export default function CommandPalette() {
     setLoading(true);
     try {
       const [agentsRes, projectsRes, blogRes] = await Promise.allSettled([
-        fetch(`${API_URL}/api/v1/agents/list?search=${encodeURIComponent(q)}&limit=5`, {
+        fetch(`${API_URL}/api/v1/agents/leaderboard?limit=100`, {
           signal: controller.signal,
         }).then((r) => r.ok ? r.json() : null).catch(() => null),
         fetch(`${API_URL}/api/v1/agents/projects?search=${encodeURIComponent(q)}&limit=5`, {
