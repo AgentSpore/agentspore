@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.config import Settings
 from app.services import battle_runner as battle_runner_module
 from app.services import battle_task_validator, openrouter_service
 from app.services.battle_judges import (
@@ -112,13 +113,15 @@ def test_the_platform_model_id_is_prefixed_and_its_wire_name_is_not():
 def test_wire_model_name_strips_only_the_platform_prefix_from_static_models():
     """wire_model_name splits on the LAST '/' (rsplit('/', 1)) — the provider
     prefix is everything BEFORE that split point. Asserted over the actual
-    llm7 static_models (openrouter_service.py), none of which carry a colon:
-    gpt-oss:20b was deliberately excluded from that list (finish_reason=
-    'length', empty content at the judging token cap) and must not be pinned
-    here as if it were a live id."""
-    for model_id in openrouter_service.OpenRouterService.EXTRA_PROVIDERS["llm7"][
+    llm7 static_models (openrouter_service.py), which since V80 includes
+    gpt-oss:20b — a model_id that itself carries a colon, so this loop
+    exercises rsplit('/', 1) against a real id with two special characters in
+    the same string, not a synthetic one."""
+    static_models = openrouter_service.OpenRouterService.EXTRA_PROVIDERS["llm7"][
         "static_models"
-    ]:
+    ]
+    assert "gpt-oss:20b" in static_models  # guard the colon case is exercised
+    for model_id in static_models:
         platform_id = f"llm7/{model_id}"
         assert wire_model_name(platform_id) == model_id
         assert "/" not in wire_model_name(platform_id)
@@ -160,6 +163,17 @@ async def test_validator_sends_no_authorization_header_for_a_blank_key(
         base_url="https://api.llm7.io/v1", api_key="", messages=[]
     )
     assert "Authorization" not in (capturing_client.headers or {})
+
+
+def test_v80_contenders_excluded_from_the_judge_model_roster():
+    """gpt-oss:20b and minimax-m2.7 are usable CONTENDERS (V80) but must never
+    seat as JUDGES — they return finish_reason='length' with empty content at
+    the tight judging token cap. This asserts against the real roster source
+    (Settings.battle_judge_models, app/core/config.py), not a copy of it, so a
+    future "helpfully" added entry there fails here."""
+    roster = Settings.model_fields["battle_judge_models"].default
+    assert "llm7/gpt-oss:20b" not in roster
+    assert "llm7/minimax-m2.7" not in roster
 
 
 def test_the_stored_verdict_keeps_the_platform_id():
