@@ -43,7 +43,7 @@ from app.schemas.battles import TaskSource, TaskStatus
 from app.services.battle_budget import BattleJudgeBudgetService, breaker_is_open
 from app.services.battle_judges import auth_headers, wire_model_name
 from app.services.battle_task_validator import (
-    VALIDATION_MODEL,
+    VALIDATION_MODEL_CANDIDATES,
     CheapFilterVerdict,
     ValidationTransportError,
     ValidationVerdict,
@@ -59,18 +59,18 @@ from app.services.provider_health import pick_live_model
 # `pick_live_model` probes this list and returns whichever answers. DRAFT_MODEL
 # stays as the head of the list — and the module's public default — because
 # other code may still import and log it.
+# 2026-08-17: the mistral fallback is REMOVED, not kept for a future top-up. A
+# 402 candidate is not a free placeholder — pick_live_model spends a probe on it
+# and the list degrades to a one-provider list, which is the outage it exists to
+# prevent. llm7 is a different (keyless) account, so it degrades across providers.
 DRAFT_MODEL_CANDIDATES = (
     "zai/glm-4.5-flash",
-    "mistral/mistral-small-latest",
+    "llm7/DeepSeek-V4-Flash-0731",
 )
 DRAFT_MODEL = DRAFT_MODEL_CANDIDATES[0]
 
-# Same rationale as DRAFT_MODEL_CANDIDATES: probe zai first, fall back to the
-# current VALIDATION_MODEL rather than trust either as a permanent constant.
-VALIDATION_MODEL_CANDIDATES = (
-    "zai/glm-4.5-flash",
-    VALIDATION_MODEL,
-)
+# VALIDATION_MODEL_CANDIDATES is imported, not redefined: the submission path
+# validates against the same list, and a private copy here is how the two drift.
 # How deep the unreviewed backlog may get, as a multiple of pool_target,
 # before drafting stops. The harvester inserts QUARANTINE and only an admin
 # moves a task to ready, so its own output can never close the ready gate;

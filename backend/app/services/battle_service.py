@@ -67,13 +67,14 @@ from app.services.battle_budget import (
     current_budget_day,
 )
 from app.services.battle_task_validator import (
-    VALIDATION_MODEL,
+    VALIDATION_MODEL_CANDIDATES,
     ValidationTransportError,
     run_cheap_filters,
     validate_with_llm,
 )
 from app.services.connection_manager import DeliveryResult, dispatch_existing
 from app.services.openrouter_service import OpenRouterService
+from app.services.provider_health import pick_live_model
 
 # How long a challenge waits for B's owner to answer. Consent is a human
 # decision, so this is generous — hours, not seconds.
@@ -955,12 +956,19 @@ class BattleService:
                 "reason": None,
             }
 
-        provider = OpenRouterService().resolve_provider(VALIDATION_MODEL)
+        # Liveness, not a constant: a dead-but-keyed id resolves credentials fine
+        # and then refuses every completion, so every submission spent a budgeted
+        # call to discover the same 402. Shares the harvester's candidate list so
+        # the two paths cannot disagree about what is usable today.
+        model = await pick_live_model(list(VALIDATION_MODEL_CANDIDATES))
+        # Resolved from the id actually sent: one provider's base_url with
+        # another's wire name is HTTP 400 "Invalid model".
+        provider = OpenRouterService().resolve_provider(model)
         if provider is None:
             logger.warning(
                 "task {} left pending: no usable provider for {}",
                 task_id,
-                VALIDATION_MODEL,
+                model,
             )
             return {
                 "id": task_id,
@@ -971,8 +979,8 @@ class BattleService:
         budget = BattleJudgeBudgetService(self._session_factory)
         reservation = await budget.reserve_validation_call(
             user_id=user_id,
-            provider=VALIDATION_MODEL.split("/")[0],
-            model=VALIDATION_MODEL,
+            provider=model.split("/")[0],
+            model=model,
         )
         if not reservation.granted:
             logger.warning(
@@ -1000,6 +1008,7 @@ class BattleService:
                 category=category,
                 difficulty=difficulty,
                 time_limit_seconds=time_limit_seconds,
+                model=model,
             )
         except ValidationTransportError as exc:
             await budget.settle_call(

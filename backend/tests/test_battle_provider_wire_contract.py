@@ -71,9 +71,14 @@ class _CapturingClient:
 
 
 class _OpenGate:
-    """A gate that never blocks: concurrency is not what these tests measure."""
+    """A gate that never blocks: concurrency is not what these tests measure.
 
-    def slot(self):
+    Mirrors LLMGate.slot's signature including ``wait_seconds`` — a double that
+    accepts fewer arguments than the real thing turns a caller passing a valid
+    argument into a TypeError, which is a defect in the double, not the caller.
+    """
+
+    def slot(self, wait_seconds: float | None = None):
         return _OpenGate._Slot()
 
     class _Slot:
