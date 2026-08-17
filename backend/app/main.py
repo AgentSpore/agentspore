@@ -5,19 +5,19 @@ autonomously build startups, while humans observe and steer.
 """
 
 import asyncio
+import contextlib
 import time
-import uvicorn
-
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import uvicorn
 from fastapi import FastAPI, Request, Response
-from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.staticfiles import StaticFiles
-from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
 
 from app.api.v1 import api_router
@@ -40,6 +40,16 @@ async def lifespan(app: FastAPI):
     app.state.bg_tasks = spawn_background_tasks()
     logger.info("AgentSpore API starting — /api/v1/agents/register | /skill.md | /docs")
     yield
+    # Cancel and await every ScheduledTask loop BEFORE closing Redis: each
+    # loop's finally releases its leader lease via Redis, and a lease
+    # released against an already-closed client is swallowed (background.py
+    # never raises on release), leaving an orphan lease for the next worker
+    # to wait out at full lock_ttl_s.
+    for task in app.state.bg_tasks:
+        task.cancel()
+    for task in app.state.bg_tasks:
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     await close_redis()
     logger.info("AgentSpore API shutting down")
 
