@@ -27,7 +27,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.background import ALL_TASKS, MIN_RENEW_INTERVAL_S, CronSchedulerTask, ScheduledTask
+from app.core.background import (
+    ALL_TASKS,
+    MIN_RENEW_INTERVAL_S,
+    BattleRunTask,
+    CronSchedulerTask,
+    ScheduledTask,
+    lock_ttl_with_headroom,
+)
 
 
 class _FakeScript:
@@ -88,6 +95,45 @@ class FakeRedis:
         return _FakeScript(self, script)
 
 
+class ExpiringFakeRedis(FakeRedis):
+    """`FakeRedis`, but `ex` actually expires the key on a real timer.
+
+    Plain `FakeRedis` ignores `ex` by design (see its docstring) — a healthy
+    loop's cadence must come from the explicit release, not expiry. But that
+    means the suite never exercises the mechanism the fix (findings 1-3)
+    depends on when the explicit release ISN'T what happens: a lease that
+    genuinely expires mid-sleep because renewal stopped. This subclass makes
+    `set(..., ex=...)` schedule a real `call_later` deletion, so a test can
+    prove the loop notices and re-acquires instead of sleeping past it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._expiry_handles: dict[str, asyncio.TimerHandle] = {}
+
+    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False):
+        got = await super().set(key, value, ex=ex, nx=nx)
+        if got and ex is not None:
+            self._arm_expiry(key, ex)
+        return got
+
+    async def eval(self, script: str, numkeys: int, *args):
+        # The renew Lua does an EXPIRE on a successful compare — real Redis
+        # resets the TTL clock on EXPIRE, so the fake must too, or every
+        # lease would expire at the FIRST ex regardless of renewal.
+        result = await super().eval(script, numkeys, *args)
+        key, ttl_s = args[0], args[2] if len(args) > 2 else None
+        if result and ttl_s is not None and "expire" in script:
+            self._arm_expiry(key, float(ttl_s))
+        return result
+
+    def _arm_expiry(self, key: str, ex: float) -> None:
+        if key in self._expiry_handles:
+            self._expiry_handles[key].cancel()
+        loop = asyncio.get_running_loop()
+        self._expiry_handles[key] = loop.call_later(ex, self.store.pop, key, None)
+
+
 class _CountingTask(ScheduledTask):
     """run_once takes LONGER than one interval — the shape that exposed the bug."""
 
@@ -143,7 +189,12 @@ class _SharedCounterTask(ScheduledTask):
     name = "test_shared_counter"
     interval_s = 0.05  # type: ignore[assignment]  # float is fine for asyncio.sleep
     lock_ttl_s = 0.05  # type: ignore[assignment]  # float; >= interval_s per the fixed contract
-    non_leader_poll_s = None
+    # Fast, well below interval_s: with non_leader_poll_s=None (the old value
+    # here) non-leaders retry only every interval_s and this parametrization
+    # PASSES even with the release-before-sleep bug reverted (they never get
+    # a chance to pile up within one cycle) — coverage the parametrization
+    # implied but did not provide. 0.01 lets non-leaders retry mid-cycle.
+    non_leader_poll_s = 0.01  # type: ignore[assignment]  # float; see comment above
 
     def __init__(self, counter: list[int], work_s: float = 0.005) -> None:
         super().__init__()
@@ -191,14 +242,129 @@ async def test_n_workers_run_once_per_interval_not_per_worker(task_cls, window_s
 
     interval_s = task_cls.interval_s
     expected = window_s / interval_s
-    # Generous band: this asserts TOTAL runs scale with the interval, not with
+    # Tightened from expected*2+1 (loose enough to absorb a 2x regression) to
+    # expected+2: this asserts TOTAL runs scale with the interval, not with
     # the worker count. Pre-fix, 4 workers piling up would multiply this by
     # up to 4x; the buggy github_sync shape measured 7.5x on production.
-    assert counter[0] <= expected * 2 + 1, (
+    assert counter[0] <= expected + 2, (
         f"{task_cls.__name__}: {counter[0]} runs in {window_s}s window "
         f"(interval={interval_s}s, expected ~{expected:.1f}) — "
         "workers are re-running the same cycle"
     )
+
+
+@pytest.mark.asyncio
+async def test_lease_loss_mid_sleep_wakes_the_loop_instead_of_sleeping_it_out():
+    """Reviewer's finding 1: a renewer that observes lease loss must cut the
+    interval sleep short, not just log and let the loop sleep to term.
+
+    Simulates a competitor stealing the key mid-cycle (the real-world trigger
+    is a missed renewal — a transient Redis error, or the lease genuinely
+    expiring under zero headroom) by deleting it directly, independent of
+    this task's own renewer. Asserts the loop notices within roughly one
+    renewal interval, not the full remaining sleep.
+    """
+    task = _CountingTask(work_s=0)
+    task.interval_s = 10  # long sleep: a passing test proves early wake, not luck
+    task.lock_ttl_s = 9  # renewal every 3s (lock_ttl_s // 3)
+    redis = FakeRedis()
+    with patch("app.core.background.get_redis", AsyncMock(return_value=redis)):
+        runner = asyncio.create_task(task.start())
+        await asyncio.sleep(0.05)  # run_once returns, sleep + renewer start
+        assert redis.store, "lease not held at cycle start"
+        stolen_at = 3.5  # after the first renewal tick (t=3), before the second (t=6)
+        await asyncio.sleep(stolen_at - 0.05)
+        redis.store[task._lock_key()] = "competitor-token"  # steal it directly
+
+        start_time = asyncio.get_running_loop().time()
+        woke_at = None
+        for _ in range(100):  # poll for the loop re-entering _acquire_leader
+            await asyncio.sleep(0.05)
+            if task._lock_token is None and redis.store.get(task._lock_key()) == "competitor-token":
+                woke_at = asyncio.get_running_loop().time() - start_time
+                break
+        runner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await runner
+
+    assert woke_at is not None, "loop never noticed the stolen lease"
+    # A renewal tick fires every 3s (lock_ttl_s // 3); loss is detected on the
+    # NEXT tick after the steal (t=6), well before the 10s sleep would end on
+    # its own. Generous band: must wake meaningfully before end-of-interval.
+    assert woke_at < 8.0, (
+        f"loop woke at ~{woke_at:.2f}s into a 10s sleep after the lease was "
+        "stolen at 3.5s — it slept out the interval instead of reacting"
+    )
+
+
+@pytest.mark.asyncio
+async def test_headroom_formula_survives_real_redis_expiry_not_just_the_fake():
+    """Positive control for finding 3, on `ExpiringFakeRedis`.
+
+    `lock_ttl_with_headroom` gives the lease real margin over interval_s. On
+    a Redis where `ex` genuinely expires the key (unlike plain `FakeRedis`,
+    which ignores `ex` by design), a healthy renewer must keep re-arming the
+    expiry before it fires — so the SAME worker holds the lease across
+    several cycles instead of losing it to itself every time.
+    """
+    task = _CountingTask(work_s=0)
+    task.interval_s = 1
+    task.lock_ttl_s = lock_ttl_with_headroom(1)  # 1 + max(5, 0) = 6
+    redis = ExpiringFakeRedis()
+    with patch("app.core.background.get_redis", AsyncMock(return_value=redis)):
+        runner = asyncio.create_task(task.start())
+        await asyncio.sleep(4.0)  # several cycles, past several renewal ticks
+        held_token = task._lock_token
+        runner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await runner
+
+    assert task.runs >= 3, f"only {task.runs} cycles in 4s at interval_s=1"
+    assert held_token is not None, "lease was lost to real expiry despite headroom + renewal"
+
+
+class _OneShotFlakyRedis(FakeRedis):
+    """`FakeRedis` whose FIRST `eval` (the first renewal attempt) raises.
+
+    Reproduces finding 2: a single transient Redis error must not end
+    renewal for the rest of the cycle — only for that one tick.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._eval_calls = 0
+
+    async def eval(self, script: str, numkeys: int, *args):
+        self._eval_calls += 1
+        if self._eval_calls == 1:
+            raise ConnectionError("transient redis blip")
+        return await super().eval(script, numkeys, *args)
+
+
+@pytest.mark.asyncio
+async def test_one_transient_renewal_error_does_not_end_renewal_for_the_cycle():
+    """Finding 2: try/except must sit INSIDE the renewal while-loop.
+
+    Pre-fix, the except sat OUTSIDE `while True`, so the first failed
+    round-trip ended `_renew_lease` for the REST of the cycle — a single
+    dropped packet during a long interval (3600s for mixer_cleanup) cost the
+    whole cycle's renewal, not just one tick.
+    """
+    task = _CountingTask(work_s=0)
+    task.interval_s = 3
+    task.lock_ttl_s = 3  # renewal every 1s (lock_ttl_s // 3)
+    redis = _OneShotFlakyRedis()
+    with patch("app.core.background.get_redis", AsyncMock(return_value=redis)):
+        runner = asyncio.create_task(task.start())
+        await asyncio.sleep(2.5)  # past the flaky first tick and a real one
+        held_token = task._lock_token
+        renewal_attempts = redis._eval_calls
+        runner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await runner
+
+    assert renewal_attempts >= 2, "renewal did not retry after the first error"
+    assert held_token is not None, "lease was dropped after one transient error"
 
 
 @pytest.mark.asyncio
@@ -305,6 +471,33 @@ def test_no_task_holds_a_lease_shorter_than_its_own_interval():
         if t().lock_ttl_s is not None and t().lock_ttl_s < t().interval_s
     }
     assert too_tight == {}, f"lock_ttl_s below interval_s (ttl, interval): {too_tight}"
+
+
+def test_no_task_lets_a_crash_stall_it_longer_than_interval_plus_headroom():
+    """Upper bound, restored: `lock_ttl_s` must not drift arbitrarily above
+    `lock_ttl_with_headroom(interval_s)`.
+
+    The previous upper-bound guard (a flat 300s cap) was deleted in the same
+    change that raised every task's TTL to equal interval_s — a silent
+    widening with no test catching it (e.g. mixer_cleanup 300 -> 3600, 12x).
+    This pins the ACTUAL formula every task now uses, so a future bulk retune
+    that drifts a task away from it fails here instead of shipping quietly.
+    `battle_run` is the one deliberate exception: its 60 exceeds the formula's
+    40 by hand-picked choice (see its class comment), so it is checked with a
+    wider, explicit tolerance rather than being exempted outright.
+    """
+    drifted = {}
+    for t in ALL_TASKS:
+        inst = t()
+        if inst.lock_ttl_s is None:
+            continue
+        expected = lock_ttl_with_headroom(inst.interval_s)
+        tolerance = 20 if t is BattleRunTask else 0
+        if inst.lock_ttl_s > expected + tolerance:
+            drifted[t.__name__] = (inst.lock_ttl_s, expected)
+    assert drifted == {}, (
+        f"lock_ttl_s drifted above formula+tolerance (actual, expected): {drifted}"
+    )
 
 
 def test_cron_scheduler_keeps_its_gate_disabled():
