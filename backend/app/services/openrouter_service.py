@@ -220,16 +220,21 @@ class OpenRouterService:
             "base_url": "https://api.llm7.io/v1",
             "api_key_field": "llm7_api_key",
             "key_optional": True,
-            # llm7's catalogue is large and mixes free/paid/broken models; only
-            # these four were verified live to return finish_reason='stop' with
-            # real content. gpt-oss:20b and minimax-m2.7 return finish='length'
-            # with empty/truncated content at the judging token cap and are
-            # deliberately excluded.
+            # llm7's catalogue is large and mixes free/paid/broken models; these
+            # six were verified live to return finish_reason='stop' with real
+            # content. gpt-oss:20b and minimax-m2.7 were re-probed at a 700-token
+            # CONTENDER-style cap (V80) after failing at the tighter JUDGE cap
+            # (finish='length', empty/truncated content) — they answer fine here
+            # but must NEVER be added to settings.battle_judge_models: the judge
+            # token budget is too tight for them and they spend it on reasoning
+            # instead of the verdict.
             "static_models": [
                 "DeepSeek-V4-Flash-0731",
                 "codestral-latest",
                 "gemini-3.1-flash-lite",
                 "mistral-Nemo-Instruct-2407",
+                "gpt-oss:20b",
+                "minimax-m2.7",
             ],
         },
     }
