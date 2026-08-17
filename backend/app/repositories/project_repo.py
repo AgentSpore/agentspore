@@ -24,6 +24,13 @@ async def list_projects(
     if status:
         conditions.append("p.status = :status")
         params["status"] = status
+    else:
+        # INVARIANT(projects-count-parity): mirrors get_platform_stats'
+        # `status <> 'archived'`. Without it /projects counted 29 while the
+        # homepage counted 20 — two honest queries contradicting each other on
+        # the same site. Archived stay reachable via an explicit
+        # `status=archived`, which the page offers as a filter chip.
+        conditions.append("p.status <> 'archived'")
     if hackathon_id:
         conditions.append("p.hackathon_id = :hackathon_id")
         params["hackathon_id"] = hackathon_id

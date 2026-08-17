@@ -112,6 +112,7 @@ from app.services.battle_judges import (
 from app.services.battle_service import BattleService
 from app.services.connection_manager import dispatch_existing
 from app.services.llm_gate import LLMGate
+from app.services.provider_health import pick_live_model
 
 # Row-lease length for a battle claimed by the reconciler. Long enough to
 # outlast one bounded step (six judge calls at up to JUDGE_HTTP_TIMEOUT_SECONDS
@@ -227,19 +228,29 @@ PROVIDER_UNREACHABLE_ERROR = "provider unreachable"
 _ANSWER_ATTEMPTS = 2
 _ANSWER_RETRY_BACKOFF_SECONDS = 2.0
 
-# The model the demo opponent answers with. kimi-k3 answers reliably (0 timeouts)
-# where the old glm judge always timed out on a single-call demo answer, so the
-# demo side never spoke. This constant is kept SEPARATE from JUDGE_MODEL on
-# purpose: the demo path answers a full task and so overrides the tight judging
-# defaults with a much wider token budget (DEMO_ANSWER_MAX_TOKENS) and a longer
-# HTTP timeout — a FULL task answer was measured live at ~120s, whereas a short
-# judge verdict is ~7s (do not size the demo timeouts off the verdict figure).
+# The models the demo opponent may answer with, best-first. These stay SEPARATE
+# from JUDGE_MODEL on purpose: the demo path answers a full task and so overrides
+# the tight judging defaults with a much wider token budget
+# (DEMO_ANSWER_MAX_TOKENS) and a longer HTTP timeout — a FULL task answer was
+# measured live at ~120s, whereas a short judge verdict is ~7s (do not size the
+# demo timeouts off the verdict figure).
 #
-# Was kimi-k3 until the moonshot account was suspended for insufficient balance:
-# every demo battle then answered 429 and voided. mistral-small-latest replaces
-# it — reachable, paid for, and cheap enough for a path that exists to give a
-# visitor something to watch.
-DEMO_ANSWER_MODEL = "mistral/mistral-small-latest"
+# A LIST resolved per call by pick_live_model, not one constant: the constant
+# form failed twice in a week the same way — the named account kept valid
+# credentials (so "has a key" said nothing) and refused every completion (kimi
+# 429, then mistral 402), voiding every demo battle with no verdict.
+#
+# Ordered by ANSWER LATENCY, the demo path's real constraint: one call must fit
+# inside DEMO_ANSWER_TIMEOUT_SECONDS, and a model that reasons before it writes
+# has already cost real answers here (kimi exceeded 180s twice in one window).
+# Flash-tier first; the llm7 ids are a DIFFERENT account, so one provider's
+# billing cannot take the whole list down (the judge roster's INVARIANT).
+DEMO_ANSWER_MODEL_CANDIDATES = (
+    "zai/glm-4.5-flash",
+    "llm7/gemini-3.1-flash-lite",
+    "llm7/mistral-Nemo-Instruct-2407",
+)
+DEMO_ANSWER_MODEL = DEMO_ANSWER_MODEL_CANDIDATES[0]
 
 # Response-length ceiling for the demo opponent's answer call. Deliberately
 # LARGER than the judge cap (JUDGE_MAX_TOKENS, sized for reasoning + a short JSON
@@ -267,6 +278,35 @@ DEMO_ANSWER_MAX_TOKENS = 8192
 # ceiling is back to the value that was measured working — 13 kimi answers in
 # 13 attempts — and the outer budget grew instead.
 DEMO_ANSWER_TIMEOUT_SECONDS = 240.0
+
+# How long an ANSWER call waits for a slot on its provider's account. Distinct
+# from the gate's DEFAULT_WAIT_SECONDS (20s) for one reason: that number was
+# derived for the JUDGE panel, which is SEQUENTIAL — six calls, each waiting at
+# most one pace interval, so 8s < 20s held with room to spare. The answer path is
+# CONCURRENT: _spawn_contender_drives fires both sides as detached tasks, so on a
+# capacity-1 account (llm7) the second claimant does not wait one pace interval,
+# it waits out the first side's ENTIRE in-flight call.
+#
+# Measured on production (v1.28.2, two-hour window): 12 battles ended, 2 reached
+# a verdict, 9 recorded "provider unreachable". One battle's log, in order: side
+# a "unreachable provider (gate saturated)", side b answered 6s later, battle
+# settled without judging. Side b won the slot; side a was bounced at 20s and its
+# battle voided. With four llm7 contenders in the pool, most battles are
+# llm7-vs-llm7, which is why this was the DOMINANT failure and not an edge case.
+#
+# The arithmetic, stated because getting it wrong is what shipped the defect:
+#   second claimant's worst case = first side's whole call + one pace interval
+#                                = DEMO_ANSWER_TIMEOUT_SECONDS(240) + 8 = 248s
+# so the wait must be >= 248. The ceiling is the drive's own budget: one attempt
+# is gate wait + HTTP, and it must fit ANSWER_DRIVE_BUDGET_SECONDS(560) or the
+# detached wait_for kills the call mid-flight —
+#   250 + 240 = 490 <= 560, leaving 70s of headroom.
+# Widening is safe against the ACCOUNT because it does not touch pace or
+# capacity: llm7 still departs at most once per 8s with one call in flight. A
+# longer wait costs a coroutine sitting idle, never a second concurrent request.
+# The two sides' drive budgets run in PARALLEL (one wait_for per detached task),
+# so they do not sum against each other.
+ANSWER_GATE_WAIT_SECONDS = 250.0
 
 # Hard ceiling on ONE detached drive: gate wait + HTTP, twice, plus the backoff.
 #
@@ -1273,21 +1313,25 @@ class BattleRunner:
         """One gated provider call producing the demo opponent's answer, or None.
 
         Reuses the judge's exact call shape (:func:`call_judge_model`) but routes
-        to DEMO_ANSWER_MODEL (kimi-k3) rather than the judge model: kimi answers
-        fast and reliably inside the deadline where a single glm call always
-        timed out. kimi is a distinct provider (moonshot), so its OWN base_url /
-        api_key are resolved here via OpenRouterService — falling back to the
-        judge credentials threaded in only when moonshot is unconfigured. It also
-        REQUIRES temperature=1, applied through judge_temperature_for so kimi is
-        not silently sampled wrong. Goes through the same bounded retry the
-        contender path uses — one failure mode, one behaviour. Returns the answer
-        capped to MAX_SUBMISSION_CHARS, or None when the model answered with
-        nothing; a transport failure PROPAGATES so the caller can tell the two
-        apart.
+        to a demo answer model rather than the judge model, because the two jobs
+        have different latency and token profiles (see the constants above).
+
+        WHICH model is decided per call by :func:`pick_live_model`, not by a
+        constant: a dead-but-keyed id resolves credentials fine and then refuses
+        every completion, which is how this path voided every demo battle twice.
+        Credentials and the temperature quirk are resolved downstream from the
+        picked id in ``_answer_with_model``, with the judge credentials threaded
+        in here only as the fallback for an unconfigured provider.
+
+        Goes through the same bounded retry the contender path uses. Returns the
+        answer capped to MAX_SUBMISSION_CHARS, or None when the model answered
+        with nothing; a transport failure PROPAGATES so the caller can tell the
+        two apart.
         """
+        model = await pick_live_model(list(DEMO_ANSWER_MODEL_CANDIDATES))
         return await self._answer_with_retry(
             battle,
-            AnswerSpec(DEMO_ANSWER_MODEL, _DEMO_ANSWER_SYSTEM, _SEED_SLOT[Side.B]),
+            AnswerSpec(model, _DEMO_ANSWER_SYSTEM, _SEED_SLOT[Side.B]),
             api_key,
             base_url,
         )
@@ -1354,6 +1398,10 @@ class BattleRunner:
                 # judging HTTP ceiling would abort it as a transport timeout and
                 # silence the answering side. Match the detached task's own bound.
                 http_timeout=DEMO_ANSWER_TIMEOUT_SECONDS,
+                # Both sides of a battle run as CONCURRENT detached drives, so on
+                # a capacity-1 account the loser must outwait the winner's whole
+                # call — the judge default (20s) bounced it and voided the battle.
+                gate_wait_seconds=ANSWER_GATE_WAIT_SECONDS,
             )
         except JudgeTransportError as exc:
             # PROPAGATED, not flattened to None. "We never reached the model" and
