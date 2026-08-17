@@ -1,11 +1,22 @@
 """Leader-lock lifecycle for `ScheduledTask` (no Docker, no real Redis).
 
-Regression cover for the cadence defect: the lease used to be acquired with
-`SET NX EX lock_ttl_s` and never released, so a task's own stale lock blocked
-its next `SET NX` and the effective period became max(interval_s, lock_ttl_s).
-On production that turned battle_run's 30-second reconcile into a 10-minute
-one. These tests pin the fixed contract: the lease is held for the duration of
-`run_once` and released — ownership-checked — the moment the cycle ends.
+Regression cover for TWO cadence defects, opposite directions:
+
+1. (fixed earlier) the lease used to be acquired with `SET NX EX lock_ttl_s`
+   and never released, so a task's own stale lock blocked its next `SET NX`
+   and the effective period became max(interval_s, lock_ttl_s) — 10 minutes
+   instead of 30 seconds for battle_run.
+2. (fixed here) the fix for #1 released the lease BEFORE the interval sleep,
+   which uncapped the opposite failure: a non-leader already blocked in
+   `_acquire_leader` (or, for github_sync, polling every non_leader_poll_s=60
+   while interval_s=300) would take the lock back and run the same pass again
+   within the same declared interval. MEASURED ON PRODUCTION: github_sync
+   logged 180 passes in a 2-hour window against a declared 300s cadence
+   (~24 expected) — a 7.5x over-frequency hitting GitHub's rate-limited API.
+
+These tests pin the fixed contract: the lease is held for the duration of the
+WHOLE cycle — run_once AND the interval_s sleep — and released — ownership-
+checked — only once the sleep ends or the task is cancelled.
 """
 
 from __future__ import annotations
@@ -17,13 +28,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.background import ALL_TASKS, MIN_RENEW_INTERVAL_S, CronSchedulerTask, ScheduledTask
-
-# A crashed worker must not park a task for longer than this. Lives in the test
-# rather than in background.py because it is a review guard on the declared
-# values, not a runtime knob: the old workaround pairing (lock_ttl_s ~=
-# interval_s + 20) put mixer_cleanup at 3620 — a full hour of stalled cleanup
-# after one crash — and nothing failed. Now it would.
-MAX_CRASH_STALL_S = 300
 
 
 class _FakeScript:
@@ -127,16 +131,94 @@ async def test_slow_run_once_keeps_interval_cadence_not_ttl_cadence():
     assert task.runs >= 3, f"cadence collapsed to the TTL: only {task.runs} run(s)"
 
 
+class _SharedCounterTask(ScheduledTask):
+    """A shared `runs` counter reachable from N independent task instances.
+
+    Each simulated worker gets its own instance (own `_lock_token`), but they
+    all increment the SAME counter and share the SAME FakeRedis — exactly how
+    4 uvicorn workers share one Redis and would (pre-fix) each run a "leader"
+    pass whenever the lease happened to be free.
+    """
+
+    name = "test_shared_counter"
+    interval_s = 0.05  # type: ignore[assignment]  # float is fine for asyncio.sleep
+    lock_ttl_s = 0.05  # type: ignore[assignment]  # float; >= interval_s per the fixed contract
+    non_leader_poll_s = None
+
+    def __init__(self, counter: list[int], work_s: float = 0.005) -> None:
+        super().__init__()
+        self.counter = counter
+        self.work_s = work_s
+
+    async def run_once(self) -> None:
+        self.counter[0] += 1
+        await asyncio.sleep(self.work_s)
+
+
+class _FastPollNonLeaderTask(_SharedCounterTask):
+    """github_sync's shape: a slow interval, but non-leaders poll much faster."""
+
+    name = "test_fast_poll"
+    interval_s = 0.2  # type: ignore[assignment]  # float is fine for asyncio.sleep
+    lock_ttl_s = 0.2  # type: ignore[assignment]  # float; >= interval_s per the fixed contract
+    non_leader_poll_s = 0.02  # type: ignore[assignment]  # float; << interval_s, github_sync's shape
+
+
 @pytest.mark.asyncio
-async def test_lease_is_released_after_run_once_returns():
+@pytest.mark.parametrize(
+    "task_cls,window_s",
+    [(_SharedCounterTask, 0.22), (_FastPollNonLeaderTask, 0.85)],
+)
+async def test_n_workers_run_once_per_interval_not_per_worker(task_cls, window_s):
+    """4 workers sharing one Redis must total interval-paced runs, not 4x them.
+
+    Covers both production shapes: a fast run_once with default polling (the
+    harvester shape, workers pile up within the same second) and a slow
+    interval with fast non_leader_poll_s (the github_sync shape, non-leaders
+    retake the lock at roughly the poll cadence instead of the declared one).
+    """
+    counter = [0]
+    redis = FakeRedis()
+    tasks = [task_cls(counter) for _ in range(4)]
+    with patch("app.core.background.get_redis", AsyncMock(return_value=redis)):
+        runners = [asyncio.create_task(t.start()) for t in tasks]
+        await asyncio.sleep(window_s)
+        for r in runners:
+            r.cancel()
+        for r in runners:
+            with contextlib.suppress(asyncio.CancelledError):
+                await r
+
+    interval_s = task_cls.interval_s
+    expected = window_s / interval_s
+    # Generous band: this asserts TOTAL runs scale with the interval, not with
+    # the worker count. Pre-fix, 4 workers piling up would multiply this by
+    # up to 4x; the buggy github_sync shape measured 7.5x on production.
+    assert counter[0] <= expected * 2 + 1, (
+        f"{task_cls.__name__}: {counter[0]} runs in {window_s}s window "
+        f"(interval={interval_s}s, expected ~{expected:.1f}) — "
+        "workers are re-running the same cycle"
+    )
+
+
+@pytest.mark.asyncio
+async def test_lease_is_still_held_during_the_interval_sleep():
+    """The fixed contract: release happens AFTER the sleep, not before it.
+
+    This is the inverse of the old (pre-fix) assertion — the whole point of
+    the fix is that the lease outlives run_once and covers the sleep too.
+    """
     task = _CountingTask(work_s=0)
     redis = FakeRedis()
     with patch("app.core.background.get_redis", AsyncMock(return_value=redis)):
-        assert await task._acquire_leader() is True
-        assert redis.store  # held during the cycle
-        await task._release_leader()
+        runner = asyncio.create_task(task.start())
+        await asyncio.sleep(0.005)  # run_once has returned, sleep is in progress
+        assert redis.store, "lease released before the interval sleep ended"
+        runner.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await runner
 
-    assert redis.store == {}
+    assert redis.store == {}, "cancellation during sleep must still release"
     assert task._lock_token is None
 
 
@@ -200,27 +282,29 @@ def test_every_ttl_leaves_room_for_at_least_three_renewals():
     one is still executing, which no other test in this file would catch.
     """
     too_tight = {
-        t.__name__: t.lock_ttl_s
+        t.__name__: t().lock_ttl_s
         for t in ALL_TASKS
-        if t.lock_ttl_s is not None and t.lock_ttl_s < 3 * MIN_RENEW_INTERVAL_S
+        if t().lock_ttl_s is not None and t().lock_ttl_s < 3 * MIN_RENEW_INTERVAL_S
     }
     assert too_tight == {}, f"lock_ttl_s below the renewal floor: {too_tight}"
 
 
-def test_no_task_lets_a_crash_stall_it_for_longer_than_the_cap():
-    """Upper bound: lock_ttl_s is how long a CRASHED worker blocks its peer.
+def test_no_task_holds_a_lease_shorter_than_its_own_interval():
+    """`lock_ttl_s` must be >= `interval_s` now that the lease spans the sleep.
 
-    Pins the meaning the retune gave it. Reverting any task to the old
-    `interval_s + 20` pairing (620 / 320 / 3620) fails here, which is the point
-    — that convention was a workaround for the missing release, and it read as
-    intentional design for long enough to cost a production incident.
+    Post-fix contract (see background.py module docstring): the lease covers
+    run_once AND the interval sleep. A TTL below interval_s would expire
+    mid-sleep and reopen the exact defect this release fixes — measured on
+    production as github_sync running 180 times in 2 hours against a declared
+    300s cadence (~24 expected), because non-leaders retook the lock as soon
+    as the old, too-short TTL lapsed.
     """
-    too_slack = {
-        t.__name__: t.lock_ttl_s
+    too_tight = {
+        t.__name__: (t().lock_ttl_s, t().interval_s)
         for t in ALL_TASKS
-        if t.lock_ttl_s is not None and t.lock_ttl_s > MAX_CRASH_STALL_S
+        if t().lock_ttl_s is not None and t().lock_ttl_s < t().interval_s
     }
-    assert too_slack == {}, f"a crash would stall these beyond the cap: {too_slack}"
+    assert too_tight == {}, f"lock_ttl_s below interval_s (ttl, interval): {too_tight}"
 
 
 def test_cron_scheduler_keeps_its_gate_disabled():
