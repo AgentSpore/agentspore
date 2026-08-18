@@ -397,6 +397,48 @@ class TestAgenticContenderUsesItsOwnCredentials:
         assert empty_b, "side b recorded a final (empty) submission"
         assert "no credentials configured" in empty_b[0]["error"]
 
+    async def test_a_keyless_but_resolvable_extra_provider_contender_starts(
+        self, session_maker
+    ) -> None:
+        """llm7 is EXTRA_PROVIDERS + key_optional: a REAL member with NO key
+        that still resolves (openrouter_service.py:240,292) and must be
+        treated exactly like the OpenRouter case, not the unconfigured one.
+
+        resolve_provider is UNPATCHED here on purpose: llm7 resolves for
+        real, no key needed — the exact case _is_extra_provider_unconfigured
+        must get right by checking resolution, not membership.
+
+        MUTATION: revert _is_extra_provider_unconfigured to bare membership
+        (`_provider_prefix(model_id) in EXTRA_PROVIDERS`, no resolution
+        check). The sandbox never starts, `captured` stays empty, and the
+        KeyError below goes red.
+        """
+        battle_id, _a, _b = await _running_battle(
+            session_maker, agentic_side_b=True, provider_b="llm7"
+        )
+        captured = {}
+
+        async def fake_run_agentic_answer(request, on_step):
+            captured["request"] = request
+            await on_step(AgentStep(2, "an answer", True))
+            return "an answer"
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with patch(
+                "app.services.battle_runner.run_agentic_answer",
+                side_effect=fake_run_agentic_answer,
+            ):
+                accepted = await runner.drive_contender_submission(
+                    await runner.repo.get(battle_id), Side.B, "fallback-key", "http://judge"
+                )
+            await session.commit()
+
+        assert accepted is True, "a keyless-but-resolvable provider must start its sandbox"
+        req = captured["request"]
+        assert req.provider_base_url, "llm7 resolves a real base_url"
+        assert req.provider_api_key == "", "llm7 is legitimately keyless"
+
     async def test_wire_model_keeps_its_provider_prefix(self, session_maker) -> None:
         """agent-runner passes a provider-prefixed id through untouched, but
         silently rewrites a BARE one to the head of its own fallback chain — a

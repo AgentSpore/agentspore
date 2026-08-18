@@ -460,20 +460,32 @@ def _resolve_answer_credentials(model_id: str) -> dict | None:
 
 
 def _is_extra_provider_unconfigured(model_id: str) -> bool:
-    """True when `model_id` names a KNOWN extra provider with no key set.
+    """True when `model_id` names a KNOWN extra provider whose credentials do
+    NOT resolve — never true for a provider that resolves, keyless or not.
 
     False for an OpenRouter model (no EXTRA_PROVIDERS prefix at all) and for
     a typo'd/unknown prefix — the schema (V72) only enforces
     ``length(btrim(provider)) > 0``, not membership in EXTRA_PROVIDERS, so an
     unrecognised prefix is not proven unconfigured; it keeps the OLD
     fallback-and-attempt behavior rather than being permanently silenced.
+
+    Membership in EXTRA_PROVIDERS alone is NOT unconfigured: llm7 is
+    ``key_optional`` (openrouter_service.py:240) and resolves a real
+    base_url with an empty api_key — legitimately keyless AND callable.
+    Checking membership without also checking resolution reported every
+    llm7 contender "unconfigured" the moment one ran in agent mode, voiding
+    every battle it entered with the exact false diagnosis this whole fix
+    exists to remove. Delegates the resolve check to
+    :func:`_resolve_answer_credentials` — the SAME call the caller then
+    makes — so ``key_optional`` is honoured in one place, not two.
     """
     from app.services.openrouter_service import (  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
         OpenRouterService,
         _provider_prefix,
     )
 
-    return _provider_prefix(model_id) in OpenRouterService.EXTRA_PROVIDERS
+    is_known_extra = _provider_prefix(model_id) in OpenRouterService.EXTRA_PROVIDERS
+    return is_known_extra and _resolve_answer_credentials(model_id) is None
 
 
 def _unreachable_kind(exc: JudgeTransportError) -> str:
