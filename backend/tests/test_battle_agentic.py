@@ -105,7 +105,7 @@ async def db_session(session_maker):
 
 
 async def _new_contender(
-    session, *, execution_mode: str, model_id: str, system_prompt: str
+    session, *, execution_mode: str, model_id: str, system_prompt: str, provider: str = "zai"
 ) -> str:
     cid = str(uuid.uuid4())
     await session.execute(
@@ -115,12 +115,13 @@ async def _new_contender(
                 (id, provider, model_id, approach_key, system_prompt, display_name,
                  execution_mode, elo, enabled)
             VALUES
-                (CAST(:id AS UUID), 'zai', :model_id, 'plain', :system_prompt, :model_id,
+                (CAST(:id AS UUID), :provider, :model_id, 'plain', :system_prompt, :model_id,
                  :execution_mode, :elo, TRUE)
             """
         ),
         {
             "id": cid,
+            "provider": provider,
             "model_id": model_id,
             "system_prompt": system_prompt,
             "execution_mode": execution_mode,
@@ -130,12 +131,17 @@ async def _new_contender(
     return cid
 
 
-async def _running_battle(session_maker, *, agentic_side_b: bool) -> tuple[str, str, str]:
+async def _running_battle(
+    session_maker, *, agentic_side_b: bool, provider_b: str = "zai"
+) -> tuple[str, str, str]:
     """A 'running' battle: side A a MODEL contender, side B either agent or model.
 
     Mixed by default (agentic_side_b picks B's mode, A always 'model') so the
     forfeit/timeout assertions are not entangled with the both-agentic
-    path-judging branch, which is a separate concern.
+    path-judging branch, which is a separate concern. ``provider_b`` defaults
+    to 'zai' (an EXTRA_PROVIDERS member) so existing forfeit/timeout tests are
+    unaffected; TestAgenticContenderCredentials overrides it to exercise the
+    OpenRouter-vs-unconfigured-extra-provider split.
     """
     async with session_maker() as session:
         repo = BattleRepository(session)
@@ -160,6 +166,7 @@ async def _running_battle(session_maker, *, agentic_side_b: bool) -> tuple[str, 
             execution_mode="agent" if agentic_side_b else "model",
             model_id=f"glm-4.5-flash-{unique}",
             system_prompt="answer as an agent with tools",
+            provider=provider_b,
         )
         battle_id = str(uuid.uuid4())
         # No agent_a/b_owner_snapshot: a contender-only battle has none (V72
@@ -210,7 +217,7 @@ class TestAgenticTimeoutIsAThirdOutcome:
         assertion below both go red.
         """
         battle_id, contender_a, contender_b = await _running_battle(
-            session_maker, agentic_side_b=True
+            session_maker, agentic_side_b=True, provider_b="openrouter"
         )
 
         async def fake_run_agentic_answer(request, on_step):
@@ -258,7 +265,7 @@ class TestAgenticTimeoutIsAThirdOutcome:
         (as it was before the fix). This test's final assertion goes red.
         """
         battle_id, contender_a, contender_b = await _running_battle(
-            session_maker, agentic_side_b=True
+            session_maker, agentic_side_b=True, provider_b="openrouter"
         )
 
         async def fake_run_agentic_answer(request, on_step):
@@ -294,18 +301,27 @@ class TestAgenticTimeoutIsAThirdOutcome:
 
 
 class TestAgenticContenderUsesItsOwnCredentials:
-    """BLOCKING 3 (review): an OpenRouter contender (resolve_provider() -> None)
-    must fall back to the caller's own creds, not start with empty ones."""
+    """A contender's provider decides what an unresolved id means: an
+    OpenRouter model falls back to the caller's own creds (OpenRouter IS the
+    default route); a known EXTRA_PROVIDERS model with no key never starts
+    the sandbox at all — same distinction _answer_with_model makes on the
+    direct-HTTP path, and for the same production incident (see
+    _resolve_answer_credentials)."""
 
-    async def test_agentic_drive_receives_fallback_creds_when_unresolved(
+    async def test_an_openrouter_contender_falls_back_to_the_callers_creds(
         self, session_maker
     ) -> None:
-        """MUTATION: drop the fallback_base_url/fallback_api_key wiring in
+        """'openrouter' is not an EXTRA_PROVIDERS member, so resolve_provider()
+        returning None here is the LEGITIMATE case the fallback exists for.
+
+        MUTATION: drop the fallback_base_url/fallback_api_key wiring in
         _drive_agentic_submission. The captured request's provider_base_url
         stays '' and this test's assertion on fallback_base_url goes red
         (asserting equality with the OpenRouter fallback passed to the drive).
         """
-        battle_id, _a, _b = await _running_battle(session_maker, agentic_side_b=True)
+        battle_id, _a, _b = await _running_battle(
+            session_maker, agentic_side_b=True, provider_b="openrouter"
+        )
         captured = {}
 
         async def fake_run_agentic_answer(request, on_step):
@@ -338,6 +354,49 @@ class TestAgenticContenderUsesItsOwnCredentials:
         assert req.fallback_base_url == "https://openrouter.ai/api/v1"
         assert req.fallback_api_key == "fallback-key"
 
+    async def test_an_unconfigured_extra_provider_contender_never_starts(
+        self, session_maker
+    ) -> None:
+        """Production: 13 of 31 battles in 8h voided through this exact path —
+        zai/glm-4.5-flash (no key on prod), execution_mode='agent'. Starting
+        the sandbox with the caller's (judge) credentials sent it to the
+        wrong provider entirely, misdiagnosed as an outage.
+
+        MUTATION: drop the _is_extra_provider_unconfigured short-circuit in
+        _drive_agentic_submission. run_agentic_answer then gets called (this
+        test's mock would be invoked) and this assertion goes red.
+        """
+        battle_id, _a, side_b = await _running_battle(
+            session_maker, agentic_side_b=True, provider_b="zai"
+        )
+
+        async def fake_run_agentic_answer(request, on_step):
+            raise AssertionError("the sandbox must never start for an unconfigured provider")
+
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None)
+            with (
+                patch(
+                    "app.services.battle_runner.run_agentic_answer",
+                    side_effect=fake_run_agentic_answer,
+                ),
+                patch(
+                    "app.services.openrouter_service.OpenRouterService.resolve_provider",
+                    return_value=None,
+                ),
+            ):
+                accepted = await runner.drive_contender_submission(
+                    await runner.repo.get(battle_id), Side.B, "fallback-key", "http://judge"
+                )
+            await session.commit()
+
+        assert accepted is False
+        async with session_maker() as session:
+            subs = await BattleRepository(session).list_submissions(battle_id)
+        empty_b = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
+        assert empty_b, "side b recorded a final (empty) submission"
+        assert "no credentials configured" in empty_b[0]["error"]
+
     async def test_wire_model_keeps_its_provider_prefix(self, session_maker) -> None:
         """agent-runner passes a provider-prefixed id through untouched, but
         silently rewrites a BARE one to the head of its own fallback chain — a
@@ -347,8 +406,16 @@ class TestAgenticContenderUsesItsOwnCredentials:
 
         MUTATION: wrap the wire_model argument in wire_model_name() again — the
         prefix disappears and this goes red.
+
+        provider_b='openrouter': not an EXTRA_PROVIDERS member, so it must
+        reach run_agentic_answer via the legitimate fallback — an unrelated
+        concern to this test's own assertion (see
+        TestAgenticContenderUsesItsOwnCredentials for the
+        unconfigured-extra-provider short-circuit itself).
         """
-        battle_id, _a, _b = await _running_battle(session_maker, agentic_side_b=True)
+        battle_id, _a, _b = await _running_battle(
+            session_maker, agentic_side_b=True, provider_b="openrouter"
+        )
         captured = {}
 
         async def fake_run_agentic_answer(request, on_step):

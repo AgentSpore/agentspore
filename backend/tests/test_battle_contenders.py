@@ -150,9 +150,19 @@ def _resolvable_contender_credentials():
     reaching the call_judge_model mock these tests patch — these tests exercise
     call routing/retry, not credential resolution, which is what
     TestContenderOwnCredentials overrides this fixture to test explicitly.
+
+    Derived from the model id, NOT a fixed pair: a fixed
+    "http://unused"/"k" pair is byte-identical to the judge provider these
+    tests ALSO pass as ``provider={"api_key": "k", "base_url": "http://unused"}``
+    — reverting the fix (falling back to the judge's credentials) would then
+    change nothing observable here, and every test in this module would stay
+    green regardless. Diverging per model id makes a leaked judge pair visible.
     """
     def fake_resolve(self, model_id: str) -> dict | None:
-        return {"base_url": "http://unused", "api_key": "k"}
+        return {
+            "base_url": f"http://{model_id}-resolved",
+            "api_key": f"{model_id}-resolved-key",
+        }
 
     with patch.object(OpenRouterService, "resolve_provider", fake_resolve):
         yield

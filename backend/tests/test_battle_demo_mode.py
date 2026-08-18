@@ -119,10 +119,19 @@ def _resolvable_demo_credentials():
     call would hit the no-credentials short-circuit in _answer_with_model
     before reaching the call_judge_model mock these tests patch — these tests
     exercise the demo drive, not credential resolution.
+
+    Derived from the model id, NOT a fixed pair — see
+    test_battle_contenders.py's twin fixture for why a fixed
+    "http://unused"/"k" pair (identical to the judge provider every test here
+    ALSO passes) makes a reverted fallback undetectable by any test in this
+    module.
     """
 
     def fake_resolve(self, model_id: str) -> dict | None:
-        return {"base_url": "http://unused", "api_key": "k"}
+        return {
+            "base_url": f"http://{model_id}-resolved",
+            "api_key": f"{model_id}-resolved-key",
+        }
 
     with patch.object(OpenRouterService, "resolve_provider", fake_resolve):
         yield
