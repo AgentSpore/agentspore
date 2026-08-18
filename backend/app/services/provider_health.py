@@ -113,18 +113,25 @@ async def pick_live_model(candidates: list[str]) -> str:
 
     A candidate with no configured API key is skipped without any network
     call. Verdicts are cached per model id (see module TTLs). If none of the
-    candidates are alive, the first candidate is returned anyway — so the
-    caller makes a real request and produces a real upstream error/log line
-    instead of silently doing nothing.
+    candidates are alive, the first one with a CONFIGURED key is returned
+    anyway — so the caller makes a real request and produces a real upstream
+    error/log line instead of silently doing nothing. A candidate with no key
+    at all is never that fallback: it cannot produce an upstream error, only
+    a caller borrowing someone else's credentials for it (see
+    battle_runner._resolve_answer_credentials) — same failure this function
+    already prevents for the normal loop. Only if EVERY candidate lacks a key
+    does the literal first one return, unchanged from before.
     """
     svc = OpenRouterService()
     verdicts: dict[str, str] = {}
+    keyed_candidates: list[str] = []
 
     for model_id in candidates:
         creds = svc.resolve_provider(model_id)
         if creds is None:
             verdicts[model_id] = "no_api_key"
             continue
+        keyed_candidates.append(model_id)
 
         cached = _cached_verdict(model_id)
         if cached is not None:
@@ -139,5 +146,6 @@ async def pick_live_model(candidates: list[str]) -> str:
         if verdict is Verdict.ALIVE:
             return model_id
 
-    logger.warning("no live candidate among {}; falling back to first: {}", verdicts, candidates[0])
-    return candidates[0]
+    fallback = keyed_candidates[0] if keyed_candidates else candidates[0]
+    logger.warning("no live candidate among {}; falling back to: {}", verdicts, fallback)
+    return fallback
