@@ -120,10 +120,14 @@ class AgenticAnswerRequest:
         resolve_provider() returns None for OpenRouter by design — it is the
         DEFAULT route, not an "extra" provider — so a contender on an OpenRouter
         model arrives here with both provider fields empty. The caller's own
-        credentials are the fallback, mirroring what the model path does in
-        battle_runner._answer_with_model. Without this an OpenRouter contender
-        starts with no provider and voids every battle it enters, reported as
-        "unreachable" rather than as the misconfiguration it is.
+        credentials are the fallback for THAT case only: an EXTRA_PROVIDERS
+        contender with no configured key never reaches this class at all —
+        battle_runner._drive_agentic_submission short-circuits it before
+        building the request (_is_extra_provider_unconfigured), the same
+        distinction battle_runner._answer_with_model makes on the direct-HTTP
+        path. Without the OpenRouter half of this fallback, an OpenRouter
+        contender starts with no provider and voids every battle it enters,
+        reported as "unreachable" rather than as the misconfiguration it is.
 
         Branches on ``provider_base_url``, NOT on the key: a resolved keyless
         provider (llm7, key_optional) has a real base_url and a legitimately

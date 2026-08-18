@@ -57,6 +57,7 @@ from app.services.battle_runner import (
 from app.services.battle_service import BattleService
 from app.services.connection_manager import DeliveryResult
 from app.services.llm_gate import DEFAULT_WAIT_SECONDS as GATE_WAIT_SECONDS
+from app.services.openrouter_service import OpenRouterService
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 _MIG_FILES = [
@@ -108,6 +109,32 @@ CREATE TABLE IF NOT EXISTS agents (
 """
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
+
+
+@pytest.fixture(autouse=True)
+def _resolvable_demo_credentials():
+    """DEMO_ANSWER_MODEL (zai/glm-4.5-flash) resolves in the test environment.
+
+    zai carries no key in this environment, so without this every demo answer
+    call would hit the no-credentials short-circuit in _answer_with_model
+    before reaching the call_judge_model mock these tests patch — these tests
+    exercise the demo drive, not credential resolution.
+
+    Derived from the model id, NOT a fixed pair — see
+    test_battle_contenders.py's twin fixture for why a fixed
+    "http://unused"/"k" pair (identical to the judge provider every test here
+    ALSO passes) makes a reverted fallback undetectable by any test in this
+    module.
+    """
+
+    def fake_resolve(self, model_id: str) -> dict | None:
+        return {
+            "base_url": f"http://{model_id}-resolved",
+            "api_key": f"{model_id}-resolved-key",
+        }
+
+    with patch.object(OpenRouterService, "resolve_provider", fake_resolve):
+        yield
 
 
 @pytest.fixture(scope="module")

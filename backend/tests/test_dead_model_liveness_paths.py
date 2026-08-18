@@ -109,7 +109,7 @@ class TestDemoAnswerResolvesByLiveness:
         runner = BattleRunner.__new__(BattleRunner)
         seen: list[str] = []
 
-        async def _capture(_self, _battle, spec, _api_key, _base_url):
+        async def _capture(_self, _battle, spec):
             seen.append(spec.model)
             return "answer"
 
@@ -123,7 +123,7 @@ class TestDemoAnswerResolvesByLiveness:
             ),
             patch.object(BattleRunner, "_answer_with_retry", _capture),
         ):
-            answer = await runner._generate_demo_answer({"id": "b"}, "k", "http://unused")
+            answer = await runner._generate_demo_answer({"id": "b"})
 
         assert answer == "answer"
         assert seen == ["live/picked-answer-model"], (

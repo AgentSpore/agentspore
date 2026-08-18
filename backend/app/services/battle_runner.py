@@ -217,6 +217,11 @@ SILENT_FIGHTER_ERROR = "no submission before deadline"
 # that was never asked must not be recorded as having lost.
 PROVIDER_UNREACHABLE_ERROR = "provider unreachable"
 
+# _unreachable_kind's answer for a contender/demo model whose provider has no
+# configured credentials — distinct from a real transport failure. See
+# _resolve_answer_credentials for the incident and the case split.
+NO_CREDENTIALS_ERROR = "no credentials configured"
+
 # Answer-path attempts, total, per side per battle. One retry: enough for an
 # upstream blip (mistral answered 500/503 intermittently), and it adds no
 # CONCURRENT load because the first attempt's gate slot is released before the
@@ -408,8 +413,85 @@ class AnswerSpec:
 _SEED_SLOT: dict[Side, int] = {Side.A: 0, Side.B: 1}
 
 
+class _NoCredentialsError(JudgeTransportError):
+    """Raised instead of calling the provider: this model's account has no key.
+
+    A subclass, not a message convention, so ``_unreachable_kind`` cannot
+    confuse it with a permanent balance/auth REFUSAL (JudgeTransportError
+    itself, permanent=True) — that one reached the provider and was told no;
+    this one was never sent, because there was nothing to authenticate with.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, permanent=True)
+
+
+def _resolve_answer_credentials(model_id: str) -> dict | None:
+    """Credentials for a platform-run answer call, or None for OpenRouter.
+
+    THE single place this platform decides "unconfigured" vs "OpenRouter" for
+    a model id, used by both the direct-HTTP answer path
+    (:meth:`BattleRunner._answer_with_model`) and the agentic one
+    (:meth:`BattleRunner._drive_agentic_submission`) — both used to duplicate
+    this call and diverged on what a None result meant.
+
+    ``resolve_provider`` returns None for two DIFFERENT reasons that a bare
+    None cannot tell apart: (1) the id's provider prefix is a known
+    EXTRA_PROVIDERS entry with no key configured (mistral/moonshot/deepseek/
+    zai/llm7 minus llm7, which is keyless) — that model should never be
+    called, or (2) the id has no EXTRA_PROVIDERS prefix at all, i.e. it is an
+    OpenRouter model, OpenRouter being the DEFAULT route rather than an
+    "extra" one — that model is correctly reachable via the caller's own
+    (judge/OpenRouter) credentials. Only case (1) is unconfigured; the caller
+    tells them apart via :func:`_is_extra_provider_unconfigured`.
+
+    Production: 31 battles / 6h, zero verdicts, every submission "provider
+    unreachable: provider error or timeout". Case (1) for zai/glm-4.5-flash
+    (no key on prod) was being treated like case (2) and silently answered
+    with the JUDGE's (llm7) credentials — a real call to the wrong provider's
+    endpoint under a model name it had never heard of, misdiagnosed as an
+    outage instead of a missing key.
+    """
+    from app.services.openrouter_service import (
+        OpenRouterService,  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
+    )
+
+    return OpenRouterService().resolve_provider(model_id)
+
+
+def _is_extra_provider_unconfigured(model_id: str) -> bool:
+    """True when `model_id` names a KNOWN extra provider whose credentials do
+    NOT resolve — never true for a provider that resolves, keyless or not.
+
+    False for an OpenRouter model (no EXTRA_PROVIDERS prefix at all) and for
+    a typo'd/unknown prefix — the schema (V72) only enforces
+    ``length(btrim(provider)) > 0``, not membership in EXTRA_PROVIDERS, so an
+    unrecognised prefix is not proven unconfigured; it keeps the OLD
+    fallback-and-attempt behavior rather than being permanently silenced.
+
+    Membership in EXTRA_PROVIDERS alone is NOT unconfigured: llm7 is
+    ``key_optional`` (openrouter_service.py:240) and resolves a real
+    base_url with an empty api_key — legitimately keyless AND callable.
+    Checking membership without also checking resolution reported every
+    llm7 contender "unconfigured" the moment one ran in agent mode, voiding
+    every battle it entered with the exact false diagnosis this whole fix
+    exists to remove. Delegates the resolve check to
+    :func:`_resolve_answer_credentials` — the SAME call the caller then
+    makes — so ``key_optional`` is honoured in one place, not two.
+    """
+    from app.services.openrouter_service import (  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
+        OpenRouterService,
+        _provider_prefix,
+    )
+
+    is_known_extra = _provider_prefix(model_id) in OpenRouterService.EXTRA_PROVIDERS
+    return is_known_extra and _resolve_answer_credentials(model_id) is None
+
+
 def _unreachable_kind(exc: JudgeTransportError) -> str:
     """Which kind of not-reaching-the-provider this was. Never the raw body."""
+    if isinstance(exc, _NoCredentialsError):
+        return NO_CREDENTIALS_ERROR
     if exc.saturated:
         return "gate saturated"
     if exc.permanent:
@@ -1038,7 +1120,7 @@ class BattleRunner:
             return False
 
         try:
-            answer = await self._generate_demo_answer(current, api_key, base_url)
+            answer = await self._generate_demo_answer(current)
         except JudgeTransportError as exc:
             # Same distinction the contender path makes: the demo opponent was
             # never asked, so the battle voids rather than handing the user's
@@ -1132,7 +1214,7 @@ class BattleRunner:
             seed_slot=_SEED_SLOT[side],
         )
         try:
-            answer = await self._answer_with_retry(current, spec, api_key, base_url)
+            answer = await self._answer_with_retry(current, spec)
         except JudgeTransportError as exc:
             await self.record_unreachable(battle_id, side, _unreachable_kind(exc))
             return False
@@ -1169,8 +1251,19 @@ class BattleRunner:
         (add_submission's monotonic seq_no check then refuses every later
         write) — detected via its bool return and stopping the drive rather
         than silently discarding steps into a battle that moved on.
+
+        A known-unconfigured extra provider (see
+        :func:`_is_extra_provider_unconfigured`) is never started: unlike an
+        OpenRouter contender, it has no legitimate fallback pair, and starting
+        it anyway with the caller's (judge) credentials reproduces the same
+        false "provider unreachable" diagnosis :meth:`_answer_with_model`
+        fixes on the direct-HTTP path.
         """
         battle_id = str(battle["id"])
+        model = f"{contender['provider']}/{contender['model_id']}"
+        if _is_extra_provider_unconfigured(model):
+            await self.record_unreachable(battle_id, side, NO_CREDENTIALS_ERROR)
+            return False
         write_failed = False
         final_written = False
 
@@ -1198,12 +1291,7 @@ class BattleRunner:
                 return
             final_written = final_written or step.is_final
 
-        from app.services.openrouter_service import (  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
-            OpenRouterService,
-        )
-
-        model = f"{contender['provider']}/{contender['model_id']}"
-        creds = OpenRouterService().resolve_provider(model)
+        creds = _resolve_answer_credentials(model)
         request = AgenticAnswerRequest(
             battle_id=battle_id,
             side_value=side.value,
@@ -1232,9 +1320,7 @@ class BattleRunner:
             return False
         return final_written and not write_failed
 
-    async def _answer_with_retry(
-        self, battle: dict, spec: AnswerSpec, api_key: str, base_url: str
-    ) -> str | None:
+    async def _answer_with_retry(self, battle: dict, spec: AnswerSpec) -> str | None:
         """One retry on a transient provider failure, then give up.
 
         Mistral answered 500/503 intermittently and every one of those cost a
@@ -1250,7 +1336,7 @@ class BattleRunner:
         """
         for attempt in range(_ANSWER_ATTEMPTS):
             try:
-                return await self._answer_with_model(battle, spec, api_key, base_url)
+                return await self._answer_with_model(battle, spec)
             except JudgeTransportError as exc:
                 last = attempt == _ANSWER_ATTEMPTS - 1
                 if last or exc.permanent or exc.saturated:
@@ -1307,9 +1393,7 @@ class BattleRunner:
             )
         return accepted
 
-    async def _generate_demo_answer(
-        self, battle: dict, api_key: str, base_url: str
-    ) -> str | None:
+    async def _generate_demo_answer(self, battle: dict) -> str | None:
         """One gated provider call producing the demo opponent's answer, or None.
 
         Reuses the judge's exact call shape (:func:`call_judge_model`) but routes
@@ -1320,8 +1404,10 @@ class BattleRunner:
         constant: a dead-but-keyed id resolves credentials fine and then refuses
         every completion, which is how this path voided every demo battle twice.
         Credentials and the temperature quirk are resolved downstream from the
-        picked id in ``_answer_with_model``, with the judge credentials threaded
-        in here only as the fallback for an unconfigured provider.
+        picked id in ``_answer_with_model``; ``pick_live_model``'s own
+        all-dead fallback now prefers a candidate that at least has a
+        configured key, so this path has no judge-credentials fallback of its
+        own to fall back to.
 
         Goes through the same bounded retry the contender path uses. Returns the
         answer capped to MAX_SUBMISSION_CHARS, or None when the model answered
@@ -1330,15 +1416,10 @@ class BattleRunner:
         """
         model = await pick_live_model(list(DEMO_ANSWER_MODEL_CANDIDATES))
         return await self._answer_with_retry(
-            battle,
-            AnswerSpec(model, _DEMO_ANSWER_SYSTEM, _SEED_SLOT[Side.B]),
-            api_key,
-            base_url,
+            battle, AnswerSpec(model, _DEMO_ANSWER_SYSTEM, _SEED_SLOT[Side.B])
         )
 
-    async def _answer_with_model(
-        self, battle: dict, spec: AnswerSpec, api_key: str, base_url: str
-    ) -> str | None:
+    async def _answer_with_model(self, battle: dict, spec: AnswerSpec) -> str | None:
         """One gated provider call producing a fighter's answer, or None.
 
         The single HTTP path for every answer the platform produces on a
@@ -1348,12 +1429,18 @@ class BattleRunner:
         temperature quirks per model are all already solved there, and a parallel
         client would have to re-solve them and then drift.
 
-        Credentials are resolved PER MODEL, so a contender on a different
-        provider than the judge brings its own; the judge credentials threaded in
-        are only the fallback for an unconfigured provider. Returns the answer
-        capped to MAX_SUBMISSION_CHARS, or None when the model answered with
-        nothing. A transport failure RAISES: "never reached" and "produced
-        nothing" settle differently, so they must not share a return value.
+        Credentials come from :func:`_resolve_answer_credentials`, resolved PER
+        MODEL, so a contender on a different provider than the judge brings its
+        own — see that function for the case split and the incident it fixes.
+        Unlike the agentic path, this one has no judge/OpenRouter fallback pair
+        to thread through (dropped with the old bug — see class history): every
+        model/demo answer id is EXTRA_PROVIDERS-prefixed in practice (V72/V79/
+        V80 seed data), so an unresolved model raises regardless of WHY it did
+        not resolve, rather than silently borrowing a stranger's credentials.
+        Returns the answer capped to MAX_SUBMISSION_CHARS, or None when the
+        model answered with nothing. A transport failure RAISES: "never
+        reached" and "produced nothing" settle differently, so they must not
+        share a return value.
         """
         prompt = battle.get("task_prompt_snapshot")
         if not prompt:
@@ -1363,14 +1450,15 @@ class BattleRunner:
         rubric = battle.get("task_rubric_snapshot") or []
         messages = build_answer_messages(spec.system_prompt, str(prompt), rubric)
 
-        from app.services.openrouter_service import (  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
-            OpenRouterService,
-            _provider_prefix,
+        from app.services.openrouter_service import (
+            _provider_prefix,  # noqa: PLC0415 (cycle: app.services.openrouter_service <-> app.core.background)
         )
 
-        creds = OpenRouterService().resolve_provider(spec.model)
-        answer_base_url = creds["base_url"] if creds else base_url
-        answer_api_key = creds["api_key"] if creds else api_key
+        creds = _resolve_answer_credentials(spec.model)
+        if creds is None:
+            raise _NoCredentialsError(f"no route resolved for model {spec.model!r}")
+        answer_base_url = creds["base_url"]
+        answer_api_key = creds["api_key"]
 
         http = self.http or httpx.AsyncClient()
         try:
