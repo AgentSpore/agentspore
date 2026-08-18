@@ -45,6 +45,7 @@ from app.services.battle_judges import (
 )
 from app.services.battle_runner import (
     ANSWER_LANGUAGE_RULE,
+    NO_CREDENTIALS_ERROR,
     PROVIDER_UNREACHABLE_ERROR,
     BattleRunner,
     _await_demo_drives,
@@ -53,6 +54,7 @@ from app.services.battle_runner import (
 )
 from app.services.battle_service import BattleMatchmaker
 from app.services.connection_manager import DeliveryResult
+from app.services.openrouter_service import OpenRouterService
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 _MIG_FILES = [
@@ -135,6 +137,24 @@ def _impartial_judge_roster():
     with patch.object(
         BattleRunner, "_resolve_judge_roster", return_value=_roster(["panel/impartial"])
     ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _resolvable_contender_credentials():
+    """Every contender's provider resolves to fake credentials, for the module.
+
+    None of the seeded providers (mistral, moonshot, deepseek, zai) carry a key
+    in the test environment, so without this every contender answer call would
+    hit the new no-credentials short-circuit (_NoCredentialsError) before
+    reaching the call_judge_model mock these tests patch — these tests exercise
+    call routing/retry, not credential resolution, which is what
+    TestContenderOwnCredentials overrides this fixture to test explicitly.
+    """
+    def fake_resolve(self, model_id: str) -> dict | None:
+        return {"base_url": "http://unused", "api_key": "k"}
+
+    with patch.object(OpenRouterService, "resolve_provider", fake_resolve):
         yield
 
 
@@ -817,6 +837,118 @@ class TestUnreachableProviderVoids:
         assert sum(1 for s in seen if _is_side(s, sides["b"])) == 2, "failed once, retried once"
         assert row["status"] == "completed"
         assert row["winner"] in {"a", "b", "tie"}, "a judged result, not a void"
+
+
+class TestContenderOwnCredentials:
+    """A contender is called with ITS OWN provider's credentials, not the
+    judge's — and one with no configured key is never called at all.
+
+    Production: 31 battles / 6h, zero verdicts, every submission
+    "provider unreachable: provider error or timeout". zai/glm-4.5-flash (no
+    key on prod) was resolving to None and falling back to the JUDGE's llm7
+    credentials — a real network call to llm7's endpoint asking for a model it
+    had never heard of, misdiagnosed as an outage.
+    """
+
+    async def test_a_contender_is_called_with_its_own_resolved_credentials(
+        self, session_maker
+    ) -> None:
+        """Every contender answer call must carry the base_url/api_key that
+        resolve_provider returned for ITS OWN model — never the judge's
+        "http://judge-account" fallback, regardless of which provider it is.
+
+        MUTATION: revert _answer_with_model to fall back to the passed-in
+        (judge) api_key/base_url whenever resolve_provider is falsy-checked
+        loosely instead of exactly `is None`. Every call then carries
+        "http://judge-account" and the assertion goes red.
+        """
+        await _fresh_auto_battle(session_maker)
+
+        def fake_resolve(self, model_id: str) -> dict | None:
+            provider = model_id.partition("/")[0]
+            return {"base_url": f"http://{provider}-account", "api_key": f"{provider}-key"}
+
+        drive = partial(
+            reconcile_once,
+            session_factory=session_maker,
+            gate=None,
+            provider={"api_key": "judge-key", "base_url": "http://judge-account"},
+        )
+        answer = _provider_mock()
+
+        with (
+            _no_transport(),
+            patch("app.services.battle_runner.call_judge_model", answer),
+            patch.object(OpenRouterService, "resolve_provider", fake_resolve),
+        ):
+            await drive()
+            await _await_demo_drives()
+
+        answer_calls = [
+            c.kwargs
+            for c in answer.await_args_list
+            if "submission_alpha" not in c.kwargs["messages"][-1]["content"]
+        ]
+        assert len(answer_calls) == 2, "both contender sides answered"
+        for call_kwargs in answer_calls:
+            provider = call_kwargs["provider"]
+            assert provider, "the answer call names its own provider"
+            assert call_kwargs["base_url"] == f"http://{provider}-account"
+            assert call_kwargs["api_key"] == f"{provider}-key"
+            assert call_kwargs["base_url"] != "http://judge-account", (
+                "a contender must never be called with the judge's credentials"
+            )
+
+    async def test_a_contender_with_no_configured_key_is_never_called(
+        self, session_maker
+    ) -> None:
+        """No credentials -> no network call, and a distinct submission error.
+
+        MUTATION: drop the `creds is None` short-circuit in _answer_with_model.
+        The provider mock is then called (asserted False below), and the
+        recorded error reverts to the generic transport bucket.
+        """
+        battle_id = await _fresh_auto_battle(session_maker)
+        sides = await _contender_ident(session_maker, battle_id)
+        called_unconfigured: list[str] = []
+
+        def fake_resolve(self, model_id: str) -> dict | None:
+            if model_id.rsplit("/", 1)[-1] == sides["b"][0]:
+                return None
+            provider = model_id.partition("/")[0]
+            return {"base_url": f"http://{provider}-account", "api_key": f"{provider}-key"}
+
+        async def reply(**kwargs) -> str:
+            messages = kwargs["messages"]
+            if "submission_alpha" in messages[-1]["content"]:
+                return VALID_JUDGE_REPLY
+            if _is_side((kwargs["wire_model"], messages[0]["content"]), sides["b"]):
+                called_unconfigured.append(kwargs["wire_model"])
+            return PLAIN_ANSWER
+
+        answer = AsyncMock(side_effect=reply)
+        drive = partial(
+            reconcile_once,
+            session_factory=session_maker,
+            gate=None,
+            provider={"api_key": "judge-key", "base_url": "http://judge-account"},
+        )
+
+        with (
+            _no_transport(),
+            patch("app.services.battle_runner.call_judge_model", answer),
+            patch.object(OpenRouterService, "resolve_provider", fake_resolve),
+        ):
+            row = await _drive_to_terminal(drive, session_maker, battle_id, answer)
+
+        assert called_unconfigured == [], "the provider was never called"
+        async with session_maker() as session:
+            subs = await BattleRepository(session).list_submissions(battle_id)
+        empty_b = [s for s in subs if str(s["side"]) == Side.B.value and s["is_final"]]
+        assert empty_b, "side b recorded a final (empty) submission"
+        assert empty_b[0]["error"] == f"{PROVIDER_UNREACHABLE_ERROR}: {NO_CREDENTIALS_ERROR}"
+        assert row["winner"] is None, "void: side b was never asked"
+        assert "void" in row["verdict_reason"]
 
 
 class TestDriveLevelUnreachable:

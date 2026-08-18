@@ -217,6 +217,14 @@ SILENT_FIGHTER_ERROR = "no submission before deadline"
 # that was never asked must not be recorded as having lost.
 PROVIDER_UNREACHABLE_ERROR = "provider unreachable"
 
+# _unreachable_kind's answer for a contender/demo model whose provider has no
+# configured credentials. Distinct from "provider error or timeout" (a call was
+# attempted and failed) so the two are not confused in the submission error or
+# in an operator's grep — production once mis-diagnosed the latter as an
+# outage when it was really a call to the wrong provider's endpoint entirely,
+# borrowed from the judge's own credentials (see NO_CREDENTIALS check below).
+NO_CREDENTIALS_ERROR = "no credentials configured"
+
 # Answer-path attempts, total, per side per battle. One retry: enough for an
 # upstream blip (mistral answered 500/503 intermittently), and it adds no
 # CONCURRENT load because the first attempt's gate slot is released before the
@@ -408,8 +416,23 @@ class AnswerSpec:
 _SEED_SLOT: dict[Side, int] = {Side.A: 0, Side.B: 1}
 
 
+class _NoCredentialsError(JudgeTransportError):
+    """Raised instead of calling the provider: this model's account has no key.
+
+    A subclass, not a message convention, so ``_unreachable_kind`` cannot
+    confuse it with a permanent balance/auth REFUSAL (JudgeTransportError
+    itself, permanent=True) — that one reached the provider and was told no;
+    this one was never sent, because there was nothing to authenticate with.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, permanent=True)
+
+
 def _unreachable_kind(exc: JudgeTransportError) -> str:
     """Which kind of not-reaching-the-provider this was. Never the raw body."""
+    if isinstance(exc, _NoCredentialsError):
+        return NO_CREDENTIALS_ERROR
     if exc.saturated:
         return "gate saturated"
     if exc.permanent:
@@ -1349,11 +1372,20 @@ class BattleRunner:
         client would have to re-solve them and then drift.
 
         Credentials are resolved PER MODEL, so a contender on a different
-        provider than the judge brings its own; the judge credentials threaded in
-        are only the fallback for an unconfigured provider. Returns the answer
-        capped to MAX_SUBMISSION_CHARS, or None when the model answered with
-        nothing. A transport failure RAISES: "never reached" and "produced
-        nothing" settle differently, so they must not share a return value.
+        provider than the judge brings its own. ``resolve_provider`` returning
+        None here means this model's OWN provider has no configured key — every
+        contender and demo-answer id names an EXTRA_PROVIDERS prefix (mistral,
+        moonshot, deepseek, zai, llm7), never a bare OpenRouter slug, so None is
+        unambiguous and the call is never attempted (see _NoCredentialsError):
+        falling back to the judge's credentials previously sent an
+        unconfigured contender's request to a DIFFERENT provider's endpoint
+        under a model name it had never heard of, and that provider's honest
+        4xx/timeout was then recorded as "provider unreachable" — the same
+        shape as a real outage, hiding a missing key behind a false diagnosis.
+        Returns the answer capped to MAX_SUBMISSION_CHARS, or None when the
+        model answered with nothing. A transport failure RAISES: "never
+        reached" and "produced nothing" settle differently, so they must not
+        share a return value.
         """
         prompt = battle.get("task_prompt_snapshot")
         if not prompt:
@@ -1369,8 +1401,13 @@ class BattleRunner:
         )
 
         creds = OpenRouterService().resolve_provider(spec.model)
-        answer_base_url = creds["base_url"] if creds else base_url
-        answer_api_key = creds["api_key"] if creds else api_key
+        if creds is None:
+            raise _NoCredentialsError(
+                f"no configured key for provider {_provider_prefix(spec.model)!r} "
+                f"(model {spec.model})"
+            )
+        answer_base_url = creds["base_url"]
+        answer_api_key = creds["api_key"]
 
         http = self.http or httpx.AsyncClient()
         try:
