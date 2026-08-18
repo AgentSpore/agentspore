@@ -146,6 +146,59 @@ async def test_all_dead_returns_first_candidate_and_logs_warning():
 
 
 @pytest.mark.asyncio
+async def test_all_dead_prefers_a_keyed_candidate_over_the_unconfigured_head():
+    """The all-dead fallback must not land on a candidate with NO key at all.
+
+    DEMO_ANSWER_MODEL_CANDIDATES' own production shape: zai (head) carries no
+    key, mistral (second) does and answers dead. Returning the head anyway
+    hands a caller a model with no credentials to authenticate with — the
+    caller then either borrows someone else's (the production incident) or
+    raises with nothing to fall back to. The keyed-but-dead candidate is the
+    correct fallback: at least it produces a real, attributable upstream error.
+
+    MUTATION: revert to `return candidates[0]` unconditionally. `chosen` would
+    then be "zai/glm-4.5-flash" and this assertion goes red.
+    """
+    settings = _settings(mistral_api_key="m-key")  # zai key blank
+    get_mock = AsyncMock(return_value=_resp(402))
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.post = get_mock
+
+    with (
+        _patch_settings(settings),
+        patch("httpx.AsyncClient", return_value=client),
+        patch("app.services.provider_health.logger") as mock_logger,
+    ):
+        chosen = await pick_live_model(["zai/glm-4.5-flash", "mistral/mistral-small-latest"])
+
+    assert chosen == "mistral/mistral-small-latest"
+    # zai never made a network call: it was skipped as no_api_key, same as the
+    # ordinary loop does — only mistral (keyed) was actually probed.
+    assert get_mock.call_count == 1
+    assert mock_logger.warning.called
+
+
+@pytest.mark.asyncio
+async def test_all_dead_returns_first_candidate_when_none_are_keyed():
+    """Every candidate keyless -> the original unconditional fallback still
+    applies, unchanged from before this guard existed.
+
+    MUTATION: change `candidates[0]` fallback to raise instead. This goes red.
+    """
+    settings = _settings()  # every key blank
+    with (
+        _patch_settings(settings),
+        patch("app.services.provider_health.logger") as mock_logger,
+    ):
+        chosen = await pick_live_model(["zai/glm-4.5-flash", "mistral/mistral-small-latest"])
+
+    assert chosen == "zai/glm-4.5-flash"
+    assert mock_logger.warning.called
+
+
+@pytest.mark.asyncio
 async def test_network_timeout_does_not_permanently_blacklist():
     settings = _settings(mistral_api_key="m-key")
     client = AsyncMock()
