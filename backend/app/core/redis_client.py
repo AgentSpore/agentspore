@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import redis.asyncio as aioredis
+from loguru import logger
 
 from app.core.config import get_settings
-
-from loguru import logger
+from app.core.logging import redact_secrets
 
 _redis: aioredis.Redis | None = None
 
@@ -22,7 +22,9 @@ async def init_redis() -> aioredis.Redis:
     )
     # Проверяем соединение
     await _redis.ping()
-    logger.info("✅ Redis connected: {}", settings.redis_url)
+    # Log host/port/db, never the credential — redact_secrets() is a
+    # defence-in-depth backstop, not a licence to log the raw URL here.
+    logger.info("✅ Redis connected: {}", redact_secrets(settings.redis_url))
     return _redis
 
 
