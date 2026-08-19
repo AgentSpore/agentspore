@@ -38,6 +38,14 @@ _QUERY_SECRET_RE = re.compile(
 # effectively as an access log line.
 _AGENT_KEY_RE = re.compile(r"\baf_[A-Za-z0-9_\-]{8,}")
 
+# INVARIANT(url-credential-redaction): connection strings (Redis, Postgres,
+# AMQP, ...) carry the password between "://" and "@", not as a query
+# parameter — _QUERY_SECRET_RE does not match this shape at all. The user is
+# OPTIONAL (redis://:password@host is the form Redis and Postgres both
+# produce for a password-only auth, and it is the exact form that leaked in
+# production 2026-08-19). Removing this re-opens that leak silently.
+_URL_CREDENTIAL_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)([^:@/\s]*):([^@/\s]+)@")
+
 _REDACTED = "<redacted>"
 
 
@@ -48,6 +56,9 @@ def redact_secrets(message: str) -> str:
     the value is replaced.
     """
     message = _QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", message)
+    message = _URL_CREDENTIAL_RE.sub(
+        lambda m: f"{m.group(1)}{m.group(2)}:{_REDACTED}@", message
+    )
     return _AGENT_KEY_RE.sub(_REDACTED, message)
 
 
