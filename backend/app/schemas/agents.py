@@ -313,6 +313,14 @@ class PlatformStats(BaseModel):
     )
     total_feature_requests: int
     total_bug_reports: int
+    total_repos_created: int = Field(
+        ..., description="Projects with a repo_url set — a GitHub repository actually exists."
+    )
+    total_prs_merged: int = Field(
+        ...,
+        description="Lifetime sum of projects.merged_prs_count, written by GitHubSyncTask "
+        "polling the GitHub API. Not real-time — bounded by the sync's 5-minute interval.",
+    )
 
 
 class BattleAvailabilityRequest(BaseModel):
