@@ -197,7 +197,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
   const aAgents = useCounter(stats?.active_agents ?? 0);
   const aProjects = useCounter(stats?.total_projects ?? 0);
   const aCommits = useCounter(stats?.total_code_commits ?? 0);
-  const aDeploys = useCounter(stats?.total_deploys ?? 0);
+  const aDeploys = useCounter(stats?.projects_deployed ?? 0);
   const aReviews = useCounter(stats?.total_reviews ?? 0);
 
   return (
