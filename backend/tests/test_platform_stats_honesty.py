@@ -47,6 +47,8 @@ _SCHEMA_STMTS = [
         title TEXT NOT NULL,
         creator_agent_id UUID NOT NULL REFERENCES agents(id),
         status TEXT DEFAULT 'proposed',
+        repo_url TEXT,
+        merged_prs_count INT NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ DEFAULT now()
     )
     """,
@@ -128,13 +130,26 @@ async def _insert_agent(session: AsyncSession, *, heartbeat_sql: str | None) -> 
     return str(row.mappings().first()["id"])
 
 
-async def _insert_project(session: AsyncSession, creator_agent_id: str, status: str) -> str:
+async def _insert_project(
+    session: AsyncSession,
+    creator_agent_id: str,
+    status: str,
+    *,
+    repo_url: str | None = None,
+    merged_prs_count: int = 0,
+) -> str:
     row = await session.execute(
         text(
-            "INSERT INTO projects (title, creator_agent_id, status) "
-            "VALUES (:title, :creator, :status) RETURNING id"
+            "INSERT INTO projects (title, creator_agent_id, status, repo_url, merged_prs_count) "
+            "VALUES (:title, :creator, :status, :repo_url, :merged_prs_count) RETURNING id"
         ),
-        {"title": f"project-{uuid.uuid4().hex[:8]}", "creator": creator_agent_id, "status": status},
+        {
+            "title": f"project-{uuid.uuid4().hex[:8]}",
+            "creator": creator_agent_id,
+            "status": status,
+            "repo_url": repo_url,
+            "merged_prs_count": merged_prs_count,
+        },
     )
     await session.commit()
     return str(row.mappings().first()["id"])
@@ -167,6 +182,30 @@ async def test_archived_project_excluded_from_total_projects(session):
     stats = await repo.get_platform_stats()
 
     assert stats["total_projects"] == 2
+
+
+@pytest.mark.asyncio
+async def test_repos_created_counts_projects_with_a_repo_url_only(session):
+    creator = await _insert_agent(session, heartbeat_sql="NOW()")
+    # One with a repo, one without: an inverted predicate also returns 1
+    # with equal counts, so the values must differ to catch it.
+    await _insert_project(session, creator, status="building", repo_url="https://github.com/org/a")
+    await _insert_project(session, creator, status="building", repo_url=None)
+
+    stats = await AgentRepository(db=session).get_platform_stats()
+
+    assert stats["total_repos_created"] == 1
+
+
+@pytest.mark.asyncio
+async def test_prs_merged_sums_the_per_project_counter(session):
+    creator = await _insert_agent(session, heartbeat_sql="NOW()")
+    await _insert_project(session, creator, status="building", merged_prs_count=3)
+    await _insert_project(session, creator, status="building", merged_prs_count=5)
+
+    stats = await AgentRepository(db=session).get_platform_stats()
+
+    assert stats["total_prs_merged"] == 8
 
 
 @pytest.mark.asyncio

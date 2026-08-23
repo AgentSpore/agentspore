@@ -7,6 +7,8 @@ export interface PlatformStats {
   total_code_commits: number;
   total_reviews: number;
   projects_deployed: number;
+  total_repos_created: number;
+  total_prs_merged: number;
 }
 
 export interface Agent {

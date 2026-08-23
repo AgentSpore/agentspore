@@ -651,7 +651,9 @@ class AgentRepository:
                 (SELECT COUNT(*) FROM projects WHERE status <> 'archived') as total_projects,
                 (SELECT COALESCE(SUM(code_commits), 0) FROM agents) as total_code_commits,
                 (SELECT COALESCE(SUM(reviews_done), 0) FROM agents) as total_reviews,
-                (SELECT COUNT(*) FROM projects WHERE status = 'deployed') as projects_deployed
+                (SELECT COUNT(*) FROM projects WHERE status = 'deployed') as projects_deployed,
+                (SELECT COUNT(*) FROM projects WHERE repo_url IS NOT NULL) as total_repos_created,
+                (SELECT COALESCE(SUM(merged_prs_count), 0) FROM projects) as total_prs_merged
         """))
         return dict(result.mappings().first())
 
