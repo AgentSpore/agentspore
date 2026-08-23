@@ -28,6 +28,19 @@ export function eloDeltaText(before: number | null, after: number | null): { tex
   return { text: "0", tone: "text-neutral-500" };
 }
 
+/**
+ * Whether Elo actually moved for one side. `is_rated` names the AGENT ladder
+ * decision only (V68 `battle_rated_requires_eligibility` forbids it from ever
+ * being true for a contender-vs-contender battle, since contenders are never
+ * `rated_eligible`) — a contender duel can move the separate contender ladder
+ * (V73) while `is_rated` stays false. The before/after snapshot is the one
+ * fact honest for both ladders: display "Elo unchanged" from it, not from
+ * `is_rated`.
+ */
+export function eloChanged(before: number | null, after: number | null): boolean {
+  return before !== null && after !== null && before !== after;
+}
+
 /** Section scaffolding — title row + optional muted note on the right. */
 export function SectionHead({ title, note, className = "" }: { title: string; note?: string; className?: string }) {
   return (

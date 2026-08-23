@@ -2,7 +2,7 @@
 
 import { BATTLE_DIFFICULTY, BattleDetail, BattleSide } from "@/lib/api";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
-import { eloDeltaText } from "@/components/battles/battleUi";
+import { eloChanged, eloDeltaText } from "@/components/battles/battleUi";
 import { isRecusedBattle, isVoidBattle } from "@/components/battles/BattleTimeline";
 
 // Compact mono countdown for the center slot — "mm:ss", or "h:mm:ss" once an
@@ -100,6 +100,8 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
 
   const eloAFinal = battle.elo_a_after ?? battle.elo_a_before;
   const eloBFinal = battle.elo_b_after ?? battle.elo_b_before;
+  const battleEloChanged =
+    eloChanged(battle.elo_a_before, battle.elo_a_after) || eloChanged(battle.elo_b_before, battle.elo_b_after);
 
   const deadlinePassed = deadlineMs !== null && deadlineMs <= 0;
   const urgent = deadlineMs !== null && deadlineMs > 0 && deadlineMs < 60000;
@@ -155,7 +157,7 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
               </span>
             </>
           ) : isCompleted ? (
-            battle.is_rated ? (
+            battleEloChanged ? (
               <>
                 <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
                   Elo after battle

@@ -105,6 +105,19 @@ async def _contender_ids(session) -> list[str]:
     return [str(r["id"]) for r in rows]
 
 
+async def _all_contender_ids_oldest_first(session) -> list[str]:
+    """Every seeded contender by ``created_at``, enabled or not.
+
+    Unlike :func:`_contender_ids`, membership never shifts when a test
+    disables a row — needed by tests that must keep referring to the SAME
+    contenders (the ones earlier tests already battled) after that happens.
+    """
+    result = await session.execute(
+        text("SELECT id FROM battle_contenders ORDER BY created_at, id")
+    )
+    return [str(row[0]) for row in result.fetchall()]
+
+
 async def _elo(session, contender_id: str) -> dict:
     result = await session.execute(
         text(
@@ -342,13 +355,19 @@ class TestLeaderboardEndpoint:
             await session.execute(
                 text(
                     "UPDATE battle_contenders SET enabled = FALSE WHERE id = "
-                    "(SELECT id FROM battle_contenders ORDER BY created_at LIMIT 1)"
+                    "(SELECT id FROM battle_contenders "
+                    "WHERE wins + losses + ties > 0 ORDER BY created_at LIMIT 1)"
                 )
             )
             await session.commit()
             expected_total = int(
                 (
-                    await session.execute(text("SELECT COUNT(*) FROM battle_contenders"))
+                    await session.execute(
+                        text(
+                            "SELECT COUNT(*) FROM battle_contenders "
+                            "WHERE wins + losses + ties > 0"
+                        )
+                    )
                 ).scalar_one()
             )
 
@@ -398,7 +417,7 @@ class TestLeaderboardEndpoint:
         instead of from the counters. The stopped battle inserted here is
         completed and joins, so the count rises by one and this goes red.
         """
-        a_id, b_id = (await _contender_ids(db_session))[:2]
+        a_id, b_id = (await _all_contender_ids_oldest_first(db_session))[:2]
         before = await BattleService(db_session).contender_leaderboard()
         battles_before = {str(c.id): c.battles for c in before.contenders}
 
@@ -417,3 +436,24 @@ class TestLeaderboardEndpoint:
         battles_after = {str(c.id): c.battles for c in after.contenders}
         assert battles_after[a_id] == battles_before[a_id]
         assert battles_after[b_id] == battles_before[b_id]
+
+    async def test_a_never_fought_contender_is_hidden_from_the_leaderboard(
+        self, session_maker, db_session
+    ) -> None:
+        """A contender at the default rating with a 0-0-0 record has no
+        history yet, so it must not occupy a ranked slot.
+
+        MUTATION: drop the ``wins + losses + ties > 0`` filter from
+        ``list_contender_ratings``. Every seeded contender reappears and the
+        never-fought id below shows up in the response.
+        """
+        all_ids = await _all_contender_ids_oldest_first(db_session)
+        never_fought_id = all_ids[-1]
+        record = await _elo(db_session, never_fought_id)
+        assert record["wins"] + record["losses"] + record["ties"] == 0, (
+            "fixture assumption: the last seeded contender never battled"
+        )
+
+        leaderboard = await BattleService(db_session).contender_leaderboard()
+        returned_ids = {str(c.id) for c in leaderboard.contenders}
+        assert never_fought_id not in returned_ids

@@ -4104,11 +4104,15 @@ class BattleRepository:
         return [dict(row) for row in result.mappings()]
 
     async def list_contender_ratings(self) -> list[dict]:
-        """Every contender's rating record, disabled ones included (V73).
+        """Every contender's rating record with a fought battle, disabled ones
+        included (V73).
 
         A retired contender's history is still history, so ``enabled`` is not a
         filter here — unlike :meth:`list_enabled_contenders`, which answers the
-        different question of who may still be fielded.
+        different question of who may still be fielded. A contender with zero
+        recorded battles has no history yet, so it is filtered out: an
+        untested model sitting on the leaderboard at the default rating with a
+        0-0-0 record reads as a ranked entry when it has never been measured.
         """
         result = await self.db.execute(
             text(
@@ -4116,6 +4120,7 @@ class BattleRepository:
                 SELECT id, display_name, provider, model_id, approach_key,
                        elo, wins, losses, ties
                   FROM battle_contenders
+                 WHERE wins + losses + ties > 0
                  ORDER BY elo DESC, display_name
                 """
             )
