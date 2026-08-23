@@ -973,6 +973,7 @@ class GitHubService:
                 "body": pr.get("body", ""),
                 "state": pr["state"],
                 "head": pr["head"]["ref"],
+                "head_sha": pr["head"]["sha"],
                 "base": pr["base"]["ref"],
                 "created_at": pr["created_at"],
                 "merged_at": pr.get("merged_at"),
