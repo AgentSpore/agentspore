@@ -68,6 +68,8 @@ import asyncio
 import contextlib
 import json
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime, timedelta
+from typing import Any, NamedTuple
 from uuid import uuid4
 
 from loguru import logger
@@ -83,6 +85,7 @@ from app.services.github_service import get_github_service
 from app.services.hosted_agent_service import HostedAgentService
 from app.services.mixer_service import MixerService
 from app.services.openrouter_service import OpenRouterService
+from app.services.openviking_service import get_openviking_service
 
 # Extend the lease only while we still own it: compare-and-expire, so a
 # task whose lease already expired (and was taken by another worker)
@@ -380,6 +383,18 @@ class HackathonAdvanceTask(ScheduledTask):
             await db.commit()
 
 
+class _PRSyncCtx(NamedTuple):
+    """The five values every PR-outcome-sync helper needs, bundled so their
+    signatures stay under the 5-param budget instead of threading each one
+    through separately."""
+
+    db: Any
+    github: Any
+    ov: Any
+    project_id: str
+    repo_name: str
+
+
 class GitHubSyncTask(ScheduledTask):
     """Reconcile agent commit counts against GitHub every 5 minutes.
 
@@ -414,6 +429,7 @@ class GitHubSyncTask(ScheduledTask):
             logger.warning("GitHub sync: failed to initialize, skipping")
             return
         logger.info("GitHub sync: running cycle...")
+        ov = get_openviking_service()
 
         async with async_session_maker() as db:
             projects = await db.execute(
@@ -434,7 +450,7 @@ class GitHubSyncTask(ScheduledTask):
             agent_commits: dict[str, int] = {}
 
             for project in projects:
-                await self._sync_project(db, github, project, agent_map, agent_commits)
+                await self._sync_project(db, github, ov, project, agent_map, agent_commits)
 
             # GitHub's count is reality for GitHub-hosted work, but it is NOT
             # the whole truth: this query selects vcs_provider = 'github' only,
@@ -469,7 +485,7 @@ class GitHubSyncTask(ScheduledTask):
                     len(agent_commits), len(projects),
                 )
 
-    async def _sync_project(self, db, github, project, agent_map: dict[str, str],
+    async def _sync_project(self, db, github, ov, project, agent_map: dict[str, str],
                             agent_commits: dict[str, int]) -> None:
         """Attribute one project's commits, accumulating totals into agent_commits."""
         project_id = str(project["id"])
@@ -478,9 +494,13 @@ class GitHubSyncTask(ScheduledTask):
         if not repo_name:
             return
 
-        await self._sync_merged_prs(db, github, project_id, repo_name)
+        closed_prs = await self._sync_merged_prs(db, github, project_id, repo_name)
 
         all_commits = await self._fetch_all_commits(github, repo_name)
+
+        open_prs = await github.list_pull_requests(repo_name, state="open")
+        ctx = _PRSyncCtx(db, github, ov, project_id, repo_name)
+        await self._sync_pr_outcomes(ctx, agent_map, closed_prs, open_prs)
         if not all_commits:
             return
 
@@ -517,13 +537,16 @@ class GitHubSyncTask(ScheduledTask):
             )
 
     @staticmethod
-    async def _sync_merged_prs(db, github, project_id: str, repo_name: str) -> None:
+    async def _sync_merged_prs(db, github, project_id: str, repo_name: str) -> list[dict]:
         """Recount merged PRs for one repo and store the count on the project.
 
         Reads only closed PRs (single GitHub call) and counts the ones that
         carry merged_at. GREATEST guards the write for the same reason as the
         commit counter: a repo made temporarily unreachable must not zero out
         a previously observed count.
+
+        Returns the closed PR list so callers (PR-outcome memory sync) reuse
+        it instead of issuing a second `state=closed` call for the same repo.
         """
         closed_prs = await github.list_pull_requests(repo_name, state="closed")
         merged = sum(1 for pr in closed_prs if pr.get("merged_at"))
@@ -534,6 +557,116 @@ class GitHubSyncTask(ScheduledTask):
             """),
             {"n": merged, "pid": project_id},
         )
+        return closed_prs
+
+    # A PR open longer than this with no merge/close is a stale-open event.
+    # Chosen to exceed a normal review cycle (days) without waiting so long
+    # the lesson stops being actionable; matches the platform's other
+    # "stuck" thresholds (e.g. approval-expiry windows) in order of magnitude.
+    STALE_OPEN_DAYS = 7
+
+    @classmethod
+    async def _sync_pr_outcomes(
+        cls, ctx: _PRSyncCtx,
+        agent_map: dict[str, str], closed_prs: list[dict], open_prs: list[dict],
+    ) -> None:
+        """Write each PR-authoring agent's own outcome into its private memory.
+
+        Best-effort, same contract as battle_runner._record_battle_lessons: a
+        failed or disabled OpenViking must never look like it worked, and one
+        agent's write failing must not stop the next agent's write. Author
+        attribution reuses the commit-author match already used for the
+        commit counter (`agent_map`, keyed by git commit author name) — GitHub
+        PR `user.login` is the App/owner identity for every agent alike and
+        cannot distinguish which agent opened the PR, but the PR's head commit
+        carries the real agent author the same way a push commit does.
+        """
+        if not ctx.ov.enabled:
+            logger.warning(
+                "PR outcome sync: OpenViking disabled, skipping repo {}", ctx.repo_name
+            )
+            return
+
+        sha_to_agent = await cls._sha_agent_map(ctx.github, ctx.repo_name, agent_map)
+
+        for pr in closed_prs:
+            agent_id = sha_to_agent.get(pr.get("head_sha", "")[:7])
+            if not agent_id:
+                continue
+            event = "merged" if pr.get("merged_at") else "closed"
+            reason = ""
+            if event == "closed":
+                reason = await cls._closing_reason(ctx.github, ctx.repo_name, pr["number"])
+            await cls._record_pr_lesson(ctx, agent_id, pr, event, reason)
+
+        cutoff = datetime.now(UTC) - timedelta(days=cls.STALE_OPEN_DAYS)
+        for pr in open_prs:
+            agent_id = sha_to_agent.get(pr.get("head_sha", "")[:7])
+            if not agent_id:
+                continue
+            created = _parse_github_ts(pr.get("created_at", ""))
+            if created is None or created > cutoff:
+                continue
+            await cls._record_pr_lesson(ctx, agent_id, pr, "stale", "")
+
+    @staticmethod
+    async def _sha_agent_map(github, repo_name: str, agent_map: dict[str, str]) -> dict[str, str]:
+        """7-char commit sha -> agent_id, reusing the same commit page GitHub
+        sync already fetches for the commit counter (no extra HTTP call)."""
+        commits = await GitHubSyncTask._fetch_all_commits(github, repo_name)
+        result: dict[str, str] = {}
+        for commit in commits:
+            author_name = commit.get("author", "")
+            agent_id = agent_map.get(author_name.lower())
+            if agent_id:
+                result[commit.get("sha", "")] = agent_id
+        return result
+
+    @staticmethod
+    async def _closing_reason(github, repo_name: str, pr_number: int) -> str:
+        """Last PR-thread comment, if any — the closest thing to a stated
+        reason a closed-without-merge PR carries. One extra call, only for
+        this rare event (closed PRs are a small minority of the sync)."""
+        comments = await github.list_pr_comments(repo_name, pr_number)
+        return comments[-1]["body"] if comments else ""
+
+    @staticmethod
+    async def _record_pr_lesson(
+        ctx: _PRSyncCtx, agent_id: str, pr: dict, event: str, reason: str,
+    ) -> None:
+        pr_key = f"{ctx.repo_name}#{pr['number']}:{event}"
+        inserted = await ctx.db.execute(
+            text("""
+                INSERT INTO agent_activity
+                    (agent_id, project_id, action_type, description, metadata)
+                VALUES (
+                    CAST(:agent_id AS UUID), CAST(:project_id AS UUID), 'pr_outcome',
+                    :description, CAST(:metadata AS jsonb)
+                )
+                ON CONFLICT DO NOTHING
+                RETURNING id
+            """),
+            {
+                "agent_id": agent_id,
+                "project_id": ctx.project_id,
+                "description": f"PR outcome: {event}",
+                "metadata": json.dumps({"pr_key": pr_key, "pr_number": pr["number"]}),
+            },
+        )
+        if inserted.first() is None:
+            return  # already delivered this event for this agent
+
+        lesson = _pr_lesson(ctx.repo_name, pr, event, reason)
+        try:
+            ok = await ctx.ov.add_to_agent_session(agent_id, lesson)
+        except Exception as exc:
+            logger.warning(
+                "PR outcome lesson write to agent {} raised ({}): {}",
+                agent_id, pr_key, exc,
+            )
+            return
+        if not ok:
+            logger.warning("PR outcome lesson write failed for agent {} ({})", agent_id, pr_key)
 
     @staticmethod
     async def _record_sha(db, agent_id: str, project_id: str, sha: str) -> None:
@@ -931,3 +1064,37 @@ ALL_TASKS: tuple[type[ScheduledTask], ...] = (
 def spawn_background_tasks() -> list[asyncio.Task]:
     """Instantiate every registered task and schedule it on the event loop."""
     return [asyncio.create_task(cls().start()) for cls in ALL_TASKS]
+
+
+_PR_LESSON_REASON_MAX_CHARS = 400
+
+
+def _pr_lesson(repo_name: str, pr: dict, event: str, reason: str) -> str:
+    """A short, first-person memory entry for one agent's own PR outcome.
+
+    ``reason`` is the closing comment's free text (unbounded), truncated for
+    the same reason battle_runner._battle_lesson truncates a judge's verdict:
+    this is a memory entry re-read on a future heartbeat, not a transcript.
+    """
+    title = pr.get("title", f"PR #{pr['number']}")
+    if event == "merged":
+        outcome = "was merged"
+    elif event == "closed":
+        outcome = "was closed without merging"
+    else:
+        outcome = "has been open a while with no review yet"
+    trimmed = reason.strip()
+    if len(trimmed) > _PR_LESSON_REASON_MAX_CHARS:
+        trimmed = trimmed[:_PR_LESSON_REASON_MAX_CHARS].rstrip() + "…"
+    suffix = f' Comment: "{trimmed}"' if trimmed else ""
+    return f'PR lesson: my pull request "{title}" in {repo_name} {outcome}.{suffix}'
+
+
+def _parse_github_ts(value: str) -> datetime | None:
+    """Parse a GitHub API timestamp ("...Z" ISO 8601). None on empty/bad input."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
