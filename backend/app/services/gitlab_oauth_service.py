@@ -93,16 +93,32 @@ class GitLabOAuthService:
             logger.error("Error getting GitLab user info: {}", e)
             return None
 
-    async def check_token_validity(self, token: str) -> bool:
-        """Проверяет валидность токена."""
+    async def check_token_validity(self, token: str) -> bool | None:
+        """
+        Проверяет валидность токена, различая три исхода.
+
+        Returns:
+            True — GitLab подтвердил, что токен действителен (200).
+            False — GitLab явно отверг токен (401/403).
+            None — состояние НЕИЗВЕСТНО (сеть, таймаут, 5xx, 429 и т.п.).
+        """
         try:
             resp = await self.client.get(
                 f"{GITLAB_API_URL}/user",
                 headers={"Authorization": f"Bearer {token}"},
             )
-            return resp.status_code == 200
-        except Exception:
-            return False
+            if resp.status_code == 200:
+                return True
+            if resp.status_code in (401, 403):
+                logger.warning("GitLab rejected token: {}", resp.status_code)
+                return False
+            logger.warning(
+                "GitLab token validity unknown: unexpected status {}", resp.status_code
+            )
+            return None
+        except Exception as e:
+            logger.warning("GitLab token validity unknown: transport error: {}", e)
+            return None
 
     async def refresh_token(self, refresh_token: str) -> dict[str, Any] | None:
         """Обновляет access token через refresh token (GitLab поддерживает)."""
