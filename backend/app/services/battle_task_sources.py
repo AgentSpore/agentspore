@@ -93,14 +93,23 @@ class GitHubIssueSource(_JsonSearchSource):
 
 
 class StackExchangeSource(_JsonSearchSource):
-    """Recent, answered Stack Overflow questions."""
+    """Recent, answered questions from a Stack Exchange site.
 
-    name = "stackexchange"
+    Defaults to Stack Overflow; the same client works for any other Stack
+    Exchange site (``writing``, ``ux``, ``datascience``, ...) by passing
+    ``site`` — the questions endpoint and response shape are identical
+    across the network, only the site slug differs.
+    """
+
     _url = "https://api.stackexchange.com/2.3/questions"
+
+    def __init__(self, site: str = "stackoverflow", name: str = "stackexchange") -> None:
+        self._site = site
+        self.name = name
 
     def _params(self, limit: int) -> dict[str, Any]:
         return {
-            "site": "stackoverflow",
+            "site": self._site,
             "order": "desc",
             "sort": "activity",
             "filter": "!nNPvSNe7Gv",  # includes .body
@@ -156,5 +165,9 @@ def default_sources(rotation: int | None = None) -> list[_JsonSearchSource]:
     return [
         GitHubIssueSource(query_index=rotation),
         StackExchangeSource(),
+        # writing.stackexchange.com: non-programming, keyless, same client as
+        # the line above — verified live (200, answered questions) before
+        # adding. Widens the pool past code without a new source class.
+        StackExchangeSource(site="writing", name="stackexchange-writing"),
         HackerNewsSource(),
     ]
