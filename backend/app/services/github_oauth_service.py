@@ -16,6 +16,7 @@ GitHub OAuth Service — OAuth авторизация агентов через 
 
 import secrets
 import time
+from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any
 from urllib.parse import urlencode
@@ -161,12 +162,16 @@ class GitHubOAuthService:
             logger.error(f"Error getting user info: {e}")
             return None
 
-    async def check_token_validity(self, token: str) -> bool:
+    async def check_token_validity(self, token: str) -> bool | None:
         """
-        Проверяет валидность токена.
+        Проверяет валидность токена, различая три исхода.
 
         Returns:
-            True if token is valid, False otherwise
+            True — GitHub подтвердил, что токен действителен (200).
+            False — GitHub явно отверг токен (401/403).
+            None — состояние НЕИЗВЕСТНО (сеть, таймаут, 5xx, 429 и т.п.):
+                GitHub не дал определённого ответа, поэтому нельзя считать
+                токен ни валидным, ни невалидным.
         """
         try:
             resp = await self.client.get(
@@ -176,9 +181,18 @@ class GitHubOAuthService:
                     "Accept": "application/vnd.github+json",
                 },
             )
-            return resp.status_code == 200
-        except Exception:
-            return False
+            if resp.status_code == 200:
+                return True
+            if resp.status_code in (401, 403):
+                logger.warning("GitHub rejected token: {}", resp.status_code)
+                return False
+            logger.warning(
+                "GitHub token validity unknown: unexpected status {}", resp.status_code
+            )
+            return None
+        except Exception as e:
+            logger.warning("GitHub token validity unknown: transport error: {}", e)
+            return None
 
     async def revoke_token(self, token: str) -> bool:
         """
@@ -266,10 +280,9 @@ class GitHubOAuthService:
 
         Returns:
             {"access_token": str, "refresh_token": str|None, "expires_at": datetime|None}
-            если токен обновлён, иначе None (токен валиден, обновление не нужно).
+            если токен обновлён или явно отозван GitHub, иначе None
+            (токен валиден или его состояние неизвестно — обновление не нужно).
         """
-        from datetime import datetime, timedelta
-
         # Конвертируем expires_at в timestamp если это datetime
         ts = None
         if expires_at is not None:
@@ -301,12 +314,23 @@ class GitHubOAuthService:
                     "expires_at": new_expires_at,
                 }
 
-        # Refresh не удался — проверяем валидность текущего токена через API
-        if await self.check_token_validity(token):
+        # Refresh не удался — проверяем валидность текущего токена через API.
+        # INVARIANT(oauth-guard): различаем ТРИ исхода, не два. Неизвестное
+        # состояние (сеть/таймаут/5xx) НЕ равно доказанному отказу GitHub —
+        # стираем токен только когда GitHub явно ответил 401/403, иначе
+        # временный сбой сети стирает живые токены у всех агентов сразу.
+        validity = await self.check_token_validity(token)
+        if validity is True:
             logger.info("GitHub OAuth token still valid despite expiry timestamp")
             return None
+        if validity is None:
+            logger.warning(
+                "GitHub OAuth token validity unknown (transport failure) — "
+                "keeping existing token, not wiping"
+            )
+            return None
 
-        logger.warning("GitHub OAuth token expired and refresh failed — token is invalid")
+        logger.warning("GitHub rejected the OAuth token (401/403) — clearing it")
         return {"access_token": None, "refresh_token": None, "expires_at": None}
 
     async def close(self):
