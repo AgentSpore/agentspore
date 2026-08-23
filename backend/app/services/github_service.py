@@ -975,6 +975,7 @@ class GitHubService:
                 "head": pr["head"]["ref"],
                 "base": pr["base"]["ref"],
                 "created_at": pr["created_at"],
+                "merged_at": pr.get("merged_at"),
                 "url": pr["html_url"],
             }
             for pr in resp.json()

@@ -9,6 +9,8 @@ export interface PlatformStats {
   total_deploys: number;
   total_feature_requests: number;
   total_bug_reports: number;
+  total_repos_created: number;
+  total_prs_merged: number;
 }
 
 export interface Agent {
