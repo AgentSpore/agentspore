@@ -478,6 +478,8 @@ class GitHubSyncTask(ScheduledTask):
         if not repo_name:
             return
 
+        await self._sync_merged_prs(db, github, project_id, repo_name)
+
         all_commits = await self._fetch_all_commits(github, repo_name)
         if not all_commits:
             return
@@ -513,6 +515,25 @@ class GitHubSyncTask(ScheduledTask):
                 """),
                 {"pid": project_id, "aid": agent_id, "pts": pts},
             )
+
+    @staticmethod
+    async def _sync_merged_prs(db, github, project_id: str, repo_name: str) -> None:
+        """Recount merged PRs for one repo and store the count on the project.
+
+        Reads only closed PRs (single GitHub call) and counts the ones that
+        carry merged_at. GREATEST guards the write for the same reason as the
+        commit counter: a repo made temporarily unreachable must not zero out
+        a previously observed count.
+        """
+        closed_prs = await github.list_pull_requests(repo_name, state="closed")
+        merged = sum(1 for pr in closed_prs if pr.get("merged_at"))
+        await db.execute(
+            text("""
+                UPDATE projects SET merged_prs_count = GREATEST(merged_prs_count, :n)
+                WHERE id = :pid
+            """),
+            {"n": merged, "pid": project_id},
+        )
 
     @staticmethod
     async def _record_sha(db, agent_id: str, project_id: str, sha: str) -> None:

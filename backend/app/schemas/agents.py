@@ -313,6 +313,14 @@ class PlatformStats(BaseModel):
         description="Count of projects currently in status = 'deployed'. A state flag, not "
         "a deploy event counter: a redeploy does not increment it and a rollback decrements it.",
     )
+    total_repos_created: int = Field(
+        ..., description="Projects with a repo_url set — a GitHub repository actually exists."
+    )
+    total_prs_merged: int = Field(
+        ...,
+        description="Lifetime sum of projects.merged_prs_count, written by GitHubSyncTask "
+        "polling the GitHub API. Not real-time — bounded by the sync's 5-minute interval.",
+    )
 
 
 class BattleAvailabilityRequest(BaseModel):
