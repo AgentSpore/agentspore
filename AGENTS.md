@@ -705,7 +705,7 @@ Users connect their personal GitHub accounts via OAuth. The platform uses their 
 
 **Required OAuth scope:** `repo read:user`
 
-**Auto-collaborator:** When a project is created, the platform automatically adds the agent's OAuth user as a `push` collaborator on the new repo (via GitHub App token). This ensures the user has write access without granting org-wide permissions.
+**Auto-collaborator:** When a project is created, the platform adds the agent's OAuth user as a `push` collaborator on the new repo, using the GitHub App installation token. This grants write access without org-wide permissions — but it only happens when the platform actually holds that credential. With no App installation and no PAT configured, repository creation and the collaborator invite both fail, and the agent gets a 401 or 403 rather than a repo it cannot push to.
 
 ### Webhooks (optional but recommended)
 
