@@ -3451,3 +3451,109 @@ class TestUnparsableJudgeReplyIsRetried:
         ), "a deliberate abstention was re-asked until the judge picked a side"
         assert len(judgements) == REPLICATE_COUNT
         assert all(j["vote"] == "abstain" for j in judgements)
+
+
+async def _new_contender(session, display_name: str = "c") -> str:
+    cid = str(uuid.uuid4())
+    await session.execute(
+        text(
+            "INSERT INTO battle_contenders "
+            "(id, display_name, provider, model_id, approach_key, system_prompt) "
+            "VALUES (CAST(:id AS UUID), :name, 'openrouter', :model, 'baseline', 'answer well')"
+        ),
+        {"id": cid, "name": display_name, "model": f"x/{cid[:8]}"},
+    )
+    return cid
+
+
+async def _battle_in_judging_contender_pair(
+    session, task_id: str, *, votes: list[Vote]
+) -> tuple[str, str, str, str]:
+    """Same lifecycle as :func:`_battle_in_judging`, but both sides are
+    contenders (no agent owner) — the MIXED/contender branch settle_battle
+    must treat differently from an agent pair."""
+    battle_id, agent_a, agent_b, token = await _battle_in_judging(
+        session, task_id, votes=votes
+    )
+    contender_a = await _new_contender(session, "alpha")
+    contender_b = await _new_contender(session, "beta")
+    await session.execute(
+        text(
+            "UPDATE battles SET agent_a_id = NULL, agent_b_id = NULL, "
+            "agent_a_owner_snapshot = NULL, agent_b_owner_snapshot = NULL, "
+            "contender_a_id = CAST(:ca AS UUID), contender_b_id = CAST(:cb AS UUID) "
+            "WHERE id = CAST(:id AS UUID)"
+        ),
+        {"ca": contender_a, "cb": contender_b, "id": battle_id},
+    )
+    await session.commit()
+    return battle_id, agent_a, agent_b, token
+
+
+class TestBattleLessonMemory:
+    """FIX: a battle's verdict must reach each agent fighter's OWN memory, so
+    the lesson (why it won or lost) is available on its next heartbeat via
+    AgentService's existing memory_context read path — not just logged and
+    thrown away. Best-effort, like _notify_battle_owners: a memory failure
+    must never be able to undo the already-committed verdict."""
+
+    async def test_completed_battle_writes_a_lesson_to_each_agent_session(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        battle_id, agent_a, agent_b, token = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.B]
+        )
+        spy = AsyncMock(return_value=True)
+        fake_ov = SimpleNamespace(enabled=True, add_to_agent_session=spy)
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None, ov=fake_ov)
+            assert await runner.settle_battle(battle_id, token) is not None
+
+        recorded_agents = {call.args[0] for call in spy.await_args_list}
+        assert recorded_agents == {agent_a, agent_b}
+
+        contents = {call.args[0]: call.args[1] for call in spy.await_args_list}
+        assert "won" in contents[agent_a].lower()
+        assert "lost" in contents[agent_b].lower()
+        # The task the lesson is about must be identifiable in the text.
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["task_title_snapshot"].lower() in contents[agent_a].lower()
+
+    async def test_a_memory_write_failure_does_not_undo_the_verdict(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """Memory is best-effort: settlement must stay durable even if every
+        write to OpenViking raises."""
+        battle_id, agent_a, agent_b, token = await _battle_in_judging(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.B]
+        )
+        fake_ov = SimpleNamespace(
+            enabled=True,
+            add_to_agent_session=AsyncMock(side_effect=RuntimeError("openviking is down")),
+        )
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None, ov=fake_ov)
+            change = await runner.settle_battle(battle_id, token)
+
+        assert change is not None and change.applied is True
+        async with session_maker() as session:
+            battle = await BattleRepository(session).get(battle_id)
+        assert battle["status"] == "completed"
+        assert battle["winner"] == Side.A.value
+
+    async def test_a_contender_pair_battle_writes_no_agent_memory(
+        self, session_maker, db_session, task_id
+    ) -> None:
+        """Contender-vs-contender has no agent owner on either side — there is
+        nothing to write a lesson into, and the call must not be attempted."""
+        battle_id, _, _, token = await _battle_in_judging_contender_pair(
+            db_session, task_id, votes=[Vote.A, Vote.A, Vote.B]
+        )
+        spy = AsyncMock(return_value=True)
+        fake_ov = SimpleNamespace(enabled=True, add_to_agent_session=spy)
+        async with session_maker() as session:
+            runner = BattleRunner(session, gate=None, ov=fake_ov)
+            assert await runner.settle_battle(battle_id, token) is not None
+
+        spy.assert_not_awaited()
