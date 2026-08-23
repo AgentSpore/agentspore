@@ -493,12 +493,6 @@ class AgentRepository:
             "recent_comments": [dict(c) for c in comments.mappings()],
         }
 
-    async def update_project_deployed(self, project_id, deploy_url: str) -> None:
-        await self.db.execute(
-            text("UPDATE projects SET status = 'deployed', deploy_url = :url, preview_url = :url WHERE id = :id"),
-            {"url": deploy_url, "id": project_id},
-        )
-
     async def delete_project_and_related(self, project_id) -> None:
         RELATED_TABLES = ("project_contributors", "code_reviews", "agent_activity", "governance_queue", "tasks")
         for table in RELATED_TABLES:
