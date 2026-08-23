@@ -17,6 +17,8 @@ import pytest
 
 from app.schemas.battles import TaskStatus
 from app.services.battle_task_harvester import (
+    _DRAFT_SYSTEM_PROMPT,
+    DRAFT_CATEGORIES,
     DRAFT_LANGUAGES,
     TaskHarvesterService,
     TopicSource,
@@ -131,14 +133,10 @@ class TestHarvestPass:
         assert result.created == 0
         source.fetch_topics.assert_not_awaited()
 
-    async def test_validator_transport_failure_drops_only_that_topic(
-        self, harvester, repo, source
-    ):
+    async def test_validator_transport_failure_drops_only_that_topic(self, harvester, repo, source):
         """A provider outage on one topic must not discard the topics after it."""
         source.fetch_topics = AsyncMock(return_value=[_topic("A"), _topic("B")])
-        harvester.draft_task = AsyncMock(
-            side_effect=[_drafted_task("A"), _drafted_task("B")]
-        )
+        harvester.draft_task = AsyncMock(side_effect=[_drafted_task("A"), _drafted_task("B")])
         harvester.run_validator = AsyncMock(
             side_effect=[
                 ValidationTransportError("provider 502"),
@@ -186,9 +184,7 @@ class TestHarvestPass:
         assert result.created == 1
         source.fetch_topics.assert_awaited()
 
-    async def test_stops_drafting_once_the_backlog_is_deep(
-        self, harvester, repo, source
-    ) -> None:
+    async def test_stops_drafting_once_the_backlog_is_deep(self, harvester, repo, source) -> None:
         """Gating on ready alone has no self-closing path — bound it.
 
         The harvester only ever inserts QUARANTINE and only an admin promotes
@@ -210,9 +206,7 @@ class TestHarvestPass:
         source.fetch_topics.assert_not_awaited()
 
     async def test_stops_at_max_per_pass(self, harvester, repo, source):
-        source.fetch_topics = AsyncMock(
-            return_value=[_topic("A"), _topic("B"), _topic("C")]
-        )
+        source.fetch_topics = AsyncMock(return_value=[_topic("A"), _topic("B"), _topic("C")])
         harvester.draft_task = AsyncMock(
             side_effect=[_drafted_task("A"), _drafted_task("B"), _drafted_task("C")]
         )
@@ -247,9 +241,7 @@ class TestHarvestPass:
         assert outcome == "rejected"
         repo.create_task.assert_not_awaited()
         repo.content_key_exists.assert_awaited_once()
-        cheap, verdict = await harvester.run_validator(
-            _drafted_task(), duplicate_exists=True
-        )
+        cheap, verdict = await harvester.run_validator(_drafted_task(), duplicate_exists=True)
         assert not cheap.passed
         assert cheap.reason == REASON_DUPLICATE_CONTENT
         assert verdict is None
@@ -279,9 +271,7 @@ class TestHarvestPass:
                 lambda _self, model: seen.append(model) or None,
             ),
         ):
-            cheap, verdict = await harvester.run_validator(
-                _drafted_task(), duplicate_exists=False
-            )
+            cheap, verdict = await harvester.run_validator(_drafted_task(), duplicate_exists=False)
 
         assert seen == ["other/picked-model"]
         assert cheap.reason == "no_validation_provider"
@@ -353,9 +343,7 @@ class TestHarvestPass:
         user_message = captured["messages"][-1]["content"]
         assert f"Language for this task: {_language_for(topic)}" in user_message
 
-    async def test_drafting_sends_no_authorization_header_for_a_blank_key(
-        self, harvester
-    ):
+    async def test_drafting_sends_no_authorization_header_for_a_blank_key(self, harvester):
         """Same call site pattern as the judge/validator paths: an empty
         resolved api_key (llm7, key_optional) must omit the header, not send
         it empty — `Bearer ` is illegal and httpx/h11 refuse to send it."""
@@ -430,9 +418,7 @@ class TestHarvestPass:
         one above) cannot tell "stopped" apart from "spun through every topic
         anyway" — both end with created == 0.
         """
-        source.fetch_topics = AsyncMock(
-            return_value=[_topic("A"), _topic("B"), _topic("C")]
-        )
+        source.fetch_topics = AsyncMock(return_value=[_topic("A"), _topic("B"), _topic("C")])
         harvester.draft_task = AsyncMock(
             side_effect=[_drafted_task("A"), _drafted_task("B"), _drafted_task("C")]
         )
@@ -457,9 +443,7 @@ class TestLedgerNamesTheModelActuallyUsed:
     """The ledger row is the only record of which account was charged."""
 
     @pytest.mark.asyncio
-    async def test_reservation_and_request_use_the_same_picked_model(
-        self, harvester, repo, source
-    ):
+    async def test_reservation_and_request_use_the_same_picked_model(self, harvester, repo, source):
         # zai is dead today, so the pick falls back to mistral. Reserving under
         # the static constant would bill the ledger to zai for a call mistral
         # served — the next outage investigation would read the wrong account.
@@ -473,3 +457,21 @@ class TestLedgerNamesTheModelActuallyUsed:
         harvester.reserve_budget.assert_awaited()
         assert harvester.reserve_budget.await_args.args[0] == picked
         assert harvester.draft_task.await_args.args[1] == picked
+
+
+class TestDraftCategoriesWidenThePool:
+    """A single-value-set feed is the same defect as a single-language feed."""
+
+    def test_original_five_categories_are_kept(self):
+        for category in ("backend", "frontend", "algorithms", "devops", "general"):
+            assert category in DRAFT_CATEGORIES
+
+    def test_non_programming_categories_were_added(self):
+        assert len(DRAFT_CATEGORIES) > 5
+
+    def test_category_set_has_no_duplicates(self):
+        assert len(DRAFT_CATEGORIES) == len(set(DRAFT_CATEGORIES))
+
+    def test_prompt_offers_every_category(self):
+        for category in DRAFT_CATEGORIES:
+            assert f'"{category}"' in _DRAFT_SYSTEM_PROMPT

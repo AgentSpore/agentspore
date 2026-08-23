@@ -93,14 +93,23 @@ class GitHubIssueSource(_JsonSearchSource):
 
 
 class StackExchangeSource(_JsonSearchSource):
-    """Recent, answered Stack Overflow questions."""
+    """Recent, answered questions from a Stack Exchange site.
 
-    name = "stackexchange"
+    Defaults to Stack Overflow; the same client works for any other Stack
+    Exchange site (``writing``, ``ux``, ``datascience``, ...) by passing
+    ``site`` — the questions endpoint and response shape are identical
+    across the network, only the site slug differs.
+    """
+
     _url = "https://api.stackexchange.com/2.3/questions"
+
+    def __init__(self, site: str = "stackoverflow", name: str = "stackexchange") -> None:
+        self._site = site
+        self.name = name
 
     def _params(self, limit: int) -> dict[str, Any]:
         return {
-            "site": "stackoverflow",
+            "site": self._site,
             "order": "desc",
             "sort": "activity",
             "filter": "!nNPvSNe7Gv",  # includes .body
@@ -139,22 +148,40 @@ class HackerNewsSource(_JsonSearchSource):
         return str(hit.get("story_text") or "")
 
 
+# Non-programming Stack Exchange sites the harvester rotates through, one per
+# pass, alongside the always-on stackoverflow.com source. Anonymous Stack
+# Exchange callers get ~300 requests/day per IP; the harvester already spends
+# one call per pass on stackoverflow.com, so adding a SECOND unconditional
+# site would double that spend for no reason once the pool has enough variety
+# from one rotating slot. Verified live before adding: writing/datascience/ux
+# all answered 200 with real, answered questions.
+_NON_PROGRAMMING_SE_SITES = ("writing", "datascience", "ux")
+
+
 def default_sources(rotation: int | None = None) -> list[_JsonSearchSource]:
     """The harvester's out-of-the-box source list.
 
     A dead source is logged and skipped by the caller (TaskHarvesterService),
-    so listing all three costs nothing when one is unreachable — it just
+    so listing all sources costs nothing when one is unreachable — it just
     yields fewer topics that pass.
 
-    ``rotation`` picks which GitHub query this pass runs. It defaults to the
-    current half-hour, which is the harvester's own interval, so consecutive
-    passes sweep different ecosystems instead of re-reading one. Passing it
-    explicitly keeps the choice testable.
+    ``rotation`` picks both which GitHub query this pass runs AND which
+    non-programming Stack Exchange site joins it — the same half-hour counter
+    drives both, so a pass that widens its GitHub ecosystem also widens its
+    topic domain. It defaults to the current half-hour, which is the
+    harvester's own interval, so consecutive passes sweep different
+    combinations instead of re-reading one. Passing it explicitly keeps the
+    choice testable.
     """
     if rotation is None:
         rotation = int(time.time() // 1800)
+    non_programming_site = _NON_PROGRAMMING_SE_SITES[rotation % len(_NON_PROGRAMMING_SE_SITES)]
     return [
         GitHubIssueSource(query_index=rotation),
         StackExchangeSource(),
+        StackExchangeSource(
+            site=non_programming_site,
+            name=f"stackexchange-{non_programming_site}",
+        ),
         HackerNewsSource(),
     ]

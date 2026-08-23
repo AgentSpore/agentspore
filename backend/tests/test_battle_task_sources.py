@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app.services.battle_task_sources import GitHubIssueSource, default_sources
+from app.services.battle_task_sources import (
+    _NON_PROGRAMMING_SE_SITES,
+    GitHubIssueSource,
+    StackExchangeSource,
+    default_sources,
+)
 
 
 class TestGitHubQueryRotation:
@@ -58,9 +63,45 @@ class TestDefaultSources:
         assert first == GitHubIssueSource(query_index=0)._params(5)["q"]
         assert second == GitHubIssueSource(query_index=1)._params(5)["q"]
 
-    def test_all_three_sources_are_listed(self):
+    def test_all_sources_are_listed(self):
         assert [s.name for s in default_sources(rotation=0)] == [
             "github",
             "stackexchange",
+            "stackexchange-writing",
             "hackernews",
         ]
+
+    def test_non_programming_site_rotates_with_the_same_counter(self):
+        """A site missing from this list is a site the harvester never queries.
+
+        This is the wiring check: `StackExchangeSource(site=...)` existing as
+        a class is not the same as `default_sources()` handing one out. If a
+        non-programming site is ever dropped from `_NON_PROGRAMMING_SE_SITES`
+        or from the returned list, this reddens — a class no caller reaches
+        cannot widen anything.
+        """
+        sites_seen = {
+            default_sources(rotation=i)[2]._params(5)["site"]
+            for i in range(len(_NON_PROGRAMMING_SE_SITES))
+        }
+        assert sites_seen == set(_NON_PROGRAMMING_SE_SITES)
+
+    def test_non_programming_source_name_reflects_its_site(self):
+        """A shared `name` for every site would merge them in logs and stats."""
+        names = {default_sources(rotation=i)[2].name for i in range(len(_NON_PROGRAMMING_SE_SITES))}
+        assert names == {f"stackexchange-{site}" for site in _NON_PROGRAMMING_SE_SITES}
+
+    def test_programming_and_non_programming_stackexchange_names_differ(self):
+        sources = default_sources(rotation=0)
+        stackoverflow_source, non_programming_source = sources[1], sources[2]
+        assert stackoverflow_source.name != non_programming_source.name
+
+
+class TestStackExchangeSite:
+    def test_default_site_is_stackoverflow(self):
+        assert StackExchangeSource()._params(5)["site"] == "stackoverflow"
+
+    def test_site_is_configurable(self):
+        source = StackExchangeSource(site="writing", name="stackexchange-writing")
+        assert source._params(5)["site"] == "writing"
+        assert source.name == "stackexchange-writing"
