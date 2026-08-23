@@ -112,6 +112,7 @@ from app.services.battle_judges import (
 from app.services.battle_service import BattleService
 from app.services.connection_manager import dispatch_existing
 from app.services.llm_gate import LLMGate
+from app.services.openviking_service import OpenVikingService
 from app.services.provider_health import pick_live_model
 
 # Row-lease length for a battle claimed by the reconciler. Long enough to
@@ -532,12 +533,17 @@ class BattleRunner:
     """
 
     def __init__(
-        self, db: AsyncSession, gate: LLMGate, http: httpx.AsyncClient | None = None
+        self,
+        db: AsyncSession,
+        gate: LLMGate,
+        http: httpx.AsyncClient | None = None,
+        ov: OpenVikingService | None = None,
     ) -> None:
         self.db = db
         self.repo = BattleRepository(db)
         self.gate = gate
         self.http = http
+        self.ov = ov or OpenVikingService()
 
     # -- settlement ---------------------------------------------------------
 
@@ -735,7 +741,44 @@ class BattleRunner:
                 for side, agent_id in _agent_sides(completed)
             ],
         )
+        if agent_pair:
+            await self._record_battle_lessons(completed, winner, verdict.reason)
         return change
+
+    async def _record_battle_lessons(
+        self, completed: dict, winner: Winner | None, reason: str
+    ) -> None:
+        """Write each agent fighter's own outcome into its private memory.
+
+        Best-effort, same contract as :func:`_notify_battle_owners`: the battle
+        is already completed and durable by the time this runs, and a failed or
+        disabled OpenViking must never appear to have worked. A contender has no
+        agent-owned memory to write into, so the caller only reaches here for an
+        agent-vs-agent battle; a contender side's judge reasoning is never
+        written into an opponent agent's memory either — only each agent's own
+        outcome and its own side of the verdict.
+        """
+        if not self.ov.enabled:
+            logger.warning(
+                "battle {} lesson not recorded: OpenViking disabled", completed["id"]
+            )
+            return
+        for side, agent_id in _agent_sides(completed):
+            lesson = _battle_lesson(completed["task_title_snapshot"], side, winner, reason)
+            try:
+                ok = await self.ov.add_to_agent_session(agent_id, lesson)
+            except Exception as exc:
+                logger.warning(
+                    "battle {} lesson write to agent {} raised (verdict durable): {}",
+                    completed["id"],
+                    agent_id,
+                    exc,
+                )
+                continue
+            if not ok:
+                logger.warning(
+                    "battle {} lesson write failed for agent {}", completed["id"], agent_id
+                )
 
     @staticmethod
     def _verdict_to_winner(side: Side | None, is_tie: bool) -> Winner | None:
@@ -2442,6 +2485,32 @@ def _battle_result_title(battle_id: str, side: Side, winner: str | None) -> str:
     else:
         outcome = "loss"
     return f"Battle finished — {outcome} (battle {battle_id})"
+
+
+_LESSON_REASON_MAX_CHARS = 400
+
+
+def _battle_lesson(task_title: str, side: Side, winner: Winner | None, reason: str) -> str:
+    """A short, first-person memory entry for one agent's own outcome.
+
+    Only the agent's own outcome and the judge's reasoning go in — never the
+    opponent's answer text, which stays private to the opponent's own memory.
+    ``reason`` is truncated: it is a judge's free-text explanation, unbounded in
+    length, and this is a memory entry meant to be re-read on a future
+    heartbeat, not a transcript.
+    """
+    if winner is Winner.TIE:
+        outcome = "tied"
+    elif winner is None:
+        outcome = "got no result (judging did not reach quorum) in"
+    elif winner.value == side.value:
+        outcome = "won"
+    else:
+        outcome = "lost"
+    trimmed = reason.strip()
+    if len(trimmed) > _LESSON_REASON_MAX_CHARS:
+        trimmed = trimmed[:_LESSON_REASON_MAX_CHARS].rstrip() + "…"
+    return f'Battle lesson: I {outcome} the task "{task_title}". Judge verdict: {trimmed}'
 
 
 async def _notify_battle_owners(
