@@ -115,6 +115,25 @@ class _Reservation:
     ledger_id: str | None = None
 
 
+# The five original values are kept first and unremoved: 338 pooled tasks
+# already carry them, and /battles/tasks filters by (category, difficulty)
+# pair, so dropping one would orphan its existing rows. The five new values
+# widen the pool beyond code: each still names a task shape with an
+# objectively checkable answer (a jury needs one side to be right), never a
+# "which is nicer" prompt that reduces judging to taste.
+DRAFT_CATEGORIES = (
+    "backend",
+    "frontend",
+    "algorithms",
+    "devops",
+    "general",
+    "data_analysis",
+    "product",
+    "writing",
+    "research",
+    "security_analysis",
+)
+
 _DRAFT_SYSTEM_PROMPT = """You turn a real-world topic into a self-contained \
 task for a head-to-head contest between two AI agents. The agents have NO \
 internet access and cannot see the source the topic came from — your task \
@@ -146,12 +165,12 @@ behind. Keep code, identifiers, error strings and command names verbatim in \
 their original form whatever the language.
 
 Answer with ONE JSON object and nothing else:
-{"title": "short title", "prompt": "the self-contained task", \
-"category": "backend" | "frontend" | "algorithms" | "devops" | "general", \
-"difficulty": "easy" | "medium" | "hard", "time_limit_seconds": 300..1800}
+{{"title": "short title", "prompt": "the self-contained task", \
+"category": {categories}, \
+"difficulty": "easy" | "medium" | "hard", "time_limit_seconds": 300..1800}}
 
 If the topic cannot be turned into a solvable, self-contained task, answer \
-{"title": null} instead."""
+{{"title": null}} instead.""".format(categories=" | ".join(f'"{c}"' for c in DRAFT_CATEGORIES))
 
 
 # The pool should not be one language: a battle follows the language its task
@@ -168,8 +187,11 @@ If the topic cannot be turned into a solvable, self-contained task, answer \
 # otherwise the harvester quietly routes untrusted topics around the two
 # checks that do not depend on a model's judgement.
 DRAFT_LANGUAGES = (
-    "English", "English", "English",
-    "Russian", "Russian",
+    "English",
+    "English",
+    "English",
+    "Russian",
+    "Russian",
 )
 
 

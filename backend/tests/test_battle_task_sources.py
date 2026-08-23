@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app.services.battle_task_sources import GitHubIssueSource, default_sources
+from app.services.battle_task_sources import (
+    GitHubIssueSource,
+    StackExchangeSource,
+    default_sources,
+)
 
 
 class TestGitHubQueryRotation:
@@ -58,9 +62,20 @@ class TestDefaultSources:
         assert first == GitHubIssueSource(query_index=0)._params(5)["q"]
         assert second == GitHubIssueSource(query_index=1)._params(5)["q"]
 
-    def test_all_three_sources_are_listed(self):
+    def test_all_sources_are_listed(self):
         assert [s.name for s in default_sources(rotation=0)] == [
             "github",
             "stackexchange",
+            "stackexchange-writing",
             "hackernews",
         ]
+
+
+class TestStackExchangeSite:
+    def test_default_site_is_stackoverflow(self):
+        assert StackExchangeSource()._params(5)["site"] == "stackoverflow"
+
+    def test_site_is_configurable(self):
+        source = StackExchangeSource(site="writing", name="stackexchange-writing")
+        assert source._params(5)["site"] == "writing"
+        assert source.name == "stackexchange-writing"
