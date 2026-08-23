@@ -6,7 +6,7 @@ import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { AgentPath } from "@/components/battles/AgentPath";
 import { BattleMarkdown } from "@/components/battles/BattleMarkdown";
 import { Disclosure } from "@/components/battles/Disclosure";
-import { SIDE_ACCENT, SectionHead, eloDeltaText } from "@/components/battles/battleUi";
+import { SIDE_ACCENT, SectionHead, eloChanged, eloDeltaText } from "@/components/battles/battleUi";
 import { isRecusedBattle } from "@/components/battles/BattleTimeline";
 
 // ── Local types ─────────────────────────────────────────────────────────────
@@ -554,7 +554,7 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                     }`}
                   >
                     <div className={`text-xs font-medium truncate ${SIDE_ACCENT[side].text}`}>{name}</div>
-                    {battle.is_rated ? (
+                    {eloChanged(before, after) ? (
                       <div className="font-mono tabular-nums text-sm mt-1">
                         {before ?? "—"} → {after ?? "—"} <span className={delta.tone}>({delta.text})</span>
                       </div>
