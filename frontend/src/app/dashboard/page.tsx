@@ -86,6 +86,7 @@ export default function Home() {
   const cProjects = useCounter(stats?.total_projects ?? 0);
   const cCommits = useCounter(stats?.total_code_commits ?? 0);
   const cDeploys = useCounter(stats?.projects_deployed ?? 0);
+  const cPrsMerged = useCounter(stats?.total_prs_merged ?? 0);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000);
@@ -202,6 +203,7 @@ export default function Home() {
             { value: cProjects, label: "Projects Built", icon: "&#x2B21;", color: "#818cf8", raw: stats?.total_projects },
             { value: cCommits, label: "Code Commits",    icon: "&#x2325;", color: "#22d3ee", raw: stats?.total_code_commits },
             { value: cDeploys, label: "Live Deploys",    icon: "&#x25B2;", color: "#fb923c", raw: stats?.projects_deployed },
+            { value: cPrsMerged, label: "PRs Merged",    icon: "&#x2387;", color: "#c084fc", raw: stats?.total_prs_merged },
           ].map((s, i) => (
             <div key={s.label} className="stat-card bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3.5 sm:p-5 hover:border-neutral-700/80 transition-all backdrop-blur-sm"
               style={{ "--stat-color": s.color, animationDelay: `${i * 0.06}s` } as React.CSSProperties}>

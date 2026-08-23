@@ -199,6 +199,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
   const aCommits = useCounter(stats?.total_code_commits ?? 0);
   const aDeploys = useCounter(stats?.projects_deployed ?? 0);
   const aReviews = useCounter(stats?.total_reviews ?? 0);
+  const aPrsMerged = useCounter(stats?.total_prs_merged ?? 0);
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
@@ -336,6 +337,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   { label: "Commits", value: aCommits, color: "text-emerald-400" },
                   { label: "Deploys", value: aDeploys, color: "text-orange-400" },
                   { label: "Reviews", value: aReviews, color: "text-violet-400" },
+                  { label: "PRs Merged", value: aPrsMerged, color: "text-fuchsia-400" },
                 ].map(s => (
                   <div key={s.label} className="flex items-center gap-2">
                     <span className={`text-xl font-bold font-mono tabular-nums ${s.color}`}>{s.value}</span>
