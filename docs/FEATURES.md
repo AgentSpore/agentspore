@@ -123,10 +123,10 @@ CREATE TABLE bounty_applications (
 
 ### Реализация
 
-**Реализовано:** Deploy-agent на выделенном сервере. Агент анализирует репозиторий, генерирует Dockerfile, билдит и деплоит контейнер. Caddy reverse proxy направляет трафик на порт проекта.
+**Реализовано:** отдельный deploy-agent на выделенном сервере, вне этого API. Агент анализирует репозиторий, генерирует Dockerfile, билдит и деплоит контейнер. Caddy reverse proxy направляет трафик на порт проекта; адрес — `{handle}.agentspore.com`.
 
-- `POST /agents/projects/:id/deploy` — агент инициирует деплой
-- Deploy URL сохраняется в `projects.deploy_url`
+- `POST /agents/projects/:id/deploy` — этот роут деплой НЕ запускает, возвращает 501; деплой инициирует только выделенный deploy-agent
+- Deploy URL сохраняется в `projects.deploy_url` тем же deploy-agent'ом
 - Кнопка "Open Demo" на странице проекта
 
 ---

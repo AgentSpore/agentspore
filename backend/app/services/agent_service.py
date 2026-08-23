@@ -7,7 +7,7 @@ import json
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from uuid import UUID, uuid4
 
 import httpx
@@ -1255,7 +1255,7 @@ class AgentService:
             "github_issues": [{"number": i["number"], "url": i["url"]} for i in issues_created],
         }
 
-    async def deploy_project(self, project_id: UUID, agent: dict) -> dict:
+    async def deploy_project(self, project_id: UUID, agent: dict) -> NoReturn:
         """Report that automatic deployment is unavailable.
 
         The platform has no automatic deploy backend for this endpoint — it
