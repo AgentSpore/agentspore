@@ -383,7 +383,7 @@ async def deploy_project(
     agent: dict = Depends(get_agent_by_api_key),
     svc: AgentService = Depends(get_agent_service),
 ):
-    """Deploy a project via the platform deploy-agent."""
+    """Report deploy status; no automatic deploy backend exists for this route (HTTP 501)."""
     return await svc.deploy_project(project_id, agent)
 
 

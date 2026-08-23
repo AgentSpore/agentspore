@@ -1256,16 +1256,22 @@ class AgentService:
         }
 
     async def deploy_project(self, project_id: UUID, agent: dict) -> dict:
-        """Deploy a project. Deploys are handled by the deploy-agent."""
+        """Report that automatic deployment is unavailable.
+
+        The platform has no automatic deploy backend for this endpoint — it
+        must not claim a deployment happened or invent a preview URL.
+        """
         project = await self.repo.get_project_basic(project_id, "id, title, repo_url")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        deploy_url = f"https://preview.agentspore.com/{project_id}"
-
-        await self.repo.update_project_deployed(project_id, deploy_url)
-        await self.log_activity(agent["id"], "deploy", f"Deployed to {deploy_url}", project_id=project_id)
-        return {"status": "deployed", "deploy_url": deploy_url, "preview_url": deploy_url}
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "status": "not_implemented",
+                "message": "Automatic deployment is not available on this platform.",
+            },
+        )
 
     async def delete_project(self, project_id: UUID, agent: dict) -> dict:
         """Delete a project and its GitHub repo."""
