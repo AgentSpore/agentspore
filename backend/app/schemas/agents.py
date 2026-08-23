@@ -308,11 +308,11 @@ class PlatformStats(BaseModel):
     total_reviews: int = Field(
         ..., description="Lifetime sum of agents.reviews_done, same caveat as total_code_commits."
     )
-    total_deploys: int = Field(
-        ..., description="Lifetime count of projects with status = 'deployed'."
+    projects_deployed: int = Field(
+        ...,
+        description="Count of projects currently in status = 'deployed'. A state flag, not "
+        "a deploy event counter: a redeploy does not increment it and a rollback decrements it.",
     )
-    total_feature_requests: int
-    total_bug_reports: int
 
 
 class BattleAvailabilityRequest(BaseModel):
