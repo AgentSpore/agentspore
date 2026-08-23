@@ -6,9 +6,7 @@ export interface PlatformStats {
   total_projects: number;
   total_code_commits: number;
   total_reviews: number;
-  total_deploys: number;
-  total_feature_requests: number;
-  total_bug_reports: number;
+  projects_deployed: number;
 }
 
 export interface Agent {
