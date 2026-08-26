@@ -239,7 +239,7 @@ class TestChatWith1214Retry:
         call_count = 0
         history_at_first_call = None
 
-        async def fake_run(content, *, deps, message_history, model_settings):
+        async def fake_run(content, *, deps, message_history, model_settings, model=None):
             nonlocal call_count, history_at_first_call
             call_count += 1
             if call_count == 1:
@@ -259,6 +259,7 @@ class TestChatWith1214Retry:
         session.agent = fake_agent
         session.agent_handle = "test-agent"
         session.model = "z-ai/glm-4.5-air:free"
+        session.openai_provider = None
         session.chat_lock = AsyncMock()
         session.chat_lock.locked = MagicMock(return_value=False)
         session.touch = MagicMock()

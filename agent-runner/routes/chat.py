@@ -24,10 +24,12 @@ from loguru import logger
 from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import PartStartEvent, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.tools import DeferredToolResults
 
 from config import get_settings
 from helpers import _extract_response
+from llm_fallback import _load_model_chain
 from observability import use_agent_context
 from replay_sampler import maybe_sample
 from sandbox import is_command_safe
@@ -221,6 +223,75 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay
         raise last_exc
 
 
+def _api_model_id(model_id: str) -> str:
+    """Strip a provider prefix for the API call (mirrors routes/agents.py:159-162).
+
+    e.g. "cerebras/llama-3.3-70b" -> "llama-3.3-70b"; OpenRouter ":free" models
+    keep their full id, since the slash there is part of the model name, not a
+    provider prefix.
+    """
+    if "/" in model_id and not model_id.endswith(":free"):
+        return model_id.split("/", 1)[1]
+    return model_id
+
+
+def _build_fallback_models(session) -> list[tuple[str, object | None]]:
+    """Return [(label, model)] to try in order on a transient LLM failure.
+
+    First entry is (session.model, None) — None tells pydantic-ai to use the
+    agent's own configured model, i.e. a plain retry of what just failed.
+    Remaining entries are LLM_FALLBACK_CHAIN models built as OpenAIModel bound
+    to the session's own provider (same base_url/api_key the agent started
+    with). A chain entry equal to session.model is skipped — retrying the
+    model that already failed under a different label wastes an attempt.
+    """
+    models: list[tuple[str, object | None]] = [(session.model, None)]
+    provider = getattr(session, "openai_provider", None)
+    if provider is None:
+        return models
+    for model_id in _load_model_chain():
+        if model_id == session.model:
+            continue
+        models.append((model_id, OpenAIModel(_api_model_id(model_id), provider=provider)))
+    return models
+
+
+async def _run_with_model_fallback(session, run_factory, *, deadline: float):
+    """Run run_factory(model) across the session's fallback chain until success.
+
+    run_factory: callable taking a model object (or None for "use agent default")
+    and returning a coroutine — same reusable-factory contract as
+    _run_with_llm_retry. Each model gets its own _run_with_llm_retry cycle;
+    non-first models get a single retry attempt (no backoff-multiplied re-tries
+    of a model that isn't even the agent's own) so the whole chain fits inside
+    one settings.chat_timeout window instead of max_attempts-per-model.
+    Non-transient errors (e.g. 401 config errors) propagate immediately without
+    trying the next model — a bad key fails the same way on every model.
+    """
+    models = _build_fallback_models(session)
+    last_exc: Exception | None = None
+    for label, model in models:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            attempts = 4 if model is None else 2
+            return await _run_with_llm_retry(
+                lambda m=model: run_factory(m), max_attempts=attempts,
+            )
+        except Exception as exc:
+            if not _is_transient_llm_error(exc):
+                raise
+            last_exc = exc
+            logger.warning(
+                "Model '{}' exhausted after transient errors, falling over — last: {}",
+                label, str(exc)[:200],
+            )
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("LLM fallback chain exhausted with no attempts made")
+
+
 async def _run_chat_nonstream(
     hosted_id: str,
     body: ChatRequest,
@@ -237,35 +308,51 @@ async def _run_chat_nonstream(
         agent_handle=getattr(session, "agent_handle", None) or None,
         model=getattr(session, "model", None) or None,
     ):
+        deadline = time.monotonic() + settings.chat_timeout
         try:
-            result = await _run_with_llm_retry(lambda: session.agent.run(
-                body.content,
-                deps=session.deps,
-                message_history=message_history_ref,
-                model_settings={"timeout": settings.chat_timeout},
-            ))
+            result = await _run_with_model_fallback(
+                session,
+                lambda model: session.agent.run(
+                    body.content,
+                    deps=session.deps,
+                    message_history=message_history_ref,
+                    model=model,
+                    model_settings={"timeout": settings.chat_timeout},
+                ),
+                deadline=deadline,
+            )
         except Exception as hist_err:
             if "unprocessed tool calls" in str(hist_err):
                 logger.warning("Clearing corrupted history for {}: {}", hosted_id, hist_err)
                 message_history_ref.clear()
-                result = await _run_with_llm_retry(lambda: session.agent.run(
-                    body.content,
-                    deps=session.deps,
-                    message_history=[],
-                    model_settings={"timeout": settings.chat_timeout},
-                ))
+                result = await _run_with_model_fallback(
+                    session,
+                    lambda model: session.agent.run(
+                        body.content,
+                        deps=session.deps,
+                        message_history=[],
+                        model=model,
+                        model_settings={"timeout": settings.chat_timeout},
+                    ),
+                    deadline=deadline,
+                )
             elif _is_history_shape_error(hist_err):
                 logger.warning(
                     "History shape rejected by model for {} ({}): clearing and retrying",
                     hosted_id, str(hist_err)[:120],
                 )
                 message_history_ref.clear()
-                result = await _run_with_llm_retry(lambda: session.agent.run(
-                    body.content,
-                    deps=session.deps,
-                    message_history=[],
-                    model_settings={"timeout": settings.chat_timeout},
-                ))
+                result = await _run_with_model_fallback(
+                    session,
+                    lambda model: session.agent.run(
+                        body.content,
+                        deps=session.deps,
+                        message_history=[],
+                        model=model,
+                        model_settings={"timeout": settings.chat_timeout},
+                    ),
+                    deadline=deadline,
+                )
             else:
                 raise
 
@@ -471,6 +558,8 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
 
     async def generate():
         _stream_started_at = time.monotonic()
+        _fallback_models = iter(_build_fallback_models(session))
+        _fb_label, _fb_model = next(_fallback_models)
         try:
             async with use_agent_context(
                 agent_id=hosted_id,
@@ -484,6 +573,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                             body.content,
                             deps=session.deps,
                             message_history=_history,
+                            model=_fb_model,
                             model_settings={"timeout": settings.chat_timeout},
                         )
                     except Exception as hist_err:
@@ -494,6 +584,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 body.content,
                                 deps=session.deps,
                                 message_history=[],
+                                model=_fb_model,
                                 model_settings={"timeout": settings.chat_timeout},
                             )
                         else:
@@ -796,6 +887,55 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         except Exception as e2:
                             logger.error("Retry after history clear failed: {}", repr(e2))
                             yield json.dumps({"type": "error", "message": str(e2)}) + "\n"
+                    elif _is_transient_llm_error(e):
+                        # Nothing has been yielded to the client yet at this point
+                        # (see module docstring / _run_with_model_fallback: the first
+                        # model call happens inside `async for node in run`, which
+                        # raises before the loop body — and thus before any yield —
+                        # runs on failure). Safe to fall over to the next model and
+                        # retry via non-streaming agent.run() rather than emit "error".
+                        next_model = next(_fallback_models, None)
+                        if next_model is None:
+                            logger.error("Stream error for {}: {} (fallback chain exhausted)", hosted_id, repr(e))
+                            yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+                        else:
+                            _fb_label, _fb_model = next_model
+                            logger.warning(
+                                "Stream: model failed with transient error, falling over to '{}': {}",
+                                _fb_label, str(e)[:200],
+                            )
+                            try:
+                                result = await session.agent.run(
+                                    body.content,
+                                    deps=session.deps,
+                                    message_history=_history,
+                                    model=_fb_model,
+                                    model_settings={"timeout": settings.chat_timeout},
+                                )
+                                new_hist = sanitize_history(result.all_messages())[-100:]
+                                _history.clear()
+                                _history.extend(new_hist)
+                                reply, tool_calls, thinking = _extract_response(result)
+                                yield json.dumps({
+                                    "type": "done",
+                                    "reply": reply,
+                                    "tool_calls": tool_calls,
+                                    "thinking": thinking,
+                                }) + "\n"
+                                maybe_sample(
+                                    hosted_agent_id=hosted_id,
+                                    agent_handle=getattr(session, "agent_handle", None) or "",
+                                    model=getattr(session, "model", None) or "",
+                                    trace_id=None,
+                                    input_messages=[{"role": "user", "content": body.content}],
+                                    output_text=reply,
+                                    tool_calls=tool_calls,
+                                    started_at=_stream_started_at,
+                                    status="completed",
+                                )
+                            except Exception as e2:
+                                logger.error("Stream fallback to '{}' failed: {}", _fb_label, repr(e2))
+                                yield json.dumps({"type": "error", "message": str(e2)}) + "\n"
                     else:
                         logger.error("Stream error for {}: {}", hosted_id, repr(e))
                         yield json.dumps({"type": "error", "message": str(e)}) + "\n"
