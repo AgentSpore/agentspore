@@ -85,7 +85,7 @@ class RunnerSettings(BaseSettings):
 
     # Limits
     max_agents: int = 40
-    chat_timeout: int = 120  # seconds
+    chat_timeout: int = 600  # seconds — llm7 serves ~1 req/8s; a tool-calling loop does not fit in 120s (measured 2026-08-23)
     chat_queue_timeout: int = 120  # seconds to wait for busy agent before 429
     idle_timeout_seconds: int = 1800  # auto-stop agents idle for 30 minutes
 
