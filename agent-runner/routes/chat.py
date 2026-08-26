@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import PartStartEvent, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.tools import DeferredToolResults
 
@@ -63,6 +64,15 @@ _TRANSIENT_LLM_ERROR_MARKERS: tuple[str, ...] = (
     "Too Many Requests",
     "Rate limit reached",   # Z.AI error code 1302 message text
     "rate_limit_exceeded",  # OpenAI-compatible error.code
+    # llm7.io's per-key rate limiter. Confirmed transient by measurement
+    # (2026-08-23): the same key's retry_after cycled 3 -> 39 -> 84297 -> 39
+    # seconds over one session, i.e. a moving throttle window, not a fixed
+    # daily ban. Markers are specific to llm7's JSON error shape
+    # ({"type": "insufficient_quota", "code": "quota_exceeded"}) to avoid
+    # matching unrelated quota/limit text from other providers.
+    "insufficient_quota",
+    "quota_exceeded",
+    "Daily token quota exceeded",
 )
 
 # Errors that arrive with HTTP 429 but are PERMANENT, so they must never be
@@ -90,6 +100,10 @@ _HISTORY_SHAPE_ERROR_MARKERS: tuple[str, ...] = (
     "1214",
 )
 
+# Cap on honoring a provider's retry_after (seconds) inside _run_with_llm_retry.
+# See usage site for rationale.
+_RETRY_AFTER_CAP_SECONDS = 120.0
+
 
 def _is_transient_llm_error(exc: Exception) -> bool:
     """Return True if an exception is a flaky upstream LLM response worth retrying.
@@ -115,6 +129,25 @@ def _is_history_shape_error(exc: Exception) -> bool:
     return any(marker in msg for marker in _HISTORY_SHAPE_ERROR_MARKERS)
 
 
+def _extract_retry_after_seconds(exc: Exception) -> float | None:
+    """Return the provider-reported retry_after seconds, if present and usable.
+
+    Only ModelHTTPError carries a structured JSON body (Z.AI/llm7 embed
+    retry_after there); other transient markers (502/503/504 strings) never
+    have one, so this returns None for them and the caller falls back to the
+    existing exponential backoff.
+    """
+    if not isinstance(exc, ModelHTTPError) or not isinstance(exc.body, dict):
+        return None
+    error = exc.body.get("error")
+    if not isinstance(error, dict):
+        return None
+    retry_after = error.get("retry_after")
+    if isinstance(retry_after, (int, float)) and retry_after > 0:
+        return float(retry_after)
+    return None
+
+
 async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay: float = 1.0):
     """Invoke an async agent.run() coroutine, retrying on transient upstream LLM errors.
 
@@ -122,14 +155,16 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay
     cannot be re-awaited after a failure). Pass `lambda: session.agent.run(...)`.
 
     Retries with exponential backoff and equal jitter (~1s, ~2s, ~4s by default) up to
-    max_attempts. Non-transient errors propagate on the first failure so the caller's
-    existing handlers see them.
+    max_attempts. When a provider reports a retry_after in its error body and it fits
+    the cap (see _RETRY_AFTER_CAP_SECONDS), that wait wins over the exponential window.
+    Non-transient errors propagate on the first failure so the caller's existing
+    handlers see them.
 
     Sizing rationale — the upstream free GLM tier serves ~3 concurrent requests and
     429s the rest (measured 2026-07-15), while 10/10 sequential calls succeed. So a
     429 clears as soon as an in-flight request drains, and retrying is the only
     resilience available: there is no second provider to fall over to.
-      - 4 attempts (was 3): worst-case wait ~7s, well inside chat_timeout=120s,
+      - 4 attempts (was 3): worst-case wait ~7s, well inside chat_timeout=600s,
         and it lets a request survive three separate contention windows.
       - Equal jitter: several requests rejected by the same burst would otherwise
         wake in lockstep at exactly 1s and collide again. Each delay is randomised
@@ -145,7 +180,18 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay
         except Exception as exc:
             if not _is_transient_llm_error(exc) or attempt == max_attempts:
                 raise
-            delay = base_delay * (2 ** (attempt - 1)) * random.uniform(0.5, 1.0)
+            exp_delay = base_delay * (2 ** (attempt - 1)) * random.uniform(0.5, 1.0)
+            server_delay = _extract_retry_after_seconds(exc)
+            # Honor the provider's requested wait when it's small enough to still
+            # leave room for the retry itself inside chat_timeout (600s). llm7's
+            # retry_after ranged 39s-84297s across one session (measured
+            # 2026-08-23) — most of that range is a multi-hour throttle a single
+            # HTTP request cannot wait out, so the cap covers only the short end
+            # and falls back to the existing exponential backoff otherwise.
+            if server_delay is not None and server_delay <= _RETRY_AFTER_CAP_SECONDS:
+                delay = max(server_delay, exp_delay)
+            else:
+                delay = exp_delay
             logger.warning(
                 "Transient LLM error (attempt {}/{}): {} — retrying in {}s",
                 attempt, max_attempts, str(exc)[:200], delay,

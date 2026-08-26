@@ -10,7 +10,9 @@ import asyncio
 
 import pytest
 
-from routes.chat import _is_transient_llm_error, _run_with_llm_retry
+from pydantic_ai.exceptions import ModelHTTPError
+
+from routes.chat import _extract_retry_after_seconds, _is_transient_llm_error, _run_with_llm_retry
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +116,54 @@ class TestIsTransientLLMError:
     def test_401_unauthorized_not_transient(self):
         exc = RuntimeError("401 Unauthorized: bad API key")
         assert _is_transient_llm_error(exc) is False
+
+    def test_llm7_quota_exceeded_prod_text(self):
+        """Verbatim text from the production runner log (2026-08-26)."""
+        exc = RuntimeError(
+            "status_code: 429, model_name: DeepSeek-V4-Flash-0731, body: "
+            "{'message': 'Daily token quota exceeded. Retry after 34 seconds.', "
+            "'type': 'insufficient_quota', 'param': None, 'code': 'quota_exceeded', "
+            "'retry_after': 34}"
+        )
+        assert _is_transient_llm_error(exc) is True
+
+    def test_zai_1113_still_not_transient_with_llm7_markers_present(self):
+        """Existing permanent-error markers must still win after the llm7 addition."""
+        exc = RuntimeError(
+            "Error code: 429 - {'error': {'code': '1113', "
+            "'message': 'Insufficient balance or no resource package'}}"
+        )
+        assert _is_transient_llm_error(exc) is False
+
+
+# ---------------------------------------------------------------------------
+# _extract_retry_after_seconds
+# ---------------------------------------------------------------------------
+
+class TestExtractRetryAfterSeconds:
+    def test_model_http_error_with_retry_after(self):
+        exc = ModelHTTPError(
+            status_code=429,
+            model_name="DeepSeek-V4-Flash-0731",
+            body={"error": {"code": "quota_exceeded", "retry_after": 34}},
+        )
+        assert _extract_retry_after_seconds(exc) == 34.0
+
+    def test_non_model_http_error_returns_none(self):
+        exc = RuntimeError("Error code: 429 - {'error': {'retry_after': 34}}")
+        assert _extract_retry_after_seconds(exc) is None
+
+    def test_model_http_error_without_retry_after_returns_none(self):
+        exc = ModelHTTPError(
+            status_code=502,
+            model_name="some-model",
+            body={"error": {"message": "Bad Gateway"}},
+        )
+        assert _extract_retry_after_seconds(exc) is None
+
+    def test_model_http_error_non_dict_body_returns_none(self):
+        exc = ModelHTTPError(status_code=429, model_name="some-model", body="not a dict")
+        assert _extract_retry_after_seconds(exc) is None
 
 
 # ---------------------------------------------------------------------------
@@ -327,3 +377,54 @@ class TestRunWithLLMRetry:
                 )
 
         assert len(set(observed)) > 1
+
+    @pytest.mark.asyncio
+    async def test_retry_after_within_cap_wins_over_exponential(self, monkeypatch):
+        """A small server-reported retry_after must be honored over backoff."""
+        delays: list[float] = []
+
+        async def fake_sleep(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr("routes.chat.asyncio.sleep", fake_sleep)
+        attempts = []
+
+        async def factory_body():
+            attempts.append(1)
+            if len(attempts) < 2:
+                raise ModelHTTPError(
+                    status_code=429,
+                    model_name="some-model",
+                    body={"error": {"code": "quota_exceeded", "retry_after": 34}},
+                )
+            return "ok"
+
+        result = await _run_with_llm_retry(lambda: factory_body(), base_delay=0.001)
+        assert result == "ok"
+        assert delays == [34.0]
+
+    @pytest.mark.asyncio
+    async def test_retry_after_above_cap_falls_back_to_exponential(self, monkeypatch):
+        """A multi-hour throttle window must not be waited out inline."""
+        delays: list[float] = []
+
+        async def fake_sleep(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr("routes.chat.asyncio.sleep", fake_sleep)
+        attempts = []
+
+        async def factory_body():
+            attempts.append(1)
+            if len(attempts) < 2:
+                raise ModelHTTPError(
+                    status_code=429,
+                    model_name="some-model",
+                    body={"error": {"code": "quota_exceeded", "retry_after": 84297}},
+                )
+            return "ok"
+
+        result = await _run_with_llm_retry(lambda: factory_body(), base_delay=1.0)
+        assert result == "ok"
+        assert len(delays) == 1
+        assert 0.5 <= delays[0] <= 1.0
