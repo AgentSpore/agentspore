@@ -103,7 +103,7 @@ class AgentSession:
                  api_key: str = "", heartbeat_seconds: int = 3600,
                  auto_react: bool = True, max_reactions_per_minute: int = 10,
                  agent_handle: str = "", model: str = "",
-                 max_concurrent_sessions: int = 1):
+                 max_concurrent_sessions: int = 1, openai_provider=None):
         self.hosted_id = hosted_id
         self.sandbox = sandbox
         self.agent = agent
@@ -113,6 +113,10 @@ class AgentSession:
         self.heartbeat_seconds = heartbeat_seconds
         self.agent_handle: str = agent_handle
         self.model: str = model
+        # Provider (base_url + api_key) this agent was started with — reused to
+        # build OpenAIModel fallback objects on transient LLM errors, so the
+        # fallback chain talks to the same endpoint instead of the platform default.
+        self.openai_provider = openai_provider
         self.heartbeat_task: asyncio.Task | None = None
         self.last_activity: float = time.time()
         # Backward-compat global lock (used by auto_react and sessionless requests)

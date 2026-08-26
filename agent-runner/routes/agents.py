@@ -252,6 +252,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
         agent_handle=body.agent_handle,
         model=resolved_model,
         max_concurrent_sessions=body.max_concurrent_sessions,
+        openai_provider=openai_provider,
     )
 
     # Restore message_history from platform DB (short-term memory).
