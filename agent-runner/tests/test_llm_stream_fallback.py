@@ -3,6 +3,10 @@
 Covers the specific claim in the task: a transient model failure that happens
 before any ndjson event was yielded to the client falls over to the next
 LLM_FALLBACK_CHAIN model and the client receives a "done" event, not "error".
+
+Also covers the opposite case: a transient failure that happens AFTER a
+text_delta was already streamed must NOT fall over (that would double-send the
+reply to the client — a partial fragment plus a full "done" reply).
 """
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic_ai.messages import PartStartEvent, TextPart
 from pydantic_ai.providers.openai import OpenAIProvider
 
 import routes.chat as chat_mod
@@ -51,6 +56,68 @@ def session_factory():
         return session
 
     return build
+
+
+class _FakeStream:
+    """Fakes node.stream(run.ctx): yields the given events, no error."""
+
+    def __init__(self, events):
+        self._events = events
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for event in self._events:
+            yield event
+
+
+class _FakeRequestNode:
+    """Fakes a pydantic-ai ModelRequestNode: has .stream(), name contains 'Request'."""
+
+    def __init__(self, events):
+        self._events = events
+
+    def stream(self, ctx):
+        return _FakeStream(self._events)
+
+
+class _FakeRun:
+    """Async-iterates fake nodes; raises `error` (if set) AFTER the last node,
+    simulating a transient failure detected once the async-for loop resumes for
+    the next node — i.e. after every event from prior nodes was already yielded."""
+
+    def __init__(self, nodes, result, error=None):
+        self._nodes = nodes
+        self.result = result
+        self.ctx = None
+        self._error = error
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for node in self._nodes:
+            yield node
+        if self._error is not None:
+            raise self._error
+
+
+class _FakeIterCtx:
+    def __init__(self, run):
+        self._run = run
+
+    async def __aenter__(self):
+        return self._run
+
+    async def __aexit__(self, *exc_info):
+        return False
 
 
 async def _collect_events(response):
@@ -116,6 +183,42 @@ class TestStreamFallback:
 
         assert any(e["type"] == "error" for e in events)
         assert not any(e["type"] == "done" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_error_after_first_delta_does_not_double_send(self, monkeypatch, session_factory):
+        """A transient error raised INSIDE node.stream(), after a text_delta was
+        already yielded, must NOT fall over to the next model — client gets
+        "error" and never both a fragment and a full "done" reply."""
+        monkeypatch.setattr("routes.chat.asyncio.sleep", _noop)
+        monkeypatch.setattr("routes.chat._load_model_chain", lambda: ["b/model-2"])
+        monkeypatch.setattr(chat_mod, "use_agent_context", _noop_ctx)
+
+        agent = MagicMock()
+        node = _FakeRequestNode(events=[PartStartEvent(index=0, part=TextPart(content="Hello wor"))])
+        run = _FakeRun(nodes=[node], result=FakeResult(), error=RuntimeError("503 Service Unavailable"))
+        agent.iter = MagicMock(return_value=_FakeIterCtx(run))
+
+        fallover_calls = []
+
+        async def run_records_fallover(*args, **kwargs):
+            fallover_calls.append(kwargs)
+            return FakeResult()
+
+        agent.run = run_records_fallover
+
+        session = session_factory(agent)
+        monkeypatch.setitem(chat_mod.sessions, "test-hosted-id", session)
+
+        response = await chat_stream("test-hosted-id", ChatRequest(content="hello"))
+        events = await _collect_events(response)
+
+        deltas = [e for e in events if e["type"] == "text_delta"]
+        errors = [e for e in events if e["type"] == "error"]
+        done = [e for e in events if e["type"] == "done"]
+        assert len(deltas) == 1
+        assert not fallover_calls  # agent.run() (model fallover) must never be called
+        assert len(errors) == 1
+        assert not done  # no double-send: fragment + error, never fragment + done
 
 
 async def _noop(*_args, **_kwargs):
