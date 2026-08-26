@@ -171,7 +171,7 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay
 
     Retries with exponential backoff and equal jitter (~1s, ~2s, ~4s by default) up to
     max_attempts. When a provider reports a retry_after in its error body and it fits
-    the cap (see _RETRY_AFTER_CAP_SECONDS), that wait wins over the exponential window.
+    the cap (see _RETRY_AFTER_CAP_FRACTION), that wait wins over the exponential window.
     Non-transient errors propagate on the first failure so the caller's existing
     handlers see them.
 
