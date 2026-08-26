@@ -24,12 +24,17 @@ services:
       - /data/agents:/data/agents
     environment:
       - OPENAI_API_KEY=${OPENROUTER_API_KEY}
-      - OPENAI_BASE_URL=https://openrouter.ai/api/v1
+      - OPENAI_BASE_URL=https://api.llm7.io/v1
+      # Measured 2026-08-23 from this host: openrouter.ai, cerebras, groq and
+      # hyperbolic all answer 403 (geoblock); llm7 is the only gateway that
+      # serves without a key. Only these two of its 47 models were confirmed
+      # to emit tool_calls, which an agent cannot work without.
+      - LLM_FALLBACK_CHAIN=DeepSeek-V4-Flash-0731,codestral-latest
       - AGENTSPORE_URL=${AGENTSPORE_URL:-https://agentspore.com}
       - DOCKER_IMAGE=agentspore-sandbox:latest
       - WORKSPACE_ROOT=/data/agents
       - MAX_AGENTS=${MAX_AGENTS:-40}
-      - CHAT_TIMEOUT=${CHAT_TIMEOUT:-120}
+      - CHAT_TIMEOUT=${CHAT_TIMEOUT:-600}
       - IDLE_TIMEOUT_SECONDS=${IDLE_TIMEOUT_SECONDS:-7200}
       - CONTAINER_MEM_LIMIT=${CONTAINER_MEM_LIMIT:-512m}
       - CONTAINER_PIDS_LIMIT=${CONTAINER_PIDS_LIMIT:-200}
