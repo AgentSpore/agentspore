@@ -66,7 +66,7 @@ class TestRunWithModelFallback:
 
         models_used = []
 
-        async def run_factory(model):
+        async def run_factory(model, timeout):
             models_used.append(model)
             if model is None:
                 raise RuntimeError("503 Service Unavailable")
@@ -88,7 +88,7 @@ class TestRunWithModelFallback:
 
         models_used = []
 
-        async def run_factory(model):
+        async def run_factory(model, timeout):
             models_used.append(model)
             if len(models_used) == 1:
                 raise RuntimeError("503 Service Unavailable")
@@ -106,7 +106,7 @@ class TestRunWithModelFallback:
         monkeypatch.setattr("routes.chat._load_model_chain", lambda: ["b/model-2"])
         session = _session("current-model")
 
-        async def run_factory(model):
+        async def run_factory(model, timeout):
             raise RuntimeError("503 Service Unavailable")
 
         with pytest.raises(RuntimeError, match="503"):
@@ -121,7 +121,7 @@ class TestRunWithModelFallback:
 
         models_used = []
 
-        async def run_factory(model):
+        async def run_factory(model, timeout):
             models_used.append(model)
             raise RuntimeError("Error code: 401 - invalid api key")
 
@@ -138,13 +138,34 @@ class TestRunWithModelFallback:
 
         models_used = []
 
-        async def run_factory(model):
+        async def run_factory(model, timeout):
             models_used.append(model)
             raise RuntimeError("503 Service Unavailable")
 
         with pytest.raises(RuntimeError, match="503|exhausted"):
             await _run_with_model_fallback(session, run_factory, deadline=time.monotonic() - 1)
         assert len(models_used) == 0
+
+    @pytest.mark.asyncio
+    async def test_deadline_expiring_mid_chain_stops_the_remaining_models(self, monkeypatch):
+        """The deadline must be re-checked between models, not only at chain entry —
+        a deadline that expires after the first model's retries must stop the chain
+        instead of moving on to the second model."""
+        monkeypatch.setattr("routes.chat.asyncio.sleep", lambda *_: _noop())
+        monkeypatch.setattr("routes.chat._load_model_chain", lambda: ["b/model-2", "c/model-3"])
+        session = _session("current-model")
+
+        models_used = []
+        deadline = time.monotonic() + 0.05
+
+        async def run_factory(model, timeout):
+            models_used.append(model)
+            time.sleep(0.06)  # pushes monotonic() past `deadline` before the 2nd model
+            raise RuntimeError("503 Service Unavailable")
+
+        with pytest.raises(RuntimeError, match="503|exhausted"):
+            await _run_with_model_fallback(session, run_factory, deadline=deadline)
+        assert len(models_used) == 1  # only the first model was attempted
 
 
 async def _noop(*_args, **_kwargs):
