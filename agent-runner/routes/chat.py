@@ -67,11 +67,11 @@ _TRANSIENT_LLM_ERROR_MARKERS: tuple[str, ...] = (
     # llm7.io's per-key rate limiter. Confirmed transient by measurement
     # (2026-08-23): the same key's retry_after cycled 3 -> 39 -> 84297 -> 39
     # seconds over one session, i.e. a moving throttle window, not a fixed
-    # daily ban. Markers are specific to llm7's JSON error shape
-    # ({"type": "insufficient_quota", "code": "quota_exceeded"}) to avoid
-    # matching unrelated quota/limit text from other providers.
-    "insufficient_quota",
-    "quota_exceeded",
+    # daily ban. "insufficient_quota"/"quota_exceeded" alone are NOT used as
+    # markers here — OpenAI reports a permanent zero-balance error with the
+    # identical `'type': 'insufficient_quota'` (measured 2026-08-26), so only
+    # "Daily token quota exceeded" is checked: it is llm7's unique wording and
+    # sufficient by itself to identify llm7's throttle.
     "Daily token quota exceeded",
 )
 
@@ -89,6 +89,11 @@ _PERMANENT_LLM_ERROR_MARKERS: tuple[str, ...] = (
     "'code': 1113",
     '"code": 1113',
     "Insufficient balance",
+    # OpenAI's zero-balance 429 also matches the generic "Error code: 429"
+    # transient marker (measured 2026-08-26); its billing-exhausted wording is
+    # unique enough to check for directly rather than trying to keep every
+    # transient 429 marker from ever matching it.
+    "exceeded your current quota",
 )
 
 # Markers indicating the conversation history has an illegal shape for the
@@ -100,9 +105,14 @@ _HISTORY_SHAPE_ERROR_MARKERS: tuple[str, ...] = (
     "1214",
 )
 
-# Cap on honoring a provider's retry_after (seconds) inside _run_with_llm_retry.
-# See usage site for rationale.
-_RETRY_AFTER_CAP_SECONDS = 120.0
+# Fraction of settings.chat_timeout honored as a provider's retry_after inside
+# _run_with_llm_retry, rather than a fixed number: chat_timeout is configurable
+# and differs from its 120s repo default in production (measured 2026-08-26:
+# CHAT_TIMEOUT=600 in prod, raised manually and not committed). A fixed 120.0
+# cap equal to a 120s timeout let 4 retries burn 3*120s = 360s of sleep alone
+# under the held chat_lock. One third leaves room for the retry itself plus
+# the remaining attempts within whatever timeout is actually configured.
+_RETRY_AFTER_CAP_FRACTION = 1 / 3
 
 
 def _is_transient_llm_error(exc: Exception) -> bool:
@@ -136,13 +146,18 @@ def _extract_retry_after_seconds(exc: Exception) -> float | None:
     retry_after there); other transient markers (502/503/504 strings) never
     have one, so this returns None for them and the caller falls back to the
     existing exponential backoff.
+
+    The openai SDK unwraps the `{"error": {...}}` envelope before setting
+    `exc.body` (measured 2026-08-26 against a live llm7 429: body keys were
+    `['message', 'type', 'param', 'code', 'retry_after']`, no 'error' wrapper),
+    so retry_after is read from the top level first, falling back to a nested
+    'error' dict for gateways that don't unwrap it.
     """
     if not isinstance(exc, ModelHTTPError) or not isinstance(exc.body, dict):
         return None
-    error = exc.body.get("error")
-    if not isinstance(error, dict):
-        return None
-    retry_after = error.get("retry_after")
+    nested = exc.body.get("error")
+    src = nested if isinstance(nested, dict) else exc.body
+    retry_after = src.get("retry_after")
     if isinstance(retry_after, (int, float)) and retry_after > 0:
         return float(retry_after)
     return None
@@ -164,8 +179,11 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay
     429s the rest (measured 2026-07-15), while 10/10 sequential calls succeed. So a
     429 clears as soon as an in-flight request drains, and retrying is the only
     resilience available: there is no second provider to fall over to.
-      - 4 attempts (was 3): worst-case wait ~7s, well inside chat_timeout=600s,
-        and it lets a request survive three separate contention windows.
+      - 4 attempts (was 3): worst-case exponential-only wait ~7s, well inside
+        settings.chat_timeout (a configurable value, not the 120s repo
+        default — see _RETRY_AFTER_CAP_FRACTION), and it lets a request
+        survive three separate contention windows. A provider-reported
+        retry_after can push a single wait up to chat_timeout / 3.
       - Equal jitter: several requests rejected by the same burst would otherwise
         wake in lockstep at exactly 1s and collide again. Each delay is randomised
         over [0.5×, 1.0×] of its window — half the backoff is fixed (guaranteeing
@@ -183,12 +201,13 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay
             exp_delay = base_delay * (2 ** (attempt - 1)) * random.uniform(0.5, 1.0)
             server_delay = _extract_retry_after_seconds(exc)
             # Honor the provider's requested wait when it's small enough to still
-            # leave room for the retry itself inside chat_timeout (600s). llm7's
+            # leave room for the retry itself inside settings.chat_timeout. llm7's
             # retry_after ranged 39s-84297s across one session (measured
             # 2026-08-23) — most of that range is a multi-hour throttle a single
             # HTTP request cannot wait out, so the cap covers only the short end
             # and falls back to the existing exponential backoff otherwise.
-            if server_delay is not None and server_delay <= _RETRY_AFTER_CAP_SECONDS:
+            retry_after_cap = settings.chat_timeout * _RETRY_AFTER_CAP_FRACTION
+            if server_delay is not None and server_delay <= retry_after_cap:
                 delay = max(server_delay, exp_delay)
             else:
                 delay = exp_delay
