@@ -109,11 +109,11 @@ _HISTORY_SHAPE_ERROR_MARKERS: tuple[str, ...] = (
 
 # Fraction of settings.chat_timeout honored as a provider's retry_after inside
 # _run_with_llm_retry, rather than a fixed number: chat_timeout is configurable
-# and differs from its 120s repo default in production (measured 2026-08-26:
-# CHAT_TIMEOUT=600 in prod, raised manually and not committed). A fixed 120.0
-# cap equal to a 120s timeout let 4 retries burn 3*120s = 360s of sleep alone
-# under the held chat_lock. One third leaves room for the retry itself plus
-# the remaining attempts within whatever timeout is actually configured.
+# and differs from its 120s repo default in production (CHAT_TIMEOUT=600,
+# see docker-compose.yml). A fixed 120.0 cap equal to a 120s timeout let 4
+# retries burn 3*120s = 360s of sleep alone under the held chat_lock. One
+# third leaves room for the retry itself plus the remaining attempts within
+# whatever timeout is actually configured.
 _RETRY_AFTER_CAP_FRACTION = 1 / 3
 
 
@@ -165,11 +165,18 @@ def _extract_retry_after_seconds(exc: Exception) -> float | None:
     return None
 
 
-async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay: float = 1.0):
+async def _run_with_llm_retry(
+    coro_factory, *, max_attempts: int = 4, base_delay: float = 1.0, deadline: float | None = None,
+):
     """Invoke an async agent.run() coroutine, retrying on transient upstream LLM errors.
 
     coro_factory: callable that returns a fresh coroutine (NOT a bare coroutine — those
     cannot be re-awaited after a failure). Pass `lambda: session.agent.run(...)`.
+
+    deadline: optional time.monotonic() cutoff (see _run_with_model_fallback). Checked
+    before each backoff sleep — a chain of 4 attempts x up to chat_timeout/3 retry_after
+    can otherwise burn far longer than settings.chat_timeout while holding chat_lock
+    (measured 2026-08-26: ~5800s of possible sleep against a 600s deadline).
 
     Retries with exponential backoff and equal jitter (~1s, ~2s, ~4s by default) up to
     max_attempts. When a provider reports a retry_after in its error body and it fits
@@ -200,6 +207,8 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay
         except Exception as exc:
             if not _is_transient_llm_error(exc) or attempt == max_attempts:
                 raise
+            if deadline is not None and time.monotonic() >= deadline:
+                raise
             exp_delay = base_delay * (2 ** (attempt - 1)) * random.uniform(0.5, 1.0)
             server_delay = _extract_retry_after_seconds(exc)
             # Honor the provider's requested wait when it's small enough to still
@@ -224,7 +233,7 @@ async def _run_with_llm_retry(coro_factory, *, max_attempts: int = 4, base_delay
 
 
 def _api_model_id(model_id: str) -> str:
-    """Strip a provider prefix for the API call (mirrors routes/agents.py:159-162).
+    """Strip a provider prefix for the API call (mirrors routes/agents.py:161-163).
 
     e.g. "cerebras/llama-3.3-70b" -> "llama-3.3-70b"; OpenRouter ":free" models
     keep their full id, since the slash there is part of the model name, not a
@@ -256,15 +265,29 @@ def _build_fallback_models(session) -> list[tuple[str, object | None]]:
     return models
 
 
+def _remaining_timeout(deadline: float) -> float:
+    """Return the seconds left before deadline, floored at 1.0.
+
+    Used to shrink each retry/fallback attempt's model_settings timeout so the
+    whole chain fits inside settings.chat_timeout instead of each attempt
+    getting a fresh full-length timeout (see _run_with_model_fallback docstring
+    for the arithmetic this prevents).
+    """
+    return max(1.0, deadline - time.monotonic())
+
+
 async def _run_with_model_fallback(session, run_factory, *, deadline: float):
-    """Run run_factory(model) across the session's fallback chain until success.
+    """Run run_factory(model, timeout) across the session's fallback chain until success.
 
     run_factory: callable taking a model object (or None for "use agent default")
-    and returning a coroutine — same reusable-factory contract as
-    _run_with_llm_retry. Each model gets its own _run_with_llm_retry cycle;
-    non-first models get a single retry attempt (no backoff-multiplied re-tries
-    of a model that isn't even the agent's own) so the whole chain fits inside
-    one settings.chat_timeout window instead of max_attempts-per-model.
+    and the remaining seconds until deadline, returning a coroutine — same
+    reusable-factory contract as _run_with_llm_retry. Each model gets its own
+    _run_with_llm_retry cycle, itself bounded by deadline; non-first models get
+    a single retry attempt (no backoff-multiplied re-tries of a model that
+    isn't even the agent's own) so the whole chain fits inside one
+    settings.chat_timeout window instead of max_attempts-per-model x
+    retry_after-per-attempt (measured 2026-08-26: unbounded, that arithmetic
+    reaches ~5800s against a 600s chat_timeout while holding session.chat_lock).
     Non-transient errors (e.g. 401 config errors) propagate immediately without
     trying the next model — a bad key fails the same way on every model.
     """
@@ -277,7 +300,9 @@ async def _run_with_model_fallback(session, run_factory, *, deadline: float):
         try:
             attempts = 4 if model is None else 2
             return await _run_with_llm_retry(
-                lambda m=model: run_factory(m), max_attempts=attempts,
+                lambda m=model: run_factory(m, _remaining_timeout(deadline)),
+                max_attempts=attempts,
+                deadline=deadline,
             )
         except Exception as exc:
             if not _is_transient_llm_error(exc):
@@ -312,12 +337,12 @@ async def _run_chat_nonstream(
         try:
             result = await _run_with_model_fallback(
                 session,
-                lambda model: session.agent.run(
+                lambda model, timeout: session.agent.run(
                     body.content,
                     deps=session.deps,
                     message_history=message_history_ref,
                     model=model,
-                    model_settings={"timeout": settings.chat_timeout},
+                    model_settings={"timeout": timeout},
                 ),
                 deadline=deadline,
             )
@@ -327,12 +352,12 @@ async def _run_chat_nonstream(
                 message_history_ref.clear()
                 result = await _run_with_model_fallback(
                     session,
-                    lambda model: session.agent.run(
+                    lambda model, timeout: session.agent.run(
                         body.content,
                         deps=session.deps,
                         message_history=[],
                         model=model,
-                        model_settings={"timeout": settings.chat_timeout},
+                        model_settings={"timeout": timeout},
                     ),
                     deadline=deadline,
                 )
@@ -344,12 +369,12 @@ async def _run_chat_nonstream(
                 message_history_ref.clear()
                 result = await _run_with_model_fallback(
                     session,
-                    lambda model: session.agent.run(
+                    lambda model, timeout: session.agent.run(
                         body.content,
                         deps=session.deps,
                         message_history=[],
                         model=model,
-                        model_settings={"timeout": settings.chat_timeout},
+                        model_settings={"timeout": timeout},
                     ),
                     deadline=deadline,
                 )
@@ -558,6 +583,15 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
 
     async def generate():
         _stream_started_at = time.monotonic()
+        _deadline = time.monotonic() + settings.chat_timeout
+        # Set on the FIRST yield of any event to the client. Once true, a
+        # transient-error fallover (see the `elif _is_transient_llm_error(e):`
+        # branch below) must NOT re-run the request on another model — the
+        # client already has a partial reply and would receive it twice
+        # (a streamed "text_delta" fragment, then a full "done" reply from the
+        # fallback model). INVARIANT(runner-llm7-markers): do not remove this
+        # gate without also removing the fallover it guards.
+        _yielded_to_client = False
         _fallback_models = iter(_build_fallback_models(session))
         _fb_label, _fb_model = next(_fallback_models)
         try:
@@ -574,7 +608,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                             deps=session.deps,
                             message_history=_history,
                             model=_fb_model,
-                            model_settings={"timeout": settings.chat_timeout},
+                            model_settings={"timeout": _remaining_timeout(_deadline)},
                         )
                     except Exception as hist_err:
                         if "unprocessed tool calls" in str(hist_err):
@@ -585,7 +619,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 deps=session.deps,
                                 message_history=[],
                                 model=_fb_model,
-                                model_settings={"timeout": settings.chat_timeout},
+                                model_settings={"timeout": _remaining_timeout(_deadline)},
                             )
                         else:
                             raise
@@ -593,6 +627,13 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
 
                     async with iter_ctx as run:
                         async for node in run:
+                            # A node was reached, meaning agent.iter() produced at
+                            # least one step of the run. Every code path below this
+                            # point can yield an event to the client (text_delta,
+                            # tool_call, tool_result, ...), so a transient error
+                            # raised from here on must not trigger the model-fallover
+                            # retry (see _yielded_to_client comment above generate()).
+                            _yielded_to_client = True
                             node_name = type(node).__name__
 
                             # Stream text deltas from model request nodes
@@ -698,7 +739,8 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 deferred_tool_results=DeferredToolResults(approvals=approvals),
                                 deps=session.deps,
                                 message_history=result.all_messages(),
-                                model_settings={"timeout": settings.chat_timeout},
+                                model=_fb_model,
+                                model_settings={"timeout": _remaining_timeout(_deadline)},
                             )
                             new_hist = sanitize_history(result.all_messages())[-100:]
                             _history.clear()
@@ -782,7 +824,8 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 body.content,
                                 deps=session.deps,
                                 message_history=_history,
-                                model_settings={"timeout": settings.chat_timeout},
+                                model=_fb_model,
+                                model_settings={"timeout": _remaining_timeout(_deadline)},
                             )
                         except Exception as hist_err2:
                             if "unprocessed tool calls" in str(hist_err2):
@@ -792,7 +835,8 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                     body.content,
                                     deps=session.deps,
                                     message_history=[],
-                                    model_settings={"timeout": settings.chat_timeout},
+                                    model=_fb_model,
+                                    model_settings={"timeout": _remaining_timeout(_deadline)},
                                 )
                             else:
                                 raise
@@ -819,7 +863,8 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 deferred_tool_results=DeferredToolResults(approvals=approvals),
                                 deps=session.deps,
                                 message_history=result.all_messages(),
-                                model_settings={"timeout": settings.chat_timeout},
+                                model=_fb_model,
+                                model_settings={"timeout": _remaining_timeout(_deadline)},
                             )
                             new_hist = sanitize_history(result.all_messages())[-100:]
                             _history.clear()
@@ -861,7 +906,8 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                 body.content,
                                 deps=session.deps,
                                 message_history=[],
-                                model_settings={"timeout": settings.chat_timeout},
+                                model=_fb_model,
+                                model_settings={"timeout": _remaining_timeout(_deadline)},
                             )
                             new_hist = sanitize_history(result.all_messages())[-100:]
                             _history.clear()
@@ -887,13 +933,12 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                         except Exception as e2:
                             logger.error("Retry after history clear failed: {}", repr(e2))
                             yield json.dumps({"type": "error", "message": str(e2)}) + "\n"
-                    elif _is_transient_llm_error(e):
-                        # Nothing has been yielded to the client yet at this point
-                        # (see module docstring / _run_with_model_fallback: the first
-                        # model call happens inside `async for node in run`, which
-                        # raises before the loop body — and thus before any yield —
-                        # runs on failure). Safe to fall over to the next model and
-                        # retry via non-streaming agent.run() rather than emit "error".
+                    elif _is_transient_llm_error(e) and not _yielded_to_client and time.monotonic() < _deadline:
+                        # Safe to fall over to the next model and retry via
+                        # non-streaming agent.run() ONLY when nothing reached the
+                        # client yet (see _yielded_to_client) — otherwise the
+                        # fallover would emit a full "done" reply on top of the
+                        # partial text the client already received.
                         next_model = next(_fallback_models, None)
                         if next_model is None:
                             logger.error("Stream error for {}: {} (fallback chain exhausted)", hosted_id, repr(e))
@@ -910,7 +955,7 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
                                     deps=session.deps,
                                     message_history=_history,
                                     model=_fb_model,
-                                    model_settings={"timeout": settings.chat_timeout},
+                                    model_settings={"timeout": _remaining_timeout(_deadline)},
                                 )
                                 new_hist = sanitize_history(result.all_messages())[-100:]
                                 _history.clear()

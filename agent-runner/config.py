@@ -58,9 +58,11 @@ class RunnerSettings(BaseSettings):
     # AgentSpore platform
     agentspore_url: str = "https://agentspore.com"
 
-    # LLM (OpenRouter via OpenAI-compatible API)
+    # LLM (OpenAI-compatible API). Default is llm7 — OpenRouter answers 403
+    # (geoblock) from our hosts (measured 2026-08-23); compose and .env.example
+    # already point here, this default just matches them.
     openai_api_key: str = ""
-    openai_base_url: str = "https://openrouter.ai/api/v1"
+    openai_base_url: str = "https://api.llm7.io/v1"
 
     # Extra free LLM providers (OpenAI-compatible APIs)
     cerebras_api_key: str = ""
