@@ -127,6 +127,17 @@ class TestIsTransientLLMError:
         )
         assert _is_transient_llm_error(exc) is True
 
+    def test_openai_insufficient_quota_not_transient(self):
+        """OpenAI's permanent zero-balance error shares 'insufficient_quota' with
+        llm7's throttle wording, but is hopeless until the plan is paid — must
+        not be retried under the held chat_lock."""
+        exc = RuntimeError(
+            "Error code: 429 - {'error': {'message': 'You exceeded your current "
+            "quota, please check your plan and billing details.', "
+            "'type': 'insufficient_quota', 'code': 'insufficient_quota'}}"
+        )
+        assert _is_transient_llm_error(exc) is False
+
     def test_zai_1113_still_not_transient_with_llm7_markers_present(self):
         """Existing permanent-error markers must still win after the llm7 addition."""
         exc = RuntimeError(
@@ -141,7 +152,25 @@ class TestIsTransientLLMError:
 # ---------------------------------------------------------------------------
 
 class TestExtractRetryAfterSeconds:
-    def test_model_http_error_with_retry_after(self):
+    def test_model_http_error_with_retry_after_flat_body(self):
+        """llm7's actual body shape: the openai SDK unwraps the 'error' envelope
+        (measured 2026-08-26 against a live 429: body keys were
+        ['message', 'type', 'param', 'code', 'retry_after'], no 'error' key)."""
+        exc = ModelHTTPError(
+            status_code=429,
+            model_name="DeepSeek-V4-Flash-0731",
+            body={
+                "message": "Daily token quota exceeded. Retry after 34 seconds.",
+                "type": "insufficient_quota",
+                "param": None,
+                "code": "quota_exceeded",
+                "retry_after": 34,
+            },
+        )
+        assert _extract_retry_after_seconds(exc) == 34.0
+
+    def test_model_http_error_with_retry_after_nested_body(self):
+        """Fallback path for gateways that still wrap the body in 'error'."""
         exc = ModelHTTPError(
             status_code=429,
             model_name="DeepSeek-V4-Flash-0731",
@@ -157,7 +186,7 @@ class TestExtractRetryAfterSeconds:
         exc = ModelHTTPError(
             status_code=502,
             model_name="some-model",
-            body={"error": {"message": "Bad Gateway"}},
+            body={"message": "Bad Gateway"},
         )
         assert _extract_retry_after_seconds(exc) is None
 
@@ -395,7 +424,12 @@ class TestRunWithLLMRetry:
                 raise ModelHTTPError(
                     status_code=429,
                     model_name="some-model",
-                    body={"error": {"code": "quota_exceeded", "retry_after": 34}},
+                    body={
+                        "message": "Daily token quota exceeded. Retry after 34 seconds.",
+                        "type": "insufficient_quota",
+                        "code": "quota_exceeded",
+                        "retry_after": 34,
+                    },
                 )
             return "ok"
 
@@ -420,7 +454,12 @@ class TestRunWithLLMRetry:
                 raise ModelHTTPError(
                     status_code=429,
                     model_name="some-model",
-                    body={"error": {"code": "quota_exceeded", "retry_after": 84297}},
+                    body={
+                        "message": "Daily token quota exceeded. Retry after 84297 seconds.",
+                        "type": "insufficient_quota",
+                        "code": "quota_exceeded",
+                        "retry_after": 84297,
+                    },
                 )
             return "ok"
 
