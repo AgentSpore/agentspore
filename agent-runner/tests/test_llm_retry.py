@@ -146,6 +146,32 @@ class TestIsTransientLLMError:
         )
         assert _is_transient_llm_error(exc) is False
 
+    def test_llm7_model_unavailable_400_prod_text(self):
+        """Verbatim text from a live llm7 request (2026-08-26): a 400 status,
+        but the model comes back later, so it must be retried."""
+        exc = RuntimeError(
+            "status_code: 400, model_name: DeepSeek-V4-Flash-0731, body: "
+            "{'error': {'message': \"Model 'DeepSeek-V4-Flash-0731' is "
+            "currently unavailable.\", 'type': 'invalid_request_error', "
+            "'param': None, 'code': 'model_unavailable'}}"
+        )
+        assert _is_transient_llm_error(exc) is True
+
+    def test_llm7_missing_api_key_400_not_transient(self):
+        exc = RuntimeError(
+            "status_code: 400, body: {'error': {'message': 'Missing API key.', "
+            "'type': 'authentication_error', 'code': 'missing_api_key'}}"
+        )
+        assert _is_transient_llm_error(exc) is False
+
+    def test_llm7_other_invalid_request_400_not_transient(self):
+        exc = RuntimeError(
+            "status_code: 400, body: {'error': {'message': 'Unrecognized "
+            "request argument supplied: foo', 'type': 'invalid_request_error', "
+            "'code': 'unknown_parameter'}}"
+        )
+        assert _is_transient_llm_error(exc) is False
+
 
 # ---------------------------------------------------------------------------
 # _extract_retry_after_seconds
