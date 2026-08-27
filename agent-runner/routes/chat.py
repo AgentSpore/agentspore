@@ -52,6 +52,12 @@ _TRANSIENT_LLM_ERROR_MARKERS: tuple[str, ...] = (
     "validation error for ChatCompletion",
     "Input should be a valid",
     "503 Service Unavailable",
+    # pydantic-ai renders an upstream error as "status_code: NNN, model_name: ...",
+    # never as httpx's status line, so the marker above never matched a real 503.
+    # Measured 2026-08-26 in production: 4 of 9 failures in six hours carried
+    # `status_code: 503 ... 'code': 'model_temporarily_unavailable'` and were
+    # classified permanent, so neither retry nor fallover ever ran on them.
+    "model_temporarily_unavailable",
     "502 Bad Gateway",
     "504 Gateway Timeout",
     # Rate limiting. Z.AI's free GLM tier serves only ~3 concurrent requests
