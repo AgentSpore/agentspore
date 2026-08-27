@@ -7,7 +7,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 from pydantic_ai import DeferredToolRequests
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_backends import RuntimeConfig
 
@@ -166,7 +166,7 @@ async def start_agent(hosted_id: str, body: StartRequest):
     effective_api_key = body.provider_api_key or settings.openai_api_key
 
     openai_provider = OpenAIProvider(base_url=effective_base_url, api_key=effective_api_key)
-    model_obj = OpenAIModel(api_model, provider=openai_provider)
+    model_obj = OpenAIChatModel(api_model, provider=openai_provider)
 
     # Bind search_past_runs to this agent's handle so the LLM cannot spoof
     # cross-agent history queries (handle is captured in closure, not arg).
