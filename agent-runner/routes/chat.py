@@ -280,6 +280,9 @@ def _build_fallback_models(session) -> list[tuple[str, object | None]]:
     return models
 
 
+_UNSET = object()  # distinguishes "pinned_model not passed" from the legitimate value None
+
+
 def _remaining_timeout(deadline: float) -> float:
     """Return the seconds left before deadline, floored at 1.0.
 
@@ -291,7 +294,7 @@ def _remaining_timeout(deadline: float) -> float:
     return max(1.0, deadline - time.monotonic())
 
 
-async def _run_with_model_fallback(session, run_factory, *, deadline: float):
+async def _run_with_model_fallback(session, run_factory, *, deadline: float, pinned_model=_UNSET):
     """Run run_factory(model, timeout) across the session's fallback chain until success.
 
     run_factory: callable taking a model object (or None for "use agent default")
@@ -305,8 +308,26 @@ async def _run_with_model_fallback(session, run_factory, *, deadline: float):
     reaches ~5800s against a 600s chat_timeout while holding session.chat_lock).
     Non-transient errors (e.g. 401 config errors) propagate immediately without
     trying the next model — a bad key fails the same way on every model.
+
+    pinned_model: when given (a sentinel distinguishes "not passed" from the
+    legitimate value None = agent default), try only this model first instead
+    of starting the chain over at the agent's own model — it already proved
+    reachable this turn, so re-trying the model that just failed wastes an
+    attempt. Falls through to the normal chain (skipping the pinned model,
+    already tried) if the pinned model has failed again.
+
+    Returns (result, model) — the winning model object (None means "agent
+    default") so a caller running a follow-up turn (e.g. the deferred-tool
+    approval loop) can pin it directly instead of re-walking the whole chain,
+    including the model that just failed, on every iteration.
     """
     models = _build_fallback_models(session)
+    if pinned_model is not _UNSET:
+        pinned_name = None if pinned_model is None else pinned_model.model_name
+        models = [("pinned", pinned_model)] + [
+            (label, model) for label, model in models
+            if (None if model is None else model.model_name) != pinned_name
+        ]
     last_exc: Exception | None = None
     for label, model in models:
         remaining = deadline - time.monotonic()
@@ -314,11 +335,12 @@ async def _run_with_model_fallback(session, run_factory, *, deadline: float):
             break
         try:
             attempts = 4 if model is None else 2
-            return await _run_with_llm_retry(
+            result = await _run_with_llm_retry(
                 lambda m=model: run_factory(m, _remaining_timeout(deadline)),
                 max_attempts=attempts,
                 deadline=deadline,
             )
+            return result, model
         except Exception as exc:
             if not _is_transient_llm_error(exc):
                 raise
@@ -350,7 +372,7 @@ async def _run_chat_nonstream(
     ):
         deadline = time.monotonic() + settings.chat_timeout
         try:
-            result = await _run_with_model_fallback(
+            result, winning_model = await _run_with_model_fallback(
                 session,
                 lambda model, timeout: session.agent.run(
                     body.content,
@@ -365,7 +387,7 @@ async def _run_chat_nonstream(
             if "unprocessed tool calls" in str(hist_err):
                 logger.warning("Clearing corrupted history for {}: {}", hosted_id, hist_err)
                 message_history_ref.clear()
-                result = await _run_with_model_fallback(
+                result, winning_model = await _run_with_model_fallback(
                     session,
                     lambda model, timeout: session.agent.run(
                         body.content,
@@ -382,7 +404,7 @@ async def _run_chat_nonstream(
                     hosted_id, str(hist_err)[:120],
                 )
                 message_history_ref.clear()
-                result = await _run_with_model_fallback(
+                result, winning_model = await _run_with_model_fallback(
                     session,
                     lambda model, timeout: session.agent.run(
                         body.content,
@@ -418,12 +440,21 @@ async def _run_chat_nonstream(
                 approvals[tc.tool_call_id] = True
             logger.info("Non-stream: auto-approving {} deferred tools", sum(v for v in approvals.values()))
             prev_messages = result.all_messages()
-            result = await _run_with_llm_retry(lambda: session.agent.run(
-                deferred_tool_results=DeferredToolResults(approvals=approvals),
-                deps=session.deps,
-                message_history=prev_messages,
-                model_settings={"timeout": settings.chat_timeout},
-            ))
+            # Pin the model that just won the fallback chain rather than re-walking
+            # it from the agent's own (already-failed) model on every approval loop
+            # iteration — the winning model just proved it's reachable.
+            result, winning_model = await _run_with_model_fallback(
+                session,
+                lambda model, timeout: session.agent.run(
+                    deferred_tool_results=DeferredToolResults(approvals=approvals),
+                    deps=session.deps,
+                    message_history=prev_messages,
+                    model=model,
+                    model_settings={"timeout": timeout},
+                ),
+                deadline=deadline,
+                pinned_model=winning_model,
+            )
             new_history = sanitize_history(result.all_messages())[-100:]
             message_history_ref.clear()
             message_history_ref.extend(new_history)
