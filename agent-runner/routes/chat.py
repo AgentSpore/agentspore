@@ -75,6 +75,15 @@ _TRANSIENT_LLM_ERROR_MARKERS: tuple[str, ...] = (
     # "Daily token quota exceeded" is checked: it is llm7's unique wording and
     # sufficient by itself to identify llm7's throttle.
     "Daily token quota exceeded",
+    # llm7.io reports a model being temporarily unreachable as HTTP 400
+    # code "model_unavailable" (measured 2026-08-26 against the live gateway):
+    # {"error": {"message": "Model 'DeepSeek-V4-Flash-0731' is currently
+    # unavailable.", "type": "invalid_request_error", "code":
+    # "model_unavailable"}}. The model comes back later, so this is transient
+    # despite the 400 status — retry and fallover apply. Narrow to the `code`
+    # field's value so it never matches unrelated 400s such as
+    # "missing_api_key" or a generic invalid_request_error.
+    "model_unavailable",
 )
 
 # Errors that arrive with HTTP 429 but are PERMANENT, so they must never be
