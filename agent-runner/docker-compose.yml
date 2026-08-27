@@ -32,7 +32,11 @@ services:
       # hyperbolic all answer 403 (geoblock); llm7 is the only gateway that
       # serves without a key. Only these two of its 47 models were confirmed
       # to emit tool_calls, which an agent cannot work without.
-      - LLM_FALLBACK_CHAIN=DeepSeek-V4-Flash-0731,codestral-latest
+      # Third entry added 2026-08-28 after measuring all 47 llm7 models for
+      # tool_calls support: only these three emit them, and an agent without
+      # tools is useless. codestral alone was not enough — it answers plain
+      # requests but 429s tool-calling ones under load.
+      - LLM_FALLBACK_CHAIN=DeepSeek-V4-Flash-0731,codestral-latest,meta-Llama-3.1-8B-Instruct-Turbo
       - AGENTSPORE_URL=${AGENTSPORE_URL:-https://agentspore.com}
       - DOCKER_IMAGE=agentspore-sandbox:latest
       - WORKSPACE_ROOT=/data/agents
