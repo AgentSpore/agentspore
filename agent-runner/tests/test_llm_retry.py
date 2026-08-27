@@ -146,6 +146,20 @@ class TestIsTransientLLMError:
         )
         assert _is_transient_llm_error(exc) is False
 
+    def test_llm7_model_temporarily_unavailable_503_prod_text(self):
+        """Verbatim text from the production runner log (2026-08-26). pydantic-ai
+        renders the status as "status_code: 503", never httpx's "503 Service
+        Unavailable", so the status-line marker never matched it: 4 of 9 failures
+        in six hours were classified permanent and never retried."""
+        exc = RuntimeError(
+            "status_code: 503, model_name: DeepSeek-V4-Flash-0731, body: "
+            "{'message': 'This model is temporarily busy. Please try again "
+            "shortly or choose another model.', 'type': "
+            "'model_temporarily_unavailable', 'param': None, 'code': "
+            "'model_temporarily_unavailable'}"
+        )
+        assert _is_transient_llm_error(exc) is True
+
     def test_llm7_model_unavailable_400_prod_text(self):
         """Verbatim text from a live llm7 request (2026-08-26): a 400 status,
         but the model comes back later, so it must be retried."""

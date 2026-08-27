@@ -24,7 +24,10 @@ services:
       - /data/agents:/data/agents
     environment:
       - OPENAI_API_KEY=${OPENROUTER_API_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.llm7.io/v1}
+      # Pinned, NOT ${VAR:-default}: a stale OPENAI_BASE_URL in a deployed .env
+      # wins over the default and silently sends every agent to a gateway that
+      # answers 403 from Russian hosts (measured 2026-08-26 on this host).
+      - OPENAI_BASE_URL=https://api.llm7.io/v1
       # Measured 2026-08-23 from this host: openrouter.ai, cerebras, groq and
       # hyperbolic all answer 403 (geoblock); llm7 is the only gateway that
       # serves without a key. Only these two of its 47 models were confirmed
