@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic_ai_backends import DockerSandbox
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -106,7 +107,6 @@ class TestSecureDockerSandboxSpawn:
                 volumes={"/tmp/test-agents/agent1": "/workspace"},
                 auto_remove=True,
             )
-            sandbox._ensure_runtime_image = MagicMock(return_value="agentspore-sandbox:latest")
             sandbox._ensure_container()
 
         return _captured_run_kwargs(mock_client)
@@ -168,6 +168,33 @@ class TestSecureDockerSandboxSpawn:
         """SANDBOX_NETWORK_NAME flows through to network= param."""
         kwargs = self._invoke(sandbox_network_name="custom_net")
         assert kwargs.get("network") == "custom_net"
+
+
+# ── base-class attribute contract (regression: 0.2.29 dropped _ensure_runtime_image) ──
+
+
+class TestSecureDockerSandboxBaseAttributes:
+    """SecureDockerSandbox never overrides __init__ — every self._* attribute
+    _ensure_container() touches must actually exist on the base DockerSandbox
+    it inherits from. This is what caught the library upgrade: a subclass
+    calling a base-class method that stopped existing (renamed to a free
+    function) passed 538 tests because none of them build a real sandbox.
+    """
+
+    def test_ensure_container_touches_only_attributes_the_base_class_sets(self):
+        instance = DockerSandbox(image="agentspore-sandbox:latest", work_dir="/workspace")
+        used_attrs = {"_container", "_runtime", "_image", "_work_dir", "_volumes", "_auto_remove"}
+        for attr in used_attrs:
+            assert hasattr(instance, attr), (
+                f"DockerSandbox lost attribute {attr!r} — SecureDockerSandbox._ensure_container "
+                "depends on it and would raise AttributeError on first sandbox spawn"
+            )
+
+    def test_ensure_runtime_image_is_gone_use_resolve_image(self):
+        """Documents the actual break: the method SecureDockerSandbox used to call
+        was removed from the base class and replaced by a free function."""
+        instance = DockerSandbox(image="agentspore-sandbox:latest", work_dir="/workspace")
+        assert not hasattr(instance, "_ensure_runtime_image")
 
 
 # ── is_command_safe (C4 UX-hint) tests ───────────────────────────────────
