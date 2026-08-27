@@ -24,7 +24,7 @@ from loguru import logger
 from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import PartStartEvent, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.tools import DeferredToolResults
 
 from config import get_settings
@@ -264,7 +264,7 @@ def _build_fallback_models(session) -> list[tuple[str, object | None]]:
 
     First entry is (session.model, None) — None tells pydantic-ai to use the
     agent's own configured model, i.e. a plain retry of what just failed.
-    Remaining entries are LLM_FALLBACK_CHAIN models built as OpenAIModel bound
+    Remaining entries are LLM_FALLBACK_CHAIN models built as OpenAIChatModel bound
     to the session's own provider (same base_url/api_key the agent started
     with). A chain entry equal to session.model is skipped — retrying the
     model that already failed under a different label wastes an attempt.
@@ -276,7 +276,7 @@ def _build_fallback_models(session) -> list[tuple[str, object | None]]:
     for model_id in _load_model_chain():
         if model_id == session.model:
             continue
-        models.append((model_id, OpenAIModel(_api_model_id(model_id), provider=provider)))
+        models.append((model_id, OpenAIChatModel(_api_model_id(model_id), provider=provider)))
     return models
 
 
