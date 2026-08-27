@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic_ai import DeferredToolRequests, FunctionToolResultEvent
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import PartStartEvent, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.tools import DeferredToolResults
@@ -138,7 +138,20 @@ def _is_transient_llm_error(exc: Exception) -> bool:
     A permanent provider error wins over the transient markers: HTTP 429 covers
     both "rate limited" (retry) and "insufficient balance" (hopeless), so the
     JSON error code decides.
+
+    A bare ModelAPIError that is NOT a ModelHTTPError is pydantic-ai's wrapper
+    for a network-transport failure (openai SDK APIConnectionError, including
+    its APITimeoutError subclass) — no HTTP response was ever received, so
+    there is no status code or body to inspect (measured 2026-08-28 in prod:
+    "Chat error: ModelAPIError('Connection error.')" fell through every string
+    marker and was treated as permanent). Verified against the installed
+    pydantic_ai.models.openai._map_api_errors: every APIStatusError (any
+    response with a 4xx/5xx status) is raised as ModelHTTPError, so this
+    branch can never misclassify a real 401/quota/config error — those all
+    carry ModelHTTPError and keep going through the string markers below.
     """
+    if type(exc) is ModelAPIError and not isinstance(exc, ModelHTTPError):
+        return True
     msg = str(exc)
     if any(marker in msg for marker in _PERMANENT_LLM_ERROR_MARKERS):
         return False

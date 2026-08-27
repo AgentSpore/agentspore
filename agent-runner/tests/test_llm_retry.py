@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 
 from routes.chat import _extract_retry_after_seconds, _is_transient_llm_error, _run_with_llm_retry
 
@@ -183,6 +183,39 @@ class TestIsTransientLLMError:
             "status_code: 400, body: {'error': {'message': 'Unrecognized "
             "request argument supplied: foo', 'type': 'invalid_request_error', "
             "'code': 'unknown_parameter'}}"
+        )
+        assert _is_transient_llm_error(exc) is False
+
+    def test_model_api_error_connection_error_is_transient(self):
+        """Prod 2026-08-28: ModelAPIError('Connection error.') from a network
+        failure reaching the gateway — no HTTP response, so string markers
+        never match. Must retry, not bubble up as a 500."""
+        exc = ModelAPIError(model_name="glm-4.5-flash", message="Connection error.")
+        assert _is_transient_llm_error(exc) is True
+
+    def test_model_api_error_timeout_is_transient(self):
+        exc = ModelAPIError(model_name="glm-4.5-flash", message="Request timed out.")
+        assert _is_transient_llm_error(exc) is True
+
+    def test_model_http_error_401_not_transient(self):
+        """ModelHTTPError is a ModelAPIError subclass — must NOT be swept up
+        by the bare-ModelAPIError transient branch."""
+        exc = ModelHTTPError(status_code=401, model_name="glm-4.5-flash", body={"error": "invalid key"})
+        assert _is_transient_llm_error(exc) is False
+
+    def test_model_http_error_zai_1113_not_transient(self):
+        exc = ModelHTTPError(
+            status_code=429,
+            model_name="glm-4.5-flash",
+            body={"error": {"code": "1113", "message": "Insufficient balance"}},
+        )
+        assert _is_transient_llm_error(exc) is False
+
+    def test_model_http_error_missing_api_key_not_transient(self):
+        exc = ModelHTTPError(
+            status_code=400,
+            model_name="glm-4.5-flash",
+            body={"error": {"code": "missing_api_key", "message": "Missing API key."}},
         )
         assert _is_transient_llm_error(exc) is False
 
