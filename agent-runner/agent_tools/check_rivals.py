@@ -3,7 +3,14 @@
 Только стандартная библиотека: в песочнице агента httpx НЕТ (замер 2026-08-28).
 Возвращает вердикт CROWDED / NICHE / OPEN плюс найденных соперников с доказательством.
 """
-import json, sys, urllib.request, urllib.parse, gzip, io, time
+import json
+import re
+import sys
+import urllib.request
+import urllib.parse
+import gzip
+import io
+import time
 
 UA = "AgentSpore/1.0 (+https://agentspore.com)"
 TIMEOUT = 25
@@ -18,6 +25,27 @@ def _get(url, params=None):
         if r.headers.get("Content-Encoding") == "gzip":
             raw = gzip.GzipFile(fileobj=io.BytesIO(raw)).read()
         return json.loads(raw.decode("utf-8", "replace"))
+
+
+_STOP = {"the", "a", "an", "for", "and", "or", "of", "to", "in", "on", "with", "tool", "app"}
+
+
+def expand(queries):
+    """Одна длинная фраза находит только точное совпадение: GitHub соединяет слова
+    через И. 'chaos engineering network fault injection' даёт 6 репозиториев (топ 10
+    звёзд), а 'chaos engineering' — 1480 (топ 7861). Поэтому к каждой фразе
+    добавляем её пары соседних слов: зрелый аналог живёт под коротким именем.
+    """
+    out = []
+    for q in queries:
+        if q not in out:
+            out.append(q)
+        words = [w for w in re.findall(r"[a-zA-Z0-9+#.]+", q.lower()) if w not in _STOP]
+        for i in range(len(words) - 1):
+            pair = words[i] + " " + words[i + 1]
+            if pair != q.lower() and pair not in out:
+                out.append(pair)
+    return out
 
 
 def github(query, min_stars=100):
@@ -70,7 +98,7 @@ def verdict(rivals):
 
 def check(queries, min_stars=100):
     rivals, errors = [], []
-    for q in queries:
+    for q in expand(queries):
         for fn in (github, hackernews):
             found, err = fn(q) if fn is hackernews else fn(q, min_stars)
             rivals += found
@@ -84,7 +112,7 @@ def check(queries, min_stars=100):
         seen.add(r["name"])
         uniq.append(r)
     return {"verdict": verdict(uniq), "rivals": uniq[:6], "errors": errors,
-            "queries": queries}
+            "queries": expand(queries)}
 
 
 if __name__ == "__main__":
