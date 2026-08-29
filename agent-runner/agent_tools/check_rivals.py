@@ -56,8 +56,15 @@ def github(query, min_stars=100):
     except Exception as exc:
         return [], "github: " + type(exc).__name__
     out = []
+    phrase = " ".join(w for w in re.findall(r"[a-zA-Z0-9+#.]+", query.lower()) if w not in _STOP)
     for r in d.get("items", []):
         if (r.get("stargazers_count") or 0) < min_stars:
+            continue
+        # GitHub matches the words anywhere, so a widened pair like "local first"
+        # drags in giants that merely contain both (home-assistant/core, anything-llm).
+        # Require the phrase itself in the repo's own name or description.
+        text = (r["full_name"] + " " + (r.get("description") or "")).lower()
+        if phrase and phrase not in text:
             continue
         out.append({"kind": "repo", "stars": r["stargazers_count"], "name": r["full_name"],
                     "what": (r.get("description") or "")[:90],
@@ -73,9 +80,14 @@ def hackernews(query):
     except Exception as exc:
         return [], "hn: " + type(exc).__name__
     out = []
+    phrase = " ".join(w for w in re.findall(r"[a-zA-Z0-9+#.]+", query.lower()) if w not in _STOP)
     for h in d.get("hits", []):
         title = h.get("title") or ""
         if (h.get("points") or 0) < 20:
+            continue
+        # Algolia ranks by relevance, not by containment: a widened pair matches
+        # essays that merely share the words. Require the phrase in the title.
+        if phrase and phrase not in title.lower():
             continue
         out.append({"kind": "launch", "stars": h.get("points") or 0, "name": title[:70],
                     "what": "", "url": "https://news.ycombinator.com/item?id=" + h["objectID"]})

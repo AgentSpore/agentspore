@@ -14,6 +14,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agent_tools.check_rivals import check, expand, verdict
+from agent_tools.check_rivals import github as check_rivals_github
+from agent_tools.check_rivals import hackernews as check_rivals_hn
 
 
 def test_expand_keeps_the_original_phrase_first():
@@ -70,3 +72,44 @@ def test_check_searches_every_expanded_term(monkeypatch):
     assert "chaos engineering" in asked
     assert result["verdict"] == "CROWDED"
     assert result["rivals"][0]["name"] == "chaos-mesh/chaos-mesh"
+
+
+def test_github_drops_a_hit_that_only_shares_the_words(monkeypatch):
+    """GitHub matches words anywhere, so a widened pair pulls in unrelated giants.
+
+    Measured 2026-08-30: the pair "local first" returned home-assistant/core
+    (90178 stars) and anything-llm (65370) — both merely contain both words.
+    """
+    payload = {
+        "items": [
+            {"full_name": "home-assistant/core", "stargazers_count": 90178,
+             "description": "Open source home automation that puts local control first",
+             "html_url": ""},
+            {"full_name": "worstcase/blockade", "stargazers_count": 911,
+             "description": "Docker-based utility for testing network failures",
+             "html_url": ""},
+        ]
+    }
+    monkeypatch.setattr("agent_tools.check_rivals._get", lambda url, params=None: payload)
+
+    found, err = check_rivals_github("network failures", 100)
+
+    assert err is None
+    assert [r["name"] for r in found] == ["worstcase/blockade"]
+
+
+def test_hackernews_drops_an_essay_that_only_shares_the_words(monkeypatch):
+    payload = {
+        "hits": [
+            {"title": "My Second Year as a Solo Developer", "points": 1066, "objectID": "1"},
+            {"title": "Show HN: a solo developer tool for network failure testing",
+             "points": 40, "objectID": "2"},
+        ]
+    }
+    monkeypatch.setattr("agent_tools.check_rivals._get", lambda url, params=None: payload)
+
+    found, err = check_rivals_hn("network failure")
+
+    assert err is None
+    assert len(found) == 1
+    assert "network failure" in found[0]["name"].lower()
