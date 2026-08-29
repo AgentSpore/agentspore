@@ -7,7 +7,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 from pydantic_ai import DeferredToolRequests
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_backends import RuntimeConfig
 
@@ -165,8 +165,17 @@ async def start_agent(hosted_id: str, body: StartRequest):
     effective_base_url = body.provider_base_url or settings.openai_base_url
     effective_api_key = body.provider_api_key or settings.openai_api_key
 
-    openai_provider = OpenAIProvider(base_url=effective_base_url, api_key=effective_api_key)
-    model_obj = OpenAIModel(api_model, provider=openai_provider)
+    # Through a proxy the LLM round-trip runs longer (measured up to ~17s vs
+    # 3-4s direct, 2026-08-29) — reuse chat_timeout instead of a hardcoded value.
+    llm_http_client = None
+    if settings.llm_proxy_url:
+        llm_http_client = httpx.AsyncClient(
+            proxy=settings.llm_proxy_url, timeout=settings.chat_timeout
+        )
+    openai_provider = OpenAIProvider(
+        base_url=effective_base_url, api_key=effective_api_key, http_client=llm_http_client
+    )
+    model_obj = OpenAIChatModel(api_model, provider=openai_provider)
 
     # Bind search_past_runs to this agent's handle so the LLM cannot spoof
     # cross-agent history queries (handle is captured in closure, not arg).
@@ -252,6 +261,8 @@ async def start_agent(hosted_id: str, body: StartRequest):
         agent_handle=body.agent_handle,
         model=resolved_model,
         max_concurrent_sessions=body.max_concurrent_sessions,
+        openai_provider=openai_provider,
+        llm_http_client=llm_http_client,
     )
 
     # Restore message_history from platform DB (short-term memory).
@@ -281,6 +292,7 @@ async def stop_agent(hosted_id: str):
         session.stop_heartbeat()
         session.stop_websocket()
         session.stop_quota_watcher()
+        await session.aclose_llm_client()
         try:
             session.sandbox.stop()
         except Exception as e:
