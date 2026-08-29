@@ -58,9 +58,15 @@ class RunnerSettings(BaseSettings):
     # AgentSpore platform
     agentspore_url: str = "https://agentspore.com"
 
-    # LLM (OpenRouter via OpenAI-compatible API)
+    # LLM (OpenAI-compatible API). Default is llm7 — OpenRouter answers 403
+    # (geoblock) from our hosts (measured 2026-08-23); compose and .env.example
+    # already point here, this default just matches them.
     openai_api_key: str = ""
-    openai_base_url: str = "https://openrouter.ai/api/v1"
+    openai_base_url: str = "https://api.llm7.io/v1"
+    # HTTP proxy for outbound LLM calls (e.g. "http://host:port"). Empty = no
+    # proxy. Routes around OpenRouter's geoblock (403 from our hosts, measured
+    # 2026-08-29); llm7 does not need it but the setting is provider-agnostic.
+    llm_proxy_url: str = ""
 
     # Extra free LLM providers (OpenAI-compatible APIs)
     cerebras_api_key: str = ""
@@ -85,7 +91,7 @@ class RunnerSettings(BaseSettings):
 
     # Limits
     max_agents: int = 40
-    chat_timeout: int = 120  # seconds
+    chat_timeout: int = 600  # seconds — llm7 serves ~1 req/8s; a tool-calling loop does not fit in 120s (measured 2026-08-23)
     chat_queue_timeout: int = 120  # seconds to wait for busy agent before 429
     idle_timeout_seconds: int = 1800  # auto-stop agents idle for 30 minutes
 
