@@ -27,7 +27,7 @@ services:
       # Pinned, NOT ${VAR:-default}: a stale OPENAI_BASE_URL in a deployed .env
       # wins over the default and silently sends every agent to a gateway that
       # answers 403 from Russian hosts (measured 2026-08-26 on this host).
-      - OPENAI_BASE_URL=https://api.llm7.io/v1
+      - OPENAI_BASE_URL=https://openrouter.ai/api/v1
       # Measured 2026-08-23 from this host: openrouter.ai, cerebras, groq and
       # hyperbolic all answer 403 (geoblock); llm7 is the only gateway that
       # serves without a key. Only these two of its 47 models were confirmed
@@ -36,7 +36,13 @@ services:
       # tool_calls support: only these three emit them, and an agent without
       # tools is useless. codestral alone was not enough — it answers plain
       # requests but 429s tool-calling ones under load.
-      - LLM_FALLBACK_CHAIN=DeepSeek-V4-Flash-0731,codestral-latest,meta-Llama-3.1-8B-Instruct-Turbo
+      # OpenRouter is 403-geoblocked from this host; the key is live (measured
+      # 2026-08-29). This proxy restores it: 6/6 requests, 0 failures, 2.6s avg
+      # from this host, tool_calls confirmed on free models.
+      - LLM_PROXY_URL=http://89.169.135.131:80
+      # Free OpenRouter models with tool_calls, measured live 2026-08-29 through
+      # the proxy: minimax-m3 9.2s, nemotron-3.5-lightning 17.2s, north-mini-code 11.3s.
+      - LLM_FALLBACK_CHAIN=minimax/minimax-m3:free,cohere/north-mini-code:free,nvidia/nemotron-3.5-lightning:free
       - AGENTSPORE_URL=${AGENTSPORE_URL:-https://agentspore.com}
       - DOCKER_IMAGE=agentspore-sandbox:latest
       - WORKSPACE_ROOT=/data/agents
