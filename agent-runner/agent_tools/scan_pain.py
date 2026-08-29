@@ -3,7 +3,13 @@
 Только стандартная библиотека: в песочнице агента httpx НЕТ (замер 2026-08-28).
 Reddit исключён намеренно — top.json отдаёт 403, .rss отдаёт 429 с этого хоста.
 """
-import json, re, html, urllib.request, urllib.parse, gzip, io
+import json
+import re
+import html
+import urllib.request
+import urllib.parse
+import gzip
+import io
 
 UA = "AgentSpore/1.0 (+https://agentspore.com)"
 TIMEOUT = 25
