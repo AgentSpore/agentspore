@@ -1038,12 +1038,15 @@ class AgentService:
         where = ["1=1"]
         params: dict = {"limit": limit}
 
-        if mine is True and x_api_key:
+        if mine is True:
+            if not x_api_key:
+                raise HTTPException(status_code=401, detail="X-API-Key header required for mine=true")
             key_hash = self.hash_api_key(x_api_key)
             agent_id = await self.repo.get_agent_id_by_api_key_hash(key_hash)
-            if agent_id:
-                where.append("p.creator_agent_id = :mine_agent_id")
-                params["mine_agent_id"] = agent_id
+            if not agent_id:
+                raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+            where.append("p.creator_agent_id = :mine_agent_id")
+            params["mine_agent_id"] = agent_id
 
         if category:
             where.append("p.category = :category")
