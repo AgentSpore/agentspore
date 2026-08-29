@@ -10,7 +10,9 @@ import asyncio
 
 import pytest
 
-from routes.chat import _is_transient_llm_error, _run_with_llm_retry
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+
+from routes.chat import _extract_retry_after_seconds, _is_transient_llm_error, _run_with_llm_retry
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +116,156 @@ class TestIsTransientLLMError:
     def test_401_unauthorized_not_transient(self):
         exc = RuntimeError("401 Unauthorized: bad API key")
         assert _is_transient_llm_error(exc) is False
+
+    def test_llm7_quota_exceeded_prod_text(self):
+        """Verbatim text from the production runner log (2026-08-26)."""
+        exc = RuntimeError(
+            "status_code: 429, model_name: DeepSeek-V4-Flash-0731, body: "
+            "{'message': 'Daily token quota exceeded. Retry after 34 seconds.', "
+            "'type': 'insufficient_quota', 'param': None, 'code': 'quota_exceeded', "
+            "'retry_after': 34}"
+        )
+        assert _is_transient_llm_error(exc) is True
+
+    def test_openai_insufficient_quota_not_transient(self):
+        """OpenAI's permanent zero-balance error shares 'insufficient_quota' with
+        llm7's throttle wording, but is hopeless until the plan is paid — must
+        not be retried under the held chat_lock."""
+        exc = RuntimeError(
+            "Error code: 429 - {'error': {'message': 'You exceeded your current "
+            "quota, please check your plan and billing details.', "
+            "'type': 'insufficient_quota', 'code': 'insufficient_quota'}}"
+        )
+        assert _is_transient_llm_error(exc) is False
+
+    def test_zai_1113_still_not_transient_with_llm7_markers_present(self):
+        """Existing permanent-error markers must still win after the llm7 addition."""
+        exc = RuntimeError(
+            "Error code: 429 - {'error': {'code': '1113', "
+            "'message': 'Insufficient balance or no resource package'}}"
+        )
+        assert _is_transient_llm_error(exc) is False
+
+    def test_llm7_model_temporarily_unavailable_503_prod_text(self):
+        """Verbatim text from the production runner log (2026-08-26). pydantic-ai
+        renders the status as "status_code: 503", never httpx's "503 Service
+        Unavailable", so the status-line marker never matched it: 4 of 9 failures
+        in six hours were classified permanent and never retried."""
+        exc = RuntimeError(
+            "status_code: 503, model_name: DeepSeek-V4-Flash-0731, body: "
+            "{'message': 'This model is temporarily busy. Please try again "
+            "shortly or choose another model.', 'type': "
+            "'model_temporarily_unavailable', 'param': None, 'code': "
+            "'model_temporarily_unavailable'}"
+        )
+        assert _is_transient_llm_error(exc) is True
+
+    def test_llm7_model_unavailable_400_prod_text(self):
+        """Verbatim text from a live llm7 request (2026-08-26): a 400 status,
+        but the model comes back later, so it must be retried."""
+        exc = RuntimeError(
+            "status_code: 400, model_name: DeepSeek-V4-Flash-0731, body: "
+            "{'error': {'message': \"Model 'DeepSeek-V4-Flash-0731' is "
+            "currently unavailable.\", 'type': 'invalid_request_error', "
+            "'param': None, 'code': 'model_unavailable'}}"
+        )
+        assert _is_transient_llm_error(exc) is True
+
+    def test_llm7_missing_api_key_400_not_transient(self):
+        exc = RuntimeError(
+            "status_code: 400, body: {'error': {'message': 'Missing API key.', "
+            "'type': 'authentication_error', 'code': 'missing_api_key'}}"
+        )
+        assert _is_transient_llm_error(exc) is False
+
+    def test_llm7_other_invalid_request_400_not_transient(self):
+        exc = RuntimeError(
+            "status_code: 400, body: {'error': {'message': 'Unrecognized "
+            "request argument supplied: foo', 'type': 'invalid_request_error', "
+            "'code': 'unknown_parameter'}}"
+        )
+        assert _is_transient_llm_error(exc) is False
+
+    def test_model_api_error_connection_error_is_transient(self):
+        """Prod 2026-08-28: ModelAPIError('Connection error.') from a network
+        failure reaching the gateway — no HTTP response, so string markers
+        never match. Must retry, not bubble up as a 500."""
+        exc = ModelAPIError(model_name="glm-4.5-flash", message="Connection error.")
+        assert _is_transient_llm_error(exc) is True
+
+    def test_model_api_error_timeout_is_transient(self):
+        exc = ModelAPIError(model_name="glm-4.5-flash", message="Request timed out.")
+        assert _is_transient_llm_error(exc) is True
+
+    def test_model_http_error_401_not_transient(self):
+        """ModelHTTPError is a ModelAPIError subclass — must NOT be swept up
+        by the bare-ModelAPIError transient branch."""
+        exc = ModelHTTPError(status_code=401, model_name="glm-4.5-flash", body={"error": "invalid key"})
+        assert _is_transient_llm_error(exc) is False
+
+    def test_model_http_error_zai_1113_not_transient(self):
+        exc = ModelHTTPError(
+            status_code=429,
+            model_name="glm-4.5-flash",
+            body={"error": {"code": "1113", "message": "Insufficient balance"}},
+        )
+        assert _is_transient_llm_error(exc) is False
+
+    def test_model_http_error_missing_api_key_not_transient(self):
+        exc = ModelHTTPError(
+            status_code=400,
+            model_name="glm-4.5-flash",
+            body={"error": {"code": "missing_api_key", "message": "Missing API key."}},
+        )
+        assert _is_transient_llm_error(exc) is False
+
+
+# ---------------------------------------------------------------------------
+# _extract_retry_after_seconds
+# ---------------------------------------------------------------------------
+
+class TestExtractRetryAfterSeconds:
+    def test_model_http_error_with_retry_after_flat_body(self):
+        """llm7's actual body shape: the openai SDK unwraps the 'error' envelope
+        (measured 2026-08-26 against a live 429: body keys were
+        ['message', 'type', 'param', 'code', 'retry_after'], no 'error' key)."""
+        exc = ModelHTTPError(
+            status_code=429,
+            model_name="DeepSeek-V4-Flash-0731",
+            body={
+                "message": "Daily token quota exceeded. Retry after 34 seconds.",
+                "type": "insufficient_quota",
+                "param": None,
+                "code": "quota_exceeded",
+                "retry_after": 34,
+            },
+        )
+        assert _extract_retry_after_seconds(exc) == 34.0
+
+    def test_model_http_error_with_retry_after_nested_body(self):
+        """Fallback path for gateways that still wrap the body in 'error'."""
+        exc = ModelHTTPError(
+            status_code=429,
+            model_name="DeepSeek-V4-Flash-0731",
+            body={"error": {"code": "quota_exceeded", "retry_after": 34}},
+        )
+        assert _extract_retry_after_seconds(exc) == 34.0
+
+    def test_non_model_http_error_returns_none(self):
+        exc = RuntimeError("Error code: 429 - {'error': {'retry_after': 34}}")
+        assert _extract_retry_after_seconds(exc) is None
+
+    def test_model_http_error_without_retry_after_returns_none(self):
+        exc = ModelHTTPError(
+            status_code=502,
+            model_name="some-model",
+            body={"message": "Bad Gateway"},
+        )
+        assert _extract_retry_after_seconds(exc) is None
+
+    def test_model_http_error_non_dict_body_returns_none(self):
+        exc = ModelHTTPError(status_code=429, model_name="some-model", body="not a dict")
+        assert _extract_retry_after_seconds(exc) is None
 
 
 # ---------------------------------------------------------------------------
@@ -327,3 +479,64 @@ class TestRunWithLLMRetry:
                 )
 
         assert len(set(observed)) > 1
+
+    @pytest.mark.asyncio
+    async def test_retry_after_within_cap_wins_over_exponential(self, monkeypatch):
+        """A small server-reported retry_after must be honored over backoff."""
+        delays: list[float] = []
+
+        async def fake_sleep(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr("routes.chat.asyncio.sleep", fake_sleep)
+        attempts = []
+
+        async def factory_body():
+            attempts.append(1)
+            if len(attempts) < 2:
+                raise ModelHTTPError(
+                    status_code=429,
+                    model_name="some-model",
+                    body={
+                        "message": "Daily token quota exceeded. Retry after 34 seconds.",
+                        "type": "insufficient_quota",
+                        "code": "quota_exceeded",
+                        "retry_after": 34,
+                    },
+                )
+            return "ok"
+
+        result = await _run_with_llm_retry(lambda: factory_body(), base_delay=0.001)
+        assert result == "ok"
+        assert delays == [34.0]
+
+    @pytest.mark.asyncio
+    async def test_retry_after_above_cap_falls_back_to_exponential(self, monkeypatch):
+        """A multi-hour throttle window must not be waited out inline."""
+        delays: list[float] = []
+
+        async def fake_sleep(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr("routes.chat.asyncio.sleep", fake_sleep)
+        attempts = []
+
+        async def factory_body():
+            attempts.append(1)
+            if len(attempts) < 2:
+                raise ModelHTTPError(
+                    status_code=429,
+                    model_name="some-model",
+                    body={
+                        "message": "Daily token quota exceeded. Retry after 84297 seconds.",
+                        "type": "insufficient_quota",
+                        "code": "quota_exceeded",
+                        "retry_after": 84297,
+                    },
+                )
+            return "ok"
+
+        result = await _run_with_llm_retry(lambda: factory_body(), base_delay=1.0)
+        assert result == "ok"
+        assert len(delays) == 1
+        assert 0.5 <= delays[0] <= 1.0

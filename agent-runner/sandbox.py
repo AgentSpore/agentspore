@@ -7,6 +7,9 @@ from pathlib import Path
 import docker
 from loguru import logger
 from pydantic_ai_backends import DockerSandbox
+# resolve_image is only exported from this subpackage, not the top-level
+# pydantic_ai_backends package — path may move in a future library release.
+from pydantic_ai_backends.backends.docker.sandbox import resolve_image
 
 from ssrf_guard import extract_urls, is_safe_url
 
@@ -116,7 +119,7 @@ class SecureDockerSandbox(DockerSandbox):
 
         client = docker.from_env()
 
-        image = self._ensure_runtime_image(client)
+        image = resolve_image(client, self._runtime, self._image)
 
         # pip --user writes to ~/.local, and the root filesystem is mounted
         # read-only (see read_only=True below), so an agent asking for a library
