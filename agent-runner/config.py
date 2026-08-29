@@ -63,6 +63,10 @@ class RunnerSettings(BaseSettings):
     # already point here, this default just matches them.
     openai_api_key: str = ""
     openai_base_url: str = "https://api.llm7.io/v1"
+    # HTTP proxy for outbound LLM calls (e.g. "http://host:port"). Empty = no
+    # proxy. Routes around OpenRouter's geoblock (403 from our hosts, measured
+    # 2026-08-29); llm7 does not need it but the setting is provider-agnostic.
+    llm_proxy_url: str = ""
 
     # Extra free LLM providers (OpenAI-compatible APIs)
     cerebras_api_key: str = ""

@@ -103,7 +103,8 @@ class AgentSession:
                  api_key: str = "", heartbeat_seconds: int = 3600,
                  auto_react: bool = True, max_reactions_per_minute: int = 10,
                  agent_handle: str = "", model: str = "",
-                 max_concurrent_sessions: int = 1, openai_provider=None):
+                 max_concurrent_sessions: int = 1, openai_provider=None,
+                 llm_http_client: httpx.AsyncClient | None = None):
         self.hosted_id = hosted_id
         self.sandbox = sandbox
         self.agent = agent
@@ -117,6 +118,10 @@ class AgentSession:
         # build OpenAIModel fallback objects on transient LLM errors, so the
         # fallback chain talks to the same endpoint instead of the platform default.
         self.openai_provider = openai_provider
+        # Only set when LLM_PROXY_URL configures a proxied http_client for the
+        # provider above; closed on session stop to avoid leaking connections
+        # across the agent's lifetime (real concern at max_agents=40).
+        self.llm_http_client = llm_http_client
         self.heartbeat_task: asyncio.Task | None = None
         self.last_activity: float = time.time()
         # Backward-compat global lock (used by auto_react and sessionless requests)
@@ -279,6 +284,12 @@ class AgentSession:
         if self.quota_watcher_task:
             self.quota_watcher_task.cancel()
             self.quota_watcher_task = None
+
+    async def aclose_llm_client(self):
+        """Close the proxied LLM http_client, if one was configured."""
+        if self.llm_http_client is not None:
+            await self.llm_http_client.aclose()
+            self.llm_http_client = None
 
     async def _handle_platform_event(self, event: dict, ws):
         """Handle an event received from the platform.
@@ -471,6 +482,7 @@ async def idle_cleanup_loop():
                 session.stop_heartbeat()
                 session.stop_websocket()
                 session.stop_quota_watcher()
+                await session.aclose_llm_client()
                 try:
                     session.sandbox.stop()
                 except Exception:
