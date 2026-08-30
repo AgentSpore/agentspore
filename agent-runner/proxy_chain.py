@@ -12,6 +12,15 @@ proxy and is installed as a single ``httpx.AsyncClient``'s transport, so the
 client built once per agent session (``build_llm_http_client``) can recover
 mid-session without a restart. It remembers the last-good index so a healthy
 proxy is not re-tried after a dead one on every request.
+
+It advances on ``httpx.TransportError``, the common ancestor: ``ReadError``
+and ``ProxyError`` are siblings of ``ConnectError``, not subclasses, and a
+proxy that accepts the connection then drops the response raises the former —
+one of the shapes measured in production.
+
+Failover covers request establishment only. ``handle_async_request`` returns
+once headers arrive, so a proxy that dies mid-body raises to the caller with
+no retry; a partly-consumed stream cannot be safely replayed here.
 """
 
 from __future__ import annotations
@@ -23,7 +32,9 @@ from loguru import logger
 def _mask(proxy_url: str) -> str:
     """host:port only — no credentials survive into a log line."""
     parsed = httpx.URL(proxy_url)
-    return f"{parsed.scheme}://{parsed.host}:{parsed.port}" if parsed.host else "<invalid>"
+    if not parsed.host:
+        return "<invalid>"
+    return f"{parsed.scheme}://{parsed.host}:{parsed.port}" if parsed.port else f"{parsed.scheme}://{parsed.host}"
 
 
 class ProxyChainTransport(httpx.AsyncBaseTransport):
@@ -48,7 +59,7 @@ class ProxyChainTransport(httpx.AsyncBaseTransport):
             index = (self._current + offset) % len(self._transports)
             try:
                 response = await self._transports[index].handle_async_request(request)
-            except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
+            except httpx.TransportError as exc:
                 last_exc = exc
                 logger.warning(
                     "Proxy chain: '{}' failed ({}) — trying '{}'",
@@ -66,7 +77,6 @@ class ProxyChainTransport(httpx.AsyncBaseTransport):
             self._current = index
             return response
 
-        assert last_exc is not None
         raise last_exc
 
     async def aclose(self) -> None:
