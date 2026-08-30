@@ -90,6 +90,23 @@ def sanitize_history(messages: list) -> list:
         return cleaned
 
 
+def sanitize_history_in_place(history_ref: list) -> None:
+    """Sanitize a session's live history list in place, defensively.
+
+    Meant for failure paths: a turn that raised may have left message_history
+    holding an orphan ToolCallPart with no matching return, which would fail
+    every subsequent turn at the provider. sanitize_history() itself raising
+    must not mask the original error, so any failure here is only logged.
+    """
+    try:
+        cleaned = sanitize_history(history_ref)
+    except Exception as e:
+        logger.warning("Failure-path history sanitize raised, leaving history as-is: {}", e)
+        return
+    if cleaned is not history_ref:
+        history_ref[:] = cleaned
+
+
 class AgentSession:
     """Holds a running agent's sandbox, agent instance, message history, and heartbeat task.
 
@@ -451,6 +468,7 @@ class AgentSession:
                 logger.info("Auto-reacted to {} for {}", event.get("type"), self.hosted_id)
             except Exception as e:
                 logger.warning("Auto-react failed for {}: {}", self.hosted_id, e)
+                sanitize_history_in_place(self.message_history)
 
 
 # Active agent sessions
