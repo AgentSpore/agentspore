@@ -50,13 +50,12 @@ class ProxyChainTransport(httpx.AsyncBaseTransport):
                 response = await self._transports[index].handle_async_request(request)
             except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
                 last_exc = exc
-                if index != self._current or offset > 0:
-                    logger.warning(
-                        "Proxy chain: '{}' failed ({}) — switching to '{}'",
-                        _mask(self._proxy_urls[index]),
-                        type(exc).__name__,
-                        _mask(self._proxy_urls[(index + 1) % len(self._transports)]),
-                    )
+                logger.warning(
+                    "Proxy chain: '{}' failed ({}) — trying '{}'",
+                    _mask(self._proxy_urls[index]),
+                    type(exc).__name__,
+                    _mask(self._proxy_urls[(index + 1) % len(self._transports)]),
+                )
                 continue
 
             if index != self._current:
