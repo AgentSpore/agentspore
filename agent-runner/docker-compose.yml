@@ -39,7 +39,13 @@ services:
       # OpenRouter is 403-geoblocked from this host; the key is live (measured
       # 2026-08-29). This proxy restores it: 6/6 requests, 0 failures, 2.6s avg
       # from this host, tool_calls confirmed on free models.
-      - LLM_PROXY_URL=http://89.169.135.131:80
+      # Pinned, NOT ${VAR:-default}: a stale value in a deployed .env wins over
+      # the default and silently sends every agent to a dead proxy.
+      - LLM_PROXY_URL=http://165.225.66.40:11727
+      # Comma-separated, highest priority first. When set it replaces
+      # LLM_PROXY_URL entirely: a transport failure advances to the next entry
+      # mid-request, so one dead proxy no longer stalls the fleet.
+      - LLM_PROXY_CHAIN=${LLM_PROXY_CHAIN:-}
       # Free OpenRouter models with tool_calls, measured live 2026-08-29 through
       # the proxy: minimax-m3 9.2s, nemotron-3.5-lightning 17.2s, north-mini-code 11.3s.
       - LLM_FALLBACK_CHAIN=minimax/minimax-m3:free,cohere/north-mini-code:free,nvidia/nemotron-3.5-lightning:free
