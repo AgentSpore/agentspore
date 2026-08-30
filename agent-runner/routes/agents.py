@@ -13,6 +13,7 @@ from pydantic_ai_backends import RuntimeConfig
 
 from config import get_settings
 from llm_fallback import resolve_model_for_agent
+from proxy_chain import ProxyChainTransport
 from pydantic_deep import DeepAgent, DeepAgentDeps, create_deep_agent
 from sandbox import SecureDockerSandbox
 from schemas import ActionResponse, StartRequest
@@ -24,6 +25,11 @@ settings = get_settings()
 
 router = APIRouter()
 
+
+
+# Measured 2026-08-30: a working proxy completes a connect in 1.4-9.5s, so a
+# connect still pending at 30s is dead rather than slow.
+PROXY_CONNECT_TIMEOUT_S = 30.0
 
 
 def build_llm_http_client() -> httpx.AsyncClient | None:
@@ -40,7 +46,26 @@ def build_llm_http_client() -> httpx.AsyncClient | None:
     15s, 1s and 0.0 (pooling disabled entirely) all scored 3/4. The pool is not
     the variable; the proxy drops roughly one call in four whatever the client
     does. Retries in routes/chat.py are what carry a turn through it.
+
+    LLM_PROXY_CHAIN (comma-separated, highest priority first) installs
+    ProxyChainTransport instead of a single proxy: a transport-level failure
+    advances to the next proxy for that request, inside the same client the
+    session reuses for hours, so a session that started on a dead proxy
+    recovers without a restart. Unset keeps LLM_PROXY_URL's exact behavior.
     """
+    chain_raw = settings.llm_proxy_chain.strip()
+    if chain_raw:
+        proxy_urls = [url.strip() for url in chain_raw.split(",") if url.strip()]
+        if proxy_urls:
+            transport = ProxyChainTransport(proxy_urls)
+            # A flat timeout would apply per proxy attempt: three hung proxies
+            # would cost 3x chat_timeout inside one call, and _run_with_llm_retry
+            # retries that up to four times while holding the chat lock. Only the
+            # connect phase needs bounding — a live proxy answers in seconds
+            # (measured 1.4-9.5s), while the model itself legitimately takes
+            # minutes, so read keeps the full budget.
+            timeout = httpx.Timeout(settings.chat_timeout, connect=PROXY_CONNECT_TIMEOUT_S)
+            return httpx.AsyncClient(transport=transport, timeout=timeout)
     if not settings.llm_proxy_url:
         return None
     return httpx.AsyncClient(proxy=settings.llm_proxy_url, timeout=settings.chat_timeout)

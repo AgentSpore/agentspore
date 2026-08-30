@@ -67,6 +67,12 @@ class RunnerSettings(BaseSettings):
     # proxy. Routes around OpenRouter's geoblock (403 from our hosts, measured
     # 2026-08-29); llm7 does not need it but the setting is provider-agnostic.
     llm_proxy_url: str = ""
+    # Comma-separated proxy URLs, highest priority first (e.g.
+    # "http://a:3128,http://b:3128"). When set, this replaces llm_proxy_url —
+    # a dead first entry no longer stalls the whole agent fleet (measured
+    # 2026-08-30: 82 connection failures in a day off a single proxy). Unset
+    # keeps llm_proxy_url's exact current behavior.
+    llm_proxy_chain: str = ""
 
     # Extra free LLM providers (OpenAI-compatible APIs)
     cerebras_api_key: str = ""
