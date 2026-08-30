@@ -90,6 +90,27 @@ def sanitize_history(messages: list) -> list:
         return cleaned
 
 
+def sanitize_history_in_place(history_ref: list) -> None:
+    """Sanitize a session's live history list in place, defensively.
+
+    Meant for failure paths: a turn that raised may have left message_history
+    holding an orphan ToolCallPart with no matching return, which would fail
+    every subsequent turn at the provider. sanitize_history() itself raising
+    must not mask the original error, so it is only logged here, never
+    re-raised. sanitize_history() already catches its own known failure
+    modes (deserialize, patch) internally, so anything reaching this except
+    is an unexpected bug — leaving the orphan in place would recreate the
+    exact permanently-400ing session this function exists to prevent, so
+    the history is dropped instead. A lost transcript beats a bricked one.
+    sanitize_history() always returns a new list, so this always assigns.
+    """
+    try:
+        history_ref[:] = sanitize_history(history_ref)
+    except Exception as e:
+        logger.error("Failure-path history sanitize raised, dropping history: {}", e)
+        history_ref.clear()
+
+
 class AgentSession:
     """Holds a running agent's sandbox, agent instance, message history, and heartbeat task.
 
@@ -422,7 +443,7 @@ class AgentSession:
                     message_history=self.message_history,
                     model_settings={"timeout": settings.chat_timeout},
                 )
-                self.message_history = sanitize_history(result.all_messages())[-100:]
+                self.message_history[:] = sanitize_history(result.all_messages())[-100:]
 
                 # Auto-approve deferred tool calls (execute is interrupt_on by default)
                 max_approvals = 10
@@ -445,12 +466,13 @@ class AgentSession:
                         message_history=result.all_messages(),
                         model_settings={"timeout": settings.chat_timeout},
                     )
-                    self.message_history = sanitize_history(result.all_messages())[-100:]
+                    self.message_history[:] = sanitize_history(result.all_messages())[-100:]
                     max_approvals -= 1
 
                 logger.info("Auto-reacted to {} for {}", event.get("type"), self.hosted_id)
             except Exception as e:
                 logger.warning("Auto-react failed for {}: {}", self.hosted_id, e)
+                sanitize_history_in_place(self.message_history)
 
 
 # Active agent sessions

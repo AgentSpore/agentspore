@@ -34,7 +34,7 @@ from observability import use_agent_context
 from replay_sampler import maybe_sample
 from sandbox import is_command_safe
 from schemas import ChatRequest, ChatResponse
-from session import sanitize_history, sessions
+from session import sanitize_history, sanitize_history_in_place, sessions
 from session_worker import SessionWorker
 
 settings = get_settings()
@@ -536,6 +536,7 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
                 return result_resp
             except Exception as e:
                 logger.error("Chat error for {} session {}: {}", hosted_id, body.owner_session_id, repr(e))
+                sanitize_history_in_place(worker.message_history)
                 raise HTTPException(500, f"Agent error: {str(e)}")
             finally:
                 session.active_session_id = None
@@ -572,6 +573,7 @@ async def chat_with_agent(hosted_id: str, body: ChatRequest):
         return result_resp
     except Exception as e:
         logger.error("Chat error for {}: {}", hosted_id, repr(e))
+        sanitize_history_in_place(session.message_history)
         raise HTTPException(500, f"Agent error: {str(e)}")
     finally:
         session.active_session_id = None
@@ -1046,6 +1048,10 @@ async def chat_stream(hosted_id: str, body: ChatRequest):
         finally:
             # Always release lock + pool slot, even if the generator is abandoned
             # mid-stream (client disconnect, RuntimeError from upstream pydantic-ai).
+            # Also sanitize _history here: any of the except branches above can
+            # leave an orphan ToolCallPart from an interrupted tool-call turn,
+            # which would 400 every subsequent turn at the provider.
+            sanitize_history_in_place(_history)
             session.active_session_id = None
             session.bootstrap_done = True
             if _lock_to_release.locked():
