@@ -25,6 +25,42 @@ settings = get_settings()
 router = APIRouter()
 
 
+
+def build_llm_http_client() -> httpx.AsyncClient | None:
+    """The client every agent session reuses for the whole run.
+
+    Through a proxy the LLM round-trip runs longer (measured up to ~17s vs
+    3-4s direct, 2026-08-29), so it reuses chat_timeout rather than a
+    hardcoded value.
+
+    Deliberately no keepalive tuning. Turns fail with
+    ModelAPIError('Connection error.') across a 30s idle gap, which looks like
+    a stale pooled connection — but measured 2026-08-30 through the live proxy,
+    keepalive_expiry of 5s (httpx's default, in force during the incident),
+    15s, 1s and 0.0 (pooling disabled entirely) all scored 3/4. The pool is not
+    the variable; the proxy drops roughly one call in four whatever the client
+    does. Retries in routes/chat.py are what carry a turn through it.
+    """
+    if not settings.llm_proxy_url:
+        return None
+    return httpx.AsyncClient(proxy=settings.llm_proxy_url, timeout=settings.chat_timeout)
+
+
+async def _teardown_session(hosted_id: str, session) -> None:
+    """Drop a session and everything it holds open.
+
+    Three call sites removed a session from `sessions` and only two of them
+    closed its proxied http client, so a sandbox that died left an
+    AsyncClient holding pooled sockets with no owner, and its quota watcher
+    still running.
+    """
+    session.stop_heartbeat()
+    session.stop_websocket()
+    session.stop_quota_watcher()
+    await session.aclose_llm_client()
+    sessions.pop(hosted_id, None)
+
+
 @router.post("/agents/{hosted_id}/start", response_model=ActionResponse)
 async def start_agent(hosted_id: str, body: StartRequest):
     """Start a hosted agent in a Docker container with its own heartbeat."""
@@ -165,15 +201,11 @@ async def start_agent(hosted_id: str, body: StartRequest):
     effective_base_url = body.provider_base_url or settings.openai_base_url
     effective_api_key = body.provider_api_key or settings.openai_api_key
 
-    # Through a proxy the LLM round-trip runs longer (measured up to ~17s vs
-    # 3-4s direct, 2026-08-29) — reuse chat_timeout instead of a hardcoded value.
-    llm_http_client = None
-    if settings.llm_proxy_url:
-        llm_http_client = httpx.AsyncClient(
-            proxy=settings.llm_proxy_url, timeout=settings.chat_timeout
-        )
+    llm_http_client = build_llm_http_client()
     openai_provider = OpenAIProvider(
-        base_url=effective_base_url, api_key=effective_api_key, http_client=llm_http_client
+        base_url=effective_base_url,
+        api_key=effective_api_key,
+        http_client=llm_http_client,
     )
     model_obj = OpenAIChatModel(api_model, provider=openai_provider)
 
@@ -273,15 +305,28 @@ async def start_agent(hosted_id: str, body: StartRequest):
         history = sanitize_history(list(body.message_history))
         session.message_history = history
         trimmed = len(body.message_history) - len(history)
-        logger.info("Restored {} messages for agent {} (trimmed {} orphan trailing)", len(history), hosted_id, trimmed)
+        logger.info(
+            "Restored {} messages for agent {} (trimmed {} orphan trailing)",
+            len(history),
+            hosted_id,
+            trimmed,
+        )
 
     sessions[hosted_id] = session
     session.start_heartbeat()
     session.start_websocket()  # real-time event channel
     session.start_quota_watcher()  # disk quota enforcement
 
-    logger.info("Started agent {} with model {} (resolved: {}), heartbeat every {}s, ws=enabled", hosted_id, body.model, resolved_model, body.heartbeat_seconds)
-    return ActionResponse(status="running", message="Agent started", container_id=hosted_id)
+    logger.info(
+        "Started agent {} with model {} (resolved: {}), heartbeat every {}s, ws=enabled",
+        hosted_id,
+        body.model,
+        resolved_model,
+        body.heartbeat_seconds,
+    )
+    return ActionResponse(
+        status="running", message="Agent started", container_id=hosted_id
+    )
 
 
 @router.post("/agents/{hosted_id}/stop", response_model=ActionResponse)
@@ -350,9 +395,7 @@ async def agent_status(hosted_id: str):
                 container.reload()
                 if container.status != "running":
                     logger.warning("Sandbox dead for {}, cleaning up", hosted_id)
-                    session.stop_heartbeat()
-                    session.stop_websocket()
-                    sessions.pop(hosted_id, None)
+                    await _teardown_session(hosted_id, session)
                     return {
                         "status": "stopped",
                         "busy": False,
@@ -363,9 +406,7 @@ async def agent_status(hosted_id: str):
                     }
     except Exception:
         logger.warning("Sandbox check failed for {}, cleaning up", hosted_id)
-        session.stop_heartbeat()
-        session.stop_websocket()
-        sessions.pop(hosted_id, None)
+        await _teardown_session(hosted_id, session)
         return {
             "status": "stopped",
             "busy": False,
