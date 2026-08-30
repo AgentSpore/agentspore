@@ -5,6 +5,7 @@ Reddit исключён намеренно — top.json отдаёт 403, .rss �
 """
 import json
 import re
+import time
 import html
 import urllib.request
 import urllib.parse
@@ -62,9 +63,32 @@ def _lob(n=25):
 SITES = ["softwareengineering", "devops", "dba", "serverfault", "webmasters"]
 
 
+# Ask HN sorted by date gives whatever was posted today; these three phrasings
+# find the questions where someone describes a workflow they pay for in time or
+# money. Measured 2026-08-30: 15 such questions in the last 180 days with 10+
+# points ("How do you handle clients who don't pay on time?", 39 points) versus
+# a top-of-week list that returned the same crowded question three days running.
+ASK_QUERIES = ("how do you handle", "what do you use for", "is there a better way")
+ASK_MIN_POINTS = 10
+ASK_WINDOW_DAYS = 180
+
+
+def _hn_ask(query, min_points=ASK_MIN_POINTS):
+    cutoff = int(time.time()) - ASK_WINDOW_DAYS * 86400
+    d = _get("https://hn.algolia.com/api/v1/search",
+             {"query": query, "tags": "ask_hn", "hitsPerPage": 50,
+              "numericFilters": "created_at_i>" + str(cutoff)})
+    return [{"src": "ask_hn_q", "title": h["title"], "score": h.get("points") or 0,
+             "url": "https://news.ycombinator.com/item?id=" + h["objectID"],
+             "text": (h.get("story_text") or "")[:500]}
+            for h in d.get("hits", [])
+            if h.get("title") and (h.get("points") or 0) >= min_points]
+
+
 def collect():
     items, errors = [], []
     jobs = [("ask_hn", lambda: _hn("ask_hn", 80)), ("lobsters", _lob)]
+    jobs += [("ask_hn_q:" + q, (lambda q: lambda: _hn_ask(q))(q)) for q in ASK_QUERIES]
     jobs += [("se-" + s, (lambda s: lambda: _se(s))(s)) for s in SITES]
     for name, fn in jobs:
         try:
