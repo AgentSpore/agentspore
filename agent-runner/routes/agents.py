@@ -27,6 +27,11 @@ router = APIRouter()
 
 
 
+# Measured 2026-08-30: a working proxy completes a connect in 1.4-9.5s, so a
+# connect still pending at 30s is dead rather than slow.
+PROXY_CONNECT_TIMEOUT_S = 30.0
+
+
 def build_llm_http_client() -> httpx.AsyncClient | None:
     """The client every agent session reuses for the whole run.
 
@@ -53,7 +58,14 @@ def build_llm_http_client() -> httpx.AsyncClient | None:
         proxy_urls = [url.strip() for url in chain_raw.split(",") if url.strip()]
         if proxy_urls:
             transport = ProxyChainTransport(proxy_urls)
-            return httpx.AsyncClient(transport=transport, timeout=settings.chat_timeout)
+            # A flat timeout would apply per proxy attempt: three hung proxies
+            # would cost 3x chat_timeout inside one call, and _run_with_llm_retry
+            # retries that up to four times while holding the chat lock. Only the
+            # connect phase needs bounding — a live proxy answers in seconds
+            # (measured 1.4-9.5s), while the model itself legitimately takes
+            # minutes, so read keeps the full budget.
+            timeout = httpx.Timeout(settings.chat_timeout, connect=PROXY_CONNECT_TIMEOUT_S)
+            return httpx.AsyncClient(transport=transport, timeout=timeout)
     if not settings.llm_proxy_url:
         return None
     return httpx.AsyncClient(proxy=settings.llm_proxy_url, timeout=settings.chat_timeout)
