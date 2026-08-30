@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+import routes.agents as agents_mod
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -36,25 +38,20 @@ def test_llm_proxy_url_read_from_env(monkeypatch):
     assert settings.llm_proxy_url == "http://127.0.0.1:3128"
 
 
-def llm_http_client_for(proxy_url: str, timeout: int) -> httpx.AsyncClient | None:
-    """Mirrors the client-construction branch in routes/agents.py start_agent."""
-    if not proxy_url:
-        return None
-    return httpx.AsyncClient(proxy=proxy_url, timeout=timeout)
-
-
-def llm_http_client_mutated(proxy_url: str, timeout: int) -> httpx.AsyncClient | None:
-    """Mutant: simulates dropping the http_client= wiring regardless of proxy_url."""
-    return None
-
-
 class TestProviderClientWiring:
-    def test_no_proxy_configured_no_http_client(self):
-        client = llm_http_client_for("", timeout=600)
-        assert client is None
+    """Exercises the builder start_agent actually calls, not a copy of it."""
 
-    def test_proxy_configured_builds_client_with_timeout(self):
-        client = llm_http_client_for("http://127.0.0.1:3128", timeout=600)
+    def test_no_proxy_configured_no_http_client(self, monkeypatch):
+        monkeypatch.setattr(agents_mod.settings, "llm_proxy_url", "")
+
+        assert agents_mod.build_llm_http_client() is None
+
+    def test_proxy_configured_builds_client_with_chat_timeout(self, monkeypatch):
+        monkeypatch.setattr(agents_mod.settings, "llm_proxy_url", "http://127.0.0.1:3128")
+        monkeypatch.setattr(agents_mod.settings, "chat_timeout", 600)
+
+        client = agents_mod.build_llm_http_client()
+
         assert client is not None
         assert client.timeout.connect == 600
 
@@ -64,7 +61,10 @@ class TestAgentSessionCloseLlmClient:
     async def test_closes_configured_client(self):
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         session = AgentSession(
-            hosted_id="h1", sandbox=None, agent=None, deps=None,
+            hosted_id="h1",
+            sandbox=None,
+            agent=None,
+            deps=None,
             llm_http_client=mock_client,
         )
 
@@ -82,15 +82,40 @@ class TestAgentSessionCloseLlmClient:
         assert session.llm_http_client is None
 
 
-class TestMutationProvesTheGuard:
-    """Mutation both ways: removing http_client from the branch breaks the
-    'proxy configured -> client exists' assertion.
+@pytest.mark.asyncio
+async def test_dead_sandbox_cleanup_closes_the_llm_client(monkeypatch):
+    """A sandbox that dies must not strand its proxied client.
 
-    Baseline (guard present, llm_http_client_for): 1 passed
-    Mutated (llm_http_client_mutated, always None): 1 failed
+    Three call sites dropped a session from `sessions`; only two closed the
+    client it held. The orphaned AsyncClient keeps pooled sockets with no
+    owner left to close them — accumulating with runner uptime, the same
+    shape as the stale-connection defect this module guards.
     """
+    import routes.agents as agents_mod
 
-    def test_mutation_breaks_without_http_client_wiring(self):
-        client = llm_http_client_mutated("http://127.0.0.1:3128", timeout=600)
-        with pytest.raises(AssertionError):
-            assert client is not None
+    closed = []
+
+    class FakeSession:
+        def __init__(self):
+            self.llm_http_client = object()
+
+        def stop_heartbeat(self):
+            pass
+
+        def stop_websocket(self):
+            pass
+
+        def stop_quota_watcher(self):
+            pass
+
+        async def aclose_llm_client(self):
+            closed.append(True)
+            self.llm_http_client = None
+
+    session = FakeSession()
+    agents_mod.sessions["dead-agent"] = session
+
+    await agents_mod._teardown_session("dead-agent", session)
+
+    assert closed == [True], "session was dropped without closing its LLM client"
+    assert "dead-agent" not in agents_mod.sessions
