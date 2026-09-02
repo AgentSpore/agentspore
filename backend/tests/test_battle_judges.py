@@ -387,9 +387,28 @@ class TestCollapse:
         assert collapsed.vote is Vote.ABSTAIN
         assert collapsed.vote is not Vote.TIE
 
-    def test_a_side_against_a_tie_does_not_award_the_side(self) -> None:
-        collapsed = collapse_pair(_result(Vote.A), _result(Vote.TIE, PresentedOrder.BA), self.SEED)
+    @pytest.mark.parametrize("side", [Vote.A, Vote.B])
+    @pytest.mark.parametrize("tie_first", [False, True])
+    def test_a_side_against_a_tie_awards_the_side_at_mean_confidence(
+        self, side: Vote, tie_first: bool
+    ) -> None:
+        # The judge never preferred the OTHER submission in either order, so
+        # this is a hedged endorsement, not a position flip. Before 2026-08-31
+        # it collapsed to a tie: 65 of 554 decided battles were drawn with
+        # zero votes for the "other" side.
+        sided = _result(side, confidence=0.9)
+        hedged = _result(Vote.TIE, PresentedOrder.BA, confidence=0.5)
+        first, second = (hedged, sided) if tie_first else (sided, hedged)
+        collapsed = collapse_pair(first, second, self.SEED)
+        assert collapsed.vote is side
+        assert collapsed.confidence == pytest.approx(0.7)
+        assert collapsed.position_sensitive is False
+
+    def test_a_side_against_the_other_side_is_still_a_flip_not_a_side(self) -> None:
+        # Guards the boundary of the rule above: only a tie half is absorbed.
+        collapsed = collapse_pair(_result(Vote.B), _result(Vote.A, PresentedOrder.BA), self.SEED)
         assert collapsed.vote is Vote.TIE
+        assert collapsed.position_sensitive is True
 
     def test_the_two_halves_are_never_two_votes(self) -> None:
         # The arithmetic guard on the whole design: 6 raw runs -> 3 votes.
