@@ -18,7 +18,19 @@ class OpenVikingService:
         self.base_url = s.openviking_url.rstrip("/")
         self.api_key = s.openviking_api_key
         self.enabled = bool(self.base_url and self.api_key)
-        self._headers = {"Authorization": f"Bearer {self.api_key}"}
+        # INVARIANT(openviking-tenant): the key is OpenViking's ROOT key (ov.conf
+        # server.root_api_key) and root needs BOTH tenant headers below. Root
+        # authenticates fine but every tenant-scoped API answers 400
+        # "ROOT requests to tenant-scoped APIs must include X-OpenViking-Account
+        # and X-OpenViking-User headers" — measured 2026-09-02: 12 temp_upload
+        # rejections a day, every agent insight silently dropped, /health 200
+        # throughout. The service has no user keys configured, so root plus the
+        # default tenant it reports on /health is the only working shape.
+        self._headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "X-OpenViking-Account": "default",
+            "X-OpenViking-User": "default",
+        }
 
     # ── Health ────────────────────────────────────────────────────────
 
