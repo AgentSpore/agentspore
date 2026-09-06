@@ -22,6 +22,22 @@ env:
   SECRET_KEY: ci-placeholder-value
 
 jobs:
+  telemetry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - run: uv sync --project agent-runner --frozen --extra dev
+      - name: Verify both services' telemetry boundaries without network exporters
+        run: >-
+          uv run --project agent-runner --frozen --extra dev pytest -q
+          agent-runner/tests/test_telemetry_limits.py
+          agent-runner/tests/test_observability.py
+          agent-runner/tests/test_baggage_span_processor.py
+
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 25

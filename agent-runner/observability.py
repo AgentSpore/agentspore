@@ -8,6 +8,7 @@ manual instrumentation inside business code.
 
 Sends to local OTLP collector (Jaeger) only — send_to_logfire=False.
 No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset (local dev, CI).
+String attributes are bounded before provider creation; see docs/TELEMETRY.md.
 
 Each logfire.instrument_* call is wrapped in try/except so that a missing
 optional dependency or version mismatch causes a logged warning rather than
@@ -59,6 +60,28 @@ class BaggageSpanProcessor(SpanProcessor):
         return True
 
 
+# OpenTelemetry limits count characters, not bytes. Even four-byte UTF-8
+# characters use at most 32 KiB per string, under Jaeger's reported 65 KB limit.
+_MAX_ATTRIBUTE_LENGTH = 8192
+
+
+def _configure_attribute_limits() -> None:
+    """Bound SDK string values before any provider accepts attributes.
+
+    Keep in sync across the separately packaged backend and agent-runner;
+    agent-runner/tests/test_telemetry_limits.py exercises both entrypoints.
+    """
+    limit = _MAX_ATTRIBUTE_LENGTH
+    for key in ("OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT", "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT"):
+        try:
+            configured = int(os.environ.get(key, str(limit)))
+            if configured >= 0:
+                limit = min(configured, _MAX_ATTRIBUTE_LENGTH)
+        except ValueError:
+            pass
+        os.environ[key] = str(limit)
+
+
 def configure(app=None) -> None:
     """Configure logfire. No-op if OTEL_EXPORTER_OTLP_ENDPOINT unset.
 
@@ -74,6 +97,8 @@ def configure(app=None) -> None:
     """
     if not os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
         return
+
+    _configure_attribute_limits()
 
     logfire.configure(
         service_name=os.getenv("OTEL_SERVICE_NAME", "agent-runner"),
