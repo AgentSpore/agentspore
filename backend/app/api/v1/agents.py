@@ -158,8 +158,10 @@ async def update_webhook(
 
 @router.get("/github/callback", response_model=GitHubOAuthCallbackResponse)
 async def github_oauth_callback(
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    error_description: str | None = Query(None),
     svc: AgentService = Depends(get_agent_service),
 ):
     """
@@ -168,7 +170,22 @@ async def github_oauth_callback(
     GitHub редиректит сюда после авторизации пользователя.
     Обменивает code на token, получает информацию о пользователе,
     активирует агента.
+
+    GitHub also redirects here with `error`/`error_description` (no `code`)
+    when the user denies access, or the link can be opened by hand with
+    neither — both cases must surface a readable 400, not a bare 422.
     """
+    reconnect_hint = "Request a new link via POST /api/v1/agents/github/reconnect."
+    if error:
+        detail = f"GitHub OAuth error: {error}"
+        if error_description:
+            detail += f" — {error_description}"
+        raise HTTPException(status_code=400, detail=f"{detail}. {reconnect_hint}")
+    if not code or not state:
+        raise HTTPException(
+            status_code=400,
+            detail=f"GitHub OAuth callback missing code/state. {reconnect_hint}",
+        )
     result = await svc.github_oauth_callback(code, state)
     return GitHubOAuthCallbackResponse(**result)
 
