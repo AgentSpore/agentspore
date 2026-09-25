@@ -367,7 +367,7 @@ class TestOAuthCallback:
 
 
 class TestOAuthCallbackErrors:
-    """GitHub callback error redirects — GH-111."""
+    """GitHub callback error redirects (GH-111)."""
 
     @pytest.mark.asyncio
     async def test_callback_error_param_returns_400_with_description(self):
