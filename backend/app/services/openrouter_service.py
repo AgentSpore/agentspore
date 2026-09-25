@@ -254,6 +254,11 @@ class OpenRouterService:
                 "gpt-oss:20b",
                 "minimax-m2.7",
             ],
+            # 2026-08-31: paired probe (same body, one field differs) showed
+            # codestral-latest 200 without 'seed', 422 upstream_unprocessable_request
+            # with it — llm7 does not accept the OpenAI-standard seed field.
+            # None omits it entirely (see seed_field_for in battle_judges.py).
+            "seed_field": None,
         },
     }
 
