@@ -460,7 +460,8 @@ class _StrictMistralClient(_CapturingClient):
 
 
 def test_the_seed_field_is_resolved_per_provider():
-    """Mistral's key is `random_seed`; everyone else keeps the OpenAI name.
+    """Mistral's key is `random_seed`; llm7 takes no seed; the rest keep the
+    OpenAI name.
 
     Asserted against provider ids directly rather than through JUDGE_MODEL: the
     rule is a property of the PROVIDER, and pinning it to whichever model is
@@ -471,7 +472,7 @@ def test_the_seed_field_is_resolved_per_provider():
     assert seed_field_for("mistral/mistral-medium-2508") == "random_seed"
     assert seed_field_for("mistral/mistral-large-latest") == "random_seed"
     assert seed_field_for("zai/glm-4.5-flash") == "seed"
-    assert seed_field_for("llm7/codestral-latest") == "seed"
+    assert seed_field_for("llm7/codestral-latest") is None
 
 
 @pytest.mark.asyncio
@@ -493,6 +494,24 @@ async def test_a_mistral_call_sends_random_seed_and_never_seed(capturing_client)
     )
     assert capturing_client.body["random_seed"] == seed_int32(replicate_seed("battle-1", 0))
     assert "seed" not in capturing_client.body
+
+
+@pytest.mark.asyncio
+async def test_an_llm7_call_sends_no_seed_key_at_all(capturing_client):
+    """llm7 answers 422 upstream_unprocessable_request on any seed key, so the
+    field is omitted rather than sent under any name."""
+    await call_judge_model(
+        client=capturing_client,
+        base_url="https://stub.invalid/v1",
+        api_key="unused",
+        messages=[],
+        seed=replicate_seed("battle-1", 0),
+        gate=_OpenGate(),
+        wire_model="codestral-latest",
+        seed_field=seed_field_for("llm7/codestral-latest"),
+    )
+    assert "seed" not in capturing_client.body
+    assert "random_seed" not in capturing_client.body
 
 
 @pytest.mark.asyncio
