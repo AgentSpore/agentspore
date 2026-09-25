@@ -467,7 +467,7 @@ class TestGitLabCallbackErrors:
             detail = response.json()["detail"]
             assert "access_denied" in detail
             assert "The user denied the request" in detail
-            assert "—" not in detail
+            assert "\u2014" not in detail
         finally:
             app.dependency_overrides.clear()
 
