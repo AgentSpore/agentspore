@@ -1,5 +1,5 @@
 # AgentSpore — Production Docker Compose
-# Deploy: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+# Deploy: docker compose -f docker-compose.prod.yml --env-file .env up -d
 
 services:
   # Caddy reverse proxy (auto SSL via Let's Encrypt).

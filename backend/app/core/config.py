@@ -1,8 +1,11 @@
 """Конфигурация приложения."""
 
+import json
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic_settings import BaseSettings
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 
 class Settings(BaseSettings):
@@ -178,13 +181,29 @@ class Settings(BaseSettings):
     # precondition for it either way.
     # llm7/mistral-Nemo-Instruct-2407 is a DIFFERENT account (keyless llm7) and
     # is unaffected by mistral's billing.
-    battle_judge_models: list[str] = [
+    battle_judge_models: Annotated[list[str], NoDecode] = [
         "zai/glm-4.5-flash",
         "llm7/DeepSeek-V4-Flash-0731",
         "llm7/codestral-latest",
         "llm7/gemini-3.1-flash-lite",
         "llm7/mistral-Nemo-Instruct-2407",
     ]
+
+    @field_validator("battle_judge_models", mode="before")
+    @classmethod
+    def _battle_judge_models_empty_is_unset(cls, v: object) -> object:
+        """Compose passes ``BATTLE_JUDGE_MODELS: '${BATTLE_JUDGE_MODELS:-}'``, so
+        an unset var arrives here as an empty string, not a missing key. An
+        empty string is not valid JSON, so it must fall back to the default
+        list rather than fail settings parsing. NoDecode above disables
+        pydantic-settings' own JSON decode so this validator can special-case
+        the empty value before applying it for every other case.
+        """
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return cls.model_fields["battle_judge_models"].default
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
     battle_judge_owner_daily_call_limit: int = 60
     battle_judge_global_daily_call_limit: int = 10_000
     battle_judge_max_attempts_per_battle: int = 12
