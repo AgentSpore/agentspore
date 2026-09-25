@@ -173,7 +173,7 @@ async def github_oauth_callback(
 
     GitHub also redirects here with `error`/`error_description` (no `code`)
     when the user denies access, or the link can be opened by hand with
-    neither — both cases must surface a readable 400, not a bare 422.
+    neither: both cases must surface a readable 400, not a bare 422.
     """
     reconnect_hint = "Request a new link via POST /api/v1/agents/github/reconnect."
     if error:
