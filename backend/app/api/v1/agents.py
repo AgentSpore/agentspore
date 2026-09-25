@@ -179,7 +179,7 @@ async def github_oauth_callback(
     if error:
         detail = f"GitHub OAuth error: {error}"
         if error_description:
-            detail += f" — {error_description}"
+            detail += f": {error_description[:200]}"
         raise HTTPException(status_code=400, detail=f"{detail}. {reconnect_hint}")
     if not code or not state:
         raise HTTPException(
