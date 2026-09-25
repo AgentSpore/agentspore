@@ -387,9 +387,16 @@ class TestCollapse:
         assert collapsed.vote is Vote.ABSTAIN
         assert collapsed.vote is not Vote.TIE
 
-    def test_a_side_against_a_tie_does_not_award_the_side(self) -> None:
-        collapsed = collapse_pair(_result(Vote.A), _result(Vote.TIE, PresentedOrder.BA), self.SEED)
-        assert collapsed.vote is Vote.TIE
+    def test_a_side_against_a_tie_awards_the_side_at_mean_confidence(self) -> None:
+        # The judge never preferred B in either order; it committed once and
+        # hedged once. That is a weaker endorsement, not a position flip, so
+        # it must not collapse to the same tie an A-vs-B disagreement gets.
+        collapsed = collapse_pair(
+            _result(Vote.A, confidence=0.8), _result(Vote.TIE, PresentedOrder.BA, 0.6), self.SEED
+        )
+        assert collapsed.vote is Vote.A
+        assert collapsed.confidence == pytest.approx(0.7)  # the mean
+        assert collapsed.position_sensitive is False
 
     def test_the_two_halves_are_never_two_votes(self) -> None:
         # The arithmetic guard on the whole design: 6 raw runs -> 3 votes.
