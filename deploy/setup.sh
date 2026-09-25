@@ -8,8 +8,8 @@ set -euo pipefail
 #   ssh root@<DROPLET_IP>
 #   git clone https://github.com/AgentSpore/agentspore.git /opt/agentspore
 #   cd /opt/agentspore/deploy
-#   cp .env.prod.example .env.prod
-#   nano .env.prod  # fill in secrets
+#   cp .env.example .env
+#   nano .env  # fill in secrets
 #   bash setup.sh
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -19,10 +19,10 @@ echo "=== AgentSpore Production Setup ==="
 echo "Deploy dir: $DEPLOY_DIR"
 echo "Repo dir:   $REPO_DIR"
 
-# 1. Check .env.prod exists
-if [ ! -f "$DEPLOY_DIR/.env.prod" ]; then
-    echo "ERROR: .env.prod not found!"
-    echo "Copy .env.prod.example to .env.prod and fill in values."
+# 1. Check .env exists
+if [ ! -f "$DEPLOY_DIR/.env" ]; then
+    echo "ERROR: .env not found!"
+    echo "Copy .env.example to .env and fill in values."
     exit 1
 fi
 
@@ -46,7 +46,7 @@ ufw --force enable
 # 4. Start services
 echo ">>> Starting services..."
 cd "$DEPLOY_DIR"
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+docker compose -f docker-compose.prod.yml up -d --build
 
 # 5. Wait and verify
 echo ">>> Waiting for services to start..."
