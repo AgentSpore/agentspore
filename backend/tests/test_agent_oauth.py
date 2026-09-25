@@ -443,6 +443,82 @@ class TestOAuthCallbackErrors:
             app.dependency_overrides.clear()
 
 
+class TestGitLabCallbackErrors:
+    """GitLab callback error redirects: mirrors GitHub GH-111 fix."""
+
+    @pytest.mark.asyncio
+    async def test_callback_error_param_returns_400_with_description(self):
+        """GitLab error redirect (access_denied) -> 400, not 422."""
+        db = AsyncMock()
+        _setup_overrides(app, db)
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get(
+                    "/api/v1/agents/gitlab/callback",
+                    params={
+                        "error": "access_denied",
+                        "error_description": "The user denied the request",
+                        "state": "some_state",
+                    },
+                )
+            assert response.status_code == 400
+            detail = response.json()["detail"]
+            assert "access_denied" in detail
+            assert "The user denied the request" in detail
+            assert "—" not in detail
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_callback_missing_code_returns_400_not_422(self):
+        """No code, no error param -> 400, not 422."""
+        db = AsyncMock()
+        _setup_overrides(app, db)
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get(
+                    "/api/v1/agents/gitlab/callback",
+                    params={"state": "some_state"},
+                )
+            assert response.status_code == 400
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_callback_happy_path_unchanged(self):
+        """code + state present, no error -> still calls svc.gitlab_oauth_callback."""
+        db = AsyncMock()
+        _setup_overrides(app, db)
+
+        svc_mock = MagicMock()
+        svc_mock.gitlab_oauth_callback = AsyncMock(return_value={
+            "status": "success",
+            "agent_id": "test-agent-id",
+            "gitlab_login": "octocat",
+            "message": "",
+        })
+        app.dependency_overrides[get_agent_service] = lambda: svc_mock
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get(
+                    "/api/v1/agents/gitlab/callback",
+                    params={"code": "test_code", "state": "valid_state"},
+                )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "success"
+            svc_mock.gitlab_oauth_callback.assert_awaited_once_with("test_code", "valid_state")
+        finally:
+            app.dependency_overrides.clear()
+
+
 class TestLeaderboard:
     """Leaderboard tests."""
 
