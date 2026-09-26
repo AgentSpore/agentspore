@@ -1102,13 +1102,20 @@ def collapse_pair(first: JudgeRunResult, second: JudgeRunResult, seed: str) -> C
     * both halves the same side -> that side, confidence = mean. Order-robust,
       which is the strongest signal this design can produce.
     * both halves tie -> tie.
-    * halves disagree on the side -> ``tie`` + ``position_sensitive``. The
+    * halves name OPPOSITE sides -> ``tie`` + ``position_sensitive``. The
       replicate's preference flipped with presentation order, so it is an
       artefact of position, not a judgement about quality. Recorded rather than
       discarded because it is a real finding about the pair of submissions.
+    * one half a side, the other ``tie`` -> that side, confidence = mean,
+      NOT position-sensitive. The judge never preferred the other submission
+      in either order; it committed once and hedged once. That is a weaker
+      endorsement, not a flip, and the mean confidence carries the weakness.
 
-    A tie in one half and a side in the other also lands on ``tie``: the two
-    halves did not agree, so no side survives.
+    Measured 2026-08-31 on 554 decided battles: treating side+tie as a tie
+    (the previous rule) turned 65 verdicts (12%) into draws where one side had
+    the only votes cast — e.g. raw halves a,tie,a,a,a,tie collapsed to
+    a,tie,tie and settled as a tie with zero votes for b. 245 replicate pairs
+    were in that shape, nearly as many as the 258 genuine flips.
     """
     votes = (first.vote, second.vote)
 
@@ -1132,7 +1139,20 @@ def collapse_pair(first: JudgeRunResult, second: JudgeRunResult, seed: str) -> C
             position_sensitive=False,
         )
 
-    # One said a side, the other said tie or the other side: no agreement.
+    # One half committed to a side, the other hedged with a tie: the side
+    # survives at reduced confidence. Only an A-vs-B flip is position noise.
+    if Vote.TIE in votes:
+        sided = first if first.vote is not Vote.TIE else second
+        return CollapsedVote(
+            replicate_seed=seed,
+            vote=sided.vote,
+            confidence=_mean_confidence(first, second),
+            reasoning=sided.reasoning,
+            scores=sided.scores,
+            position_sensitive=False,
+        )
+
+    # A in one order, B in the other: the preference tracked the slot.
     return CollapsedVote(
         replicate_seed=seed,
         vote=Vote.TIE,

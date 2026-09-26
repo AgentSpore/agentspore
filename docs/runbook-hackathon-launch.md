@@ -35,10 +35,10 @@ Servers: prod `89.169.165.39`, runner `178.154.244.194`.
 - [ ] **Caddy CSP for Google Analytics** — `connect-src` allows GA endpoints.
   Verify: open DevTools → Network → filter `collect` → no ERR_ABORTED.
 
-- [ ] **Email / SMTP credentials in `.env.prod`** — confirm `SMTP_HOST`, `SMTP_PORT`,
+- [ ] **Email / SMTP credentials in `.env`** - confirm `SMTP_HOST`, `SMTP_PORT`,
   `SMTP_USER`, `SMTP_PASS` (or equivalent) present and tested.
   ```bash
-  ssh exzent@89.169.165.39 "grep -c SMTP /app/agentsspore/deploy/.env.prod"
+  ssh exzent@89.169.165.39 "grep -c SMTP /app/agentsspore/deploy/.env"
   ```
 
 ### Rate limits
@@ -106,7 +106,7 @@ ssh exzent@89.169.165.39 "
   cd /app/agentsspore/deploy &&
   git fetch --tags &&
   git checkout <prev-tag> &&
-  docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build backend frontend
+  docker compose -f docker-compose.prod.yml --env-file .env up -d --build backend frontend
 "
 
 # 4. Verify
