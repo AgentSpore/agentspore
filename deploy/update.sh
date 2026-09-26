@@ -35,6 +35,17 @@ fi
 # INVARIANT: git reset --hard silently wiped uncommitted prod patches twice
 # (2026-07-21, 2026-08-30). Abort instead of discarding a dirty tracked file
 # that actually differs from origin/main, unless it is explicitly ignored.
+# The NUL-separated name list is captured into a FILE, not a variable: bash
+# cannot store a NUL byte in a variable, so routing it through `$(...)` first
+# would silently drop every delimiter and merge all the names into one. A
+# file preserves them, and its own exit check catches `git diff` failing
+# before the loop ever runs, instead of failing open on a broken repo.
+DIRTY_RAW_FILE="$(mktemp)"
+if ! git diff -z --name-only HEAD > "$DIRTY_RAW_FILE"; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') ABORT: git diff --name-only HEAD failed" >> "$LOG"
+    rm -f "$DIRTY_RAW_FILE"
+    exit 1
+fi
 DIRTY_UNRESOLVED=()
 while IFS= read -r -d '' f; do
     case " $RESET_IGNORE " in
@@ -43,18 +54,36 @@ while IFS= read -r -d '' f; do
     if ! git diff --quiet origin/main -- "$f"; then
         DIRTY_UNRESOLVED+=("$f")
     fi
-done < <(git diff -z --name-only HEAD)
+done < "$DIRTY_RAW_FILE"
+rm -f "$DIRTY_RAW_FILE"
 if [ "${#DIRTY_UNRESOLVED[@]}" -gt 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') ABORT: uncommitted changes differ from origin/main: ${DIRTY_UNRESOLVED[*]}" >> "$LOG"
     exit 1
 fi
 
-# RESET_IGNORE files still get overwritten by `reset --hard` itself (it does
-# not know about the ignore list, only this script does), so back each one up
-# and put it back once the reset is done.
+# A RESET_IGNORE file with an uncommitted local change would otherwise be
+# overwritten by `reset --hard` (it does not know about the ignore list, only
+# this script does), so back it up and restore it once the reset is done. A
+# CLEAN ignored file is left alone: it must still pick up an upstream change
+# like any other tracked file, or that change would be silently reverted on
+# every deploy forever.
 RESET_IGNORE_BACKUP="$(mktemp -d)"
+
+restore_reset_ignore() {
+    local exit_code=$?
+    for f in $RESET_IGNORE; do
+        if [ -f "$RESET_IGNORE_BACKUP/$f" ]; then
+            cp "$RESET_IGNORE_BACKUP/$f" "$REPO_DIR/$f"
+        fi
+    done
+    echo "$(date '+%Y-%m-%d %H:%M:%S') restored dirty RESET_IGNORE files from $RESET_IGNORE_BACKUP (exit $exit_code)" >> "$LOG"
+    rm -rf "$RESET_IGNORE_BACKUP"
+    return "$exit_code"
+}
+trap restore_reset_ignore EXIT
+
 for f in $RESET_IGNORE; do
-    if [ -f "$REPO_DIR/$f" ]; then
+    if [ -f "$REPO_DIR/$f" ] && ! git diff --quiet HEAD -- "$f"; then
         mkdir -p "$RESET_IGNORE_BACKUP/$(dirname "$f")"
         cp "$REPO_DIR/$f" "$RESET_IGNORE_BACKUP/$f"
     fi
@@ -62,13 +91,6 @@ done
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Updating $LOCAL -> $REMOTE" >> "$LOG"
 git reset --hard origin/main >> "$LOG" 2>&1
-
-for f in $RESET_IGNORE; do
-    if [ -f "$RESET_IGNORE_BACKUP/$f" ]; then
-        cp "$RESET_IGNORE_BACKUP/$f" "$REPO_DIR/$f"
-    fi
-done
-rm -rf "$RESET_IGNORE_BACKUP"
 
 # 2. Rebuild and restart
 cd "$DEPLOY_DIR"
