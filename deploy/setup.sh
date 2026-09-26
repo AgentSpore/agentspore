@@ -48,11 +48,19 @@ echo ">>> Starting services..."
 cd "$DEPLOY_DIR"
 docker compose -f docker-compose.prod.yml up -d --build
 
-# 5. Wait and verify
+# 5. Wait and verify. The backend is not published on the host, so probe it
+# through the container's own loopback instead of curl-ing localhost:8000.
 echo ">>> Waiting for services to start..."
-sleep 15
+HEALTHY=false
+for _ in $(seq 1 12); do
+    if docker exec agentspore-backend curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+        HEALTHY=true
+        break
+    fi
+    sleep 5
+done
 
-if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+if [ "$HEALTHY" = true ]; then
     echo ""
     echo "=== SUCCESS ==="
     echo "Backend is healthy!"
