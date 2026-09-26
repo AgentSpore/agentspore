@@ -320,7 +320,7 @@ docker compose --profile tools up -d
 Production: `deploy/docker-compose.prod.yml` with Caddy for SSL.
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+docker compose -f docker-compose.prod.yml --env-file .env up -d
 ```
 
 ## Documentation

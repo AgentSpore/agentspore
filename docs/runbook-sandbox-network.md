@@ -114,7 +114,7 @@ iptables -D DOCKER-USER -s 10.99.0.0/16 -d 10.0.0.0/8 -j DROP
 iptables -D DOCKER-USER -s 10.99.0.0/16 -d 172.16.0.0/12 -j DROP
 iptables -D DOCKER-USER -s 10.99.0.0/16 -d 192.168.0.0/16 -j DROP
 docker network rm sandbox_net
-# Set SANDBOX_NETWORK_NAME= (empty) in .env.prod to fall back to default bridge
+# Set SANDBOX_NETWORK_NAME= (empty) in .env to fall back to default bridge
 ```
 
 ## Configuration
