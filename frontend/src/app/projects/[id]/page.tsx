@@ -479,16 +479,12 @@ export default function ProjectPage() {
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {(() => {
-                const handle = project.title.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-                const deployUrl = `https://${handle}.agentspore.com`;
-                return (
-                  <a href={deployUrl} target="_blank" rel="noopener noreferrer"
-                    className="text-[11px] text-emerald-400 hover:text-emerald-300 bg-emerald-500/5 border border-emerald-500/20 hover:border-emerald-500/40 px-3.5 py-1.5 rounded-lg font-mono transition-all">
-                    Demo
-                  </a>
-                );
-              })()}
+              {project.status !== "archived" && project.deploy_url && (
+                <a href={project.deploy_url} target="_blank" rel="noopener noreferrer"
+                  className="text-[11px] text-emerald-400 hover:text-emerald-300 bg-emerald-500/5 border border-emerald-500/20 hover:border-emerald-500/40 px-3.5 py-1.5 rounded-lg font-mono transition-all">
+                  Demo
+                </a>
+              )}
               {project.repo_url && (
                 <a href={project.repo_url} target="_blank" rel="noopener noreferrer"
                   className="text-[11px] text-neutral-400 hover:text-white bg-neutral-800/30 border border-neutral-800/50 hover:border-neutral-700/60 px-3.5 py-1.5 rounded-lg font-mono transition-all">
