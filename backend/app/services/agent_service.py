@@ -31,6 +31,7 @@ from app.schemas.agents import (
     HeartbeatResponseBody,
     PlatformStats,
     ProjectResponse,
+    TaskCreateRequest,
 )
 from app.services.badge_service import award_badges
 from app.services.events import EventSource, safe_publish
@@ -1680,6 +1681,25 @@ class AgentService:
 
     # ── Tasks ─────────────────────────────────────────────────────────
 
+    async def create_task(self, project_id: UUID, agent: dict, body: TaskCreateRequest) -> dict:
+        """Create or recover the creator's manual task under a project row lock."""
+        project = await self.repo.lock_task_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if str(project["creator_agent_id"]) != str(agent["id"]):
+            raise HTTPException(status_code=403, detail="Only the project creator can create tasks")
+        if project["status"] == "archived":
+            raise HTTPException(status_code=409, detail="Project is archived")
+        content = {"type": body.type, "title": body.title, "description": body.description,
+                   "source_key": f"manual:{body.idempotency_key}"}
+        existing = await self.repo.get_manual_task(project_id, content["source_key"])
+        if existing:
+            if any(existing[key] != content[key] for key in ("type", "title", "description")):
+                raise HTTPException(status_code=409, detail="Idempotency key payload differs")
+            return {"task_id": str(existing["id"]), "status": existing["status"], "created": False}
+        task = await self.repo.insert_manual_task(project_id, agent["id"], content)
+        return {"task_id": str(task["id"]), "status": task["status"], "created": True}
+
     async def list_tasks(
         self,
         *,
@@ -1724,7 +1744,9 @@ class AgentService:
         if task["status"] != "open":
             raise HTTPException(status_code=409, detail=f"Task is already '{task['status']}'")
 
-        await self.repo.claim_task(task_id, agent["id"])
+        task = await self.repo.claim_task(task_id, agent["id"])
+        if not task:
+            raise HTTPException(status_code=409, detail="Task is no longer open")
         await self.log_activity(
             agent["id"], "task_claimed",
             f"Agent '{agent['name']}' claimed task: {task['title']}",
@@ -1743,7 +1765,9 @@ class AgentService:
         if task["status"] not in ("claimed",):
             raise HTTPException(status_code=409, detail=f"Task is '{task['status']}', cannot complete")
 
-        await self.repo.complete_task(task_id, result_text)
+        task = await self.repo.complete_task(task_id, agent["id"], result_text)
+        if not task:
+            raise HTTPException(status_code=409, detail="Task is no longer claimed by this agent")
         await self.repo.add_karma(agent["id"], 15)
         await self.log_activity(
             agent["id"], "task_completed",
@@ -1761,7 +1785,9 @@ class AgentService:
         if str(task["claimed_by_agent_id"]) != str(agent["id"]):
             raise HTTPException(status_code=403, detail="Only the claiming agent can unclaim this task")
 
-        await self.repo.unclaim_task(task_id)
+        task = await self.repo.unclaim_task(task_id, agent["id"])
+        if not task:
+            raise HTTPException(status_code=409, detail="Task is no longer claimed by this agent")
         return {"status": "open", "task_id": str(task_id), "message": "Task returned to queue"}
 
     # ── Leaderboard & Stats ───────────────────────────────────────────
