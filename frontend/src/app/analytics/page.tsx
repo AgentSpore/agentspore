@@ -1,5 +1,9 @@
 "use client";
 
+import { localeTag } from '@/lib/i18n/locale';
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
@@ -72,6 +76,8 @@ function DotGrid() {
 }
 
 export default function AnalyticsPage() {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
   const [period, setPeriod] = useState<"7d" | "30d" | "90d">("30d");
   const [overview, setOverview] = useState<OverviewStats | null>(null);
   const [activity, setActivity] = useState<ActivityPoint[]>([]);
@@ -117,15 +123,15 @@ export default function AnalyticsPage() {
         {/* Breadcrumbs + period toggle */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-[10px] font-mono">
-            <Link href="/" className="text-neutral-600 hover:text-neutral-400 transition-colors">home</Link>
+            <Link href="/" className="text-neutral-600 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
             <span className="text-neutral-700">/</span>
-            <span className="text-neutral-400">analytics</span>
+            <span className="text-neutral-400">{tr('analytics')}</span>
           </div>
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs shrink-0">
             {PERIOD_OPTIONS.map(p => (
               <button key={p.value} onClick={() => setPeriod(p.value)}
                 className={`px-3 py-1.5 font-mono transition-colors ${period === p.value ? "bg-white text-black" : "text-neutral-500 hover:text-neutral-300 bg-neutral-900/30"}`}>
-                {p.label}
+                {displayPublicLabel(locale, p.label)}
               </button>
             ))}
           </div>
@@ -133,21 +139,21 @@ export default function AnalyticsPage() {
 
         {/* Section label */}
         <div>
-          <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-4">Platform Overview</p>
+          <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-4">{tr('platformOverview')}</p>
         </div>
 
         {/* Overview stat cards */}
         {overview && (
           <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard value={overview.total_agents} label="Total Agents" color="#a78bfa" sub={`${overview.active_agents} active`} delay={0} />
-            <StatCard value={overview.total_projects} label="Projects" color="#818cf8" delay={1} />
-            <StatCard value={overview.total_commits} label="Commits" color="#22d3ee" delay={2} />
-            <StatCard value={overview.total_reviews} label="Reviews" color="#fb923c" delay={3} />
-            <StatCard value={overview.total_teams} label="Teams" color="#ec4899" delay={4} />
-            <StatCard value={overview.total_messages} label="Chat Messages" color="#a78bfa" delay={5} />
+            <StatCard value={overview.total_agents} label={tr('totalAgents')} color="#a78bfa" sub={tr('countActive', { count: overview.active_agents })} delay={0} />
+            <StatCard value={overview.total_projects} label={tr('projects')} color="#818cf8" delay={1} />
+            <StatCard value={overview.total_commits} label={tr('commits')} color="#22d3ee" delay={2} />
+            <StatCard value={overview.total_reviews} label={tr('reviews')} color="#fb923c" delay={3} />
+            <StatCard value={overview.total_teams} label={tr('teams')} color="#ec4899" delay={4} />
+            <StatCard value={overview.total_messages} label={tr('chatMessages')} color="#a78bfa" delay={5} />
             <StatCard
               value={overview.total_agents > 0 ? Math.round(overview.total_commits / overview.total_agents) : 0}
-              label="Avg Commits/Agent" color="#34d399" delay={6}
+              label={tr('avgCommitsAgent')} color="#34d399" delay={6}
             />
           </section>
         )}
@@ -155,20 +161,20 @@ export default function AnalyticsPage() {
         {/* Activity line chart */}
         <section className="fade-up fade-up-3 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm overflow-hidden">
           <div className="px-5 py-4 border-b border-neutral-800/50">
-            <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Activity Over Time</p>
+            <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('activityOverTime')}</p>
           </div>
           <div className="p-5">
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={activity} margin={{ top: 4, right: 4, bottom: 4, left: -20 }}>
                 <XAxis dataKey="date" tick={{ fill: "#404040", fontSize: 10, fontFamily: "monospace" }}
-                  tickFormatter={d => d.slice(5)} interval="preserveStartEnd" axisLine={{ stroke: "#262626" }} tickLine={false} />
+                  tickFormatter={d => new Date(d).toLocaleDateString(localeTag(locale), { month: "short", day: "numeric" })} interval="preserveStartEnd" axisLine={{ stroke: "#262626" }} tickLine={false} />
                 <YAxis tick={{ fill: "#404040", fontSize: 10, fontFamily: "monospace" }} axisLine={false} tickLine={false} />
                 <Tooltip {...CHART_TOOLTIP_STYLE} />
                 <Legend wrapperStyle={{ fontSize: 11, color: "#a3a3a3", fontFamily: "monospace" }} />
-                <Line type="monotone" dataKey="commits"  stroke="#22d3ee" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="reviews"  stroke="#fb923c" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="messages" stroke="#a78bfa" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="new_projects" stroke="#4ade80" strokeWidth={2} dot={false} name="new projects" />
+                <Line type="monotone" dataKey="commits" name={tr('commits')} stroke="#22d3ee" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="reviews" name={tr('reviews')} stroke="#fb923c" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="messages" name={tr('chatMessages')} stroke="#a78bfa" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="new_projects" stroke="#4ade80" strokeWidth={2} dot={false} name={tr('projects')} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -178,7 +184,7 @@ export default function AnalyticsPage() {
           {/* Top agents bar chart */}
           <section className="fade-up fade-up-4 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm overflow-hidden">
             <div className="px-5 py-4 border-b border-neutral-800/50">
-              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Top Agents</p>
+              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('topAgents')}</p>
             </div>
             <div className="p-5">
               <ResponsiveContainer width="100%" height={240}>
@@ -187,8 +193,8 @@ export default function AnalyticsPage() {
                   <YAxis type="category" dataKey="name" tick={{ fill: "#a3a3a3", fontSize: 10, fontFamily: "monospace" }} width={80} axisLine={false} tickLine={false} />
                   <Tooltip {...CHART_TOOLTIP_STYLE} />
                   <Legend wrapperStyle={{ fontSize: 11, color: "#a3a3a3", fontFamily: "monospace" }} />
-                  <Bar dataKey="commits" fill="#22d3ee" radius={[0, 4, 4, 0]} />
-                  <Bar dataKey="reviews" fill="#fb923c" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="commits" name={tr('commits')} fill="#22d3ee" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="reviews" name={tr('reviews')} fill="#fb923c" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -197,7 +203,7 @@ export default function AnalyticsPage() {
           {/* Language pie chart */}
           <section className="fade-up fade-up-5 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm overflow-hidden">
             <div className="px-5 py-4 border-b border-neutral-800/50">
-              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Tech Stack Distribution</p>
+              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('techStackDistribution')}</p>
             </div>
             <div className="p-5">
               {languages.length > 0 ? (
@@ -205,12 +211,12 @@ export default function AnalyticsPage() {
                   <ResponsiveContainer width="50%" height={200}>
                     <PieChart>
                       <Pie data={languages.slice(0, 8)} dataKey="project_count" nameKey="language"
-                        cx="50%" cy="50%" innerRadius={50} outerRadius={90} strokeWidth={0}>
+                        cx="50%" cy="50%" innerRadius="50%" outerRadius="90%" strokeWidth={0}>
                         {languages.slice(0, 8).map((_, i) => (
                           <Cell key={i} fill={LANG_COLORS[i % LANG_COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => [`${v} projects`]} />
+                      <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => [`${typeof v === 'number' ? new Intl.NumberFormat(localeTag(locale)).format(v) : v} ${tr('projects')}`]} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="flex-1 space-y-2">
@@ -220,13 +226,13 @@ export default function AnalyticsPage() {
                           <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: LANG_COLORS[i % LANG_COLORS.length] }} />
                           <span className="text-neutral-400 font-mono text-[11px]">{l.language}</span>
                         </div>
-                        <span className="text-neutral-600 font-mono text-[11px]">{l.percentage}%</span>
+                        <span className="text-neutral-600 font-mono text-[11px]">{new Intl.NumberFormat(localeTag(locale)).format(l.percentage)}%</span>
                       </div>
                     ))}
                   </div>
                 </div>
               ) : (
-                <div className="h-48 flex items-center justify-center text-neutral-600 text-sm font-mono">No data yet</div>
+                <div className="h-48 flex items-center justify-center text-neutral-600 text-sm font-mono">{tr('noDataYet')}</div>
               )}
             </div>
           </section>
@@ -240,37 +246,37 @@ export default function AnalyticsPage() {
               <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
               <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
             </div>
-            <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Agent Rankings</p>
+            <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('agentRankings')}</p>
           </div>
 
           {/* Table header */}
-          <div className="grid grid-cols-[40px_1fr_80px_80px_80px] gap-2 px-5 py-2.5 border-b border-neutral-800/30 text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600">
+          <div className="grid grid-cols-[24px_minmax(0,1fr)_44px_44px_44px] sm:grid-cols-[40px_minmax(0,1fr)_80px_80px_80px] gap-1 px-3 sm:gap-2 sm:px-5 py-2.5 border-b border-neutral-800/30 text-[10px] font-mono uppercase tracking-normal sm:tracking-[0.15em] text-neutral-600">
             <span>#</span>
-            <span>Agent</span>
-            <span className="text-right">Commits</span>
-            <span className="text-right">Reviews</span>
-            <span className="text-right">Karma</span>
+            <span>{tr('agent2')}</span>
+            <span className="text-right break-words text-[9px] sm:text-[10px]">{tr('commits')}</span>
+            <span className="text-right break-words text-[9px] sm:text-[10px]">{tr('reviews')}</span>
+            <span className="text-right break-words text-[9px] sm:text-[10px]">{tr('karma2')}</span>
           </div>
 
           <div className="divide-y divide-neutral-800/30">
             {topAgents.map((agent, i) => (
               <Link key={agent.agent_id} href={`/agents/${agent.agent_id}`}>
-                <div className="grid grid-cols-[40px_1fr_80px_80px_80px] gap-2 items-center px-5 py-3 hover:bg-neutral-800/20 transition-colors group">
-                  <span className="text-neutral-600 text-xs font-mono">#{i + 1}</span>
-                  <div className="min-w-0 flex items-center gap-2">
+                <div className="grid grid-cols-[24px_minmax(0,1fr)_44px_44px_44px] sm:grid-cols-[40px_minmax(0,1fr)_80px_80px_80px] gap-1 sm:gap-2 items-center px-3 sm:px-5 py-3 hover:bg-neutral-800/20 transition-colors group">
+                  <span className="text-neutral-600 text-xs font-mono">#{new Intl.NumberFormat(localeTag(locale)).format(i + 1)}</span>
+                  <div className="min-w-0 flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
                     <span className="text-sm font-mono text-neutral-200 group-hover:text-white transition-colors truncate">{agent.name}</span>
                     {agent.specialization && (
-                      <span className="text-[10px] font-mono text-violet-400 bg-violet-400/10 border border-violet-400/20 px-1.5 py-0.5 rounded shrink-0">{agent.specialization}</span>
+                      <span className="text-[10px] font-mono text-violet-400 bg-violet-400/10 border border-violet-400/20 px-1.5 py-0.5 rounded max-w-full truncate">{displayPublicLabel(locale, agent.specialization)}</span>
                     )}
                   </div>
-                  <span className="text-right text-cyan-400 font-mono text-sm">{agent.commits}</span>
-                  <span className="text-right text-orange-400 font-mono text-sm">{agent.reviews}</span>
-                  <span className="text-right text-violet-400 font-mono text-sm">{agent.karma}</span>
+                  <span className="text-right text-cyan-400 font-mono text-sm">{new Intl.NumberFormat(localeTag(locale)).format(agent.commits)}</span>
+                  <span className="text-right text-orange-400 font-mono text-sm">{new Intl.NumberFormat(localeTag(locale)).format(agent.reviews)}</span>
+                  <span className="text-right text-violet-400 font-mono text-sm">{new Intl.NumberFormat(localeTag(locale)).format(agent.karma)}</span>
                 </div>
               </Link>
             ))}
             {topAgents.length === 0 && (
-              <div className="py-16 text-center text-neutral-600 text-sm font-mono">No activity in this period</div>
+              <div className="py-16 text-center text-neutral-600 text-sm font-mono">{tr('noActivityInThisPeriod')}</div>
             )}
           </div>
         </section>
@@ -280,6 +286,7 @@ export default function AnalyticsPage() {
 }
 
 function StatCard({ value, label, color, sub, delay }: { value: number; label: string; color: string; sub?: string; delay: number }) {
+  const { locale } = useLocale();
   return (
     <div className={`fade-up fade-up-${delay} relative overflow-hidden bg-neutral-900/30 border border-neutral-800/50 hover:border-neutral-700/60 rounded-xl transition-all group`}>
       {/* Colored top-line accent */}
@@ -287,8 +294,8 @@ function StatCard({ value, label, color, sub, delay }: { value: number; label: s
       <div className="p-5">
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
           style={{ background: `radial-gradient(circle at top left, ${color}08, transparent 60%)` }} />
-        <div className="text-3xl font-bold font-mono" style={{ color }}>{value.toLocaleString()}</div>
-        <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600 mt-2">{label}</div>
+        <div className="text-3xl font-bold font-mono" style={{ color }}>{value.toLocaleString(localeTag(locale))}</div>
+        <div className="text-[10px] font-mono uppercase tracking-normal sm:tracking-[0.15em] text-neutral-600 mt-2">{label}</div>
         {sub && <div className="text-[10px] font-mono text-neutral-700 mt-0.5">{sub}</div>}
       </div>
     </div>

@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { automationMessages } from "@/lib/i18n/automation";
+
 import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -32,6 +35,10 @@ const stepStatusDot: Record<string, string> = {
 };
 
 export default function FlowDetailPage() {
+  const tr = useTranslations(automationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(automationMessages.en, value) ? tr(value) : value;
+
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [flow, setFlow] = useState<Flow | null>(null);
@@ -134,14 +141,13 @@ export default function FlowDetailPage() {
       <Header />
 
       <main className="relative z-10 max-w-3xl mx-auto px-6 py-10 space-y-8">
-        {loading && <p className="text-neutral-600 text-sm font-mono fade-up">Loading...</p>}
+        {loading && <p className="text-neutral-600 text-sm font-mono fade-up">{tr("Loading...")}</p>}
 
         {!loading && !flow && (
           <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-12 text-center space-y-3 fade-up">
-            <p className="text-neutral-500">Flow not found</p>
+            <p className="text-neutral-500">{tr("Flow not found")}</p>
             <Link href="/flows" className="text-sm text-neutral-400 hover:text-white mt-2 inline-block font-mono">
-              Back to Flows
-            </Link>
+              {" " + tr("Back to Flows") + " "}</Link>
           </div>
         )}
 
@@ -151,8 +157,7 @@ export default function FlowDetailPage() {
             <div className="fade-up" style={{ animationDelay: "0ms" }}>
               <div className="flex items-center gap-1.5 mb-3">
                 <Link href="/flows" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">
-                  Flows
-                </Link>
+                  {" " + tr("Flows") + " "}</Link>
                 <span className="text-[10px] text-neutral-700">/</span>
                 <span className="text-[10px] font-mono text-neutral-500 truncate max-w-[200px]">
                   {flow.title}
@@ -166,13 +171,13 @@ export default function FlowDetailPage() {
                     <p className="text-neutral-500 text-sm mt-1">{flow.description}</p>
                   )}
                   <div className="flex items-center gap-3 mt-2 text-[11px] text-neutral-600 font-mono">
-                    <span>{timeAgo(flow.created_at)}</span>
+                    <span>{timeAgo(flow.created_at, locale)}</span>
                     <span className="text-neutral-800">|</span>
-                    <span>{steps.length} steps</span>
+                    <span>{steps.length.toLocaleString(locale)} {" " + tr("steps")}</span>
                   </div>
                 </div>
                 <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono flex-shrink-0 ${st.classes}`}>
-                  {st.label}
+                  {display(st.label)}
                 </span>
               </div>
             </div>
@@ -185,7 +190,7 @@ export default function FlowDetailPage() {
                   disabled={!!actionLoading || steps.length === 0}
                   className="px-5 py-2.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50"
                 >
-                  {actionLoading === "start" ? "Starting..." : "Start Flow"}
+                  {actionLoading === "start" ? tr("Starting...") : tr("Start Flow")}
                 </button>
               )}
               {flow.status === "running" && (
@@ -194,8 +199,7 @@ export default function FlowDetailPage() {
                   disabled={!!actionLoading}
                   className="px-5 py-2.5 rounded-lg text-sm font-mono bg-neutral-800/30 border border-neutral-800/50 text-neutral-300 hover:text-white hover:border-neutral-700/60 transition-all"
                 >
-                  Pause
-                </button>
+                  {" " + tr("Pause") + " "}</button>
               )}
               {flow.status === "paused" && (
                 <button
@@ -203,8 +207,7 @@ export default function FlowDetailPage() {
                   disabled={!!actionLoading}
                   className="px-5 py-2.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all"
                 >
-                  Resume
-                </button>
+                  {" " + tr("Resume") + " "}</button>
               )}
               {["draft", "running", "paused"].includes(flow.status) && (
                 <button
@@ -212,29 +215,25 @@ export default function FlowDetailPage() {
                   disabled={!!actionLoading}
                   className="px-5 py-2.5 rounded-lg text-sm font-mono bg-neutral-800/30 border border-red-500/20 text-red-400 hover:text-red-300 hover:border-red-500/40 transition-all"
                 >
-                  Cancel
-                </button>
+                  {" " + tr("Cancel") + " "}</button>
               )}
               {flow.status === "draft" && (
                 <Link
                   href={`/flows/new`}
                   className="px-5 py-2.5 rounded-lg text-sm font-mono bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 hover:text-white hover:border-neutral-700/60 transition-all ml-auto"
                 >
-                  Edit Steps
-                </Link>
+                  {" " + tr("Edit Steps") + " "}</Link>
               )}
             </div>
 
             {/* Pipeline visualization */}
             <div className="space-y-1 fade-up" style={{ animationDelay: "120ms" }}>
               <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
-                Pipeline
-              </span>
+                {" " + tr("Pipeline") + " "}</span>
 
               {steps.length === 0 && (
                 <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono mt-2">
-                  No steps added yet
-                </div>
+                  {" " + tr("No steps added yet") + " "}</div>
               )}
 
               <div className="mt-3 space-y-0">
@@ -270,38 +269,37 @@ export default function FlowDetailPage() {
                               <span className="text-white font-medium text-sm truncate">{step.title}</span>
                             </div>
                             <div className="flex items-center gap-2 mt-1.5 text-[11px] text-neutral-500 font-mono">
-                              <span className="text-violet-400/70">@{step.agent_handle || "unknown"}</span>
+                              <span className="text-violet-400/70">@{step.agent_handle || tr("unknown")}</span>
                               {step.auto_approve && (
                                 <>
                                   <span className="text-neutral-800">|</span>
-                                  <span className="text-cyan-400/50">auto-approve</span>
+                                  <span className="text-cyan-400/50">{tr("auto-approve")}</span>
                                 </>
                               )}
                               {deps.length > 0 && (
                                 <>
                                   <span className="text-neutral-800">|</span>
-                                  <span className="text-neutral-600">depends: {deps.map((d) => d.title).join(", ")}</span>
+                                  <span className="text-neutral-600">{tr("depends:") + " "}{deps.map((d) => d.title).join(", ")}</span>
                                 </>
                               )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
                             <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono ${sts.classes}`}>
-                              {sts.label}
+                              {display(sts.label)}
                             </span>
                             <Link
                               href={`/flows/${id}/steps/${step.id}`}
                               className="text-[10px] font-mono text-neutral-600 hover:text-violet-400 transition-colors px-2 py-1 rounded-md border border-neutral-800/50 hover:border-violet-500/30"
                             >
-                              Chat
-                            </Link>
+                              {" " + tr("Chat") + " "}</Link>
                           </div>
                         </div>
 
                         {/* Output preview for review */}
                         {isReview && step.output_text && (
                           <div className="rounded-lg bg-neutral-900/50 border border-neutral-800/50 p-3">
-                            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1.5">Agent output</span>
+                            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1.5">{tr("Agent output")}</span>
                             <pre className="text-xs text-neutral-300 whitespace-pre-wrap font-mono max-h-40 overflow-y-auto leading-relaxed">
                               {step.output_text}
                             </pre>
@@ -314,7 +312,7 @@ export default function FlowDetailPage() {
                             <textarea
                               value={editedOutput}
                               onChange={(e) => setEditedOutput(e.target.value)}
-                              placeholder="Edit output before approving (optional)"
+                              placeholder={tr("Edit output before approving (optional)")}
                               rows={3}
                               className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none font-mono"
                             />
@@ -324,14 +322,12 @@ export default function FlowDetailPage() {
                                 disabled={!!actionLoading}
                                 className="px-4 py-1.5 rounded-lg text-xs font-mono bg-white text-black hover:bg-neutral-200 transition-all"
                               >
-                                Confirm Approve
-                              </button>
+                                {" " + tr("Confirm Approve") + " "}</button>
                               <button
                                 onClick={() => { setApproveStepId(null); setEditedOutput(""); }}
                                 className="px-4 py-1.5 rounded-lg text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors"
                               >
-                                Cancel
-                              </button>
+                                {" " + tr("Cancel") + " "}</button>
                             </div>
                           </div>
                         )}
@@ -342,7 +338,7 @@ export default function FlowDetailPage() {
                             <textarea
                               value={rejectFeedback}
                               onChange={(e) => setRejectFeedback(e.target.value)}
-                              placeholder="Feedback for the agent (what to fix)"
+                              placeholder={tr("Feedback for the agent (what to fix)")}
                               rows={2}
                               className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-3 py-2 text-xs text-white placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none font-mono"
                             />
@@ -352,14 +348,12 @@ export default function FlowDetailPage() {
                                 disabled={!!actionLoading || !rejectFeedback.trim()}
                                 className="px-4 py-1.5 rounded-lg text-xs font-mono bg-neutral-800/30 border border-red-500/20 text-red-400 hover:text-red-300 transition-all disabled:opacity-50"
                               >
-                                Confirm Reject
-                              </button>
+                                {" " + tr("Confirm Reject") + " "}</button>
                               <button
                                 onClick={() => { setRejectStepId(null); setRejectFeedback(""); }}
                                 className="px-4 py-1.5 rounded-lg text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors"
                               >
-                                Cancel
-                              </button>
+                                {" " + tr("Cancel") + " "}</button>
                             </div>
                           </div>
                         )}
@@ -371,21 +365,18 @@ export default function FlowDetailPage() {
                               onClick={() => { setApproveStepId(step.id); setEditedOutput(step.output_text || ""); }}
                               className="px-4 py-1.5 rounded-lg text-xs font-mono bg-white text-black hover:bg-neutral-200 transition-all"
                             >
-                              Approve
-                            </button>
+                              {" " + tr("Approve") + " "}</button>
                             <button
                               onClick={() => setRejectStepId(step.id)}
                               className="px-4 py-1.5 rounded-lg text-xs font-mono bg-neutral-800/30 border border-red-500/20 text-red-400 hover:text-red-300 transition-all"
                             >
-                              Reject
-                            </button>
+                              {" " + tr("Reject") + " "}</button>
                             <button
                               onClick={() => skipStep(step.id)}
                               disabled={!!actionLoading}
                               className="px-4 py-1.5 rounded-lg text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors"
                             >
-                              Skip
-                            </button>
+                              {" " + tr("Skip") + " "}</button>
                           </div>
                         )}
 
@@ -396,14 +387,13 @@ export default function FlowDetailPage() {
                             disabled={!!actionLoading}
                             className="text-[11px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors"
                           >
-                            Skip this step
-                          </button>
+                            {" " + tr("Skip this step") + " "}</button>
                         )}
 
                         {/* Approved/skipped output */}
                         {step.status === "approved" && step.output_text && (
                           <div className="rounded-lg bg-neutral-900/50 border border-emerald-500/10 p-3">
-                            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-emerald-500/50 block mb-1.5">Approved output</span>
+                            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-emerald-500/50 block mb-1.5">{tr("Approved output")}</span>
                             <pre className="text-xs text-neutral-400 whitespace-pre-wrap font-mono max-h-32 overflow-y-auto leading-relaxed">
                               {step.output_text}
                             </pre>
