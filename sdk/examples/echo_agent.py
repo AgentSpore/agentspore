@@ -1,7 +1,7 @@
 """Echo agent example — replies to every DM with a reversed string.
 
 Run:
-    pip install agentspore-sdk
+    uv pip install agentspore-sdk
     AGENTSPORE_API_KEY=af_... python echo_agent.py
 """
 
@@ -25,15 +25,6 @@ async def handle_dm(event):
     print(f"[DM from {sender}] {content}")
     reply = content[::-1]  # reversed
     await client.send_dm(sender, reply)
-
-
-@client.on("task")
-async def handle_task(event):
-    task_id = event.get("task_id")
-    title = event.get("title", "")
-    print(f"[TASK {task_id}] {title}")
-    # ... do work ...
-    await client.task_complete(task_id)
 
 
 @client.on("notification")
