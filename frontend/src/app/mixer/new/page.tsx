@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { mixerMessages } from "@/lib/i18n/mixer";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -43,6 +46,10 @@ let keyCounter = 0;
 function nextKey() { return `chunk-${++keyCounter}`; }
 
 export default function NewMixerPage() {
+  const tr = useTranslations(mixerMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(mixerMessages.en, value) ? tr(value) : value;
+
   const router = useRouter();
 
   // Step 1: session info
@@ -209,25 +216,24 @@ export default function NewMixerPage() {
       <main className="relative max-w-3xl mx-auto px-6 py-12 space-y-8">
         {/* Breadcrumb */}
         <div className="text-[10px] font-mono text-neutral-600 tracking-wide fade-up">
-          <Link href="/" className="hover:text-neutral-400 transition-colors">HOME</Link>
+          <Link href="/" className="hover:text-neutral-400 transition-colors">{tr("HOME")}</Link>
           <span className="mx-2">/</span>
-          <Link href="/mixer" className="hover:text-neutral-400 transition-colors">MIXER</Link>
+          <Link href="/mixer" className="hover:text-neutral-400 transition-colors">{tr("MIXER")}</Link>
           <span className="mx-2">/</span>
-          <span className="text-neutral-400">NEW SESSION</span>
+          <span className="text-neutral-400">{tr("NEW SESSION")}</span>
         </div>
 
         {/* Page header */}
         <div className="flex items-end justify-between gap-4 fade-up" style={{ animationDelay: "0.05s" }}>
           <div>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-2">Create</span>
-            <h1 className="text-2xl font-bold tracking-tight">New Mixer Session</h1>
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-2">{tr("Create")}</span>
+            <h1 className="text-2xl font-bold tracking-tight">{tr("New Mixer Session")}</h1>
           </div>
           <Link
             href="/mixer"
             className="text-[11px] font-mono text-neutral-500 hover:text-neutral-300 transition-colors flex-shrink-0 px-3 py-1.5 rounded-lg border border-neutral-800/50 bg-neutral-900/30 hover:border-neutral-700/60"
           >
-            &larr; Back
-          </Link>
+            {" " + tr("← Back") + " "}</Link>
         </div>
 
         {!sessionId ? (
@@ -235,18 +241,18 @@ export default function NewMixerPage() {
           <>
             {/* Session info */}
             <div className="space-y-4 fade-up" style={{ animationDelay: "0.1s" }}>
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Session Details</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Session Details")}</span>
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Session title"
+                placeholder={tr("Session title")}
                 className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
                 maxLength={300}
               />
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Description (optional)"
+                placeholder={tr("Description (optional)")}
                 rows={2}
                 className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
                 maxLength={2000}
@@ -257,36 +263,35 @@ export default function NewMixerPage() {
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-6 space-y-4 fade-up" style={{ animationDelay: "0.15s" }}>
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1">Input</span>
-                  <h2 className="text-base font-semibold">Task Text</h2>
+                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1">{tr("Input")}</span>
+                  <h2 className="text-base font-semibold">{tr("Task Text")}</h2>
                 </div>
                 <button
                   onClick={wrapSelection}
                   className="text-xs px-4 py-2 rounded-lg border border-violet-500/30 text-violet-300 bg-violet-500/10 hover:bg-violet-500/20 transition-all font-mono"
                 >
-                  Mark as Private
-                </button>
+                  {" " + tr("Mark as Private") + " "}</button>
               </div>
               <p className="text-xs text-neutral-600 font-mono">
-                Select text and click &quot;Mark as Private&quot; or manually wrap with{" "}
+                {" " + tr("Select text and click \"Mark as Private\" or manually wrap with")}{" "}
                 <code className="text-violet-300 bg-violet-500/10 px-1.5 py-0.5 rounded">{"{{PRIVATE:value}}"}</code>{" "}
-                or{" "}
+                {" " + tr("or")}{" "}
                 <code className="text-violet-300 bg-violet-500/10 px-1.5 py-0.5 rounded">{"{{PRIVATE:category:value}}"}</code>
               </p>
               <textarea
                 ref={textareaRef}
                 value={taskText}
                 onChange={(e) => setTaskText(e.target.value)}
-                placeholder="Enter your task here. Wrap sensitive data with {{PRIVATE:value}}&#10;&#10;Example: Analyze the report for {{PRIVATE:company:Acme Corp}} — their revenue was {{PRIVATE:financial:$45.2M}}"
+                placeholder={tr("Enter your task here. Wrap sensitive data with {{PRIVATE:value}}\n\nExample: Analyze the report for {{PRIVATE:company:Acme Corp}} — their revenue was {{PRIVATE:financial:$45.2M}}")}
                 rows={8}
                 className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
                 maxLength={50000}
               />
               <div className="flex items-center gap-3 text-[11px] text-neutral-600 font-mono">
-                <span>{taskText.length} chars</span>
+                <span>{taskText.length.toLocaleString(locale)} {" " + tr("chars")}</span>
                 <span className="text-neutral-800">&middot;</span>
                 <span className={markerCount > 0 ? "text-violet-300" : "text-neutral-600"}>
-                  {markerCount} private marker{markerCount !== 1 ? "s" : ""}
+                  {markerCount.toLocaleString(locale)} {" " + tr("private marker")}
                 </span>
               </div>
             </div>
@@ -294,7 +299,7 @@ export default function NewMixerPage() {
             {/* Preview */}
             {markerCount > 0 && (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 space-y-3 fade-up" style={{ animationDelay: "0.18s" }}>
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Preview (what agents will see)</span>
+                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Preview (what agents will see)")}</span>
                 <pre className="text-xs text-neutral-400 font-mono whitespace-pre-wrap break-words leading-relaxed">
                   {previewText}
                 </pre>
@@ -304,18 +309,16 @@ export default function NewMixerPage() {
             {/* Passphrase */}
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-6 space-y-4 fade-up" style={{ animationDelay: "0.2s" }}>
               <div>
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1">Security</span>
-                <h2 className="text-base font-semibold">Encryption Passphrase</h2>
+                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1">{tr("Security")}</span>
+                <h2 className="text-base font-semibold">{tr("Encryption Passphrase")}</h2>
               </div>
               <p className="text-xs text-neutral-600 font-mono">
-                Used to encrypt private data. You&apos;ll need it again to view the assembled result.
-                The passphrase is never stored on the server.
-              </p>
+                {" " + tr("Used to encrypt private data. You'll need it again to view the assembled result. The passphrase is never stored on the server.") + " "}</p>
               <input
                 type="password"
                 value={passphrase}
                 onChange={(e) => setPassphrase(e.target.value)}
-                placeholder="Passphrase (min 8 chars)"
+                placeholder={tr("Passphrase (min 8 chars)")}
                 className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
                 maxLength={128}
               />
@@ -323,24 +326,23 @@ export default function NewMixerPage() {
                 type="password"
                 value={passphraseConfirm}
                 onChange={(e) => setPassphraseConfirm(e.target.value)}
-                placeholder="Confirm passphrase"
+                placeholder={tr("Confirm passphrase")}
                 className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
                 maxLength={128}
               />
               {passphrase && passphraseConfirm && passphrase !== passphraseConfirm && (
-                <p className="text-xs text-red-400 font-mono">Passphrases do not match</p>
+                <p className="text-xs text-red-400 font-mono">{tr("Passphrases do not match")}</p>
               )}
             </div>
 
             {/* TTL */}
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-6 space-y-4 fade-up" style={{ animationDelay: "0.22s" }}>
               <div>
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1">Expiry</span>
-                <h2 className="text-base font-semibold">Fragment TTL</h2>
+                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1">{tr("Expiry")}</span>
+                <h2 className="text-base font-semibold">{tr("Fragment TTL")}</h2>
               </div>
               <p className="text-xs text-neutral-600 font-mono">
-                Private data fragments are automatically deleted after this period.
-              </p>
+                {" " + tr("Private data fragments are automatically deleted after this period.") + " "}</p>
               <select
                 value={ttl}
                 onChange={(e) => setTtl(Number(e.target.value))}
@@ -348,7 +350,7 @@ export default function NewMixerPage() {
               >
                 {TTL_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
-                    {opt.label}
+                    {display(opt.label)}
                   </option>
                 ))}
               </select>
@@ -356,7 +358,7 @@ export default function NewMixerPage() {
 
             {error && (
               <div className="rounded-xl border border-red-500/20 bg-red-500/[0.05] p-4 text-sm text-red-400 font-mono fade-up">
-                {error}
+                {display(error)}
               </div>
             )}
 
@@ -366,7 +368,7 @@ export default function NewMixerPage() {
               className="w-full py-3.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed fade-up"
               style={{ animationDelay: "0.25s" }}
             >
-              {submitting ? "Encrypting..." : "Create Session & Add Chunks"}
+              {submitting ? tr("Encrypting...") : tr("Create Session & Add Chunks")}
             </button>
           </>
         ) : (
@@ -382,18 +384,16 @@ export default function NewMixerPage() {
                 </div>
                 <div>
                   <p className="text-sm text-emerald-400 font-medium">
-                    Session created. {fragments.length} fragment{fragments.length !== 1 ? "s" : ""} encrypted.
-                  </p>
+                    {" " + tr("Session created.") + " "}{fragments.length.toLocaleString(locale)} {" " + tr("fragments")} {" " + tr("encrypted.") + " "}</p>
                   <p className="text-xs text-neutral-500 font-mono mt-1">
-                    Now add chunks -- each chunk is a sub-task assigned to a different agent.
-                  </p>
+                    {" " + tr("Now add chunks -- each chunk is a sub-task assigned to a different agent.") + " "}</p>
                 </div>
               </div>
             </div>
 
             {/* Sanitized text */}
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 space-y-3 fade-up" style={{ animationDelay: "0.13s" }}>
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Sanitized Text (Placeholders)</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Sanitized Text (Placeholders)")}</span>
               <pre className="text-xs text-neutral-400 font-mono whitespace-pre-wrap break-words leading-relaxed">
                 {sanitizedText}
               </pre>
@@ -401,7 +401,7 @@ export default function NewMixerPage() {
 
             {/* Fragment list */}
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 space-y-3 fade-up" style={{ animationDelay: "0.16s" }}>
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Available Placeholders</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Available Placeholders")}</span>
               <div className="flex flex-wrap gap-2">
                 {fragments.map((f) => (
                   <span
@@ -419,10 +419,10 @@ export default function NewMixerPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between fade-up" style={{ animationDelay: "0.19s" }}>
                 <div>
-                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1">Configuration</span>
-                  <h2 className="text-base font-semibold">Chunks</h2>
+                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-1">{tr("Configuration")}</span>
+                  <h2 className="text-base font-semibold">{tr("Chunks")}</h2>
                 </div>
-                <span className="text-[11px] text-neutral-600 font-mono">{chunks.length} chunk{chunks.length !== 1 ? "s" : ""}</span>
+                <span className="text-[11px] text-neutral-600 font-mono">{chunks.length.toLocaleString(locale)} {" " + tr("chunks")}</span>
               </div>
 
               {chunks.map((c, idx) => (
@@ -432,21 +432,20 @@ export default function NewMixerPage() {
                   style={{ animationDelay: `${0.2 + idx * 0.04}s` }}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Chunk {idx + 1}</span>
+                    <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Chunk") + " "}{idx + 1}</span>
                     {chunks.length > 1 && (
                       <button
                         onClick={() => removeChunk(c.key)}
                         className="text-xs font-mono text-neutral-600 hover:text-red-400 transition-colors"
                       >
-                        Remove
-                      </button>
+                        {" " + tr("Remove") + " "}</button>
                     )}
                   </div>
 
                   <input
                     value={c.title}
                     onChange={(e) => updateChunk(c.key, "title", e.target.value)}
-                    placeholder="Chunk title"
+                    placeholder={tr("Chunk title")}
                     className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
                     maxLength={300}
                   />
@@ -456,10 +455,10 @@ export default function NewMixerPage() {
                     onChange={(e) => updateChunk(c.key, "agent_id", e.target.value)}
                     className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-violet-500/50 transition-colors"
                   >
-                    <option value="">Select agent...</option>
+                    <option value="">{tr("Select agent...")}</option>
                     {agents.map((a) => (
                       <option key={a.id} value={a.id}>
-                        @{a.handle} &mdash; {a.name} ({a.specialization}, {a.model_provider})
+                        @{a.handle} &mdash; {a.name} ({display(a.specialization)}, {a.model_provider})
                       </option>
                     ))}
                   </select>
@@ -467,7 +466,7 @@ export default function NewMixerPage() {
                   <textarea
                     value={c.instructions}
                     onChange={(e) => updateChunk(c.key, "instructions", e.target.value)}
-                    placeholder={`Instructions for this chunk. Use placeholders like {{${fragments[0]?.placeholder || "MIX_xxxxxx"}}}`}
+                    placeholder={tr("Instructions for this chunk. Use placeholders like {marker}", { marker: `{{${fragments[0]?.placeholder || "MIX_xxxxxx"}}}` })}
                     rows={3}
                     className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
                     maxLength={50000}
@@ -480,8 +479,7 @@ export default function NewMixerPage() {
                 className="w-full py-3 rounded-xl border border-dashed border-neutral-700/60 text-sm font-mono text-neutral-500 hover:text-neutral-300 hover:border-neutral-600 bg-neutral-900/20 transition-all fade-up"
                 style={{ animationDelay: `${0.2 + chunks.length * 0.04}s` }}
               >
-                + Add Chunk
-              </button>
+                {" " + tr("+ Add Chunk") + " "}</button>
             </div>
 
             {/* Provider diversity check */}
@@ -502,16 +500,14 @@ export default function NewMixerPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                   </svg>
                   <span>
-                    Provider overlap: {duplicates.map(([p, n]) => `${p} (${n} chunks)`).join(", ")}.
-                    For better privacy, use agents with different LLM providers.
-                  </span>
+                    {" " + tr("Provider overlap:") + " "}{duplicates.map(([p, n]) => tr("{provider} ({count} chunks)", { provider: p, count: n.toLocaleString(locale) })).join(", ")}{tr(". For better privacy, use agents with different LLM providers.") + " "}</span>
                 </div>
               );
             })()}
 
             {error && (
               <div className="rounded-xl border border-red-500/20 bg-red-500/[0.05] p-4 text-sm text-red-400 font-mono fade-up">
-                {error}
+                {display(error)}
               </div>
             )}
 
@@ -520,14 +516,13 @@ export default function NewMixerPage() {
                 onClick={saveDraft}
                 className="flex-1 py-3.5 rounded-lg text-sm font-mono border border-neutral-800/50 bg-neutral-900/30 text-neutral-400 hover:text-white hover:border-neutral-700/60 transition-all"
               >
-                Save as Draft
-              </button>
+                {" " + tr("Save as Draft") + " "}</button>
               <button
                 onClick={handleStartSession}
                 disabled={submitting}
                 className="flex-1 py-3.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {submitting ? "Starting..." : "Start Session"}
+                {submitting ? tr("Starting...") : tr("Start Session")}
               </button>
             </div>
           </>

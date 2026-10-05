@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { automationMessages } from "@/lib/i18n/automation";
+
 import Link from "next/link";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
@@ -22,6 +25,10 @@ function DotGrid() {
 }
 
 export default function StepChatPage() {
+  const tr = useTranslations(automationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(automationMessages.en, value) ? tr(value) : value;
+
   const { id: flowId, stepId } = useParams<{ id: string; stepId: string }>();
   const [step, setStep] = useState<FlowStep | null>(null);
   const [messages, setMessages] = useState<FlowStepMessage[]>([]);
@@ -159,7 +166,7 @@ export default function StepChatPage() {
   // Group messages by date
   const groupedMessages: { date: string; msgs: FlowStepMessage[] }[] = [];
   messages.forEach((m) => {
-    const date = new Date(m.created_at).toLocaleDateString("en-US", {
+    const date = new Date(m.created_at).toLocaleDateString(locale, {
       month: "short", day: "numeric", year: "numeric",
     });
     const last = groupedMessages[groupedMessages.length - 1];
@@ -180,32 +187,30 @@ export default function StepChatPage() {
         <div className="max-w-3xl mx-auto px-6 py-4">
           <div className="flex items-center gap-1.5 mb-2">
             <Link href="/flows" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">
-              Flows
-            </Link>
+              {" " + tr("Flows") + " "}</Link>
             <span className="text-[10px] text-neutral-700">/</span>
             <Link href={`/flows/${flowId}`} className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">
-              Flow
-            </Link>
+              {" " + tr("Flow") + " "}</Link>
             <span className="text-[10px] text-neutral-700">/</span>
             <span className="text-[10px] font-mono text-neutral-500 truncate max-w-[150px]">
-              {step?.title || "Step"}
+              {step?.title || tr("Step")}
             </span>
           </div>
           <div className="flex items-center justify-between">
             <div className="min-w-0">
-              <h1 className="text-lg font-bold truncate tracking-tight">{step?.title || "Loading..."}</h1>
+              <h1 className="text-lg font-bold truncate tracking-tight">{step?.title || tr("Loading...")}</h1>
               <div className="flex items-center gap-2 text-[11px] text-neutral-500 font-mono mt-1">
                 <span className="text-violet-400/70">@{step?.agent_handle || "..."}</span>
                 {step?.started_at && (
                   <>
                     <span className="text-neutral-800">|</span>
-                    <span>started {timeAgo(step.started_at)}</span>
+                    <span>{tr("started") + " "}{timeAgo(step.started_at, locale)}</span>
                   </>
                 )}
               </div>
             </div>
             <span className={`text-[10px] px-2.5 py-0.5 rounded-full border font-mono ${sts.classes}`}>
-              {sts.label}
+              {display(sts.label)}
             </span>
           </div>
         </div>
@@ -216,18 +221,18 @@ export default function StepChatPage() {
         <div className="max-w-3xl mx-auto px-6 py-4 space-y-1">
           {loadingMore && (
             <div className="flex justify-center py-3">
-              <span className="text-[10px] text-neutral-600 font-mono tracking-widest">LOADING</span>
+              <span className="text-[10px] text-neutral-600 font-mono tracking-widest">{tr("LOADING")}</span>
             </div>
           )}
-          {loading && <p className="text-neutral-600 text-sm font-mono">Loading messages...</p>}
+          {loading && <p className="text-neutral-600 text-sm font-mono">{tr("Loading messages...")}</p>}
 
           {!loading && messages.length === 0 && (
             <div className="text-center py-16 space-y-2">
               <div className="w-10 h-10 rounded-full bg-neutral-800/50 border border-neutral-700/50 flex items-center justify-center mx-auto">
                 <span className="text-neutral-600 text-sm font-mono">&gt;_</span>
               </div>
-              <p className="text-neutral-600 text-sm font-mono">No messages yet</p>
-              <p className="text-neutral-700 text-xs">Start the conversation below</p>
+              <p className="text-neutral-600 text-sm font-mono">{tr("No messages yet")}</p>
+              <p className="text-neutral-700 text-xs">{tr("Start the conversation below")}</p>
             </div>
           )}
 
@@ -261,7 +266,7 @@ export default function StepChatPage() {
                             {m.sender_name}
                           </span>
                           <span className="text-[10px] text-neutral-700 font-mono">
-                            {new Date(m.created_at).toLocaleTimeString("en-US", {
+                            {new Date(m.created_at).toLocaleTimeString(locale, {
                               hour: "2-digit", minute: "2-digit",
                             })}
                           </span>
@@ -276,7 +281,7 @@ export default function StepChatPage() {
                             rel="noopener noreferrer"
                             className="text-xs text-cyan-400 hover:text-cyan-300 mt-1.5 inline-block font-mono"
                           >
-                            {m.file_name || "File"}
+                            {m.file_name || tr("File")}
                           </a>
                         )}
                       </div>
@@ -299,7 +304,7 @@ export default function StepChatPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Send a message..."
+                placeholder={tr("Send a message...")}
                 rows={1}
                 className="flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
                 maxLength={5000}
@@ -309,7 +314,7 @@ export default function StepChatPage() {
                 disabled={!input.trim() || sending}
                 className="px-5 py-3 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
               >
-                {sending ? "..." : "Send"}
+                {sending ? "..." : tr("Send")}
               </button>
             </div>
           </div>

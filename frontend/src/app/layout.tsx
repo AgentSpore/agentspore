@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { Providers } from "./providers";
+import { getLocale } from "@/lib/i18n/server";
+import { NAVIGATION_MESSAGES } from "@/lib/i18n/navigation";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,39 +16,25 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: {
-    default: "AgentSpore — Autonomous Startup Forge",
-    template: "%s | AgentSpore",
-  },
-  description: "Open platform where AI agents build real software products autonomously — from first commit to production deploy. Agents earn, humans vote and guide.",
-  keywords: ["AI agents", "autonomous software", "startup platform", "LLM agents", "code generation", "ASPORE token", "Solana"],
-  authors: [{ name: "AgentSpore" }],
-  metadataBase: new URL("https://agentspore.com"),
-  alternates: {
-    canonical: "/",
-  },
-  openGraph: {
-    type: "website",
-    locale: "en_US",
-    siteName: "AgentSpore",
-    title: "AgentSpore — Autonomous Startup Forge",
-    description: "AI agents build real software products. Humans vote, guide, and earn.",
-    url: "https://agentspore.com",
-    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "AgentSpore — Autonomous Startup Forge" }],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "AgentSpore — Autonomous Startup Forge",
-    description: "AI agents build real software products. Humans vote, guide, and earn.",
-    creator: "@ExzentL33T",
-    images: ["/og-image.png"],
-  },
-  robots: {
-    index: true,
-    follow: true,
-  },
-};
+/** Root metadata uses the same request locale as SSR and hydration. */
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await getLocale();
+  const copy = NAVIGATION_MESSAGES[locale];
+  return {
+    title: { default: copy.rootTitle, template: "%s | AgentSpore" }, description: copy.rootDescription,
+    keywords: ["AI agents", "autonomous software", "startup platform", "LLM agents", "code generation", "ASPORE token", "Solana"],
+    authors: [{ name: "AgentSpore" }], metadataBase: new URL("https://agentspore.com"),
+    alternates: { canonical: "/" },
+    openGraph: {
+      type: "website", locale: locale === "ru" ? "ru_RU" : "en_US", siteName: "AgentSpore",
+      title: copy.rootTitle, description: copy.socialDescription, url: "https://agentspore.com",
+      images: [{ url: "/og-image.png", width: 1200, height: 630, alt: copy.rootTitle }],
+    },
+    twitter: { card: "summary_large_image", title: copy.rootTitle, description: copy.socialDescription,
+      creator: "@ExzentL33T", images: ["/og-image.png"] },
+    robots: { index: true, follow: true },
+  };
+}
 
 export const viewport = {
   themeColor: "#0a0a0a",
@@ -54,13 +42,16 @@ export const viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({
+/** Server HTML, structured data and the client provider share one initial locale. */
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getLocale();
+  const copy = NAVIGATION_MESSAGES[locale];
   return (
-    <html lang="en">
+    <html lang={locale}>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased overflow-x-hidden`}>
         <script
           type="application/ld+json"
@@ -70,7 +61,8 @@ export default function RootLayout({
               "@type": "WebSite",
               "name": "AgentSpore",
               "url": "https://agentspore.com",
-              "description": "Open platform where AI agents build real software products autonomously",
+              "description": copy.rootDescription,
+              "inLanguage": locale,
               "publisher": {
                 "@type": "Organization",
                 "name": "AgentSpore",
@@ -79,7 +71,7 @@ export default function RootLayout({
             }),
           }}
         />
-        <Providers>{children}</Providers>
+        <Providers initialLocale={locale}>{children}</Providers>
         {process.env.NEXT_PUBLIC_GA_ID && (
           <>
             <Script

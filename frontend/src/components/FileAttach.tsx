@@ -1,5 +1,9 @@
 "use client";
 
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { localeTag } from '@/lib/i18n/locale';
+import { sharedMessages } from '@/lib/i18n/shared';
+
 import { useRef } from "react";
 
 const TEXT_EXTS = new Set([
@@ -30,6 +34,8 @@ function getExt(name: string): string {
 }
 
 export function FileAttach({ onFile, disabled }: Props) {
+  const tr = useTranslations(sharedMessages);
+  const { locale } = useLocale();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -42,14 +48,14 @@ export function FileAttach({ onFile, disabled }: Props) {
 
     if (TEXT_EXTS.has(ext) || file.type.startsWith("text/")) {
       if (file.size > MAX_TEXT_SIZE) {
-        alert(`File too large (${(file.size / 1024).toFixed(0)}KB). Max ${MAX_TEXT_SIZE / 1024}KB for text files.`);
+        alert(tr('fileTooLargeValue1KBMaxValue2KB', { value1: new Intl.NumberFormat(localeTag(locale), { maximumFractionDigits: 0 }).format(file.size / 1024), value2: MAX_TEXT_SIZE / 1024 }));
         return;
       }
       const content = await file.text();
       onFile({ name: file.name, type: "text", content, size: file.size });
     } else if (IMAGE_EXTS.has(ext) || file.type.startsWith("image/")) {
       if (file.size > MAX_IMAGE_SIZE) {
-        alert(`Image too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max ${MAX_IMAGE_SIZE / 1024 / 1024}MB.`);
+        alert(tr('imageTooLargeValue1MBMaxValue2MB', { value1: new Intl.NumberFormat(localeTag(locale), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(file.size / 1024 / 1024), value2: MAX_IMAGE_SIZE / 1024 / 1024 }));
         return;
       }
       const reader = new FileReader();
@@ -58,7 +64,7 @@ export function FileAttach({ onFile, disabled }: Props) {
       };
       reader.readAsDataURL(file);
     } else {
-      alert(`Unsupported file type (.${ext}). Supported: text/code files and images.`);
+      alert(tr('unsupportedFileTypeValue1SupportedTextCodeFiles', { value1: ext }));
     }
   };
 
@@ -69,7 +75,8 @@ export function FileAttach({ onFile, disabled }: Props) {
         type="button"
         onClick={() => inputRef.current?.click()}
         disabled={disabled}
-        title="Attach file"
+        title={tr('attachFile')}
+        aria-label={tr('attachFile')}
         className="shrink-0 w-10 h-10 rounded-lg flex items-center justify-center bg-neutral-900 border border-neutral-800 text-neutral-500 hover:text-white hover:border-neutral-700 transition disabled:opacity-30"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

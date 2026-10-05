@@ -1,5 +1,9 @@
 "use client";
 
+import { localeTag } from '@/lib/i18n/locale';
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
+
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
@@ -63,6 +67,8 @@ function LoginModal({ onLogin, onClose }: {
   onLogin: (auth: AuthState) => void;
   onClose: () => void;
 }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -76,14 +82,14 @@ function LoginModal({ onLogin, onClose }: {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
-      if (!r.ok) { setErr("Invalid email or password"); setLoading(false); return; }
+      if (!r.ok) { setErr(publicMessages.en.invalidEmailOrPassword); setLoading(false); return; }
       const d = await r.json();
       // decode userId from JWT payload
       const payload = JSON.parse(atob(d.access_token.split(".")[1]));
       const auth: AuthState = { token: d.access_token, email, userId: payload.sub };
       localStorage.setItem("auth", JSON.stringify(auth));
       onLogin(auth);
-    } catch { setErr("Connection error"); }
+    } catch { setErr(publicMessages.en.connectionError); }
     setLoading(false);
   };
 
@@ -91,26 +97,26 @@ function LoginModal({ onLogin, onClose }: {
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center px-4">
       <div className="bg-[#0a0a0a] border border-neutral-800/50 rounded-xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
         <div className="flex items-center justify-between">
-          <h2 className="text-white font-medium text-sm">Sign in to continue</h2>
+          <h2 className="text-white font-medium text-sm">{tr('signInToContinue')}</h2>
           <button onClick={onClose} className="text-neutral-500 hover:text-white text-xl leading-none transition-colors">x</button>
         </div>
         <form onSubmit={submit} className="space-y-3">
           <input
-            type="email" placeholder="Email" value={email}
+            type="email" placeholder={tr('email')} value={email}
             onChange={e => setEmail(e.target.value)} required
             className="w-full bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 font-mono"
           />
           <input
-            type="password" placeholder="Password" value={password}
+            type="password" placeholder={tr('password')} value={password}
             onChange={e => setPassword(e.target.value)} required
             className="w-full bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 font-mono"
           />
-          {err && <p className="text-red-400 text-xs font-mono">{err}</p>}
+          {err && <p className="text-red-400 text-xs font-mono">{displayPublicLabel(locale, err)}</p>}
           <button
             type="submit" disabled={loading}
             className="w-full bg-white text-black disabled:opacity-50 rounded-lg py-2 text-sm font-mono font-medium transition-colors hover:opacity-90"
           >
-            {loading ? "Signing in..." : "Sign in"}
+            {loading ? tr('signingIn') : tr('signIn')}
           </button>
         </form>
       </div>
@@ -123,6 +129,8 @@ function LoginModal({ onLogin, onClose }: {
 function VoteButtons({ projectId, votesUp, votesDown }: {
   projectId: string; votesUp: number; votesDown: number;
 }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
   const [up, setUp] = useState(votesUp);
   const [down, setDown] = useState(votesDown);
   const [voting, setVoting] = useState(false);
@@ -147,21 +155,21 @@ function VoteButtons({ projectId, votesUp, votesDown }: {
 
   return (
     <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
-      <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Votes</div>
+      <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('votes')}</div>
       <div className="flex items-center gap-2">
         <button
           onClick={() => vote(1)}
           disabled={voting}
           className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-emerald-500/10 text-emerald-400 border border-neutral-800/50 hover:border-emerald-500/30 disabled:opacity-50"
         >
-          <span>↑</span>{up}
+          <span>↑</span>{new Intl.NumberFormat(localeTag(locale)).format(up)}
         </button>
         <button
           onClick={() => vote(-1)}
           disabled={voting}
           className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-red-500/10 text-red-400 border border-neutral-800/50 hover:border-red-500/30 disabled:opacity-50"
         >
-          <span>↓</span>{down}
+          <span>↓</span>{new Intl.NumberFormat(localeTag(locale)).format(down)}
         </button>
       </div>
     </div>
@@ -186,6 +194,8 @@ interface ProjectMessage {
 type Tab = "overview" | "contributors" | "ownership" | "chat";
 
 export default function ProjectPage() {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
   const params = useParams();
   const projectId = params?.id as string;
 
@@ -224,9 +234,9 @@ export default function ProjectPage() {
       fetch(`${API_URL}/api/v1/projects/${projectId}`).then(r => r.ok ? r.json() : null),
       fetch(`${API_URL}/api/v1/projects/${projectId}/ownership`).then(r => r.ok ? r.json() : null),
     ]).then(([p, o]) => {
-      if (!p) { setError("Project not found"); }
+      if (!p) { setError(publicMessages.en.projectNotFound); }
       setProject(p); setOwnership(o); setLoading(false);
-    }).catch(() => { setError("Failed to load"); setLoading(false); });
+    }).catch(() => { setError(publicMessages.en.failedToLoad); setLoading(false); });
   }, [projectId]);
 
   const loadContributors = () => {
@@ -244,10 +254,10 @@ export default function ProjectPage() {
     if (!auth) { setShowLogin(true); return; }
     setJoining(true);
     const r = await apiFetch(`/projects/${projectId}/contributors/join`, auth.token, {
-      method: "POST", body: JSON.stringify({ message: "I'd like to contribute to this project." }),
+      method: "POST", body: JSON.stringify({ message: publicMessages.en.iDLikeToContributeToThisProject }),
     });
     const d = await r.json();
-    setJoinMsg(d.status === "auto_approved" ? "You are now a contributor!" : "Your request is pending approval.");
+    setJoinMsg(d.status === "auto_approved" ? publicMessages.en.youAreNowAContributor : publicMessages.en.yourRequestIsPendingApproval);
     setJoining(false);
     loadContributors();
   };
@@ -374,12 +384,11 @@ export default function ProjectPage() {
 
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-600 text-sm font-mono">
-      Loading...
-    </div>
+      {tr('loading')}</div>
   );
   if (error || !project) return (
     <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-500 text-sm font-mono">
-      {error || "Project not found"}
+      {displayPublicLabel(locale, error || publicMessages.en.projectNotFound)}
     </div>
   );
 
@@ -392,10 +401,10 @@ export default function ProjectPage() {
   };
 
   const TABS: { key: Tab; label: string }[] = [
-    { key: "overview", label: "Overview" },
-    { key: "chat", label: "Discussion" },
-    { key: "contributors", label: `Contributors ${contributors.length > 0 ? `(${contributors.length})` : ""}` },
-    { key: "ownership", label: "Ownership" },
+    { key: "overview", label: tr('overview') },
+    { key: "chat", label: tr('discussion') },
+    { key: "contributors", label: tr('contributorsCount', { count: contributors.length > 0 ? `(${contributors.length})` : '' }) },
+    { key: "ownership", label: tr('ownership') },
   ];
 
   return (
@@ -432,28 +441,26 @@ export default function ProjectPage() {
 
       {/* Nav bar with auth */}
       <div className="relative z-20 border-b border-neutral-800/50 bg-[#0a0a0a]/80 backdrop-blur-sm px-6 py-3">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
+        <div className="max-w-4xl mx-auto flex min-w-0 items-center justify-between gap-3">
           {/* Breadcrumbs */}
-          <div className="flex items-center gap-2 text-[10px] font-mono">
-            <Link href="/" className="text-neutral-600 hover:text-neutral-400 transition-colors">home</Link>
+          <div className="flex min-w-0 flex-1 items-center gap-2 text-[10px] font-mono">
+            <Link href="/" className="text-neutral-600 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
             <span className="text-neutral-800">/</span>
-            <Link href="/projects" className="text-neutral-600 hover:text-neutral-400 transition-colors">projects</Link>
+            <Link href="/projects" className="text-neutral-600 hover:text-neutral-400 transition-colors">{tr('projects3')}</Link>
             <span className="text-neutral-800">/</span>
-            <span className="text-neutral-400 truncate max-w-[200px]">{project.title.toLowerCase()}</span>
+            <span className="min-w-0 text-neutral-400 truncate max-w-[200px]">{project.title.toLowerCase()}</span>
           </div>
           <div className="flex items-center gap-3">
             {auth ? (
               <div className="flex items-center gap-3">
-                <span className="text-[10px] font-mono text-neutral-600">{auth.email}</span>
+                <span className="max-w-24 truncate text-[10px] font-mono text-neutral-600 sm:max-w-48">{auth.email}</span>
                 <button onClick={handleLogout} className="text-[10px] font-mono text-neutral-700 hover:text-neutral-400 transition-colors">
-                  sign out
-                </button>
+                  {tr('signOut')}</button>
               </div>
             ) : (
               <button onClick={() => setShowLogin(true)}
                 className="text-[10px] font-mono text-neutral-400 hover:text-white bg-neutral-800/30 border border-neutral-800/50 px-3 py-1.5 rounded-lg transition-colors">
-                sign in
-              </button>
+                {tr('signIn2')}</button>
             )}
           </div>
         </div>
@@ -462,28 +469,27 @@ export default function ProjectPage() {
       {/* Project Header */}
       <div className="relative z-10 border-b border-neutral-800/50 px-6 py-8">
         <div className="max-w-4xl mx-auto">
-          <div className="fade-up flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">Project</p>
-              <h1 className="text-2xl font-semibold text-white tracking-tight">{project.title}</h1>
-              <p className="text-neutral-500 text-sm mt-2 font-mono">
-                by{" "}
+          <div className="fade-up flex min-w-0 flex-col items-start justify-between gap-4 sm:flex-row">
+            <div className="min-w-0 w-full sm:flex-1">
+              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('project')}</p>
+              <h1 className="text-2xl font-semibold text-white tracking-tight break-words">{project.title}</h1>
+              <p className="text-neutral-500 text-sm mt-2 font-mono break-words">
+                {tr('by')}{" "}
                 <Link href={`/agents/${project.creator_agent_id}`}
                   className="text-violet-400 hover:text-violet-300 transition-colors">
                   @{project.agent_handle || project.agent_name}
                 </Link>
                 <span className="text-neutral-700 mx-2">|</span>
-                <span className="text-neutral-500">{project.category}</span>
+                <span className="text-neutral-500">{displayPublicLabel(locale, project.category)}</span>
                 <span className="text-neutral-700 mx-2">|</span>
-                <span className={`capitalize ${STATUS_COLOR[project.status] ?? "text-neutral-500"}`}>{project.status}</span>
+                <span className={`capitalize ${STATUS_COLOR[project.status] ?? "text-neutral-500"}`}>{displayPublicLabel(locale, project.status)}</span>
               </p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
               {project.status !== "archived" && project.deploy_url && (
                 <a href={project.deploy_url} target="_blank" rel="noopener noreferrer"
                   className="text-[11px] text-emerald-400 hover:text-emerald-300 bg-emerald-500/5 border border-emerald-500/20 hover:border-emerald-500/40 px-3.5 py-1.5 rounded-lg font-mono transition-all">
-                  Demo
-                </a>
+                  {tr('demo2')}</a>
               )}
               {project.repo_url && (
                 <a href={project.repo_url} target="_blank" rel="noopener noreferrer"
@@ -495,7 +501,7 @@ export default function ProjectPage() {
           </div>
 
           {/* Tabs */}
-          <div className="flex gap-1 mt-8 fade-up" style={{ animationDelay: "100ms" }}>
+          <div className="flex min-w-0 flex-wrap gap-1 mt-8 fade-up" style={{ animationDelay: "100ms" }}>
             {TABS.map(t => (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`px-3.5 py-1.5 text-xs font-mono rounded-lg transition-all ${
@@ -518,13 +524,13 @@ export default function ProjectPage() {
           <div className="space-y-6 fade-up" style={{ animationDelay: "150ms" }}>
             {project.description && (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5">
-                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">About</p>
+                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('about')}</p>
                 <p className="text-neutral-300 leading-relaxed text-sm">{project.description}</p>
               </div>
             )}
             {project.tech_stack.length > 0 && (
               <div>
-                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">Tech Stack</p>
+                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('techStack')}</p>
                 <div className="flex flex-wrap gap-2">
                   {project.tech_stack.map(t => (
                     <span key={t} className="text-[11px] bg-neutral-900/30 border border-neutral-800/50 px-3 py-1 rounded-lg text-neutral-400 font-mono backdrop-blur-sm">
@@ -536,13 +542,13 @@ export default function ProjectPage() {
             )}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="stat-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
-                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Created</div>
-                <div className="text-sm text-neutral-200 font-mono">{timeAgo(project.created_at)}</div>
+                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('created')}</div>
+                <div className="text-sm text-neutral-200 font-mono">{timeAgo(project.created_at, locale)}</div>
               </div>
               <VoteButtons projectId={project.id} votesUp={project.votes_up} votesDown={project.votes_down} />
               <div className="stat-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
-                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Contributors</div>
-                <div className="text-sm text-neutral-200 font-mono">{contributors.length}</div>
+                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('contributors')}</div>
+                <div className="text-sm text-neutral-200 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(contributors.length)}</div>
               </div>
             </div>
           </div>
@@ -560,8 +566,8 @@ export default function ProjectPage() {
                     <span className="text-[11px] text-neutral-500">#</span>
                   </div>
                   <div>
-                    <span className="text-[12px] font-semibold text-neutral-300 font-mono">Discussion</span>
-                    <span className="text-[10px] text-neutral-700 font-mono ml-2">{chatMessages.length} messages</span>
+                    <span className="text-[12px] font-semibold text-neutral-300 font-mono">{tr('discussion')}</span>
+                    <span className="text-[10px] text-neutral-700 font-mono ml-2">{new Intl.NumberFormat(localeTag(locale)).format(chatMessages.length)} {tr('messages')}</span>
                   </div>
                 </div>
               </div>
@@ -578,7 +584,7 @@ export default function ProjectPage() {
                   <div className="flex justify-center py-3">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full border border-neutral-700 border-t-neutral-500 animate-spin" />
-                      <span className="text-[10px] text-neutral-600 font-mono">Loading older messages</span>
+                      <span className="text-[10px] text-neutral-600 font-mono">{tr('loadingOlderMessages')}</span>
                     </div>
                   </div>
                 )}
@@ -587,8 +593,8 @@ export default function ProjectPage() {
                     <div className="w-12 h-12 rounded-2xl bg-neutral-800/30 border border-neutral-800/40 flex items-center justify-center">
                       <span className="text-xl text-neutral-700">#</span>
                     </div>
-                    <p className="text-neutral-600 text-sm font-mono">No messages yet</p>
-                    <p className="text-neutral-700 text-[10px] font-mono">Start a discussion about this project</p>
+                    <p className="text-neutral-600 text-sm font-mono">{tr('noMessagesYet')}</p>
+                    <p className="text-neutral-700 text-[10px] font-mono">{tr('startADiscussionAboutThisProject')}</p>
                   </div>
                 ) : (
                   chatMessages.map((msg, idx) => {
@@ -606,7 +612,7 @@ export default function ProjectPage() {
                           <div className="flex items-center gap-3 my-4">
                             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                             <span className="text-[9px] text-neutral-600 font-mono uppercase tracking-[0.15em]">
-                              {new Date(msg.created_at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                              {new Date(msg.created_at).toLocaleDateString(localeTag(locale), { weekday: "short", month: "short", day: "numeric" })}
                             </span>
                             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                           </div>
@@ -641,19 +647,19 @@ export default function ProjectPage() {
                                     {msg.sender_name}
                                   </span>
                                   {isUser && (
-                                    <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/15 font-mono font-bold uppercase tracking-wider">usr</span>
+                                    <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/15 font-mono font-bold uppercase tracking-wider">{tr('usr')}</span>
                                   )}
                                   {!isUser && (
-                                    <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/15 font-mono font-bold uppercase tracking-wider">agent</span>
+                                    <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/15 font-mono font-bold uppercase tracking-wider">{tr('agent')}</span>
                                   )}
-                                  <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(msg.created_at)}</span>
+                                  <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(msg.created_at, locale)}</span>
                                   {msg.message_type !== "text" && !msg.is_deleted && (
                                     <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-md ${
                                       msg.message_type === "bug" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
                                       msg.message_type === "idea" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
                                       "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
                                     }`}>
-                                      {msg.message_type}
+                                      {displayPublicLabel(locale, msg.message_type)}
                                     </span>
                                   )}
                                 </div>
@@ -671,12 +677,12 @@ export default function ProjectPage() {
                                     ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1">{children}</ol>,
                                     pre: ({ children }) => <pre className="bg-black/30 rounded-lg p-2 my-1 overflow-x-auto text-[11px]">{children}</pre>,
                                   }}>{msg.content}</ReactMarkdown>
-                                  {msg.edited_at && !msg.is_deleted && <span className="text-[8px] text-neutral-600 ml-1.5">(edited)</span>}
+                                  {msg.edited_at && !msg.is_deleted && <span className="text-[8px] text-neutral-600 ml-1.5">{tr('edited')}</span>}
                                 </div>
                                 {/* Actions */}
                                 {!msg.is_deleted && auth && (
                                   <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 shrink-0 mt-0.5">
-                                    <button onClick={() => handleChatReply(msg)} title="Reply"
+                                    <button onClick={() => handleChatReply(msg)} title={tr('reply')}
                                       className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors">
                                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                         <polyline points="9 17 4 12 9 7" /><path d="M20 18v-2a4 4 0 0 0-4-4H4" />
@@ -684,14 +690,14 @@ export default function ProjectPage() {
                                     </button>
                                     {isOwner && (
                                       <>
-                                        <button onClick={() => handleChatEdit(msg.id, msg.content)} title="Edit"
+                                        <button onClick={() => handleChatEdit(msg.id, msg.content)} title={tr('edit')}
                                           className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors">
                                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                           </svg>
                                         </button>
-                                        <button onClick={() => handleChatDelete(msg.id)} title="Delete"
+                                        <button onClick={() => handleChatDelete(msg.id)} title={tr('delete')}
                                           className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors">
                                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -716,11 +722,10 @@ export default function ProjectPage() {
               <div className="border-t border-neutral-800/40 px-5 py-3">
                 {!auth ? (
                   <div className="flex items-center justify-center gap-2 py-2">
-                    <span className="text-[12px] text-neutral-600 font-mono">Want to join the discussion?</span>
+                    <span className="text-[12px] text-neutral-600 font-mono">{tr('wantToJoinTheDiscussion')}</span>
                     <button onClick={() => setShowLogin(true)}
                       className="text-[12px] text-violet-400 hover:text-violet-300 font-medium font-mono transition-colors">
-                      Sign in
-                    </button>
+                      {tr('signIn')}</button>
                   </div>
                 ) : (
                   <form onSubmit={handleChatSend} className="space-y-0">
@@ -734,7 +739,7 @@ export default function ProjectPage() {
                         <div className={`w-0.5 h-4 rounded-full ${chatEditingId ? "bg-violet-500/50" : "bg-cyan-500/50"}`} />
                         <div className="flex-1 min-w-0">
                           <span className={`text-[10px] font-mono font-semibold ${chatEditingId ? "text-violet-400" : "text-cyan-400"}`}>
-                            {chatEditingId ? "Editing message" : `Replying to ${chatReplyTo?.sender_name}`}
+                            {chatEditingId ? tr('editingMessage') : tr('replyingToName', { name: chatReplyTo?.sender_name || '' })}
                           </span>
                           {chatReplyTo && (
                             <p className="text-[10px] text-neutral-600 font-mono truncate">{chatReplyTo.content}</p>
@@ -760,7 +765,7 @@ export default function ProjectPage() {
                         ref={chatInputRef}
                         value={chatContent}
                         onChange={e => setChatContent(e.target.value)}
-                        placeholder={chatEditingId ? "Edit your message..." : chatReplyTo ? `Reply to ${chatReplyTo.sender_name}...` : "Write a message..."}
+                        placeholder={chatEditingId ? tr('editYourMessage') : chatReplyTo ? tr('replyToName', { name: chatReplyTo.sender_name }) : tr('writeAMessage')}
                         rows={1}
                         className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none resize-none max-h-28 overflow-y-auto font-mono leading-relaxed"
                         onKeyDown={e => {
@@ -797,7 +802,7 @@ export default function ProjectPage() {
                       </button>
                     </div>
                     <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">
-                      {chatEditingId ? "Enter to save, Esc to cancel" : chatReplyTo ? "Enter to reply, Esc to cancel" : "Enter to send, Shift+Enter for newline"}
+                      {chatEditingId ? tr('enterToSaveEscToCancel') : chatReplyTo ? tr('enterToReplyEscToCancel') : tr('enterToSendShiftEnterForNewline')}
                     </p>
                   </form>
                 )}
@@ -811,26 +816,23 @@ export default function ProjectPage() {
           <div className="space-y-4 fade-up" style={{ animationDelay: "150ms" }}>
             <div className="flex items-center justify-between">
               <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
-                Human Contributors
-              </p>
+                {tr('humanContributors')}</p>
               {!isContributor && !joinMsg && (
                 <button onClick={handleJoin} disabled={joining}
                   className="text-xs bg-white text-black font-medium font-mono disabled:opacity-50 px-3.5 py-1.5 rounded-lg transition-all hover:opacity-90">
-                  {joining ? "Requesting..." : "Request to join"}
+                  {joining ? tr('requesting') : tr('requestToJoin')}
                 </button>
               )}
-              {joinMsg && <p className="text-xs text-emerald-400 font-mono">{joinMsg}</p>}
+              {joinMsg && <p className="text-xs text-emerald-400 font-mono">{displayPublicLabel(locale, joinMsg)}</p>}
             </div>
 
             {contributors.length === 0 ? (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-10 text-center text-neutral-600 text-sm font-mono">
-                No contributors yet.{" "}
+                {tr('noContributorsYet')}{" "}
                 {!auth && (
                   <button onClick={() => setShowLogin(true)} className="text-neutral-400 hover:text-violet-400 underline transition-colors">
-                    Sign in
-                  </button>
-                )}{" "}to be the first.
-              </div>
+                    {tr('signIn')}</button>
+                )}{" "}{tr('toBeTheFirst')}</div>
             ) : (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm divide-y divide-neutral-800/40 overflow-hidden">
                 {contributors.map(c => (
@@ -848,7 +850,7 @@ export default function ProjectPage() {
                         </Badge>
                       </div>
                       <p className="text-[10px] text-neutral-600 mt-0.5 font-mono">
-                        {c.contribution_points} pts · joined {timeAgo(c.joined_at)}
+                        {new Intl.NumberFormat(localeTag(locale)).format(c.contribution_points)} {tr('ptsJoined')}{timeAgo(c.joined_at, locale)}
                       </p>
                     </div>
                   </div>
@@ -875,30 +877,28 @@ export default function ProjectPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-1">Contract</div>
+                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-1">{tr('contract')}</div>
                     <div className="font-mono text-neutral-300 text-xs break-all">{ownership.token.contract_address}</div>
                   </div>
                   <div>
-                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-1">Total minted</div>
-                    <div className="text-neutral-200 font-mono">{ownership.token.total_minted.toLocaleString()} pts</div>
+                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-1">{tr('totalMinted')}</div>
+                    <div className="text-neutral-200 font-mono">{ownership.token.total_minted.toLocaleString(localeTag(locale))} {tr('pts')}</div>
                   </div>
                 </div>
               </div>
             ) : (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
-                No on-chain token deployed yet
-              </div>
+                {tr('noOnChainTokenDeployedYet')}</div>
             )}
 
             <div>
               <div className="flex items-center justify-between mb-4">
-                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Agent Contributors</p>
+                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('agentContributors')}</p>
                 <span className="text-[10px] text-neutral-600 font-mono">
-                  {ownership.contributors.reduce((s, c) => s + c.contribution_points, 0)} total points
-                </span>
+                  {new Intl.NumberFormat(localeTag(locale)).format(ownership.contributors.reduce((s, c) => s + c.contribution_points, 0))} {tr('totalPoints')}</span>
               </div>
               {ownership.contributors.length === 0 ? (
-                <p className="text-neutral-600 text-sm font-mono">No agent contributors yet.</p>
+                <p className="text-neutral-600 text-sm font-mono">{tr('noAgentContributorsYet')}</p>
               ) : (
                 <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm px-5 divide-y divide-neutral-800/40 overflow-hidden">
                   {ownership.contributors.map(c => (
@@ -924,7 +924,7 @@ export default function ProjectPage() {
           </div>
         )}
         {tab === "ownership" && !ownership && (
-          <p className="text-neutral-600 text-sm font-mono fade-up">No ownership data available.</p>
+          <p className="text-neutral-600 text-sm font-mono fade-up">{tr('noOwnershipDataAvailable')}</p>
         )}
       </main>
     </div>

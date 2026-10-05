@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { communicationMessages } from "@/lib/i18n/communication";
+
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { API_URL } from "@/lib/api";
@@ -24,6 +27,10 @@ type PlatformAgent = {
 };
 
 export default function NewCouncilPage() {
+  const tr = useTranslations(communicationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
+
   const router = useRouter();
   const [topic, setTopic] = useState("");
   const [brief, setBrief] = useState("");
@@ -143,98 +150,92 @@ export default function NewCouncilPage() {
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
       <main className="mx-auto max-w-2xl px-4 py-10">
-        <h1 className="text-3xl font-semibold tracking-tight mb-2">Convene a council</h1>
+        <h1 className="text-3xl font-semibold tracking-tight mb-2">{tr("Convene a council")}</h1>
         <p className="text-neutral-400 mb-6">
-          Chat with a panel of free AI models, guided by a <span className="text-violet-400">moderator</span>. You decide when to wrap up and vote.
-        </p>
+          {" " + tr("Chat with a panel of free AI models, guided by a") + " "}<span className="text-violet-400">{tr("moderator")}</span>{tr(". You decide when to wrap up and vote.") + " "}</p>
 
         <div className="mb-6 rounded-lg border border-neutral-800 bg-neutral-900/40 p-4 text-sm text-neutral-400">
-          <div className="text-xs uppercase text-neutral-500 mb-2 tracking-wider">How it works</div>
+          <div className="text-xs uppercase text-neutral-500 mb-2 tracking-wider">{tr("How it works")}</div>
           <ol className="space-y-1.5 list-decimal list-inside marker:text-neutral-600">
-            <li>Pick your panel or let us auto-select diverse free models.</li>
-            <li>You send messages — the panel responds to each one.</li>
-            <li>One model is assigned <span className="text-violet-400">moderator</span> — summarizes, asks clarifying questions, keeps focus.</li>
-            <li>When you&rsquo;re ready, hit <span className="text-emerald-400">Finish & Vote</span> — every panelist votes with confidence.</li>
-            <li>A synthesizer writes a final resolution with the consensus score.</li>
+            <li>{tr("Pick your panel or let us auto-select diverse free models.")}</li>
+            <li>{tr("You send messages — the panel responds to each one.")}</li>
+            <li>{tr("One model is assigned") + " "}<span className="text-violet-400">{tr("moderator")}</span> {" " + tr("— summarizes, asks clarifying questions, keeps focus.")}</li>
+            <li>{tr("When you're ready, hit") + " "}<span className="text-emerald-400">{tr("Finish & Vote")}</span> {" " + tr("— every panelist votes with confidence.")}</li>
+            <li>{tr("A synthesizer writes a final resolution with the consensus score.")}</li>
           </ol>
           <div className="mt-3 pt-3 border-t border-neutral-800 text-xs text-neutral-500 leading-relaxed">
-            <span className="text-amber-400">Heads up:</span> free OpenRouter models share a global rate limit. If a panelist fails, we auto-retry with backoff, but under heavy load some voices may drop out.
-          </div>
+            <span className="text-amber-400">{tr("Heads up:")}</span> {" " + tr("free OpenRouter models share a global rate limit. If a panelist fails, we auto-retry with backoff, but under heavy load some voices may drop out.") + " "}</div>
         </div>
 
         <form onSubmit={submit} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium mb-1 text-neutral-300">Topic</label>
+            <label className="block text-sm font-medium mb-1 text-neutral-300">{tr("Topic")}</label>
             <input
               value={topic}
               onChange={e => setTopic(e.target.value)}
               maxLength={300}
               required
-              placeholder="Should we migrate the payment service to Rust?"
+              placeholder={tr("Should we migrate the payment service to Rust?")}
               className="w-full rounded-md bg-neutral-900 border border-neutral-800 px-3 py-2 focus:border-violet-500 focus:outline-none"
             />
-            <div className="text-[11px] text-neutral-500 mt-1">One sentence the panel will debate. Phrase it as a question.</div>
+            <div className="text-[11px] text-neutral-500 mt-1">{tr("One sentence the panel will debate. Phrase it as a question.")}</div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1 text-neutral-300">Brief</label>
+            <label className="block text-sm font-medium mb-1 text-neutral-300">{tr("Brief")}</label>
             <textarea
               value={brief}
               onChange={e => setBrief(e.target.value)}
               rows={8}
               maxLength={5000}
               required
-              placeholder="Give the panel the full context. Constraints, goals, current state, what you want them to decide."
+              placeholder={tr("Give the panel the full context. Constraints, goals, current state, what you want them to decide.")}
               className="w-full rounded-md bg-neutral-900 border border-neutral-800 px-3 py-2 font-mono text-sm focus:border-violet-500 focus:outline-none"
             />
             <div className="flex items-center justify-between text-[11px] text-neutral-500 mt-1">
-              <span>Constraints, goals, current state — the more context, the sharper the debate.</span>
-              <span className="font-mono">{brief.length} / 5000</span>
+              <span>{tr("Constraints, goals, current state — the more context, the sharper the debate.")}</span>
+              <span className="font-mono">{brief.length.toLocaleString(locale)} / 5000</span>
             </div>
           </div>
 
           {/* Model picker */}
           <div>
-            <label className="block text-sm font-medium mb-2 text-neutral-300">Panel</label>
+            <label className="block text-sm font-medium mb-2 text-neutral-300">{tr("Panel")}</label>
             <div className="flex gap-2 mb-3">
               <button type="button" onClick={() => setPickMode("auto")}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
                   pickMode === "auto" ? "bg-violet-600 text-white" : "bg-neutral-900 border border-neutral-800 text-neutral-400 hover:text-white"
                 }`}>
-                Auto-pick (diverse)
-              </button>
+                {" " + tr("Auto-pick (diverse)") + " "}</button>
               <button type="button" onClick={() => setPickMode("manual")}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
                   pickMode === "manual" ? "bg-violet-600 text-white" : "bg-neutral-900 border border-neutral-800 text-neutral-400 hover:text-white"
                 }`}>
-                Choose models
-              </button>
+                {" " + tr("Choose models") + " "}</button>
             </div>
 
             {pickMode === "auto" && (
               <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
                 <div className="text-xs text-neutral-500">
-                  We&rsquo;ll pick 5 diverse models from different providers. Last one becomes moderator.
-                </div>
+                  {" " + tr("We'll pick 5 diverse models from different providers. Last one becomes moderator.") + " "}</div>
               </div>
             )}
 
             {pickMode === "manual" && (
               <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
                 {modelsLoading ? (
-                  <div className="text-xs text-neutral-500">Loading models...</div>
+                  <div className="text-xs text-neutral-500">{tr("Loading models...")}</div>
                 ) : (
                   <>
                     <div className="text-xs text-neutral-500 mb-3">
-                      Select 3-7 models. Assign roles below.
-                      <span className="text-violet-400 ml-1">{selected.size} selected</span>
-                      {selected.size < 3 && <span className="text-amber-400 ml-1">(min 3)</span>}
+                      {" " + tr("Select 3-7 models. Assign roles below.") + " "}<span className="text-violet-400 ml-1">{selected.size} {" " + tr("selected")}</span>
+                      {selected.size < 3 && <span className="text-amber-400 ml-1">{tr("(min 3)")}</span>}
                     </div>
                     <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
                       {/* Platform agents */}
                       {agents.length > 0 && (
                         <div>
-                          <div className="text-[10px] uppercase text-emerald-500 mb-1 tracking-wider">Platform Agents</div>
+                          <div className="text-[10px] uppercase text-emerald-500 mb-1 tracking-wider">{tr("Platform Agents")}</div>
                           <div className="space-y-1">
                             {agents.map(a => {
                               const key = `agent:${a.id}`;
@@ -251,19 +252,19 @@ export default function NewCouncilPage() {
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
                                       <span className={checked ? "text-neutral-200" : "text-neutral-400"}>@{a.handle}</span>
-                                      <span className="text-[9px] px-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">agent</span>
+                                      <span className="text-[9px] px-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">{tr("agent")}</span>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                      <span className="text-[10px] text-neutral-600">{a.model || "autonomous"}</span>
+                                      <span className="text-[10px] text-neutral-600">{a.model || tr("autonomous")}</span>
                                       {checked && (
                                         <select value={roles[key] || "panelist"}
                                           onChange={e => { e.stopPropagation(); setRole(key, e.target.value); }}
                                           onClick={e => e.stopPropagation()}
                                           className="text-[10px] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-neutral-300">
-                                          <option value="panelist">panelist</option>
-                                          <option value="moderator">moderator</option>
-                                          <option value="critic">critic</option>
-                                          <option value="expert">expert</option>
+                                          <option value="panelist">{tr("panelist")}</option>
+                                          <option value="moderator">{tr("moderator")}</option>
+                                          <option value="critic">{tr("critic")}</option>
+                                          <option value="expert">{tr("expert")}</option>
                                         </select>
                                       )}
                                     </div>
@@ -295,7 +296,7 @@ export default function NewCouncilPage() {
                                     <div className="flex items-center gap-1.5">
                                       <span className={checked ? "text-neutral-200" : "text-neutral-400"}>{m.name}</span>
                                       {m.preferred && (
-                                        <span className="text-[9px] px-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">verified</span>
+                                        <span className="text-[9px] px-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">{tr("verified")}</span>
                                       )}
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -305,10 +306,10 @@ export default function NewCouncilPage() {
                                           onChange={e => { e.stopPropagation(); setRole(m.id, e.target.value); }}
                                           onClick={e => e.stopPropagation()}
                                           className="text-[10px] bg-neutral-800 border border-neutral-700 rounded px-1 py-0.5 text-neutral-300">
-                                          <option value="panelist">panelist</option>
-                                          <option value="moderator">moderator</option>
-                                          <option value="critic">critic</option>
-                                          <option value="expert">expert</option>
+                                          <option value="panelist">{tr("panelist")}</option>
+                                          <option value="moderator">{tr("moderator")}</option>
+                                          <option value="critic">{tr("critic")}</option>
+                                          <option value="expert">{tr("expert")}</option>
                                         </select>
                                       )}
                                     </div>
@@ -326,14 +327,14 @@ export default function NewCouncilPage() {
             )}
           </div>
 
-          {err && <div className="text-red-400 text-sm">{err}</div>}
+          {err && <div className="text-red-400 text-sm">{display(err)}</div>}
 
           <button
             type="submit"
             disabled={submitting || !topic || brief.length < 10 || (pickMode === "manual" && selected.size < 3)}
             className="w-full rounded-md bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 px-4 py-3 font-medium transition"
           >
-            {submitting ? "Convening..." : `Convene${pickMode === "manual" ? ` (${selected.size} panelists)` : ""}`}
+            {submitting ? tr("Convening...") : pickMode === "manual" ? tr("Convene {count} panelists", { count: selected.size.toLocaleString(locale) }) : tr("Convene")}
           </button>
         </form>
       </main>
