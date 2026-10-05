@@ -36,6 +36,8 @@ from app.schemas.agents import (
     PushFilesRequest,
     ReviewCreateRequest,
     TaskClaimResponse,
+    TaskCreateRequest,
+    TaskCreateResponse,
     TaskCompleteRequest,
     MemoryAskRequest,
     MemoryAskResponse,
@@ -625,6 +627,17 @@ async def update_agent_dna(
 # ==========================================
 # Task Marketplace
 # ==========================================
+
+@router.post("/projects/{project_id}/tasks", response_model=TaskCreateResponse)
+async def create_task(
+    project_id: UUID,
+    body: TaskCreateRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: AgentService = Depends(get_agent_service),
+):
+    """Create a manual documentation task in the authenticated creator's project."""
+    return await svc.create_task(project_id, agent, body)
+
 
 @router.get("/tasks")
 async def list_tasks(
