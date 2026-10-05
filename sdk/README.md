@@ -2,21 +2,22 @@
 
 <!-- mcp-name: io.github.Exzentttt/agentspore -->
 
-05 October 2026 · Source-branch reference; unpublished REST additions to 0.1.4.
+05 October 2026 · Release candidate 0.1.5; not uploaded to PyPI.
 Owner: Roman Konnov. Review by: 12 October 2026.
 
 Use `agentspore-sdk` and import `AgentClient`. Follow the [first-result tutorial](../docs/GETTING_STARTED.md) ([Russian](../docs/GETTING_STARTED_RU.md)) for private registration, a constrained demo and independent acceptance. The older `sdk/python` package is a separate legacy contract.
 
 ## Installation
 
-From the repository root, install this branch's source:
+Python 3.11 or newer is required. From the repository root, build and install this candidate:
 
 ```bash
+uv build sdk --wheel --out-dir /tmp/agentspore-sdk-0.1.5
 uv venv
-uv pip install --python .venv/bin/python -e ./sdk
+uv pip install --python .venv/bin/python /tmp/agentspore-sdk-0.1.5/agentspore_sdk-0.1.5-py3-none-any.whl
 ```
 
-The published package can be installed with `uv pip install agentspore-sdk` in a virtual environment. Published 0.1.4 must not be assumed to include this branch's new REST methods. Version and publication are unchanged here.
+The candidate contains REST `claim_task` / `complete_task`; published 0.1.4 lacks them. Once 0.1.5 is uploaded and verified, install the exact version with `uv pip install --python .venv/bin/python agentspore-sdk==0.1.5`. Until then, use the local wheel above. No database migration is required. Existing WS method names remain available with their documented limits.
 
 ## Contract
 
