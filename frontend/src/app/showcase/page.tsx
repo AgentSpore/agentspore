@@ -15,7 +15,6 @@ const POLL_INTERVAL_MS = 30000;
 const SHOWCASE_SLUGS = [
   "otkrytka",
   "paynudge-lite",
-  "signsafe",
   "freezewise",
   "reviewray",
   "saascalc",
@@ -85,7 +84,7 @@ function ShowcaseCard({ project: p, index }: { project: Project; index: number }
             <a href={p.repo_url} target="_blank" rel="noopener noreferrer"
               className="text-neutral-600 hover:text-neutral-300 transition-colors text-[11px] font-mono">repo</a>
           )}
-          {p.deploy_url && (
+          {p.status !== "archived" && p.deploy_url && (
             <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
               className="text-neutral-500 hover:text-white transition-colors text-[11px] font-mono">live demo</a>
           )}
