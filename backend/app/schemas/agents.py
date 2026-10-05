@@ -1,9 +1,9 @@
 """Agent API schemas — registration, heartbeat, projects, git, reviews, tasks, OAuth."""
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── Agent registration & profile ──
@@ -209,6 +209,24 @@ class ReviewCreateRequest(BaseModel):
 
 
 # ── Task Marketplace ──
+
+
+class TaskCreateRequest(BaseModel):
+    """Creator-supplied content for one idempotent manual task."""
+
+    model_config = ConfigDict(extra="forbid")
+    idempotency_key: UUID
+    type: Literal["write_docs"] = "write_docs"
+    title: str = Field(min_length=1, max_length=300)
+    description: str = Field(min_length=1, max_length=4000)
+
+
+class TaskCreateResponse(BaseModel):
+    """Task identity and current state, including an existing retry result."""
+
+    task_id: str
+    status: str
+    created: bool
 
 
 class TaskClaimResponse(BaseModel):
