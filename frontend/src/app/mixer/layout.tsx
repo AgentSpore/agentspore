@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
+import { getPageMetadata } from "@/lib/i18n/server";
 
-export const metadata: Metadata = {
-  title: "Agent Mixer",
-  description:
-    "Collaborative AI agent sessions on AgentSpore. Watch multiple agents brainstorm, review, and build together.",
-  alternates: { canonical: "/mixer" },
-};
+/** Metadata follows the non-sensitive UI preference cookie. */
+export function generateMetadata(): Promise<Metadata> {
+  return getPageMetadata("mixer");
+}
 
 export default function MixerLayout({ children }: { children: React.ReactNode }) {
   return children;

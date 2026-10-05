@@ -1,5 +1,10 @@
 "use client";
 
+import { localeTag } from '@/lib/i18n/locale';
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { publicMessages } from '@/lib/i18n/public';
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
@@ -27,6 +32,8 @@ function DotGrid() {
 }
 
 export default function BlogPostPage() {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
   const params = useParams();
   const postId = params.id as string;
 
@@ -148,12 +155,12 @@ export default function BlogPostPage() {
         <main className="relative max-w-3xl mx-auto px-6 py-12">
           <DotGrid />
           <div className="relative z-10">
-            <Link href="/blog" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors mb-8 block">&larr; Blog</Link>
+            <Link href="/blog" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors mb-8 block">{tr('blog2')}</Link>
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-16 text-center">
               <div className="w-12 h-12 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center mx-auto mb-4">
                 <span className="text-neutral-600 font-mono text-lg">?</span>
               </div>
-              <p className="text-neutral-400 text-sm">Post not found</p>
+              <p className="text-neutral-400 text-sm">{tr('postNotFound')}</p>
             </div>
           </div>
         </main>
@@ -231,9 +238,9 @@ export default function BlogPostPage() {
         <div className="relative z-10">
           {/* Breadcrumbs */}
           <div className="flex items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">home</Link>
+            <Link href="/" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
             <span className="text-neutral-800 text-[10px]">/</span>
-            <Link href="/blog" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">blog</Link>
+            <Link href="/blog" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">{tr('blog3')}</Link>
             <span className="text-neutral-800 text-[10px]">/</span>
             <span className="text-[10px] font-mono text-neutral-400 truncate max-w-[200px]">{post.title}</span>
           </div>
@@ -251,7 +258,7 @@ export default function BlogPostPage() {
                   <div className="flex items-center gap-2">
                     {post.agent_handle && <span className="text-[10px] text-neutral-600 font-mono">@{post.agent_handle}</span>}
                     <span className="text-neutral-800">&middot;</span>
-                    <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(post.created_at)}</span>
+                    <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(post.created_at, locale)}</span>
                   </div>
                 </div>
               </Link>
@@ -282,7 +289,7 @@ export default function BlogPostPage() {
                     }`}
                   >
                     <span className="text-sm">{REACTION_META[r].emoji}</span>
-                    {count > 0 && <span className="font-mono text-[11px]">{count}</span>}
+                    {count > 0 && <span className="font-mono text-[11px]">{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
                   </button>
                 );
               })}
@@ -292,10 +299,10 @@ export default function BlogPostPage() {
           {/* Comments */}
           <section className="fade-up-d2">
             <div className="flex items-center gap-3 mb-5">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Comments</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('comments')}</span>
               {comments.length > 0 && (
                 <span className="text-[10px] font-mono text-violet-400 bg-violet-400/10 border border-violet-400/15 px-2 py-0.5 rounded-full">
-                  {comments.length}
+                  {new Intl.NumberFormat(localeTag(locale)).format(comments.length)}
                 </span>
               )}
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/40 to-transparent" />
@@ -313,13 +320,13 @@ export default function BlogPostPage() {
                       value={commentText}
                       onChange={e => setCommentText(e.target.value)}
                       onKeyDown={handleCommentKey}
-                      placeholder="Write a comment..."
+                      placeholder={tr('writeAComment')}
                       maxLength={5000}
                       rows={3}
                       className="w-full bg-neutral-900/40 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none border border-neutral-800/50 rounded-2xl rounded-tl-md px-4 py-3 focus:border-neutral-700/60 transition-colors font-mono leading-relaxed"
                     />
                     <div className="flex items-center justify-between mt-2">
-                      <span className="text-[9px] text-neutral-700 font-mono">{commentText.length}/5000 &middot; Cmd+Enter to post</span>
+                      <span className="text-[9px] text-neutral-700 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(commentText.length)}{tr('5000CmdEnterToPost')}</span>
                       <button
                         onClick={submitComment}
                         disabled={!commentText.trim() || submitting}
@@ -329,7 +336,7 @@ export default function BlogPostPage() {
                             : "bg-neutral-800/30 text-neutral-600 cursor-not-allowed"
                         }`}
                       >
-                        {submitting ? "Posting..." : "Post"}
+                        {submitting ? tr('posting') : tr('post2')}
                       </button>
                     </div>
                   </div>
@@ -340,8 +347,8 @@ export default function BlogPostPage() {
             {/* Comment list */}
             {comments.length === 0 ? (
               <div className="py-12 text-center">
-                <p className="text-neutral-600 text-sm">No comments yet</p>
-                <p className="text-neutral-700 text-[10px] font-mono mt-1">Be the first to share your thoughts</p>
+                <p className="text-neutral-600 text-sm">{tr('noCommentsYet')}</p>
+                <p className="text-neutral-700 text-[10px] font-mono mt-1">{tr('beTheFirstToShareYourThoughts')}</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -371,11 +378,11 @@ export default function BlogPostPage() {
                             ? "bg-cyan-400/10 text-cyan-400/70 border border-cyan-400/15"
                             : "bg-neutral-700/30 text-neutral-500 border border-neutral-700/20"
                         }`}>{comment.author_type}</span>
-                        <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(comment.created_at)}</span>
+                        <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(comment.created_at, locale)}</span>
                         <button
                           onClick={() => deleteComment(comment.id)}
                           className="ml-auto text-[10px] text-neutral-800 hover:text-red-400 font-mono transition-colors opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full flex items-center justify-center hover:bg-red-400/10"
-                          title="Delete"
+                          title={tr('delete')}
                         >
                           &times;
                         </button>

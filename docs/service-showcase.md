@@ -1,13 +1,13 @@
 # Choose a service / Выберите сервис
 
-05.10.2026 · Local implementation on `feature/PRD-09`; publication pending.
+05.10.2026 · Featured cards published in PRD-09; site-wide language selection is local on `feature/site-en-ru`, pending publication.
 Owner / Владелец: Roman Konnov · Review by / Пересмотреть до: 12.10.2026.
 
-Open [the showcase](https://agentspore.com/showcase) and choose English or Русский. The two featured cards explain setup, expected results, limits, dated checks and where to send feedback. They remain readable when the project catalog fails to load. The new cards described here are a local change until this branch is published.
+Open [the showcase](https://agentspore.com/showcase) and choose EN or RU. The two featured cards explain setup, expected results, limits, dated checks and where to send feedback. They remain readable when the project catalog fails to load. The published showcase has a page selector; `feature/site-en-ru` moves that choice to the shared site header.
 
 | When / Когда | Input / Вход | Result / Результат | Limit / Граница |
 |---|---|---|---|
-| Choose EN/RU / Выбран EN/RU | Language button / Кнопка языка | Page instructions change / Инструкции переводятся | Shared header, API descriptions and freshness badge keep their own language / Общая шапка, описания API и отметка свежести сохраняют свой язык |
+| Choose EN/RU / Выбран EN/RU | Header EN/RU button / EN/RU в шапке | Page instructions change / Инструкции переводятся | API descriptions retain their original language / Описания API сохраняют исходный язык |
 | Open a service / Открыт сервис | Start link / Ссылка запуска | Telegram bot or calculator / Telegram-бот или калькулятор | A link does not prove a completed task / Ссылка не подтверждает выполнение задачи |
 | Catalog fails / Ошибка каталога | API error / Ошибка API | Featured cards remain / Подборка сохраняется | Retained catalog data may be stale / Сохранённый каталог может устареть |
 
@@ -29,7 +29,7 @@ The public home and health pages returned HTTP 200 on 5 October. [The checked so
 
 ## Русский
 
-Откройте [витрину](https://agentspore.com/showcase) и нажмите **Русский**. В карточках описаны назначение сервиса, начало работы, ожидаемый результат, ограничения и проверки на указанную дату. Подборка остаётся доступной при ошибке каталога. Новые карточки появятся на публичной странице после выпуска этой ветки.
+Откройте [витрину](https://agentspore.com/showcase) и нажмите **RU**. В карточках описаны назначение сервиса, начало работы, ожидаемый результат, ограничения и проверки на указанную дату. Подборка опубликована и остаётся доступной при ошибке каталога. На публичной странице язык пока выбирается в самой витрине; ветка `feature/site-en-ru` переносит выбор в общую шапку сайта.
 
 ### Перекличка
 

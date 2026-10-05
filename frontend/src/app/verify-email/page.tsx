@@ -1,5 +1,12 @@
 "use client";
 
+import { LanguageSelector } from "@/components/LanguageSelector";
+
+import { localeTag } from '@/lib/i18n/locale';
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
+
 import Link from "next/link";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -28,10 +35,12 @@ function DotGrid() {
 }
 
 export default function VerifyEmailPage() {
+  const tr = useTranslations(accountMessages);
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
-        <div className="text-neutral-500 text-sm font-mono animate-pulse">Initializing…</div>
+      <div className="relative min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
+        <div className="absolute right-4 top-4"><LanguageSelector /></div>
+        <div className="text-neutral-500 text-sm font-mono animate-pulse">{tr('initializing')}</div>
       </div>
     }>
       <VerifyEmailInner />
@@ -40,6 +49,8 @@ export default function VerifyEmailPage() {
 }
 
 function VerifyEmailInner() {
+  const { locale } = useLocale();
+  const tr = useTranslations(accountMessages);
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
   const [state, setState] = useState<State>(
@@ -78,7 +89,7 @@ function VerifyEmailInner() {
         } else {
           const msg = typeof body.detail === "string"
             ? body.detail
-            : "Verification failed. The link may be invalid.";
+            : accountMessages.en.verificationFailedTheLinkMayBeInvalid;
           const expired =
             msg.toLowerCase().includes("expired") ||
             msg.toLowerCase().includes("invalid");
@@ -87,7 +98,7 @@ function VerifyEmailInner() {
       } catch {
         setState({
           status: "error",
-          message: "Network error — could not reach the server.",
+          message: accountMessages.en.networkErrorCouldNotReachTheServer,
           expired: false,
         });
       }
@@ -125,6 +136,7 @@ function VerifyEmailInner() {
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">
+        <div className="mb-4 flex justify-end"><LanguageSelector /></div>
         {/* Logo */}
         <div className="text-center mb-10 animate-fadeUp">
           <Link href="/" className="inline-flex items-center gap-3">
@@ -147,23 +159,21 @@ function VerifyEmailInner() {
           {state.status === "verifying" && (
             <div className="text-center py-6" data-testid="state-verifying">
               <div className="inline-block w-6 h-6 border-2 border-neutral-700 border-t-cyan-400 rounded-full animate-spin mb-4" />
-              <p className="text-neutral-400 text-sm font-mono">Verifying your email…</p>
+              <p className="text-neutral-400 text-sm font-mono">{tr('verifyingYourEmail')}</p>
             </div>
           )}
 
           {state.status === "success" && (
             <div className="text-center py-4" data-testid="state-success">
-              <div className="text-3xl mb-4 text-emerald-400 font-mono">[OK]</div>
-              <h2 className="text-white font-mono font-semibold text-lg mb-2">Email verified</h2>
+              <div className="text-3xl mb-4 text-emerald-400 font-mono">{tr('oK')}</div>
+              <h2 className="text-white font-mono font-semibold text-lg mb-2">{tr('emailVerified')}</h2>
               <p className="text-neutral-400 text-sm font-mono mb-6">
-                You&apos;re signed in. Redirecting to your profile in {redirectCountdown}s…
-              </p>
+                {tr('youReSignedInRedirectingToYourProfile')}{new Intl.NumberFormat(localeTag(locale)).format(redirectCountdown)}{tr('s')}</p>
               <Link
                 href="/profile"
                 className="inline-block px-6 py-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-mono hover:bg-emerald-500/20 transition-colors"
               >
-                Go to profile &rarr;
-              </Link>
+                {tr('goToProfile')}</Link>
             </div>
           )}
 
@@ -171,7 +181,7 @@ function VerifyEmailInner() {
             <div data-testid="state-error">
               <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3 mb-6">
                 <p className="text-red-400 text-xs font-mono" data-testid="error-message">
-                  {state.message}
+                  {displayAccountLabel(locale, state.message)}
                 </p>
               </div>
 
@@ -186,8 +196,7 @@ function VerifyEmailInner() {
 
               <p className="text-center mt-4">
                 <Link href="/login" className="text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
-                  back to login
-                </Link>
+                  {tr('backToLogin')}</Link>
               </p>
             </div>
           )}
@@ -196,8 +205,7 @@ function VerifyEmailInner() {
             <div data-testid="state-missing">
               <div className="bg-amber-950/30 border border-amber-800/30 rounded-lg px-4 py-3 mb-6">
                 <p className="text-amber-400 text-xs font-mono">
-                  Invalid link — no verification token found.
-                </p>
+                  {tr('invalidLinkNoVerificationTokenFound')}</p>
               </div>
 
               <ResendForm
@@ -209,28 +217,25 @@ function VerifyEmailInner() {
 
               <p className="text-center mt-4">
                 <Link href="/login" className="text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
-                  back to login
-                </Link>
+                  {tr('backToLogin')}</Link>
               </p>
             </div>
           )}
 
           {state.status === "resent" && (
             <div className="text-center py-4" data-testid="state-resent">
-              <div className="text-3xl mb-4 text-cyan-400 font-mono">[SENT]</div>
-              <h2 className="text-white font-mono font-semibold text-lg mb-2">Check your inbox</h2>
+              <div className="text-3xl mb-4 text-cyan-400 font-mono">{tr('sENT')}</div>
+              <h2 className="text-white font-mono font-semibold text-lg mb-2">{tr('checkYourInbox')}</h2>
               <p className="text-neutral-400 text-sm font-mono mb-6">
-                If the account exists and is unverified, a new link has been sent.
-              </p>
+                {tr('ifTheAccountExistsAndIsUnverifiedA')}</p>
               <Link href="/login" className="text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
-                back to login
-              </Link>
+                {tr('backToLogin')}</Link>
             </div>
           )}
         </div>
 
         <p className="text-center text-xs text-neutral-600 mt-6 font-mono animate-fadeUp animation-delay-200">
-          <Link href="/" className="hover:text-cyan-400 transition-colors">cd ~/home</Link>
+          <Link href="/" className="hover:text-cyan-400 transition-colors">{tr('cdHome')}</Link>
         </p>
       </div>
 
@@ -261,17 +266,18 @@ function ResendForm({
   loading: boolean;
   onSubmit: () => void;
 }) {
+  const tr = useTranslations(accountMessages);
   return (
     <div>
-      <p className="text-neutral-500 text-xs font-mono mb-3">Request a new verification link:</p>
-      <div className="flex gap-2">
+      <p className="text-neutral-500 text-xs font-mono mb-3">{tr('requestANewVerificationLink')}</p>
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
         <input
           type="email"
           value={email}
           onChange={e => onEmailChange(e.target.value)}
           placeholder="you@example.com"
-          aria-label="Email address"
-          className="flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-cyan-500/50 focus:outline-none font-mono px-3 py-2.5 text-sm transition-colors"
+          aria-label={tr('emailAddress')}
+          className="min-w-0 w-full flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-cyan-500/50 focus:outline-none font-mono px-3 py-2.5 text-sm transition-colors"
         />
         <button
           type="button"
@@ -279,7 +285,7 @@ function ResendForm({
           disabled={loading || !email.trim()}
           className="px-4 py-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-sm font-mono hover:bg-cyan-500/20 transition-colors disabled:opacity-50 whitespace-nowrap"
         >
-          {loading ? "…" : "Resend"}
+          {loading ? "…" : tr('resend')}
         </button>
       </div>
     </div>

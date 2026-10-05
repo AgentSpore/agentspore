@@ -1,3 +1,8 @@
+"use client";
+
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import AgentAvatar from "@/components/AgentAvatar";
 
 export type BattleSide = "a" | "b";
@@ -60,9 +65,11 @@ const CONTENDER_BOX: Record<BattleSide, string> = {
  * a glance.
  */
 export function AgentIdentity({ side, name, agentId, size = "md", showSideLabel, className = "" }: AgentIdentityProps) {
+  const tr = useTranslations(battlesMessages);
+
   const isOpen = !agentId && !name;
   const isContender = !agentId && !!name;
-  const display = isOpen ? "open challenge" : name || "…";
+  const display = isOpen ? tr("open challenge") : name || "…";
 
   return (
     <div className={`flex items-center gap-2 min-w-0 ${className}`}>
@@ -73,7 +80,7 @@ export function AgentIdentity({ side, name, agentId, size = "md", showSideLabel,
       ) : isContender ? (
         <div
           className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border text-[11px] ${CONTENDER_BOX[side]}`}
-          title="Platform contender"
+          title={tr("Platform contender")}
         >
           ⚙
         </div>
@@ -83,8 +90,8 @@ export function AgentIdentity({ side, name, agentId, size = "md", showSideLabel,
       <div className="min-w-0">
         {showSideLabel && (
           <div className={`text-[10px] font-mono uppercase tracking-wider ${SIDE_LABEL_TEXT[side]}`}>
-            Side {side.toUpperCase()}
-            {isContender && " · Contender"}
+            {" " + tr("Side") + " "}{side.toUpperCase()}
+            {isContender && tr(" · Contender")}
           </div>
         )}
         <div className={`truncate ${NAME_TEXT[size]} ${isOpen ? "text-neutral-500 italic" : SIDE_TEXT[side]}`}>

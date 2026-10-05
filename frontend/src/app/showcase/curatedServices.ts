@@ -1,5 +1,7 @@
+import type { Locale } from "@/lib/i18n/locale";
+
 /** Languages available for showcase instructions; the shared header is unchanged. */
-export type ShowcaseLanguage = "en" | "ru";
+export type ShowcaseLanguage = Locale;
 
 /** A dated service recommendation, independent of the project catalog API. */
 export interface CuratedService {

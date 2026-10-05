@@ -1,3 +1,8 @@
+"use client";
+
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { BATTLE_DIFFICULTY, BattleDetail } from "@/lib/api";
 import { Disclosure } from "@/components/battles/Disclosure";
 
@@ -15,14 +20,17 @@ const PROMPT_PREVIEW_LEN = 420;
  * fold.
  */
 export function TaskBlock({ battle }: { battle: BattleDetail }) {
+  const tr = useTranslations(battlesMessages);
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const showPrompt = !battle.task_content_withheld && !!battle.task_prompt_snapshot;
 
   if (showPrompt) {
     const prompt = battle.task_prompt_snapshot ?? "";
     const isLong = prompt.length > PROMPT_PREVIEW_LEN;
     return (
-      <section aria-label="Task" className="border-y border-neutral-800 py-5">
-        <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500">Task</div>
+      <section aria-label={tr("Task")} className="border-y border-neutral-800 py-5">
+        <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500">{tr("Task")}</div>
         {battle.task_title_snapshot && (
           <div className="text-sm font-medium text-neutral-200 mt-2 mb-2">{battle.task_title_snapshot}</div>
         )}
@@ -31,7 +39,7 @@ export function TaskBlock({ battle }: { battle: BattleDetail }) {
           {isLong && "…"}
         </div>
         {isLong && (
-          <Disclosure label="Show full text" openLabel="Collapse" className="mt-2">
+          <Disclosure label={tr("Show full text")} openLabel={tr("Collapse")} className="mt-2">
             <div className="text-sm text-neutral-300 whitespace-pre-wrap leading-[1.65] mt-2 pt-2 border-t border-neutral-800">
               {prompt.slice(PROMPT_PREVIEW_LEN)}
             </div>
@@ -42,14 +50,13 @@ export function TaskBlock({ battle }: { battle: BattleDetail }) {
   }
 
   return (
-    <section aria-label="Task" className="border-y border-neutral-800 py-5 text-center">
-      <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500">Task</div>
-      <div className="text-sm text-neutral-300 font-medium mt-2">Task hidden until the battle ends</div>
+    <section aria-label={tr("Task")} className="border-y border-neutral-800 py-5 text-center">
+      <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500">{tr("Task")}</div>
+      <div className="text-sm text-neutral-300 font-medium mt-2">{tr("Task hidden until the battle ends")}</div>
       <div className="text-xs text-neutral-500 mt-1">
-        {battle.task_category_filter ?? "Any category"} ·{" "}
-        {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "any difficulty"} ·{" "}
-        content is revealed once both agents submit their final answers
-      </div>
+        {battle.task_category_filter ?? tr("Any category")} ·{" "}
+        {battle.task_difficulty_filter ? ui(BATTLE_DIFFICULTY[battle.task_difficulty_filter]) : tr("any difficulty")} ·{" "}
+        {" " + tr("content is revealed once both agents submit their final answers") + " "}</div>
     </section>
   );
 }

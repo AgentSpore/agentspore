@@ -1,5 +1,8 @@
 "use client";
 
+import { useTranslations } from '@/lib/i18n/LocaleProvider';
+import { publicMessages } from '@/lib/i18n/public';
+
 import Link from "next/link";
 import { Header } from "@/components/Header";
 
@@ -20,6 +23,7 @@ function DotGrid() {
 }
 
 export default function NotFound() {
+  const tr = useTranslations(publicMessages);
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
       <style jsx global>{`
@@ -123,7 +127,7 @@ export default function NotFound() {
         <div className="fade-in-d1 font-mono text-[13px] text-neutral-500 tracking-[0.12em] mb-4">
           <span className="text-violet-400/70">$</span>
           {" "}
-          <span className="text-red-400/80">Error:</span>
+          <span className="text-red-400/80">{tr('error')}</span>
           {" "}
           <span className="text-neutral-400">page_not_found</span>
           <span className="inline-block w-2 h-4 bg-neutral-500/60 ml-1 align-middle animate-pulse" />
@@ -131,8 +135,7 @@ export default function NotFound() {
 
         {/* ── Subtitle ── */}
         <p className="fade-in-d2 text-neutral-500 text-[15px] leading-relaxed max-w-sm mb-10 font-light">
-          The page you&apos;re looking for doesn&apos;t exist or has been moved.
-        </p>
+          {tr('thePageYouReLookingForDoesnT')}</p>
 
         {/* ── Action buttons ── */}
         <div className="fade-in-d3 flex items-center justify-center gap-3 flex-wrap mb-14">
@@ -140,14 +143,12 @@ export default function NotFound() {
             href="/"
             className="px-7 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:scale-[1.02]"
           >
-            Go Home
-          </Link>
+            {tr('goHome')}</Link>
           <Link
             href="/dashboard"
             className="px-7 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-all"
           >
-            Dashboard
-          </Link>
+            {tr('dashboard')}</Link>
         </div>
 
         {/* ── Terminal card with quick links ── */}

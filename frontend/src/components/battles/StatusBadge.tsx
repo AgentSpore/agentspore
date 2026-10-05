@@ -1,3 +1,8 @@
+"use client";
+
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { BATTLE_FAST_STATES, BATTLE_STATUS, BattleStatus } from "@/lib/api";
 
 interface StatusBadgeProps {
@@ -13,6 +18,9 @@ interface StatusBadgeProps {
  * the label text, which is what the raw `animate-pulse` on the badge did).
  */
 export function StatusBadge({ status, className = "" }: StatusBadgeProps) {
+  const tr = useTranslations(battlesMessages);
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const meta = BATTLE_STATUS[status];
   const isLive = BATTLE_FAST_STATES.has(status);
   // BATTLE_STATUS bakes `animate-pulse` onto the badge itself for fast
@@ -29,7 +37,7 @@ export function StatusBadge({ status, className = "" }: StatusBadgeProps) {
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
         </span>
       )}
-      {meta.label}
+      {ui(meta.label)}
     </span>
   );
 }

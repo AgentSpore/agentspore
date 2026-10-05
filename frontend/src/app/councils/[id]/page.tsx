@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { communicationMessages } from "@/lib/i18n/communication";
+
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -119,6 +122,10 @@ function voteBadge(vote: string): string {
 }
 
 export default function CouncilPage() {
+  const tr = useTranslations(communicationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
+
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [council, setCouncil] = useState<Council | null>(null);
@@ -213,7 +220,7 @@ export default function CouncilPage() {
 
   // ── Actions ──────────────────────────────────────────────────────────
   const abort = async () => {
-    if (!id || !confirm("Abort this council?")) return;
+    if (!id || !confirm(tr("Abort this council?"))) return;
     setAborting(true);
     try {
       const res = await fetchWithAuth(`${API_URL}/api/v1/councils/${id}/abort`, { method: "POST" });
@@ -233,11 +240,11 @@ export default function CouncilPage() {
     if (file) {
       if (file.type === "text") {
         const ext = file.name.split(".").pop() || "txt";
-        const fileBlock = `**Attached: ${file.name}** (${(file.size / 1024).toFixed(1)}KB)\n\`\`\`${ext}\n${file.content}\n\`\`\``;
+        const fileBlock = `**Attached: ${file.name}** (${(file.size / 1024).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}KB)\n\`\`\`${ext}\n${file.content}\n\`\`\``;
         content = content ? `${content}\n\n${fileBlock}` : fileBlock;
       } else {
         // Image — LLM gets filename, UI shows inline via message metadata
-        const imgNote = `**Attached image: ${file.name}** (${(file.size / 1024).toFixed(0)}KB)`;
+        const imgNote = `**Attached image: ${file.name}** (${(file.size / 1024).toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}KB)`;
         content = content ? `${content}\n\n${imgNote}` : imgNote;
       }
     }
@@ -259,7 +266,7 @@ export default function CouncilPage() {
   };
 
   const finish = async () => {
-    if (!id || !confirm("Wrap up discussion? The panel will vote and produce a resolution.")) return;
+    if (!id || !confirm(tr("Wrap up discussion? The panel will vote and produce a resolution."))) return;
     setFinishing(true);
     setErr(null);
     try {
@@ -304,24 +311,24 @@ export default function CouncilPage() {
     <div className="min-h-screen bg-neutral-950 text-neutral-100 pb-32">
       <Header />
       <main className="mx-auto max-w-4xl px-4 py-8">
-        {err && <div className="text-red-400 mb-4 text-sm">{err}</div>}
+        {err && <div className="text-red-400 mb-4 text-sm">{display(err)}</div>}
         {council && (
           <>
             <div className="flex items-start justify-between gap-4 mb-6">
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight">{council.topic}</h1>
                 <div className="text-sm text-neutral-500 mt-1">
-                  {council.panel_size} panelists{council.current_round > 0 && ` · ${council.current_round} exchange${council.current_round > 1 ? "s" : ""}`}
+                  {council.panel_size.toLocaleString(locale)} {" " + tr("panelists")}{council.current_round > 0 && ` · ${tr("{count} exchanges", { count: council.current_round.toLocaleString(locale) })}`}
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <span className={`text-xs px-2 py-0.5 rounded border ${statusBadge(council.status)}`}>
-                  {statusLabel(council.status)}
+                  {display(statusLabel(council.status))}
                 </span>
                 {!isTerminal && (
                   <button onClick={abort} disabled={aborting}
                     className="text-xs px-2 py-0.5 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-50">
-                    {aborting ? "..." : "Abort"}
+                    {aborting ? "..." : tr("Abort")}
                   </button>
                 )}
               </div>
@@ -329,8 +336,7 @@ export default function CouncilPage() {
 
             {allErrored && (
               <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-300">
-                All panelists failed to vote. Free tier rate-limiting — try again in a few minutes.
-              </div>
+                {" " + tr("All panelists failed to vote. Free tier rate-limiting — try again in a few minutes.") + " "}</div>
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-6">
@@ -339,7 +345,7 @@ export default function CouncilPage() {
                 {/* Brief */}
                 {brief && (
                   <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4 mb-4">
-                    <div className="text-xs uppercase text-neutral-500 mb-2">Brief</div>
+                    <div className="text-xs uppercase text-neutral-500 mb-2">{tr("Brief")}</div>
                     <div className="text-sm text-neutral-300 whitespace-pre-wrap">{brief.content}</div>
                   </div>
                 )}
@@ -347,8 +353,7 @@ export default function CouncilPage() {
                 {/* Chat hint when no discussion yet */}
                 {discussion.length === 0 && !isTerminal && (
                   <div className="rounded-lg border border-neutral-800 bg-neutral-900/30 p-4 text-sm text-neutral-500 mb-3">
-                    Panel assembled. Type your first message below to start the discussion.
-                  </div>
+                    {" " + tr("Panel assembled. Type your first message below to start the discussion.") + " "}</div>
                 )}
 
                 {/* Discussion */}
@@ -362,8 +367,8 @@ export default function CouncilPage() {
                       return (
                         <div key={m.id} className="rounded-lg border border-violet-500/30 bg-violet-500/5 p-3 ml-8">
                           <div className="flex items-center gap-2 mb-1">
-                            <span className="font-medium text-violet-300">You</span>
-                            <span className="text-xs text-neutral-600">round {m.round_num}</span>
+                            <span className="font-medium text-violet-300">{tr("You")}</span>
+                            <span className="text-xs text-neutral-600">{tr("round") + " "}{m.round_num.toLocaleString(locale)}</span>
                           </div>
                           <div className="text-sm text-neutral-200 prose prose-invert prose-sm max-w-none">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
@@ -385,10 +390,10 @@ export default function CouncilPage() {
                         <div key={m.id} className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-3">
                           <div className="flex items-center gap-2 mb-1">
                             <span className={`font-medium ${p ? roleColor(p.role) : "text-neutral-400"}`}>
-                              {p?.display_name || "System"}
+                              {p?.display_name || tr("System")}
                             </span>
                             <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                              {info.isVote ? "vote failed" : "no response"}
+                              {info.isVote ? tr("vote failed") : tr("no response")}
                             </span>
                           </div>
                           <div className="text-xs text-amber-200/70">{info.detail}</div>
@@ -403,12 +408,12 @@ export default function CouncilPage() {
                       }`}>
                         <div className="flex items-center gap-2 mb-1">
                           <span className={`font-medium ${p ? roleColor(p.role) : "text-neutral-400"}`}>
-                            {p?.display_name || "System"}
+                            {p?.display_name || tr("System")}
                           </span>
                           {p && roleBadge(p.role) && (
-                            <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${roleBadge(p.role)!.cls}`}>{roleBadge(p.role)!.text}</span>
+                            <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${roleBadge(p.role)!.cls}`}>{display(roleBadge(p.role)!.text)}</span>
                           )}
-                          <span className="text-xs text-neutral-600">round {m.round_num}</span>
+                          <span className="text-xs text-neutral-600">{tr("round") + " "}{m.round_num.toLocaleString(locale)}</span>
                         </div>
                         <div className="text-sm text-neutral-200 prose prose-invert prose-sm max-w-none">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
@@ -420,8 +425,7 @@ export default function CouncilPage() {
                   {/* Responding indicator */}
                   {isResponding && (
                     <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-3 text-sm text-violet-300/70 animate-pulse">
-                      Panel is thinking...
-                    </div>
+                      {" " + tr("Panel is thinking...") + " "}</div>
                   )}
 
                   <div ref={bottomRef} />
@@ -430,7 +434,7 @@ export default function CouncilPage() {
                 {/* Resolution */}
                 {resolution && (
                   <div className="mt-6 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-5">
-                    <div className="text-xs uppercase text-emerald-400 mb-2">Resolution</div>
+                    <div className="text-xs uppercase text-emerald-400 mb-2">{tr("Resolution")}</div>
                     <div className="prose prose-invert prose-sm max-w-none">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{resolution.content}</ReactMarkdown>
                     </div>
@@ -441,7 +445,7 @@ export default function CouncilPage() {
               {/* Sidebar */}
               <aside className="md:sticky md:top-20 h-fit">
                 <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-4">
-                  <div className="text-xs uppercase text-neutral-500 mb-2">Panel · {panelists.length}</div>
+                  <div className="text-xs uppercase text-neutral-500 mb-2">{tr("Panel ·") + " "}{panelists.length.toLocaleString(locale)}</div>
                   <ul className="space-y-2.5">
                     {panelists.map(p => {
                       const v = votes.find(vv => vv.panelist_id === p.id);
@@ -450,7 +454,7 @@ export default function CouncilPage() {
                           <div className="flex items-center gap-1.5">
                             <div className={`font-medium truncate ${roleColor(p.role)}`}>{p.display_name}</div>
                             {roleBadge(p.role) && (
-                              <span className={`shrink-0 text-[9px] uppercase px-1 rounded border ${roleBadge(p.role)!.cls}`}>{roleBadge(p.role)!.text}</span>
+                              <span className={`shrink-0 text-[9px] uppercase px-1 rounded border ${roleBadge(p.role)!.cls}`}>{display(roleBadge(p.role)!.text)}</span>
                             )}
                           </div>
                           <div className="text-[10px] font-mono text-neutral-600 truncate" title={p.model_id || p.adapter}>
@@ -458,8 +462,8 @@ export default function CouncilPage() {
                           </div>
                           {v && (
                             <div className="flex items-center gap-1.5 mt-1">
-                              <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${voteBadge(v.vote)}`}>{v.vote}</span>
-                              {v.vote !== "error" && <span className="text-[10px] text-neutral-600 font-mono">{v.confidence.toFixed(2)}</span>}
+                              <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${voteBadge(v.vote)}`}>{display(v.vote)}</span>
+                              {v.vote !== "error" && <span className="text-[10px] text-neutral-600 font-mono">{v.confidence.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
                             </div>
                           )}
                         </li>
@@ -469,15 +473,15 @@ export default function CouncilPage() {
 
                   {council.consensus_score !== null && (
                     <div className="mt-4 pt-3 border-t border-neutral-800">
-                      <div className="text-xs uppercase text-neutral-500 mb-1">Consensus</div>
+                      <div className="text-xs uppercase text-neutral-500 mb-1">{tr("Consensus")}</div>
                       <div className="text-lg font-mono">
-                        {council.consensus_score > 0 ? "+" : ""}{council.consensus_score.toFixed(2)}
+                        {council.consensus_score > 0 ? "+" : ""}{council.consensus_score.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div className="text-[10px] text-neutral-600 mt-0.5">
-                        {council.consensus_score > 0.5 ? "strong approve"
-                          : council.consensus_score > 0 ? "lean approve"
-                          : council.consensus_score === 0 ? "split"
-                          : council.consensus_score > -0.5 ? "lean reject" : "strong reject"}
+                        {council.consensus_score > 0.5 ? tr("strong approve")
+                          : council.consensus_score > 0 ? tr("lean approve")
+                          : council.consensus_score === 0 ? tr("split")
+                          : council.consensus_score > -0.5 ? tr("lean reject") : tr("strong reject")}
                       </div>
                     </div>
                   )}
@@ -487,14 +491,12 @@ export default function CouncilPage() {
                     <div className="mt-4 pt-3 border-t border-neutral-800">
                       <button onClick={finish} disabled={isResponding || finishing}
                         className="w-full text-xs px-3 py-2 rounded-lg border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40 transition">
-                        Finish & Vote
-                      </button>
+                        {" " + tr("Finish & Vote") + " "}</button>
                     </div>
                   )}
                   {finishing && (
                     <div className="mt-4 pt-3 border-t border-neutral-800 text-xs text-violet-300 animate-pulse text-center">
-                      Wrapping up...
-                    </div>
+                      {" " + tr("Wrapping up...") + " "}</div>
                   )}
                 </div>
               </aside>
@@ -518,7 +520,7 @@ export default function CouncilPage() {
                     <span className="text-violet-400 font-mono">{pendingFile.name.split(".").pop()}</span>
                   )}
                   <span className="truncate max-w-[200px]">{pendingFile.name}</span>
-                  <span className="text-neutral-600">{(pendingFile.size / 1024).toFixed(0)}KB</span>
+                  <span className="text-neutral-600">{(pendingFile.size / 1024).toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}{tr("KB")}</span>
                   <button onClick={() => setPendingFile(null)} className="text-neutral-600 hover:text-red-400 ml-1">&times;</button>
                 </div>
               </div>
@@ -529,7 +531,7 @@ export default function CouncilPage() {
               value={chatInput}
               onChange={e => setChatInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={isResponding ? "Wait for panel to respond..." : "Ask the panel..."}
+              placeholder={isResponding ? tr("Wait for panel to respond...") : tr("Ask the panel...")}
               disabled={!canChat}
               rows={1}
               className="flex-1 rounded-lg bg-neutral-900 border border-neutral-800 px-3 py-2 text-sm resize-none focus:border-violet-500 focus:outline-none disabled:opacity-40 max-h-32"
@@ -542,8 +544,7 @@ export default function CouncilPage() {
               disabled={!canChat || (!chatInput.trim() && !pendingFile)}
               className="shrink-0 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 text-sm font-medium transition"
             >
-              Send
-            </button>
+              {" " + tr("Send") + " "}</button>
             </div>
           </div>
         </div>
