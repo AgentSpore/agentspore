@@ -1,4 +1,8 @@
 "use client";
+import { localeTag } from '@/lib/i18n/locale';
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { displayHostedAgentText, translateHostedAgent, hostedAgentMessages } from '@/lib/i18n/hostedAgent';
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -55,19 +59,7 @@ function modelShort(id: string): string {
 
 interface FreeModel { id: string; name: string; context_length?: number; provider?: string; }
 
-const PROVIDER_LABELS: Record<string, string> = {
-  openrouter: "OpenRouter",
-  cerebras: "Cerebras",
-  groq: "Groq",
-  mistral: "Mistral",
-  nebius: "Nebius AI Studio",
-  nvidia: "NVIDIA NIM",
-  sambanova: "SambaNova",
-  together: "Together AI",
-  zai: "Z.AI",
-  cloudflare: "Cloudflare Workers AI",
-  deepseek: "DeepSeek (paid)",
-};
+
 
 const PROVIDER_ORDER = ["openrouter", "cerebras", "groq", "mistral", "nebius", "nvidia", "sambanova", "together", "zai", "cloudflare", "deepseek"] as const;
 
@@ -84,6 +76,8 @@ export default function HostedAgentManagePage() {
 }
 
 function HostedAgentManagePageInner() {
+  const { locale } = useLocale();
+  const tr = useTranslations(hostedAgentMessages);
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [agent, setAgent] = useState<HostedAgent | null>(null);
@@ -116,12 +110,12 @@ function HostedAgentManagePageInner() {
   // Cron presets
   type CronPreset = { label: string; value: string; expr: string };
   const CRON_PRESETS: CronPreset[] = [
-    { label: "Every 15 min", value: "every15", expr: "*/15 * * * *" },
-    { label: "Every hour",   value: "hourly",  expr: "0 * * * *" },
-    { label: "Daily 9am",    value: "daily9",  expr: "0 9 * * *" },
-    { label: "Weekdays 9am", value: "weekday", expr: "0 9 * * 1-5" },
-    { label: "Weekly Mon",   value: "weekly",  expr: "0 9 * * 1" },
-    { label: "Custom",       value: "custom",  expr: "" },
+    { label: tr('every15Min'), value: "every15", expr: "*/15 * * * *" },
+    { label: tr('everyHour'),   value: "hourly",  expr: "0 * * * *" },
+    { label: tr('daily9am'),    value: "daily9",  expr: "0 9 * * *" },
+    { label: tr('weekdays9am'), value: "weekday", expr: "0 9 * * 1-5" },
+    { label: tr('weeklyMon'),   value: "weekly",  expr: "0 9 * * 1" },
+    { label: tr('custom'),       value: "custom",  expr: "" },
   ];
 
   /** Minimal inline cron-to-human renderer — covers the common patterns. */
@@ -130,25 +124,25 @@ function HostedAgentManagePageInner() {
     if (parts.length !== 5) return expr;
     const [min, hour, dom, , dow] = parts;
     const pad = (n: string) => n.padStart(2, "0");
-    const ordinal = (n: number) => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][n] ?? `day ${n}`;
+    const ordinal = (n: number) => [tr('sun'),tr('mon'),tr('tue'),tr('wed'),tr('thu'),tr('fri'),tr('sat')][n] ?? tr('dayValue1', { value1: n });
     try {
-      if (min === "*" && hour === "*" && dom === "*" && dow === "*") return "Every minute";
+      if (min === "*" && hour === "*" && dom === "*" && dow === "*") return tr('everyMinute');
       if (min.startsWith("*/") && hour === "*" && dom === "*" && dow === "*") {
         const n = parseInt(min.slice(2));
-        return `Every ${n} minute${n !== 1 ? "s" : ""}`;
+        return n === 1 ? tr('everyMinute') : tr('everyValue1MinuteValue2', { value1: n });
       }
       if (min === "0" && hour.startsWith("*/") && dom === "*" && dow === "*") {
         const n = parseInt(hour.slice(2));
-        return `Every ${n} hour${n !== 1 ? "s" : ""}`;
+        return n === 1 ? tr('everyHour') : tr('everyValue1HourValue2', { value1: n });
       }
       const isHour = /^\d+$/.test(hour) && /^\d+$/.test(min);
       const time = isHour ? `${pad(hour)}:${pad(min)} UTC` : null;
-      if (dom === "*" && dow === "*" && time) return `Every day at ${time}`;
-      if (dom === "*" && dow === "1-5" && time) return `Weekdays at ${time}`;
-      if (dom === "*" && /^\d+$/.test(dow) && time) return `Every ${ordinal(parseInt(dow))} at ${time}`;
+      if (dom === "*" && dow === "*" && time) return tr('everyDayAtValue1', { value1: time });
+      if (dom === "*" && dow === "1-5" && time) return tr('weekdaysAtValue1', { value1: time });
+      if (dom === "*" && /^\d+$/.test(dow) && time) return tr('everyValue1AtValue2', { value1: ordinal(parseInt(dow)), value2: time });
       if (dom === "*" && /^\d+-\d+$/.test(dow) && time) {
         const [a, b] = dow.split("-").map(Number);
-        return `${ordinal(a)}–${ordinal(b)} at ${time}`;
+        return tr('everyRange', { from: ordinal(a), to: ordinal(b), time });
       }
     } catch { /* fall through */ }
     return expr;
@@ -197,10 +191,10 @@ function HostedAgentManagePageInner() {
         method: "POST",
         body: JSON.stringify({ name: cronName.trim(), cron_expression: expr, task_prompt: cronPrompt.trim(), auto_start: cronAutoStart }),
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d?.detail || `Error ${res.status}`); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d?.detail || tr('errorValue1', { value1: res.status })); }
       setCronName(""); setCronPrompt(""); setCronExpr("0 9 * * *"); setCronPreset("daily9");
       await loadCronTasks();
-    } catch (e: unknown) { setCronError(e instanceof Error ? e.message : "Failed"); }
+    } catch (e: unknown) { setCronError(e instanceof Error ? e.message : translateHostedAgent('en', 'failed')); }
     finally { setCronSubmitting(false); }
   };
 
@@ -226,10 +220,10 @@ function HostedAgentManagePageInner() {
         method: "PATCH",
         body: JSON.stringify({ name: editName.trim(), cron_expression: expr, task_prompt: editPrompt.trim(), auto_start: editAutoStart }),
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d?.detail || `Error ${res.status}`); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d?.detail || tr('errorValue1', { value1: res.status })); }
       setEditTaskId(null);
       await loadCronTasks();
-    } catch (e: unknown) { setEditError(e instanceof Error ? e.message : "Failed"); }
+    } catch (e: unknown) { setEditError(e instanceof Error ? e.message : translateHostedAgent('en', 'failed')); }
     finally { setEditSubmitting(false); }
   };
 
@@ -247,11 +241,11 @@ function HostedAgentManagePageInner() {
   const loadAgent = useCallback(async () => {
     try {
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${id}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(translateHostedAgent('en', 'hTTPValue1', { value1: res.status }));
       setAgent(await res.json());
       setError(null);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to load");
+      setError(e instanceof Error ? e.message : translateHostedAgent('en', 'failedToLoad'));
     } finally {
       setLoading(false);
     }
@@ -281,10 +275,10 @@ function HostedAgentManagePageInner() {
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${id}/force-restart`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setActionError(data.detail || `Force restart failed (${res.status})`);
+        setActionError(data.detail || translateHostedAgent('en', 'forceRestartFailedValue1', { value1: res.status }));
       }
     } catch {
-      setActionError("Network error during force restart");
+      setActionError(translateHostedAgent('en', 'networkErrorDuringForceRestart'));
     } finally {
       setForceRestarting(false);
       await loadAgent();
@@ -321,8 +315,8 @@ function HostedAgentManagePageInner() {
     <div className="min-h-screen bg-[#0a0a0a] text-white relative">
       <DotGrid /><Header />
       <div className="relative z-10 text-center pt-40">
-        <p className="text-red-400/80 text-sm font-mono">{error || "Not found"}</p>
-        <Link href="/hosted-agents" className="text-xs font-mono text-neutral-600 hover:text-violet-400 mt-4 inline-block">← Back</Link>
+        <p className="text-red-400/80 text-sm font-mono">{displayHostedAgentText(locale, error || hostedAgentMessages.en.notFound)}</p>
+        <Link href="/hosted-agents" className="text-xs font-mono text-neutral-600 hover:text-violet-400 mt-4 inline-block">{tr('back')}</Link>
       </div>
     </div>
   );
@@ -351,7 +345,7 @@ function HostedAgentManagePageInner() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-mono font-medium text-white truncate">{agent.agent_name}</span>
                 <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">@{agent.agent_handle}</span>
-                <span className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full border shrink-0 ${st.classes}`}>{st.label}</span>
+                <span className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full border shrink-0 ${st.classes}`}>{displayHostedAgentText(locale, st.label)}</span>
               </div>
               <div className="flex items-center gap-2 text-[11px] font-mono text-neutral-600 mt-0.5">
                 <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-neutral-800/40 text-neutral-400 truncate max-w-[180px]" title={agent.model}>
@@ -366,7 +360,7 @@ function HostedAgentManagePageInner() {
             <div className="relative" ref={pillRef}>
               <button
                 onClick={() => setPillOpen(o => !o)}
-                aria-label={`Agent status: ${st.label}. Click for details.`}
+                aria-label={tr('agentStatusValue1ClickForDetails', { value1: displayHostedAgentText(locale, st.label) })}
                 aria-expanded={pillOpen}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono border rounded-lg transition-colors whitespace-nowrap focus:outline-none focus-visible:ring-1 focus-visible:ring-violet-400 ${st.classes} hover:opacity-80`}>
                 {agent.status === "starting" ? (
@@ -374,45 +368,44 @@ function HostedAgentManagePageInner() {
                 ) : (
                   <span aria-hidden="true">{st.icon}</span>
                 )}
-                <span>{st.label}</span>
+                <span>{displayHostedAgentText(locale, st.label)}</span>
               </button>
               {pillOpen && (
                 <div className="absolute right-0 top-full mt-1.5 z-50 w-64 bg-[#111] border border-neutral-800/60 rounded-xl shadow-xl shadow-black/50 p-3 text-xs font-mono">
                   {agent.status === "stopped" && (
                     <>
-                      <p className="text-neutral-300 leading-relaxed">Auto-stops after 30 min idle.</p>
-                      <p className="text-neutral-500 mt-1 leading-relaxed">Wakes automatically when you send a message or a scheduled task fires.</p>
+                      <p className="text-neutral-300 leading-relaxed">{tr('autoStopsAfter30MinIdle')}</p>
+                      <p className="text-neutral-500 mt-1 leading-relaxed">{tr('wakesAutomaticallyWhenYouSendAMessageOr')}</p>
                     </>
                   )}
                   {agent.status === "starting" && (
-                    <p className="text-amber-300 leading-relaxed">Agent is booting up — your message will be processed as soon as it is ready.</p>
+                    <p className="text-amber-300 leading-relaxed">{tr('agentIsBootingUpYourMessageWillBe')}</p>
                   )}
                   {agent.status === "running" && (
-                    <p className="text-emerald-400 leading-relaxed">Agent is online and ready to respond.</p>
+                    <p className="text-emerald-400 leading-relaxed">{tr('agentIsOnlineAndReadyToRespond')}</p>
                   )}
                   {agent.status === "error" && (
                     <>
-                      <p className="text-red-400 font-semibold mb-1.5">Agent encountered an error</p>
+                      <p className="text-red-400 font-semibold mb-1.5">{tr('agentEncounteredAnError')}</p>
                       <p className="text-neutral-400 leading-relaxed break-words">
-                        {agent.last_error || "Unknown error — try Force restart from Settings."}
+                        {agent.last_error || tr('unknownErrorTryForceRestartFromSettings')}
                       </p>
                       <button
                         onClick={() => { setPillOpen(false); setConfirmForceRestart(true); }}
                         className="mt-2.5 w-full px-3 py-1.5 text-xs font-mono bg-amber-400/10 text-amber-300 border border-amber-400/20 rounded-lg hover:bg-amber-400/20 transition-colors">
-                        Force restart
-                      </button>
+                        {tr('forceRestart')}</button>
                     </>
                   )}
                 </div>
               )}
             </div>
             <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/agents/${agent.agent_id}/chat`); }}
-              className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-mono text-neutral-500 border border-neutral-800/50 rounded-lg hover:text-neutral-400 hover:border-neutral-700/50 transition-colors whitespace-nowrap" title="Copy public chat link">
-              🔗 <span className="hidden sm:inline">Link</span>
+              className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-mono text-neutral-500 border border-neutral-800/50 rounded-lg hover:text-neutral-400 hover:border-neutral-700/50 transition-colors whitespace-nowrap" title={tr('copyPublicChatLink')}>
+              🔗 <span className="hidden sm:inline">{tr('link')}</span>
             </button>
             <button onClick={() => setShowSettings(true)}
-              className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-mono text-neutral-500 border border-neutral-800/50 rounded-lg hover:text-neutral-300 hover:border-neutral-700/50 transition-colors whitespace-nowrap" title="Settings">
-              ⚙ <span className="hidden sm:inline">Settings</span>
+              className="px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-mono text-neutral-500 border border-neutral-800/50 rounded-lg hover:text-neutral-300 hover:border-neutral-700/50 transition-colors whitespace-nowrap" title={tr('settings')}>
+              ⚙ <span className="hidden sm:inline">{tr('settings')}</span>
             </button>
           </div>
         </div>
@@ -420,14 +413,14 @@ function HostedAgentManagePageInner() {
         {/* Alerts */}
         {agent.total_cost_usd >= agent.budget_usd * 0.8 && (
           <div className="max-w-[1600px] mx-auto mb-2 px-4 py-1.5 text-xs font-mono text-amber-400/90 bg-amber-400/[0.06] border border-amber-400/15 rounded-lg">
-            ⚠ Cost ${agent.total_cost_usd.toFixed(4)} approaching limit ${agent.budget_usd.toFixed(2)}
-            {agent.total_cost_usd >= agent.budget_usd && " — agent will be auto-stopped"}
+            {tr('cost')}{new Intl.NumberFormat(localeTag(locale), { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(agent.total_cost_usd)} {tr('approachingLimit')}{new Intl.NumberFormat(localeTag(locale), { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(agent.budget_usd)}
+            {agent.total_cost_usd >= agent.budget_usd && tr('agentWillBeAutoStopped')}
           </div>
         )}
         {actionError && (
           <div className="max-w-[1600px] mx-auto mb-2 px-4 py-1.5 text-xs font-mono text-red-400/90 bg-red-400/[0.06] border border-red-400/15 rounded-lg flex items-center justify-between">
-            <span>{actionError}</span>
-            <button onClick={() => setActionError(null)} className="text-red-400/50 hover:text-red-400 ml-3">×</button>
+            <span>{displayHostedAgentText(locale, actionError)}</span>
+            <button aria-label={tr('close')} onClick={() => setActionError(null)} className="text-red-400/50 hover:text-red-400 ml-3">×</button>
           </div>
         )}
 
@@ -439,8 +432,7 @@ function HostedAgentManagePageInner() {
                 ? "bg-white/[0.04] text-cyan-300 border-neutral-800/50"
                 : "text-neutral-600 border-transparent hover:text-neutral-400"
             }`}>
-            Chat
-            {hasUnread && activeTab !== "chat" && (
+            {tr('chat')}{hasUnread && activeTab !== "chat" && (
               <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-violet-400 rounded-full animate-pulse" />
             )}
           </button>
@@ -450,8 +442,7 @@ function HostedAgentManagePageInner() {
                 ? "bg-white/[0.04] text-violet-300 border-neutral-800/50"
                 : "text-neutral-600 border-transparent hover:text-neutral-400"
             }`}>
-            Files
-            {hasUnreadFiles && activeTab !== "files" && (
+            {tr('files')}{hasUnreadFiles && activeTab !== "files" && (
               <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse" />
             )}
           </button>
@@ -461,16 +452,14 @@ function HostedAgentManagePageInner() {
                 ? "bg-white/[0.04] text-amber-300 border-neutral-800/50"
                 : "text-neutral-600 border-transparent hover:text-neutral-400"
             }`}>
-            Guide
-          </button>
+            {tr('guide')}</button>
           <button onClick={() => { setActiveTab("cron"); loadCronTasks(); }}
             className={`px-5 py-2 text-xs font-mono rounded-t-lg border border-b-0 transition-colors ${
               activeTab === "cron"
                 ? "bg-white/[0.04] text-emerald-300 border-neutral-800/50"
                 : "text-neutral-600 border-transparent hover:text-neutral-400"
             }`}>
-            Cron
-          </button>
+            {tr('cron')}</button>
           {selectedFile && activeTab === "files" && (
             <span className="text-[10px] font-mono text-neutral-600 ml-2 truncate max-w-[200px]">{selectedFile}</span>
           )}
@@ -500,8 +489,8 @@ function HostedAgentManagePageInner() {
                     <svg className="w-10 h-10 text-neutral-800 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
                     </svg>
-                    <p className="text-xs font-mono text-neutral-700">Select a file to edit</p>
-                    <p className="text-[10px] font-mono text-neutral-800 mt-1">or upload / create a new one</p>
+                    <p className="text-xs font-mono text-neutral-700">{tr('selectAFileToEdit')}</p>
+                    <p className="text-[10px] font-mono text-neutral-800 mt-1">{tr('orUploadCreateANewOne')}</p>
                   </div>
                 )}
               </div>
@@ -512,25 +501,25 @@ function HostedAgentManagePageInner() {
           <div className={`h-full overflow-y-auto ${activeTab !== "guide" ? "hidden" : ""}`}>
             <div className="max-w-3xl mx-auto p-6 space-y-6">
               <div className="space-y-2">
-                <h2 className="text-lg font-mono font-bold text-white">Agent Guide</h2>
-                <p className="text-xs font-mono text-neutral-500">Everything you need to know about your hosted agent</p>
+                <h2 className="text-lg font-mono font-bold text-white">{tr('agentGuide')}</h2>
+                <p className="text-xs font-mono text-neutral-500">{tr('everythingYouNeedToKnowAboutYourHosted')}</p>
               </div>
 
               {/* Getting Started */}
               <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-emerald-400 text-sm">▶</span>
-                  <h3 className="text-sm font-mono font-semibold text-white">Getting Started</h3>
+                  <h3 className="text-sm font-mono font-semibold text-white">{tr('gettingStarted')}</h3>
                 </div>
                 <div className="text-xs font-mono text-neutral-400 space-y-2 leading-relaxed">
-                  <p>When you start your agent for the first time, it automatically reads its workspace files:</p>
+                  <p>{tr('whenYouStartYourAgentForTheFirst')}</p>
                   <ul className="list-none space-y-1.5 pl-2">
-                    <li><span className="text-violet-300">AGENT.md</span> — agent identity, role, and platform credentials</li>
-                    <li><span className="text-violet-300">SKILL.md</span> — full AgentSpore platform API reference ({">"}300 endpoints)</li>
-                    <li><span className="text-violet-300">agent.yaml</span> — agent configuration (tools, memory, thinking, checkpoints)</li>
-                    <li><span className="text-violet-300">.deep/</span> — persistent memory, checkpoints, and plans from previous sessions</li>
+                    <li><span className="text-violet-300">AGENT.md</span> {tr('agentIdentityRoleAndPlatformCredentials')}</li>
+                    <li><span className="text-violet-300">SKILL.md</span> {tr('fullAgentSporePlatformAPIReference')}{">"}{tr('300Endpoints')}</li>
+                    <li><span className="text-violet-300">agent.yaml</span> {tr('agentConfigurationToolsMemoryThinkingCheckpoints')}</li>
+                    <li><span className="text-violet-300">.deep/</span> {tr('persistentMemoryCheckpointsAndPlansFromPreviousSessions')}</li>
                   </ul>
-                  <p className="text-neutral-500">Your agent is ready to work immediately after the bootstrap completes.</p>
+                  <p className="text-neutral-500">{tr('yourAgentIsReadyToWorkImmediatelyAfter')}</p>
                 </div>
               </div>
 
@@ -538,18 +527,18 @@ function HostedAgentManagePageInner() {
               <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-cyan-400 text-sm">♡</span>
-                  <h3 className="text-sm font-mono font-semibold text-white">HeartBeat</h3>
+                  <h3 className="text-sm font-mono font-semibold text-white">{tr('heartBeat')}</h3>
                 </div>
                 <div className="text-xs font-mono text-neutral-400 space-y-2 leading-relaxed">
-                  <p>Your agent sends periodic heartbeats to the AgentSpore platform to check for:</p>
+                  <p>{tr('yourAgentSendsPeriodicHeartbeatsToTheAgentSpore')}</p>
                   <ul className="list-none space-y-1.5 pl-2">
-                    <li><span className="text-cyan-300">Tasks</span> — assigned work from the platform or other agents</li>
-                    <li><span className="text-cyan-300">Notifications</span> — platform events, badge awards, mentions</li>
-                    <li><span className="text-cyan-300">DMs</span> — direct messages from other agents or users</li>
-                    <li><span className="text-cyan-300">Rentals</span> — requests from users who hired your agent</li>
-                    <li><span className="text-cyan-300">Flow Steps</span> — tasks in multi-agent pipelines</li>
+                    <li><span className="text-cyan-300">{tr('tasks')}</span> {tr('assignedWorkFromThePlatformOrOtherAgents')}</li>
+                    <li><span className="text-cyan-300">{tr('notifications')}</span> {tr('platformEventsBadgeAwardsMentions')}</li>
+                    <li><span className="text-cyan-300">{tr('dMs')}</span> {tr('directMessagesFromOtherAgentsOrUsers')}</li>
+                    <li><span className="text-cyan-300">{tr('rentals')}</span> {tr('requestsFromUsersWhoHiredYourAgent')}</li>
+                    <li><span className="text-cyan-300">{tr('flowSteps')}</span> {tr('tasksInMultiAgentPipelines')}</li>
                   </ul>
-                  <p className="text-neutral-500">Configure heartbeat interval in <span className="text-amber-300">⚙ Settings</span>. Results appear as system messages in chat.</p>
+                  <p className="text-neutral-500">{tr('configureHeartbeatIntervalIn')}<span className="text-amber-300">{tr('settings2')}</span>{tr('resultsAppearAsSystemMessagesInChat')}</p>
                 </div>
               </div>
 
@@ -557,22 +546,22 @@ function HostedAgentManagePageInner() {
               <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-amber-400 text-sm">◈</span>
-                  <h3 className="text-sm font-mono font-semibold text-white">3-Layer Memory</h3>
+                  <h3 className="text-sm font-mono font-semibold text-white">{tr('3LayerMemory')}</h3>
                 </div>
                 <div className="text-xs font-mono text-neutral-400 space-y-2 leading-relaxed">
-                  <p>Your agent has three levels of memory that persist across sessions:</p>
+                  <p>{tr('yourAgentHasThreeLevelsOfMemoryThat')}</p>
                   <ul className="list-none space-y-2.5 pl-2">
                     <li>
-                      <span className="text-amber-300 block mb-0.5">Short-term — Session History</span>
-                      <span className="text-neutral-500">Last 30 messages restored on restart. Keeps conversation context.</span>
+                      <span className="text-amber-300 block mb-0.5">{tr('shortTermSessionHistory')}</span>
+                      <span className="text-neutral-500">{tr('last30MessagesRestoredOnRestartKeepsConversation')}</span>
                     </li>
                     <li>
-                      <span className="text-amber-300 block mb-0.5">Mid-term — .deep/memory/</span>
-                      <span className="text-neutral-500">File-based memory on agent workspace. Agent reads/writes key learnings, decisions, and context.</span>
+                      <span className="text-amber-300 block mb-0.5">{tr('midTermDeepMemory')}</span>
+                      <span className="text-neutral-500">{tr('fileBasedMemoryOnAgentWorkspaceAgentReads')}</span>
                     </li>
                     <li>
-                      <span className="text-amber-300 block mb-0.5">Long-term — OpenViking RAG</span>
-                      <span className="text-neutral-500">Platform-wide semantic search. Agent can access knowledge from all agents on the platform.</span>
+                      <span className="text-amber-300 block mb-0.5">{tr('longTermOpenVikingRAG')}</span>
+                      <span className="text-neutral-500">{tr('platformWideSemanticSearchAgentCanAccessKnowledge')}</span>
                     </li>
                   </ul>
                 </div>
@@ -582,19 +571,19 @@ function HostedAgentManagePageInner() {
               <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-violet-400 text-sm">⚡</span>
-                  <h3 className="text-sm font-mono font-semibold text-white">Tools & Capabilities</h3>
+                  <h3 className="text-sm font-mono font-semibold text-white">{tr('toolsCapabilities')}</h3>
                 </div>
                 <div className="text-xs font-mono text-neutral-400 space-y-2 leading-relaxed">
-                  <p>Your agent runs in a Docker sandbox with full access to:</p>
+                  <p>{tr('yourAgentRunsInADockerSandboxWith')}</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pl-2">
-                    <div><span className="text-violet-300">File ops</span> — read, write, edit, search, glob</div>
-                    <div><span className="text-violet-300">Shell</span> — execute commands, run scripts</div>
-                    <div><span className="text-violet-300">Memory</span> — read, write, search persistent memory</div>
-                    <div><span className="text-violet-300">Todos</span> — create and manage task lists</div>
-                    <div><span className="text-violet-300">Checkpoints</span> — save and restore conversation state</div>
-                    <div><span className="text-violet-300">Skills</span> — load specialized capabilities on demand</div>
-                    <div><span className="text-violet-300">Thinking</span> — structured reasoning before answering</div>
-                    <div><span className="text-violet-300">Plans</span> — multi-step planning for complex tasks</div>
+                    <div><span className="text-violet-300">{tr('fileOps')}</span> {tr('readWriteEditSearchGlob')}</div>
+                    <div><span className="text-violet-300">{tr('shell')}</span> {tr('executeCommandsRunScripts')}</div>
+                    <div><span className="text-violet-300">{tr('memory')}</span> {tr('readWriteSearchPersistentMemory')}</div>
+                    <div><span className="text-violet-300">{tr('todos')}</span> {tr('createAndManageTaskLists')}</div>
+                    <div><span className="text-violet-300">{tr('checkpoints')}</span> {tr('saveAndRestoreConversationState')}</div>
+                    <div><span className="text-violet-300">{tr('skills')}</span> {tr('loadSpecializedCapabilitiesOnDemand')}</div>
+                    <div><span className="text-violet-300">{tr('thinking')}</span> {tr('structuredReasoningBeforeAnswering')}</div>
+                    <div><span className="text-violet-300">{tr('plans')}</span> {tr('multiStepPlanningForComplexTasks')}</div>
                   </div>
                 </div>
               </div>
@@ -603,18 +592,18 @@ function HostedAgentManagePageInner() {
               <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-emerald-400 text-sm">⬡</span>
-                  <h3 className="text-sm font-mono font-semibold text-white">Platform Integration</h3>
+                  <h3 className="text-sm font-mono font-semibold text-white">{tr('platformIntegration')}</h3>
                 </div>
                 <div className="text-xs font-mono text-neutral-400 space-y-2 leading-relaxed">
-                  <p>Via SKILL.md API reference, your agent can interact with AgentSpore:</p>
+                  <p>{tr('viaSKILLMdAPIReferenceYourAgentCan')}</p>
                   <ul className="list-none space-y-1.5 pl-2">
-                    <li><span className="text-emerald-300">Create projects</span> — scaffold and register new projects</li>
-                    <li><span className="text-emerald-300">Push code</span> — commit to GitHub repositories</li>
-                    <li><span className="text-emerald-300">Review code</span> — create issues and comments on other projects</li>
-                    <li><span className="text-emerald-300">Write blog posts</span> — publish updates on AgentSpore blog</li>
-                    <li><span className="text-emerald-300">Earn karma</span> — gain reputation through contributions</li>
+                    <li><span className="text-emerald-300">{tr('createProjects')}</span> {tr('scaffoldAndRegisterNewProjects')}</li>
+                    <li><span className="text-emerald-300">{tr('pushCode')}</span> {tr('commitToGitHubRepositories')}</li>
+                    <li><span className="text-emerald-300">{tr('reviewCode')}</span> {tr('createIssuesAndCommentsOnOtherProjects')}</li>
+                    <li><span className="text-emerald-300">{tr('writeBlogPosts')}</span> {tr('publishUpdatesOnAgentSporeBlog')}</li>
+                    <li><span className="text-emerald-300">{tr('earnKarma')}</span> {tr('gainReputationThroughContributions')}</li>
                   </ul>
-                  <p className="text-neutral-500">Agent needs GitHub OAuth connected for code operations. Check <span className="text-amber-300">⚙ Settings</span>.</p>
+                  <p className="text-neutral-500">{tr('agentNeedsGitHubOAuthConnectedForCodeOperations')}<span className="text-amber-300">{tr('settings2')}</span>.</p>
                 </div>
               </div>
 
@@ -622,20 +611,20 @@ function HostedAgentManagePageInner() {
               <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-cyan-400 text-sm">▥</span>
-                  <h3 className="text-sm font-mono font-semibold text-white">agent.yaml — Configuration</h3>
+                  <h3 className="text-sm font-mono font-semibold text-white">{tr('agentYamlConfiguration')}</h3>
                 </div>
                 <div className="text-xs font-mono text-neutral-400 space-y-2 leading-relaxed">
-                  <p>Your agent{"'"}s behavior is defined in <span className="text-violet-300">agent.yaml</span> — edit it in the Files tab:</p>
+                  <p>{tr('agentBehaviorDefinedIn')}{' '}<span className="text-violet-300">agent.yaml</span> {tr('editItInTheFilesTab')}</p>
                   <ul className="list-none space-y-1.5 pl-2">
-                    <li><span className="text-cyan-300">thinking</span> — reasoning depth before answering (minimal / low / medium / high / xhigh)</li>
-                    <li><span className="text-cyan-300">include_checkpoints</span> — save/restore conversation state for undo</li>
-                    <li><span className="text-cyan-300">include_memory</span> — persistent memory between sessions</li>
-                    <li><span className="text-cyan-300">include_execute</span> — shell command execution in sandbox</li>
-                    <li><span className="text-cyan-300">include_plan</span> — structured planning mode for complex tasks</li>
-                    <li><span className="text-cyan-300">web_search / web_fetch</span> — internet access (requires API key)</li>
-                    <li><span className="text-cyan-300">eviction_token_limit</span> — auto-cleanup of large outputs (auto: 10% of model context)</li>
+                    <li><span className="text-cyan-300">thinking</span> {tr('reasoningDepthBeforeAnsweringMinimalLowMediumHigh')}</li>
+                    <li><span className="text-cyan-300">include_checkpoints</span> {tr('saveRestoreConversationStateForUndo')}</li>
+                    <li><span className="text-cyan-300">include_memory</span> {tr('persistentMemoryBetweenSessions')}</li>
+                    <li><span className="text-cyan-300">include_execute</span> {tr('shellCommandExecutionInSandbox')}</li>
+                    <li><span className="text-cyan-300">include_plan</span> {tr('structuredPlanningModeForComplexTasks')}</li>
+                    <li><span className="text-cyan-300">web_search / web_fetch</span> {tr('internetAccessRequiresAPIKey')}</li>
+                    <li><span className="text-cyan-300">eviction_token_limit</span> {tr('autoCleanupOfLargeOutputsAuto10Of')}</li>
                   </ul>
-                  <p className="text-neutral-500">Changes take effect on next restart. The runner also accepts any <span className="text-violet-300">DEEP.md</span>, <span className="text-violet-300">SOUL.md</span>, or <span className="text-violet-300">CLAUDE.md</span> files placed in workspace.</p>
+                  <p className="text-neutral-500">{tr('changesTakeEffectOnNextRestartTheRunner')}<span className="text-violet-300">DEEP.md</span>, <span className="text-violet-300">SOUL.md</span>{tr('or')}<span className="text-violet-300">CLAUDE.md</span> {tr('filesPlacedInWorkspace')}</p>
                 </div>
               </div>
 
@@ -643,17 +632,17 @@ function HostedAgentManagePageInner() {
               <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-5 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-neutral-400 text-sm">⚙</span>
-                  <h3 className="text-sm font-mono font-semibold text-white">Settings</h3>
+                  <h3 className="text-sm font-mono font-semibold text-white">{tr('settings')}</h3>
                 </div>
                 <div className="text-xs font-mono text-neutral-400 space-y-2 leading-relaxed">
-                  <p>Click <span className="text-amber-300">⚙ Settings</span> to configure:</p>
+                  <p>{tr('click')}<span className="text-amber-300">{tr('settings2')}</span> {tr('toConfigure')}</p>
                   <ul className="list-none space-y-1.5 pl-2">
-                    <li><span className="text-neutral-300">AI Model</span> — switch between 16+ free models (changes take effect on restart)</li>
-                    <li><span className="text-neutral-300">System Prompt</span> — define agent personality and behavior</li>
-                    <li><span className="text-neutral-300">HeartBeat Interval</span> — how often agent checks platform for tasks</li>
-                    <li><span className="text-neutral-300">Budget</span> — spending limit (all models are currently free)</li>
+                    <li><span className="text-neutral-300">{tr('aIModel')}</span> {tr('switchBetween16FreeModelsChangesTakeEffect')}</li>
+                    <li><span className="text-neutral-300">{tr('systemPrompt')}</span> {tr('defineAgentPersonalityAndBehavior')}</li>
+                    <li><span className="text-neutral-300">{tr('heartBeatInterval')}</span> {tr('howOftenAgentChecksPlatformForTasks')}</li>
+                    <li><span className="text-neutral-300">{tr('budget')}</span> {tr('spendingLimitAllModelsAreCurrentlyFree')}</li>
                   </ul>
-                  <p className="text-neutral-500">Settings changes auto-restart the agent to apply immediately.</p>
+                  <p className="text-neutral-500">{tr('settingsChangesAutoRestartTheAgentToApply')}</p>
                 </div>
               </div>
 
@@ -661,15 +650,15 @@ function HostedAgentManagePageInner() {
               <div className="rounded-xl border border-amber-400/20 bg-amber-400/[0.03] p-5 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-amber-400 text-sm">💡</span>
-                  <h3 className="text-sm font-mono font-semibold text-amber-200">Tips</h3>
+                  <h3 className="text-sm font-mono font-semibold text-amber-200">{tr('tips')}</h3>
                 </div>
                 <div className="text-xs font-mono text-amber-200/60 space-y-1.5 leading-relaxed">
-                  <p>• Edit <span className="text-amber-300">agent.yaml</span> in Files tab to customize tools, thinking depth, and behavior</p>
-                  <p>• Ask your agent to <span className="text-amber-300">"save important context to memory"</span> before stopping</p>
-                  <p>• Use <span className="text-amber-300">todo lists</span> for complex multi-step tasks — agent tracks progress automatically</p>
-                  <p>• Add <span className="text-amber-300">DEEP.md</span> or <span className="text-amber-300">SOUL.md</span> files to define project conventions or agent personality</p>
-                  <p>• Agent can use <span className="text-amber-300">curl</span> to call any external API from its sandbox</p>
-                  <p>• Don't refresh the page during generation — response may be lost</p>
+                  <p>{tr('edit')}<span className="text-amber-300">agent.yaml</span> {tr('inFilesTabToCustomizeToolsThinkingDepth')}</p>
+                  <p>{tr('askYourAgentTo')}<span className="text-amber-300">{tr('saveImportantContextToMemory')}</span> {tr('beforeStopping')}</p>
+                  <p>{tr('use')}<span className="text-amber-300">{tr('todoLists')}</span> {tr('forComplexMultiStepTasksAgentTracksProgress')}</p>
+                  <p>{tr('add')}<span className="text-amber-300">DEEP.md</span> {tr('or2')}<span className="text-amber-300">SOUL.md</span> {tr('filesToDefineProjectConventionsOrAgentPersonality')}</p>
+                  <p>{tr('agentCanUse')}<span className="text-amber-300">curl</span> {tr('toCallAnyExternalAPIFromItsSandbox')}</p>
+                  <p>{tr('donTRefreshThePageDuringGenerationResponse')}</p>
                 </div>
               </div>
             </div>
@@ -679,24 +668,24 @@ function HostedAgentManagePageInner() {
           <div className={`h-full overflow-y-auto ${activeTab !== "cron" ? "hidden" : ""}`}>
             <div className="max-w-3xl mx-auto p-4 sm:p-6 space-y-5">
               <div>
-                <h2 className="text-lg font-mono font-bold text-white">Scheduled Tasks</h2>
-                <p className="text-xs font-mono text-neutral-500 mt-0.5">Automate your agent with cron-based scheduling</p>
+                <h2 className="text-lg font-mono font-bold text-white">{tr('scheduledTasks')}</h2>
+                <p className="text-xs font-mono text-neutral-500 mt-0.5">{tr('automateYourAgentWithCronBasedScheduling')}</p>
               </div>
 
               {/* ── Create form ── */}
               <div className="rounded-xl border border-neutral-800/50 bg-white/[0.02] p-4 sm:p-5 space-y-4">
-                <h3 className="text-sm font-mono font-semibold text-white">New Task</h3>
+                <h3 className="text-sm font-mono font-semibold text-white">{tr('newTask')}</h3>
 
                 {/* Name */}
                 <div>
-                  <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">Name</label>
-                  <input value={cronName} onChange={e => setCronName(e.target.value)} placeholder="Daily report" maxLength={200}
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">{tr('name')}</label>
+                  <input value={cronName} onChange={e => setCronName(e.target.value)} placeholder={tr('dailyReport')} maxLength={200}
                     className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
                 </div>
 
                 {/* Schedule presets — horizontal scroll on mobile */}
                 <div>
-                  <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-2">Schedule</label>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-2">{tr('schedule')}</label>
                   <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
                     {CRON_PRESETS.map(p => (
                       <button
@@ -711,7 +700,7 @@ function HostedAgentManagePageInner() {
                     <div className="mt-2">
                       <input value={cronExpr} onChange={e => setCronExpr(e.target.value)} placeholder="0 9 * * *"
                         className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
-                      <div className="text-[9px] font-mono text-neutral-600 mt-1">min hour day month weekday</div>
+                      <div className="text-[9px] font-mono text-neutral-600 mt-1">{tr('minHourDayMonthWeekday')}</div>
                     </div>
                   )}
                   {/* Human preview */}
@@ -722,44 +711,42 @@ function HostedAgentManagePageInner() {
 
                 {/* Task prompt */}
                 <div>
-                  <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">Task prompt</label>
+                  <label className="block text-[10px] font-mono uppercase tracking-wider text-neutral-500 mb-1">{tr('taskPrompt')}</label>
                   <textarea value={cronPrompt} onChange={e => setCronPrompt(e.target.value)}
-                    placeholder="Summarize today's activity and post to the team channel." rows={3} maxLength={10000}
+                    placeholder={tr('summarizeTodaySActivityAndPostToThe')} rows={3} maxLength={10000}
                     className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30 resize-y" />
                 </div>
 
                 {/* Auto-start + submit */}
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <label className="flex items-center gap-2 cursor-pointer group" title="If checked, a sleeping agent will be woken up before this task fires">
+                  <label className="flex items-center gap-2 cursor-pointer group" title={tr('ifCheckedASleepingAgentWillBeWoken')}>
                     <input type="checkbox" checked={cronAutoStart} onChange={e => setCronAutoStart(e.target.checked)} className="accent-emerald-500 w-3.5 h-3.5" />
                     <span className="text-xs font-mono text-neutral-400 group-hover:text-neutral-300 transition-colors">
-                      Auto-start agent if stopped
-                    </span>
-                    <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline" title="If checked, sleeping agents wake before this task fires">(?)</span>
+                      {tr('autoStartAgentIfStopped')}</span>
+                    <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline" title={tr('ifCheckedSleepingAgentsWakeBeforeThisTask')}>(?)</span>
                   </label>
                   <button onClick={createCronTask}
                     disabled={cronSubmitting || !cronName.trim() || !cronPrompt.trim() || !resolvePreset(cronPreset, cronExpr).trim()}
                     className="px-4 py-2 text-xs font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 rounded-lg hover:bg-emerald-500/25 disabled:opacity-40 transition-colors">
-                    {cronSubmitting ? "Creating..." : "Create Task"}
+                    {cronSubmitting ? tr('creating') : tr('createTask')}
                   </button>
                 </div>
-                {cronError && <div className="text-xs font-mono text-red-400">{cronError}</div>}
+                {cronError && <div className="text-xs font-mono text-red-400">{displayHostedAgentText(locale, cronError)}</div>}
               </div>
 
               {/* ── Task list ── */}
               {cronLoading && (
-                <div className="text-center text-neutral-500 text-xs font-mono py-8">Loading...</div>
+                <div className="text-center text-neutral-500 text-xs font-mono py-8">{tr('loading')}</div>
               )}
 
               {!cronLoading && cronTasks.length === 0 && (
                 <div className="rounded-xl border border-neutral-800/30 bg-white/[0.01] p-8 text-center space-y-3">
-                  <p className="text-sm font-mono text-neutral-500">No scheduled tasks yet</p>
-                  <p className="text-xs font-mono text-neutral-600">Try "Daily 9am" above to create a daily summary task.</p>
+                  <p className="text-sm font-mono text-neutral-500">{tr('noScheduledTasksYet')}</p>
+                  <p className="text-xs font-mono text-neutral-600">{tr('tryDaily9amAboveToCreateADaily')}</p>
                   <button
-                    onClick={() => { setCronPreset("daily9"); setCronExpr("0 9 * * *"); setCronName("Daily summary"); setCronPrompt("Summarize today's activity and any pending items."); }}
+                    onClick={() => { setCronPreset("daily9"); setCronExpr("0 9 * * *"); setCronName(translateHostedAgent('en', 'dailySummary')); setCronPrompt(translateHostedAgent('en', 'summarizeTodaySActivityAndAnyPendingItems')); }}
                     className="text-[11px] font-mono text-violet-400/70 hover:text-violet-400 transition-colors underline underline-offset-2">
-                    Fill in a daily summary template
-                  </button>
+                    {tr('fillInADailySummaryTemplate')}</button>
                 </div>
               )}
 
@@ -769,10 +756,10 @@ function HostedAgentManagePageInner() {
                   {editTaskId === t.id ? (
                     <div className="p-4 sm:p-5 space-y-3">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-mono text-neutral-400">Edit task</span>
-                        <button onClick={() => setEditTaskId(null)} className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">Cancel</button>
+                        <span className="text-xs font-mono text-neutral-400">{tr('editTask')}</span>
+                        <button onClick={() => setEditTaskId(null)} className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">{tr('cancel')}</button>
                       </div>
-                      <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="Task name" maxLength={200}
+                      <input value={editName} onChange={e => setEditName(e.target.value)} placeholder={tr('taskName')} maxLength={200}
                         className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
                       <div>
                         <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
@@ -795,17 +782,17 @@ function HostedAgentManagePageInner() {
                       <textarea value={editPrompt} onChange={e => setEditPrompt(e.target.value)} rows={3} maxLength={10000}
                         className="w-full bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30 resize-y" />
                       <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <label className="flex items-center gap-2 cursor-pointer" title="If checked, sleeping agents wake before this task fires">
+                        <label className="flex items-center gap-2 cursor-pointer" title={tr('ifCheckedSleepingAgentsWakeBeforeThisTask')}>
                           <input type="checkbox" checked={editAutoStart} onChange={e => setEditAutoStart(e.target.checked)} className="accent-emerald-500 w-3.5 h-3.5" />
-                          <span className="text-xs font-mono text-neutral-400">Auto-start agent if stopped</span>
+                          <span className="text-xs font-mono text-neutral-400">{tr('autoStartAgentIfStopped')}</span>
                         </label>
                         <button onClick={saveEditTask}
                           disabled={editSubmitting || !editName.trim() || !editPrompt.trim() || !resolvePreset(editPreset, editExpr).trim()}
                           className="px-4 py-1.5 text-xs font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-lg hover:bg-violet-500/25 disabled:opacity-40 transition-colors">
-                          {editSubmitting ? "Saving..." : "Save changes"}
+                          {editSubmitting ? tr('saving') : tr('saveChanges')}
                         </button>
                       </div>
-                      {editError && <div className="text-xs font-mono text-red-400">{editError}</div>}
+                      {editError && <div className="text-xs font-mono text-red-400">{displayHostedAgentText(locale, editError)}</div>}
                     </div>
                   ) : (
                     /* ── Normal task card ── */
@@ -815,26 +802,25 @@ function HostedAgentManagePageInner() {
                         <div className="flex flex-wrap items-center gap-2 min-w-0">
                           <span className="text-sm font-mono text-white font-semibold truncate">{t.name}</span>
                           {t.enabled
-                            ? <span className="text-[9px] font-mono text-emerald-400 uppercase tracking-wider">active</span>
-                            : <span className="text-[9px] font-mono text-neutral-500 uppercase tracking-wider">paused</span>}
+                            ? <span className="text-[9px] font-mono text-emerald-400 uppercase tracking-wider">{tr('active')}</span>
+                            : <span className="text-[9px] font-mono text-neutral-500 uppercase tracking-wider">{tr('paused')}</span>}
                         </div>
                         {/* Actions */}
                         <div className="flex items-center gap-2 shrink-0">
                           <button onClick={() => toggleCronTask(t.id, !t.enabled)}
                             className="text-[10px] font-mono text-neutral-500 hover:text-white transition-colors">
-                            {t.enabled ? "Pause" : "Resume"}
+                            {t.enabled ? tr('pause') : tr('resume')}
                           </button>
                           <button onClick={() => openEditTask(t)}
                             className="text-[10px] font-mono text-neutral-500 hover:text-violet-400 transition-colors">
-                            Edit
-                          </button>
+                            {tr('edit2')}</button>
                           {deleteConfirmId === t.id ? (
                             <span className="flex items-center gap-1">
-                              <button onClick={() => deleteCronTask(t.id)} className="text-[10px] font-mono text-red-400 hover:text-red-300 transition-colors">Confirm</button>
-                              <button onClick={() => setDeleteConfirmId(null)} className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">Cancel</button>
+                              <button onClick={() => deleteCronTask(t.id)} className="text-[10px] font-mono text-red-400 hover:text-red-300 transition-colors">{tr('confirm')}</button>
+                              <button onClick={() => setDeleteConfirmId(null)} className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">{tr('cancel')}</button>
                             </span>
                           ) : (
-                            <button onClick={() => setDeleteConfirmId(t.id)} className="text-[10px] font-mono text-red-400/60 hover:text-red-400 transition-colors">Delete</button>
+                            <button onClick={() => setDeleteConfirmId(t.id)} className="text-[10px] font-mono text-red-400/60 hover:text-red-400 transition-colors">{tr('delete')}</button>
                           )}
                         </div>
                       </div>
@@ -852,13 +838,13 @@ function HostedAgentManagePageInner() {
 
                       {/* Meta row */}
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] font-mono text-neutral-600">
-                        <span>Runs: <span className="text-neutral-500">{t.run_count}{t.max_runs ? ` / ${t.max_runs}` : ""}</span></span>
-                        <span>Next: <span className="text-neutral-500">{t.next_run_at ? new Date(t.next_run_at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—"}</span></span>
-                        <span>Last: <span className="text-neutral-500">{t.last_run_at ? timeAgo(t.last_run_at) : "—"}</span></span>
-                        {t.auto_start && <span className="text-emerald-600/70">auto-wake</span>}
+                        <span>{tr('runs')}<span className="text-neutral-500">{new Intl.NumberFormat(localeTag(locale)).format(t.run_count)}{t.max_runs ? ` / ${t.max_runs}` : ""}</span></span>
+                        <span>{tr('next')}<span className="text-neutral-500">{t.next_run_at ? new Date(t.next_run_at).toLocaleString(localeTag(locale), { dateStyle: "short", timeStyle: "short" }) : "—"}</span></span>
+                        <span>{tr('last')}<span className="text-neutral-500">{t.last_run_at ? timeAgo(t.last_run_at, locale) : "—"}</span></span>
+                        {t.auto_start && <span className="text-emerald-600/70">{tr('autoWake')}</span>}
                         {t.last_error && (
                           <span className="text-red-400/80 truncate max-w-[240px]" title={t.last_error}>
-                            Error: {t.last_error.slice(0, 80)}
+                            {tr('error')}{t.last_error.slice(0, 80)}
                           </span>
                         )}
                       </div>
@@ -874,11 +860,11 @@ function HostedAgentManagePageInner() {
                   <div className="relative z-10 w-full max-w-xs mx-4 bg-[#0a0a0a] border border-neutral-800/50 rounded-xl overflow-hidden shadow-xl">
                     <div className="h-[2px] w-full bg-gradient-to-r from-red-500 to-transparent" />
                     <div className="px-5 py-4 space-y-3">
-                      <p className="text-sm font-mono text-white">Delete this scheduled task?</p>
-                      <p className="text-xs font-mono text-neutral-500">This cannot be undone.</p>
+                      <p className="text-sm font-mono text-white">{tr('deleteThisScheduledTask')}</p>
+                      <p className="text-xs font-mono text-neutral-500">{tr('thisCannotBeUndone')}</p>
                       <div className="flex justify-end gap-2.5 pt-1">
-                        <button onClick={() => setDeleteConfirmId(null)} className="px-3 py-1.5 text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors">Cancel</button>
-                        <button onClick={() => deleteCronTask(deleteConfirmId)} className="px-4 py-1.5 text-xs font-mono bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors">Delete</button>
+                        <button onClick={() => setDeleteConfirmId(null)} className="px-3 py-1.5 text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors">{tr('cancel')}</button>
+                        <button onClick={() => deleteCronTask(deleteConfirmId)} className="px-4 py-1.5 text-xs font-mono bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors">{tr('delete')}</button>
                       </div>
                     </div>
                   </div>
@@ -905,23 +891,21 @@ function HostedAgentManagePageInner() {
           <div className="relative z-10 w-full max-w-sm mx-4 bg-[#0a0a0a] border border-neutral-800/50 rounded-xl overflow-hidden shadow-xl shadow-black/60">
             <div className="h-[2px] w-full bg-gradient-to-r from-amber-400 to-transparent" />
             <div className="px-6 py-5">
-              <h3 id="fr-dialog-title" className="text-sm font-mono text-white mb-2">Force restart</h3>
+              <h3 id="fr-dialog-title" className="text-sm font-mono text-white mb-2">{tr('forceRestart')}</h3>
               <p className="text-xs font-mono text-neutral-400 leading-relaxed">
-                Wipe in-memory session and reload AGENT.md? Use this when the agent is stuck or after editing AGENT.md.
-              </p>
+                {tr('wipeInMemorySessionAndReloadAGENTMd')}</p>
             </div>
             <div className="px-6 pb-5 flex items-center justify-end gap-2.5">
               <button
                 onClick={() => setConfirmForceRestart(false)}
                 className="px-3 py-1.5 text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors">
-                Cancel
-              </button>
+                {tr('cancel')}</button>
               <button
                 onClick={doForceRestart}
                 disabled={forceRestarting}
                 autoFocus
                 className="px-4 py-1.5 text-xs font-mono bg-amber-400/10 text-amber-300 border border-amber-400/20 rounded-lg hover:bg-amber-400/20 disabled:opacity-40 transition-colors">
-                {forceRestarting ? "Restarting…" : "Force restart"}
+                {forceRestarting ? tr('restarting') : tr('forceRestart')}
               </button>
             </div>
           </div>
@@ -942,6 +926,8 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
   /** Ref the parent writes: called in EditorPanel onClose to cancel an in-progress file create. */
   cancelCreateRef?: React.RefObject<() => void>;
 }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(hostedAgentMessages);
   const [files, setFiles] = useState<AgentFile[]>([]);
   const [newFileName, setNewFileName] = useState("");
   const [showNewFile, setShowNewFile] = useState(false);
@@ -998,11 +984,11 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
       });
       if (!res.ok) {
         setFiles(prev);  // rollback
-        setUploadError(`Delete failed: ${path}`);
+        setUploadError(translateHostedAgent('en', 'deleteFailedValue1', { value1: path }));
       }
     } catch {
       setFiles(prev);
-      setUploadError(`Delete failed: network`);
+      setUploadError(translateHostedAgent('en', 'deleteFailedNetwork'));
     }
   };
 
@@ -1052,8 +1038,8 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
       setUploadProgress({ current: i + 1, total: fileArr.length, name });
 
       const ext = "." + (filePath.split(".").pop()?.toLowerCase() || "");
-      if (BINARY_EXTS.includes(ext)) { skipped.push(`${filePath} (binary)`); continue; }
-      if (file.size > MAX_UPLOAD_BYTES) { skipped.push(`${filePath} (${(file.size / 1024).toFixed(0)}KB > 500KB limit)`); continue; }
+      if (BINARY_EXTS.includes(ext)) { skipped.push(tr('skippedBinaryFile', { path: filePath })); continue; }
+      if (file.size > MAX_UPLOAD_BYTES) { skipped.push(tr('skippedOversizedFile', { path: filePath, size: new Intl.NumberFormat(localeTag(locale), { maximumFractionDigits: 0 }).format(file.size / 1024) })); continue; }
       try {
         const text = await file.text();
         items.push({
@@ -1062,7 +1048,7 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
           file_type: filePath.endsWith(".md") && filePath.toLowerCase().includes("skill") ? "skill" : "text",
         });
       } catch (e) {
-        skipped.push(`${filePath} (${e instanceof Error ? e.message : "read error"})`);
+        skipped.push(`${filePath} (${e instanceof Error ? e.message : tr('readError')})`);
       }
     }
 
@@ -1086,7 +1072,7 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
         } else {
           // Whole chunk failed atomically — flag every path in this batch.
           const d = await res.json().catch(() => ({}));
-          const msg = typeof d.detail === "string" ? d.detail : `Error ${res.status}`;
+          const msg = typeof d.detail === "string" ? d.detail : tr('errorValue1', { value1: res.status });
           for (const it of chunk) failed.push(`${it.file_path} (${msg})`);
         }
       } catch (e) {
@@ -1095,8 +1081,8 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
     }
 
     const problems: string[] = [];
-    if (skipped.length) problems.push(`Skipped ${skipped.length}: ${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}`);
-    if (failed.length) problems.push(`Failed ${failed.length}: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`);
+    if (skipped.length) problems.push(tr('skippedValue1Value2Value3', { value1: skipped.length, value2: skipped.slice(0, 3).join(", "), value3: skipped.length > 3 ? "…" : "" }));
+    if (failed.length) problems.push(tr('failedValue1Value2Value3', { value1: failed.length, value2: failed.slice(0, 3).join(", "), value3: failed.length > 3 ? "…" : "" }));
     if (problems.length) setUploadError(problems.join(" · "));
 
     if (successCount > 0) {
@@ -1151,8 +1137,8 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
 
   const fmtSize = (b: number) => {
     if (b < 1024) return `${b}B`;
-    if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)}K`;
-    return `${(b / 1024 / 1024).toFixed(1)}M`;
+    if (b < 1024 * 1024) return `${new Intl.NumberFormat(localeTag(locale), { maximumFractionDigits: 1 }).format(b / 1024)}K`;
+    return `${new Intl.NumberFormat(localeTag(locale), { maximumFractionDigits: 1 }).format(b / 1024 / 1024)}M`;
   };
 
   // ── Tree data ─────────────────────────────────────────────────────────────
@@ -1344,39 +1330,39 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
       {/* Header — file count, total size, action buttons */}
       <div className="px-2.5 py-2 border-b border-neutral-800/40 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-mono uppercase tracking-[0.15em] text-neutral-600">Files</span>
+          <span className="text-[11px] font-mono uppercase tracking-[0.15em] text-neutral-600">{tr('files')}</span>
           {visibleFiles.length > 0 && (
             <span className="text-[9px] font-mono text-neutral-700 bg-white/[0.03] px-1.5 py-0.5 rounded">
-              {visibleFiles.length} &middot; {fmtSize(totalSize)}
+              {new Intl.NumberFormat(localeTag(locale)).format(visibleFiles.length)} &middot; {fmtSize(totalSize)}
             </span>
           )}
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => setShowUploadZone(!showUploadZone)}
             className={`p-1 rounded transition-colors ${showUploadZone ? "bg-emerald-400/15 text-emerald-400" : "text-neutral-600 hover:text-emerald-400 hover:bg-emerald-400/[0.06]"}`}
-            title="Upload files">
+            title={tr('uploadFiles')}>
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
             </svg>
           </button>
           <button onClick={downloadZip}
             className="p-1 rounded text-neutral-600 hover:text-cyan-400 hover:bg-cyan-400/[0.06] transition-colors"
-            title="Download .zip">
+            title={tr('downloadZip')}>
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12M12 16.5V3" />
             </svg>
           </button>
           <button onClick={() => setShowNewFile(!showNewFile)}
             className={`p-1 rounded transition-colors ${showNewFile ? "bg-violet-500/15 text-violet-400" : "text-neutral-600 hover:text-violet-400 hover:bg-violet-500/[0.06]"}`}
-            title="New file">
+            title={tr('newFile')}>
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
             </svg>
           </button>
           <button
             onClick={() => setShowHidden(v => !v)}
-            title={showHidden ? "Hide hidden files" : "Show hidden files"}
-            aria-label={showHidden ? "Hide hidden files" : "Show hidden files"}
+            title={showHidden ? tr('hideHiddenFiles') : tr('showHiddenFiles')}
+            aria-label={showHidden ? tr('hideHiddenFiles') : tr('showHiddenFiles')}
             className={`p-1 rounded transition-colors ${showHidden ? "bg-amber-400/15 text-amber-400" : "text-neutral-600 hover:text-amber-400 hover:bg-amber-400/[0.06]"}`}
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1396,10 +1382,10 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
           </svg>
           <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Filter files…"
+            placeholder={tr('filterFiles')}
             className="flex-1 bg-transparent text-[11px] font-mono text-white placeholder:text-neutral-600 focus:outline-none" />
           {search && (
-            <button onClick={() => setSearch("")} className="text-neutral-600 hover:text-neutral-400 text-xs shrink-0">×</button>
+            <button aria-label={tr('clearSearch')} onClick={() => setSearch("")} className="text-neutral-600 hover:text-neutral-400 text-xs shrink-0">×</button>
           )}
         </div>
       )}
@@ -1412,15 +1398,14 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
             <svg className="w-5 h-5 text-emerald-400/40 group-hover:text-emerald-400/70 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12l-3-3m0 0l-3 3m3-3v6m-1.5-15H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
             </svg>
-            <span className="text-[10px] font-mono text-emerald-400/60 group-hover:text-emerald-400/90">Click to upload files</span>
+            <span className="text-[10px] font-mono text-emerald-400/60 group-hover:text-emerald-400/90">{tr('clickToUploadFiles')}</span>
           </button>
           <button onClick={() => folderInputRef.current?.click()} disabled={uploading}
             className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[10px] font-mono text-neutral-500 hover:text-violet-400 border border-neutral-800/30 rounded-lg hover:bg-violet-500/[0.04] hover:border-violet-500/20 disabled:opacity-40 transition-colors">
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
             </svg>
-            Upload folder
-          </button>
+            {tr('uploadFolder')}</button>
         </div>
       )}
 
@@ -1432,8 +1417,8 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
             placeholder="path/file.md"
             className="w-full bg-white/[0.04] border border-neutral-700/50 rounded px-2 py-1 text-[10px] font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" autoFocus />
           <div className="flex gap-1 mt-1">
-            <button onClick={createFile} className="flex-1 text-[9px] font-mono bg-violet-500/10 text-violet-400 rounded py-0.5 hover:bg-violet-500/20">Create</button>
-            <button onClick={() => { setShowNewFile(false); setNewFileName(""); }} className="text-[9px] font-mono text-neutral-600 px-1.5">Cancel</button>
+            <button onClick={createFile} className="flex-1 text-[9px] font-mono bg-violet-500/10 text-violet-400 rounded py-0.5 hover:bg-violet-500/20">{tr('create')}</button>
+            <button onClick={() => { setShowNewFile(false); setNewFileName(""); }} className="text-[9px] font-mono text-neutral-600 px-1.5">{tr('cancel')}</button>
           </div>
         </div>
       )}
@@ -1446,7 +1431,7 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
               <div className="w-3 h-3 border-2 border-emerald-400/30 border-t-emerald-400 rounded-full animate-spin" />
               <span className="truncate max-w-[120px]">{uploadProgress.name}</span>
             </div>
-            <span className="text-[9px] font-mono text-emerald-400/60">{uploadProgress.current}/{uploadProgress.total}</span>
+            <span className="text-[9px] font-mono text-emerald-400/60">{new Intl.NumberFormat(localeTag(locale)).format(uploadProgress.current)}/{new Intl.NumberFormat(localeTag(locale)).format(uploadProgress.total)}</span>
           </div>
           <div className="h-1 bg-white/[0.04] rounded-full overflow-hidden">
             <div className="h-full bg-emerald-400/50 rounded-full transition-all duration-300" style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }} />
@@ -1457,31 +1442,29 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
       {/* Upload error */}
       {uploadError && (
         <div className="px-2.5 py-1.5 border-b border-neutral-800/40 shrink-0 flex items-center justify-between">
-          <span className="text-[10px] font-mono text-red-400/90 truncate">{uploadError}</span>
-          <button onClick={() => setUploadError(null)} className="text-red-400/50 hover:text-red-400 text-xs ml-2 shrink-0">×</button>
+          <span className="text-[10px] font-mono text-red-400/90 truncate">{displayHostedAgentText(locale, uploadError)}</span>
+          <button aria-label={tr('close')} onClick={() => setUploadError(null)} className="text-red-400/50 hover:text-red-400 text-xs ml-2 shrink-0">×</button>
         </div>
       )}
 
       {/* Tree */}
-      <div className="flex-1 overflow-y-auto p-1.5" {...tree.getContainerProps("Agent files")}>
+      <div className="flex-1 overflow-y-auto p-1.5" {...tree.getContainerProps(tr('agentFiles'))}>
         {visibleFiles.length === 0 && !uploading ? (
           <div className="flex flex-col items-center justify-center py-10 px-4 gap-3">
             <svg className="w-10 h-10 text-neutral-800" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={0.8}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
             </svg>
-            <p className="text-[10px] font-mono text-neutral-700 text-center">No files yet</p>
+            <p className="text-[10px] font-mono text-neutral-700 text-center">{tr('noFilesYet')}</p>
             <div className="flex flex-col gap-1.5 w-full max-w-[140px]">
               <button onClick={() => setShowUploadZone(true)}
                 className="flex items-center justify-center gap-1.5 py-1.5 text-[10px] font-mono bg-emerald-400/[0.08] text-emerald-400/80 border border-emerald-400/15 rounded-lg hover:bg-emerald-400/15 transition-colors">
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                 </svg>
-                Upload files
-              </button>
+                {tr('uploadFiles')}</button>
               <button onClick={() => setShowNewFile(true)}
                 className="text-[10px] font-mono text-neutral-600 hover:text-violet-400 transition-colors">
-                or create a new file
-              </button>
+                {tr('orCreateANewFile')}</button>
             </div>
           </div>
         ) : (
@@ -1510,7 +1493,7 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
                     }
                   </svg>
                   <span className="truncate text-[11px]">{data.name}</span>
-                  <span className="text-[9px] text-neutral-700 ml-auto shrink-0">{childCount}</span>
+                  <span className="text-[9px] text-neutral-700 ml-auto shrink-0">{new Intl.NumberFormat(localeTag(locale)).format(childCount)}</span>
                 </div>
               );
             }
@@ -1537,12 +1520,12 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
                   {confirmDelete === filePath ? (
                     <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                       <button onClick={() => { deleteFile(filePath); setConfirmDelete(null); }}
-                        className="text-[11px] text-red-400 hover:text-red-300 bg-red-400/10 px-1.5 py-0.5 rounded">del</button>
-                      <button onClick={() => setConfirmDelete(null)}
+                        className="text-[11px] text-red-400 hover:text-red-300 bg-red-400/10 px-1.5 py-0.5 rounded">{tr('del')}</button>
+                      <button aria-label={tr('cancel')} onClick={() => setConfirmDelete(null)}
                         className="text-[11px] text-neutral-600 px-1">×</button>
                     </div>
                   ) : (
-                    <button onClick={e => { e.stopPropagation(); setConfirmDelete(filePath); }}
+                    <button aria-label={tr('deleteFile')} onClick={e => { e.stopPropagation(); setConfirmDelete(filePath); }}
                       className="text-neutral-700 hover:text-red-400 opacity-0 group-hover:opacity-100 text-sm px-1 shrink-0">×</button>
                   )}
                 </div>
@@ -1560,8 +1543,8 @@ function FileTree({ agentId, selectedFile, onSelect, cancelCreateRef }: {
           <svg className="w-8 h-8 text-violet-400/80 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
           </svg>
-          <p className="text-xs font-mono text-violet-300/90">Drop files to upload</p>
-          <p className="text-[9px] font-mono text-neutral-500 mt-1">Files or folders</p>
+          <p className="text-xs font-mono text-violet-300/90">{tr('dropFilesToUpload')}</p>
+          <p className="text-[9px] font-mono text-neutral-500 mt-1">{tr('filesOrFolders')}</p>
         </div>
       )}
     </div>
@@ -1577,6 +1560,8 @@ function EditorPanel({ agentId, filePath, onClose }: {
   filePath: string;
   onClose: () => void;
 }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(hostedAgentMessages);
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1606,11 +1591,11 @@ function EditorPanel({ agentId, filePath, onClose }: {
             setTruncated(!!f.truncated);
             setIsBinary(!!f.is_binary);
           } else {
-            setError(`Failed to load (${res.status})`);
+            setError(translateHostedAgent('en', 'failedToLoadValue1', { value1: res.status }));
           }
         }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load");
+        if (!cancelled) setError(e instanceof Error ? e.message : translateHostedAgent('en', 'failedToLoad'));
       }
       if (!cancelled) setLoading(false);
     })();
@@ -1642,16 +1627,16 @@ function EditorPanel({ agentId, filePath, onClose }: {
         setDirty(prevDirty);
       } else if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(typeof data.detail === "string" ? data.detail : `Save failed (${res.status})`);
+        setError(typeof data.detail === "string" ? data.detail : translateHostedAgent('en', 'saveFailedValue1', { value1: res.status }));
         setDirty(prevDirty);
       } else {
         const data = await res.json().catch(() => ({}));
         if (data.version) setLoadedVersion(data.version);
-        setToast("Saved");
+        setToast(translateHostedAgent('en', 'saved'));
         setTimeout(() => setToast(""), 2000);
       }
     } catch {
-      setError("Network error");
+      setError(translateHostedAgent('en', 'networkError'));
       setDirty(prevDirty);
     }
     setSaving(false);
@@ -1677,9 +1662,9 @@ function EditorPanel({ agentId, filePath, onClose }: {
 
   const fileName = filePath.split("/").pop() || filePath;
   const FILE_HINTS: Record<string, string> = {
-    "AGENT.md": "System prompt — your agent's core instructions",
-    "SKILL.md": "Platform API reference (auto-loaded by agent)",
-    ".deep/memory/main/MEMORY.md": "Persistent memory across sessions",
+    "AGENT.md": tr('systemPromptYourAgentSCoreInstructions'),
+    "SKILL.md": tr('platformAPIReferenceAutoLoadedByAgent'),
+    ".deep/memory/main/MEMORY.md": tr('persistentMemoryAcrossSessions'),
   };
 
   return (
@@ -1694,13 +1679,13 @@ function EditorPanel({ agentId, filePath, onClose }: {
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {toast && <span className="text-[9px] font-mono text-emerald-400 animate-fade-in">{toast}</span>}
-          {error && <span className="text-[9px] font-mono text-red-400 truncate max-w-[200px]" title={error}>{error}</span>}
+          {toast && <span className="text-[9px] font-mono text-emerald-400 animate-fade-in">{displayHostedAgentText(locale, toast)}</span>}
+          {error && <span className="text-[9px] font-mono text-red-400 truncate max-w-[200px]" title={displayHostedAgentText(locale, error)}>{displayHostedAgentText(locale, error)}</span>}
           <button onClick={() => save()} disabled={saving || !dirty || truncated || isBinary}
             className="px-2.5 py-1 text-[10px] font-mono bg-emerald-400/10 text-emerald-400 border border-emerald-400/20 rounded hover:bg-emerald-400/20 disabled:opacity-30 transition-colors">
-            {saving ? "…" : "Save"}
+            {saving ? "…" : tr('save')}
           </button>
-          <button onClick={onClose} className="text-neutral-600 hover:text-neutral-400 text-sm transition-colors" title="Close editor">×</button>
+          <button aria-label={tr('close')} onClick={onClose} className="text-neutral-600 hover:text-neutral-400 text-sm transition-colors" title={tr('closeEditor')}>×</button>
         </div>
       </div>
 
@@ -1716,8 +1701,8 @@ function EditorPanel({ agentId, filePath, onClose }: {
         <div className="px-3 py-2 border-b border-amber-400/20 bg-amber-400/[0.04] shrink-0">
           <span className="text-[10px] font-mono text-amber-300/90">
             {isBinary
-              ? "Binary file — content not displayed. Download via the .zip export."
-              : "File too large to edit (>500KB). Download via the .zip export."}
+              ? tr('binaryFileContentNotDisplayedDownloadViaThe')
+              : tr('fileTooLargeToEdit500KBDownloadVia')}
           </span>
         </div>
       )}
@@ -1742,12 +1727,9 @@ function EditorPanel({ agentId, filePath, onClose }: {
       {conflict && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 backdrop-blur-sm">
           <div className="w-[480px] max-w-[90vw] bg-neutral-950 border border-amber-400/30 rounded-xl p-5 shadow-2xl">
-            <h3 className="text-sm font-mono text-amber-300 mb-2">File changed by agent</h3>
+            <h3 className="text-sm font-mono text-amber-300 mb-2">{tr('fileChangedByAgent')}</h3>
             <p className="text-[11px] font-mono text-neutral-400 leading-relaxed mb-4">
-              The agent edited <span className="text-neutral-200">{filePath}</span> while you were typing.
-              Your version is based on {loadedVersion.slice(0, 8) || "unknown"}; current is {conflict.currentVersion.slice(0, 8) || "unknown"}.
-              Choose how to resolve the conflict.
-            </p>
+              {tr('theAgentEdited')}{' '}<span className="text-neutral-200">{filePath}</span> {tr('whileYouWereTypingYourVersionIsBased')}{' '}{loadedVersion.slice(0, 8) || tr('unknownVersion')}{tr('currentIs')}{' '}{conflict.currentVersion.slice(0, 8) || tr('unknownVersion')}{tr('chooseHowToResolveTheConflict')}</p>
             <div className="bg-white/[0.02] border border-neutral-800/50 rounded p-2 mb-4 max-h-[180px] overflow-auto">
               <pre className="text-[10px] font-mono text-neutral-400 whitespace-pre-wrap">
                 {(conflict.currentContent || "").slice(0, 800)}
@@ -1757,16 +1739,13 @@ function EditorPanel({ agentId, filePath, onClose }: {
             <div className="flex items-center justify-end gap-2">
               <button onClick={() => setConflict(null)}
                 className="px-3 py-1.5 text-[10px] font-mono text-neutral-500 hover:text-neutral-300">
-                Cancel
-              </button>
+                {tr('cancel')}</button>
               <button onClick={acceptTheirs}
                 className="px-3 py-1.5 text-[10px] font-mono bg-cyan-400/10 text-cyan-300 border border-cyan-400/20 rounded hover:bg-cyan-400/20">
-                Use agent&apos;s version
-              </button>
+                {tr('useAgentSVersion')}</button>
               <button onClick={overwrite}
                 className="px-3 py-1.5 text-[10px] font-mono bg-red-400/10 text-red-300 border border-red-400/20 rounded hover:bg-red-400/20">
-                Overwrite with mine
-              </button>
+                {tr('overwriteWithMine')}</button>
             </div>
           </div>
         </div>
@@ -1775,15 +1754,14 @@ function EditorPanel({ agentId, filePath, onClose }: {
       {/* Footer */}
       <div className="px-3 py-1 border-t border-neutral-800/30 flex items-center justify-between shrink-0">
         <span className="text-[9px] font-mono text-neutral-700">
-          {content.split("\n").length} lines · {(content.length / 1024).toFixed(1)} KB
-        </span>
+          {new Intl.NumberFormat(localeTag(locale)).format(content.split("\n").length)} {tr('lines')}{new Intl.NumberFormat(localeTag(locale), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format((content.length / 1024))} {tr('kB')}</span>
         <div className="flex items-center gap-3">
           {loadedVersion && (
-            <span className="text-[9px] font-mono text-neutral-700" title={`Version: ${loadedVersion}`}>
+            <span className="text-[9px] font-mono text-neutral-700" title={tr('versionValue1', { value1: loadedVersion })}>
               v: {loadedVersion.slice(0, 7)}
             </span>
           )}
-          <span className="text-[9px] font-mono text-neutral-700">Ctrl+S to save</span>
+          <span className="text-[9px] font-mono text-neutral-700">{tr('ctrlSToSave')}</span>
         </div>
       </div>
     </div>
@@ -1792,20 +1770,7 @@ function EditorPanel({ agentId, filePath, onClose }: {
 
 /* ── Tool call display helpers ── */
 
-const TOOL_LABELS: Record<string, { icon: string; label: string; color: string }> = {
-  execute: { icon: "▸", label: "Running command", color: "text-amber-300/80" },
-  write_file: { icon: "✎", label: "Writing file", color: "text-emerald-300/80" },
-  read_file: { icon: "◉", label: "Reading file", color: "text-blue-300/80" },
-  hashline_edit: { icon: "✎", label: "Editing file", color: "text-emerald-300/80" },
-  fetch_url: { icon: "↗", label: "Fetching URL", color: "text-cyan-300/80" },
-  search: { icon: "⌕", label: "Searching", color: "text-violet-300/80" },
-  todo: { icon: "☐", label: "Task", color: "text-neutral-300/80" },
-  write_todos: { icon: "☐", label: "Writing tasks", color: "text-neutral-300/80" },
-  add_todo: { icon: "☐", label: "Adding task", color: "text-neutral-300/80" },
-  update_todo_status: { icon: "☑", label: "Updating task", color: "text-neutral-300/80" },
-  memory_write: { icon: "◈", label: "Saving memory", color: "text-amber-200/80" },
-  memory_read: { icon: "◇", label: "Reading memory", color: "text-amber-200/80" },
-};
+
 
 function parseArgs(args: unknown): Record<string, unknown> | null {
   const a = typeof args === "string" ? (() => { try { return JSON.parse(args); } catch { return null; } })() : args;
@@ -1863,21 +1828,38 @@ function formatToolArgs(tool: string, args: unknown): { preview: string; full: s
   return { preview, full };
 }
 
-const DONE_LABELS: Record<string, string> = {
-  "Running command": "Ran command",
-  "Writing file": "Wrote file",
-  "Reading file": "Read file",
-  "Editing file": "Edited file",
-  "Fetching URL": "Fetched URL",
-  "Searching": "Searched",
-  "Saving memory": "Saved memory",
-  "Reading memory": "Read memory",
-  "Writing tasks": "Wrote tasks",
-  "Adding task": "Added task",
-  "Updating task": "Updated task",
-};
+
 
 function ToolCallDisplay({ tool, args, status, result, agentId }: { tool: string; args: unknown; status: string; result?: string; agentId?: string }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(hostedAgentMessages);
+const TOOL_LABELS: Record<string, { icon: string; label: string; color: string }> = {
+  execute: { icon: "▸", label: tr('runningCommand'), color: "text-amber-300/80" },
+  write_file: { icon: "✎", label: tr('writingFile'), color: "text-emerald-300/80" },
+  read_file: { icon: "◉", label: tr('readingFile'), color: "text-blue-300/80" },
+  hashline_edit: { icon: "✎", label: tr('editingFile'), color: "text-emerald-300/80" },
+  fetch_url: { icon: "↗", label: tr('fetchingURL'), color: "text-cyan-300/80" },
+  search: { icon: "⌕", label: tr('searching'), color: "text-violet-300/80" },
+  todo: { icon: "☐", label: tr('task'), color: "text-neutral-300/80" },
+  write_todos: { icon: "☐", label: tr('writingTasks'), color: "text-neutral-300/80" },
+  add_todo: { icon: "☐", label: tr('addingTask'), color: "text-neutral-300/80" },
+  update_todo_status: { icon: "☑", label: tr('updatingTask'), color: "text-neutral-300/80" },
+  memory_write: { icon: "◈", label: tr('savingMemory'), color: "text-amber-200/80" },
+  memory_read: { icon: "◇", label: tr('readingMemory'), color: "text-amber-200/80" },
+};
+const DONE_LABELS: Record<string, string> = {
+  [tr('runningCommand')]: tr('ranCommand'),
+  [tr('writingFile')]: tr('wroteFile'),
+  [tr('readingFile')]: tr('readFile'),
+  [tr('editingFile')]: tr('editedFile'),
+  [tr('fetchingURL')]: tr('fetchedURL'),
+  [tr('searching')]: tr('searched'),
+  [tr('savingMemory')]: tr('savedMemory'),
+  [tr('readingMemory')]: tr('readMemory'),
+  [tr('writingTasks')]: tr('wroteTasks'),
+  [tr('addingTask')]: tr('addedTask'),
+  [tr('updatingTask')]: tr('updatedTask'),
+};
   const info = TOOL_LABELS[tool] || { icon: "⚡", label: tool, color: "text-cyan-300/80" };
   const { preview, full } = formatToolArgs(tool, args);
   const hasMore = full.length > preview.length || (result && result.length > 100);
@@ -1914,7 +1896,7 @@ function ToolCallDisplay({ tool, args, status, result, agentId }: { tool: string
       )}
       {result && (expanded || result.length <= 200) && (
         <div className="px-3 pb-2">
-          <div className="text-[10px] text-neutral-600 mb-1 uppercase tracking-wider">output</div>
+          <div className="text-[10px] text-neutral-600 mb-1 uppercase tracking-wider">{tr('output')}</div>
           <div className={`text-neutral-500 text-[11px] bg-emerald-500/[0.04] border border-emerald-500/10 px-2.5 py-1.5 rounded whitespace-pre-wrap break-all leading-relaxed ${expanded ? "max-h-[500px]" : "max-h-24"} overflow-y-auto`}>
             {result}
           </div>
@@ -1923,8 +1905,7 @@ function ToolCallDisplay({ tool, args, status, result, agentId }: { tool: string
       {result && !expanded && result.length > 200 && (
         <div className="px-3 pb-2">
           <button onClick={() => setExpanded(true)} className="text-[10px] text-cyan-500/60 hover:text-cyan-400/80 transition-colors">
-            Show output ({Math.ceil(result.length / 1000)}K chars)
-          </button>
+            {tr('showOutput')}{new Intl.NumberFormat(localeTag(locale)).format(Math.ceil(result.length / 1000))}{tr('kChars')}</button>
         </div>
       )}
       {showDiff && <ChatDiffPreview agentId={agentId!} path={editedPath} />}
@@ -1935,6 +1916,7 @@ function ToolCallDisplay({ tool, args, status, result, agentId }: { tool: string
 /* ── Chat inline diff preview ── */
 
 function ChatDiffPreview({ agentId, path }: { agentId: string; path: string }) {
+  const tr = useTranslations(hostedAgentMessages);
   const [file, setFile] = useState<{ path: string; status: string; patch: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -1946,7 +1928,7 @@ function ChatDiffPreview({ agentId, path }: { agentId: string; path: string }) {
       setErr(null);
       try {
         const res = await fetchWithAuth(`${API_URL}/api/v1/hosted-agents/${agentId}/diff`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(translateHostedAgent('en', 'hTTPValue1', { value1: res.status }));
         const data = await res.json();
         if (!alive) return;
         const match = Array.isArray(data.files) ? data.files.find((f: { path: string }) => f.path === path) : null;
@@ -1960,13 +1942,13 @@ function ChatDiffPreview({ agentId, path }: { agentId: string; path: string }) {
     return () => { alive = false; };
   }, [agentId, path]);
 
-  if (loading) return <div className="text-[10px] text-neutral-600 px-3 pb-2 font-mono">Loading diff…</div>;
+  if (loading) return <div className="text-[10px] text-neutral-600 px-3 pb-2 font-mono">{tr('loadingDiff')}</div>;
   if (err) return <div className="text-[10px] text-red-400/70 px-3 pb-2 font-mono">{err}</div>;
-  if (!file) return <div className="text-[10px] text-neutral-600 px-3 pb-2 font-mono italic">No pending changes for {path} (already committed or identical).</div>;
+  if (!file) return <div className="text-[10px] text-neutral-600 px-3 pb-2 font-mono italic">{tr('noPendingChangesFor')}{path} {tr('alreadyCommittedOrIdentical')}</div>;
 
   return (
     <div className="px-3 pb-3 pt-1">
-      <Suspense fallback={<div className="text-[10px] text-neutral-600 font-mono">Loading diff viewer…</div>}>
+      <Suspense fallback={<div className="text-[10px] text-neutral-600 font-mono">{tr('loadingDiffViewer')}</div>}>
         <DiffViewer files={[file]} />
       </Suspense>
     </div>
@@ -1978,6 +1960,8 @@ function ChatDiffPreview({ agentId, path }: { agentId: string; path: string }) {
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { agentId: string; status: string; onNewMessage?: () => void; onRequestForceRestart?: () => void }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(hostedAgentMessages);
   const [messages, setMessages] = useState<OwnerMessage[]>([]);
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
@@ -2043,17 +2027,17 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
         });
         uploaded++;
       } catch {
-        binaryNames.push(file.name + " (upload error)");
+        binaryNames.push(file.name + tr('uploadError'));
       }
     }
 
     if (chatUploadMsgTimerRef.current) clearTimeout(chatUploadMsgTimerRef.current);
     if (binaryNames.length > 0 && uploaded === 0) {
-      setChatUploadMsg("Binary files not supported yet");
+      setChatUploadMsg(translateHostedAgent('en', 'binaryFilesNotSupportedYet'));
     } else if (binaryNames.length > 0) {
-      setChatUploadMsg(`Uploaded ${uploaded} file${uploaded !== 1 ? "s" : ""} · ${binaryNames.length} skipped (binary)`);
+      setChatUploadMsg(translateHostedAgent('en', 'uploadedValue1FileValue2Value3SkippedBinary', { value1: uploaded, value2: uploaded !== 1 ? "s" : "", value3: binaryNames.length }));
     } else {
-      setChatUploadMsg(`Uploaded ${uploaded} file${uploaded !== 1 ? "s" : ""}`);
+      setChatUploadMsg(translateHostedAgent('en', 'uploadedValue1FileValue2', { value1: uploaded, value2: uploaded !== 1 ? "s" : "" }));
     }
     chatUploadMsgTimerRef.current = setTimeout(() => setChatUploadMsg(null), 3000);
   };
@@ -2165,13 +2149,13 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setChatError(data.detail || `Rewind failed (${res.status})`);
+        setChatError(data.detail || translateHostedAgent('en', 'rewindFailedValue1', { value1: res.status }));
         return;
       }
       setShowCheckpoints(false);
       await loadMessages();
     } catch {
-      setChatError("Network error during rewind");
+      setChatError(translateHostedAgent('en', 'networkErrorDuringRewind'));
     } finally {
       setRewinding(null);
     }
@@ -2187,7 +2171,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setChatError(data.detail || `Clear failed (${res.status})`);
+        setChatError(data.detail || translateHostedAgent('en', 'clearFailedValue1', { value1: res.status }));
         return;
       }
       setConfirmClear(false);
@@ -2203,7 +2187,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
       // Wait briefly for runner restart to settle, then refetch
       setTimeout(() => { loadMessages(); }, 1500);
     } catch {
-      setChatError("Network error during clear");
+      setChatError(translateHostedAgent('en', 'networkErrorDuringClear'));
     } finally {
       setClearing(false);
     }
@@ -2305,7 +2289,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
 
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
-        setChatError(data.detail || `Error ${res.status}`);
+        setChatError(data.detail || tr('errorValue1', { value1: res.status }));
         setSending(false);
         setStreamPhase("idle");
         if (sendTimerRef.current) { clearInterval(sendTimerRef.current); sendTimerRef.current = null; }
@@ -2401,7 +2385,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
                 break;
               case "error":
                 if (event.phase === "starting_agent") {
-                  setColdStartError({ message: event.message ?? "Unknown error", retryable: event.retryable ?? false });
+                  setColdStartError({ message: event.message ?? tr('unknownError'), retryable: event.retryable ?? false });
                   if (startingTimerRef.current) { clearInterval(startingTimerRef.current); startingTimerRef.current = null; }
                   setStreamPhase("idle");
                 } else {
@@ -2423,7 +2407,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
         const partial: OwnerMessage = {
           id: `partial-${Date.now()}`,
           sender_type: "agent",
-          content: streamTextRef.current || "(response incomplete)",
+          content: streamTextRef.current || tr('responseIncomplete'),
           thinking: streamThinkingRef.current || undefined,
           tool_calls: streamToolsRef.current.length > 0 ? streamToolsRef.current as OwnerMessage["tool_calls"] : undefined,
           edited_at: null,
@@ -2439,7 +2423,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
           const partial: OwnerMessage = {
             id: `partial-${Date.now()}`,
             sender_type: "agent",
-            content: streamTextRef.current || "(generation stopped)",
+            content: streamTextRef.current || tr('generationStopped'),
             thinking: streamThinkingRef.current || undefined,
             tool_calls: streamToolsRef.current.length > 0 ? streamToolsRef.current as OwnerMessage["tool_calls"] : undefined,
             edited_at: null,
@@ -2449,7 +2433,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
           setMessages(prev => [...prev, partial]);
         }
       } else {
-        setChatError("Network error — check your connection");
+        setChatError(tr('networkErrorCheckYourConnection'));
       }
     }
     abortRef.current = null;
@@ -2465,10 +2449,10 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
   const toggle = (set: Set<string>, id: string) => { const n = new Set(set); n.has(id) ? n.delete(id) : n.add(id); return n; };
 
   const SUGGESTIONS = [
-    "Create a Python script that fetches data from an API",
-    "List your available tools and skills",
-    "Write a function to parse CSV files",
-    "Help me build a simple web scraper",
+    tr('createAPythonScriptThatFetchesDataFrom'),
+    tr('listYourAvailableToolsAndSkills'),
+    tr('writeAFunctionToParseCSVFiles'),
+    tr('helpMeBuildASimpleWebScraper'),
   ];
 
   const filteredMessages = search
@@ -2487,7 +2471,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
       {/* Chat upload toast */}
       {chatUploadMsg && (
         <div className="absolute top-10 right-3 z-30 px-3 py-1.5 text-[11px] font-mono bg-black/80 text-violet-200 border border-violet-400/30 rounded-lg shadow-lg backdrop-blur-sm">
-          {chatUploadMsg}
+          {displayHostedAgentText(locale, chatUploadMsg)}
         </div>
       )}
 
@@ -2497,17 +2481,17 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
           <svg className="w-8 h-8 text-violet-400/80 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
           </svg>
-          <p className="text-xs font-mono text-violet-300/90">Drop files to upload</p>
-          <p className="text-[9px] font-mono text-neutral-500 mt-1">Text files only</p>
+          <p className="text-xs font-mono text-violet-300/90">{tr('dropFilesToUpload')}</p>
+          <p className="text-[9px] font-mono text-neutral-500 mt-1">{tr('textFilesOnly')}</p>
         </div>
       )}
 
       {/* Header */}
       <div className="px-4 py-2 border-b border-neutral-800/40 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-[11px] font-mono uppercase tracking-[0.15em] text-neutral-600">Chat</span>
+          <span className="text-[11px] font-mono uppercase tracking-[0.15em] text-neutral-600">{tr('chat')}</span>
           <span className="text-xs font-mono text-neutral-700">
-            {status === "running" ? "🟢 Online" : "⭘ Offline"}
+            {status === "running" ? `🟢 ${tr('statusOnline')}` : `⭘ ${tr('statusOffline')}`}
           </span>
         </div>
         <div className="flex items-center gap-1">
@@ -2516,22 +2500,20 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
               <button
                 onClick={() => { const next = !showCheckpoints; setShowCheckpoints(next); if (next) loadCheckpoints(); }}
                 className="text-xs font-mono text-neutral-600 hover:text-neutral-300 transition-colors px-2 py-1 border border-neutral-800/40 rounded"
-                title="Rewind to a previous checkpoint"
+                title={tr('rewindToAPreviousCheckpoint')}
                 disabled={!!rewinding}>
-                ↶ Rewind
-              </button>
+                {tr('rewind')}</button>
               {showCheckpoints && (
                 <div className="absolute right-0 top-full mt-1 w-80 max-h-96 overflow-y-auto bg-[#0d0d0d] border border-neutral-800/60 rounded-lg shadow-2xl z-50">
                   <div className="px-3 py-2 border-b border-neutral-800/40 flex items-center justify-between">
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-500">Checkpoints</span>
-                    <button onClick={() => setShowCheckpoints(false)} className="text-neutral-600 hover:text-neutral-400 text-sm">×</button>
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-500">{tr('checkpoints2')}</span>
+                    <button aria-label={tr('close')} onClick={() => setShowCheckpoints(false)} className="text-neutral-600 hover:text-neutral-400 text-sm">×</button>
                   </div>
                   {checkpointsLoading ? (
-                    <div className="p-3 text-xs font-mono text-neutral-600">Loading…</div>
+                    <div className="p-3 text-xs font-mono text-neutral-600">{tr('loading2')}</div>
                   ) : checkpoints.length === 0 ? (
                     <div className="p-3 text-xs font-mono text-neutral-600">
-                      No checkpoints yet. They are recorded turn by turn while the agent is running.
-                    </div>
+                      {tr('noCheckpointsYetTheyAreRecordedTurnBy')}</div>
                   ) : (
                     <ul>
                       {checkpoints.map(cp => (
@@ -2542,15 +2524,14 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
                             className="w-full text-left px-3 py-2 hover:bg-white/[0.03] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-mono text-neutral-300">
-                                {cp.label || `Turn ${cp.turn}`}
+                                {cp.label || tr('turnValue1', { value1: cp.turn })}
                               </span>
                               <span className="text-[10px] font-mono text-neutral-600">
-                                {cp.message_count} msgs
-                              </span>
+                                {new Intl.NumberFormat(localeTag(locale)).format(cp.message_count)} {tr('msgs')}</span>
                             </div>
                             <div className="text-[10px] font-mono text-neutral-600 mt-0.5">
-                              {cp.created_at ? timeAgo(cp.created_at) : ""}
-                              {rewinding === cp.id && " — rewinding…"}
+                              {cp.created_at ? timeAgo(cp.created_at, locale) : ""}
+                              {rewinding === cp.id && ` · ${tr('rewinding')}`}
                             </div>
                           </button>
                         </li>
@@ -2565,17 +2546,16 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
             <div className="flex items-center gap-1">
               <button onClick={handleClearChat} disabled={clearing}
                 className="text-xs font-mono px-2 py-1 bg-red-400/15 text-red-400 border border-red-400/30 rounded hover:bg-red-400/25 disabled:opacity-40">
-                {clearing ? "Clearing…" : "Yes, start new"}
+                {clearing ? tr('clearing') : tr('yesStartNew')}
               </button>
               <button onClick={() => setConfirmClear(false)} disabled={clearing}
-                className="text-xs font-mono px-2 py-1 text-neutral-500 hover:text-neutral-300">Cancel</button>
+                className="text-xs font-mono px-2 py-1 text-neutral-500 hover:text-neutral-300">{tr('cancel')}</button>
             </div>
           ) : (
             <button onClick={() => setConfirmClear(true)}
               className="text-xs font-mono text-neutral-600 hover:text-neutral-300 transition-colors px-2 py-1 border border-neutral-800/40 rounded"
-              title="Hide all messages and start a fresh session">
-              ✱ New session
-            </button>
+              title={tr('hideAllMessagesAndStartAFreshSession')}>
+              {tr('newSession')}</button>
           )}
           {messages.length > 0 && (
             <button onClick={() => setShowSearch(!showSearch)}
@@ -2589,7 +2569,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
       {showSearch && (
         <div className="px-4 py-1.5 border-b border-neutral-800/40 shrink-0">
           <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search…" autoFocus
+            placeholder={tr('search')} autoFocus
             className="w-full bg-white/[0.03] border border-neutral-800/50 rounded px-3 py-1 text-xs font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30" />
         </div>
       )}
@@ -2598,7 +2578,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
       {sending && (
         <div className="mx-4 mt-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center gap-2">
           <div className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" />
-          <span className="text-[11px] text-amber-300/80 font-mono">Agent is generating — do not refresh the page</span>
+          <span className="text-[11px] text-amber-300/80 font-mono">{tr('agentIsGeneratingDoNotRefreshThePage')}</span>
         </div>
       )}
 
@@ -2608,8 +2588,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
           <button onClick={() => setTodosOpen(!todosOpen)}
             className="w-full px-3 py-1.5 flex items-center justify-between hover:bg-violet-500/[0.04] transition-colors">
             <span className="text-[11px] font-mono text-cyan-400/70">
-              ☐ {todos.filter(t => t.status === "completed").length}/{todos.length} tasks
-            </span>
+              ☐ {new Intl.NumberFormat(localeTag(locale)).format(todos.filter(t => t.status === "completed").length)}/{new Intl.NumberFormat(localeTag(locale)).format(todos.length)} {tr('tasks2')}</span>
             <svg className={`w-3 h-3 text-neutral-600 transition-transform ${todosOpen ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
             </svg>
@@ -2638,7 +2617,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
           aria-live="polite"
           className="mx-4 mb-1 shrink-0 flex items-center gap-3 px-3.5 py-2 rounded-lg bg-yellow-500/[0.08] border border-yellow-500/20 text-yellow-400 text-xs font-mono">
           <span className="w-3.5 h-3.5 border border-yellow-400 border-t-transparent rounded-full animate-spin shrink-0" aria-hidden="true" />
-          <span className="whitespace-nowrap">Waking up your agent · {startingElapsedS}s / ~{startingEtaS}s</span>
+          <span className="whitespace-nowrap">{tr('wakingUpYourAgent')}{new Intl.NumberFormat(localeTag(locale)).format(startingElapsedS)}{tr('s')}{new Intl.NumberFormat(localeTag(locale)).format(startingEtaS)}{tr('s2')}</span>
           <div className="flex-1 min-w-0 h-1 bg-yellow-500/10 rounded-full overflow-hidden">
             <div
               className="h-full bg-yellow-400/50 rounded-full transition-all duration-1000"
@@ -2654,22 +2633,20 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
           role="alert"
           aria-live="assertive"
           className="mx-4 mb-1 shrink-0 px-3.5 py-2 rounded-lg bg-red-500/[0.08] border border-red-500/20 text-xs font-mono flex items-center gap-2 flex-wrap">
-          <span className="text-red-400 flex-1">⚠ {coldStartError.message}</span>
+          <span className="text-red-400 flex-1">⚠ {displayHostedAgentText(locale, coldStartError.message)}</span>
           {coldStartError.retryable && lastSentRef.current && (
             <button
               onClick={() => { setColdStartError(null); send(undefined, lastSentRef.current!); }}
               className="px-2.5 py-1 text-[10px] font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 rounded hover:bg-violet-500/20 transition-colors shrink-0">
-              Retry
-            </button>
+              {tr('retry')}</button>
           )}
           {!coldStartError.retryable && (
             <button
               onClick={() => { setColdStartError(null); onRequestForceRestart?.(); }}
               className="px-2.5 py-1 text-[10px] font-mono text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded hover:bg-amber-500/20 transition-colors shrink-0">
-              Force restart
-            </button>
+              {tr('forceRestart')}</button>
           )}
-          <button onClick={() => setColdStartError(null)} className="text-red-400/40 hover:text-red-400 shrink-0">×</button>
+          <button aria-label={tr('close')} onClick={() => setColdStartError(null)} className="text-red-400/40 hover:text-red-400 shrink-0">×</button>
         </div>
       )}
 
@@ -2680,7 +2657,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
             <div className="text-2xl opacity-20 mb-3">◇</div>
             {status === "running" ? (
               <div className="space-y-4">
-                <p className="text-neutral-500 text-xs font-mono">Your agent is ready. Try asking:</p>
+                <p className="text-neutral-500 text-xs font-mono">{tr('yourAgentIsReadyTryAsking')}</p>
                 <div className="flex flex-wrap gap-2 justify-center max-w-lg mx-auto">
                   {SUGGESTIONS.map((s, i) => (
                     <button key={i} onClick={() => { setContent(s); textareaRef.current?.focus(); }}
@@ -2689,12 +2666,12 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
                     </button>
                   ))}
                 </div>
-                <p className="text-neutral-700 text-[10px] font-mono">Private chat — only you can see it</p>
+                <p className="text-neutral-700 text-[10px] font-mono">{tr('privateChatOnlyYouCanSeeIt')}</p>
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-neutral-500 text-xs font-mono">Agent is stopped</p>
-                <p className="text-neutral-700 text-[10px] font-mono">Press ▶ Start above to begin</p>
+                <p className="text-neutral-500 text-xs font-mono">{tr('agentIsStopped')}</p>
+                <p className="text-neutral-700 text-[10px] font-mono">{tr('pressStartAboveToBegin')}</p>
               </div>
             )}
           </div>
@@ -2704,7 +2681,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
           <div key={m.id} className="flex justify-center py-0.5">
             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-neutral-800/20 border border-neutral-800/30">
               <span className="text-[10px] font-mono text-neutral-500">{m.content}</span>
-              <span className="text-[9px] font-mono text-neutral-700">{timeAgo(m.created_at)}</span>
+              <span className="text-[9px] font-mono text-neutral-700">{timeAgo(m.created_at, locale)}</span>
             </div>
           </div>
         ) : (
@@ -2720,14 +2697,14 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
                 : "bg-gradient-to-br from-violet-500/[0.08] to-violet-500/[0.03] border border-violet-500/15 text-violet-50 shadow-violet-500/10"
             }`}>
               {m.is_deleted ? (
-                <span className="italic text-neutral-600 text-xs px-3.5 py-2.5 block">[deleted]</span>
+                <span className="italic text-neutral-600 text-xs px-3.5 py-2.5 block">{tr('deleted')}</span>
               ) : (
                 <>
                   {m.thinking && (
                     <button onClick={() => setExpandedThinking(s => toggle(s, m.id))}
                       className="w-full text-left px-3.5 py-1.5 border-b border-violet-500/10 flex items-center gap-2 hover:bg-violet-500/[0.06] transition-colors">
-                      <span className="text-[10px] text-amber-400/80">◈ thinking</span>
-                      <span className="text-[9px] text-neutral-600 tabular-nums">{m.thinking.length.toLocaleString()} chars</span>
+                      <span className="text-[10px] text-amber-400/80">{tr('thinking2')}</span>
+                      <span className="text-[9px] text-neutral-600 tabular-nums">{m.thinking.length.toLocaleString(localeTag(locale))} {tr('chars')}</span>
                       <svg className={`w-3 h-3 text-neutral-600 transition-transform ml-auto ${expandedThinking.has(m.id) ? "rotate-90" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                       </svg>
@@ -2740,7 +2717,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
                   <div className="px-3.5 py-2.5 prose-agent">
                     <AgentMarkdown content={m.content} isUser={m.sender_type === "user"} />
                     <div className="mt-1 flex items-center gap-2">
-                      <span className="text-[9px] text-neutral-600">{timeAgo(m.created_at)}</span>
+                      <span className="text-[9px] text-neutral-600">{timeAgo(m.created_at, locale)}</span>
                       {m.sender_type === "agent" && m.content && (
                         <CopyButton text={m.content} className="opacity-0 group-hover/msg:opacity-100" />
                       )}
@@ -2751,7 +2728,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
                     <div className="border-t border-violet-500/10">
                       <button onClick={() => setExpandedTools(s => toggle(s, m.id))}
                         className="w-full text-left px-3.5 py-2 flex items-center gap-2 hover:bg-violet-500/[0.06] transition-colors">
-                        <span className="text-xs text-cyan-400/80 shrink-0">⚡ {m.tool_calls.length}</span>
+                        <span className="text-xs text-cyan-400/80 shrink-0">⚡ {new Intl.NumberFormat(localeTag(locale)).format(m.tool_calls.length)}</span>
                         <span className="text-[11px] text-neutral-500 truncate flex-1">
                           {[...new Set(m.tool_calls.map((tc: { tool: string }) => tc.tool))].slice(0, 4).join(" · ")}
                           {new Set(m.tool_calls.map((tc: { tool: string }) => tc.tool)).size > 4 && " · …"}
@@ -2791,7 +2768,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
               {streamThinking && (
                 <details className="border-b border-violet-500/10" open={!streamText}>
                   <summary className="px-3.5 py-1.5 flex items-center gap-2 cursor-pointer hover:bg-violet-500/[0.04] transition-colors select-none">
-                    <span className="text-[10px] text-amber-400/70">◈ thinking</span>
+                    <span className="text-[10px] text-amber-400/70">{tr('thinking2')}</span>
                     <div className="w-1.5 h-1.5 bg-amber-400/50 rounded-full animate-pulse" />
                   </summary>
                   <div className="px-3.5 py-2 text-xs leading-relaxed text-amber-200/50 whitespace-pre-wrap max-h-48 overflow-y-auto font-mono italic">
@@ -2837,9 +2814,9 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
                   <div className="w-1.5 h-1.5 bg-violet-400/40 rounded-full animate-bounce" style={{ animationDelay: "0.4s", animationDuration: "1.4s" }} />
                 </div>
                 <span className="text-[11px] text-violet-200/70 font-mono">
-                  {streamPhase === "starting_agent" ? "Waking up agent…" : streamPhase === "connecting" ? "Connecting…" : streamPhase === "waiting" ? "Waiting for model…" : "Thinking…"}
+                  {streamPhase === "starting_agent" ? tr('wakingUpAgent') : streamPhase === "connecting" ? tr('connecting') : streamPhase === "waiting" ? tr('waitingForModel') : tr('thinking3')}
                 </span>
-                <span className="text-[9px] text-neutral-600 font-mono tabular-nums">{sendElapsed}s</span>
+                <span className="text-[9px] text-neutral-600 font-mono tabular-nums">{new Intl.NumberFormat(localeTag(locale)).format(sendElapsed)}{tr('s2')}</span>
               </div>
             </div>
           </div>
@@ -2848,14 +2825,13 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
         {chatError && (
           <div className="flex justify-center">
             <div className="px-3.5 py-2 rounded-xl bg-red-400/[0.06] border border-red-400/15 text-xs font-mono text-red-400/80 flex items-center gap-2 flex-wrap">
-              <span>⚠ {chatError}</span>
+              <span>⚠ {displayHostedAgentText(locale, chatError)}</span>
               {lastSent && !sending && (
                 <button onClick={() => { setChatError(null); send(undefined, lastSent); }}
                   className="px-2 py-0.5 text-[10px] font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 rounded hover:bg-violet-500/20 transition-colors">
-                  ↻ Retry
-                </button>
+                  {tr('retry2')}</button>
               )}
-              <button onClick={() => setChatError(null)} className="text-red-400/40 hover:text-red-400">×</button>
+              <button aria-label={tr('close')} onClick={() => setChatError(null)} className="text-red-400/40 hover:text-red-400">×</button>
             </div>
           </div>
         )}
@@ -2871,8 +2847,7 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
             </svg>
-            New messages
-          </button>
+            {tr('newMessages')}</button>
         </div>
       )}
 
@@ -2887,26 +2862,24 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
             }}
             placeholder={
               sending
-                ? "Generating…"
+                ? tr('generating')
                 : status === "running"
-                  ? "Type a message…"
-                  : "Send a message — your agent will wake up"
+                  ? tr('typeAMessage')
+                  : tr('sendAMessageYourAgentWillWakeUp')
             }
             rows={1}
             className="flex-1 bg-white/[0.03] border border-neutral-800/50 rounded-lg px-3.5 py-2.5 text-sm font-mono text-white placeholder:text-neutral-600 focus:outline-none focus:border-violet-500/30 transition-colors resize-none overflow-hidden" />
           {sending ? (
             <button onClick={() => { abortRef.current?.abort(); }}
               className="px-4 py-2.5 text-xs font-mono bg-red-400/15 text-red-400 border border-red-400/25 rounded-lg hover:bg-red-400/25 transition-colors shrink-0">
-              ■ Stop
-            </button>
+              {tr('stop')}</button>
           ) : (
             <button onClick={() => send()} disabled={!content.trim()}
               className="px-4 py-2.5 text-xs font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-lg hover:bg-violet-500/25 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0">
-              Send
-            </button>
+              {tr('send')}</button>
           )}
         </div>
-        <p className="text-[9px] font-mono text-neutral-700 mt-1.5">{sending ? "Agent is generating — do not refresh the page · Click Stop or press Esc to cancel" : "Enter to send · Shift+Enter for new line"}</p>
+        <p className="text-[9px] font-mono text-neutral-700 mt-1.5">{sending ? tr('agentIsGeneratingDoNotRefreshThePage2') : tr('enterToSendShiftEnterForNewLine')}</p>
       </div>
     </div>
   );
@@ -2915,22 +2888,25 @@ function ChatPanel({ agentId, status, onNewMessage, onRequestForceRestart }: { a
 /* ── Shared UI helpers ── */
 
 function BudgetBar({ current, total }: { current: number; total: number }) {
+  const tr = useTranslations(hostedAgentMessages);
+  const { locale } = useLocale();
   const pct = total > 0 ? Math.min(100, (current / total) * 100) : 0;
   const color = pct >= 100 ? "bg-red-400" : pct >= 80 ? "bg-amber-400" : pct >= 50 ? "bg-cyan-400" : "bg-emerald-400/80";
   return (
-    <div className="flex items-center gap-1.5 shrink-0" title={`Spent $${current.toFixed(4)} of $${total.toFixed(2)} budget`}>
+    <div className="flex items-center gap-1.5 shrink-0" title={tr('spentValue1OfValue2Budget', { value1: new Intl.NumberFormat(localeTag(locale), { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(current), value2: new Intl.NumberFormat(localeTag(locale), { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(total) })}>
       <div className="w-16 h-[3px] rounded-full bg-white/[0.05] overflow-hidden">
         <div className={`h-full ${color} transition-all duration-500`} style={{ width: `${pct}%` }} />
       </div>
       <span className="tabular-nums text-neutral-500">
-        ${current.toFixed(current < 0.1 ? 4 : 2)}
-        <span className="text-neutral-700"> / ${total.toFixed(2)}</span>
+        ${new Intl.NumberFormat(localeTag(locale), { minimumFractionDigits: current < 0.1 ? 4 : 2, maximumFractionDigits: current < 0.1 ? 4 : 2 }).format(current)}
+        <span className="text-neutral-700"> / ${new Intl.NumberFormat(localeTag(locale), { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(total)}</span>
       </span>
     </div>
   );
 }
 
-function CopyButton({ text, label = "copy", className = "" }: { text: string; label?: string; className?: string }) {
+function CopyButton({ text, label, className = "" }: { text: string; label?: string; className?: string }) {
+  const tr = useTranslations(hostedAgentMessages);
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -2941,8 +2917,8 @@ function CopyButton({ text, label = "copy", className = "" }: { text: string; la
         setTimeout(() => setCopied(false), 1400);
       }}
       className={`text-[10px] font-mono transition-all ${copied ? "text-emerald-400" : "text-neutral-600 hover:text-violet-300"} ${className}`}
-      title="Copy to clipboard">
-      {copied ? "✓ copied" : label}
+      title={tr('copyToClipboard')}>
+      {copied ? `✓ ${tr('copiedFeedback')}` : label ?? tr('copyDefault')}
     </button>
   );
 }
@@ -3014,6 +2990,21 @@ function AgentMarkdown({ content, isUser }: { content: string; isUser: boolean }
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 function SettingsModal({ agent, onClose, onUpdate, onForceRestart }: { agent: HostedAgent; onClose: () => void; onUpdate: () => void; onForceRestart: () => void }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(hostedAgentMessages);
+const PROVIDER_LABELS: Record<string, string> = {
+  openrouter: "OpenRouter",
+  cerebras: "Cerebras",
+  groq: "Groq",
+  mistral: "Mistral",
+  nebius: "Nebius AI Studio",
+  nvidia: "NVIDIA NIM",
+  sambanova: "SambaNova",
+  together: "Together AI",
+  zai: "Z.AI",
+  cloudflare: "Cloudflare Workers AI",
+  deepseek: tr('deepSeekPaid'),
+};
   const router = useRouter();
   const [prompt, setPrompt] = useState(agent.system_prompt);
   const [model, setModel] = useState(agent.model);
@@ -3051,20 +3042,20 @@ function SettingsModal({ agent, onClose, onUpdate, onForceRestart }: { agent: Ho
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agent.id}`, {
         method: "PATCH", body: JSON.stringify(body),
       });
-      if (res.ok) { setToast("Saved"); setTimeout(() => setToast(""), 2000); onUpdate(); }
-      else { const d = await res.json().catch(() => ({})); setError(d.detail || "Error"); }
-    } catch { setError("Network error"); }
+      if (res.ok) { setToast(tr('saved')); setTimeout(() => setToast(""), 2000); onUpdate(); }
+      else { const d = await res.json().catch(() => ({})); setError(d.detail || translateHostedAgent('en', 'error2')); }
+    } catch { setError(translateHostedAgent('en', 'networkError')); }
     setSaving(false);
   };
 
   const handleDelete = async () => {
-    if (!confirm("Delete this agent? This cannot be undone.")) return;
+    if (!confirm(tr('deleteThisAgentThisCannotBeUndone'))) return;
     setDeleting(true);
     try {
       const res = await authFetch(`${API_URL}/api/v1/hosted-agents/${agent.id}`, { method: "DELETE" });
       if (res.ok) router.push("/hosted-agents");
-      else { const d = await res.json().catch(() => ({})); setError(d.detail || "Failed"); }
-    } catch { setError("Network error"); }
+      else { const d = await res.json().catch(() => ({})); setError(d.detail || translateHostedAgent('en', 'failed')); }
+    } catch { setError(translateHostedAgent('en', 'networkError')); }
     setDeleting(false);
   };
 
@@ -3077,16 +3068,16 @@ function SettingsModal({ agent, onClose, onUpdate, onForceRestart }: { agent: Ho
       <div className="relative z-10 w-full max-w-lg mx-4 bg-[#0a0a0a] border border-neutral-800/50 rounded-xl overflow-hidden max-h-[85vh] flex flex-col">
         <div className="h-[2px] w-full bg-gradient-to-r from-violet-400 to-transparent" />
         <div className="px-6 py-4 border-b border-neutral-800/40 flex items-center justify-between shrink-0">
-          <h3 className="text-sm font-mono text-white">Settings — {agent.agent_name}</h3>
-          <button onClick={onClose} className="text-neutral-600 hover:text-neutral-400 text-sm">×</button>
+          <h3 className="text-sm font-mono text-white">{tr('settings3')}{agent.agent_name}</h3>
+          <button aria-label={tr('close')} onClick={onClose} className="text-neutral-600 hover:text-neutral-400 text-sm">×</button>
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           <div>
-            <label className={labelCls}>System Prompt (AGENT.md)</label>
+            <label className={labelCls}>{tr('systemPromptAGENTMd')}</label>
             <textarea value={prompt} onChange={e => setPrompt(e.target.value)} className={inputCls + " min-h-[120px] resize-y"} />
           </div>
           <div>
-            <label className={labelCls}>Model</label>
+            <label className={labelCls}>{tr('model')}</label>
             {(() => {
               const modelsByProvider = models.reduce<Record<string, FreeModel[]>>((acc, m) => {
                 const p = m.provider ?? "openrouter";
@@ -3107,18 +3098,17 @@ function SettingsModal({ agent, onClose, onUpdate, onForceRestart }: { agent: Ho
               );
             })()}
             <p className="text-[10px] font-mono text-neutral-700 mt-1">
-              All models are free except DeepSeek (paid escalation fallback). Grouped by provider: OpenRouter, Cerebras, Groq, Mistral, Nebius, NVIDIA NIM, SambaNova, Together AI, Z.AI, Cloudflare, DeepSeek.
-            </p>
+              {tr('allModelsAreFreeExceptDeepSeekPaidEscalation')}</p>
           </div>
           <div>
-            <label className={labelCls}>Budget (USD)</label>
+            <label className={labelCls}>{tr('budgetUSD')}</label>
             <input type="number" step="0.1" min="0.1" max="100" value={budget}
               onChange={e => setBudget(e.target.value)} className={inputCls + " max-w-[200px]"} />
-            <p className="text-[10px] font-mono text-neutral-700 mt-1">Current spend: ${agent.total_cost_usd.toFixed(4)}</p>
+            <p className="text-[10px] font-mono text-neutral-700 mt-1">{tr('currentSpend')}{new Intl.NumberFormat(localeTag(locale), { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(agent.total_cost_usd)}</p>
           </div>
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className={labelCls + " mb-0"}>Heartbeat</label>
+              <label className={labelCls + " mb-0"}>{tr('heartbeat')}</label>
               <button onClick={() => setHbEnabled(!hbEnabled)}
                 className={`relative w-9 h-5 rounded-full transition-colors ${hbEnabled ? "bg-emerald-400/30" : "bg-neutral-800"}`}>
                 <div className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${hbEnabled ? "left-[18px] bg-emerald-400" : "left-0.5 bg-neutral-600"}`} />
@@ -3127,61 +3117,57 @@ function SettingsModal({ agent, onClose, onUpdate, onForceRestart }: { agent: Ho
             {hbEnabled && (
               <select value={hbSeconds} onChange={e => setHbSeconds(e.target.value)}
                 className={inputCls + " max-w-[200px] cursor-pointer text-xs"}>
-                <option value="300">Every 5 min</option>
-                <option value="900">Every 15 min</option>
-                <option value="1800">Every 30 min</option>
-                <option value="3600">Every 1 hour</option>
-                <option value="7200">Every 2 hours</option>
+                <option value="300">{tr('every5Min')}</option>
+                <option value="900">{tr('every15Min')}</option>
+                <option value="1800">{tr('every30Min')}</option>
+                <option value="3600">{tr('every1Hour')}</option>
+                <option value="7200">{tr('every2Hours')}</option>
               </select>
             )}
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className={labelCls + " mb-0"}>Stuck Loop Detection</label>
+              <label className={labelCls + " mb-0"}>{tr('stuckLoopDetection')}</label>
               <button onClick={() => setStuckLoop(!stuckLoop)}
                 className={`relative w-9 h-5 rounded-full transition-colors ${stuckLoop ? "bg-amber-400/30" : "bg-neutral-800"}`}>
                 <div className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${stuckLoop ? "left-[18px] bg-amber-400" : "left-0.5 bg-neutral-600"}`} />
               </button>
             </div>
             <p className="text-[10px] font-mono text-neutral-600 leading-relaxed">
-              Injects ModelRetry when the agent repeats the same tool call, A-B-A-B alternates, or makes
-              no-op calls. Saves tokens on runaway loops, may interrupt legitimate polling.
-              Takes effect on next start.
-            </p>
+              {tr('injectsModelRetryWhenTheAgentRepeatsTheSame')}</p>
           </div>
 
           <div className="bg-white/[0.02] border border-neutral-800/50 rounded-lg p-4">
-            <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600 mb-2">Info</p>
+            <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600 mb-2">{tr('info')}</p>
             <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
-              <span className="text-neutral-600">Agent ID</span><span className="text-neutral-400 truncate">{agent.agent_id}</span>
-              <span className="text-neutral-600">Handle</span><span className="text-neutral-400">@{agent.agent_handle}</span>
-              <span className="text-neutral-600">.deep/</span><span className="text-neutral-400">{agent.memory_limit_mb} MB</span>
-              <span className="text-neutral-600">Created</span><span className="text-neutral-400">{timeAgo(agent.created_at)}</span>
+              <span className="text-neutral-600">{tr('agentID')}</span><span className="text-neutral-400 truncate">{agent.agent_id}</span>
+              <span className="text-neutral-600">{tr('handle')}</span><span className="text-neutral-400">@{agent.agent_handle}</span>
+              <span className="text-neutral-600">.deep/</span><span className="text-neutral-400">{new Intl.NumberFormat(localeTag(locale)).format(agent.memory_limit_mb)} {tr('mB')}</span>
+              <span className="text-neutral-600">{tr('created')}</span><span className="text-neutral-400">{timeAgo(agent.created_at, locale)}</span>
             </div>
           </div>
           {error && (
-            <div className="px-3 py-2 text-xs font-mono text-red-400/90 bg-red-400/[0.06] border border-red-400/15 rounded-lg">{error}</div>
+            <div className="px-3 py-2 text-xs font-mono text-red-400/90 bg-red-400/[0.06] border border-red-400/15 rounded-lg">{displayHostedAgentText(locale, error)}</div>
           )}
         </div>
         <div className="px-6 py-3 border-t border-neutral-800/40 shrink-0">
           <button
             onClick={onForceRestart}
             className="w-full px-3 py-2 text-xs font-mono text-amber-300 bg-amber-400/[0.06] border border-amber-400/15 rounded-lg hover:bg-amber-400/10 transition-colors flex items-center gap-1.5">
-            <span aria-hidden="true">⚡</span> Force restart
-          </button>
+            <span aria-hidden="true">⚡</span> {tr('forceRestart')}</button>
         </div>
         <div className="px-6 py-4 border-t border-neutral-800/40 flex items-center justify-between shrink-0">
           <button onClick={handleDelete} disabled={deleting}
             className="px-3 py-1.5 text-xs font-mono text-red-400/70 border border-red-400/15 rounded-lg hover:bg-red-400/[0.06] hover:text-red-400 disabled:opacity-40 transition-colors">
-            {deleting ? "Deleting…" : "Delete Agent"}
+            {deleting ? tr('deleting') : tr('deleteAgent')}
           </button>
           <div className="flex items-center gap-3">
-            {toast && <span className="text-[10px] font-mono text-emerald-400">{toast}</span>}
-            <button onClick={onClose} className="px-3 py-1.5 text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors">Cancel</button>
+            {toast && <span className="text-[10px] font-mono text-emerald-400">{displayHostedAgentText(locale, toast)}</span>}
+            <button aria-label={tr('close')} onClick={onClose} className="px-3 py-1.5 text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors">{tr('cancel')}</button>
             <button onClick={save} disabled={saving}
               className="px-4 py-1.5 text-xs font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-lg hover:bg-violet-500/25 disabled:opacity-40 transition-colors">
-              {saving ? "Saving…" : "Save"}
+              {saving ? tr('saving2') : tr('save')}
             </button>
           </div>
         </div>

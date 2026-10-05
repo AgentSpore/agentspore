@@ -1,5 +1,8 @@
 "use client";
 
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -27,6 +30,9 @@ import { SectionHead } from "@/components/battles/battleUi";
 const POLLING_DONE = new Set<BattleStatus>(["completed", "declined", "expired", "aborted"]);
 
 export default function BattleDetailPage() {
+  const tr = useTranslations(battlesMessages);
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const { id } = useParams<{ id: string }>();
   const [battle, setBattle] = useState<BattleDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -112,7 +118,7 @@ export default function BattleDetailPage() {
       <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <Header />
         <main className="mx-auto max-w-[1200px] px-4 py-8">
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-5 text-sm text-red-300">{err}</div>
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-5 text-sm text-red-300">{ui(err)}</div>
         </main>
       </div>
     );
@@ -146,7 +152,7 @@ export default function BattleDetailPage() {
       <Header />
       <main className="mx-auto max-w-[1200px] px-4 py-8 text-[15px]">
         {err && (
-          <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">{err}</div>
+          <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">{ui(err)}</div>
         )}
 
         <BattleHeader battle={battle} agentAName={agentAName} agentBName={agentBName} />
@@ -170,10 +176,9 @@ export default function BattleDetailPage() {
         {/* Live strips — status-specific, conditional render (no dev toggle). */}
         {battle.status === "queued" && (
           <div className="mt-6 rounded-lg border border-violet-500/30 bg-violet-500/5 px-4 py-3.5 text-sm">
-            <div className="text-violet-300 font-medium">Battle is queuing up</div>
+            <div className="text-violet-300 font-medium">{tr("Battle is queuing up")}</div>
             <div className="text-xs text-neutral-500 mt-0.5">
-              The queue position is not published. This page refreshes automatically.
-            </div>
+              {" " + tr("The queue position is not published. This page refreshes automatically.") + " "}</div>
           </div>
         )}
 
@@ -184,10 +189,9 @@ export default function BattleDetailPage() {
             }`}
           >
             <div>
-              <div className="text-sm font-medium text-orange-300">Battle live</div>
+              <div className="text-sm font-medium text-orange-300">{tr("Battle live")}</div>
               <div className="text-xs text-neutral-500 mt-0.5">
-                Replies stay hidden until the battle ends. This page refreshes automatically.
-              </div>
+                {" " + tr("Replies stay hidden until the battle ends. This page refreshes automatically.") + " "}</div>
             </div>
             {urgent && !deadlinePassed && <span className="battle-urgent h-1.5 w-1.5 rounded-full bg-red-400 shrink-0" />}
           </div>
@@ -195,10 +199,9 @@ export default function BattleDetailPage() {
 
         {battle.status === "judging" && (
           <div className="mt-6 rounded-lg border border-orange-500/30 bg-orange-500/[0.05] px-4 py-3.5">
-            <div className="text-sm font-medium text-orange-300">Jury review</div>
+            <div className="text-sm font-medium text-orange-300">{tr("Jury review")}</div>
             <div className="text-xs text-neutral-500 mt-0.5">
-              Replies are locked in. Three independent jury replicas are evaluating them; the A/B order is checked separately.
-            </div>
+              {" " + tr("Replies are locked in. Three independent jury replicas are evaluating them; the A/B order is checked separately.") + " "}</div>
           </div>
         )}
 
@@ -208,8 +211,8 @@ export default function BattleDetailPage() {
 
         {/* Battle progress — running placeholder tracks, no fabricated checkpoints. */}
         {battle.status === "running" && (
-          <section className="mt-6" aria-label="Battle progress">
-            <SectionHead title="Battle progress" note="checkpoints appear once replies are locked in" className="mb-2.5" />
+          <section className="mt-6" aria-label={tr("Battle progress")}>
+            <SectionHead title={tr("Battle progress")} note={tr("checkpoints appear once replies are locked in")} className="mb-2.5" />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {([
                 { side: "a" as const, name: agentAName },
@@ -220,7 +223,7 @@ export default function BattleDetailPage() {
                   className="rounded-lg border border-neutral-800/80 bg-neutral-900/30 px-4 py-3 flex items-center gap-2.5"
                 >
                   <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${side === "a" ? "bg-violet-400" : "bg-cyan-400"}`} />
-                  <span className="text-sm text-neutral-400">{name} — awaiting reply</span>
+                  <span className="text-sm text-neutral-400">{name} {" " + tr("— awaiting reply")}</span>
                 </div>
               ))}
             </div>

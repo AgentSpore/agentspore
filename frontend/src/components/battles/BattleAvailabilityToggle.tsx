@@ -1,5 +1,8 @@
 "use client";
 
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { useEffect, useState } from "react";
 import { API_URL } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
@@ -21,6 +24,9 @@ interface BattleAvailabilityToggleProps {
  * both require it server-side.
  */
 export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabilityToggleProps) {
+  const tr = useTranslations(battlesMessages);
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const [busy, setBusy] = useState<boolean | null>(null);
   const [result, setResult] = useState<boolean | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -71,13 +77,12 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
 
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
-      <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Battle participation — {agentName}</div>
+      <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">{tr("Battle participation —") + " "}{agentName}</div>
       <p className="text-xs text-neutral-500 mb-3">
-        Without this toggle the agent cannot be challenged to a battle and cannot accept challenges from others.
-      </p>
-      {result === null && !loadErr && <p className="text-xs text-neutral-500 mb-2">Checking the current state…</p>}
-      {loadErr && <div className="text-xs text-red-400 mb-2">{loadErr}</div>}
-      {err && <div className="text-xs text-red-400 mb-2">{err}</div>}
+        {" " + tr("Without this toggle the agent cannot be challenged to a battle and cannot accept challenges from others.") + " "}</p>
+      {result === null && !loadErr && <p className="text-xs text-neutral-500 mb-2">{tr("Checking the current state…")}</p>}
+      {loadErr && <div className="text-xs text-red-400 mb-2">{ui(loadErr)}</div>}
+      {err && <div className="text-xs text-red-400 mb-2">{ui(err)}</div>}
 
       <div className="relative flex w-full sm:inline-flex sm:w-auto rounded-full border border-neutral-800 bg-neutral-950/60 p-1">
         {result !== null && (
@@ -96,8 +101,7 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
           }`}
         >
           {busy === true && <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-current/40 border-t-current animate-spin" />}
-          Battle-ready
-        </button>
+          {" " + tr("Battle-ready") + " "}</button>
         <button
           onClick={() => setAvailability(false)}
           disabled={busy !== null}
@@ -106,8 +110,7 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
           }`}
         >
           {busy === false && <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-current/40 border-t-current animate-spin" />}
-          Withdrawn from battles
-        </button>
+          {" " + tr("Withdrawn from battles") + " "}</button>
       </div>
     </div>
   );

@@ -1,4 +1,8 @@
 "use client";
+import { localeTag } from '@/lib/i18n/locale';
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { displaySharedText, sharedMessages } from '@/lib/i18n/shared';
 
 import { useRef, useState, type ReactNode } from "react";
 import { getAgentColors } from "@/components/AgentAvatar";
@@ -117,6 +121,8 @@ export function AgentHoverContent({
   commits,
   isActive,
 }: AgentHoverContentProps) {
+  const { locale } = useLocale();
+  const tr = useTranslations(sharedMessages);
   const { fromColor, toColor, angle } = getAgentColors(name);
 
   const initials = name
@@ -155,7 +161,7 @@ export function AgentHoverContent({
             {/* Online status dot */}
             <span
               className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? "bg-emerald-400" : "bg-neutral-600"}`}
-              title={isActive ? "Online" : "Offline"}
+              title={isActive ? tr('online') : tr('offline')}
             />
           </span>
           {handle && (
@@ -170,7 +176,7 @@ export function AgentHoverContent({
       {specialization && (
         <span className="inline-flex block">
           <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-400 border border-violet-500/20 uppercase tracking-wide">
-            {specialization}
+            {displaySharedText(locale, specialization)}
           </span>
         </span>
       )}
@@ -178,21 +184,21 @@ export function AgentHoverContent({
       {/* Stats */}
       <span className="flex items-center gap-4 pt-1 border-t border-neutral-800/60 block">
         <span className="flex flex-col block">
-          <span className="text-[10px] font-mono text-neutral-600 uppercase tracking-wider">Karma</span>
+          <span className="text-[10px] font-mono text-neutral-600 uppercase tracking-wider">{tr('karma')}</span>
           <span className="text-sm font-mono font-semibold text-neutral-200 mt-0.5">
-            {karma.toLocaleString()}
+            {karma.toLocaleString(localeTag(locale))}
           </span>
         </span>
         <span className="w-px h-6 bg-neutral-800 shrink-0" />
         <span className="flex flex-col block">
-          <span className="text-[10px] font-mono text-neutral-600 uppercase tracking-wider">Commits</span>
+          <span className="text-[10px] font-mono text-neutral-600 uppercase tracking-wider">{tr('commits')}</span>
           <span className="text-sm font-mono font-semibold text-neutral-200 mt-0.5">
-            {commits.toLocaleString()}
+            {commits.toLocaleString(localeTag(locale))}
           </span>
         </span>
         <span className="flex-1" />
         <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isActive ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-neutral-800 text-neutral-500 border-neutral-700"}`}>
-          {isActive ? "active" : "idle"}
+          {isActive ? tr('active') : tr('idle')}
         </span>
       </span>
     </span>
@@ -214,6 +220,8 @@ export function ProjectHoverContent({
   status,
   agentName,
 }: ProjectHoverContentProps) {
+  const { locale } = useLocale();
+  const tr = useTranslations(sharedMessages);
   const badgeClass = STATUS_BADGE[status.toLowerCase()] ?? STATUS_BADGE.proposed;
 
   // Truncate description to ~80 chars
@@ -238,7 +246,7 @@ export function ProjectHoverContent({
           <span className="text-sm font-medium text-neutral-100 truncate block">{name}</span>
         </span>
         <span className={`text-[10px] px-2 py-0.5 rounded-md border font-mono shrink-0 ${badgeClass}`}>
-          {status}
+          {displaySharedText(locale, status)}
         </span>
       </span>
 
@@ -255,7 +263,7 @@ export function ProjectHoverContent({
           <circle cx="8" cy="6" r="3" />
           <path d="M2 14c0-3.314 2.686-5 6-5s6 1.686 6 5" />
         </svg>
-        <span className="text-[11px] font-mono text-neutral-500">by</span>
+        <span className="text-[11px] font-mono text-neutral-500">{tr('by')}</span>
         <span className="text-[11px] font-mono text-neutral-300 truncate">{agentName}</span>
       </span>
     </span>

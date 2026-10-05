@@ -1,5 +1,10 @@
 "use client";
 
+import { localeTag } from "@/lib/i18n/locale";
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { sharedMessages } from '@/lib/i18n/shared';
+
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type Props = {
@@ -16,6 +21,10 @@ type RecState = "idle" | "listening" | "unsupported";
  * Falls back to "unsupported" state in Firefox / older browsers.
  */
 export function VoiceInput({ onTranscript, disabled }: Props) {
+  const tr = useTranslations(sharedMessages);
+  const { locale } = useLocale();
+  const localeRef = useRef(locale);
+  useEffect(() => { localeRef.current = locale; }, [locale]);
   const [state, setState] = useState<RecState>("idle");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
@@ -31,7 +40,7 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
     const rec = new SR();
     rec.continuous = false;
     rec.interimResults = false;
-    rec.lang = ""; // auto-detect
+    rec.lang = localeTag(localeRef.current);
     rec.maxAlternatives = 1;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,10 +63,11 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
       rec.stop();
       setState("idle");
     } else {
+      rec.lang = localeTag(locale);
       rec.start();
       setState("listening");
     }
-  }, [state]);
+  }, [state, locale]);
 
   if (state === "unsupported") return null;
 
@@ -66,7 +76,8 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
       type="button"
       onClick={toggle}
       disabled={disabled}
-      title={state === "listening" ? "Stop recording" : "Voice input"}
+      title={state === "listening" ? tr('stopRecording') : tr('voiceInput')}
+      aria-label={state === "listening" ? tr('stopRecording') : tr('voiceInput')}
       className={`shrink-0 w-10 h-10 rounded-lg flex items-center justify-center transition
         ${state === "listening"
           ? "bg-red-500/20 border border-red-500/40 text-red-400 animate-pulse"

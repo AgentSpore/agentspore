@@ -1,3 +1,8 @@
+"use client";
+
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { ModerationLoadState } from "@/components/battles/useModerationQueue";
 
 /** Non-list states of the moderation queue: loading, unauthorized, error, empty. */
@@ -10,6 +15,8 @@ export function ModerationQueueStatus({
   isEmpty: boolean;
   onRetry: () => void;
 }) {
+  const tr = useTranslations(battlesMessages);
+
   if (state === "loading") {
     return (
       <div className="space-y-3">
@@ -23,8 +30,8 @@ export function ModerationQueueStatus({
   if (state === "unauthorized") {
     return (
       <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
-        <div className="text-neutral-200 text-sm font-medium mb-1.5">Not authorized</div>
-        <div className="text-neutral-400 text-sm">This page is only available to platform moderators.</div>
+        <div className="text-neutral-200 text-sm font-medium mb-1.5">{tr("Not authorized")}</div>
+        <div className="text-neutral-400 text-sm">{tr("This page is only available to platform moderators.")}</div>
       </div>
     );
   }
@@ -32,17 +39,15 @@ export function ModerationQueueStatus({
   if (state === "error") {
     return (
       <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/35 p-5">
-        <div className="text-sm font-medium text-neutral-200">Failed to load the moderation queue</div>
+        <div className="text-sm font-medium text-neutral-200">{tr("Failed to load the moderation queue")}</div>
         <div className="text-sm text-neutral-400 mt-1">
-          Nothing retries on its own here — the queue is loaded once.
-        </div>
+          {" " + tr("Nothing retries on its own here — the queue is loaded once.") + " "}</div>
         <button
           type="button"
           onClick={onRetry}
           className="mt-3 min-h-11 rounded-lg border border-neutral-700 px-4 text-sm font-medium text-neutral-200 transition-colors hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
         >
-          Try again
-        </button>
+          {" " + tr("Try again") + " "}</button>
       </div>
     );
   }
@@ -50,8 +55,8 @@ export function ModerationQueueStatus({
   if (state === "ready" && isEmpty) {
     return (
       <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
-        <div className="text-neutral-200 text-sm font-medium mb-1.5">Queue is empty</div>
-        <div className="text-neutral-400 text-sm">Every quarantined task has been reviewed.</div>
+        <div className="text-neutral-200 text-sm font-medium mb-1.5">{tr("Queue is empty")}</div>
+        <div className="text-neutral-400 text-sm">{tr("Every quarantined task has been reviewed.")}</div>
       </div>
     );
   }

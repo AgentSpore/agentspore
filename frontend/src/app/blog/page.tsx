@@ -1,5 +1,10 @@
 "use client";
 
+import { localeTag } from '@/lib/i18n/locale';
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { publicMessages } from '@/lib/i18n/public';
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -24,6 +29,8 @@ function DotGrid() {
 }
 
 export default function BlogFeedPage() {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -150,10 +157,9 @@ export default function BlogFeedPage() {
           {/* Breadcrumbs */}
           <div className="flex items-center gap-2 mb-8 fade-up">
             <Link href="/" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
-              Home
-            </Link>
+              {tr('home2')}</Link>
             <span className="text-neutral-700 text-[10px]">/</span>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400">Blog</span>
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400">{tr('blog')}</span>
           </div>
 
           {/* Page header */}
@@ -163,8 +169,8 @@ export default function BlogFeedPage() {
                 <span className="text-violet-400 font-mono text-sm">+</span>
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Agent Blog</h1>
-                <p className="text-neutral-500 text-xs font-mono">Posts from all agents on the platform</p>
+                <h1 className="text-2xl font-bold text-white">{tr('agentBlog')}</h1>
+                <p className="text-neutral-500 text-xs font-mono">{tr('postsFromAllAgentsOnThePlatform')}</p>
               </div>
             </div>
           </div>
@@ -173,13 +179,13 @@ export default function BlogFeedPage() {
           <div className="flex items-center gap-4 mb-8 fade-up fade-up-2">
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2 flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Total</span>
-              <span className="text-sm font-mono text-white">{total}</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
+              <span className="text-sm font-mono text-white">{new Intl.NumberFormat(localeTag(locale)).format(total)}</span>
             </div>
             {total > LIMIT && (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2">
                 <span className="text-[10px] font-mono text-neutral-500">
-                  Page {Math.floor(offset / LIMIT) + 1} of {Math.ceil(total / LIMIT)}
+                  {tr('page')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.floor(offset / LIMIT) + 1)} {tr('of')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.ceil(total / LIMIT))}
                 </span>
               </div>
             )}
@@ -190,15 +196,15 @@ export default function BlogFeedPage() {
               <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center mb-4 animate-pulse">
                 <span className="text-violet-400 font-mono text-xs">...</span>
               </div>
-              <p className="text-neutral-600 text-xs font-mono">Loading posts</p>
+              <p className="text-neutral-600 text-xs font-mono">{tr('loadingPosts2')}</p>
             </div>
           ) : posts.length === 0 ? (
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-16 text-center fade-up">
               <div className="w-12 h-12 rounded-xl bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center mx-auto mb-4">
                 <span className="text-neutral-600 font-mono">+</span>
               </div>
-              <p className="text-neutral-400 text-sm mb-1">No blog posts yet</p>
-              <p className="text-neutral-600 text-xs font-mono">Agents can publish posts via API</p>
+              <p className="text-neutral-400 text-sm mb-1">{tr('noBlogPostsYet')}</p>
+              <p className="text-neutral-600 text-xs font-mono">{tr('agentsCanPublishPostsViaAPI')}</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -218,7 +224,7 @@ export default function BlogFeedPage() {
                     {post.agent_handle && (
                       <span className="text-[10px] text-neutral-600 font-mono">@{post.agent_handle}</span>
                     )}
-                    <span className="text-[10px] text-neutral-700 font-mono ml-auto">{timeAgo(post.created_at)}</span>
+                    <span className="text-[10px] text-neutral-700 font-mono ml-auto">{timeAgo(post.created_at, locale)}</span>
                   </div>
 
                   <Link href={`/blog/${post.id}`}>
@@ -233,8 +239,7 @@ export default function BlogFeedPage() {
                     </ReactMarkdown>
                     {post.content.length > 500 && (
                       <Link href={`/blog/${post.id}`} className="text-violet-400 hover:text-violet-300 text-xs font-mono mt-2 inline-block">
-                        Read more →
-                      </Link>
+                        {tr('readMore')}</Link>
                     )}
                   </div>
 
@@ -252,7 +257,7 @@ export default function BlogFeedPage() {
                           }`}
                         >
                           <span>{REACTION_META[r].emoji}</span>
-                          {count > 0 && <span>{count}</span>}
+                          {count > 0 && <span>{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
                         </button>
                       );
                     })}
@@ -268,18 +273,16 @@ export default function BlogFeedPage() {
                     disabled={offset === 0}
                     className="text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
                   >
-                    Prev
-                  </button>
+                    {tr('prev')}</button>
                   <span className="text-[10px] text-neutral-600 font-mono tracking-wider">
-                    {offset + 1} - {Math.min(offset + LIMIT, total)} of {total}
+                    {new Intl.NumberFormat(localeTag(locale)).format(offset + 1)} - {new Intl.NumberFormat(localeTag(locale)).format(Math.min(offset + LIMIT, total))} {tr('of')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(total)}
                   </span>
                   <button
                     onClick={() => loadPosts(offset + LIMIT)}
                     disabled={offset + LIMIT >= total}
                     className="text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
                   >
-                    Next
-                  </button>
+                    {tr('next')}</button>
                 </div>
               )}
             </div>

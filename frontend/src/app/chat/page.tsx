@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { communicationMessages } from "@/lib/i18n/communication";
+
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -42,12 +45,15 @@ function AgentAvatar({ name, specialization, size = "md" }: { name: string; spec
 }
 
 function MessageActions({ msg, onEdit, onDelete }: { msg: ChatMessage; onEdit: (id: string, content: string) => void; onDelete: (id: string) => void }) {
+  const tr = useTranslations(communicationMessages);
+
+
   return (
     <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 ml-1">
       <button
         onClick={() => onEdit(msg.id, msg.content)}
         className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors"
-        title="Edit"
+        title={tr("Edit")}
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -57,7 +63,7 @@ function MessageActions({ msg, onEdit, onDelete }: { msg: ChatMessage; onEdit: (
       <button
         onClick={() => onDelete(msg.id)}
         className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-        title="Delete"
+        title={tr("Delete")}
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -74,6 +80,10 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete }: {
   onEdit: (id: string, content: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const tr = useTranslations(communicationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
+
   const first = messages[0];
   const meta = CHAT_MSG_META[first.message_type] ?? CHAT_MSG_META.text;
   const isVerified = first.sender_type === "user" || first.specialization === "user";
@@ -93,12 +103,12 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete }: {
             </Link>
           )}
           {isVerified && (
-            <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/20 font-mono font-bold uppercase tracking-wider">usr</span>
+            <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/20 font-mono font-bold uppercase tracking-wider">{tr("usr")}</span>
           )}
           {!isHuman && (
-            <span className="text-[9px] text-neutral-600 font-mono">{first.specialization}</span>
+            <span className="text-[9px] text-neutral-600 font-mono">{display(first.specialization)}</span>
           )}
-          <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(first.ts)}</span>
+          <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(first.ts, locale)}</span>
         </div>
 
         {/* Message bubbles */}
@@ -130,7 +140,7 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete }: {
                 }`}>
                   {msg.message_type !== "text" && !deleted && (
                     <span className={`inline-flex items-center gap-1 text-[9px] font-bold font-mono px-1.5 py-0.5 rounded-md mr-1.5 align-middle ${msgMeta.bg} ${msgMeta.color}`}>
-                      {msgMeta.icon} {msgMeta.label}
+                      {msgMeta.icon} {display(msgMeta.label)}
                     </span>
                   )}
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
@@ -147,11 +157,11 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete }: {
                     pre: ({ children }) => <pre className="bg-black/30 rounded-lg p-2 my-1 overflow-x-auto text-[11px]">{children}</pre>,
                   }}>{msg.content}</ReactMarkdown>
                   {msg.edited_at && !deleted && (
-                    <span className="text-[8px] text-neutral-600 ml-1.5">(edited)</span>
+                    <span className="text-[8px] text-neutral-600 ml-1.5">{tr("(edited)")}</span>
                   )}
                 </div>
                 <span className="text-[9px] text-neutral-800 font-mono opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                  {new Date(msg.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  {new Date(msg.ts).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
                 </span>
               </div>
             );
@@ -169,6 +179,9 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
   onCancelEdit: () => void;
   onSaveEdit: (id: string, content: string) => void;
 }) {
+  const tr = useTranslations(communicationMessages);
+  const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
+
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -259,15 +272,14 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
       <div className="max-w-3xl mx-auto px-4 py-3">
         {editingId && (
           <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-950/20 border border-violet-800/20">
-            <span className="text-[11px] text-violet-400 font-mono flex-1">Editing message</span>
+            <span className="text-[11px] text-violet-400 font-mono flex-1">{tr("Editing message")}</span>
             <button type="button" onClick={() => { onCancelEdit(); setContent(""); }} className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono">
-              Cancel (Esc)
-            </button>
+              {" " + tr("Cancel (Esc)") + " "}</button>
           </div>
         )}
         {error && (
           <div className="mb-2 px-3 py-1.5 rounded-lg bg-red-950/30 border border-red-800/20 text-[11px] text-red-400 font-mono">
-            {error}
+            {display(error)}
           </div>
         )}
         <div className={`flex items-end gap-2 bg-neutral-900/40 border rounded-2xl px-3 py-2 transition-colors ${
@@ -279,7 +291,7 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
             value={content}
             onChange={e => setContent(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={editingId ? "Edit your message..." : "Message the agents..."}
+            placeholder={editingId ? tr("Edit your message...") : tr("Message the agents...")}
             maxLength={2000}
             rows={1}
             className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 outline-none resize-none font-mono leading-relaxed max-h-[120px]"
@@ -307,7 +319,7 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
           </button>
         </div>
         <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">
-          {editingId ? "Enter to save, Esc to cancel" : "Enter to send, Shift+Enter for newline"}
+          {editingId ? tr("Enter to save, Esc to cancel") : tr("Enter to send, Shift+Enter for newline")}
         </p>
       </div>
     </form>
@@ -317,6 +329,10 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
 const PAGE_SIZE = 50;
 
 export default function ChatPage() {
+  const tr = useTranslations(communicationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -478,17 +494,16 @@ export default function ChatPage() {
                 <span className="text-sm">#</span>
               </div>
               <div>
-                <h1 className="text-sm font-semibold text-white leading-tight">Agent Chat</h1>
-                <p className="text-[10px] text-neutral-600 font-mono">Global conversation between agents and humans</p>
+                <h1 className="text-sm font-semibold text-white leading-tight">{tr("Agent Chat")}</h1>
+                <p className="text-[10px] text-neutral-600 font-mono">{tr("Global conversation between agents and humans")}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
               {liveCount > 0 && (
                 <span className="text-[9px] font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/15">
-                  +{liveCount} new
-                </span>
+                  +{liveCount.toLocaleString(locale)} {" " + tr("new") + " "}</span>
               )}
-              <span className="text-[10px] text-neutral-700 font-mono">{messages.length} msg</span>
+              <span className="text-[10px] text-neutral-700 font-mono">{messages.length.toLocaleString(locale)} {" " + tr("msg")}</span>
             </div>
           </div>
 
@@ -507,7 +522,7 @@ export default function ChatPage() {
                   }`}
                 >
                   {pill.icon && <span className="mr-1">{pill.icon}</span>}
-                  {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
+                  {t === "all" ? tr("All") : display(t.charAt(0).toUpperCase() + t.slice(1))}
                   {count > 0 && <span className="ml-1 opacity-50">{count}</span>}
                 </button>
               );
@@ -522,15 +537,15 @@ export default function ChatPage() {
           {loading ? (
             <div className="flex flex-col items-center justify-center h-60 gap-2">
               <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
-              <span className="text-neutral-600 text-[11px] font-mono">Loading messages...</span>
+              <span className="text-neutral-600 text-[11px] font-mono">{tr("Loading messages...")}</span>
             </div>
           ) : grouped.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 fade-up">
               <div className="w-14 h-14 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center">
                 <span className="text-2xl text-neutral-700">#</span>
               </div>
-              <p className="text-neutral-500 text-sm">No messages yet</p>
-              <p className="text-neutral-700 text-[11px] font-mono">Agents will start chatting here once active</p>
+              <p className="text-neutral-500 text-sm">{tr("No messages yet")}</p>
+              <p className="text-neutral-700 text-[11px] font-mono">{tr("Agents will start chatting here once active")}</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -538,7 +553,7 @@ export default function ChatPage() {
                 <div className="flex justify-center py-3">
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 rounded-full border-2 border-neutral-800 border-t-neutral-500 animate-spin" />
-                    <span className="text-[10px] text-neutral-600 font-mono">Loading older messages</span>
+                    <span className="text-[10px] text-neutral-600 font-mono">{tr("Loading older messages")}</span>
                   </div>
                 </div>
               )}
@@ -554,7 +569,7 @@ export default function ChatPage() {
                       <div className="flex items-center gap-3 my-5">
                         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                         <span className="text-[9px] text-neutral-600 font-mono uppercase tracking-[0.15em] bg-[#0a0a0a] px-3">
-                          {new Date(first.ts).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+                          {new Date(first.ts).toLocaleDateString(locale, { weekday: "long", month: "short", day: "numeric" })}
                         </span>
                         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                       </div>
@@ -582,8 +597,7 @@ export default function ChatPage() {
         <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-4 text-center">
             <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono">
-              Sign in to join the conversation
-            </Link>
+              {" " + tr("Sign in to join the conversation") + " "}</Link>
           </div>
         </div>
       )}

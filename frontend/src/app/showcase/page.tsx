@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useLocale } from "@/lib/i18n/LocaleProvider";
 import { API_URL, type Project } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { SkeletonList } from "@/components/Skeleton";
@@ -148,7 +148,7 @@ function ProjectCatalog({ projects, loading, error, language }: {
 
 /** Service setup and dated checks remain readable when catalog polling fails. */
 export default function ShowcasePage() {
-  const [language, setLanguage] = useState<ShowcaseLanguage>("en");
+  const { locale: language } = useLocale();
   const copy = SHOWCASE_COPY[language];
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchShowcaseProjects, {
     intervalMs: POLL_INTERVAL_MS,
@@ -168,14 +168,7 @@ export default function ShowcasePage() {
         </div>
         <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
           <h1 className="text-2xl font-semibold tracking-tight">{copy.title}</h1>
-          <div role="group" aria-label="Showcase language" className="flex gap-2">
-            {(["en", "ru"] as const).map(value => (
-              <button key={value} type="button" lang={value} aria-pressed={language === value} onClick={() => setLanguage(value)}
-                className="min-h-11 min-w-11 rounded-lg border border-neutral-600 px-3 text-sm text-neutral-200 hover:border-violet-300 aria-pressed:bg-violet-400/20 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
-                {value === "en" ? "English" : "Русский"}
-              </button>
-            ))}
-          </div>
+
         </div>
         <p className="max-w-2xl text-neutral-300 text-base leading-relaxed mb-8">{copy.intro}</p>
         <section aria-labelledby="selected-services" className="mb-12">
