@@ -569,6 +569,35 @@ class AgentRepository:
 
     # ── Tasks ──
 
+    async def lock_task_project(self, project_id: UUID) -> dict | None:
+        """Serialize manual task creation until the request transaction ends."""
+        result = await self.db.execute(text(
+            "SELECT creator_agent_id, status FROM projects WHERE id = :id FOR UPDATE"
+        ), {"id": project_id})
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def get_manual_task(self, project_id: UUID, source_key: str) -> dict | None:
+        """Find an idempotency key across every task state in this project."""
+        result = await self.db.execute(text(
+            "SELECT * FROM tasks WHERE project_id = :project_id "
+            "AND source_type = 'manual' AND source_key = :source_key"
+        ), {"project_id": project_id, "source_key": source_key})
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def insert_manual_task(self, project_id: UUID, agent_id: UUID, content: dict) -> dict:
+        """Insert server-owned task state while the project row remains locked."""
+        result = await self.db.execute(text("""
+            INSERT INTO tasks (project_id, type, title, description, priority, status,
+                               source_type, source_key, created_by_agent_id)
+            VALUES (:project_id, :type, :title, :description, 'medium', 'open',
+                    'manual', :source_key, :agent_id)
+            RETURNING id, status
+        """), {"project_id": project_id, "agent_id": agent_id, **content})
+        return dict(result.mappings().one())
+
+
     async def list_open_tasks(self, where_clause: str, params: dict) -> list[dict]:
         result = await self.db.execute(
             text(f"""
@@ -592,35 +621,37 @@ class AgentRepository:
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def claim_task(self, task_id, agent_id) -> None:
-        await self.db.execute(
-            text("""
-                UPDATE tasks
-                SET status = 'claimed', claimed_by_agent_id = :agent_id, claimed_at = NOW(), updated_at = NOW()
-                WHERE id = :id AND status = 'open'
-            """),
-            {"id": task_id, "agent_id": agent_id},
-        )
+    async def claim_task(self, task_id: UUID, agent_id: UUID) -> dict | None:
+        """Return only the winner of the open-to-claimed transition."""
+        result = await self.db.execute(text("""
+            UPDATE tasks SET status = 'claimed', claimed_by_agent_id = :agent_id,
+                             claimed_at = NOW(), updated_at = NOW()
+            WHERE id = :id AND status = 'open' RETURNING *
+        """), {"id": task_id, "agent_id": agent_id})
+        row = result.mappings().first()
+        return dict(row) if row else None
 
-    async def complete_task(self, task_id, result_text: str) -> None:
-        await self.db.execute(
-            text("""
-                UPDATE tasks
-                SET status = 'completed', result = :result, completed_at = NOW(), updated_at = NOW()
-                WHERE id = :id
-            """),
-            {"id": task_id, "result": result_text},
-        )
+    async def complete_task(self, task_id: UUID, agent_id: UUID, result_text: str) -> dict | None:
+        """Complete a claimed task only once and only for its claiming agent."""
+        result = await self.db.execute(text("""
+            UPDATE tasks SET status = 'completed', result = :result,
+                             completed_at = NOW(), updated_at = NOW()
+            WHERE id = :id AND status = 'claimed' AND claimed_by_agent_id = :agent_id
+            RETURNING *
+        """), {"id": task_id, "agent_id": agent_id, "result": result_text})
+        row = result.mappings().first()
+        return dict(row) if row else None
 
-    async def unclaim_task(self, task_id) -> None:
-        await self.db.execute(
-            text("""
-                UPDATE tasks
-                SET status = 'open', claimed_by_agent_id = NULL, claimed_at = NULL, updated_at = NOW()
-                WHERE id = :id
-            """),
-            {"id": task_id},
-        )
+    async def unclaim_task(self, task_id: UUID, agent_id: UUID) -> dict | None:
+        """Return only the winner of a claimed-to-open transition."""
+        result = await self.db.execute(text("""
+            UPDATE tasks SET status = 'open', claimed_by_agent_id = NULL,
+                             claimed_at = NULL, updated_at = NOW()
+            WHERE id = :id AND status = 'claimed' AND claimed_by_agent_id = :agent_id
+            RETURNING *
+        """), {"id": task_id, "agent_id": agent_id})
+        row = result.mappings().first()
+        return dict(row) if row else None
 
     # ── Leaderboard & Stats ──
 
