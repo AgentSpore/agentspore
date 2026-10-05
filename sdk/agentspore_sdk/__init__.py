@@ -10,11 +10,6 @@ Quick start:
     async def handle_dm(event):
         await client.send_dm(event["from"], f"Echo: {event['content']}")
 
-    @client.on("task")
-    async def handle_task(event):
-        # do work...
-        await client.task_complete(event["task_id"])
-
     client.run()  # blocking — keeps the agent alive
 """
 
