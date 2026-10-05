@@ -1,5 +1,9 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { interpolate, type Locale } from "@/lib/i18n/locale";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { useEffect, useState } from "react";
 import { API_URL, BattleDetail, BattleSide } from "@/lib/api";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
@@ -97,25 +101,29 @@ export function VoteChip({
   agentAName?: string;
   agentBName?: string;
 }) {
+  const tr = useTranslations(battlesMessages);
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   if (!vote) {
     return (
       <span className="inline-flex items-center rounded-md border border-neutral-700 px-2 py-0.5 text-xs text-neutral-500">
-        no response
-      </span>
+        {" " + tr("no response") + " "}</span>
     );
   }
   const meta = VOTE_META[vote];
   const label =
-    vote === "a" && agentAName ? `For ${agentAName}` : vote === "b" && agentBName ? `For ${agentBName}` : meta.label;
+    vote === "a" && agentAName ? tr("For {name}", { name: agentAName }) : vote === "b" && agentBName ? tr("For {name}", { name: agentBName }) : meta.label;
   return (
     <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${meta.classes}`}>
-      {label}
+      {ui(label)}
     </span>
   );
 }
 
-function pluralReplicas(n: number): string {
-  return n === 1 ? "replica" : "replicas";
+function pluralReplicas(n: number, locale: Locale = "en"): string {
+  if (locale === "en") return n === 1 ? "replica" : "replicas";
+  const form = new Intl.PluralRules(locale).select(n);
+  return battlesMessages.ru[form === "one" ? "replica" : form === "few" ? "replicasFew" : "replicas"];
 }
 
 /**
@@ -126,28 +134,29 @@ function pluralReplicas(n: number): string {
  * client-side from the same tally the raw string summarizes, so the
  * human-readable line and the tallies below it can never drift out of sync.
  */
-function composeQuorumSummary(tally: JudgeTally, agentAName: string, agentBName: string): string {
+function composeQuorumSummary(tally: JudgeTally, agentAName: string, agentBName: string, locale: Locale = "en"): string {
+  const tr = (key: string, values?: Record<string, string | number>) => interpolate(battlesMessages[locale][key], values);
   const { votes_for_a, votes_for_b, ties, abstained, errored, valid } = tally;
   const clauses: string[] = [];
 
   if (valid === 0) {
-    clauses.push("LLM quorum: no valid votes");
+    clauses.push(tr("LLM quorum: no valid votes"));
   } else if (votes_for_a > votes_for_b) {
-    clauses.push(`LLM quorum: majority ${votes_for_a} of ${valid} valid votes for ${agentAName}`);
+    clauses.push(tr("LLM quorum: majority {votes} of {valid} valid votes for {name}", { votes: votes_for_a.toLocaleString(locale), valid: valid.toLocaleString(locale), name: agentAName }));
   } else if (votes_for_b > votes_for_a) {
-    clauses.push(`LLM quorum: majority ${votes_for_b} of ${valid} valid votes for ${agentBName}`);
+    clauses.push(tr("LLM quorum: majority {votes} of {valid} valid votes for {name}", { votes: votes_for_b.toLocaleString(locale), valid: valid.toLocaleString(locale), name: agentBName }));
   } else {
-    clauses.push(`LLM quorum: votes split evenly (${votes_for_a} to ${votes_for_b} of ${valid})`);
+    clauses.push(tr("LLM quorum: votes split evenly ({a} to {b} of {valid})", { a: votes_for_a.toLocaleString(locale), b: votes_for_b.toLocaleString(locale), valid: valid.toLocaleString(locale) }));
   }
 
   if (ties > 0) {
-    clauses.push(`${ties} ${pluralReplicas(ties)} called a tie`);
+    clauses.push(tr("{count} {replicas} called a tie", { count: ties.toLocaleString(locale), replicas: pluralReplicas(ties, locale) }));
   }
   if (abstained > 0) {
-    clauses.push(`${abstained} ${pluralReplicas(abstained)} abstained`);
+    clauses.push(tr("{count} {replicas} abstained", { count: abstained.toLocaleString(locale), replicas: pluralReplicas(abstained, locale) }));
   }
   if (errored > 0) {
-    clauses.push(`${errored} ${pluralReplicas(errored)} errored out`);
+    clauses.push(tr("{count} {replicas} errored out", { count: errored.toLocaleString(locale), replicas: pluralReplicas(errored, locale) }));
   }
 
   return clauses.join("; ") + ".";
@@ -170,11 +179,14 @@ function widthStep(pct: number): string {
 }
 
 function ConfidenceMeter({ confidence, vote }: { confidence: number | null; vote: Vote }) {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+
   if (confidence === null) {
     return (
       <div className="mt-2.5">
         <div className="font-mono text-[13px] text-neutral-500">
-          — <span className="font-sans text-[11px] text-neutral-600">confidence</span>
+          — <span className="font-sans text-[11px] text-neutral-600">{tr("confidence")}</span>
         </div>
         <div className="mt-1.5 h-1 w-full rounded-full bg-neutral-800 overflow-hidden" />
       </div>
@@ -185,7 +197,7 @@ function ConfidenceMeter({ confidence, vote }: { confidence: number | null; vote
   return (
     <div className="mt-2.5">
       <div className={`font-mono tabular-nums text-[13px] ${vote === "abstain" ? "text-neutral-500" : "text-neutral-300"}`}>
-        {pct}% <span className="font-sans text-[11px] text-neutral-600">confidence</span>
+        {pct.toLocaleString(locale)}% <span className="font-sans text-[11px] text-neutral-600">{tr("confidence")}</span>
       </div>
       <div
         className="mt-1.5 h-1 w-full rounded-full bg-neutral-800 overflow-hidden"
@@ -193,7 +205,7 @@ function ConfidenceMeter({ confidence, vote }: { confidence: number | null; vote
         aria-valuenow={pct}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label="Confidence"
+        aria-label={tr("Confidence")}
       >
         <div className={`h-full rounded-full ${fill} ${widthStep(pct)}`} />
       </div>
@@ -230,6 +242,8 @@ export function ReplicaCard({
   agentAName: string;
   agentBName: string;
 }) {
+  const tr = useTranslations(battlesMessages);
+
   return (
     <div className="min-w-0 rounded-lg border border-neutral-800 bg-neutral-900/30 p-3.5">
       <div className="flex items-center justify-between gap-2">
@@ -238,11 +252,11 @@ export function ReplicaCard({
             // Not a model id. The backend writes this token precisely so a
             // recused seat is not misattributed to whichever model would
             // otherwise have filled it (battle_judges.py, RECUSED_JUDGE_REF).
-            <span className="text-neutral-600">no judge seated</span>
+            <span className="text-neutral-600">{tr("no judge seated")}</span>
           ) : judgeRef ? (
             <span className="block truncate" title={judgeRef}>{judgeRef}</span>
           ) : (
-            <>Replica {index + 1}</>
+            <>{tr("Replica") + " "}{index + 1}</>
           )}
         </span>
         {pending ? (
@@ -251,8 +265,7 @@ export function ReplicaCard({
               <span className="battle-live-dot-ping absolute inline-flex h-full w-full rounded-full bg-current opacity-60" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
             </span>
-            run in progress
-          </span>
+            {" " + tr("run in progress") + " "}</span>
         ) : (
           <VoteChip vote={vote} agentAName={agentAName} agentBName={agentBName} />
         )}
@@ -264,15 +277,14 @@ export function ReplicaCard({
             content={reasoning}
             className="text-[13px] leading-[1.65] text-neutral-300"
             collapsedMaxHeight="max-h-[16rem]"
-            expandLabel="Read the full reasoning"
+            expandLabel={tr("Read the full reasoning")}
           />
         </div>
       )}
       {positionSensitive && (
         <div className="mt-2.5 flex gap-1.5 flex-wrap">
           <span className="inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-300">
-            Order-sensitive (A/B)
-          </span>
+            {" " + tr("Order-sensitive (A/B)") + " "}</span>
         </div>
       )}
     </div>
@@ -282,9 +294,13 @@ export function ReplicaCard({
 // ── Tally ───────────────────────────────────────────────────────────────────
 
 function TallyLine({ tally, agentAName, agentBName }: { tally: JudgeTally; agentAName: string; agentBName: string }) {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const items: { label: string; value: number; tone: string }[] = [
-    { label: `for ${agentAName}`, value: tally.votes_for_a, tone: "text-violet-300" },
-    { label: `for ${agentBName}`, value: tally.votes_for_b, tone: "text-cyan-300" },
+    { label: tr("for {name}", { name: agentAName }), value: tally.votes_for_a, tone: "text-violet-300" },
+    { label: tr("for {name}", { name: agentBName }), value: tally.votes_for_b, tone: "text-cyan-300" },
     { label: "ties", value: tally.ties, tone: "text-neutral-400" },
     { label: "abstained", value: tally.abstained, tone: "text-amber-300" },
     { label: "errors", value: tally.errored, tone: "text-rose-400" },
@@ -294,8 +310,8 @@ function TallyLine({ tally, agentAName, agentBName }: { tally: JudgeTally; agent
     <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-3.5 pt-3.5 border-t border-neutral-800">
       {items.map((it) => (
         <div key={it.label} className="text-xs">
-          <span className={`font-mono font-medium ${it.tone}`}>{it.value}</span>{" "}
-          <span className="text-neutral-600">{it.label}</span>
+          <span className={`font-mono font-medium ${it.tone}`}>{it.value.toLocaleString(locale)}</span>{" "}
+          <span className="text-neutral-600">{ui(it.label)}</span>
         </div>
       ))}
     </div>
@@ -317,6 +333,8 @@ function FinalAnswer({
   name: string;
   submissions: BattleSubmissionView[];
 }) {
+  const tr = useTranslations(battlesMessages);
+
   const isWinner = battle.winner === side;
   const accent = SIDE_ACCENT[side];
   return (
@@ -325,24 +343,21 @@ function FinalAnswer({
         <AgentIdentity side={side} agentId={side === "a" ? battle.agent_a_id : battle.agent_b_id} name={name} size="sm" />
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-neutral-600 border border-neutral-700 rounded px-1.5 py-0.5">
-            Final answer
-          </span>
+            {" " + tr("Final answer") + " "}</span>
           {isWinner && (
             <span className="text-[10px] font-mono uppercase tracking-[0.08em] text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 rounded px-1.5 py-0.5">
-              Winner
-            </span>
+              {" " + tr("Winner") + " "}</span>
           )}
         </div>
       </div>
       {!sub ? (
-        <div className="text-sm text-neutral-500">No final answer received</div>
+        <div className="text-sm text-neutral-500">{tr("No final answer received")}</div>
       ) : sub.content_withheld ? (
-        <div className="text-sm text-neutral-500 italic">Content hidden until the battle ends</div>
+        <div className="text-sm text-neutral-500 italic">{tr("Content hidden until the battle ends")}</div>
       ) : sub.error ? (
         <div className="rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-sm text-neutral-400 flex items-center gap-2">
           <span className="text-[10px] font-mono uppercase tracking-wide text-rose-400 border border-neutral-700 rounded px-1.5 py-0.5 shrink-0">
-            Generation error
-          </span>
+            {" " + tr("Generation error") + " "}</span>
         </div>
       ) : (
         <>
@@ -350,9 +365,9 @@ function FinalAnswer({
             content={sub.content ?? ""}
             className="text-[14px] leading-[1.7] text-neutral-200"
             collapsedMaxHeight="max-h-[28rem]"
-            expandLabel="Read the full answer"
+            expandLabel={tr("Read the full answer")}
           />
-          {sub.truncated && <div className="text-xs text-amber-400 mt-2">Reply truncated at the limit</div>}
+          {sub.truncated && <div className="text-xs text-amber-400 mt-2">{tr("Reply truncated at the limit")}</div>}
         </>
       )}
       <AgentPath submissions={submissions} side={side} />
@@ -385,6 +400,10 @@ interface Props {
  * endpoint returns empty collections before completion.
  */
 export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const [submissions, setSubmissions] = useState<BattleSubmissionView[]>([]);
   const [verdict, setVerdict] = useState<BattleVerdictView | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -451,9 +470,9 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
   if (!isCompleted) return null;
 
   return (
-    <section aria-label="Battle outcome" className="battle-verdict-enter">
+    <section aria-label={tr("Battle outcome")} className="battle-verdict-enter">
       {err && (
-        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">{err}</div>
+        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">{ui(err)}</div>
       )}
 
       {!loaded && (
@@ -479,11 +498,10 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                   noQuorum ? "text-amber-400" : "text-emerald-400"
                 }`}
               >
-                Verdict
-              </div>
+                {" " + tr("Verdict") + " "}</div>
               {winnerName ? (
                 <>
-                  <div className="text-xs text-neutral-500 mb-1">Winner</div>
+                  <div className="text-xs text-neutral-500 mb-1">{tr("Winner")}</div>
                   <div
                     className={`text-[26px] leading-8 font-semibold tracking-[-0.025em] ${
                       battle.winner === "a" ? SIDE_ACCENT.a.text : SIDE_ACCENT.b.text
@@ -493,47 +511,46 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                   </div>
                   <div className="mt-2.5 flex gap-2 flex-wrap">
                     <span className="inline-flex items-center rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-300">
-                      Side {(battle.winner as string).toUpperCase()}
+                      {" " + tr("Side") + " "}{(battle.winner as string).toUpperCase()}
                     </span>
                     {llmTally && (
                       <span className="inline-flex items-center rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-300">
-                        Quorum: {llmTally.valid} of {llmJudgements.length || llmTally.valid}
+                        {" " + tr("Quorum:") + " "}{llmTally.valid.toLocaleString(locale)} {" " + tr("of") + " "}{(llmJudgements.length || llmTally.valid).toLocaleString(locale)}
                       </span>
                     )}
                   </div>
                 </>
               ) : battle.winner === "tie" ? (
                 <>
-                  <div className="text-[26px] leading-8 font-semibold tracking-[-0.025em] text-neutral-200">Tie</div>
+                  <div className="text-[26px] leading-8 font-semibold tracking-[-0.025em] text-neutral-200">{tr("Tie")}</div>
                   <div className="mt-2.5 flex gap-2 flex-wrap">
                     <span className="inline-flex items-center rounded-md border border-neutral-700 px-2 py-0.5 text-xs font-medium text-neutral-400">
-                      votes split evenly
-                    </span>
+                      {" " + tr("votes split evenly") + " "}</span>
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="text-xs text-neutral-500 mb-1">Outcome</div>
+                  <div className="text-xs text-neutral-500 mb-1">{tr("Outcome")}</div>
                   <div className="text-[22px] leading-7 sm:text-[26px] sm:leading-8 font-semibold tracking-[-0.025em] text-amber-300">
                     {isRecusedBattle(battle)
-                      ? "No result: no judge model was impartial here"
-                      : "Outcome undetermined: the jury did not reach quorum"}
+                      ? tr("No result: no judge model was impartial here")
+                      : tr("Outcome undetermined: the jury did not reach quorum")}
                   </div>
                   <p className="text-[13px] text-neutral-400 mt-2">
                     {isRecusedBattle(battle)
-                      ? "Every judge model also fights as a contender in this battle, so each was recused and no vote was taken. Elo does not change."
-                      : "Elo does not change; the battle is marked completed with no winner."}
+                      ? tr("Every judge model also fights as a contender in this battle, so each was recused and no vote was taken. Elo does not change.")
+                      : tr("Elo does not change; the battle is marked completed with no winner.")}
                   </p>
                 </>
               )}
               {llmTally && (
                 <p className="text-sm text-neutral-300 leading-[1.6] max-w-[70ch] mt-3">
-                  {composeQuorumSummary(llmTally, agentAName, agentBName)}
+                  {composeQuorumSummary(llmTally, agentAName, agentBName, locale)}
                 </p>
               )}
               {battle.verdict_reason && (
                 <p className="mt-2.5 max-w-[70ch] font-mono text-xs text-neutral-600">
-                  <span className="mr-1.5 uppercase tracking-[0.08em] text-neutral-700">Technical verdict:</span>
+                  <span className="mr-1.5 uppercase tracking-[0.08em] text-neutral-700">{tr("Technical verdict:")}</span>
                   {battle.verdict_reason}
                 </p>
               )}
@@ -559,7 +576,7 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                         {before ?? "—"} → {after ?? "—"} <span className={delta.tone}>({delta.text})</span>
                       </div>
                     ) : (
-                      <div className="font-mono text-sm mt-1 text-neutral-500">Elo unchanged</div>
+                      <div className="font-mono text-sm mt-1 text-neutral-500">{tr("Elo unchanged")}</div>
                     )}
                   </div>
                 );
@@ -569,7 +586,7 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
 
           {/* 2. Final answers */}
           <div className="p-5 sm:p-6 border-t border-neutral-800">
-            <SectionHead title="Final answers" note="revealed once locked in" className="mb-3.5" />
+            <SectionHead title={tr("Final answers")} note={tr("revealed once locked in")} className="mb-3.5" />
             <div className="grid md:grid-cols-2 gap-4">
               <FinalAnswer battle={battle} side="a" sub={finalBySide.a} name={agentAName} submissions={submissions} />
               <FinalAnswer battle={battle} side="b" sub={finalBySide.b} name={agentBName} submissions={submissions} />
@@ -579,11 +596,9 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
           {/* 3. Jury replicas */}
           {llmJudgements.length > 0 && (
             <div className="p-5 sm:p-6 border-t border-neutral-800">
-              <SectionHead title="Jury replicas" className="mb-1" />
+              <SectionHead title={tr("Jury replicas")} className="mb-1" />
               <p className="text-xs text-neutral-500 mb-3.5">
-                {llmJudgements.length} independent jury {pluralReplicas(llmJudgements.length)}, each
-                by the model named on its card; the A/B order is checked separately.
-              </p>
+                {tr("Independent jury replicas: {count}. Each model is named on its card; the A/B order is checked separately.", { count: llmJudgements.length.toLocaleString(locale) })}</p>
               <div className="grid md:grid-cols-3 gap-3">
                 {llmJudgements.map((j, i) => (
                   <ReplicaCard
@@ -611,7 +626,7 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
               public endpoint. Show the vote, never the voter. */}
           {humanJudgements.length > 0 && (
             <div className="p-5 sm:p-6 border-t border-neutral-800">
-              <SectionHead title="Human votes" className="mb-3" />
+              <SectionHead title={tr("Human votes")} className="mb-3" />
               <div className="space-y-2">
                 {humanJudgements.map((j) => (
                   <div key={j.replicate_seed} className="rounded-md border border-neutral-800 p-2.5">
@@ -630,14 +645,14 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
           {verdict && verdict.runs.length > 0 && (
             <div className="p-5 sm:p-6 border-t border-neutral-800 bg-neutral-950/40">
               <Disclosure
-                label={`Technical runs · ${verdict.runs.length}`}
-                openLabel={`Hide technical runs · ${verdict.runs.length}`}
+                label={tr("Technical runs · {count}", { count: verdict.runs.length.toLocaleString(locale) })}
+                openLabel={tr("Hide technical runs · {count}", { count: verdict.runs.length.toLocaleString(locale) })}
                 className="min-h-11 flex items-center"
               >
                 <div className="space-y-3">
                   {Array.from(runsBySeed.entries()).map(([seed, runs], i) => (
                     <div key={seed} className="rounded-md border border-neutral-800 p-3 text-xs">
-                      <div className="text-neutral-400 mb-2">Replica {i + 1}</div>
+                      <div className="text-neutral-400 mb-2">{tr("Replica") + " "}{(i + 1).toLocaleString(locale)}</div>
                       <div className="space-y-2">
                         {runs.map((run) => (
                           <div
@@ -646,12 +661,12 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                           >
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <span className="text-neutral-400">
-                                Order {run.presented_order === "ab" ? "A→B" : "B→A"} · status {run.status}
+                                {" " + tr("Order") + " "}{run.presented_order === "ab" ? "A→B" : "B→A"} {" " + tr("· status") + " "}{ui(run.status)}
                               </span>
                               <VoteChip vote={run.vote} agentAName={agentAName} agentBName={agentBName} />
                             </div>
                             {run.confidence !== null && (
-                              <div className="text-neutral-500 mt-1">Confidence: {Math.round(run.confidence * 100)}%</div>
+                              <div className="text-neutral-500 mt-1">{tr("Confidence:") + " "}{Math.round(run.confidence * 100).toLocaleString(locale)}%</div>
                             )}
                             {run.reasoning && (
                               <BattleMarkdown content={run.reasoning} className="mt-1 text-neutral-500 leading-[1.65]" />
@@ -659,7 +674,7 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
                           </div>
                         ))}
                       </div>
-                      <div className="text-[11px] font-mono text-neutral-500 mt-2">seed {seed.slice(0, 8)}</div>
+                      <div className="text-[11px] font-mono text-neutral-500 mt-2">{tr("seed") + " "}{seed.slice(0, 8)}</div>
                     </div>
                   ))}
                 </div>

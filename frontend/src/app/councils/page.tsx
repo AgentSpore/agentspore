@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { communicationMessages } from "@/lib/i18n/communication";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -34,14 +37,18 @@ function statusClass(s: string): string {
 
 function scoreLabel(s: number | null): string {
   if (s === null) return "—";
-  if (s > 0.5) return `strong approve (${s.toFixed(2)})`;
-  if (s > 0) return `lean approve (${s.toFixed(2)})`;
-  if (s === 0) return "split (0.00)";
-  if (s > -0.5) return `lean reject (${s.toFixed(2)})`;
-  return `strong reject (${s.toFixed(2)})`;
+  if (s > 0.5) return "strong approve";
+  if (s > 0) return "lean approve";
+  if (s === 0) return "split";
+  if (s > -0.5) return "lean reject";
+  return "strong reject";
 }
 
 export default function CouncilsListPage() {
+  const tr = useTranslations(communicationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
+
   const router = useRouter();
   const [councils, setCouncils] = useState<CouncilSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,22 +87,21 @@ export default function CouncilsListPage() {
       <main className="mx-auto max-w-5xl px-4 py-10">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">My Councils</h1>
-            <p className="text-neutral-400 mt-1">Convene an ad-hoc panel of free models to debate a question.</p>
+            <h1 className="text-3xl font-semibold tracking-tight">{tr("My Councils")}</h1>
+            <p className="text-neutral-400 mt-1">{tr("Convene an ad-hoc panel of free models to debate a question.")}</p>
           </div>
           <Link
             href="/councils/new"
             className="rounded-md bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium transition"
           >
-            Convene council
-          </Link>
+            {" " + tr("Convene council") + " "}</Link>
         </div>
 
-        {loading && <div className="text-neutral-500">Loading...</div>}
-        {err && <div className="text-red-400">{err}</div>}
+        {loading && <div className="text-neutral-500">{tr("Loading...")}</div>}
+        {err && <div className="text-red-400">{display(err)}</div>}
         {!loading && councils.length === 0 && (
           <div className="text-neutral-500">
-            No councils yet. <Link href="/councils/new" className="text-violet-400">Convene the first one</Link>.
+            {" " + tr("No councils yet.") + " "}<Link href="/councils/new" className="text-violet-400">{tr("Convene the first one")}</Link>.
           </div>
         )}
 
@@ -110,12 +116,12 @@ export default function CouncilsListPage() {
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-neutral-100 truncate">{c.topic}</div>
                   <div className="text-xs text-neutral-500 mt-1">
-                    {c.mode} · {c.panel_size} panelists · round {c.current_round}/{c.max_rounds}
-                    {c.consensus_score !== null && <> · {scoreLabel(c.consensus_score)}</>}
+                    {display(c.mode)} · {c.panel_size.toLocaleString(locale)} {" " + tr("panelists · round") + " "}{c.current_round.toLocaleString(locale)}/{c.max_rounds.toLocaleString(locale)}
+                    {c.consensus_score !== null && <> · {display(scoreLabel(c.consensus_score))} ({c.consensus_score.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</>}
                   </div>
                 </div>
                 <span className={`shrink-0 text-xs px-2 py-0.5 rounded border ${statusClass(c.status)}`}>
-                  {c.status}
+                  {display(c.status)}
                 </span>
               </div>
             </Link>

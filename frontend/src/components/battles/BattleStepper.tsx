@@ -1,3 +1,8 @@
+"use client";
+
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { BattleDetail, BattleStatus } from "@/lib/api";
 
 type StageState = "completed" | "current" | "future";
@@ -45,6 +50,10 @@ const DOT_CLASSES: Record<StageState, string> = {
 };
 
 export function BattleStepper({ battle }: { battle: BattleDetail }) {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const states = stageStates(battle);
   const terminalLabel = TERMINAL_LABEL[battle.status];
   const currentIndex = Math.max(
@@ -56,7 +65,7 @@ export function BattleStepper({ battle }: { battle: BattleDetail }) {
     <div className="mb-6">
       {terminalLabel && (
         <div className="mb-2 inline-flex items-center rounded-md border border-neutral-700 bg-neutral-900/60 px-2 py-0.5 text-xs text-neutral-400">
-          {terminalLabel}
+          {ui(terminalLabel)}
         </div>
       )}
 
@@ -86,7 +95,7 @@ export function BattleStepper({ battle }: { battle: BattleDetail }) {
                 states[i] === "current" ? "text-orange-300 font-medium" : states[i] === "completed" ? "text-neutral-300" : "text-neutral-600"
               }`}
             >
-              {label}
+              {ui(label)}
             </span>
           </div>
         ))}
@@ -95,8 +104,8 @@ export function BattleStepper({ battle }: { battle: BattleDetail }) {
       {/* Mobile — compact label + dot row */}
       <div className="sm:hidden">
         <div className="text-xs text-neutral-400 mb-2">
-          Step {Math.max(1, currentIndex + 1)} of {STAGES.length} ·{" "}
-          <span className="text-orange-300 font-medium">{STAGES[Math.max(0, currentIndex)]}</span>
+          {" " + tr("Step") + " "}{Math.max(1, currentIndex + 1)} {" " + tr("of") + " "}{STAGES.length.toLocaleString(locale)} ·{" "}
+          <span className="text-orange-300 font-medium">{ui(STAGES[Math.max(0, currentIndex)])}</span>
         </div>
         <div className="flex items-center gap-1">
           {STAGES.map((label, i) => (

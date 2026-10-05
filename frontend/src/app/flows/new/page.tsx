@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { automationMessages } from "@/lib/i18n/automation";
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -34,6 +37,10 @@ let keyCounter = 0;
 function nextKey() { return `step-${++keyCounter}`; }
 
 export default function NewFlowPage() {
+  const tr = useTranslations(automationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(automationMessages.en, value) ? tr(value) : value;
+
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -144,32 +151,30 @@ export default function NewFlowPage() {
         <div className="fade-up" style={{ animationDelay: "0ms" }}>
           <div className="flex items-center gap-1.5 mb-3">
             <Link href="/flows" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">
-              Flows
-            </Link>
+              {" " + tr("Flows") + " "}</Link>
             <span className="text-[10px] text-neutral-700">/</span>
-            <span className="text-[10px] font-mono text-neutral-500">New</span>
+            <span className="text-[10px] font-mono text-neutral-500">{tr("New")}</span>
           </div>
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold tracking-tight">New Flow</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{tr("New Flow")}</h1>
           </div>
         </div>
 
         {/* Flow info */}
         <div className="space-y-3 fade-up" style={{ animationDelay: "60ms" }}>
           <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
-            Details
-          </span>
+            {" " + tr("Details") + " "}</span>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="Flow title"
+            placeholder={tr("Flow title")}
             className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
             maxLength={300}
           />
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Description (optional)"
+            placeholder={tr("Description (optional)")}
             rows={2}
             className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-3 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
             maxLength={5000}
@@ -180,9 +185,8 @@ export default function NewFlowPage() {
         <div className="space-y-3 fade-up" style={{ animationDelay: "120ms" }}>
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
-              Steps
-            </span>
-            <span className="text-[10px] text-neutral-600 font-mono">{steps.length} step{steps.length !== 1 ? "s" : ""}</span>
+              {" " + tr("Steps") + " "}</span>
+            <span className="text-[10px] text-neutral-600 font-mono">{steps.length.toLocaleString(locale)} {" " + tr("steps")}</span>
           </div>
 
           {steps.map((s, idx) => (
@@ -197,7 +201,7 @@ export default function NewFlowPage() {
                     {String(idx + 1).padStart(2, "0")}
                   </span>
                   <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
-                    Step {idx + 1}
+                    {" " + tr("Step") + " "}{idx + 1}
                   </span>
                 </div>
                 {steps.length > 1 && (
@@ -205,15 +209,14 @@ export default function NewFlowPage() {
                     onClick={() => removeStep(s.key)}
                     className="text-[10px] font-mono text-neutral-600 hover:text-red-400 transition-colors"
                   >
-                    Remove
-                  </button>
+                    {" " + tr("Remove") + " "}</button>
                 )}
               </div>
 
               <input
                 value={s.title}
                 onChange={(e) => updateStep(s.key, "title", e.target.value)}
-                placeholder="Step title"
+                placeholder={tr("Step title")}
                 className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-3 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
                 maxLength={300}
               />
@@ -223,10 +226,10 @@ export default function NewFlowPage() {
                 onChange={(e) => updateStep(s.key, "agent_id", e.target.value)}
                 className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-violet-500/50 transition-colors"
               >
-                <option value="">Select agent...</option>
+                <option value="">{tr("Select agent...")}</option>
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>
-                    @{a.handle} -- {a.name} ({a.specialization})
+                    @{a.handle} -- {a.name} ({display(a.specialization)})
                   </option>
                 ))}
               </select>
@@ -234,7 +237,7 @@ export default function NewFlowPage() {
               <textarea
                 value={s.instructions}
                 onChange={(e) => updateStep(s.key, "instructions", e.target.value)}
-                placeholder="Instructions for this step (optional)"
+                placeholder={tr("Instructions for this step (optional)")}
                 rows={2}
                 className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-3 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
                 maxLength={10000}
@@ -244,8 +247,7 @@ export default function NewFlowPage() {
               {idx > 0 && (
                 <div>
                   <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-2">
-                    Depends on
-                  </span>
+                    {" " + tr("Depends on") + " "}</span>
                   <div className="flex flex-wrap gap-1.5">
                     {steps.slice(0, idx).map((dep, di) => (
                       <button
@@ -257,7 +259,7 @@ export default function NewFlowPage() {
                             : "border-neutral-800/50 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700/60"
                         }`}
                       >
-                        Step {di + 1}: {dep.title || "Untitled"}
+                        {" " + tr("Step") + " "}{di + 1}: {dep.title || tr("Untitled")}
                       </button>
                     ))}
                   </div>
@@ -272,8 +274,7 @@ export default function NewFlowPage() {
                   className="rounded border-neutral-700 bg-neutral-900/50 text-violet-500 focus:ring-0 focus:ring-offset-0"
                 />
                 <span className="text-[11px] font-mono text-neutral-500 group-hover:text-neutral-400 transition-colors">
-                  Auto-approve (skip manual review)
-                </span>
+                  {" " + tr("Auto-approve (skip manual review)") + " "}</span>
               </label>
             </div>
           ))}
@@ -282,16 +283,14 @@ export default function NewFlowPage() {
             onClick={addStep}
             className="w-full py-3 rounded-xl border border-dashed border-neutral-800/50 text-sm font-mono text-neutral-500 hover:text-neutral-300 hover:border-neutral-700/60 transition-all bg-neutral-900/10"
           >
-            + Add Step
-          </button>
+            {" " + tr("+ Add Step") + " "}</button>
         </div>
 
         {/* DAG preview */}
         {steps.length > 1 && (
           <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 fade-up" style={{ animationDelay: "200ms" }}>
             <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-3">
-              DAG Preview
-            </span>
+              {" " + tr("DAG Preview") + " "}</span>
             <div className="space-y-1.5">
               {steps.map((s, idx) => {
                 const deps = s.depends_on
@@ -302,17 +301,17 @@ export default function NewFlowPage() {
                     <span className="text-neutral-600 bg-neutral-800/50 px-1.5 py-0.5 rounded text-[10px]">
                       {String(idx + 1).padStart(2, "0")}
                     </span>
-                    <span className="truncate">{s.title || "Untitled"}</span>
+                    <span className="truncate">{s.title || tr("Untitled")}</span>
                     {deps.length > 0 && (
                       <span className="text-neutral-600 ml-auto flex-shrink-0">
-                        depends: {deps.map((n) => `Step ${n}`).join(", ")}
+                        {" " + tr("depends:") + " "}{deps.map((n) => tr("Step {count}", { count: n.toLocaleString(locale) })).join(", ")}
                       </span>
                     )}
                     {deps.length === 0 && idx > 0 && (
-                      <span className="text-emerald-400/50 ml-auto flex-shrink-0">parallel</span>
+                      <span className="text-emerald-400/50 ml-auto flex-shrink-0">{tr("parallel")}</span>
                     )}
                     {deps.length === 0 && idx === 0 && (
-                      <span className="text-cyan-400/50 ml-auto flex-shrink-0">root</span>
+                      <span className="text-cyan-400/50 ml-auto flex-shrink-0">{tr("root")}</span>
                     )}
                   </div>
                 );
@@ -323,7 +322,7 @@ export default function NewFlowPage() {
 
         {error && (
           <div className="rounded-xl border border-red-500/20 bg-red-500/[0.05] p-4 text-sm text-red-400 font-mono fade-up">
-            {error}
+            {display(error)}
           </div>
         )}
 
@@ -333,7 +332,7 @@ export default function NewFlowPage() {
           className="w-full py-3.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed fade-up"
           style={{ animationDelay: "250ms" }}
         >
-          {submitting ? "Creating..." : "Create Flow"}
+          {submitting ? tr("Creating...") : tr("Create Flow")}
         </button>
       </main>
 

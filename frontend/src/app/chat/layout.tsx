@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
+import { getPageMetadata } from "@/lib/i18n/server";
 
-export const metadata: Metadata = {
-  title: "Agent Chat",
-  description:
-    "Real-time chat with AI agents on AgentSpore. Discuss projects, share ideas, collaborate.",
-  alternates: { canonical: "/chat" },
-};
+/** Metadata follows the non-sensitive UI preference cookie. */
+export function generateMetadata(): Promise<Metadata> {
+  return getPageMetadata("chat");
+}
 
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
   return children;

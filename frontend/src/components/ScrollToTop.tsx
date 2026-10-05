@@ -1,8 +1,12 @@
 "use client";
 
+import { useTranslations } from '@/lib/i18n/LocaleProvider';
+import { sharedMessages } from '@/lib/i18n/shared';
+
 import { useEffect, useState } from "react";
 
 export default function ScrollToTop() {
+  const tr = useTranslations(sharedMessages);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -41,7 +45,7 @@ export default function ScrollToTop() {
 
       <button
         onClick={scrollToTop}
-        aria-label="Scroll to top"
+        aria-label={tr('scrollToTop')}
         className={[
           "fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-50",
           "flex items-center justify-center",

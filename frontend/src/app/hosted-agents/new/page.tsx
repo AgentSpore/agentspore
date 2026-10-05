@@ -1,5 +1,8 @@
 "use client";
 
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { automationMessages } from "@/lib/i18n/automation";
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -148,6 +151,9 @@ const TEMPLATES: Template[] = [
 ];
 
 export default function CreateHostedAgentPage() {
+  const tr = useTranslations(automationMessages);
+  const display = (value: string) => Object.hasOwn(automationMessages.en, value) ? tr(value) : value;
+
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -273,21 +279,21 @@ export default function CreateHostedAgentPage() {
       <div className="relative z-10 max-w-3xl mx-auto px-4 pt-28 pb-20">
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-[10px] font-mono text-neutral-600 mb-8">
-          <Link href="/hosted-agents" className="hover:text-violet-400 transition-colors">My Agents</Link>
+          <Link href="/hosted-agents" className="hover:text-violet-400 transition-colors">{tr("My Agents")}</Link>
           <span>/</span>
-          <span className="text-neutral-500">New</span>
+          <span className="text-neutral-500">{tr("New")}</span>
         </div>
 
         <div className="mb-8">
-          <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Create</p>
-          <h1 className="text-2xl font-medium font-mono text-white tracking-tight">New Hosted Agent</h1>
-          <p className="text-xs text-neutral-500 mt-1 font-mono">Pick a template to start fast, or scroll down to write from scratch</p>
+          <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr("Create")}</p>
+          <h1 className="text-2xl font-medium font-mono text-white tracking-tight">{tr("New Hosted Agent")}</h1>
+          <p className="text-xs text-neutral-500 mt-1 font-mono">{tr("Pick a template to start fast, or scroll down to write from scratch")}</p>
         </div>
 
         {/* Templates */}
         <div className="mb-10">
           <div className="flex items-center justify-between mb-4">
-            <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600">Start from template</p>
+            <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600">{tr("Start from template")}</p>
             {activeTemplate && (
               <button
                 type="button"
@@ -298,8 +304,7 @@ export default function CreateHostedAgentPage() {
                 }}
                 className="text-[10px] font-mono text-neutral-600 hover:text-violet-400 transition-colors"
               >
-                clear ×
-              </button>
+                {" " + tr("clear ×") + " "}</button>
             )}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
@@ -320,10 +325,10 @@ export default function CreateHostedAgentPage() {
                     <span className="text-xl leading-none mt-0.5 shrink-0" aria-hidden>{t.icon}</span>
                     <div className="min-w-0">
                       <p className={`text-xs font-mono font-medium truncate ${isActive ? "text-violet-200" : "text-white group-hover:text-violet-300"} transition-colors`}>
-                        {t.title}
+                        {display(t.title)}
                       </p>
                       <p className="text-[10px] font-mono text-neutral-500 mt-1 leading-relaxed line-clamp-2">
-                        {t.tagline}
+                        {display(t.tagline)}
                       </p>
                     </div>
                   </div>
@@ -332,50 +337,48 @@ export default function CreateHostedAgentPage() {
             })}
           </div>
           <p className="text-[10px] font-mono text-neutral-700 mt-3">
-            Click any template → form fills in below. Customise or submit as-is.
-          </p>
+            {" " + tr("Click any template → form fills in below. Customise or submit as-is.") + " "}</p>
         </div>
 
         <form id="agent-form" onSubmit={handleSubmit} className="space-y-6">
           {/* Name + Specialization */}
           <div className="grid grid-cols-3 gap-4">
             <div className="col-span-2">
-              <label className={labelCls}>Agent Name</label>
+              <label className={labelCls}>{tr("Agent Name")}</label>
               <input type="text" value={name} onChange={e => setName(e.target.value)}
-                placeholder="MyAssistant" className={inputCls} maxLength={200} />
+                placeholder={tr("MyAssistant")} className={inputCls} maxLength={200} />
             </div>
             <div>
-              <label className={labelCls}>Role</label>
+              <label className={labelCls}>{tr("Role")}</label>
               <select value={specialization} onChange={e => setSpecialization(e.target.value)}
                 className={inputCls + " cursor-pointer"}>
-                {SPECIALIZATIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                {SPECIALIZATIONS.map(s => <option key={s} value={s}>{display(s)}</option>)}
               </select>
             </div>
           </div>
 
           {/* Description */}
           <div>
-            <label className={labelCls}>Description</label>
+            <label className={labelCls}>{tr("Description")}</label>
             <input type="text" value={description} onChange={e => setDescription(e.target.value)}
-              placeholder="What does this agent do?" className={inputCls} maxLength={500} />
+              placeholder={tr("What does this agent do?")} className={inputCls} maxLength={500} />
           </div>
 
           {/* System Prompt */}
           <div>
-            <label className={labelCls}>System Prompt <span className="text-violet-400/60">*</span></label>
+            <label className={labelCls}>{tr("System Prompt") + " "}<span className="text-violet-400/60">*</span></label>
             <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
-              placeholder={"Example: You are a Python developer assistant. You help users write clean, tested code. You can create files, run scripts, and install packages in your sandbox environment."}
+              placeholder={tr("Example: You are a Python developer assistant. You help users write clean, tested code. You can create files, run scripts, and install packages in your sandbox environment.")}
               className={inputCls + " min-h-[120px] resize-y"} maxLength={10000} />
             <p className="text-[10px] font-mono text-neutral-700 mt-1">
-              Describe your agent&apos;s personality and capabilities. This is the main instruction it follows.
-            </p>
+              {" " + tr("Describe your agent's personality and capabilities. This is the main instruction it follows.") + " "}</p>
           </div>
 
           {/* Model selection */}
           <div>
-            <label className={labelCls}>AI Model</label>
+            <label className={labelCls}>{tr("AI Model")}</label>
             {models.length === 0 ? (
-              <p className="text-neutral-600 text-xs font-mono py-2">Loading models…</p>
+              <p className="text-neutral-600 text-xs font-mono py-2">{tr("Loading models…")}</p>
             ) : (() => {
               const modelsByProvider = models.reduce<Record<string, FreeModel[]>>((acc, m) => {
                 const p = m.provider ?? "openrouter";
@@ -397,26 +400,23 @@ export default function CreateHostedAgentPage() {
               );
             })()}
             <p className="text-[10px] font-mono text-neutral-700 mt-1">
-              All models are free except DeepSeek (paid escalation fallback). Grouped by provider: OpenRouter, Cerebras, Groq, Mistral, Nebius, NVIDIA NIM, SambaNova, Together AI, Z.AI, Cloudflare, DeepSeek.
-            </p>
+              {" " + tr("All models are free except DeepSeek (paid escalation fallback). Grouped by provider: OpenRouter, Cerebras, Groq, Mistral, Nebius, NVIDIA NIM, SambaNova, Together AI, Z.AI, Cloudflare, DeepSeek.") + " "}</p>
           </div>
 
           {/* Skills */}
           <div>
-            <label className={labelCls}>Skills <span className="text-neutral-700 normal-case tracking-normal">(optional)</span></label>
+            <label className={labelCls}>{tr("Skills") + " "}<span className="text-neutral-700 normal-case tracking-normal">{tr("(optional)")}</span></label>
             <div className="flex gap-2">
               <input type="text" value={skillInput}
                 onChange={e => setSkillInput(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addSkill(); } }}
-                placeholder="e.g. code-review, data-analysis, web-scraping" className={inputCls + " flex-1"} />
+                placeholder={tr("e.g. code-review, data-analysis, web-scraping")} className={inputCls + " flex-1"} />
               <button type="button" onClick={addSkill}
                 className="px-3 py-2 text-xs font-mono bg-white/[0.05] border border-neutral-800/50 rounded-lg text-neutral-400 hover:text-white hover:border-neutral-700/50 transition-colors">
-                Add
-              </button>
+                {" " + tr("Add") + " "}</button>
             </div>
             <p className="text-[10px] font-mono text-neutral-700 mt-1">
-              Tag your agent&apos;s capabilities. Other agents can discover it by skills.
-            </p>
+              {" " + tr("Tag your agent's capabilities. Other agents can discover it by skills.") + " "}</p>
             {skills.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {skills.map(s => (
@@ -432,18 +432,17 @@ export default function CreateHostedAgentPage() {
           {/* Error */}
           {error && (
             <div className="px-4 py-3 text-xs font-mono text-red-400/90 bg-red-400/[0.06] border border-red-400/15 rounded-lg">
-              {error}
+              {/^Error (\d+)$/.test(error) ? tr("Error {code}", { code: error.slice(6) }) : display(error)}
             </div>
           )}
 
           {/* Submit */}
           <div className="flex items-center justify-between pt-2">
             <Link href="/hosted-agents" className="text-xs font-mono text-neutral-600 hover:text-neutral-400 transition-colors">
-              ← Back
-            </Link>
+              {" " + tr("← Back") + " "}</Link>
             <button type="submit" disabled={submitting}
               className="px-6 py-2.5 text-sm font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-lg hover:bg-violet-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-              {submitting ? "Creating…" : "Create Agent"}
+              {submitting ? tr("Creating…") : tr("Create Agent")}
             </button>
           </div>
         </form>

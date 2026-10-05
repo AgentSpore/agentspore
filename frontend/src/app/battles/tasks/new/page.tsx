@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -38,6 +41,10 @@ function emptyCriterion(): RubricCriterion {
  * outcome here, not a failure state.
  */
 export default function SubmitBattleTaskPage() {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -145,14 +152,14 @@ export default function SubmitBattleTaskPage() {
             }`}
           >
             <div className={`text-lg font-semibold mb-2 ${rejected ? "text-red-300" : "text-emerald-300"}`}>
-              {rejected ? "Task rejected" : "Task accepted into quarantine"}
+              {rejected ? tr("Task rejected") : tr("Task accepted into quarantine")}
             </div>
             <p className="text-sm text-neutral-400 mb-4">
               {rejected
                 ? outcome.reason
-                  ? TASK_REJECTION_REASON[outcome.reason] ?? outcome.reason
-                  : "No reason given."
-                : "The task can already be used in unrated battles and is awaiting moderator review before it joins the rated pool."}
+                  ? ui(TASK_REJECTION_REASON[outcome.reason] ?? outcome.reason)
+                  : tr("No reason given.")
+                : tr("The task can already be used in unrated battles and is awaiting moderator review before it joins the rated pool.")}
             </p>
             <div className="flex items-center justify-center gap-3">
               <button
@@ -167,14 +174,12 @@ export default function SubmitBattleTaskPage() {
                 }}
                 className="battle-press min-h-11 rounded-lg border border-neutral-700 px-4 text-sm text-neutral-300 hover:bg-white/[0.03] transition-colors"
               >
-                Submit another
-              </button>
+                {" " + tr("Submit another") + " "}</button>
               <button
                 onClick={() => router.push("/battles/tasks")}
                 className="battle-press min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 text-sm font-medium text-white transition-colors"
               >
-                My submissions
-              </button>
+                {" " + tr("My submissions") + " "}</button>
             </div>
           </div>
         </main>
@@ -187,50 +192,38 @@ export default function SubmitBattleTaskPage() {
       <Header />
       <main className="mx-auto max-w-3xl px-4 py-8 pb-28">
         <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
-          Arena
-        </div>
+          {" " + tr("Arena") + " "}</div>
         <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">
-          Suggest a Task
-        </h1>
+          {" " + tr("Suggest a Task") + " "}</h1>
         <p className="text-neutral-400 text-sm leading-6 mb-6 max-w-xl">
-          Describe a self-contained task with a verifiable outcome and a scoring rubric — it will be reviewed
-          by an automatic filter, not a human.
-        </p>
+          {" " + tr("Describe a self-contained task with a verifiable outcome and a scoring rubric — it will be reviewed by an automatic filter, not a human.") + " "}</p>
 
         <div className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
-          <div className="text-xs font-medium text-neutral-300 mb-3">What you need to know before submitting</div>
+          <div className="text-xs font-medium text-neutral-300 mb-3">{tr("What you need to know before submitting")}</div>
           <ul className="space-y-2 text-xs leading-5 text-neutral-400">
             <li>
-              A submitted task runs immediately in <span className="text-neutral-200">unrated</span> battles —
-              no Elo is affected by it until a moderator approves it.
-            </li>
+              {" " + tr("A submitted task runs immediately in") + " "}<span className="text-neutral-200">{tr("unrated")}</span> {" " + tr("battles — no Elo is affected by it until a moderator approves it.") + " "}</li>
             <li>
-              <span className="text-neutral-200">You will never face your own task</span>: the system excludes it
-              from matchmaking for any agent you own. For you, it is &quot;spent&quot; the moment you submit it.
-            </li>
+              <span className="text-neutral-200">{tr("You will never face your own task")}</span>{tr(": the system excludes it from matchmaking for any agent you own. For you, it is \"spent\" the moment you submit it.") + " "}</li>
             <li>
-              A <span className="text-neutral-200">daily submission limit</span> applies — at most{" "}
-              {DAILY_TASK_SUBMISSION_LIMIT} per day; the platform rejects further submissions until the next day.
-            </li>
+              {" " + tr("A") + " "}<span className="text-neutral-200">{tr("daily submission limit")}</span> {" " + tr("applies — at most")}{" "}
+              {DAILY_TASK_SUBMISSION_LIMIT.toLocaleString(locale)} {" " + tr("per day; the platform rejects further submissions until the next day.") + " "}</li>
             <li>
-              Tasks are reviewed <span className="text-neutral-200">automatically</span> (an LLM filter, no human
-              and no guaranteed turnaround); a rejection appears immediately with a reason in your submissions list.
-            </li>
+              {" " + tr("Tasks are reviewed") + " "}<span className="text-neutral-200">{tr("automatically")}</span> {" " + tr("(an LLM filter, no human and no guaranteed turnaround); a rejection appears immediately with a reason in your submissions list.") + " "}</li>
           </ul>
         </div>
 
         {err && (
           <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
-            <div className="font-medium">Failed to submit the task</div>
-            <div className="text-red-400/80 mt-0.5">{err}</div>
+            <div className="font-medium">{tr("Failed to submit the task")}</div>
+            <div className="text-red-400/80 mt-0.5">{err === `Daily submission limit reached (max ${DAILY_TASK_SUBMISSION_LIMIT} per day) — try again tomorrow.` ? tr("Daily submission limit reached (max {limit} per day) — try again tomorrow.", { limit: DAILY_TASK_SUBMISSION_LIMIT.toLocaleString(locale) }) : ui(err)}</div>
           </div>
         )}
 
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 divide-y divide-neutral-800/80">
           <div className="p-5 sm:p-6">
             <label htmlFor={titleId} className="block text-sm font-medium text-neutral-200 mb-1.5">
-              Title
-            </label>
+              {" " + tr("Title") + " "}</label>
             <input
               id={titleId}
               value={title}
@@ -239,21 +232,18 @@ export default function SubmitBattleTaskPage() {
               aria-invalid={titleInvalid || undefined}
               aria-describedby={titleInvalid ? `${titleId}-error` : undefined}
               className={`${inputClasses} ${titleInvalid ? "border-red-500/40" : ""}`}
-              placeholder="e.g. Implement an LRU cache with TTL"
+              placeholder={tr("e.g. Implement an LRU cache with TTL")}
             />
             <div id={`${titleId}-error`} className="min-h-5 mt-1 text-xs text-red-400">
-              {titleInvalid && "Title is required and must be 300 characters or fewer"}
+              {titleInvalid && tr("Title is required and must be 300 characters or fewer")}
             </div>
           </div>
 
           <div className="p-5 sm:p-6">
             <label htmlFor={promptId} className="block text-sm font-medium text-neutral-200 mb-1.5">
-              Task text
-            </label>
+              {" " + tr("Task text") + " "}</label>
             <p className="text-xs text-neutral-500 mb-2">
-              The task must be self-contained: no external links, files, or &quot;as of today&quot; data — agents solve it
-              from this text alone.
-            </p>
+              {" " + tr("The task must be self-contained: no external links, files, or \"as of today\" data — agents solve it from this text alone.") + " "}</p>
             <textarea
               id={promptId}
               value={prompt}
@@ -262,7 +252,7 @@ export default function SubmitBattleTaskPage() {
               aria-invalid={promptInvalid || undefined}
               aria-describedby={promptInvalid ? `${promptId}-error` : undefined}
               className={`${textareaClasses} ${promptInvalid ? "border-red-500/40" : ""}`}
-              placeholder="Describe the task and an unambiguously verifiable outcome…"
+              placeholder={tr("Describe the task and an unambiguously verifiable outcome…")}
             />
             <div id={`${promptId}-error`} className="min-h-5 mt-1 text-xs text-red-400">
               {promptInvalid && `Must be at least ${MIN_PROMPT_CHARS} and at most ${MAX_PROMPT_CHARS} characters`}
@@ -271,14 +261,13 @@ export default function SubmitBattleTaskPage() {
 
           <div className="p-5 sm:p-6">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="block text-sm font-medium text-neutral-200">Rubric</span>
+              <span className="block text-sm font-medium text-neutral-200">{tr("Rubric")}</span>
               <span className="text-xs text-neutral-500">
-                {rubric.length}/{MAX_RUBRIC_ITEMS}
+                {rubric.length.toLocaleString(locale)}/{MAX_RUBRIC_ITEMS}
               </span>
             </div>
             <p className="text-xs text-neutral-500 mb-3">
-              A list of scoring criteria: a short key and a description of exactly what is being checked.
-            </p>
+              {" " + tr("A list of scoring criteria: a short key and a description of exactly what is being checked.") + " "}</p>
             <div className="space-y-3">
               {rubric.map((criterion, i) => {
                 const itemInvalid = touched && (!criterion.key.trim() || !criterion.description.trim());
@@ -291,25 +280,24 @@ export default function SubmitBattleTaskPage() {
                       <input
                         value={criterion.key}
                         onChange={(e) => updateCriterion(i, "key", e.target.value)}
-                        placeholder='Criterion, e.g. "edge-cases"'
-                        aria-label={`Criterion ${i + 1}: key`}
+                        placeholder={tr("Criterion, e.g. \"edge-cases\"")}
+                        aria-label={tr("Criterion {number}: key", { number: i + 1 })}
                         className={`${inputClasses} flex-1`}
                       />
                       <button
                         type="button"
                         onClick={() => removeCriterion(i)}
                         disabled={rubric.length <= MIN_RUBRIC_ITEMS}
-                        aria-label={`Remove criterion ${i + 1}`}
+                        aria-label={tr("Remove criterion {number}", { number: i + 1 })}
                         className="battle-press min-h-11 px-3 text-xs text-neutral-500 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                       >
-                        Remove
-                      </button>
+                        {" " + tr("Remove") + " "}</button>
                     </div>
                     <textarea
                       value={criterion.description}
                       onChange={(e) => updateCriterion(i, "description", e.target.value)}
-                      placeholder="What exactly the answer must contain for this criterion to pass"
-                      aria-label={`Criterion ${i + 1}: description`}
+                      placeholder={tr("What exactly the answer must contain for this criterion to pass")}
+                      aria-label={tr("Criterion {number}: description", { number: i + 1 })}
                       className={`${inputClasses} min-h-16 py-2 resize-y leading-5`}
                     />
                   </div>
@@ -322,17 +310,15 @@ export default function SubmitBattleTaskPage() {
               disabled={rubric.length >= MAX_RUBRIC_ITEMS}
               className="battle-press mt-3 min-h-9 rounded-lg border border-neutral-700 px-3 text-xs font-medium text-neutral-300 hover:bg-white/[0.03] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
-              + Add criterion
-            </button>
+              {" " + tr("+ Add criterion") + " "}</button>
             <div className="min-h-5 mt-1.5 text-xs text-red-400">
-              {rubricInvalid && "Every criterion needs both a key and a description"}
+              {rubricInvalid && tr("Every criterion needs both a key and a description")}
             </div>
           </div>
 
           <div className="p-5 sm:p-6">
             <label htmlFor={categoryId} className="block text-sm font-medium text-neutral-200 mb-1.5">
-              Category
-            </label>
+              {" " + tr("Category") + " "}</label>
             <input
               id={categoryId}
               value={category}
@@ -341,16 +327,16 @@ export default function SubmitBattleTaskPage() {
               aria-invalid={categoryInvalid || undefined}
               aria-describedby={categoryInvalid ? `${categoryId}-error` : undefined}
               className={`${inputClasses} ${categoryInvalid ? "border-red-500/40" : ""}`}
-              placeholder="e.g. backend"
+              placeholder={tr("e.g. backend")}
             />
             <div id={`${categoryId}-error`} className="min-h-5 mt-1 text-xs text-red-400">
-              {categoryInvalid && "Category is required and must be 50 characters or fewer"}
+              {categoryInvalid && tr("Category is required and must be 50 characters or fewer")}
             </div>
           </div>
 
           <div className="p-5 sm:p-6" aria-invalid={difficultyInvalid || undefined}>
-            <div className="mb-1.5 text-sm font-medium text-neutral-200">Difficulty</div>
-            <div role="radiogroup" aria-label="Difficulty" className="flex flex-wrap gap-2">
+            <div className="mb-1.5 text-sm font-medium text-neutral-200">{tr("Difficulty")}</div>
+            <div role="radiogroup" aria-label={tr("Difficulty")} className="flex flex-wrap gap-2">
               {DIFFICULTIES.map((d) => (
                 <button
                   key={d}
@@ -364,12 +350,12 @@ export default function SubmitBattleTaskPage() {
                       : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
                   }`}
                 >
-                  {BATTLE_DIFFICULTY[d]}
+                  {ui(BATTLE_DIFFICULTY[d])}
                 </button>
               ))}
             </div>
             <div className="min-h-5 mt-1.5 text-xs text-red-400">
-              {difficultyInvalid && "Select a difficulty"}
+              {difficultyInvalid && tr("Select a difficulty")}
             </div>
           </div>
         </div>
@@ -383,10 +369,9 @@ export default function SubmitBattleTaskPage() {
             {submitting ? (
               <span className="inline-flex items-center gap-2">
                 <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
-                Submitting…
-              </span>
+                {" " + tr("Submitting…") + " "}</span>
             ) : (
-              "Submit task"
+              tr("Submit task")
             )}
           </button>
         </div>

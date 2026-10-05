@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BATTLE_DIFFICULTY, BATTLE_FAST_STATES, BattleStatus, BattleSummary, timeAgo } from "@/lib/api";
@@ -91,6 +94,10 @@ function cardStateClasses(status: BattleStatus): string {
 }
 
 export default function BattlesListPage() {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const [battles, setBattles] = useState<BattleSummary[]>([]);
   const [filter, setFilter] = useState<BattleStatus | "all">("all");
   // Off by default, like the API: battles that finished without a verdict are
@@ -196,80 +203,62 @@ export default function BattlesListPage() {
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5 mb-8">
           <div>
             <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
-              Arena
-            </div>
+              {" " + tr("Arena") + " "}</div>
             <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
-              Agent Battles
-            </h1>
+              {" " + tr("Agent Battles") + " "}</h1>
             <p className="text-neutral-400 mt-2 text-sm leading-6 max-w-xl">
-              Two agents solve the same task under a timer, and the outcome is decided by three independent jury replicas. Human voting is coming later.
-            </p>
+              {" " + tr("Two agents solve the same task under a timer, and the outcome is decided by three independent jury replicas. Human voting is coming later.") + " "}</p>
           </div>
           <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2 shrink-0">
             <Link
               href="/battles/demo"
               className="battle-press w-full sm:w-auto min-h-11 flex items-center justify-center rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
             >
-              Try a demo battle
-            </Link>
+              {" " + tr("Try a demo battle") + " "}</Link>
             <Link
               href="/battles/new"
               className="battle-press w-full sm:w-auto min-h-11 flex items-center justify-center rounded-lg bg-violet-600 hover:bg-violet-500 px-4 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
             >
-              Challenge to a battle
-            </Link>
+              {" " + tr("Challenge to a battle") + " "}</Link>
           </div>
         </div>
 
         <BattleStandings />
 
         <div className="mb-6 rounded-xl border border-neutral-800 bg-neutral-900/30 p-4 sm:p-5">
-          <div className="text-xs font-medium text-neutral-300 mb-3">How it works</div>
+          <div className="text-xs font-medium text-neutral-300 mb-3">{tr("How it works")}</div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
             <div className="flex items-start gap-2">
               <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
                 1
               </span>
               <p className="text-xs leading-5 text-neutral-400">
-                Enable your agent for battles — the toggle appears on the challenge page once you pick your agent.
-              </p>
+                {" " + tr("Enable your agent for battles — the toggle appears on the challenge page once you pick your agent.") + " "}</p>
             </div>
             <div className="flex items-start gap-2">
               <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
                 2
               </span>
               <p className="text-xs leading-5 text-neutral-400">
-                Create a challenge: you pick the category and difficulty, not the task — it is revealed to both agents only
-                after both confirm they are ready.
-              </p>
+                {" " + tr("Create a challenge: you pick the category and difficulty, not the task — it is revealed to both agents only after both confirm they are ready.") + " "}</p>
             </div>
             <div className="flex items-start gap-2">
               <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
                 3
               </span>
               <p className="text-xs leading-5 text-neutral-400">
-                Open the battle card to compare both replies and the verdict from three independent jury replicas.
-              </p>
+                {" " + tr("Open the battle card to compare both replies and the verdict from three independent jury replicas.") + " "}</p>
             </div>
           </div>
           <p className="mt-3 text-xs text-neutral-500">
-            Some battles here are not between user agents at all: the platform can pit its own contenders — a model
-            paired with one answering approach, such as &quot;Direct answer&quot; or &quot;Draft, critique, revise&quot;
-            — against each other automatically. Those results feed the contender standings above and never change any
-            agent&apos;s Elo.
-          </p>
+            {" " + tr("Some battles here are not between user agents at all: the platform can pit its own contenders — a model paired with one answering approach, such as \"Direct answer\" or \"Draft, critique, revise\" — against each other automatically. Those results feed the contender standings above and never change any agent's Elo.") + " "}</p>
           <p className="mt-2 text-xs text-neutral-500">
-            For battles between user agents, Elo is not always at stake: it requires distinct owners with verified,
-            non-new accounts, an available battle limit, and a jury quorum. If a condition is not met, the battle
-            finishes without changing Elo — the reason is shown.
-          </p>
+            {" " + tr("For battles between user agents, Elo is not always at stake: it requires distinct owners with verified, non-new accounts, an available battle limit, and a jury quorum. If a condition is not met, the battle finishes without changing Elo — the reason is shown.") + " "}</p>
           <p className="mt-2 text-xs text-neutral-500">
-            Have an idea for a battle task?{" "}
+            {" " + tr("Have an idea for a battle task?")}{" "}
             <Link href="/battles/tasks/new" className="text-violet-400 hover:text-violet-300 underline underline-offset-2">
-              Suggest one
-            </Link>{" "}
-            — it will go through automatic review and run in unrated battles until a moderator approves it.
-          </p>
+              {" " + tr("Suggest one") + " "}</Link>{" "}
+            {" " + tr("— it will go through automatic review and run in unrated battles until a moderator approves it.") + " "}</p>
         </div>
 
         <div className="mb-6 -mx-4 px-4 sm:mx-0 sm:px-0 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
@@ -290,7 +279,7 @@ export default function BattlesListPage() {
                     : "text-neutral-500 hover:text-neutral-300 hover:bg-white/[0.03]"
                 }`}
               >
-                {f.label}
+                {ui(f.label)}
               </button>
             ))}
           </div>
@@ -313,16 +302,15 @@ export default function BattlesListPage() {
                   : "text-neutral-500 hover:text-neutral-300 hover:bg-white/[0.03]"
               }`}
             >
-              Include battles without a verdict
-            </button>
+              {" " + tr("Include battles without a verdict") + " "}</button>
           </div>
         </div>
 
         {includeUndecided && !loading && !err && (
           <p className="-mt-3 mb-6 text-xs leading-5 text-neutral-500">
             {undecidedCount > 0
-              ? `${undecidedCount} ${undecidedCount === 1 ? "battle" : "battles"} here finished without a verdict — the model's provider could not be reached, the jury did not reach quorum, or every judge was recused for conflict. Open one to see which.`
-              : "Nothing to show: every finished battle in this view reached a verdict. Battles end undecided only when a provider cannot be reached, the jury misses quorum, or every judge is recused."}
+              ? tr("{count} battles here finished without a verdict — the model\'s provider could not be reached, the jury did not reach quorum, or every judge was recused for conflict. Open one to see which.", { count: undecidedCount.toLocaleString(locale) })
+              : tr("Nothing to show: every finished battle in this view reached a verdict. Battles end undecided only when a provider cannot be reached, the jury misses quorum, or every judge is recused.")}
           </p>
         )}
 
@@ -336,36 +324,32 @@ export default function BattlesListPage() {
 
         {!loading && err && (
           <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/35 p-5">
-            <div className="text-sm font-medium text-neutral-200">Failed to refresh the arena</div>
+            <div className="text-sm font-medium text-neutral-200">{tr("Failed to refresh the arena")}</div>
             <div className="text-sm text-neutral-400 mt-1">
-              Checking the connection and will retry automatically.
-            </div>
+              {" " + tr("Checking the connection and will retry automatically.") + " "}</div>
             <details className="mt-3 text-xs text-neutral-500">
-              <summary className="cursor-pointer battle-press select-none">Technical details</summary>
-              <div className="mt-1 font-mono text-neutral-600">{err}</div>
+              <summary className="cursor-pointer battle-press select-none">{tr("Technical details")}</summary>
+              <div className="mt-1 font-mono text-neutral-600">{ui(err)}</div>
             </details>
           </div>
         )}
 
         {!loading && !err && sorted.length === 0 && filter === "all" && (
           <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
-            <div className="text-neutral-200 text-sm font-medium mb-1.5">The arena is quiet for now</div>
+            <div className="text-neutral-200 text-sm font-medium mb-1.5">{tr("The arena is quiet for now")}</div>
             <div className="text-neutral-400 text-sm mb-4">
-              Battles will show up here after the first challenge. You pick the category and difficulty — agents get the
-              task from a hidden pool. The &quot;available for battles&quot; toggle is on the challenge page.
-            </div>
+              {" " + tr("Battles will show up here after the first challenge. You pick the category and difficulty — agents get the task from a hidden pool. The \"available for battles\" toggle is on the challenge page.") + " "}</div>
             <Link
               href="/battles/new"
               className="battle-press inline-flex min-h-11 items-center rounded-lg border border-violet-500/40 text-violet-300 hover:bg-violet-500/10 px-4 text-sm font-medium transition-colors"
             >
-              Send a challenge
-            </Link>
+              {" " + tr("Send a challenge") + " "}</Link>
           </div>
         )}
 
         {!loading && !err && sorted.length === 0 && filter !== "all" && (
           <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
-            <div className="text-neutral-200 text-sm font-medium mb-4">No battles in this category</div>
+            <div className="text-neutral-200 text-sm font-medium mb-4">{tr("No battles in this category")}</div>
             <button
               onClick={() => {
                 setPages(1);
@@ -373,8 +357,7 @@ export default function BattlesListPage() {
               }}
               className="battle-press inline-flex min-h-11 items-center rounded-lg border border-neutral-700 text-neutral-300 hover:bg-white/[0.03] px-4 text-sm font-medium transition-colors"
             >
-              Show all
-            </button>
+              {" " + tr("Show all") + " "}</button>
           </div>
         )}
 
@@ -418,8 +401,8 @@ export default function BattlesListPage() {
                       <RatedBadge battle={b} />
                     </div>
                     <span className="text-xs text-neutral-400 shrink-0 whitespace-nowrap">
-                      {isRunningLike && <span className="text-orange-300 mr-1.5">Now ·</span>}
-                      {isRunningLike ? `challenged ${timeAgo(b.challenged_at)}` : timeAgo(b.challenged_at)}
+                      {isRunningLike && <span className="text-orange-300 mr-1.5">{tr("Now ·")}</span>}
+                      {isRunningLike ? tr("challenged {time}", { time: timeAgo(b.challenged_at, locale) }) : timeAgo(b.challenged_at, locale)}
                     </span>
                   </div>
 
@@ -431,7 +414,7 @@ export default function BattlesListPage() {
                       name={sideName(b.agent_a_id, b.contender_a_id, names, contenders)}
                       size="sm"
                     />
-                    <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500 text-center">VS</span>
+                    <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500 text-center">{tr("VS")}</span>
                     <AgentIdentity
                       side="b"
                       agentId={b.agent_b_id}
@@ -446,15 +429,14 @@ export default function BattlesListPage() {
                       once the battle has run and revealed it. */}
                   <div className="mt-4 border-t border-neutral-800/70 pt-3 flex items-baseline gap-2 min-w-0">
                     <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 shrink-0">
-                      Theme
-                    </span>
+                      {" " + tr("Theme") + " "}</span>
                     {!b.task_content_withheld && b.task_title_snapshot ? (
                       <span className="text-xs text-neutral-300 truncate">{b.task_title_snapshot}</span>
                     ) : (
                       <span className="text-xs text-neutral-500 truncate">
-                        {b.task_category_filter ?? "Any category"} ·{" "}
-                        {b.task_difficulty_filter ? BATTLE_DIFFICULTY[b.task_difficulty_filter] : "any difficulty"}
-                        {b.task_content_withheld && <span className="text-neutral-600"> · hidden</span>}
+                        {b.task_category_filter ?? tr("Any category")} ·{" "}
+                        {b.task_difficulty_filter ? ui(BATTLE_DIFFICULTY[b.task_difficulty_filter]) : tr("any difficulty")}
+                        {b.task_content_withheld && <span className="text-neutral-600"> {" " + tr("· hidden")}</span>}
                       </span>
                     )}
                   </div>
@@ -463,19 +445,19 @@ export default function BattlesListPage() {
                   <div className="mt-3 flex items-center justify-between gap-2">
                     {isRunningLike && (
                       <span className="text-sm text-orange-300">
-                        {b.status === "judging" ? "Checking jury replicas" : "Open live view →"}
+                        {b.status === "judging" ? tr("Checking jury replicas") : tr("Open live view →")}
                       </span>
                     )}
-                    {isQueueLike && <span className="text-sm text-neutral-400">Waiting to start</span>}
+                    {isQueueLike && <span className="text-sm text-neutral-400">{tr("Waiting to start")}</span>}
                     {b.status === "challenge_pending" && (
-                      <span className="text-sm text-violet-300">Open challenge →</span>
+                      <span className="text-sm text-violet-300">{tr("Open challenge →")}</span>
                     )}
-                    {b.status === "accepted" && <span className="text-sm text-neutral-400">Accepted, preparing</span>}
+                    {b.status === "accepted" && <span className="text-sm text-neutral-400">{tr("Accepted, preparing")}</span>}
                     {b.status === "completed" && b.winner && (
                       <span className="text-sm font-semibold text-neutral-100">
-                        {b.winner === "tie" ? "Tie" : (
+                        {b.winner === "tie" ? tr("Tie") : (
                           <>
-                            Winner:{" "}
+                            {" " + tr("Winner:")}{" "}
                             <span className={b.winner === "a" ? "text-violet-300" : "text-cyan-300"}>
                               {winnerName ?? "…"}
                             </span>
@@ -484,7 +466,7 @@ export default function BattlesListPage() {
                       </span>
                     )}
                     {b.status === "completed" && !b.winner && (
-                      <span className="text-sm text-neutral-400">Finished without a verdict</span>
+                      <span className="text-sm text-neutral-400">{tr("Finished without a verdict")}</span>
                     )}
                     {terminalText && <span className="text-sm text-neutral-500">{terminalText}</span>}
                   </div>
@@ -506,12 +488,12 @@ export default function BattlesListPage() {
               aria-busy={loadingMore}
               className="battle-press min-h-11 rounded-lg border border-neutral-700 px-5 text-sm font-medium text-neutral-200 transition-colors hover:bg-neutral-900 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
             >
-              {loadingMore ? "Loading…" : "Show more battles"}
+              {loadingMore ? tr("Loading…") : tr("Show more battles")}
             </button>
             {/* Announced, because appending 25 rows below a button that keeps
                 focus is otherwise a silent change for a screen reader. */}
             <span aria-live="polite" className="text-xs text-neutral-600">
-              Showing {battles.length}
+              {" " + tr("Showing") + " "}{battles.length.toLocaleString(locale)}
             </span>
           </div>
         )}

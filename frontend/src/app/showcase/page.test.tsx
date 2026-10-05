@@ -2,8 +2,15 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ShowcasePage from "./page";
+import { LocaleProvider, useLocale } from "@/lib/i18n/LocaleProvider";
 
-vi.mock("@/components/Header", () => ({ Header: () => null }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+function HeaderProbe() {
+  const { locale, setLocale } = useLocale();
+  return <><button aria-pressed={locale === "ru"} onClick={() => setLocale("ru")}>Русский</button>
+    <button onClick={() => setLocale("en")}>English</button></>;
+}
+vi.mock("@/components/Header", () => ({ Header: () => <HeaderProbe /> }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 function mockProjects() {
@@ -20,14 +27,14 @@ function mockProjects() {
 describe("Showcase demo links", () => {
   it("withdraws SignSafe from the curated showcase", async () => {
     mockProjects();
-    render(<ShowcasePage />);
+    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
     await screen.findByRole("heading", { name: "Live Verdict" });
     expect(screen.queryByRole("heading", { name: "SignSafe" })).toBeNull();
   });
 
   it("hides archived or missing deployments and preserves the real live URL", async () => {
     mockProjects();
-    render(<ShowcasePage />);
+    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
     const heading = await screen.findByRole("heading", { name: "Live Verdict" });
     const card = heading.closest(".project-card");
     if (!(card instanceof HTMLElement)) throw new Error("Live project card is missing");
@@ -47,14 +54,14 @@ function featuredCard(name: string) {
 describe("Showcase service selection", () => {
   it("does not promise all catalog services are running today", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
-    render(<ShowcasePage />);
+    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
     expect(screen.queryByText(/running service today/i)).toBeNull();
     expect(screen.getAllByRole("article")).toHaveLength(2);
   });
 
   it.each([200, 503])("keeps actionable cards with an empty or failed catalog (%s)", async (status) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status })));
-    render(<ShowcasePage />);
+    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
     await screen.findByText(status === 200 ? /no catalog apps found/i : /catalog unavailable/i);
     const family = featuredCard("Pereklichka");
     for (const name of ["Pereklichka", "SaaSCalc"]) {
@@ -88,7 +95,7 @@ describe("Showcase service selection", () => {
 
   it("switches page and service instructions to Russian without losing URLs", async () => {
     mockProjects();
-    render(<ShowcasePage />);
+    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
     await screen.findByRole("heading", { name: "Live Verdict" });
     fireEvent.click(screen.getByRole("button", { name: "Русский" }));
     expect(screen.getByRole("button", { name: "Русский" }).getAttribute("aria-pressed")).toBe("true");
@@ -106,7 +113,7 @@ describe("Showcase service selection", () => {
   it("retains catalog data and service links when a subsequent poll fails, then retries", async () => {
     mockProjects();
     const transport = vi.mocked(fetch);
-    render(<ShowcasePage />);
+    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
     await screen.findByRole("heading", { name: "Live Verdict" });
     transport.mockResolvedValueOnce(new Response("[]", { status: 503 }));
     await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });

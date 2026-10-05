@@ -1,5 +1,10 @@
 "use client";
 
+import { LanguageSelector } from "@/components/LanguageSelector";
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
+
 import Link from "next/link";
 import { useState, useEffect } from "react";
 import { API_URL } from "@/lib/api";
@@ -20,6 +25,8 @@ function DotGrid() {
 }
 
 export default function ResetPasswordPage() {
+  const { locale } = useLocale();
+  const tr = useTranslations(accountMessages);
   const [token, setToken] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -37,11 +44,11 @@ export default function ResetPasswordPage() {
     setError(null);
 
     if (password.length < 8) {
-      setError("Password must be at least 8 characters");
+      setError(accountMessages.en.passwordMustBeAtLeast8Characters);
       return;
     }
     if (password !== confirm) {
-      setError("Passwords do not match");
+      setError(accountMessages.en.passwordsDoNotMatch);
       return;
     }
 
@@ -54,12 +61,12 @@ export default function ResetPasswordPage() {
       });
       if (!res.ok) {
         const data = await res.json();
-        setError(data.detail ?? "Reset failed");
+        setError(data.detail ?? accountMessages.en.resetFailed);
         return;
       }
       setDone(true);
     } catch {
-      setError("Failed to connect to server");
+      setError(accountMessages.en.failedToConnectToServer);
     } finally {
       setLoading(false);
     }
@@ -73,6 +80,7 @@ export default function ResetPasswordPage() {
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">
+        <div className="mb-4 flex justify-end"><LanguageSelector /></div>
         <div className="text-center mb-10 animate-fadeUp">
           <Link href="/" className="inline-flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm flex items-center justify-center text-lg text-violet-400">
@@ -93,41 +101,36 @@ export default function ResetPasswordPage() {
 
           {!token ? (
             <>
-              <h2 className="text-lg font-semibold font-mono mb-2">$ error: invalid-link</h2>
+              <h2 className="text-lg font-semibold font-mono mb-2">{tr('errorInvalidLink')}</h2>
               <p className="text-neutral-500 text-sm font-mono mb-5">
-                This reset link is invalid or has expired.
-              </p>
+                {tr('thisResetLinkIsInvalidOrHasExpired')}</p>
               <Link
                 href="/forgot-password"
                 className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono"
               >
-                $ request-new-link
-              </Link>
+                {tr('requestNewLink')}</Link>
             </>
           ) : done ? (
             <>
               <div className="bg-emerald-950/30 border border-emerald-800/30 rounded-lg px-4 py-4 mb-5">
-                <h2 className="text-emerald-400 font-semibold font-mono mb-1">$ success</h2>
+                <h2 className="text-emerald-400 font-semibold font-mono mb-1">{tr('success')}</h2>
                 <p className="text-emerald-400/80 text-sm font-mono">
-                  Your password has been reset successfully.
-                </p>
+                  {tr('yourPasswordHasBeenResetSuccessfully')}</p>
               </div>
               <Link
                 href="/login"
                 className="inline-block w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black text-center transition-all hover:bg-neutral-200"
               >
-                Sign In
-              </Link>
+                {tr('signIn')}</Link>
             </>
           ) : (
             <>
-              <h2 className="text-lg font-semibold font-mono mb-1">$ new-password</h2>
+              <h2 className="text-lg font-semibold font-mono mb-1">{tr('newPassword2')}</h2>
               <p className="text-neutral-500 text-sm font-mono mb-6">
-                Enter your new password below.
-              </p>
+                {tr('enterYourNewPasswordBelow')}</p>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-xs text-neutral-500 font-mono mb-1.5">new_password</label>
+                  <label className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('newPassword')}</label>
                   <input
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -139,7 +142,7 @@ export default function ResetPasswordPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-neutral-500 font-mono mb-1.5">confirm_password</label>
+                  <label className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('confirmPassword')}</label>
                   <input
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}
@@ -152,7 +155,7 @@ export default function ResetPasswordPage() {
                 </div>
                 {error && (
                   <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-                    <p className="text-red-400 text-xs font-mono">{error}</p>
+                    <p className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
                   </div>
                 )}
                 <button
@@ -160,7 +163,7 @@ export default function ResetPasswordPage() {
                   disabled={loading}
                   className="w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50"
                 >
-                  {loading ? "processing..." : "Reset Password"}
+                  {loading ? tr('processing') : tr('resetPassword')}
                 </button>
               </form>
             </>
@@ -172,8 +175,7 @@ export default function ResetPasswordPage() {
             href="/login"
             className="hover:text-violet-400 transition-colors"
           >
-            cd ~/sign-in
-          </Link>
+            {tr('cdSignIn')}</Link>
         </p>
       </div>
 
