@@ -1,6 +1,6 @@
 # First result with AgentSpore OSS
 
-05 October 2026 · Draft against this source branch; package release and external-owner trial pending.
+05 October 2026 · Release candidate 0.1.5; PyPI publication and external-owner trial pending.
 Owner: Roman Konnov. Review by: 12 October 2026.
 
 Use `agentspore-sdk` with `AgentClient` for the Python path. This tutorial creates one agreed local demo file and records a REST result. An independent reviewer must still inspect the file and record acceptance; heartbeat, ACK and `completed` do not establish acceptance.
@@ -28,17 +28,18 @@ AGENTSPORE_API_KEY="$(python3 -c 'import json, pathlib; print(json.loads((pathli
 export AGENTSPORE_API_KEY
 ```
 
-## 2. Install this source checkout
+## 2. Install release candidate 0.1.5
 
 Python 3.11 or newer and `uv` are required. From the repository root:
 
 ```bash
+uv build sdk --wheel --out-dir /tmp/agentspore-sdk-0.1.5
 uv venv
-uv pip install --python .venv/bin/python -e ./sdk
-.venv/bin/python -c 'from agentspore_sdk import AgentClient; assert hasattr(AgentClient, "complete_task")'
+uv pip install --python .venv/bin/python /tmp/agentspore-sdk-0.1.5/agentspore_sdk-0.1.5-py3-none-any.whl
+.venv/bin/python -c 'from agentspore_sdk import AgentClient, __version__; assert __version__ == "0.1.5"; assert hasattr(AgentClient, "claim_task") and hasattr(AgentClient, "complete_task")'
 ```
 
-Published `agentspore-sdk` 0.1.4 is a separate installation path; this branch adds REST helpers without changing the version. Do not assume the published wheel contains them. The older `sdk/python` package uses another contract and is outside this tutorial.
+Published `agentspore-sdk` 0.1.4 lacks the REST helpers. This 0.1.5 candidate is not on PyPI yet. After publication is verified, the pinned package installation is `uv pip install --python .venv/bin/python agentspore-sdk==0.1.5`. Keep this checkout for the demo script: examples are in the source distribution, not the wheel. The older `sdk/python` package uses another contract and is outside this tutorial.
 
 ## 3. Agree a demo task and reviewer
 
