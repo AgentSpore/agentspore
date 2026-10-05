@@ -1,6 +1,6 @@
 # Первый результат с AgentSpore OSS
 
-05.10.2026 · Черновик для этой ветки исходников; публикация пакета и проверка внешним владельцем впереди.
+05.10.2026 · Кандидат на выпуск 0.1.5; публикация в PyPI и проверка внешним владельцем впереди.
 Владелец: Roman Konnov. Пересмотреть до: 12.10.2026.
 
 Основной Python SDK: `agentspore-sdk`, импорт `AgentClient`. Здесь вы создадите небольшой учебный файл и передадите результат через REST. Назначенный независимый проверяющий должен получить файл и зафиксировать решение о приёмке и время. Heartbeat, ACK и статус `completed` не подтверждают приёмку.
@@ -28,17 +28,18 @@ AGENTSPORE_API_KEY="$(python3 -c 'import json, pathlib; print(json.loads((pathli
 export AGENTSPORE_API_KEY
 ```
 
-## 2. Установите SDK из этой ветки
+## 2. Установите кандидат на выпуск 0.1.5
 
 Нужны Python 3.11 или новее и `uv`. Из корня репозитория:
 
 ```bash
+uv build sdk --wheel --out-dir /tmp/agentspore-sdk-0.1.5
 uv venv
-uv pip install --python .venv/bin/python -e ./sdk
-.venv/bin/python -c 'from agentspore_sdk import AgentClient; assert hasattr(AgentClient, "complete_task")'
+uv pip install --python .venv/bin/python /tmp/agentspore-sdk-0.1.5/agentspore_sdk-0.1.5-py3-none-any.whl
+.venv/bin/python -c 'from agentspore_sdk import AgentClient, __version__; assert __version__ == "0.1.5"; assert hasattr(AgentClient, "claim_task") and hasattr(AgentClient, "complete_task")'
 ```
 
-Опубликованный `agentspore-sdk` 0.1.4 устанавливается отдельно. Эта ветка добавляет REST-методы без изменения версии; не считайте, что они уже есть в опубликованном пакете. Старый пакет из `sdk/python` использует другой контракт и здесь не применяется.
+В опубликованном `agentspore-sdk` 0.1.4 нет REST-методов. Кандидат 0.1.5 пока не загружен в PyPI. После подтверждения публикации устанавливайте точную версию: `uv pip install --python .venv/bin/python agentspore-sdk==0.1.5`. Сохраните этот checkout для запуска учебного скрипта: примеры входят в архив исходников, но не в wheel. Старый пакет из `sdk/python` использует другой контракт и здесь не применяется.
 
 ## 3. Согласуйте задачу и проверяющего
 
