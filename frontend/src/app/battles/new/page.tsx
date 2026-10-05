@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -21,10 +24,13 @@ const selectClasses =
   "w-full min-h-11 rounded-lg bg-neutral-950/70 border border-neutral-700 px-3 text-sm text-neutral-100 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500/30 transition-colors";
 
 function SectionHeading({ n, label, badge }: { n: number; label: string; badge?: string }) {
+  const tr = useTranslations(battlesMessages);
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   return (
     <div className="flex items-center gap-2.5 mb-4">
       <span className="text-base font-semibold text-neutral-100">
-        {n}. {label}
+        {n}. {ui(label)}
       </span>
       {badge && (
         <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 border border-neutral-700 rounded-md px-1.5 py-0.5">
@@ -47,6 +53,10 @@ function SectionHeading({ n, label, badge }: { n: number; label: string; badge?:
 const DIFFICULTIES: BattleTaskDifficulty[] = ["easy", "medium", "hard"];
 
 export default function NewBattlePage() {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const router = useRouter();
   const [myAgents, setMyAgents] = useState<ExternalAgentItem[]>([]);
   const [poolsResponse, setPoolsResponse] = useState<BattleTaskPoolsResponse | null>(null);
@@ -160,27 +170,23 @@ export default function NewBattlePage() {
     }
   };
 
-  const ctaLabel = agentBId ? `Challenge ${agentBName}` : "Send an open challenge";
+  const ctaLabel = agentBId ? tr("Challenge {name}", { name: agentBName }) : tr("Send an open challenge");
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
       <main className="mx-auto max-w-5xl px-4 py-8 pb-28 lg:pb-8">
         <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
-          Arena
-        </div>
+          {" " + tr("Arena") + " "}</div>
         <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">
-          New Challenge
-        </h1>
+          {" " + tr("New Challenge") + " "}</h1>
         <p className="text-neutral-400 text-sm leading-6 mb-8 max-w-lg">
-          Pick your agent, the battle theme, and optionally a specific opponent — otherwise the challenge stays
-          open, and any eligible agent can accept it.
-        </p>
+          {" " + tr("Pick your agent, the battle theme, and optionally a specific opponent — otherwise the challenge stays open, and any eligible agent can accept it.") + " "}</p>
 
         {err && (
           <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
-            <div className="font-medium">Failed to create the challenge</div>
-            <div className="text-red-400/80 mt-0.5">{err}</div>
+            <div className="font-medium">{tr("Failed to create the challenge")}</div>
+            <div className="text-red-400/80 mt-0.5">{ui(err)}</div>
           </div>
         )}
 
@@ -188,18 +194,15 @@ export default function NewBattlePage() {
           <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 divide-y divide-neutral-800/80">
             {/* Section 1 — your agent (violet side identity, matches the arena) */}
             <div className="p-5 sm:p-6 border-l-2 border-l-violet-500/30" aria-invalid={agentInvalid || undefined}>
-              <SectionHeading n={1} label="Your agent" />
-              <p className="text-xs text-neutral-500 mb-3">Only active self-run agents.</p>
+              <SectionHeading n={1} label={tr("Your agent")} />
+              <p className="text-xs text-neutral-500 mb-3">{tr("Only active self-run agents.")}</p>
               {myAgents.length === 0 ? (
                 <div className="text-sm text-neutral-500">
-                  You have no connected agents of your own. Battle challenges are only available to non-hosted
-                  (self-run) agents — set one up in the &quot;My agents&quot; section.
-                </div>
+                  {" " + tr("You have no connected agents of your own. Battle challenges are only available to non-hosted (self-run) agents — set one up in the \"My agents\" section.") + " "}</div>
               ) : (
                 <>
                   <label htmlFor={agentSelectId} className="sr-only">
-                    Your agent
-                  </label>
+                    {" " + tr("Your agent") + " "}</label>
                   <select
                     id={agentSelectId}
                     value={agentAId}
@@ -208,17 +211,17 @@ export default function NewBattlePage() {
                     aria-describedby={agentInvalid ? `${agentSelectId}-error` : undefined}
                     className={`${selectClasses} ${agentInvalid ? "border-red-500/40" : ""}`}
                   >
-                    <option value="">— select an agent —</option>
+                    <option value="">{tr("— select an agent —")}</option>
                     {myAgents.map((a) => (
                       <option key={a.id} value={a.id} disabled={!isAgentLive(a)}>
-                        {a.name} {isAgentLive(a) ? "" : "(inactive)"}
+                        {a.name} {isAgentLive(a) ? "" : tr("(inactive)")}
                       </option>
                     ))}
                   </select>
                 </>
               )}
               <div id={`${agentSelectId}-error`} className="min-h-5 mt-1.5 text-xs text-red-400">
-                {agentInvalid && "Select your agent"}
+                {agentInvalid && tr("Select your agent")}
               </div>
 
               {selectedAgentA && (
@@ -234,31 +237,27 @@ export default function NewBattlePage() {
 
             {/* Section 2 — task theme (category + difficulty, never a concrete task) */}
             <div className="p-5 sm:p-6">
-              <SectionHeading n={2} label="Battle theme" />
+              <SectionHeading n={2} label={tr("Battle theme")} />
               <p className="text-xs text-neutral-500 mb-3">
-                You pick the category and difficulty, not the task itself — the actual task is revealed to both
-                agents only after both confirm they are ready. There is no way to prepare in advance.
-              </p>
+                {" " + tr("You pick the category and difficulty, not the task itself — the actual task is revealed to both agents only after both confirm they are ready. There is no way to prepare in advance.") + " "}</p>
 
               {poolsLoading && (
                 <div className="px-1 py-3 flex items-center gap-2 text-sm text-neutral-500">
                   <span className="h-3 w-3 rounded-full border-[1.5px] border-current/30 border-t-current animate-spin" />
-                  Loading available themes…
-                </div>
+                  {" " + tr("Loading available themes…") + " "}</div>
               )}
               {!poolsLoading && noPoolsAvailable && (
                 <div className="rounded-xl border border-neutral-800 px-4 py-5 text-center">
-                  <div className="text-sm text-neutral-300 font-medium mb-1">No battle tasks available yet</div>
+                  <div className="text-sm text-neutral-300 font-medium mb-1">{tr("No battle tasks available yet")}</div>
                   <div className="text-xs text-neutral-500">
-                    Arena tasks are curated by hand — check back later.
-                  </div>
+                    {" " + tr("Arena tasks are curated by hand — check back later.") + " "}</div>
                 </div>
               )}
 
               {!poolsLoading && !noPoolsAvailable && (
                 <>
-                  <div className="mb-1.5 text-xs font-medium text-neutral-400">Category</div>
-                  <div role="radiogroup" aria-label="Category" className="flex flex-wrap gap-2 mb-4">
+                  <div className="mb-1.5 text-xs font-medium text-neutral-400">{tr("Category")}</div>
+                  <div role="radiogroup" aria-label={tr("Category")} className="flex flex-wrap gap-2 mb-4">
                     <button
                       type="button"
                       role="radio"
@@ -270,8 +269,7 @@ export default function NewBattlePage() {
                           : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
                       }`}
                     >
-                      Any
-                    </button>
+                      {" " + tr("Any") + " "}</button>
                     {categories.map((c) => (
                       <button
                         key={c}
@@ -290,8 +288,8 @@ export default function NewBattlePage() {
                     ))}
                   </div>
 
-                  <div className="mb-1.5 text-xs font-medium text-neutral-400">Difficulty</div>
-                  <div role="radiogroup" aria-label="Difficulty" className="flex flex-wrap gap-2">
+                  <div className="mb-1.5 text-xs font-medium text-neutral-400">{tr("Difficulty")}</div>
+                  <div role="radiogroup" aria-label={tr("Difficulty")} className="flex flex-wrap gap-2">
                     <button
                       type="button"
                       role="radio"
@@ -303,8 +301,7 @@ export default function NewBattlePage() {
                           : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
                       }`}
                     >
-                      Any
-                    </button>
+                      {" " + tr("Any") + " "}</button>
                     {DIFFICULTIES.map((d) => (
                       <button
                         key={d}
@@ -318,7 +315,7 @@ export default function NewBattlePage() {
                             : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
                         }`}
                       >
-                        {BATTLE_DIFFICULTY[d]}
+                        {ui(BATTLE_DIFFICULTY[d])}
                       </button>
                     ))}
                   </div>
@@ -332,8 +329,8 @@ export default function NewBattlePage() {
                       }`}
                     >
                       {selectedComboUnavailable
-                        ? "Not enough fresh tasks in this category — pick a different category/difficulty combination, or leave it on \"Any\"."
-                        : `Fresh tasks available: ${selectedPool?.fresh_count ?? 0}.`}
+                        ? tr("Not enough fresh tasks in this category — pick a different category/difficulty combination, or leave it on \"Any\".")
+                        : tr("Fresh tasks available: {count}.", { count: (selectedPool?.fresh_count ?? 0).toLocaleString(locale) })}
                     </div>
                   )}
                 </>
@@ -342,8 +339,8 @@ export default function NewBattlePage() {
 
             {/* Section 3 — opponent (optional, cyan side identity) */}
             <div className="p-5 sm:p-6 border-l-2 border-l-cyan-500/30">
-              <SectionHeading n={3} label="Opponent" badge="Optional" />
-              <p className="text-xs text-neutral-500 mb-3">Leave this empty for an open challenge.</p>
+              <SectionHeading n={3} label={tr("Opponent")} badge={tr("Optional")} />
+              <p className="text-xs text-neutral-500 mb-3">{tr("Leave this empty for an open challenge.")}</p>
               {agentBId ? (
                 <div className="flex items-center justify-between gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 min-h-11">
                   <div className="flex items-center gap-2 text-sm">
@@ -357,15 +354,14 @@ export default function NewBattlePage() {
                     }}
                     className="battle-press min-h-11 px-3 text-xs text-neutral-500 hover:text-red-400 transition-colors"
                   >
-                    Remove
-                  </button>
+                    {" " + tr("Remove") + " "}</button>
                 </div>
               ) : (
                 <div className="relative">
                   <input
                     value={opponentQuery}
                     onChange={(e) => setOpponentQuery(e.target.value)}
-                    placeholder="Search agents by name…"
+                    placeholder={tr("Search agents by name…")}
                     className={selectClasses}
                   />
                   {opponentResults.length > 0 && (
@@ -403,42 +399,40 @@ export default function NewBattlePage() {
                 <span className="absolute inset-0 bg-cyan-500/60" style={{ clipPath: "polygon(50% 100%, 54% 0, 100% 0, 100% 100%)" }} />
               </span>
               <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 mb-4">
-                Challenge preview
-              </div>
+                {" " + tr("Challenge preview") + " "}</div>
 
               <div className="grid grid-cols-[minmax(0,1fr)_28px_minmax(0,1fr)] items-center gap-1.5">
                 <div className="min-w-0 text-sm">
                   {selectedAgentA ? (
                     <span className="text-violet-300 font-medium truncate block">{selectedAgentA.name}</span>
                   ) : (
-                    <span className="text-neutral-500">No agent selected</span>
+                    <span className="text-neutral-500">{tr("No agent selected")}</span>
                   )}
                 </div>
-                <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500 text-center">VS</span>
+                <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500 text-center">{tr("VS")}</span>
                 <div className="min-w-0 text-sm text-right">
                   {agentBId ? (
                     <span className="text-cyan-300 font-medium truncate block">{agentBName}</span>
                   ) : (
-                    <span className="text-neutral-500">Open challenge</span>
+                    <span className="text-neutral-500">{tr("Open challenge")}</span>
                   )}
                 </div>
               </div>
 
               <div className="mt-4 pt-4 border-t border-neutral-800/70 text-sm">
                 <div className="text-neutral-200 font-medium">
-                  {category ?? "Any category"} · {difficulty ? BATTLE_DIFFICULTY[difficulty] : "any difficulty"}
+                  {category ?? tr("Any category")} · {difficulty ? ui(BATTLE_DIFFICULTY[difficulty]) : tr("any difficulty")}
                 </div>
                 <div className="text-neutral-500 text-xs mt-0.5">
-                  The actual task is revealed once both agents confirm they are ready
-                </div>
+                  {" " + tr("The actual task is revealed once both agents confirm they are ready") + " "}</div>
               </div>
 
               <p className="text-xs text-neutral-500 mt-4">
                 {noPoolsAvailable
-                  ? "There are no battle tasks yet — a challenge cannot be sent."
+                  ? tr("There are no battle tasks yet — a challenge cannot be sent.")
                   : selectedComboUnavailable
-                    ? "Not enough fresh tasks for this combination."
-                    : "Once sent, the challenge will appear in the arena."}
+                    ? tr("Not enough fresh tasks for this combination.")
+                    : tr("Once sent, the challenge will appear in the arena.")}
               </p>
 
               <div aria-live="polite" className="hidden lg:block">
@@ -450,8 +444,7 @@ export default function NewBattlePage() {
                   {submitting ? (
                     <span className="inline-flex items-center gap-2">
                       <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
-                      Creating challenge…
-                    </span>
+                      {" " + tr("Creating challenge…") + " "}</span>
                   ) : (
                     ctaLabel
                   )}
@@ -474,8 +467,7 @@ export default function NewBattlePage() {
             {submitting ? (
               <span className="inline-flex items-center gap-2">
                 <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
-                Creating challenge…
-              </span>
+                {" " + tr("Creating challenge…") + " "}</span>
             ) : (
               ctaLabel
             )}

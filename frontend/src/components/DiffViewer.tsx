@@ -1,4 +1,8 @@
 "use client";
+import { localeTag } from "@/lib/i18n/locale";
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { displaySharedText, sharedMessages } from '@/lib/i18n/shared';
 
 import { useMemo, useState } from "react";
 import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
@@ -87,6 +91,8 @@ function DiffFileCard({ file, splitView, viewed, onToggleViewed }: {
   viewed: boolean;
   onToggleViewed: () => void;
 }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(sharedMessages);
   const [collapsed, setCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
   const { oldContent, newContent } = useMemo(() => reconstructFiles(file.patch), [file.patch]);
@@ -103,26 +109,25 @@ function DiffFileCard({ file, splitView, viewed, onToggleViewed }: {
     <div className={`rounded-xl border ${viewed ? "border-neutral-900 bg-white/[0.01] opacity-60" : "border-neutral-800/60 bg-white/[0.02]"} overflow-hidden`}>
       <div className="flex items-center justify-between gap-3 px-3.5 py-2 bg-neutral-950/80 border-b border-neutral-800/60 text-xs font-mono">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          <button onClick={() => setCollapsed(!collapsed)} className="text-neutral-500 hover:text-neutral-200 transition">
+          <button aria-label={collapsed ? tr('expandFile') : tr('collapseFile')} onClick={() => setCollapsed(!collapsed)} className="text-neutral-500 hover:text-neutral-200 transition">
             {collapsed ? "▸" : "▾"}
           </button>
           <span className={`px-1.5 py-0.5 rounded border text-[10px] uppercase tracking-wider ${statusCls}`}>
-            {file.status}
+            {displaySharedText(locale, file.status)}
           </span>
           <span className="text-neutral-200 truncate">{file.path}</span>
           <span className="flex items-center gap-1.5 text-[11px] shrink-0">
-            <span className="text-emerald-400">+{stats.add}</span>
-            <span className="text-red-400">−{stats.del}</span>
+            <span className="text-emerald-400">+{new Intl.NumberFormat(localeTag(locale)).format(stats.add)}</span>
+            <span className="text-red-400">−{new Intl.NumberFormat(localeTag(locale)).format(stats.del)}</span>
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button onClick={copy} className="px-2 py-0.5 rounded text-[11px] border border-neutral-800 text-neutral-400 hover:text-neutral-100 hover:border-neutral-600 transition">
-            {copied ? "Copied" : "Copy"}
+            {copied ? tr('copied') : tr('copy')}
           </button>
           <label className="flex items-center gap-1.5 text-[11px] text-neutral-400 cursor-pointer select-none">
             <input type="checkbox" checked={viewed} onChange={onToggleViewed} className="accent-violet-500 w-3 h-3" />
-            Viewed
-          </label>
+            {tr('viewed')}</label>
         </div>
       </div>
 
@@ -137,6 +142,7 @@ function DiffFileCard({ file, splitView, viewed, onToggleViewed }: {
             disableWordDiff={false}
             compareMethod={DiffMethod.LINES}
             styles={DIFF_STYLES}
+            codeFoldMessageRenderer={count => <span>{tr('hiddenLines', { count })}</span>}
             hideSummary
             disableWorker
           />
@@ -147,6 +153,8 @@ function DiffFileCard({ file, splitView, viewed, onToggleViewed }: {
 }
 
 export function DiffViewer({ files }: { files: DiffFileChange[] }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(sharedMessages);
   const [splitView, setSplitView] = useState(false);
   const [viewed, setViewed] = useState<Set<string>>(new Set());
 
@@ -172,9 +180,9 @@ export function DiffViewer({ files }: { files: DiffFileChange[] }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="text-xs font-mono text-neutral-500">
-          {files.length} file{files.length === 1 ? "" : "s"} changed{" "}
-          <span className="text-emerald-400">+{total.add}</span>{" "}
-          <span className="text-red-400">−{total.del}</span>
+          {tr('filesChanged', { count: new Intl.NumberFormat(localeTag(locale)).format(files.length), suffix: files.length === 1 ? '' : 's' })}{" "}
+          <span className="text-emerald-400">+{new Intl.NumberFormat(localeTag(locale)).format(total.add)}</span>{" "}
+          <span className="text-red-400">−{new Intl.NumberFormat(localeTag(locale)).format(total.del)}</span>
         </div>
         <div className="flex items-center gap-0 rounded-lg border border-neutral-800 bg-white/[0.02] p-0.5">
           <button
@@ -183,16 +191,14 @@ export function DiffViewer({ files }: { files: DiffFileChange[] }) {
               !splitView ? "bg-white/[0.08] text-neutral-100" : "text-neutral-500 hover:text-neutral-300"
             }`}
           >
-            Unified
-          </button>
+            {tr('unified')}</button>
           <button
             onClick={() => setSplitView(true)}
             className={`px-2.5 py-1 text-[11px] font-mono rounded-md transition ${
               splitView ? "bg-white/[0.08] text-neutral-100" : "text-neutral-500 hover:text-neutral-300"
             }`}
           >
-            Split
-          </button>
+            {tr('split')}</button>
         </div>
       </div>
 

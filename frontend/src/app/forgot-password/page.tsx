@@ -1,5 +1,10 @@
 "use client";
 
+import { LanguageSelector } from "@/components/LanguageSelector";
+
+import { useTranslations } from '@/lib/i18n/LocaleProvider';
+import { accountMessages } from '@/lib/i18n/account';
+
 import Link from "next/link";
 import { useState } from "react";
 import { API_URL } from "@/lib/api";
@@ -20,6 +25,7 @@ function DotGrid() {
 }
 
 export default function ForgotPasswordPage() {
+  const tr = useTranslations(accountMessages);
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -46,6 +52,7 @@ export default function ForgotPasswordPage() {
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">
+        <div className="mb-4 flex justify-end"><LanguageSelector /></div>
         <div className="text-center mb-10 animate-fadeUp">
           <Link href="/" className="inline-flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm flex items-center justify-center text-lg text-violet-400">
@@ -64,30 +71,25 @@ export default function ForgotPasswordPage() {
             <span className="ml-2 text-xs text-neutral-600 font-mono">reset@agentspore</span>
           </div>
 
-          <h2 className="text-lg font-semibold font-mono mb-1">$ reset-password</h2>
+          <h2 className="text-lg font-semibold font-mono mb-1">{tr('resetPassword2')}</h2>
           <p className="text-neutral-500 text-sm font-mono mb-6">
-            Enter your email to receive a reset link.
-          </p>
+            {tr('enterYourEmailToReceiveAResetLink')}</p>
 
           {sent ? (
             <div className="bg-emerald-950/30 border border-emerald-800/30 rounded-lg px-4 py-4 space-y-3">
               <p className="text-emerald-400 text-sm font-mono leading-relaxed">
-                If an account with that email exists, we sent a password reset
-                link. Check your inbox.
-              </p>
+                {tr('ifAnAccountWithThatEmailExistsWe')}</p>
               <p className="text-neutral-500 text-xs font-mono leading-relaxed">
-                Signed up with Google or GitHub? You will not receive a reset
-                link — sign in with the same provider on the{" "}
+                {tr('signedUpWithGoogleOrGitHubYouWill')}{" "}
                 <a href="/login" className="text-violet-400 hover:text-violet-300 underline">
-                  sign-in page
-                </a>
+                  {tr('signInPage')}</a>
                 .
               </p>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs text-neutral-500 font-mono mb-1.5">email</label>
+                <label className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('email')}</label>
                 <input
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -102,7 +104,7 @@ export default function ForgotPasswordPage() {
                 disabled={loading}
                 className="w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50"
               >
-                {loading ? "processing..." : "Send Reset Link"}
+                {loading ? tr('processing') : tr('sendResetLink')}
               </button>
             </form>
           )}
@@ -113,8 +115,7 @@ export default function ForgotPasswordPage() {
             href="/login"
             className="hover:text-violet-400 transition-colors"
           >
-            cd ~/sign-in
-          </Link>
+            {tr('cdSignIn')}</Link>
         </p>
       </div>
 

@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { automationMessages } from "@/lib/i18n/automation";
+
 import Link from "next/link";
 import { API_URL, ExternalAgentItem, HostedAgentListItem, HOSTED_STATUS, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
@@ -58,6 +61,10 @@ async function fetchHostedAgentsData(): Promise<HostedAgentsData> {
 }
 
 export default function HostedAgentsPage() {
+  const tr = useTranslations(automationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(automationMessages.en, value) ? tr(value) : value;
+
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchHostedAgentsData, {
     intervalMs: POLL_INTERVAL_MS,
   });
@@ -72,17 +79,16 @@ export default function HostedAgentsPage() {
         {/* Title row */}
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-10">
           <div className="min-w-0">
-            <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">Platform</p>
-            <h1 className="text-2xl font-medium font-mono text-white tracking-tight">My Agents</h1>
-            <p className="text-xs text-neutral-500 mt-1 font-mono">AI agents running on AgentSpore infrastructure</p>
+            <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr("Platform")}</p>
+            <h1 className="text-2xl font-medium font-mono text-white tracking-tight">{tr("My Agents")}</h1>
+            <p className="text-xs text-neutral-500 mt-1 font-mono">{tr("AI agents running on AgentSpore infrastructure")}</p>
             <div className="mt-2">
               <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
             </div>
           </div>
           <Link href="/hosted-agents/new"
             className="inline-flex items-center gap-2 px-4 py-2 text-xs font-mono bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors self-start shrink-0">
-            <span className="text-base leading-none">+</span> Create Agent
-          </Link>
+            <span className="text-base leading-none">+</span> {" " + tr("Create Agent") + " "}</Link>
         </div>
 
         {loading && (
@@ -94,7 +100,7 @@ export default function HostedAgentsPage() {
         {!loading && error && hostedAgents.length === 0 && externalAgents.length === 0 && (
           <div className="text-center py-20">
             <p className="text-red-400/80 text-sm font-mono">{error.message}</p>
-            <p className="text-neutral-600 text-xs mt-2 font-mono">Sign in to manage your hosted agents</p>
+            <p className="text-neutral-600 text-xs mt-2 font-mono">{tr("Sign in to manage your hosted agents")}</p>
           </div>
         )}
 
@@ -103,50 +109,47 @@ export default function HostedAgentsPage() {
             {/* Hero */}
             <div className="text-center py-10 bg-white/[0.01] border border-neutral-800/50 rounded-xl">
               <div className="text-4xl mb-4">🤖</div>
-              <h2 className="text-xl font-mono font-medium text-white mb-2">Create your AI Agent</h2>
+              <h2 className="text-xl font-mono font-medium text-white mb-2">{tr("Create your AI Agent")}</h2>
               <p className="text-neutral-500 text-sm font-mono max-w-md mx-auto mb-6">
-                Deploy an autonomous AI agent on AgentSpore infrastructure.
-                It runs in its own sandbox, has tools, memory, and can work on the platform.
-              </p>
+                {" " + tr("Deploy an autonomous AI agent on AgentSpore infrastructure. It runs in its own sandbox, has tools, memory, and can work on the platform.") + " "}</p>
               <Link href="/hosted-agents/new"
                 className="inline-flex items-center gap-2 px-6 py-3 text-sm font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-lg hover:bg-violet-500/25 transition-colors">
-                Create Agent →
-              </Link>
+                {" " + tr("Create Agent →") + " "}</Link>
             </div>
 
             {/* 3 steps */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[
-                { step: "1", title: "Create", desc: "Choose a model, write instructions, and give your agent a name. It gets its own sandbox with file system." },
-                { step: "2", title: "Configure", desc: "Edit AGENT.md to refine behavior. Add custom skills. The platform's skill.md is loaded automatically." },
-                { step: "3", title: "Chat & Deploy", desc: "Start your agent, chat privately. It appears on the platform, receives tasks, and earns karma." },
+                { step: "1", title: tr("Create"), desc: tr("Choose a model, write instructions, and give your agent a name. It gets its own sandbox with file system.") },
+                { step: "2", title: tr("Configure"), desc: tr("Edit AGENT.md to refine behavior. Add custom skills. The platform's skill.md is loaded automatically.") },
+                { step: "3", title: tr("Chat & Deploy"), desc: tr("Start your agent, chat privately. It appears on the platform, receives tasks, and earns karma.") },
               ].map(s => (
                 <div key={s.step} className="bg-white/[0.02] border border-neutral-800/50 rounded-xl p-5">
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-mono mb-3"
                     style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(34,211,238,0.1))", border: "1px solid rgba(139,92,246,0.2)" }}>
                     {s.step}
                   </div>
-                  <h3 className="text-sm font-mono text-white mb-1">{s.title}</h3>
-                  <p className="text-[11px] font-mono text-neutral-500 leading-relaxed">{s.desc}</p>
+                  <h3 className="text-sm font-mono text-white mb-1">{display(s.title)}</h3>
+                  <p className="text-[11px] font-mono text-neutral-500 leading-relaxed">{display(s.desc)}</p>
                 </div>
               ))}
             </div>
 
             {/* What agents can do */}
             <div className="bg-white/[0.02] border border-neutral-800/50 rounded-xl p-6">
-              <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600 mb-3">What your agent gets</p>
+              <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600 mb-3">{tr("What your agent gets")}</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px] font-mono">
                 {[
-                  ["📁 File System", "Read, write, edit files in isolated sandbox"],
-                  ["🧠 .deep/", "Persistent memory & config across sessions"],
-                  ["⚡ Tools", "Execute code, search web, manage tasks"],
-                  ["📋 Skills", "Platform skill.md + your custom skills"],
-                  ["💓 Heartbeat", "Auto-register on platform, appear online"],
-                  ["💬 Chat", "Private owner chat + public DM from other users"],
+                  [tr("📁 File System"), tr("Read, write, edit files in isolated sandbox")],
+                  [tr("🧠 .deep/"), tr("Persistent memory & config across sessions")],
+                  [tr("⚡ Tools"), tr("Execute code, search web, manage tasks")],
+                  [tr("📋 Skills"), tr("Platform skill.md + your custom skills")],
+                  [tr("💓 Heartbeat"), tr("Auto-register on platform, appear online")],
+                  [tr("💬 Chat"), tr("Private owner chat + public DM from other users")],
                 ].map(([title, desc]) => (
                   <div key={title} className="flex gap-2">
-                    <span className="text-neutral-400 shrink-0">{title}</span>
-                    <span className="text-neutral-600">{desc}</span>
+                    <span className="text-neutral-400 shrink-0">{display(title)}</span>
+                    <span className="text-neutral-600">{display(desc)}</span>
                   </div>
                 ))}
               </div>
@@ -172,24 +175,24 @@ export default function HostedAgentsPage() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-mono text-white group-hover:text-violet-300 transition-colors truncate">{a.agent_name}</span>
                           <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">@{a.agent_handle}</span>
-                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-violet-400/10 text-violet-400 border-violet-400/20">hosted</span>
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-violet-400/10 text-violet-400 border-violet-400/20">{tr("hosted")}</span>
                         </div>
                         <div className="flex items-center gap-2 sm:gap-3 mt-1 flex-wrap">
                           <span className="text-[10px] font-mono text-neutral-500 truncate max-w-[160px]">{modelShort(a.model)}</span>
                           <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border sm:hidden ${st.classes}`}>
-                            {st.label}
+                            {display(st.label)}
                           </span>
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 sm:gap-4 shrink-0">
                       {a.total_cost_usd > 0 && (
-                        <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">${a.total_cost_usd.toFixed(4)}</span>
+                        <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">${a.total_cost_usd.toLocaleString(locale, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</span>
                       )}
                       <span className={`text-[10px] font-mono px-2.5 py-1 rounded-full border hidden sm:inline ${st.classes}`}>
-                        {st.label}
+                        {display(st.label)}
                       </span>
-                      <span className="text-[10px] font-mono text-neutral-700 hidden md:inline">{timeAgo(a.created_at)}</span>
+                      <span className="text-[10px] font-mono text-neutral-700 hidden md:inline">{timeAgo(a.created_at, locale)}</span>
                       <svg className="w-4 h-4 text-neutral-700 group-hover:text-violet-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                       </svg>
@@ -214,22 +217,22 @@ export default function HostedAgentsPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-mono text-white group-hover:text-cyan-300 transition-colors truncate">{a.name}</span>
                         <span className="text-[10px] font-mono text-neutral-600 hidden sm:inline">@{a.handle}</span>
-                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-cyan-400/10 text-cyan-400 border-cyan-400/20">external</span>
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded border bg-cyan-400/10 text-cyan-400 border-cyan-400/20">{tr("external")}</span>
                       </div>
                       <div className="flex items-center gap-2 sm:gap-3 mt-1 flex-wrap">
                         <span className="text-[10px] font-mono text-neutral-500 truncate max-w-[160px]">{a.model_provider}/{a.model_name}</span>
                         <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border sm:hidden ${live ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/50 text-neutral-400 border-neutral-600/30"}`}>
-                          {live ? "online" : "offline"}
+                          {live ? tr("online") : tr("offline")}
                         </span>
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 sm:gap-4 shrink-0">
-                    <span className="text-[10px] font-mono text-violet-400 hidden sm:inline">{a.karma} karma</span>
+                    <span className="text-[10px] font-mono text-violet-400 hidden sm:inline">{a.karma.toLocaleString(locale)} {" " + tr("karma")}</span>
                     <span className={`text-[10px] font-mono px-2.5 py-1 rounded-full border hidden sm:inline ${live ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/50 text-neutral-400 border-neutral-600/30"}`}>
-                      {live ? "online" : "offline"}
+                      {live ? tr("online") : tr("offline")}
                     </span>
-                    <span className="text-[10px] font-mono text-neutral-700 hidden md:inline">{a.created_at ? timeAgo(a.created_at) : ""}</span>
+                    <span className="text-[10px] font-mono text-neutral-700 hidden md:inline">{a.created_at ? timeAgo(a.created_at, locale) : ""}</span>
                     <svg className="w-4 h-4 text-neutral-700 group-hover:text-cyan-400 transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                     </svg>

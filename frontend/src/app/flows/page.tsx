@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { automationMessages } from "@/lib/i18n/automation";
+
 import Link from "next/link";
 import { useState } from "react";
 import { API_URL, Flow, FLOW_STATUS, timeAgo } from "@/lib/api";
@@ -41,6 +44,10 @@ const statusColor: Record<string, string> = {
 };
 
 export default function FlowsPage() {
+  const tr = useTranslations(automationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(automationMessages.en, value) ? tr(value) : value;
+
   const [filter, setFilter] = useState<string>("all");
   // Lazy initialiser, not an effect: it runs during the first client render,
   // so the poll starts on mount rather than after a second pass. Polling a
@@ -65,14 +72,12 @@ export default function FlowsPage() {
         {/* Page header */}
         <div className="fade-up" style={{ animationDelay: "0ms" }}>
           <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
-            Pipelines
-          </span>
+            {" " + tr("Pipelines") + " "}</span>
           <div className="flex items-center justify-between mt-3">
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">Agent Flows</h1>
+              <h1 className="text-2xl font-bold tracking-tight">{tr("Agent Flows")}</h1>
               <p className="text-neutral-500 text-sm mt-1">
-                Build multi-agent pipelines to solve complex tasks
-              </p>
+                {" " + tr("Build multi-agent pipelines to solve complex tasks") + " "}</p>
               <div className="mt-1">
                 <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
               </div>
@@ -81,8 +86,7 @@ export default function FlowsPage() {
               href="/flows/new"
               className="px-5 py-2.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all"
             >
-              + New Flow
-            </Link>
+              {" " + tr("+ New Flow") + " "}</Link>
           </div>
         </div>
 
@@ -98,7 +102,7 @@ export default function FlowsPage() {
                   : "border-neutral-800/50 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700/60"
               }`}
             >
-              {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+              {s === "all" ? tr("All") : display(s.charAt(0).toUpperCase() + s.slice(1))}
               {s !== "all" && (
                 <span className="ml-1.5 text-neutral-600">
                   {flows.filter((f) => f.status === s).length}
@@ -109,7 +113,7 @@ export default function FlowsPage() {
         </div>
 
         {loading && (
-          <p className="text-neutral-600 text-sm font-mono fade-up">Loading flows...</p>
+          <p className="text-neutral-600 text-sm font-mono fade-up">{tr("Loading flows...")}</p>
         )}
 
         {!loading && flows.length === 0 && (
@@ -119,18 +123,15 @@ export default function FlowsPage() {
             </div>
             <div>
               <p className="text-neutral-400 text-sm">
-                No flows yet
-              </p>
+                {" " + tr("No flows yet") + " "}</p>
               <p className="text-neutral-600 text-xs mt-1">
-                Create your first multi-agent pipeline
-              </p>
+                {" " + tr("Create your first multi-agent pipeline") + " "}</p>
             </div>
             <Link
               href="/flows/new"
               className="inline-block mt-2 px-5 py-2.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all"
             >
-              Create Flow
-            </Link>
+              {" " + tr("Create Flow") + " "}</Link>
           </div>
         )}
 
@@ -140,7 +141,7 @@ export default function FlowsPage() {
               const st = FLOW_STATUS[f.status] || FLOW_STATUS.draft;
               const progress = f.step_count
                 ? `${f.completed_step_count ?? 0}/${f.step_count}`
-                : "0 steps";
+                : tr("0 steps");
               const colorCls = statusColor[f.status] || statusColor.draft;
               return (
                 <Link
@@ -158,13 +159,13 @@ export default function FlowsPage() {
                         <div className="text-neutral-600 text-xs mt-1 truncate">{f.description}</div>
                       )}
                       <div className="flex items-center gap-2 mt-2.5">
-                        <span className="text-neutral-500 text-[11px] font-mono">{progress} steps</span>
+                        <span className="text-neutral-500 text-[11px] font-mono">{progress} {" " + tr("steps")}</span>
                         <span className="text-neutral-700">·</span>
-                        <span className="text-neutral-600 text-[11px] font-mono">{timeAgo(f.created_at)}</span>
+                        <span className="text-neutral-600 text-[11px] font-mono">{timeAgo(f.created_at, locale)}</span>
                       </div>
                     </div>
                     <span className={`text-[10px] px-2.5 py-0.5 rounded-full border font-mono flex-shrink-0 ${colorCls}`}>
-                      {st.label}
+                      {display(st.label)}
                     </span>
                   </div>
                 </Link>

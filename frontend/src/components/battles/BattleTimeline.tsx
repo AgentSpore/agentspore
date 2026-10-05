@@ -1,3 +1,8 @@
+"use client";
+
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { BATTLE_DIFFICULTY, BattleDetail } from "@/lib/api";
 import { SectionHead } from "@/components/battles/battleUi";
 
@@ -51,10 +56,10 @@ function hasNoResultReason(battle: NoResultBattle, prefix: string): boolean {
   return battle.winner === null && (battle.verdict_reason?.startsWith(prefix) ?? false);
 }
 
-function fmtTime(ts: string): string {
+function fmtTime(ts: string, locale: string = "en"): string {
   const d = new Date(ts);
   if (!Number.isFinite(d.getTime())) return "—";
-  return d.toLocaleTimeString("en-US");
+  return d.toLocaleTimeString(locale);
 }
 
 /**
@@ -73,17 +78,21 @@ export function BattleTimeline({
   agentAName: string;
   agentBName: string;
 }) {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const rows: TimelineRow[] = [];
 
-  const filterText = `${battle.task_category_filter ?? "any category"}, ${
-    battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "any difficulty"
+  const filterText = `${battle.task_category_filter ?? tr("any category")}, ${
+    battle.task_difficulty_filter ? ui(BATTLE_DIFFICULTY[battle.task_difficulty_filter]) : tr("any difficulty")
   }`;
 
   rows.push({
     ts: battle.challenged_at,
     dot: "neutral",
     title: "Challenge sent",
-    sub: `${agentAName} challenged ${agentBName} · filter: ${filterText}`,
+    sub: tr("{challenger} challenged {opponent} · filter: {filter}", { challenger: agentAName, opponent: agentBName, filter: filterText }),
   });
 
   if (battle.agent_b_accepted_at) {
@@ -91,7 +100,7 @@ export function BattleTimeline({
       ts: battle.agent_b_accepted_at,
       dot: "b",
       title: "Challenge accepted",
-      sub: `${agentBName} confirmed participation`,
+      sub: tr("{agent} confirmed participation", { agent: agentBName }),
     });
   }
 
@@ -110,8 +119,8 @@ export function BattleTimeline({
       dot: "live",
       title: "Battle started",
       sub: battle.deadline_at
-        ? `task released to both sides · deadline ${fmtTime(battle.deadline_at)}`
-        : "task released to both sides",
+        ? tr("task released to both sides · deadline {deadline}", { deadline: fmtTime(battle.deadline_at, locale) })
+        : tr("task released to both sides"),
     });
   }
 
@@ -133,12 +142,12 @@ export function BattleTimeline({
       ts: battle.ended_at,
       dot: "ok",
       title: isVoidBattle(battle)
-        ? "Battle void — the model's provider could not be reached"
+        ? tr("Battle void — the model's provider could not be reached")
         : isRecusedBattle(battle)
-          ? "No result — every judge model was conflicted with a contender"
+          ? tr("No result — every judge model was conflicted with a contender")
           : battle.winner === null
-            ? "Battle finished without quorum"
-            : "Verdict reached, Elo updated",
+            ? tr("Battle finished without quorum")
+            : tr("Verdict reached, Elo updated"),
       sub: eloText ?? undefined,
     });
   }
@@ -152,8 +161,8 @@ export function BattleTimeline({
   }
 
   return (
-    <section aria-label="Timeline">
-      <SectionHead title="Timeline" className="mb-2.5" />
+    <section aria-label={tr("Timeline")}>
+      <SectionHead title={tr("Timeline")} className="mb-2.5" />
       <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/35 px-5 py-1.5">
         <div className="flex flex-col">
           {rows.map((row, i) => (
@@ -163,11 +172,11 @@ export function BattleTimeline({
                 i > 0 ? "border-t border-neutral-800/50" : ""
               }`}
             >
-              <span className="font-mono text-xs text-neutral-500 tabular-nums">{fmtTime(row.ts)}</span>
+              <span className="font-mono text-xs text-neutral-500 tabular-nums">{fmtTime(row.ts, locale)}</span>
               <span className={`h-[7px] w-[7px] rounded-full justify-self-center mt-1 ${DOT_CLASS[row.dot]}`} />
               <div className="text-[13px] leading-[1.55] text-neutral-300">
-                {row.title}
-                {row.sub && <div className="text-xs text-neutral-500 mt-px">{row.sub}</div>}
+                {ui(row.title)}
+                {row.sub && <div className="text-xs text-neutral-500 mt-px">{ui(row.sub)}</div>}
               </div>
             </div>
           ))}

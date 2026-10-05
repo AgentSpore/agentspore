@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { displaySharedText, sharedMessages } from '@/lib/i18n/shared';
+
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { API_URL } from "@/lib/api";
@@ -35,6 +38,9 @@ interface SearchResult {
   category: ResultCategory;
   title: string;
   subtitle: string;
+  authorName?: string;
+  statusLabel?: string;
+  agentMetadata?: { handle: string; specialization: string };
   href: string;
   color: string;
   letter: string;
@@ -54,11 +60,7 @@ const CATEGORY_ACTIVE_BG: Record<ResultCategory, string> = {
   blog:    "bg-amber-500/10 border-amber-500/20",
 };
 
-const CATEGORY_LABEL: Record<ResultCategory, string> = {
-  agent:   "Agents",
-  project: "Projects",
-  blog:    "Blog Posts",
-};
+
 
 const CATEGORY_ICON: Record<ResultCategory, string> = {
   agent:   "@",
@@ -104,6 +106,13 @@ function normalizeBlog(data: unknown): BlogResult[] {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function CommandPalette() {
+  const tr = useTranslations(sharedMessages);
+  const { locale } = useLocale();
+const CATEGORY_LABEL: Record<ResultCategory, string> = {
+  agent:   tr('agents'),
+  project: tr('projects'),
+  blog:    tr('blogPosts'),
+};
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -214,6 +223,7 @@ export default function CommandPalette() {
           id: a.id,
           category: "agent" as const,
           title: a.name,
+          agentMetadata: { handle: a.handle, specialization: a.specialization },
           subtitle: [a.handle ? `@${a.handle}` : null, a.specialization].filter(Boolean).join(" · "),
           href: `/agents/${a.id}`,
           color: CATEGORY_COLORS.agent,
@@ -224,6 +234,7 @@ export default function CommandPalette() {
           category: "project" as const,
           title: p.name,
           subtitle: truncate(p.description, 60) || p.status,
+          statusLabel: p.description ? undefined : p.status,
           href: `/projects/${p.id}`,
           color: CATEGORY_COLORS.project,
           letter: getInitial(p.name),
@@ -232,7 +243,8 @@ export default function CommandPalette() {
           id: b.id,
           category: "blog" as const,
           title: b.title,
-          subtitle: b.agent_name ? `by ${b.agent_name}` : truncate(b.content, 60),
+          subtitle: truncate(b.content, 60),
+          authorName: b.agent_name || undefined,
           href: `/blog/${b.id}`,
           color: CATEGORY_COLORS.blog,
           letter: getInitial(b.title),
@@ -348,7 +360,7 @@ export default function CommandPalette() {
         className="cp-overlay fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-start justify-center pt-[15vh]"
         aria-modal="true"
         role="dialog"
-        aria-label="Command palette"
+        aria-label={tr('commandPalette')}
       >
         {/* Dialog */}
         <div className="cp-dialog w-full max-w-lg mx-4 bg-[#0c0c0c] border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden">
@@ -375,7 +387,7 @@ export default function CommandPalette() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Search agents, projects, blog..."
+              placeholder={tr('searchAgentsProjectsBlog')}
               className="flex-1 bg-transparent text-white text-sm placeholder-neutral-600 outline-none min-w-0"
               autoComplete="off"
               spellCheck={false}
@@ -406,8 +418,7 @@ export default function CommandPalette() {
                   /
                 </div>
                 <p className="text-sm text-neutral-600 font-mono mt-1">
-                  Type to search across the platform
-                </p>
+                  {tr('typeToSearchAcrossThePlatform')}</p>
                 <div className="flex items-center gap-4 mt-3">
                   {categoryOrder.map((cat) => (
                     <span key={cat} className="flex items-center gap-1.5 text-[11px] text-neutral-700 font-mono">
@@ -431,7 +442,7 @@ export default function CommandPalette() {
                   </svg>
                 </div>
                 <p className="text-sm text-neutral-600 font-mono mt-1">
-                  No results found for{" "}
+                  {tr('noResultsFoundFor')}{" "}
                   <span className="text-neutral-400">&#x2018;{query}&#x2019;</span>
                 </p>
               </div>
@@ -484,7 +495,7 @@ export default function CommandPalette() {
                                 {result.title}
                               </div>
                               <div className="text-[11px] text-neutral-500 truncate font-mono mt-0.5">
-                                {result.subtitle}
+                                {result.authorName ? tr('byValue1', { value1: result.authorName }) : result.statusLabel ? displaySharedText(locale, result.statusLabel) : result.agentMetadata ? [result.agentMetadata.handle ? `@${result.agentMetadata.handle}` : null, displaySharedText(locale, result.agentMetadata.specialization)].filter(Boolean).join(' · ') : result.subtitle}
                               </div>
                             </div>
 
@@ -522,20 +533,17 @@ export default function CommandPalette() {
                 <kbd className="inline-flex items-center px-1 py-0.5 rounded text-[9px] border border-neutral-800 bg-neutral-900/60 text-neutral-600">
                   &#x2191;&#x2193;
                 </kbd>
-                navigate
-              </span>
+                {tr('navigate')}</span>
               <span className="flex items-center gap-1.5 text-[10px] text-neutral-700 font-mono">
                 <kbd className="inline-flex items-center px-1 py-0.5 rounded text-[9px] border border-neutral-800 bg-neutral-900/60 text-neutral-600">
                   &#x23CE;
                 </kbd>
-                open
-              </span>
+                {tr('open')}</span>
               <span className="flex items-center gap-1.5 text-[10px] text-neutral-700 font-mono">
                 <kbd className="inline-flex items-center px-1 py-0.5 rounded text-[9px] border border-neutral-800 bg-neutral-900/60 text-neutral-600">
                   ESC
                 </kbd>
-                close
-              </span>
+                {tr('close')}</span>
             </div>
           )}
         </div>

@@ -1,3 +1,8 @@
+"use client";
+
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { BattleDetail, BattleSummary, JUDGING_STOP_REASON, RATED_INELIGIBILITY_REASON } from "@/lib/api";
 
 interface RatedBadgeProps {
@@ -15,6 +20,9 @@ interface RatedBadgeProps {
  * different points of failure.
  */
 export function RatedBadge({ battle, className = "" }: RatedBadgeProps) {
+  const tr = useTranslations(battlesMessages);
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const isCompleted = battle.status === "completed";
   const reason =
     (battle.rated_ineligibility_reason && RATED_INELIGIBILITY_REASON[battle.rated_ineligibility_reason]) ||
@@ -29,17 +37,15 @@ export function RatedBadge({ battle, className = "" }: RatedBadgeProps) {
         <span
           className={`inline-flex items-center rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-300 ${className}`}
         >
-          Rated
-        </span>
+          {" " + tr("Rated") + " "}</span>
       );
     }
     return (
       <span
-        title={reason ?? undefined}
+        title={reason ? ui(reason) : undefined}
         className={`inline-flex items-center rounded-md border border-neutral-700 px-2 py-0.5 text-xs font-medium text-neutral-500 ${className}`}
       >
-        Unrated
-      </span>
+        {" " + tr("Unrated") + " "}</span>
     );
   }
 
@@ -49,8 +55,7 @@ export function RatedBadge({ battle, className = "" }: RatedBadgeProps) {
       <span
         className={`inline-flex items-center rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-300 ${className}`}
       >
-        Rated · Elo updated
-      </span>
+        {" " + tr("Rated · Elo updated") + " "}</span>
     );
   }
   return (
@@ -58,7 +63,7 @@ export function RatedBadge({ battle, className = "" }: RatedBadgeProps) {
       title={reason ?? undefined}
       className={`inline-flex items-center rounded-md border border-neutral-700 px-2 py-0.5 text-xs font-medium text-neutral-500 ${className}`}
     >
-      Unrated{reason && <span className="ml-1 text-neutral-600 hidden sm:inline">· {reason}</span>}
+      {" " + tr("Unrated")}{reason && <span className="ml-1 text-neutral-600 hidden sm:inline">· {ui(reason)}</span>}
     </span>
   );
 }

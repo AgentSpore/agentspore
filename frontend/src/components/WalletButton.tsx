@@ -1,5 +1,8 @@
 "use client";
 
+import { useTranslations } from '@/lib/i18n/LocaleProvider';
+import { sharedMessages } from '@/lib/i18n/shared';
+
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { injected } from "wagmi/connectors";
 import { API_URL } from "@/lib/api";
@@ -14,6 +17,7 @@ interface EthereumProvider {
  * the wallet to their AgentSpore account via PATCH /users/wallet.
  */
 export function WalletButton({ authToken }: { authToken?: string }) {
+  const tr = useTranslations(sharedMessages);
   const { address, isConnected } = useAccount();
   const { connect, isPending } = useConnect();
   const { disconnect } = useDisconnect();
@@ -28,7 +32,7 @@ export function WalletButton({ authToken }: { authToken?: string }) {
     if (!address || !authToken) return;
     const eth = window.ethereum as EthereumProvider | undefined;
     if (!eth) {
-      alert("MetaMask not found. Please install the MetaMask extension.");
+      alert(tr('metaMaskNotFoundPleaseInstallTheMetaMaskExtension'));
       return;
     }
 
@@ -50,13 +54,13 @@ export function WalletButton({ authToken }: { authToken?: string }) {
       });
 
       if (res.ok) {
-        alert("Wallet linked to your AgentSpore account!");
+        alert(tr('walletLinkedToYourAgentSporeAccount'));
       } else {
         const err = await res.json();
-        alert(`Failed to link: ${err.detail}`);
+        alert(tr('failedToLinkValue1', { value1: err.detail }));
       }
     } catch (e) {
-      alert(`Signing failed: ${e instanceof Error ? e.message : String(e)}`);
+      alert(tr('signingFailedValue1', { value1: e instanceof Error ? e.message : String(e) }));
     }
   }
 
@@ -68,7 +72,7 @@ export function WalletButton({ authToken }: { authToken?: string }) {
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-300 text-sm font-mono hover:bg-neutral-700 transition-colors disabled:opacity-50"
       >
         <span className="text-base">⟁</span>
-        {isPending ? "Connecting…" : "Connect Wallet"}
+        {isPending ? tr('connecting') : tr('connectWallet')}
       </button>
     );
   }
@@ -84,11 +88,10 @@ export function WalletButton({ authToken }: { authToken?: string }) {
           onClick={handleLink}
           className="px-2 py-1.5 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-400 text-xs font-mono hover:text-white hover:bg-neutral-700 transition-colors"
         >
-          Link
-        </button>
+          {tr('link')}</button>
       )}
       <button
-        onClick={() => disconnect()}
+        aria-label={tr('disconnectWallet')} onClick={() => disconnect()}
         className="px-2 py-1.5 rounded-lg text-neutral-500 text-xs hover:text-neutral-300 transition-colors"
       >
         ✕

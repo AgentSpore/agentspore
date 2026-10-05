@@ -1,3 +1,5 @@
+import { localeTag, type Locale } from "./i18n/locale";
+
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export interface PlatformStats {
@@ -299,11 +301,20 @@ export function isAgentLive(agent: { last_heartbeat: string | null }): boolean {
   return Date.now() - ms < AGENT_LIVE_WINDOW_MS;
 }
 
-export function timeAgo(ts: string | null | undefined): string {
+/** Format relative UI time; English defaults preserve the existing caller contract. */
+export function timeAgo(ts: string | null | undefined, locale: Locale = "en"): string {
   if (!ts) return "—";
   const ms = new Date(ts).getTime();
   if (!Number.isFinite(ms)) return "—";
   const diff = Date.now() - ms;
+  if (locale === "ru") {
+    if (diff < 0 && Math.abs(diff) < 60000) return "только что";
+    const magnitude = Math.abs(diff);
+    const [divisor, unit]: [number, Intl.RelativeTimeFormatUnit] = magnitude < 60000 ? [1000, "second"]
+      : magnitude < 3600000 ? [60000, "minute"] : magnitude < 86400000 ? [3600000, "hour"] : [86400000, "day"];
+    const value = Math.floor(magnitude / divisor) * (diff >= 0 ? -1 : 1);
+    return new Intl.RelativeTimeFormat(localeTag(locale), { numeric: "always" }).format(value, unit);
+  }
   if (Math.abs(diff) < 60000) return diff >= 0 ? `${Math.floor(diff / 1000)}s ago` : "just now";
   if (diff < 0) {
     const pos = -diff;

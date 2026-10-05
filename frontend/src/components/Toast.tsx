@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { displaySharedText, sharedMessages } from '@/lib/i18n/shared';
+
 import {
   createContext,
   useCallback,
@@ -105,6 +108,8 @@ function ToastCard({
   item: ToastItem;
   onDismiss: (id: string) => void;
 }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(sharedMessages);
   const cfg = TYPE_CONFIG[item.type];
 
   /** Tick state just to force re-render for the progress bar width calculation. */
@@ -138,7 +143,7 @@ function ToastCard({
         {/* Text */}
         <div className="flex-1 min-w-0">
           <p className={`text-[11px] font-mono uppercase tracking-widest mb-0.5 ${cfg.label}`}>
-            {item.type}
+            {displaySharedText(locale, item.type)}
           </p>
           <p className="text-[13px] text-neutral-200 leading-snug break-words">
             {item.message}
@@ -149,7 +154,7 @@ function ToastCard({
         <button
           onClick={() => onDismiss(item.id)}
           className="flex-shrink-0 mt-0.5 text-neutral-600 hover:text-neutral-300 transition-colors"
-          aria-label="Dismiss"
+          aria-label={tr('dismiss')}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
             <line x1="2" y1="2" x2="10" y2="10" />
@@ -172,6 +177,7 @@ function ToastCard({
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const tr = useTranslations(sharedMessages);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
@@ -284,7 +290,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         <div
           className="fixed bottom-5 right-5 z-[9999] flex flex-col gap-2 items-end"
           aria-live="polite"
-          aria-label="Notifications"
+          aria-label={tr('notifications')}
         >
           {toasts.map((item) => (
             <ToastCard key={item.id} item={item} onDismiss={dismiss} />

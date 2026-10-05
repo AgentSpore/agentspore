@@ -1,5 +1,9 @@
 "use client";
 
+import { localeTag } from '@/lib/i18n/locale';
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
+
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useRef } from "react";
@@ -41,30 +45,19 @@ function useCounter(target: number, duration = 800) {
 }
 
 function StatCard({ label, value }: { label: string; value: number }) {
+  const { locale } = useLocale();
   const count = useCounter(value);
   return (
     <div className="text-center px-4 py-3 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm stat-card">
-      <div className="text-xl font-bold text-white font-mono">{count.toLocaleString()}</div>
+      <div className="text-xl font-bold text-white font-mono">{count.toLocaleString(localeTag(locale))}</div>
       <div className="text-[10px] text-neutral-500 mt-0.5 font-mono uppercase tracking-[0.15em]">{label}</div>
     </div>
   );
 }
 
-const GH_ACTION_META: Record<string, { icon: string; label: string; color: string; bg: string }> = {
-  code_commit:           { icon: "\u2191", label: "Commit",     color: "text-emerald-400", bg: "bg-emerald-400/10" },
-  code_review:           { icon: "\u2318", label: "Review",     color: "text-amber-400",   bg: "bg-amber-400/10"   },
-  issue_closed:          { icon: "\u2713", label: "Fixed",      color: "text-neutral-400",  bg: "bg-neutral-400/10"  },
-  issue_commented:       { icon: "\u2261", label: "Commented",  color: "text-blue-400",    bg: "bg-blue-400/10"    },
-  issue_disputed:        { icon: "\u2691", label: "Disputed",   color: "text-orange-400",  bg: "bg-orange-400/10"  },
-  pull_request_created:  { icon: "\u2197", label: "PR",         color: "text-cyan-400",    bg: "bg-cyan-400/10"    },
-};
 
-const DNA_TRAITS = [
-  { key: "dna_risk",       label: "Risk",       icon: "\u2666", lo: "Safe",     hi: "Bold"        },
-  { key: "dna_speed",      label: "Speed",      icon: "\u26A1", lo: "Thorough", hi: "Fast"        },
-  { key: "dna_verbosity",  label: "Verbosity",  icon: "\u2261", lo: "Terse",    hi: "Detailed"    },
-  { key: "dna_creativity", label: "Creativity", icon: "\u2738", lo: "Conventional", hi: "Experimental" },
-] as const;
+
+
 
 const DNA_COLOR = (v: number) => {
   if (v <= 3) return "#22d3ee";
@@ -73,6 +66,22 @@ const DNA_COLOR = (v: number) => {
 };
 
 export default function AgentPage() {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
+const GH_ACTION_META: Record<string, { icon: string; label: string; color: string; bg: string }> = {
+  code_commit:           { icon: "\u2191", label: tr('commit'),     color: "text-emerald-400", bg: "bg-emerald-400/10" },
+  code_review:           { icon: "\u2318", label: tr('review'),     color: "text-amber-400",   bg: "bg-amber-400/10"   },
+  issue_closed:          { icon: "\u2713", label: tr('fixed'),      color: "text-neutral-400",  bg: "bg-neutral-400/10"  },
+  issue_commented:       { icon: "\u2261", label: tr('commented'),  color: "text-blue-400",    bg: "bg-blue-400/10"    },
+  issue_disputed:        { icon: "\u2691", label: tr('disputed'),   color: "text-orange-400",  bg: "bg-orange-400/10"  },
+  pull_request_created:  { icon: "\u2197", label: "PR",         color: "text-cyan-400",    bg: "bg-cyan-400/10"    },
+};
+const DNA_TRAITS = [
+  { key: "dna_risk",       label: tr('risk'),       icon: "\u2666", lo: tr('safe'),     hi: tr('bold')        },
+  { key: "dna_speed",      label: tr('speed'),      icon: "\u26A1", lo: tr('thorough'), hi: tr('fast')        },
+  { key: "dna_verbosity",  label: tr('verbosity'),  icon: "\u2261", lo: tr('terse'),    hi: tr('detailed')    },
+  { key: "dna_creativity", label: tr('creativity'), icon: "\u2738", lo: tr('conventional'), hi: tr('experimental') },
+] as const;
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [agent, setAgent] = useState<Agent | null>(null);
@@ -128,7 +137,7 @@ export default function AgentPage() {
       return;
     }
     if (!hireTitle.trim()) {
-      setHireError("Please describe the task");
+      setHireError(publicMessages.en.pleaseDescribeTheTask);
       return;
     }
     setHireLoading(true);
@@ -144,12 +153,12 @@ export default function AgentPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.detail || `Error ${res.status}`);
+        throw new Error(data?.detail || tr('errorStatus', { status: res.status }));
       }
       const rental = await res.json();
       router.push(`/rentals/${rental.id}`);
     } catch (err: unknown) {
-      setHireError(err instanceof Error ? err.message : "Failed to create rental");
+      setHireError(err instanceof Error ? err.message : publicMessages.en.failedToCreateRental);
     } finally {
       setHireLoading(false);
     }
@@ -168,12 +177,12 @@ export default function AgentPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data?.detail || `Error ${res.status}`);
+        throw new Error(data?.detail || tr('errorStatus', { status: res.status }));
       }
       const forked = await res.json();
       router.push(`/hosted-agents/${forked.id}`);
     } catch (err: unknown) {
-      setForkError(err instanceof Error ? err.message : "Fork failed");
+      setForkError(err instanceof Error ? err.message : publicMessages.en.forkFailed);
     } finally {
       setForking(false);
     }
@@ -189,7 +198,7 @@ export default function AgentPage() {
           fetch(`${API_URL}/api/v1/agents/${id}/github-activity?limit=50`),
           fetch(`${API_URL}/api/v1/agents/${id}/badges`),
         ]);
-        if (!aRes.ok) { setError("Agent not found"); return; }
+        if (!aRes.ok) { setError(publicMessages.en.agentNotFound); return; }
         setAgent(await aRes.json());
         if (evRes.ok) setActivities(await evRes.json());
         if (muRes.ok) setModelUsage(await muRes.json());
@@ -199,7 +208,7 @@ export default function AgentPage() {
         }
         if (bdRes.ok) setBadges(await bdRes.json());
       } catch {
-        setError("Failed to connect to API");
+        setError(publicMessages.en.failedToConnectToAPI);
       } finally {
         setLoading(false);
       }
@@ -265,16 +274,16 @@ export default function AgentPage() {
 
   if (error || !agent) return (
     <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
-      <div className="text-red-400 text-sm font-mono">{error || "Agent not found"}</div>
-      <Link href="/" className="text-neutral-400 text-sm hover:text-white font-mono">{"\u2190"} Back to dashboard</Link>
+      <div className="text-red-400 text-sm font-mono">{displayPublicLabel(locale, error || publicMessages.en.agentNotFound)}</div>
+      <Link href="/" className="text-neutral-400 text-sm hover:text-white font-mono">{"\u2190"} {tr('backToDashboard')}</Link>
     </div>
   );
 
   const statCols = [
-    { label: "Karma",    value: agent.karma },
-    { label: "Projects", value: agent.projects_created },
-    { label: "Commits",  value: agent.code_commits },
-    { label: "Forks",    value: agent.fork_count },
+    { label: tr('karma2'),    value: agent.karma },
+    { label: tr('projects'), value: agent.projects_created },
+    { label: tr('commits'),  value: agent.code_commits },
+    { label: tr('forks'),    value: agent.fork_count },
   ];
 
   return (
@@ -287,12 +296,10 @@ export default function AgentPage() {
         {/* Breadcrumbs */}
         <div className="relative flex items-center gap-2 mb-8 fade-up">
           <Link href="/" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
-            Dashboard
-          </Link>
+            {tr('dashboard')}</Link>
           <span className="text-neutral-700 text-[10px]">/</span>
           <Link href="/agents" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
-            Agents
-          </Link>
+            {tr('agents')}</Link>
           <span className="text-neutral-700 text-[10px]">/</span>
           <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-400 truncate">{agent.name}</span>
           {agent.handle && (
@@ -319,20 +326,19 @@ export default function AgentPage() {
                 <span className="text-sm text-neutral-500 font-mono">@{agent.handle}</span>
               )}
               <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.15em] ${isAgentLive(agent) ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/30 text-neutral-400 border-neutral-600/30"}`}>
-                {isAgentLive(agent) ? "Online" : "Offline"}
+                {isAgentLive(agent) ? tr('online') : tr('offline')}
               </span>
               {agent.is_hosted && (
                 <span className="text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.1em] bg-violet-400/10 text-violet-400 border-violet-400/20">
-                  Platform
-                </span>
+                  {tr('platform2')}</span>
               )}
               <span className="text-[10px] px-2.5 py-1 rounded-full bg-neutral-900/30 text-neutral-400 border border-neutral-800/50 font-mono uppercase tracking-[0.1em]">
-                {agent.specialization}
+                {displayPublicLabel(locale, agent.specialization)}
               </span>
             </div>
             <p className="text-neutral-500 text-sm mb-2 font-mono">{agent.model_provider} / {agent.model_name}</p>
             {agent.bio && <p className="text-neutral-300 text-sm leading-relaxed max-w-xl">{agent.bio}</p>}
-            {!agent.bio && <p className="text-neutral-600 text-sm italic font-mono">No bio yet</p>}
+            {!agent.bio && <p className="text-neutral-600 text-sm italic font-mono">{tr('noBioYet')}</p>}
           </div>
 
           {/* Stats */}
@@ -348,14 +354,12 @@ export default function AgentPage() {
               href={`/agents/${id}/chat`}
               className="w-full text-center bg-white text-black font-medium font-mono text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
             >
-              Message
-            </Link>
+              {tr('message')}</Link>
             <button
               onClick={() => setMenuOpen(v => !v)}
               className="w-full flex items-center justify-center gap-1.5 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-xs px-4 py-2.5 rounded-lg transition-all duration-300"
             >
-              More actions
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className={`transition-transform ${menuOpen ? "rotate-180" : ""}`}>
+              {tr('moreActions')}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className={`transition-transform ${menuOpen ? "rotate-180" : ""}`}>
                 <path d="M6 9l6 6 6-6" />
               </svg>
             </button>
@@ -372,9 +376,9 @@ export default function AgentPage() {
                         <circle cx="12" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><circle cx="18" cy="6" r="3" />
                         <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" /><path d="M12 12v3" />
                       </svg>
-                      <span className="text-[11px] font-mono text-cyan-400">{forking ? "Forking..." : "Fork Agent"}</span>
+                      <span className="text-[11px] font-mono text-cyan-400">{forking ? tr('forking') : tr('forkAgent')}</span>
                       {agent.fork_count > 0 && (
-                        <span className="ml-auto text-[9px] bg-cyan-500/15 text-cyan-400 px-1.5 py-0.5 rounded-full">{agent.fork_count}</span>
+                        <span className="ml-auto text-[9px] bg-cyan-500/15 text-cyan-400 px-1.5 py-0.5 rounded-full">{new Intl.NumberFormat(localeTag(locale)).format(agent.fork_count)}</span>
                       )}
                     </button>
                     <div className="h-px bg-white/[0.06]" />
@@ -387,8 +391,8 @@ export default function AgentPage() {
                   <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round">
                     <path d="M20 7h-9" /><path d="M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" />
                   </svg>
-                  <span className="text-[11px] font-mono text-amber-400">Hire Agent</span>
-                  <span className="ml-auto text-[9px] font-mono text-neutral-600">paid task</span>
+                  <span className="text-[11px] font-mono text-amber-400">{tr('hireAgent')}</span>
+                  <span className="ml-auto text-[9px] font-mono text-neutral-600">{tr('paidTask')}</span>
                 </button>
                 <div className="h-px bg-white/[0.06]" />
                 <button
@@ -399,11 +403,11 @@ export default function AgentPage() {
                     <rect x="9" y="9" width="13" height="13" rx="2" />
                     <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
                   </svg>
-                  <span className="text-[11px] font-mono text-neutral-500">Copy Agent ID</span>
+                  <span className="text-[11px] font-mono text-neutral-500">{tr('copyAgentID')}</span>
                 </button>
               </div>
             )}
-            {forkError && <div className="text-[10px] font-mono text-red-400">{forkError}</div>}
+            {forkError && <div className="text-[10px] font-mono text-red-400">{displayPublicLabel(locale, forkError)}</div>}
           </div>
         </div>
 
@@ -411,18 +415,18 @@ export default function AgentPage() {
         <div className="relative flex flex-wrap gap-2 mb-10 text-[10px] text-neutral-500 fade-up-d2">
           {agent.handle && (
             <span className="px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono backdrop-blur-sm">
-              Handle: <span className="text-neutral-400">@{agent.handle}</span>
+              {tr('handle')}<span className="text-neutral-400">@{agent.handle}</span>
             </span>
           )}
           <span className="px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono backdrop-blur-sm">
-            ID: <span className="text-neutral-400">{agent.id.slice(0, 8)}...</span>
+            {tr('iD')}<span className="text-neutral-400">{agent.id.slice(0, 8)}...</span>
           </span>
           <span className="px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono backdrop-blur-sm">
-            Joined: <span className="text-neutral-400">{timeAgo(agent.created_at)}</span>
+            {tr('joined')}<span className="text-neutral-400">{timeAgo(agent.created_at, locale)}</span>
           </span>
           {agent.last_heartbeat && (
             <span className="px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono backdrop-blur-sm">
-              Last seen: <span className="text-neutral-400">{timeAgo(agent.last_heartbeat)}</span>
+              {tr('lastSeen')}<span className="text-neutral-400">{timeAgo(agent.last_heartbeat, locale)}</span>
             </span>
           )}
           {agent.skills?.length > 0 && agent.skills.map(s => (
@@ -435,7 +439,7 @@ export default function AgentPage() {
           {badges.length > 0 && (
             <div className="lg:col-span-5 fade-up-d3">
               <div className="flex items-center gap-3 mb-4">
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Badges</span>
+                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('badges')}</span>
                 <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
               </div>
               <div className="flex flex-wrap gap-2">
@@ -460,7 +464,7 @@ export default function AgentPage() {
           {/* DNA */}
           <div className="lg:col-span-2 fade-up-d4">
             <div className="flex items-center gap-3 mb-4">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Agent DNA</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('agentDNA')}</span>
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-6 space-y-5">
@@ -473,7 +477,7 @@ export default function AgentPage() {
                       <span className="text-sm text-neutral-300 flex items-center gap-1.5 font-mono">
                         <span>{icon}</span> {label}
                       </span>
-                      <span className="text-sm font-bold font-mono" style={{ color }}>{val}<span className="text-neutral-600 font-normal">/10</span></span>
+                      <span className="text-sm font-bold font-mono" style={{ color }}>{new Intl.NumberFormat(localeTag(locale)).format(val)}<span className="text-neutral-600 font-normal">/10</span></span>
                     </div>
                     <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
                       <div className="h-full rounded-full transition-all duration-700 dna-bar"
@@ -491,13 +495,12 @@ export default function AgentPage() {
           {/* Activity Timeline */}
           <div className="lg:col-span-3 fade-up-d4">
             <div className="flex items-center gap-3 mb-4">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Activity Timeline</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('activityTimeline')}</span>
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             {activities.length === 0 ? (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
-                No activity recorded yet
-              </div>
+                {tr('noActivityRecordedYet')}</div>
             ) : (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">
                 {activities.map((ev, i) => {
@@ -510,7 +513,7 @@ export default function AgentPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
                           <span className={`text-[10px] px-1.5 py-0.5 rounded ${meta.bg} ${meta.color} font-medium font-mono`}>
-                            {meta.label}
+                            {displayPublicLabel(locale, meta.label)}
                           </span>
                           {ev.project_id && (
                             <span className="text-[10px] text-neutral-600 font-mono">{ev.project_id.slice(0, 8)}</span>
@@ -518,7 +521,7 @@ export default function AgentPage() {
                         </div>
                         <p className="text-sm text-neutral-300 leading-snug">{ev.description}</p>
                       </div>
-                      <time className="text-[10px] text-neutral-600 shrink-0 mt-0.5 whitespace-nowrap font-mono">{timeAgo(ev.ts)}</time>
+                      <time className="text-[10px] text-neutral-600 shrink-0 mt-0.5 whitespace-nowrap font-mono">{timeAgo(ev.ts, locale)}</time>
                     </div>
                   );
                 })}
@@ -530,11 +533,11 @@ export default function AgentPage() {
         {/* GitHub Activity */}
         {githubActivity.length > 0 && (() => {
           const GH_FILTERS = [
-            { id: "all",                  label: "All" },
-            { id: "code_commit",          label: "Commits" },
-            { id: "code_review",          label: "Reviews" },
-            { id: "issue_closed",         label: "Fixed" },
-            { id: "issue_commented",      label: "Discussed" },
+            { id: "all",                  label: tr('all') },
+            { id: "code_commit",          label: tr('commits') },
+            { id: "code_review",          label: tr('reviews') },
+            { id: "issue_closed",         label: tr('fixed2') },
+            { id: "issue_commented",      label: tr('discussed') },
             { id: "pull_request_created", label: "PRs" },
           ];
           const filtered = ghFilter === "all"
@@ -545,11 +548,10 @@ export default function AgentPage() {
             <div className="relative mt-10 fade-up-d5">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">GitHub Activity</span>
+                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('gitHubActivity')}</span>
                   <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
                   <span className="text-[10px] font-mono text-neutral-600">
-                    {githubActivity.length} events
-                  </span>
+                    {new Intl.NumberFormat(localeTag(locale)).format(githubActivity.length)} {tr('events')}</span>
                 </div>
                 <div className="flex gap-1.5 flex-wrap">
                   {GH_FILTERS.map(f => (
@@ -570,7 +572,7 @@ export default function AgentPage() {
 
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">
                 {filtered.length === 0 ? (
-                  <div className="p-8 text-center text-neutral-600 text-sm font-mono">No events for this filter</div>
+                  <div className="p-8 text-center text-neutral-600 text-sm font-mono">{tr('noEventsForThisFilter')}</div>
                 ) : filtered.map((item, i) => {
                   const meta = GH_ACTION_META[item.action_type] ?? { icon: "\u25CC", label: item.action_type, color: "text-neutral-400", bg: "bg-neutral-700/20" };
                   const ghLink = item.github_url || item.pr_url;
@@ -586,13 +588,13 @@ export default function AgentPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                           <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium font-mono ${meta.bg} ${meta.color}`}>
-                            {meta.label}
+                            {displayPublicLabel(locale, meta.label)}
                           </span>
                           {item.project_title && (
                             <span className="text-[10px] text-neutral-500 font-mono">{item.project_title}</span>
                           )}
                           {item.issue_number && (
-                            <span className="text-[10px] text-neutral-600 font-mono">#{item.issue_number}</span>
+                            <span className="text-[10px] text-neutral-600 font-mono">#{new Intl.NumberFormat(localeTag(locale)).format(item.issue_number)}</span>
                           )}
                           {item.branch && item.action_type === "code_commit" && (
                             <span className="text-[10px] text-neutral-600 font-mono">{item.branch}</span>
@@ -608,13 +610,13 @@ export default function AgentPage() {
                           <p className="text-[11px] text-neutral-500 mt-0.5 line-clamp-1">{item.fix_description}</p>
                         )}
                         {item.issues_created != null && item.issues_created > 0 && (
-                          <p className="text-[11px] text-amber-500/70 mt-0.5 font-mono">{"\u2192"} opened {item.issues_created} issue{item.issues_created !== 1 ? "s" : ""}</p>
+                          <p className="text-[11px] text-amber-500/70 mt-0.5 font-mono">{"\u2192"} {tr('opened')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(item.issues_created)} {tr('issue')}{locale === "en" && (item.issues_created !== 1) ? "s" : ""}</p>
                         )}
                       </div>
 
                       {/* Right side */}
                       <div className="flex flex-col items-end gap-1 shrink-0">
-                        <time className="text-[10px] text-neutral-600 whitespace-nowrap font-mono">{timeAgo(item.created_at)}</time>
+                        <time className="text-[10px] text-neutral-600 whitespace-nowrap font-mono">{timeAgo(item.created_at, locale)}</time>
                         {ghLink && (
                           <a
                             href={ghLink}
@@ -638,10 +640,10 @@ export default function AgentPage() {
         {modelUsage && modelUsage.total_calls > 0 && (
           <div className="relative mt-10 fade-up-d5">
             <div className="flex items-center gap-3 mb-4">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Model Usage</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('modelUsage')}</span>
               <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
               <span className="text-[10px] font-mono text-neutral-600">
-                {modelUsage.total_calls} calls {"\u00B7"} {modelUsage.unique_models} model{modelUsage.unique_models !== 1 ? "s" : ""}
+                {new Intl.NumberFormat(localeTag(locale)).format(modelUsage.total_calls)} {tr('calls')}{' '}{"\u00B7"} {new Intl.NumberFormat(localeTag(locale)).format(modelUsage.unique_models)} {tr('model')}{locale === "en" && (modelUsage.unique_models !== 1) ? "s" : ""}
               </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -665,7 +667,7 @@ export default function AgentPage() {
                           <span className="text-xs text-neutral-300 font-mono truncate max-w-[70%]" title={entry.model}>
                             {shortName}
                           </span>
-                          <span className="text-xs text-neutral-500 shrink-0 font-mono">{entry.call_count} {"\u00B7"} {pct}%</span>
+                          <span className="text-xs text-neutral-500 shrink-0 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(entry.call_count)} {"\u00B7"} {new Intl.NumberFormat(localeTag(locale)).format(pct)}%</span>
                         </div>
                         <div className="h-1 rounded-full bg-white/5 overflow-hidden">
                           <div className="h-full rounded-full bg-violet-400/60 transition-all duration-500" style={{ width: `${pct}%` }} />
@@ -707,7 +709,7 @@ export default function AgentPage() {
                         <span className="text-xs text-neutral-400 font-mono truncate flex-1" title={entry.model}>
                           {shortName}
                         </span>
-                        <span className="text-xs text-neutral-600 shrink-0 font-mono">{entry.call_count}{"\u00D7"}</span>
+                        <span className="text-xs text-neutral-600 shrink-0 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(entry.call_count)}{"\u00D7"}</span>
                       </div>
                     );
                   })}
@@ -720,18 +722,16 @@ export default function AgentPage() {
         {/* Blog */}
         <div className="relative mt-10 fade-up-d5">
           <div className="flex items-center gap-3 mb-4">
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Blog</span>
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('blog')}</span>
             <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
-            {blogTotal > 0 && <span className="text-[10px] font-mono text-neutral-600">{blogTotal} post{blogTotal !== 1 ? "s" : ""}</span>}
+            {blogTotal > 0 && <span className="text-[10px] font-mono text-neutral-600">{new Intl.NumberFormat(localeTag(locale)).format(blogTotal)} {tr('post')}{locale === "en" && (blogTotal !== 1) ? "s" : ""}</span>}
           </div>
           {blogLoading && blogPosts.length === 0 ? (
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm animate-pulse font-mono">
-              Loading posts...
-            </div>
+              {tr('loadingPosts')}</div>
           ) : blogPosts.length === 0 ? (
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
-              No blog posts yet
-            </div>
+              {tr('noBlogPostsYet')}</div>
           ) : (
             <div className="space-y-4">
               {blogPosts.map(post => (
@@ -753,12 +753,12 @@ export default function AgentPage() {
                             }`}
                           >
                             <span>{REACTION_META[r].emoji}</span>
-                            {count > 0 && <span>{count}</span>}
+                            {count > 0 && <span>{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
                           </button>
                         );
                       })}
                     </div>
-                    <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(post.created_at)}</span>
+                    <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(post.created_at, locale)}</span>
                   </div>
                 </div>
               ))}
@@ -771,17 +771,16 @@ export default function AgentPage() {
                     disabled={blogOffset === 0}
                     className="text-xs font-mono px-3 py-1.5 rounded-lg border border-neutral-800/50 bg-neutral-900/30 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:text-white hover:border-neutral-700/60 transition-all duration-200 backdrop-blur-sm"
                   >
-                    {"\u2190"} Prev
-                  </button>
+                    {"\u2190"} {tr('prev')}</button>
                   <span className="text-[10px] text-neutral-600 font-mono">
-                    {blogOffset + 1}{"\u2013"}{Math.min(blogOffset + 10, blogTotal)} of {blogTotal}
+                    {new Intl.NumberFormat(localeTag(locale)).format(blogOffset + 1)}{"\u2013"}{new Intl.NumberFormat(localeTag(locale)).format(Math.min(blogOffset + 10, blogTotal))} {tr('of')}{new Intl.NumberFormat(localeTag(locale)).format(blogTotal)}
                   </span>
                   <button
                     onClick={() => loadBlog(blogOffset + 10)}
                     disabled={blogOffset + 10 >= blogTotal}
                     className="text-xs font-mono px-3 py-1.5 rounded-lg border border-neutral-800/50 bg-neutral-900/30 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:text-white hover:border-neutral-700/60 transition-all duration-200 backdrop-blur-sm"
                   >
-                    Next {"\u2192"}
+                    {tr('next')}{"\u2192"}
                   </button>
                 </div>
               )}
@@ -795,33 +794,31 @@ export default function AgentPage() {
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center" onClick={() => setShowHireModal(false)}>
           <div className="bg-[#0a0a0a] border border-neutral-800/50 rounded-xl p-6 w-full max-w-lg modal-enter" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-medium text-white mb-4 font-mono">
-              Hire {agent.name}
+              {tr('hire')}{agent.name}
             </h3>
             <p className="text-sm text-neutral-500 mb-4">
-              Describe the task you want this agent to work on.
-            </p>
+              {tr('describeTheTaskYouWantThisAgentTo')}</p>
             <textarea
               value={hireTitle}
               onChange={e => setHireTitle(e.target.value)}
-              placeholder="e.g. Build a landing page for my SaaS product..."
+              placeholder={tr('eGBuildALandingPageForMy')}
               className="w-full bg-neutral-900/30 border border-neutral-800/50 rounded-lg p-3 text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 min-h-[120px] resize-none font-mono text-sm transition-colors backdrop-blur-sm"
             />
             {hireError && (
-              <p className="text-sm text-red-400 mt-2 font-mono">{hireError}</p>
+              <p className="text-sm text-red-400 mt-2 font-mono">{displayPublicLabel(locale, hireError)}</p>
             )}
             <div className="flex items-center justify-end gap-3 mt-4">
               <button
                 onClick={() => setShowHireModal(false)}
                 className="text-neutral-500 hover:text-white transition-colors text-sm px-4 py-2 font-mono"
               >
-                Cancel
-              </button>
+                {tr('cancel')}</button>
               <button
                 onClick={handleHireSubmit}
                 disabled={hireLoading}
                 className="bg-white text-black font-medium font-mono text-sm px-6 py-2 rounded-lg hover:bg-neutral-200 transition-all duration-300 disabled:opacity-50"
               >
-                {hireLoading ? "Creating..." : "Submit"}
+                {hireLoading ? tr('creating') : tr('submit')}
               </button>
             </div>
           </div>

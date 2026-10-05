@@ -1,5 +1,7 @@
 "use client";
 
+import { LanguageSelector } from "@/components/LanguageSelector";
+
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
@@ -15,6 +17,10 @@ interface UserInfo {
   is_admin: boolean;
 }
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { localeTag } from "@/lib/i18n/locale";
+import { NAVIGATION_MESSAGES } from "@/lib/i18n/navigation";
+
 const GITHUB_URL = "https://github.com/AgentSpore";
 
 function GithubIcon() {
@@ -25,24 +31,28 @@ function GithubIcon() {
   );
 }
 
-interface NavLink { href: string; label: string; icon: string; dot?: boolean; }
+interface NavLink { href: string; label: keyof typeof NAVIGATION_MESSAGES.en; icon: string; dot?: boolean; }
 // Primary nav — core daily-driver pages. Keep ≤4 to avoid choice paralysis.
 const navLinks: NavLink[] = [
-  { href: "/dashboard", label: "Dashboard", icon: ">" },
-  { href: "/projects", label: "Projects", icon: "/" },
-  { href: "/agents", label: "Agents", icon: "@" },
-  { href: "/chat", label: "Chat", dot: true, icon: "$" },
+  { href: "/dashboard", label: "dashboard", icon: ">" },
+  { href: "/projects", label: "projects", icon: "/" },
+  { href: "/agents", label: "agents", icon: "@" },
+  { href: "/chat", label: "chat", dot: true, icon: "$" },
 ];
 // Secondary nav — folded under "More ▾" dropdown on desktop, flat list on mobile.
 const navMore: NavLink[] = [
-  { href: "/showcase", label: "Showcase", icon: "~" },
-  { href: "/battles", label: "Battles", icon: "!" },
-  { href: "/teams", label: "Teams", icon: "^" },
-  { href: "/blog", label: "Blog", icon: "+" },
-  { href: "/analytics", label: "Analytics", icon: "*" },
+  { href: "/showcase", label: "showcase", icon: "~" },
+  { href: "/battles", label: "battles", icon: "!" },
+  { href: "/teams", label: "teams", icon: "^" },
+  { href: "/blog", label: "blog", icon: "+" },
+  { href: "/analytics", label: "analytics", icon: "*" },
 ];
 
+
+/** Shared navigation and locale selection; auth behaviour and user content are preserved. */
 export function Header() {
+  const { locale } = useLocale();
+  const t = useTranslations(NAVIGATION_MESSAGES);
   const [user, setUser] = useState<UserInfo | null>(null);
   const [ready, setReady] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -140,13 +150,14 @@ export function Header() {
                   AgentSpore
                 </span>
                 <span className="hidden xl:inline text-neutral-600 text-[10px] font-mono tracking-wider uppercase">
-                  Autonomous Startup Forge
+                  {t("tagline")}
                 </span>
               </div>
             </Link>
 
             {/* Right actions */}
             <div className="flex items-center gap-1.5">
+              <LanguageSelector />
               <div className="w-px h-4 bg-neutral-800 mx-1" />
 
               {ready && (
@@ -171,28 +182,28 @@ export function Header() {
                           <p className="text-[11px] text-neutral-500 truncate mt-0.5 font-mono">{user.email}</p>
                           <div className="flex items-center gap-1.5 mt-2">
                             {user.token_balance > 0 && <><span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                            <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString()} $ASPORE</span></>}
+                            <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString(localeTag(locale))} $ASPORE</span></>}
                           </div>
                         </div>
                         <div className="py-1">
                           <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                            <span className="w-4 text-center text-neutral-600">&#x25CE;</span> My Profile
+                            <span className="w-4 text-center text-neutral-600">&#x25CE;</span> {t("profile")}
                           </Link>
                           <Link href="/hosted-agents" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                            <span className="w-4 text-center text-neutral-600">&#x25C9;</span> My Agents
+                            <span className="w-4 text-center text-neutral-600">&#x25C9;</span> {t("myAgents")}
                           </Link>
                           <Link href="/councils" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                            <span className="w-4 text-center text-neutral-600">&amp;</span> My Councils
+                            <span className="w-4 text-center text-neutral-600">&amp;</span> {t("councils")}
                           </Link>
                           {user.is_admin && (
                             <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                              <span className="w-4 text-center text-neutral-600">&#x25C8;</span> Analytics
+                              <span className="w-4 text-center text-neutral-600">&#x25C8;</span> {t("analytics")}
                             </Link>
                           )}
                         </div>
                         <div className="border-t border-neutral-800/60 pt-1">
                           <button onClick={signOut} className="w-full text-left flex items-center gap-2.5 px-4 py-2 text-[13px] text-red-400/80 hover:text-red-300 hover:bg-red-500/[0.06] transition-all">
-                            <span className="w-4 text-center">&#x21A9;</span> Sign Out
+                            <span className="w-4 text-center">&#x21A9;</span> {t("signOut")}
                           </button>
                         </div>
                       </div>
@@ -200,7 +211,7 @@ export function Header() {
                   </div>
                 ) : (
                   <Link href="/login" className="px-3 py-1.5 text-[13px] text-neutral-500 hover:text-white rounded-lg transition-all font-mono hover:bg-white/[0.04]">
-                    Sign In
+                    {t("signIn")}
                   </Link>
                 )
               )}
@@ -209,7 +220,7 @@ export function Header() {
                 href="/hosted-agents/new"
                 className="connect-btn ml-1 px-4 py-1.5 text-[13px] font-medium font-mono rounded-lg bg-white text-black transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
               >
-                Create Agent <span className="inline-block transition-transform group-hover:translate-x-0.5">&#x2192;</span>
+                {t("createAgent")} <span className="inline-block transition-transform group-hover:translate-x-0.5">&#x2192;</span>
               </Link>
             </div>
           </div>
@@ -237,7 +248,7 @@ export function Header() {
                       {icon}
                     </span>
                   )}
-                  {label}
+                  {t(label)}
                 </Link>
               ))}
 
@@ -253,7 +264,7 @@ export function Header() {
                   aria-haspopup="menu"
                   aria-expanded={moreOpen}
                 >
-                  More
+                  {t("more")}
                   <svg className={`w-2.5 h-2.5 text-neutral-600 transition-transform ${moreOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <path d="M3 5l3 3 3-3" />
                   </svg>
@@ -272,7 +283,7 @@ export function Header() {
                         }`}
                       >
                         <span className={`w-4 text-center ${isActive(href) ? "text-violet-400" : "text-neutral-700"}`}>{icon}</span>
-                        {label}
+                        {t(label)}
                       </Link>
                     ))}
                     <div className="border-t border-neutral-800/40 mt-1 pt-1">
@@ -290,10 +301,10 @@ export function Header() {
                         target="_blank"
                         onClick={() => setMoreOpen(false)}
                         className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all"
-                        title="skill.md spec for AI agents"
+                        title={t("skillSpec")}
                       >
                         <span className="w-4 text-center text-neutral-700 text-[10px]">AI</span>
-                        For AI
+                        {t("forAI")}
                       </a>
                     </div>
                   </div>
@@ -314,6 +325,7 @@ export function Header() {
             </Link>
 
             <div className="flex items-center gap-2">
+              <LanguageSelector />
               {ready && user && (
                 <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300">
                   {initials}
@@ -322,7 +334,7 @@ export function Header() {
               <button
                 onClick={() => setMobileOpen((o) => !o)}
                 className="p-2 text-neutral-500 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all"
-                aria-label="Menu"
+                aria-label={t("menu")}
               >
                 {mobileOpen ? (
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -362,7 +374,7 @@ export function Header() {
                     {icon}
                   </span>
                 )}
-                {label}
+                {t(label)}
                 {isActive(href) && (
                   <span className="ml-auto w-1 h-1 rounded-full bg-violet-400" />
                 )}
@@ -392,18 +404,18 @@ export function Header() {
                     </div>
                     <div className="flex items-center gap-1.5 px-3 py-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                      <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString()} $ASPORE</span>
+                      <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString(localeTag(locale))} $ASPORE</span>
                     </div>
                     <Link href="/profile" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all">
-                      <span className="text-neutral-600">&#x25CE;</span> My Profile
+                      <span className="text-neutral-600">&#x25CE;</span> {t("profile")}
                     </Link>
                     <button onClick={() => { signOut(); setMobileOpen(false); }} className="w-full text-left flex items-center gap-2 px-3 py-2.5 text-sm text-red-400/80 hover:text-red-300 hover:bg-red-500/[0.06] rounded-lg transition-all">
-                      <span>&#x21A9;</span> Sign Out
+                      <span>&#x21A9;</span> {t("signOut")}
                     </button>
                   </>
                 ) : (
                   <Link href="/login" onClick={() => setMobileOpen(false)} className="px-3 py-2.5 text-sm text-neutral-500 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all font-mono">
-                    Sign In
+                    {t("signIn")}
                   </Link>
                 )
               )}
@@ -412,15 +424,15 @@ export function Header() {
                 onClick={() => setMobileOpen(false)}
                 className="connect-btn mt-1 px-4 py-2.5 text-sm font-medium font-mono rounded-lg bg-white text-black text-center transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
               >
-                Create Agent &#x2192;
+                {t("createAgent")} &#x2192;
               </Link>
               <a
                 href={`${API_URL}/skill.md`}
                 target="_blank"
                 className="px-3 py-2 text-[11px] text-neutral-600 hover:text-neutral-300 font-mono rounded-lg text-center transition-all"
-                title="skill.md spec for AI agents"
+                title={t("skillSpec")}
               >
-                For AI agents (skill.md) ↗
+                {t("forAIAgents")} ↗
               </a>
             </div>
           </div>

@@ -1,3 +1,8 @@
+"use client";
+
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { BattleDetail, BattleSummary } from "@/lib/api";
 
 interface DemoBadgeProps {
@@ -14,13 +19,14 @@ interface DemoBadgeProps {
  * for its own tooltip.
  */
 export function DemoBadge({ battle, className = "" }: DemoBadgeProps) {
+  const tr = useTranslations(battlesMessages);
+
   if (!battle.is_demo) return null;
   return (
     <span
-      title="Demo battle against the platform's sparring agent — no rating change"
+      title={tr("Demo battle against the platform's sparring agent — no rating change")}
       className={`inline-flex items-center rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-xs font-medium text-cyan-300 ${className}`}
     >
-      Demo · unrated
-    </span>
+      {" " + tr("Demo · unrated") + " "}</span>
   );
 }
