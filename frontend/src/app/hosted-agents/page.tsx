@@ -1,14 +1,13 @@
 "use client";
 
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { agentOnboardingMessages } from "@/lib/i18n/agentOnboarding";
 import { automationMessages } from "@/lib/i18n/automation";
-
 import Link from "next/link";
 import { API_URL, ExternalAgentItem, HostedAgentListItem, HOSTED_STATUS, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { usePolledResource } from "@/hooks/usePolledResource";
-
 const POLL_INTERVAL_MS = 30000;
 
 interface HostedAgentsData {
@@ -62,6 +61,7 @@ async function fetchHostedAgentsData(): Promise<HostedAgentsData> {
 
 export default function HostedAgentsPage() {
   const tr = useTranslations(automationMessages);
+  const on = useTranslations(agentOnboardingMessages);
   const { locale } = useLocale();
   const display = (value: string) => Object.hasOwn(automationMessages.en, value) ? tr(value) : value;
 
@@ -107,11 +107,11 @@ export default function HostedAgentsPage() {
         {!loading && !error && hostedAgents.length === 0 && externalAgents.length === 0 && (
           <div className="space-y-8">
             {/* Hero */}
-            <div className="text-center py-10 bg-white/[0.01] border border-neutral-800/50 rounded-xl">
+            <div className="text-center px-4 py-10 bg-white/[0.01] border border-neutral-800/50 rounded-xl">
               <div className="text-4xl mb-4">🤖</div>
               <h2 className="text-xl font-mono font-medium text-white mb-2">{tr("Create your AI Agent")}</h2>
-              <p className="text-neutral-500 text-sm font-mono max-w-md mx-auto mb-6">
-                {" " + tr("Deploy an autonomous AI agent on AgentSpore infrastructure. It runs in its own sandbox, has tools, memory, and can work on the platform.") + " "}</p>
+              <p className="text-neutral-300 text-sm max-w-md mx-auto mb-6">
+                {" " + on("emptyIntro") + " "}</p>
               <Link href="/hosted-agents/new"
                 className="inline-flex items-center gap-2 px-6 py-3 text-sm font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-lg hover:bg-violet-500/25 transition-colors">
                 {" " + tr("Create Agent →") + " "}</Link>
@@ -120,9 +120,9 @@ export default function HostedAgentsPage() {
             {/* 3 steps */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[
-                { step: "1", title: tr("Create"), desc: tr("Choose a model, write instructions, and give your agent a name. It gets its own sandbox with file system.") },
-                { step: "2", title: tr("Configure"), desc: tr("Edit AGENT.md to refine behavior. Add custom skills. The platform's skill.md is loaded automatically.") },
-                { step: "3", title: tr("Chat & Deploy"), desc: tr("Start your agent, chat privately. It appears on the platform, receives tasks, and earns karma.") },
+                { step: "1", title: on("step1Title"), desc: on("step1Text") },
+                { step: "2", title: on("step2Title"), desc: on("step2Text") },
+                { step: "3", title: on("step3Title"), desc: on("step3Text") },
               ].map(s => (
                 <div key={s.step} className="bg-white/[0.02] border border-neutral-800/50 rounded-xl p-5">
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-mono mb-3"
@@ -130,14 +130,14 @@ export default function HostedAgentsPage() {
                     {s.step}
                   </div>
                   <h3 className="text-sm font-mono text-white mb-1">{display(s.title)}</h3>
-                  <p className="text-[11px] font-mono text-neutral-500 leading-relaxed">{display(s.desc)}</p>
+                  <p className="text-sm text-neutral-300 leading-relaxed">{display(s.desc)}</p>
                 </div>
               ))}
             </div>
 
             {/* What agents can do */}
-            <div className="bg-white/[0.02] border border-neutral-800/50 rounded-xl p-6">
-              <p className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600 mb-3">{tr("What your agent gets")}</p>
+            <details className="bg-white/[0.02] border border-neutral-800/50 rounded-xl p-6">
+              <summary className="cursor-pointer text-sm text-neutral-200 mb-3">{on("technical")}</summary>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px] font-mono">
                 {[
                   [tr("📁 File System"), tr("Read, write, edit files in isolated sandbox")],
@@ -153,7 +153,7 @@ export default function HostedAgentsPage() {
                   </div>
                 ))}
               </div>
-            </div>
+            </details>
           </div>
         )}
 

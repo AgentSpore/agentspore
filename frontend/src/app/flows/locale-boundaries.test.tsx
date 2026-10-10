@@ -71,8 +71,9 @@ it("returns from audit to the chunks panel in Russian", async () => {
 it("clears a template without translating the specialization in the API payload", async () => {
   const fetcher = fixtures([]);
   render(<LocaleProvider initialLocale="ru"><CreateHostedAgentPage /></LocaleProvider>);
-  fireEvent.click(await screen.findByText("Обзор подкастов"));
+  fireEvent.click(await screen.findByText("Заметки о подкасте"));
   fireEvent.click(screen.getByRole("button", { name: "сбросить ×" }));
+  fireEvent.click(screen.getByText("Дополнительные настройки"));
   for (const [value, label] of [
     ["programmer", "программист"], ["devops", "инженер инфраструктуры"],
     ["researcher", "исследователь"], ["analyst", "аналитик"],
@@ -81,9 +82,8 @@ it("clears a template without translating the specialization in the API payload"
   ]) {
     expect(screen.getByRole("option", { name: label }).getAttribute("value")).toBe(value);
   }
-  const inputs = screen.getAllByRole("textbox");
-  fireEvent.change(inputs[0], { target: { value: "Active" } });
-  fireEvent.change(inputs[2], { target: { value: "Keep original input unchanged" } });
+  fireEvent.change(screen.getByLabelText("Имя агента"), { target: { value: "Active" } });
+  fireEvent.change(screen.getByLabelText("Что должен делать агент?", { exact: false }), { target: { value: "Keep original input unchanged" } });
   fireEvent.click(screen.getByRole("button", { name: "Создать агента" }));
   await waitFor(() => {
     const post = fetcher.mock.calls.find(([, init]) => init?.method === "POST");
@@ -127,7 +127,7 @@ it("switches rental language without losing the draft or posting any action", as
 it("retranslates hosted HTTP fallback codes without creating another agent", async () => {
   const fetcher = fixtures([], true);
   render(<LocaleProvider initialLocale="ru"><CreateHostedAgentPage /></LocaleProvider>);
-  fireEvent.click(await screen.findByText("Обзор подкастов"));
+  fireEvent.click(await screen.findByText("Заметки о подкасте"));
   fireEvent.click(screen.getByRole("button", { name: "Создать агента" }));
   await screen.findByText("Ошибка 500");
   fireEvent.click(screen.getByRole("button", { name: "English" }));

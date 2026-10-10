@@ -3,7 +3,7 @@
 import { LanguageSelector } from "@/components/LanguageSelector";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { refreshAccessToken } from "@/lib/auth";
@@ -31,17 +31,21 @@ function GithubIcon() {
   );
 }
 
-interface NavLink { href: string; label: keyof typeof NAVIGATION_MESSAGES.en; icon: string; dot?: boolean; }
+const subscribeToAuthReadiness = () => () => {};
+const isAnonymous = () => !localStorage.getItem("access_token");
+const serverAuthPending = () => false;
+
+interface NavLink { href: string; label: keyof typeof NAVIGATION_MESSAGES.en; icon: string; }
 // Primary nav — core daily-driver pages. Keep ≤4 to avoid choice paralysis.
 const navLinks: NavLink[] = [
   { href: "/dashboard", label: "dashboard", icon: ">" },
   { href: "/projects", label: "projects", icon: "/" },
   { href: "/agents", label: "agents", icon: "@" },
-  { href: "/chat", label: "chat", dot: true, icon: "$" },
+  { href: "/showcase", label: "showcase", icon: "~" },
 ];
 // Secondary nav — folded under "More ▾" dropdown on desktop, flat list on mobile.
 const navMore: NavLink[] = [
-  { href: "/showcase", label: "showcase", icon: "~" },
+  { href: "/chat", label: "chat", icon: "$" },
   { href: "/battles", label: "battles", icon: "!" },
   { href: "/teams", label: "teams", icon: "^" },
   { href: "/blog", label: "blog", icon: "+" },
@@ -55,17 +59,19 @@ export function Header() {
   const t = useTranslations(NAVIGATION_MESSAGES);
   const [user, setUser] = useState<UserInfo | null>(null);
   const [ready, setReady] = useState(false);
+  const anonymous = useSyncExternalStore(subscribeToAuthReadiness, isAnonymous, serverAuthPending);
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
-    if (!token) { setReady(true); return; }
+    if (!token) return;
 
     const fetchMe = (t: string) =>
       fetch(`${API_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${t}` } });
@@ -98,9 +104,15 @@ export function Header() {
         setMoreOpen(false);
       }
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (moreOpen) { setMoreOpen(false); moreRef.current?.querySelector("button")?.focus(); }
+      if (mobileOpen) { setMobileOpen(false); mobileToggleRef.current?.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
+    return () => { document.removeEventListener("mousedown", handler); document.removeEventListener("keydown", onKeyDown); };
+  }, [moreOpen, mobileOpen]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -160,7 +172,7 @@ export function Header() {
               <LanguageSelector />
               <div className="w-px h-4 bg-neutral-800 mx-1" />
 
-              {ready && (
+              {(ready || anonymous) && (
                 user ? (
                   <div className="relative" ref={menuRef}>
                     <button
@@ -228,7 +240,7 @@ export function Header() {
           {/* Nav row — prominent tabs with active underline */}
           <div className="max-w-7xl mx-auto px-6 pb-0 border-t border-neutral-800/40">
             <nav className="flex items-center gap-0 text-[13px]">
-              {navLinks.map(({ href, label, dot, icon }) => (
+              {navLinks.map(({ href, label, icon }) => (
                 <Link
                   key={href}
                   href={href}
@@ -238,21 +250,14 @@ export function Header() {
                       : "text-neutral-500 border-transparent hover:text-neutral-300 hover:border-neutral-700"
                   }`}
                 >
-                  {dot ? (
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
-                    </span>
-                  ) : (
-                    <span className={`text-[10px] ${isActive(href) ? "text-violet-400" : "text-neutral-700"} transition-colors`}>
-                      {icon}
-                    </span>
-                  )}
+                  <span className={`text-[10px] ${isActive(href) ? "text-violet-400" : "text-neutral-700"} transition-colors`}>
+                    {icon}
+                  </span>
                   {t(label)}
                 </Link>
               ))}
 
-              {/* More dropdown — showcase, battles, teams, blog, analytics */}
+              {/* More dropdown — chat, battles, teams, blog, analytics remain available */}
               <div className="relative" ref={moreRef}>
                 <button
                   onClick={() => setMoreOpen((o) => !o)}
@@ -332,6 +337,8 @@ export function Header() {
                 </div>
               )}
               <button
+                ref={mobileToggleRef}
+                aria-expanded={mobileOpen}
                 onClick={() => setMobileOpen((o) => !o)}
                 className="p-2 text-neutral-500 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all"
                 aria-label={t("menu")}
@@ -353,7 +360,7 @@ export function Header() {
         {/* Mobile dropdown */}
         {mobileOpen && (
           <div className="mobile-menu-enter lg:hidden border-t border-neutral-800/60 bg-[#0a0a0a]/98 backdrop-blur-md px-4 py-3 flex flex-col gap-0.5">
-            {[...navLinks, ...navMore].map(({ href, label, dot, icon }) => (
+            {[...navLinks, ...navMore].map(({ href, label, icon }) => (
               <Link
                 key={href}
                 href={href}
@@ -364,16 +371,9 @@ export function Header() {
                     : "text-neutral-400 hover:text-white hover:bg-white/[0.04]"
                 }`}
               >
-                {dot ? (
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
-                  </span>
-                ) : (
-                  <span className={`text-xs w-4 text-center ${isActive(href) ? "text-violet-400" : "text-neutral-700"}`}>
-                    {icon}
-                  </span>
-                )}
+                <span className={`text-xs w-4 text-center ${isActive(href) ? "text-violet-400" : "text-neutral-700"}`}>
+                  {icon}
+                </span>
                 {t(label)}
                 {isActive(href) && (
                   <span className="ml-auto w-1 h-1 rounded-full bg-violet-400" />
@@ -390,7 +390,7 @@ export function Header() {
             </a>
 
             <div className="border-t border-neutral-800/60 mt-2 pt-3 flex flex-col gap-1">
-              {ready && (
+              {(ready || anonymous) && (
                 user ? (
                   <>
                     <div className="px-3 py-2 flex items-center gap-3">

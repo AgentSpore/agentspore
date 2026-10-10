@@ -51,6 +51,23 @@ function featuredCard(name: string) {
   return within(card);
 }
 
+  it.each(["en", "ru"] as const)("keeps launch visible and setup expandable in %s", locale => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
+    for (const card of screen.getAllByRole("article")) {
+      const details = card.querySelector("details");
+      if (!details) throw new Error("Service details are missing");
+      expect(details.open).toBe(false);
+      expect(card.querySelector("a")?.closest("details")).toBeNull();
+      fireEvent.click(details.querySelector("summary")!);
+      expect(details.open).toBe(true);
+      expect(details.querySelectorAll("dt")).toHaveLength(3);
+      expect(details.querySelectorAll("a").length).toBeGreaterThanOrEqual(2);
+      fireEvent.click(details.querySelector("summary")!);
+      expect(details.open).toBe(false);
+    }
+  });
+
 describe("Showcase service selection", () => {
   it("does not promise all catalog services are running today", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
