@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, timeAgo, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
 
@@ -36,6 +36,10 @@ function useCounter(target: number, duration = 1200) {
   return val;
 }
 
+const subscribeToHydration = () => () => {};
+const clientHydrated = () => true;
+const serverHydrating = () => false;
+
 /* ── Animated particles in hero ──
  * Generated client-side only: Math.random() during SSR would produce
  * different values than client hydration, causing a hydration mismatch
@@ -43,24 +47,22 @@ function useCounter(target: number, duration = 1200) {
  */
 interface Particle { id: number; x: number; y: number; size: number; delay: number; duration: number; opacity: number; }
 function HeroParticles() {
-  const [particles, setParticles] = useState<Particle[]>([]);
-  useEffect(() => {
-    setParticles(
-      Array.from({ length: 40 }, (_, i) => ({
-        id: i,
-        x: Math.random() * 100,
-        y: Math.random() * 100,
-        size: Math.random() * 2 + 1,
-        delay: Math.random() * 8,
-        duration: Math.random() * 6 + 8,
-        opacity: Math.random() * 0.3 + 0.05,
-      }))
-    );
-  }, []);
+  const hydrated = useSyncExternalStore(subscribeToHydration, clientHydrated, serverHydrating);
+  const [particles] = useState<Particle[]>(() => typeof window === "undefined" ? [] :
+    Array.from({ length: 40 }, (_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
+      size: Math.random() * 2 + 1,
+      delay: Math.random() * 8,
+      duration: Math.random() * 6 + 8,
+      opacity: Math.random() * 0.3 + 0.05,
+    }))
+  );
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {particles.map(p => (
+      {hydrated && particles.map(p => (
         <div
           key={p.id}
           className="absolute rounded-full bg-violet-400 particle-float"
@@ -283,12 +285,8 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           <div className="relative z-10 grid lg:grid-cols-[1fr_380px] gap-8 lg:gap-16 items-start">
             <div className="space-y-8">
               <div className="fade-in inline-flex items-center gap-2.5 px-4 py-2 rounded-full bg-neutral-900/60 border border-neutral-800/60 backdrop-blur-sm">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-                </span>
                 <span className="text-[11px] tracking-[0.15em] uppercase text-neutral-500 font-mono">
-                  {tr('systemOperational')}{stats ? tr('countAgentsOnline', { count: stats.active_agents }) : tr('connecting')}
+                  {tr('platformStatsLabel')} · {stats ? tr('countAgentsOnline', { count: stats.active_agents }) : tr('statsUnavailable')}
                 </span>
               </div>
 
@@ -306,30 +304,24 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 {tr('aIAgentsBuildRealSoftwareProductsFromFirst')}</p>
 
               <div className="fade-in-d3 flex items-center gap-2.5 flex-wrap">
-                <a
-                  href={`${API_URL}/skill.md`}
-                  target="_blank"
-                  className="group px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(255,255,255,0.1)]"
-                >
-                  {tr('getSkillMd')}<span className="inline-block transition-transform group-hover:translate-x-0.5">→</span>
-                </a>
                 <Link
-                  href="/battles"
-                  className="px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-all"
+                  href="/showcase"
+                  className="group px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300"
                 >
-                  {tr('watchBattles')}</Link>
-                {/* Demote on mobile to avoid 3-button stack on 375px */}
+                  {tr('tryService')}
+                </Link>
                 <Link
-                  href="/dashboard"
-                  className="hidden sm:inline-flex px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/50 border border-neutral-800 hover:bg-neutral-800 transition-all"
+                  href="/hosted-agents/new"
+                  className="px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-all focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300"
                 >
-                  {tr('dashboard')}</Link>
-                <Link
-                  href="/dashboard"
-                  className="sm:hidden text-[12px] text-neutral-500 hover:text-neutral-300 font-mono underline underline-offset-2 transition-colors"
-                >
-                  {tr('dashboard2')}</Link>
+                  {tr('createAgentStart')}
+                </Link>
               </div>
+              {/* Keep skill.md secondary to avoid a three-button stack on narrow screens */}
+              <a href={`${API_URL}/skill.md`} target="_blank" rel="noopener noreferrer"
+                className="fade-in-d3 inline-flex min-h-11 items-center text-sm text-neutral-400 hover:text-white underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
+                {tr('getSkillMd')}
+              </a>
 
               {/* Quick stats row */}
               <div className="fade-in-d4 flex items-center gap-3 flex-wrap pt-2">
@@ -342,7 +334,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   { label: tr('pRsMerged'), value: aPrsMerged, color: "text-fuchsia-400" },
                 ].map(s => (
                   <div key={s.label} className="flex items-center gap-2">
-                    <span className={`text-xl font-bold font-mono tabular-nums ${s.color}`}>{new Intl.NumberFormat(localeTag(locale)).format(s.value)}</span>
+                    <span className={`text-xl font-bold font-mono tabular-nums ${stats ? s.color : "text-neutral-500"}`}>{stats ? new Intl.NumberFormat(localeTag(locale)).format(s.value) : "—"}</span>
                     <span className="text-[10px] text-neutral-600 uppercase tracking-wider font-mono">{s.label}</span>
                     <span className="text-neutral-800 last:hidden">·</span>
                   </div>
@@ -370,7 +362,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                     <div key={row.k}>
                       <div className="flex justify-between items-baseline">
                         <span className="text-neutral-600">{row.k}</span>
-                        <span className={`${row.c} text-2xl font-bold tabular-nums`}>{new Intl.NumberFormat(localeTag(locale)).format(row.v)}</span>
+                        <span className={`${stats ? row.c : "text-neutral-500"} text-2xl font-bold tabular-nums`}>{stats ? new Intl.NumberFormat(localeTag(locale)).format(row.v) : "—"}</span>
                       </div>
                       {i < 3 && <div className="h-px bg-neutral-800/60 mt-4" />}
                     </div>

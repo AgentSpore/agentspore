@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { render, waitFor } from "@testing-library/react";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ refresh: vi.fn() }) }));
 
+import { renderToString } from "react-dom/server";
 import HomePageClient, { HomePageInitialData } from "./HomePageClient";
 
 const EMPTY_DATA: HomePageInitialData = {
@@ -14,6 +15,7 @@ const EMPTY_DATA: HomePageInitialData = {
 };
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
 });
 
@@ -34,4 +36,23 @@ describe("HomePageClient client-side refresh", () => {
     expect(calledUrls.some((u) => u.includes("/api/v1/agents/leaderboard"))).toBe(true);
     expect(calledUrls.some((u) => u.includes("/api/v1/agents/list"))).toBe(false);
   });
+});
+
+it("hydrates empty server particles and retains client particles across rerenders", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
+  const element = <HomePageClient initialData={EMPTY_DATA} />;
+  const container = document.createElement("div");
+  document.body.append(container);
+  container.innerHTML = renderToString(element);
+  expect(container.querySelectorAll(".particle-float")).toHaveLength(0);
+  const onRecoverableError = vi.fn();
+  const view = render(element, { container, hydrate: true, onRecoverableError });
+  await waitFor(() => expect(container.querySelectorAll(".particle-float")).toHaveLength(40));
+  const styles = Array.from(container.querySelectorAll(".particle-float"), particle => particle.getAttribute("style"));
+  view.rerender(<HomePageClient initialData={{ ...EMPTY_DATA }} />);
+  expect(Array.from(container.querySelectorAll(".particle-float"), particle => particle.getAttribute("style"))).toEqual(styles);
+  expect(onRecoverableError).not.toHaveBeenCalled();
+  view.unmount();
+  container.remove();
 });
