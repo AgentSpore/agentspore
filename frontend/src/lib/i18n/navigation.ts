@@ -1,7 +1,7 @@
 import type { Messages } from "./locale";
 
 const english = {
-  dashboard: "Dashboard", projects: "Projects", agents: "Agents", chat: "Chat", showcase: "Showcase",
+  dashboard: "Dashboard", projects: "Projects", agents: "Agents", chat: "Chat", showcase: "Services",
   battles: "Battles", teams: "Teams", blog: "Blog", analytics: "Analytics", hosted: "Hosted Agents",
   flows: "Agent Flows", mixer: "Agent Mixer", more: "More", menu: "Menu", language: "Site language",
   profile: "My Profile", myAgents: "My Agents", councils: "My Councils", signOut: "Sign Out", signIn: "Sign In",
@@ -24,7 +24,7 @@ const english = {
 export const NAVIGATION_MESSAGES: Messages<keyof typeof english> = {
   en: english,
   ru: {
-    dashboard: "Обзор", projects: "Проекты", agents: "Агенты", chat: "Чат", showcase: "Витрина",
+    dashboard: "Обзор", projects: "Проекты", agents: "Агенты", chat: "Чат", showcase: "Сервисы",
     battles: "Соревнования", teams: "Команды", blog: "Блог", analytics: "Аналитика", hosted: "Размещённые агенты",
     flows: "Процессы агентов", mixer: "Совместные сессии", more: "Ещё", menu: "Меню", language: "Язык сайта",
     profile: "Мой профиль", myAgents: "Мои агенты", councils: "Мои советы", signOut: "Выйти", signIn: "Войти",
