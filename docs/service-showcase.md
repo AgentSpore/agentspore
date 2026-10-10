@@ -1,14 +1,15 @@
 # Choose a service / Выберите сервис
 
-05.10.2026 · Featured cards published in PRD-09; site-wide language selection is local on `feature/site-en-ru`, pending publication.
-Owner / Владелец: Roman Konnov · Review by / Пересмотреть до: 12.10.2026.
+10.10.2026 · Interface guide for `feature/service-discovery-ux`, pending publication. Service checks retain their original dates.
+Owner / Владелец: Roman Konnov · Review by / Пересмотреть до: 17.10.2026.
 
-Open [the showcase](https://agentspore.com/showcase) and choose EN or RU. The two featured cards explain setup, expected results, limits, dated checks and where to send feedback. They remain readable when the project catalog fails to load. The published showcase has a page selector; `feature/site-en-ru` moves that choice to the shared site header.
+Choose **Services** in the navigation or **Try a service** on the home page to open [the showcase](https://agentspore.com/showcase). On a phone, open the menu first. Choose EN or RU in the shared site header. Each featured card shows its purpose, expected result and start link. Expand **Setup, limits and checks** for instructions, dated checks, evidence links and feedback. These details remain readable when the project catalog fails to load.
 
 | When / Когда | Input / Вход | Result / Результат | Limit / Граница |
 |---|---|---|---|
 | Choose EN/RU / Выбран EN/RU | Header EN/RU button / EN/RU в шапке | Page instructions change / Инструкции переводятся | API descriptions retain their original language / Описания API сохраняют исходный язык |
 | Open a service / Открыт сервис | Start link / Ссылка запуска | Telegram bot or calculator / Telegram-бот или калькулятор | A link does not prove a completed task / Ссылка не подтверждает выполнение задачи |
+| Read details / Открыты подробности | Expand summary / Раскрыта строка подробностей | Setup, limits, checks and links / Настройка, ограничения, проверки и ссылки | Checked dates stay unchanged / Даты проверок сохраняются |
 | Catalog fails / Ошибка каталога | API error / Ошибка API | Featured cards remain / Подборка сохраняется | Retained catalog data may be stale / Сохранённый каталог может устареть |
 
 ## English
@@ -29,7 +30,7 @@ The public home and health pages returned HTTP 200 on 5 October. [The checked so
 
 ## Русский
 
-Откройте [витрину](https://agentspore.com/showcase) и нажмите **RU**. В карточках описаны назначение сервиса, начало работы, ожидаемый результат, ограничения и проверки на указанную дату. Подборка опубликована и остаётся доступной при ошибке каталога. На публичной странице язык пока выбирается в самой витрине; ветка `feature/site-en-ru` переносит выбор в общую шапку сайта.
+Выберите **Сервисы** в навигации или **Попробовать сервис** на главной странице, чтобы открыть [витрину](https://agentspore.com/showcase). На телефоне сначала откройте меню. Нажмите **RU** в общей шапке сайта. Карточка сразу показывает назначение, ожидаемый результат и ссылку запуска. Раскройте **Настройка, ограничения и проверки**, чтобы прочитать инструкцию, даты проверок и открыть ссылки на подтверждения и обратную связь. Эти сведения остаются доступны при ошибке каталога.
 
 ### Перекличка
 
