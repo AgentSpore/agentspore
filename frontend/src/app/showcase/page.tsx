@@ -107,8 +107,7 @@ async function fetchShowcaseProjects(): Promise<Project[]> {
 function CuratedCard({ service, language }: { service: CuratedService; language: ShowcaseLanguage }) {
   const copy = SHOWCASE_COPY[language];
   const fields = [
-    { label: copy.purpose, value: service.purpose }, { label: copy.start, value: service.start },
-    { label: copy.result, value: service.result }, { label: copy.limits, value: service.limits },
+    { label: copy.start, value: service.start }, { label: copy.limits, value: service.limits },
     { label: copy.checked, value: service.checked },
   ];
   const linkClass = "inline-flex min-h-11 items-center rounded-lg px-3 py-2 text-sm text-violet-200 hover:bg-violet-400/10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300";
@@ -116,19 +115,28 @@ function CuratedCard({ service, language }: { service: CuratedService; language:
     <article aria-labelledby={`service-${service.id}`} className="min-w-0 rounded-2xl border border-violet-400/30 bg-neutral-900/60 p-6 flex flex-col gap-5">
       <h3 id={`service-${service.id}`} className="text-xl font-semibold">{service.name}</h3>
       <dl className="space-y-4 text-sm leading-relaxed">
-        {fields.map(field => (
-          <div key={field.label}>
-            <dt className="font-medium text-neutral-200">{field.label}</dt>
-            <dd className="mt-1 text-neutral-300 break-words">{field.value}</dd>
-          </div>
-        ))}
+        <div><dt className="font-medium text-neutral-200">{copy.purpose}</dt>
+          <dd className="mt-1 text-neutral-300 break-words">{service.purpose}</dd></div>
+        <div><dt className="font-medium text-neutral-200">{copy.result}</dt>
+          <dd className="mt-1 text-neutral-300 break-words">{service.result}</dd></div>
       </dl>
-      <div className="mt-auto flex flex-wrap gap-2">
-        <a href={service.startUrl} className={`${linkClass} bg-violet-400/15 border border-violet-400/30`}>{service.startLabel}</a>
-        <a href={service.evidenceUrl} className={linkClass}>{service.evidenceLabel}</a>
-        {service.policyUrl && <a href={service.policyUrl} className={linkClass}>{copy.policy}</a>}
-        <a href={SERVICE_CONTACT_URL} className={linkClass}>{copy.contact}</a>
-      </div>
+      <a href={service.startUrl} className={`${linkClass} self-start bg-violet-400/15 border border-violet-400/30`}>{service.startLabel}</a>
+      <details className="border-t border-neutral-800 pt-4">
+        <summary className="min-h-11 cursor-pointer py-2 text-sm text-violet-200 rounded focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{copy.details}</summary>
+        <dl className="mt-3 space-y-4 text-sm leading-relaxed">
+          {fields.map(field => (
+            <div key={field.label}>
+              <dt className="font-medium text-neutral-200">{field.label}</dt>
+              <dd className="mt-1 text-neutral-300 break-words">{field.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <a href={service.evidenceUrl} className={linkClass}>{service.evidenceLabel}</a>
+          {service.policyUrl && <a href={service.policyUrl} className={linkClass}>{copy.policy}</a>}
+          <a href={SERVICE_CONTACT_URL} className={linkClass}>{copy.contact}</a>
+        </div>
+      </details>
     </article>
   );
 }
