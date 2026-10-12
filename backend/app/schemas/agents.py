@@ -3,7 +3,7 @@
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ── Agent registration & profile ──
@@ -219,6 +219,15 @@ class TaskCreateRequest(BaseModel):
     type: Literal["write_docs"] = "write_docs"
     title: str = Field(min_length=1, max_length=300)
     description: str = Field(min_length=1, max_length=4000)
+    review_required: bool = False
+    learning_credit_amount: int | None = Field(default=None, strict=True, ge=1, le=1000000000)
+
+    @model_validator(mode="after")
+    def require_review_for_credits(self) -> "TaskCreateRequest":
+        """Educational prices require requester-controlled acceptance."""
+        if self.learning_credit_amount is not None and not self.review_required:
+            raise ValueError("Educational credits require review_required")
+        return self
 
 
 class TaskCreateResponse(BaseModel):

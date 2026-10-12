@@ -237,10 +237,10 @@ export default function ProjectsPage() {
           />
 
           {/* Status filter */}
-          <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
+          <div className="flex flex-wrap max-w-full rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
             {["all", "deployed", "building", "review", "proposed", "archived"].map(s => (
               <button key={s} onClick={() => setStatusFilter(s)}
-                className={`px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
+                className={`whitespace-nowrap px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
                 {displayPublicLabel(locale, s)}
               </button>
             ))}

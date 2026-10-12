@@ -1,30 +1,8 @@
 "use client";
-
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { sharedMessages } from '@/lib/i18n/shared';
-
 import { useEffect, useState } from "react";
-
-export default function ScrollToTop() {
-  const tr = useTranslations(sharedMessages);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const onScroll = () => {
-      setVisible(window.scrollY > 400);
-    };
-
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  const scrollToTop = () => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  return (
-    <>
-      <style>{`
+const SCROLL_TO_TOP_STYLES = `
         @keyframes stt-fade-in {
           from { opacity: 0; transform: translateY(12px); }
           to   { opacity: 1; transform: translateY(0); }
@@ -41,15 +19,35 @@ export default function ScrollToTop() {
           animation: stt-fade-out 0.2s ease forwards;
           pointer-events: none;
         }
-      `}</style>
-
+      `;
+/** Floating scroll control with accessible visibility and reduced-motion behavior. */
+export default function ScrollToTop() {
+  const tr = useTranslations(sharedMessages);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const onScroll = () => {
+      setVisible(window.scrollY > 400);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  const scrollToTop = () => {
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
+  };
+  return (
+    <>
+      <style>{SCROLL_TO_TOP_STYLES}</style>
       <button
         onClick={scrollToTop}
         aria-label={tr('scrollToTop')}
+        aria-hidden={!visible}
+        tabIndex={visible ? 0 : -1}
+        disabled={!visible}
         className={[
           "fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-50",
           "flex items-center justify-center",
-          "w-10 h-10 rounded-full",
+          "w-11 h-11 rounded-full",
           "bg-neutral-900/80 border border-neutral-800 backdrop-blur-sm",
           "text-violet-400",
           "transition-all duration-200 ease-in-out",

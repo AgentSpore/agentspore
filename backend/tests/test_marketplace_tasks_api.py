@@ -153,6 +153,16 @@ async def test_completed_task_cannot_be_unclaimed(marketplace_api, created_task)
         assert await db.scalar(text("SELECT status FROM tasks")) == "completed"
 
 
+async def test_legacy_unclaim_wrong_actor_before_and_after_release(marketplace_api, created_task):
+    client, (_, _, _, _, keys) = marketplace_api
+    url = f"/api/v1/agents/tasks/{created_task}"
+    claimant, stranger = {"X-API-Key": keys[1]}, {"X-API-Key": keys[0]}
+    assert (await client.post(url + "/claim", headers=claimant)).status_code == 200
+    assert (await client.post(url + "/unclaim", headers=stranger)).status_code == 403
+    assert (await client.post(url + "/unclaim", headers=claimant)).status_code == 200
+    assert (await client.post(url + "/unclaim", headers=stranger)).status_code == 403
+
+
 @pytest.fixture
 async def competing_requests(marketplace_api):
     client, (maker, project_id, owner, other, keys) = marketplace_api
@@ -202,6 +212,68 @@ async def test_concurrent_create_one_task(marketplace_api, demo_body, competing_
     assert sorted(r.json()["created"] for r in results) == [False, True]
     async with maker() as db:
         assert await db.scalar(text("SELECT count(*) FROM tasks")) == 1
+
+
+@pytest.fixture
+async def lock_wait_barrier(marketplace_api):
+    _, (maker, _, _, _, _) = marketplace_api
+    async with maker() as observer:
+
+        async def wait_for_requests(pids, expected):
+            for _ in range(200):
+                await observer.execute(text("SELECT pg_stat_clear_snapshot()"))
+                blocked = await observer.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_stat_activity WHERE "
+                        "pid = ANY(CAST(:pids AS int[])) AND wait_event_type = 'Lock'"
+                    ),
+                    {"pids": pids},
+                )
+                if len(pids) == expected and blocked == expected:
+                    return
+                await asyncio.sleep(0.01)
+            raise AssertionError("Every queued request must reach its database row lock")
+
+        yield wait_for_requests
+
+
+async def test_reviewed_create_retry_and_claim_do_not_deadlock(
+    marketplace_api,
+    demo_body,
+    lock_wait_barrier,
+):
+    client, (maker, project_id, _, _, keys) = marketplace_api
+    create_url = f"/api/v1/agents/projects/{project_id}/tasks"
+    body, creator = {**demo_body, "review_required": True}, {"X-API-Key": keys[0]}
+    first = await client.post(create_url, json=body, headers=creator)
+    assert first.status_code == 200
+    task_id, pids = first.json()["task_id"], []
+    token = REQUEST_PIDS.set(pids)
+    try:
+        async with maker() as blocker:
+            await blocker.execute(
+                text("SELECT id FROM tasks WHERE id = :id FOR UPDATE"), {"id": task_id}
+            )
+            async with asyncio.TaskGroup() as group:
+                claim = group.create_task(
+                    client.post(
+                        f"/api/v1/agents/tasks/{task_id}/claim",
+                        headers={"X-API-Key": keys[1]},
+                    )
+                )
+                await lock_wait_barrier(pids, 1)
+                retry = group.create_task(client.post(create_url, json=body, headers=creator))
+                await lock_wait_barrier(pids, 2)
+                await blocker.commit()
+        assert claim.result().status_code == 200
+        assert retry.result().json() == {"task_id": task_id, "status": "claimed", "created": False}
+    finally:
+        REQUEST_PIDS.reset(token)
+    async with maker() as db:
+        assert await db.scalar(text("SELECT count(*) FROM tasks")) == 1
+        assert await db.scalar(text("SELECT status FROM tasks")) == "claimed"
+        assert await db.scalar(text("SELECT version FROM task_reviews")) == 1
+        assert await db.scalar(text("SELECT count(*) FROM task_review_events")) == 2
 
 
 @pytest.mark.parametrize("operation", ["claim", "complete", "unclaim"])
