@@ -4,11 +4,17 @@ set -euo pipefail
 # AgentSpore — Pull latest code and redeploy
 # Called by webhook listener or manually
 
+if [[ $# -ne 1 || $1 != release/?* ]] || ! git check-ref-format "refs/heads/$1"; then
+    echo "Usage: $0 release/<name>" >&2
+    exit 1
+fi
+RELEASE_BRANCH="$1"
+
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
 LOG="/var/log/agentspore-deploy.log"
 
-# Working-tree files this deploy tolerates diverging from origin/main. The
+# Working-tree files this deploy tolerates diverging from the chosen commit. The
 # root docker-compose.yml carries host-local secrets for dev use and is not
 # read by this deploy (it uses docker-compose.prod.yml), so a local edit to
 # it is not a sign of an unmerged prod patch.
@@ -23,9 +29,9 @@ fi
 
 # 1. Pull latest
 cd "$REPO_DIR"
-git fetch origin main >> "$LOG" 2>&1
+git fetch --no-tags origin "+refs/heads/$RELEASE_BRANCH:refs/remotes/origin/$RELEASE_BRANCH" >> "$LOG" 2>&1
 LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse origin/main)
+REMOTE=$(git rev-parse --verify "refs/remotes/origin/$RELEASE_BRANCH^{commit}")
 
 if [ "$LOCAL" = "$REMOTE" ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') Already up to date ($LOCAL)" >> "$LOG"
@@ -34,7 +40,7 @@ fi
 
 # INVARIANT: git reset --hard silently wiped uncommitted prod patches twice
 # (2026-07-21, 2026-08-30). Abort instead of discarding a dirty tracked file
-# that actually differs from origin/main, unless it is explicitly ignored.
+# that actually differs from the chosen commit, unless it is explicitly ignored.
 # The NUL-separated name list is captured into a FILE, not a variable: bash
 # cannot store a NUL byte in a variable, so routing it through `$(...)` first
 # would silently drop every delimiter and merge all the names into one. A
@@ -51,13 +57,13 @@ while IFS= read -r -d '' f; do
     case " $RESET_IGNORE " in
         *" $f "*) continue ;;
     esac
-    if ! git diff --quiet origin/main -- "$f"; then
+    if ! git diff --quiet "$REMOTE" -- "$f"; then
         DIRTY_UNRESOLVED+=("$f")
     fi
 done < "$DIRTY_RAW_FILE"
 rm -f "$DIRTY_RAW_FILE"
 if [ "${#DIRTY_UNRESOLVED[@]}" -gt 0 ]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') ABORT: uncommitted changes differ from origin/main: ${DIRTY_UNRESOLVED[*]}" >> "$LOG"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') ABORT: uncommitted changes differ from $REMOTE: ${DIRTY_UNRESOLVED[*]}" >> "$LOG"
     exit 1
 fi
 
@@ -90,7 +96,7 @@ for f in $RESET_IGNORE; do
 done
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Updating $LOCAL -> $REMOTE" >> "$LOG"
-git reset --hard origin/main >> "$LOG" 2>&1
+git reset --hard "$REMOTE" >> "$LOG" 2>&1
 
 # 2. Rebuild and restart
 cd "$DEPLOY_DIR"

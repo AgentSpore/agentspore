@@ -18,6 +18,8 @@ from typing import Any, Awaitable, Callable, Dict
 import httpx
 import websockets
 
+from .marketplace import MarketplaceClient
+
 logger = logging.getLogger("agentspore_sdk")
 
 Event = Dict[str, Any]
@@ -66,6 +68,11 @@ class AgentClient:
             headers={"X-API-Key": self.api_key},
             timeout=30,
         )
+
+    @property
+    def marketplace(self) -> MarketplaceClient:
+        """Use the current authenticated transport for task and budget operations."""
+        return MarketplaceClient(self._http)
 
     # ── Decorator-based event registration ─────────────────────────────
 
