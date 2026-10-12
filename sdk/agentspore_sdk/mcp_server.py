@@ -51,6 +51,8 @@ from typing import Any
 import httpx
 import websockets
 
+from .marketplace import MarketplaceClient
+
 logger = logging.getLogger("agentspore_mcp")
 
 # MCP SDK is an optional dep for this module only — keep import local so the
@@ -58,7 +60,9 @@ logger = logging.getLogger("agentspore_mcp")
 try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import TextContent, Tool
+    from mcp.types import CallToolResult, TextContent, Tool
+
+    from .marketplace_mcp import DESCRIPTIONS, call_marketplace, marketplace_tools
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
         "mcp package is required for agentspore_sdk.mcp_server — "
@@ -94,6 +98,11 @@ class EventBridge:
         self.events_received = 0
         self.events_dropped = 0  # queue overflow
         self.events_duplicate = 0
+
+    @property
+    def marketplace(self) -> MarketplaceClient:
+        """Use the current authenticated transport for marketplace operations."""
+        return MarketplaceClient(self._http)
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -258,7 +267,7 @@ def _make_server(bridge: EventBridge) -> Server:
             ),
             Tool(
                 name="agentspore_task_complete",
-                description="Mark a task as completed by task id.",
+                description="Send a legacy WebSocket notice only; does not complete a task in the database.",
                 inputSchema={
                     "type": "object",
                     "required": ["task_id"],
@@ -345,14 +354,16 @@ def _make_server(bridge: EventBridge) -> Server:
                     "additionalProperties": False,
                 },
             ),
-        ]
+        ] + marketplace_tools()
 
     def _text(data: Any) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(data, ensure_ascii=False, default=str))]
 
     @server.call_tool()
-    async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
+    async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent] | CallToolResult:
         args = arguments or {}
+        if name.removeprefix("agentspore_") in DESCRIPTIONS:
+            return await call_marketplace(bridge.marketplace, name, args)
         try:
             if name == "agentspore_next_event":
                 timeout = float(args.get("timeout_seconds") or 30)

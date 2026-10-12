@@ -40,6 +40,7 @@ from app.services.github_oauth_service import get_github_oauth_service
 from app.services.gitlab_oauth_service import get_gitlab_oauth_service
 from app.services.openviking_service import get_openviking_service
 from app.services.web3_service import get_web3_service
+from app.services.task_review_service import TaskReviewService
 
 from loguru import logger
 
@@ -51,6 +52,7 @@ class AgentService:
         self.db = db
         self.redis = redis
         self.repo = get_agent_repo(db)
+        self.task_reviews = TaskReviewService(db)
         self.flow_repo = get_flow_repo(db)
         self.rental_repo = get_rental_repo(db)
         self.mixer_repo = get_mixer_repo(db)
@@ -1287,6 +1289,9 @@ class AgentService:
         if str(project["creator_agent_id"]) != str(agent["id"]):
             raise HTTPException(status_code=403, detail="Only project creator can delete projects")
 
+        await self.repo.lock_task_project(project_id)
+        if await self.task_reviews.budgets.repo.project_has_reservations(project_id):
+            raise HTTPException(status_code=409, detail="Project has educational credit history")
         await self.repo.delete_project_and_related(project_id)
         await self.db.commit()
 
@@ -1694,10 +1699,22 @@ class AgentService:
                    "source_key": f"manual:{body.idempotency_key}"}
         existing = await self.repo.get_manual_task(project_id, content["source_key"])
         if existing:
-            if any(existing[key] != content[key] for key in ("type", "title", "description")):
+            existing, review = await self.task_reviews.load(existing["id"])
+            reservation = await self.task_reviews.budgets.repo.reservation(existing["id"])
+            price = reservation["amount"] if reservation else None
+            if (price != body.learning_credit_amount
+                    or any(existing[key] != content[key]
+                           for key in ("type", "title", "description"))
+                    or (review is not None) != body.review_required):
                 raise HTTPException(status_code=409, detail="Idempotency key payload differs")
             return {"task_id": str(existing["id"]), "status": existing["status"], "created": False}
         task = await self.repo.insert_manual_task(project_id, agent["id"], content)
+        if body.review_required:
+            await self.task_reviews.create(task, agent["id"])
+        if body.learning_credit_amount is not None:
+            await self.task_reviews.budgets.reserve(
+                task["id"], agent["id"], body.learning_credit_amount
+            )
         return {"task_id": str(task["id"]), "status": task["status"], "created": True}
 
     async def list_tasks(
@@ -1732,21 +1749,26 @@ class AgentService:
                 "status": r["status"],
                 "source_type": r["source_type"],
                 "created_at": str(r["created_at"]),
+                "review_required": r["review_required"],
+                "review_version": r["review_version"],
+                "learning_credit_amount": r["learning_credit_amount"],
             }
             for r in rows
         ]
 
     async def claim_task(self, task_id: UUID, agent: dict) -> dict:
         """Claim a task for the agent."""
-        task = await self.repo.get_task_by_id(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+        task, review = await self.task_reviews.load(task_id)
+        if review is not None and str(review["requester_agent_id"]) == str(agent["id"]):
+            raise HTTPException(status_code=403, detail="Requester cannot claim a reviewed task")
         if task["status"] != "open":
             raise HTTPException(status_code=409, detail=f"Task is already '{task['status']}'")
 
         task = await self.repo.claim_task(task_id, agent["id"])
         if not task:
             raise HTTPException(status_code=409, detail="Task is no longer open")
+        if review is not None:
+            await self.task_reviews.claimed(task, review, agent["id"])
         await self.log_activity(
             agent["id"], "task_claimed",
             f"Agent '{agent['name']}' claimed task: {task['title']}",
@@ -1757,11 +1779,14 @@ class AgentService:
 
     async def complete_task(self, task_id: UUID, agent: dict, result_text: str) -> dict:
         """Complete a claimed task."""
-        task = await self.repo.get_task_by_id(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+        task, review = await self.task_reviews.load(task_id)
         if str(task["claimed_by_agent_id"]) != str(agent["id"]):
             raise HTTPException(status_code=403, detail="Only the claiming agent can complete this task")
+        if review is not None:
+            # INVARIANT(AF-02): a claimant cannot accept its own result or earn legacy karma.
+            raise HTTPException(
+                status_code=409, detail="Reviewed tasks require /submit, not /complete"
+            )
         if task["status"] not in ("claimed",):
             raise HTTPException(status_code=409, detail=f"Task is '{task['status']}', cannot complete")
 
@@ -1779,15 +1804,17 @@ class AgentService:
 
     async def unclaim_task(self, task_id: UUID, agent: dict) -> dict:
         """Return a task to the queue."""
-        task = await self.repo.get_task_by_id(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+        task, review = await self.task_reviews.load(task_id)
         if str(task["claimed_by_agent_id"]) != str(agent["id"]):
             raise HTTPException(status_code=403, detail="Only the claiming agent can unclaim this task")
+        if review is not None and review["submission_version"] > 0:
+            raise HTTPException(status_code=409, detail="Submitted tasks cannot be unclaimed")
 
         task = await self.repo.unclaim_task(task_id, agent["id"])
         if not task:
             raise HTTPException(status_code=409, detail="Task is no longer claimed by this agent")
+        if review is not None:
+            await self.task_reviews.unclaimed(task, review, agent["id"])
         return {"status": "open", "task_id": str(task_id), "message": "Task returned to queue"}
 
     # ── Leaderboard & Stats ───────────────────────────────────────────

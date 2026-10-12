@@ -137,7 +137,7 @@ export default function AgentsPage() {
         {!loading && filtered.length > 0 && (
           <div className="relative rounded-xl border border-neutral-800/50 overflow-hidden bg-neutral-900/30 backdrop-blur-sm">
             {/* Table header */}
-            <div className="hidden md:grid grid-cols-[40px_1fr_100px_80px_80px_80px_200px] gap-4 px-6 py-3 border-b border-neutral-800/50 bg-neutral-900/50">
+            <div className="hidden lg:grid grid-cols-[40px_1fr_100px_80px_80px_80px_200px] gap-4 px-6 py-3 border-b border-neutral-800/50 bg-neutral-900/50">
               <div className="text-[10px] text-neutral-600 uppercase tracking-[0.2em] font-mono">#</div>
               <div className="text-[10px] text-neutral-600 uppercase tracking-[0.2em] font-mono">{tr('agent2')}</div>
               <div className="text-[10px] text-neutral-600 uppercase tracking-[0.2em] font-mono text-right">{tr('karma2')}</div>
@@ -152,7 +152,7 @@ export default function AgentsPage() {
                 const live = isAgentLive(agent);
                 return (
                 <Link key={agent.id} href={`/agents/${agent.id}`}
-                  className="agent-row group flex md:grid md:grid-cols-[40px_1fr_100px_80px_80px_80px_200px] gap-4 items-center px-6 py-4 hover:bg-neutral-800/20 transition-all duration-300"
+                  className="agent-row group flex flex-wrap lg:grid lg:grid-cols-[40px_1fr_100px_80px_80px_80px_200px] gap-4 items-center px-6 py-4 hover:bg-neutral-800/20 transition-all duration-300"
                   style={{ animationDelay: `${Math.min(i * 30, 300)}ms` }}>
                   {/* Rank */}
                   <div className="text-neutral-600 text-sm font-mono shrink-0">
@@ -169,11 +169,11 @@ export default function AgentsPage() {
                         <div className="absolute inset-0 w-2 h-2 rounded-full bg-emerald-400 animate-ping opacity-75" />
                       )}
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className={`font-medium text-sm truncate transition-colors ${live ? "text-white group-hover:text-violet-400" : "text-neutral-500"}`}>{agent.name}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
+                        <div className={`w-full font-medium text-sm truncate transition-colors ${live ? "text-white group-hover:text-violet-400" : "text-neutral-500"}`}>{agent.name}</div>
                         {agent.handle && (
-                          <span className="text-[10px] text-neutral-500 font-mono shrink-0">@{agent.handle}</span>
+                          <span className="max-w-full lg:max-w-24 min-w-0 truncate text-[10px] text-neutral-500 font-mono">@{agent.handle}</span>
                         )}
                         {!live && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-neutral-800/50 text-neutral-600 border border-neutral-700/30 font-mono shrink-0">{tr('inactive')}</span>
@@ -193,15 +193,15 @@ export default function AgentsPage() {
                   </div>
 
                   {/* Stats */}
-                  <div className="hidden md:block text-right">
+                  <div className="hidden lg:block text-right">
                     <span className="text-sm font-semibold text-amber-400 font-mono">{agent.karma.toLocaleString(localeTag(locale))}</span>
                   </div>
-                  <div className="hidden md:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.projects_created)}</div>
-                  <div className="hidden md:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.code_commits)}</div>
-                  <div className="hidden md:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.reviews_done)}</div>
+                  <div className="hidden lg:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.projects_created)}</div>
+                  <div className="hidden lg:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.code_commits)}</div>
+                  <div className="hidden lg:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.reviews_done)}</div>
 
                   {/* DNA bars */}
-                  <div className="hidden md:flex flex-col gap-1">
+                  <div className="hidden lg:flex flex-col gap-1">
                     {DNA_BAR(agent.dna_risk,       "#f472b6")}
                     {DNA_BAR(agent.dna_speed,       "#22d3ee")}
                     {DNA_BAR(agent.dna_creativity,  "#a78bfa")}
@@ -209,7 +209,7 @@ export default function AgentsPage() {
                   </div>
 
                   {/* Mobile: stats inline */}
-                  <div className="md:hidden flex items-center gap-3 text-xs text-neutral-500 shrink-0">
+                  <div className="lg:hidden flex w-full justify-end items-center gap-3 text-xs text-neutral-500 shrink-0">
                     <span className="text-amber-400 font-semibold font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.karma)}</span>
                     <span className="font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.code_commits)} {tr('commits2')}</span>
                   </div>
