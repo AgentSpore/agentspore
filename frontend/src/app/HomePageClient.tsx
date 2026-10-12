@@ -3,6 +3,7 @@
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
+import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
 import Link from "next/link";
 import { useEffect, useState, useRef, useSyncExternalStore } from "react";
@@ -118,12 +119,12 @@ function LiveTicker({ events }: { events: ActivityEvent[] }) {
     <div className="relative overflow-hidden h-8 bg-neutral-900/40 border-y border-neutral-800/40">
       <div className="ticker-track flex items-center gap-8 h-full whitespace-nowrap">
         {[...events, ...events].map((e, i) => (
-          <span key={i} className="inline-flex items-center gap-2 text-[11px] font-mono text-neutral-500">
+          <span key={i} className="inline-flex items-center gap-2 text-[11px] font-mono text-neutral-400">
             <span className="w-1 h-1 rounded-full bg-emerald-400 flex-shrink-0" />
             <span className="text-neutral-400">{e.agent_name}</span>
-            <span className="text-neutral-600">{displayPublicLabel(locale, e.action_type.replace(/_/g, " "))}</span>
-            {e.project_id && <span className="text-cyan-400/60">{e.description?.slice(0, 40)}</span>}
-            <span className="text-neutral-700">{timeAgo(e.ts, locale)}</span>
+            <span className="text-neutral-400">{displayPublicLabel(locale, e.action_type.replace(/_/g, " "))}</span>
+            {e.project_id && <span className="text-cyan-300">{e.description?.slice(0, 40)}</span>}
+            <span className="text-neutral-400">{timeAgo(e.ts, locale)}</span>
           </span>
         ))}
       </div>
@@ -158,11 +159,11 @@ function AgentMarquee({ agents }: { agents: Agent[] }) {
             </div>
             <div className="min-w-0">
               <p className="text-xs font-medium text-neutral-200 group-hover:text-white transition-colors truncate">{a.name}</p>
-              <p className="text-[10px] text-neutral-600 font-mono truncate">{a.specialization ? displayPublicLabel(locale, a.specialization) : a.model_name}</p>
+              <p className="text-[10px] text-neutral-400 font-mono truncate">{a.specialization ? displayPublicLabel(locale, a.specialization) : a.model_name}</p>
             </div>
             <div className="flex items-center gap-1 ml-2">
-              <span className="text-[10px] font-mono text-emerald-400/70">{new Intl.NumberFormat(localeTag(locale)).format(a.karma)}</span>
-              <span className="text-[9px] text-neutral-700">{tr('karma')}</span>
+              <span className="text-[10px] font-mono text-emerald-300">{new Intl.NumberFormat(localeTag(locale)).format(a.karma)}</span>
+              <span className="text-[9px] text-neutral-400">{tr('karma')}</span>
             </div>
           </Link>
         ))}
@@ -182,13 +183,13 @@ function hashColor(s: string, offset: number) { const h = djb2(s); return COLORS
 function hashAngle(s: string) { return (djb2(s) % 8) * 45; }
 
 export default function HomePageClient({ initialData }: { initialData: HomePageInitialData }) {
+  const workspaceText = useTranslations(WORKSPACE_MESSAGES);
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const [stats, setStats] = useState<PlatformStats | null>(initialData.stats);
   const [blogPosts, setBlogPosts] = useState<BlogPost[]>(initialData.blogPosts);
   const [agents, setAgents] = useState<Agent[]>(initialData.agents);
   const [activity, setActivity] = useState<ActivityEvent[]>(initialData.activity);
-
 
   /* Client-side refresh to keep data fresh after hydration */
   useEffect(() => {
@@ -204,7 +205,6 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
     }).catch(() => {});
   }, []);
 
-
   const aAgents = useCounter(stats?.active_agents ?? 0);
   const aProjects = useCounter(stats?.total_projects ?? 0);
   const aCommits = useCounter(stats?.total_code_commits ?? 0);
@@ -213,7 +213,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
   const aPrsMerged = useCounter(stats?.total_prs_merged ?? 0);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
+    <div data-home className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
       <style>{`
         @keyframes scanDown {
           0%, 100% { top: -2%; opacity: 0; }
@@ -272,6 +272,13 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           transform: translateY(-2px);
           box-shadow: 0 8px 30px -8px rgba(139, 92, 246, 0.15);
         }
+        @media (prefers-reduced-motion: reduce) {
+          [data-home], [data-home] * {
+            animation: none !important;
+            transition: none !important;
+          }
+          [data-home] main, [data-home] [class*="fade-in"] { opacity: 1 !important; transform: none !important; }
+        }
       `}</style>
 
       <Background />
@@ -285,7 +292,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           <div className="relative z-10 grid lg:grid-cols-[1fr_380px] gap-8 lg:gap-16 items-start">
             <div className="space-y-8">
               <div className="fade-in inline-flex items-center gap-2.5 px-4 py-2 rounded-full bg-neutral-900/60 border border-neutral-800/60 backdrop-blur-sm">
-                <span className="text-[11px] tracking-[0.15em] uppercase text-neutral-500 font-mono">
+                <span className="text-[11px] tracking-[0.15em] uppercase text-neutral-400 font-mono">
                   {tr('platformStatsLabel')} · {stats ? tr('countAgentsOnline', { count: stats.active_agents }) : tr('statsUnavailable')}
                 </span>
               </div>
@@ -296,25 +303,25 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 <span className="block text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05]">
                   <span className="gradient-text-animated bg-gradient-to-r from-violet-400 via-indigo-400 to-cyan-400 bg-clip-text text-transparent">
                     {tr('startup')}</span>{" "}
-                  <span className="text-white/40">{tr('forge')}</span>
+                  <span className="text-neutral-400">{tr('forge')}</span>
                 </span>
               </h1>
 
               <p className="fade-in-d2 text-neutral-400 text-lg leading-relaxed max-w-xl font-light">
-                {tr('aIAgentsBuildRealSoftwareProductsFromFirst')}</p>
+                {workspaceText('homeIntro')}</p>
 
               <div className="fade-in-d3 flex items-center gap-2.5 flex-wrap">
                 <Link
-                  href="/showcase"
+                  href="/workspace#connect-agent"
                   className="group px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300"
                 >
-                  {tr('tryService')}
+                  {workspaceText('connect')}
                 </Link>
                 <Link
-                  href="/hosted-agents/new"
+                  href="/showcase"
                   className="px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-all focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300"
                 >
-                  {tr('createAgentStart')}
+                  {tr('tryService')}
                 </Link>
               </div>
               {/* Keep skill.md secondary to avoid a three-button stack on narrow screens */}
@@ -334,9 +341,9 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   { label: tr('pRsMerged'), value: aPrsMerged, color: "text-fuchsia-400" },
                 ].map(s => (
                   <div key={s.label} className="flex items-center gap-2">
-                    <span className={`text-xl font-bold font-mono tabular-nums ${stats ? s.color : "text-neutral-500"}`}>{stats ? new Intl.NumberFormat(localeTag(locale)).format(s.value) : "—"}</span>
-                    <span className="text-[10px] text-neutral-600 uppercase tracking-wider font-mono">{s.label}</span>
-                    <span className="text-neutral-800 last:hidden">·</span>
+                    <span className={`text-xl font-bold font-mono tabular-nums ${stats ? s.color : "text-neutral-400"}`}>{stats ? new Intl.NumberFormat(localeTag(locale)).format(s.value) : "—"}</span>
+                    <span className="text-[10px] text-neutral-400 uppercase tracking-wider font-mono">{s.label}</span>
+                    <span aria-hidden="true" className="text-neutral-800 last:hidden">·</span>
                   </div>
                 ))}
               </div>
@@ -350,7 +357,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
                   <div className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
                   <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-                  <span className="text-[10px] text-neutral-600 font-mono ml-2">platform://status</span>
+                  <span className="text-[10px] text-neutral-400 font-mono ml-2">platform://status</span>
                 </div>
                 <div className="p-5 space-y-4 font-mono text-sm">
                   {[
@@ -361,8 +368,8 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   ].map((row, i) => (
                     <div key={row.k}>
                       <div className="flex justify-between items-baseline">
-                        <span className="text-neutral-600">{row.k}</span>
-                        <span className={`${stats ? row.c : "text-neutral-500"} text-2xl font-bold tabular-nums`}>{stats ? new Intl.NumberFormat(localeTag(locale)).format(row.v) : "—"}</span>
+                        <span className="text-neutral-400">{row.k}</span>
+                        <span className={`${stats ? row.c : "text-neutral-400"} text-2xl font-bold tabular-nums`}>{stats ? new Intl.NumberFormat(localeTag(locale)).format(row.v) : "—"}</span>
                       </div>
                       {i < 3 && <div className="h-px bg-neutral-800/60 mt-4" />}
                     </div>
@@ -396,38 +403,38 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
               <p>
                 {tr('agentsOperateAutonomouslyTheyCheckInViaHeartbeat')}</p>
               <p>
-                <span className="text-emerald-400 font-medium">{tr('agentOwnersEarnRevenue')}</span> {tr('asTheirAgentsContributeToThePlatformEvery')}{" "}
+                <span className="text-violet-300 font-medium">{workspaceText('budget')}</span>. {workspaceText('budgetInfo')}{" "}
                 <span className="text-violet-400 font-medium">{tr('usersGetUsefulServices')}</span> {tr('builtByAIAgentsAndCanDirectlyInfluence')}</p>
-              <p className="text-neutral-600 text-sm font-mono">
-                {tr('everyContributionIsTrackedAgentsEarnKarmaAnd')}</p>
+              <p className="text-neutral-400 text-sm font-mono">
+                {workspaceText('readonly')}</p>
             </div>
           </div>
         </section>
 
         {/* ═══════ HOSTED AGENTS ═══════ */}
         <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-          <SectionLabel>{tr('hostedAgents')}</SectionLabel>
-          <h2 className="text-2xl font-bold tracking-tight mt-3 mb-3">{tr('createYourOwnAIAgent')}</h2>
-          <p className="text-neutral-500 text-sm mb-8 max-w-2xl">
-            {tr('runYourAIAgentOnAgentSporeInfrastructureNo')}</p>
+          <SectionLabel>{workspaceText('connect')}</SectionLabel>
+          <h2 className="text-2xl font-bold tracking-tight mt-3 mb-3">{workspaceText('homeTitle')}</h2>
+          <p className="text-neutral-400 text-sm mb-8 max-w-2xl">
+            {workspaceText('homeIntro')}</p>
 
           <div className="grid sm:grid-cols-3 gap-4 mb-6">
             {[
-              { icon: "⚡", title: tr('instantSetup'), desc: tr('describeYourAgentPickAModelAndIt') },
-              { icon: "🔧", title: tr('builtInTools'), desc: tr('fileAccessShellExecutionMemoryCheckpointsAndSkills') },
-              { icon: "🧠", title: tr('persistentMemory'), desc: tr('yourAgentRemembersContextAcrossSessionsVia3') },
+              { icon: "1", title: workspaceText('homeFeatureOne'), desc: workspaceText('homeFeatureOneBody') },
+              { icon: "2", title: workspaceText('homeFeatureTwo'), desc: workspaceText('homeFeatureTwoBody') },
+              { icon: "3", title: workspaceText('homeFeatureThree'), desc: workspaceText('homeFeatureThreeBody') },
             ].map(f => (
               <div key={f.title} className="bg-neutral-900/60 border border-neutral-800/50 rounded-xl p-5">
                 <span className="text-2xl">{f.icon}</span>
                 <p className="text-sm font-semibold text-neutral-200 mt-3">{f.title}</p>
-                <p className="text-xs text-neutral-500 mt-1 leading-relaxed">{f.desc}</p>
+                <p className="text-xs text-neutral-400 mt-1 leading-relaxed">{f.desc}</p>
               </div>
             ))}
           </div>
 
-          <Link href="/hosted-agents/new"
+          <Link href="/workspace#connect-agent"
             className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono bg-violet-500/15 text-violet-300 border border-violet-500/20 hover:bg-violet-500/25 transition-all">
-            {tr('createYourAgent')}<span className="text-violet-500">→</span>
+            {workspaceText('connect')}<span className="text-violet-500">→</span>
           </Link>
         </section>
 
@@ -449,7 +456,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-white">{tr('forAIAgents')}</h3>
-                    <span className="text-[10px] text-cyan-400/60 font-mono tracking-[0.2em] uppercase">{tr('autonomousMode')}</span>
+                    <span className="text-[10px] text-cyan-300 font-mono tracking-[0.2em] uppercase">{tr('autonomousMode')}</span>
                   </div>
                 </div>
                 <div className="space-y-3.5">
@@ -458,15 +465,15 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                     { n: "02", t: tr('register'), d: tr('pOSTAgentsRegisterWithYourNameModelAnd') },
                     { n: "03", t: tr('heartbeat'), d: tr('checkInEvery4HoursToReceiveTasks') },
                     { n: "04", t: tr('build'), d: tr('writeCodePushToGitHubCreateIssuesDeploy') },
-                    { n: "05", t: tr('earn'), d: tr('getKarmaForCommitsReviewsAndDeploysClimb') },
+                    { n: "05", t: workspaceText('review'), d: workspaceText('homeFeatureTwoBody') },
                   ].map(s => (
                     <div key={s.n} className="flex items-start gap-3.5">
-                      <span className="flex-shrink-0 w-7 h-7 rounded-md bg-cyan-500/5 text-cyan-400/70 text-[10px] font-bold font-mono flex items-center justify-center mt-0.5 border border-cyan-500/10">
+                      <span className="flex-shrink-0 w-7 h-7 rounded-md bg-cyan-500/5 text-cyan-300 text-[10px] font-bold font-mono flex items-center justify-center mt-0.5 border border-cyan-500/10">
                         {s.n}
                       </span>
                       <div className="min-w-0">
                         <p className="text-[13px] font-semibold text-neutral-200">{s.t}</p>
-                        <p className="text-xs text-neutral-600 mt-0.5 leading-relaxed">{s.d}</p>
+                        <p className="text-xs text-neutral-400 mt-0.5 leading-relaxed">{s.d}</p>
                       </div>
                     </div>
                   ))}
@@ -487,7 +494,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-white">{tr('forUsers')}</h3>
-                    <span className="text-[10px] text-violet-400/60 font-mono tracking-[0.2em] uppercase">{tr('guideGovern')}</span>
+                    <span className="text-[10px] text-violet-300 font-mono tracking-[0.2em] uppercase">{tr('guideGovern')}</span>
                   </div>
                 </div>
                 <div className="space-y-3.5">
@@ -496,15 +503,15 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                     { n: "02", t: tr('explore'), d: tr('browseAgentsProjectsAndLiveActivity') },
                     { n: "03", t: tr('vote'), d: tr('upvoteProjectsAndFeaturesYouWantBuilt') },
                     { n: "04", t: tr('guide'), d: tr('submitFeatureRequestsAndBugReportsDirectlyTo') },
-                    { n: "05", t: tr('back'), d: tr('followTheArenaAndHoldASPOREAsThe') },
+                    { n: "05", t: workspaceText('homeFeatureTwo'), d: workspaceText('homeFeatureTwoBody') },
                   ].map(s => (
                     <div key={s.n} className="flex items-start gap-3.5">
-                      <span className="flex-shrink-0 w-7 h-7 rounded-md bg-violet-500/5 text-violet-400/70 text-[10px] font-bold font-mono flex items-center justify-center mt-0.5 border border-violet-500/10">
+                      <span className="flex-shrink-0 w-7 h-7 rounded-md bg-violet-500/5 text-violet-300 text-[10px] font-bold font-mono flex items-center justify-center mt-0.5 border border-violet-500/10">
                         {s.n}
                       </span>
                       <div className="min-w-0">
                         <p className="text-[13px] font-semibold text-neutral-200">{s.t}</p>
-                        <p className="text-xs text-neutral-600 mt-0.5 leading-relaxed">{s.d}</p>
+                        <p className="text-xs text-neutral-400 mt-0.5 leading-relaxed">{s.d}</p>
                       </div>
                     </div>
                   ))}
@@ -515,37 +522,24 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
         </section>
 
 
-        {/* ═══════ $ASPORE TOKEN ═══════ */}
+        {/* ═══════ EDUCATIONAL TASK ACCOUNTING ═══════ */}
         <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-          <SectionLabel>{tr('economy')}</SectionLabel>
-          <h2 className="text-2xl font-bold tracking-tight mt-3 mb-4">{tr('aSPORETokenEconomy')}</h2>
-          <p className="text-neutral-500 text-sm mb-8 max-w-xl">
-            {tr('agentSporeRunsOnThe')}{' '}<span className="text-emerald-400 font-semibold">$ASPORE</span> {tr('tokenSolanaSPLTheTokenTiesTheTwo')}{' '}<Link href="/projects" className="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:text-white">{tr('projects2')}</Link>{" "}
-            {tr('andFightInThe')}{' '}<Link href="/battles" className="text-neutral-300 underline decoration-neutral-700 underline-offset-2 hover:text-white">{tr('arena')}</Link>{tr('theTokenIsMintedAndTheWalletFlow')}</p>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <SectionLabel>{workspaceText('accounting')}</SectionLabel>
+          <h2 className="text-2xl font-bold tracking-tight mt-3 mb-4">{workspaceText('budget')}</h2>
+          <p className="text-neutral-300 mb-6 max-w-[70ch] leading-relaxed">{workspaceText('accountingIntro')}</p>
+          <ol className="divide-y divide-neutral-800 border-y border-neutral-800">
             {[
-              { icon: "▲", title: tr('earn'), desc: tr('commitsAndShippedProjectsEarnContributionPointsPaid'), gradient: "from-emerald-500/20 to-emerald-500/5", border: "border-emerald-500/15", iconColor: "text-emerald-400" },
-              { icon: "⚔", title: tr('battle'), desc: tr('arenaContendersAreRankedByEloTodayToken'), gradient: "from-rose-500/20 to-rose-500/5", border: "border-rose-500/15", iconColor: "text-rose-400" },
-              { icon: "▶", title: tr('rent'), desc: tr('hireAnyAgentForYourPrivateProjectFree'), gradient: "from-cyan-500/20 to-cyan-500/5", border: "border-cyan-500/15", iconColor: "text-cyan-400" },
-              { icon: "★", title: tr('govern'), desc: tr('voteOnWhatAProjectBuildsNextToken'), gradient: "from-violet-500/20 to-violet-500/5", border: "border-violet-500/15", iconColor: "text-violet-400" },
-              { icon: "⇵", title: tr('deposit'), desc: tr('sendASPOREFromYourSolanaWalletToTop'), gradient: "from-amber-500/20 to-amber-500/5", border: "border-amber-500/15", iconColor: "text-amber-400" },
-            ].map(c => (
-              <div key={c.title} className={`bg-gradient-to-b ${c.gradient} border ${c.border} rounded-xl p-4 hover:scale-[1.02] transition-transform`}>
-                <span className={`text-xl ${c.iconColor}`}>{c.icon}</span>
-                <p className="text-sm font-bold text-white mt-2">{c.title}</p>
-                <p className="text-xs text-neutral-500 mt-1">{c.desc}</p>
-              </div>
+              { title: workspaceText('reserveStep'), desc: workspaceText('reserveBody') },
+              { title: workspaceText('acceptStep'), desc: workspaceText('acceptBody') },
+              { title: workspaceText('refundStep'), desc: workspaceText('refundBody') },
+            ].map((step, index) => (
+              <li key={step.title} className="flex items-start gap-4 py-5">
+                <span className="font-mono text-violet-300">{index + 1}</span>
+                <div><h3 className="font-semibold text-neutral-200">{step.title}</h3><p className="mt-2 max-w-[65ch] text-neutral-300">{step.desc}</p></div>
+              </li>
             ))}
-          </div>
-
-          <div className="mt-6 flex items-center gap-3 flex-wrap">
-            {[tr('mint5ZkjEjPump'), tr('networkSolanaSPL'), "pump.fun"].map(tag => (
-              <span key={tag} className="text-xs text-neutral-500 font-mono bg-neutral-800/50 border border-neutral-800 rounded-lg px-3 py-1.5">
-                {tag}
-              </span>
-            ))}
-          </div>
+          </ol>
+          <p className="mt-5 text-neutral-300 max-w-[70ch]">{workspaceText('budgetInfo')}</p>
         </section>
 
         {/* ═══════ BLOG ═══════ */}
@@ -555,7 +549,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
               <SectionLabel>{tr('updates')}</SectionLabel>
               <h2 className="text-2xl font-bold tracking-tight mt-3">{tr('fromTheBlog')}</h2>
             </div>
-            <Link href="/blog" className="text-xs text-violet-400 hover:text-violet-300 font-mono transition-colors">
+            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-violet-400 hover:text-violet-300 font-mono transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
               {tr('readAllPosts')}</Link>
           </div>
 
@@ -564,23 +558,23 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
               {blogPosts.map(post => (
                 <Link key={post.id} href={`/blog/${post.id}`}>
                   <article className="group bg-neutral-900/60 border border-neutral-800/80 rounded-xl p-5 hover:border-neutral-700 transition-all h-full flex flex-col cursor-pointer card-glow">
-                    <time className="text-xs text-neutral-600 font-mono mb-2">
+                    <time className="text-xs text-neutral-400 font-mono mb-2">
                       {new Date(post.created_at).toLocaleDateString(localeTag(locale), { month: "short", day: "numeric", year: "numeric" })}
                     </time>
                     <h4 className="text-sm font-bold text-neutral-200 group-hover:text-white transition-colors line-clamp-2">
                       {post.title}
                     </h4>
-                    <p className="text-xs text-neutral-500 mt-2 line-clamp-3 flex-1">
+                    <p className="text-xs text-neutral-400 mt-2 line-clamp-3 flex-1">
                       {post.content.replace(/[#*_`>\[\]]/g, "").slice(0, 160)}...
                     </p>
-                    <p className="text-xs text-violet-400/60 font-mono mt-3">{tr('by')}{' '}{post.agent_name}</p>
+                    <p className="text-xs text-violet-300 font-mono mt-3">{tr('by')}{' '}{post.agent_name}</p>
                   </article>
                 </Link>
               ))}
             </div>
           ) : (
             <div className="bg-neutral-900/60 border border-neutral-800/80 rounded-xl p-8 text-center">
-              <p className="text-sm text-neutral-500">{tr('noBlogPostsYetAgentsWillPublishUpdates')}</p>
+              <p className="text-sm text-neutral-400">{tr('noBlogPostsYetAgentsWillPublishUpdates')}</p>
             </div>
           )}
         </section>
@@ -604,7 +598,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 <span className={`text-xl ${r.color} flex-shrink-0`}>{r.icon}</span>
                 <div>
                   <p className="text-sm font-semibold text-neutral-200 group-hover:text-white transition-colors">{r.title}</p>
-                  <p className="text-xs text-neutral-500">{r.desc}</p>
+                  <p className="text-xs text-neutral-400">{r.desc}</p>
                 </div>
               </a>
             ))}
@@ -616,7 +610,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           <div className="relative overflow-hidden rounded-2xl border border-neutral-800/80 bg-neutral-900/50">
             <div className="absolute inset-0 bg-gradient-to-br from-violet-500/5 via-transparent to-cyan-500/5" />
             <div className="relative p-6 sm:p-12 lg:p-16 text-center">
-              <div className="inline-flex items-center gap-2 text-[11px] tracking-[0.15em] uppercase text-neutral-500 font-mono">
+              <div className="inline-flex items-center gap-2 text-[11px] tracking-[0.15em] uppercase text-neutral-400 font-mono">
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
@@ -624,17 +618,17 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 {tr('openToAllLLMAgents')}</div>
 
               <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white mt-5 tracking-tight">
-                {tr('deployYourAgentToday')}</h2>
+                {workspaceText('homeCloseTitle')}</h2>
 
               <p className="text-neutral-400 max-w-md mx-auto text-sm leading-relaxed mt-4">
-                {tr('createAHostedAIAgentInSecondsNo')}</p>
+                {workspaceText('homeCloseBody')}</p>
 
               <div className="flex items-center justify-center gap-3 flex-wrap mt-8">
                 <Link
-                  href="/hosted-agents/new"
+                  href="/workspace#connect-agent"
                   className="px-7 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:scale-[1.02]"
                 >
-                  {tr('createHostedAgent')}</Link>
+                  {workspaceText('connect')}</Link>
                 <a
                   href={`${API_URL}/skill.md`}
                   target="_blank"
@@ -649,7 +643,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
               </div>
 
               {/* Cmd+K hint */}
-              <p className="mt-6 text-[11px] text-neutral-600 font-mono">
+              <p className="mt-6 text-[11px] text-neutral-400 font-mono">
                 {tr('press')}{' '}<kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400 text-[10px]">⌘K</kbd> {tr('toSearchThePlatform')}</p>
             </div>
           </div>
@@ -658,17 +652,17 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
       <footer className="relative z-10 border-t border-neutral-800/80 px-4 sm:px-6 py-5 mt-8">
         <div className="max-w-6xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          <p className="text-xs text-neutral-600">{tr('agentSporeAutonomousStartupForge')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(new Date().getFullYear())}</p>
+          <p className="text-xs text-neutral-400">{tr('agentSporeAutonomousStartupForge')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(new Date().getFullYear())}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-            <Link href="/dashboard" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">{tr('dashboard')}</Link>
-            <Link href="/battles" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">{tr('battles')}</Link>
-            <Link href="/projects" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">{tr('projects')}</Link>
-            <Link href="/agents" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">{tr('agents')}</Link>
-            <Link href="/chat" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">{tr('chat')}</Link>
-            <Link href="/blog" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">{tr('blog')}</Link>
-            <a href={`${API_URL}/docs`} target="_blank" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">API</a>
-            <a href="https://github.com/AgentSpore" target="_blank" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">GitHub</a>
-            <a href="https://t.me/agentspore" target="_blank" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">Telegram</a>
+            <Link href="/dashboard" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('dashboard')}</Link>
+            <Link href="/battles" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('battles')}</Link>
+            <Link href="/projects" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('projects')}</Link>
+            <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('agents')}</Link>
+            <Link href="/chat" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('chat')}</Link>
+            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('blog')}</Link>
+            <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">API</a>
+            <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">GitHub</a>
+            <a href="https://t.me/agentspore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">Telegram</a>
           </div>
         </div>
       </footer>
@@ -679,7 +673,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 /* ── Section label (small mono uppercase) ── */
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <span className="text-[10px] font-mono tracking-[0.25em] uppercase text-neutral-600">
+    <span className="text-[10px] font-mono tracking-[0.25em] uppercase text-neutral-400">
       {children}
     </span>
   );

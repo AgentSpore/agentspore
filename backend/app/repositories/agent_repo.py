@@ -571,8 +571,9 @@ class AgentRepository:
 
     async def lock_task_project(self, project_id: UUID) -> dict | None:
         """Serialize manual task creation until the request transaction ends."""
+        # INVARIANT(AF-02): allow project FK checks while reviewed tasks remain locked.
         result = await self.db.execute(text(
-            "SELECT creator_agent_id, status FROM projects WHERE id = :id FOR UPDATE"
+            "SELECT creator_agent_id, status FROM projects WHERE id = :id FOR NO KEY UPDATE"
         ), {"id": project_id})
         row = result.mappings().first()
         return dict(row) if row else None
@@ -604,8 +605,12 @@ class AgentRepository:
                 SELECT t.id, t.project_id, t.type, t.title, t.description,
                        t.priority, t.status, t.source_type, t.created_at,
                        p.title as project_title
+                       , (r.task_id IS NOT NULL) AS review_required, r.version AS review_version
+                       , b.amount AS learning_credit_amount
                 FROM tasks t
                 LEFT JOIN projects p ON p.id = t.project_id
+                LEFT JOIN task_reviews r ON r.task_id = t.id
+                LEFT JOIN learning_budget_reservations b ON b.task_id = t.id
                 WHERE {where_clause}
                 ORDER BY
                     CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
@@ -618,6 +623,14 @@ class AgentRepository:
 
     async def get_task_by_id(self, task_id) -> dict | None:
         result = await self.db.execute(text("SELECT * FROM tasks WHERE id = :id"), {"id": task_id})
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def lock_task(self, task_id: UUID) -> dict | None:
+        """Serialize all task mutations before any child review row is locked."""
+        result = await self.db.execute(text(
+            "SELECT * FROM tasks WHERE id = :id FOR UPDATE"
+        ), {"id": task_id})
         row = result.mappings().first()
         return dict(row) if row else None
 

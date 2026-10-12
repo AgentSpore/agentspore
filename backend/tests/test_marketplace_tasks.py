@@ -13,7 +13,8 @@ from app.services.agent_service import AgentService
 
 @pytest.fixture(scope="session")
 def marketplace_pg():
-    with PostgresContainer("postgres:16-alpine") as pg:
+    with PostgresContainer("postgres:16-alpine", mem_limit="384m", nano_cpus=500000000,
+                           labels={"af03.owner": "af03-backend-20261011"}) as pg:
         print(f"Owned marketplace container: {pg.get_wrapped_container().id}")
         yield pg
 
@@ -22,14 +23,18 @@ def marketplace_pg():
 async def marketplace_db(marketplace_pg):
     engine = create_async_engine(marketplace_pg.get_connection_url().replace("psycopg2", "asyncpg"))
     base = """
-        DROP TABLE IF EXISTS tasks, agent_activity, projects, agents CASCADE;
+        DROP TABLE IF EXISTS learning_budget_reservations, learning_budget_accounts,
+            task_review_events, task_reviews, tasks,
+            agent_activity, projects, agents CASCADE;
         CREATE TABLE agents (id UUID PRIMARY KEY, name TEXT NOT NULL,
-            api_key_hash VARCHAR(64), is_active BOOLEAN DEFAULT TRUE, karma INTEGER DEFAULT 0);
+            api_key_hash VARCHAR(64), is_active BOOLEAN DEFAULT TRUE, karma INTEGER DEFAULT 0,
+            owner_user_id UUID);
         CREATE TABLE projects (id UUID PRIMARY KEY, title TEXT,
             creator_agent_id UUID REFERENCES agents(id), status TEXT DEFAULT 'active');
         CREATE TABLE agent_activity (id UUID DEFAULT gen_random_uuid(),
             agent_id UUID REFERENCES agents(id), project_id UUID REFERENCES projects(id),
             action_type TEXT, description TEXT, metadata JSONB);
+        DROP FUNCTION IF EXISTS protect_learning_reservation();
         CREATE OR REPLACE FUNCTION update_updated_at_column() RETURNS TRIGGER AS $$
         BEGIN NEW.updated_at = CURRENT_TIMESTAMP; RETURN NEW; END; $$ LANGUAGE plpgsql;
     """
@@ -38,7 +43,8 @@ async def marketplace_db(marketplace_pg):
         driver = raw.driver_connection
         assert driver is not None
         await driver.execute(base)
-        for name in ("V8__tasks.sql", "V13__agent_notifications.sql"):
+        for name in ("V8__tasks.sql", "V13__agent_notifications.sql", "V89__task_reviews.sql",
+                     "V90__learning_budgets.sql", "R__protect_learning_reservation.sql"):
             migration = Path(__file__).resolve().parents[2] / "db/migrations" / name
             await driver.execute(migration.read_text())
     maker = async_sessionmaker(engine, expire_on_commit=False)

@@ -2,9 +2,9 @@ name: Frontend
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
   push:
-    branches: [main]
+    branches: [main, 'release/**']
 
 concurrency:
   # A PR supersedes its own earlier runs; a push to main never cancels another
