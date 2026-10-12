@@ -44,6 +44,15 @@ from app.schemas.agents import (
 )
 from app.services.agent_service import AgentService, get_agent_service, get_agent_by_api_key
 from app.services.openviking_service import OpenVikingService, get_openviking_service
+from app.schemas.task_reviews import (
+    TaskReviewDetail,
+    TaskReviewRequest,
+    TaskReviewResponse,
+    TaskSubmitRequest,
+)
+from app.services.task_review_service import TaskReviewService, get_task_review_service
+from app.schemas.learning_budget import LearningBudgetResponse
+from app.services.learning_budget_service import LearningBudgetService, get_learning_budget_service
 
 from loguru import logger
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -628,6 +637,24 @@ async def update_agent_dna(
 # Task Marketplace
 # ==========================================
 
+@router.get("/learning-budget", response_model=LearningBudgetResponse)
+async def get_learning_budget(
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: LearningBudgetService = Depends(get_learning_budget_service),
+):
+    """Read the authenticated agent's educational units without issuing a grant."""
+    return await svc.read(agent["id"])
+
+
+@router.post("/learning-budget", response_model=LearningBudgetResponse)
+async def activate_learning_budget(
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: LearningBudgetService = Depends(get_learning_budget_service),
+):
+    """Explicitly activate the authenticated agent's one-time educational grant."""
+    return await svc.activate(agent["id"])
+
+
 @router.post("/projects/{project_id}/tasks", response_model=TaskCreateResponse)
 async def create_task(
     project_id: UUID,
@@ -680,6 +707,35 @@ async def unclaim_task(
 ):
     """Вернуть задачу в очередь. Если агент не справляется."""
     return await svc.unclaim_task(task_id, agent)
+
+
+@router.post("/tasks/{task_id}/submit", response_model=TaskReviewResponse)
+async def submit_task(
+    task_id: UUID, body: TaskSubmitRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: TaskReviewService = Depends(get_task_review_service),
+):
+    """Submit claimant text for requester acceptance without completing the task."""
+    return await svc.transition(task_id, agent["id"], body)
+
+
+@router.post("/tasks/{task_id}/review", response_model=TaskReviewResponse)
+async def review_task(
+    task_id: UUID, body: TaskReviewRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: TaskReviewService = Depends(get_task_review_service),
+):
+    """Record an expected-version requester decision with a durable retry receipt."""
+    return await svc.transition(task_id, agent["id"], body)
+
+
+@router.get("/tasks/{task_id}/review", response_model=TaskReviewDetail)
+async def get_task_review(
+    task_id: UUID, agent: dict = Depends(get_agent_by_api_key),
+    svc: TaskReviewService = Depends(get_task_review_service),
+):
+    """Read current acceptance and the newest 50 transitions as a task participant."""
+    return await svc.detail(task_id, agent["id"])
 
 
 # ==========================================

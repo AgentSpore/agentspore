@@ -1,12 +1,11 @@
 "use client";
 
 import { LanguageSelector } from "@/components/LanguageSelector";
-
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { API_URL } from "@/lib/api";
-import { refreshAccessToken } from "@/lib/auth";
+import { clearAuthSession, fetchWithAuth, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 interface UserInfo {
   id: string;
@@ -31,20 +30,17 @@ function GithubIcon() {
   );
 }
 
-const subscribeToAuthReadiness = () => () => {};
-const isAnonymous = () => !localStorage.getItem("access_token");
-const serverAuthPending = () => false;
-
 interface NavLink { href: string; label: keyof typeof NAVIGATION_MESSAGES.en; icon: string; }
 // Primary nav — core daily-driver pages. Keep ≤4 to avoid choice paralysis.
 const navLinks: NavLink[] = [
-  { href: "/dashboard", label: "dashboard", icon: ">" },
+  { href: "/workspace", label: "workspace", icon: ">" },
   { href: "/projects", label: "projects", icon: "/" },
   { href: "/agents", label: "agents", icon: "@" },
   { href: "/showcase", label: "showcase", icon: "~" },
 ];
 // Secondary nav — folded under "More ▾" dropdown on desktop, flat list on mobile.
 const navMore: NavLink[] = [
+  { href: "/dashboard", label: "dashboard", icon: ">" },
   { href: "/chat", label: "chat", icon: "$" },
   { href: "/battles", label: "battles", icon: "!" },
   { href: "/teams", label: "teams", icon: "^" },
@@ -52,14 +48,15 @@ const navMore: NavLink[] = [
   { href: "/analytics", label: "analytics", icon: "*" },
 ];
 
-
 /** Shared navigation and locale selection; auth behaviour and user content are preserved. */
 export function Header() {
   const { locale } = useLocale();
   const t = useTranslations(NAVIGATION_MESSAGES);
-  const [user, setUser] = useState<UserInfo | null>(null);
-  const [ready, setReady] = useState(false);
-  const anonymous = useSyncExternalStore(subscribeToAuthReadiness, isAnonymous, serverAuthPending);
+  const auth = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
+  const [profile, setProfile] = useState<{ generation: number; user: UserInfo | null } | null>(null);
+  const user = profile?.generation === auth.generation ? profile.user : null;
+  const ready = profile?.generation === auth.generation;
+  const anonymous = auth.generation >= 0 && !auth.accessToken;
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -70,30 +67,19 @@ export function Header() {
   const pathname = usePathname();
 
   useEffect(() => {
-    const token = localStorage.getItem("access_token");
-    if (!token) return;
-
-    const fetchMe = (t: string) =>
-      fetch(`${API_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${t}` } });
-
-    fetchMe(token).then(async (r) => {
-      if (r.ok) {
-        setUser(await r.json());
-        setReady(true);
-        return;
-      }
-      if (r.status === 401) {
-        const newToken = await refreshAccessToken();
-        if (newToken) {
-          const r2 = await fetchMe(newToken);
-          if (r2.ok) { setUser(await r2.json()); setReady(true); return; }
-        }
-        localStorage.removeItem("access_token");
-        localStorage.removeItem("refresh_token");
-      }
-      setReady(true);
-    }).catch(() => setReady(true));
-  }, []);
+    const captured = getAuthSnapshot();
+    if (!captured.accessToken) return;
+    const controller = new AbortController();
+    fetchWithAuth(`${API_URL}/api/v1/auth/me`, { signal: controller.signal }).then(async (r) => {
+      const currentUser: UserInfo | null = r.ok ? await r.json() : null;
+      if (controller.signal.aborted || getAuthSnapshot().generation !== captured.generation) return;
+      if (r.status === 401) clearAuthSession(captured.generation);
+      setProfile({ generation: captured.generation, user: currentUser });
+    }).catch(() => {
+      if (!controller.signal.aborted && getAuthSnapshot().generation === captured.generation) setProfile({ generation: captured.generation, user: null });
+    });
+    return () => controller.abort();
+  }, [auth.generation]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -121,8 +107,7 @@ export function Header() {
   }, []);
 
   const signOut = () => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("refresh_token");
+    clearAuthSession();
     window.location.href = "/";
   };
 
@@ -135,7 +120,15 @@ export function Header() {
 
   return (
     <>
-      <header
+      <style>{`
+        @media (prefers-reduced-motion: reduce) {
+          [data-agent-header], [data-agent-header] * {
+            animation: none !important;
+            transition: none !important;
+          }
+        }
+      `}</style>
+      <header data-agent-header
         className={`relative z-30 sticky top-0 transition-all duration-300 ${
           scrolled
             ? "bg-[#0a0a0a]/98 backdrop-blur-md border-b border-neutral-800/80 shadow-[0_1px_20px_rgba(0,0,0,0.5)]"
@@ -150,7 +143,7 @@ export function Header() {
           {/* Top row */}
           <div className="max-w-7xl mx-auto px-6 pt-3 pb-1.5 flex items-center justify-between">
             {/* Logo */}
-            <Link href="/" className="flex items-center gap-3 flex-shrink-0 group">
+            <Link href="/" className="flex min-h-11 items-center gap-3 flex-shrink-0 group">
               <div className="header-logo-hex w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-neutral-900 border border-neutral-700/80 text-violet-400 font-mono">
                 <span className="relative">
                   <span className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 text-violet-300">&gt;_</span>
@@ -161,7 +154,7 @@ export function Header() {
                 <span className="text-[15px] font-bold tracking-tight text-white group-hover:text-violet-100 transition-colors">
                   AgentSpore
                 </span>
-                <span className="hidden xl:inline text-neutral-600 text-[10px] font-mono tracking-wider uppercase">
+                <span className="hidden xl:inline text-neutral-400 text-[10px] font-mono tracking-wider uppercase">
                   {t("tagline")}
                 </span>
               </div>
@@ -177,13 +170,13 @@ export function Header() {
                   <div className="relative" ref={menuRef}>
                     <button
                       onClick={() => setMenuOpen((o) => !o)}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-all group"
+                      className="flex min-h-11 items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-all group"
                     >
                       <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300 group-hover:border-violet-500/40 transition-colors">
                         {initials}
                       </div>
                       <span className="text-[13px] text-neutral-400 max-w-[100px] truncate group-hover:text-neutral-200 transition-colors">{user.name}</span>
-                      <svg className={`w-3 h-3 text-neutral-600 transition-transform duration-200 ${menuOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <svg className={`w-3 h-3 text-neutral-400 transition-transform duration-200 ${menuOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                         <path d="M3 5l3 3 3-3" />
                       </svg>
                     </button>
@@ -191,48 +184,48 @@ export function Header() {
                       <div className="header-menu-enter absolute right-0 top-full mt-2 w-56 rounded-xl border border-neutral-800/80 bg-[#0c0c0c] shadow-[0_8px_40px_rgba(0,0,0,0.6)] py-1 z-50">
                         <div className="px-4 py-3 border-b border-neutral-800/60">
                           <p className="text-sm text-white font-medium truncate">{user.name}</p>
-                          <p className="text-[11px] text-neutral-500 truncate mt-0.5 font-mono">{user.email}</p>
+                          <p className="text-[11px] text-neutral-400 truncate mt-0.5 font-mono">{user.email}</p>
                           <div className="flex items-center gap-1.5 mt-2">
                             {user.token_balance > 0 && <><span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
                             <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString(localeTag(locale))} $ASPORE</span></>}
                           </div>
                         </div>
                         <div className="py-1">
-                          <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                            <span className="w-4 text-center text-neutral-600">&#x25CE;</span> {t("profile")}
+                          <Link href="/profile" onClick={() => setMenuOpen(false)} className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
+                            <span aria-hidden="true" className="w-4 text-center text-neutral-400">&#x25CE;</span> {t("profile")}
                           </Link>
-                          <Link href="/hosted-agents" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                            <span className="w-4 text-center text-neutral-600">&#x25C9;</span> {t("myAgents")}
+                          <Link href="/workspace" onClick={() => setMenuOpen(false)} className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
+                            <span aria-hidden="true" className="w-4 text-center text-neutral-400">&#x25C9;</span> {t("myAgents")}
                           </Link>
-                          <Link href="/councils" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                            <span className="w-4 text-center text-neutral-600">&amp;</span> {t("councils")}
+                          <Link href="/councils" onClick={() => setMenuOpen(false)} className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
+                            <span aria-hidden="true" className="w-4 text-center text-neutral-400">&amp;</span> {t("councils")}
                           </Link>
                           {user.is_admin && (
-                            <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                              <span className="w-4 text-center text-neutral-600">&#x25C8;</span> {t("analytics")}
+                            <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
+                              <span aria-hidden="true" className="w-4 text-center text-neutral-400">&#x25C8;</span> {t("analytics")}
                             </Link>
                           )}
                         </div>
                         <div className="border-t border-neutral-800/60 pt-1">
-                          <button onClick={signOut} className="w-full text-left flex items-center gap-2.5 px-4 py-2 text-[13px] text-red-400/80 hover:text-red-300 hover:bg-red-500/[0.06] transition-all">
-                            <span className="w-4 text-center">&#x21A9;</span> {t("signOut")}
+                          <button onClick={signOut} className="w-full text-left flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-red-400/80 hover:text-red-300 hover:bg-red-500/[0.06] transition-all">
+                            <span aria-hidden="true" className="w-4 text-center">&#x21A9;</span> {t("signOut")}
                           </button>
                         </div>
                       </div>
                     )}
                   </div>
                 ) : (
-                  <Link href="/login" className="px-3 py-1.5 text-[13px] text-neutral-500 hover:text-white rounded-lg transition-all font-mono hover:bg-white/[0.04]">
+                  <Link href="/login" className="inline-flex min-h-11 items-center px-3 py-1.5 text-[13px] text-neutral-400 hover:text-white rounded-lg transition-all font-mono hover:bg-white/[0.04]">
                     {t("signIn")}
                   </Link>
                 )
               )}
 
               <Link
-                href="/hosted-agents/new"
-                className="connect-btn ml-1 px-4 py-1.5 text-[13px] font-medium font-mono rounded-lg bg-white text-black transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
+                href="/workspace#connect-agent"
+                className="connect-btn min-h-11 inline-flex items-center ml-1 px-4 py-1.5 text-[13px] font-medium font-mono rounded-lg bg-white text-black transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
               >
-                {t("createAgent")} <span className="inline-block transition-transform group-hover:translate-x-0.5">&#x2192;</span>
+                {t("connectAgent")} <span className="inline-block transition-transform group-hover:translate-x-0.5">&#x2192;</span>
               </Link>
             </div>
           </div>
@@ -244,13 +237,13 @@ export function Header() {
                 <Link
                   key={href}
                   href={href}
-                  className={`relative px-4 py-2.5 transition-all flex items-center gap-2 font-mono border-b-2 ${
+                  className={`relative min-h-11 px-4 py-2.5 focus-visible:outline-2 focus-visible:outline-violet-300 transition-all flex items-center gap-2 font-mono border-b-2 ${
                     isActive(href)
                       ? "text-white border-violet-500"
-                      : "text-neutral-500 border-transparent hover:text-neutral-300 hover:border-neutral-700"
+                      : "text-neutral-300 border-transparent hover:text-neutral-300 hover:border-neutral-700"
                   }`}
                 >
-                  <span className={`text-[10px] ${isActive(href) ? "text-violet-400" : "text-neutral-700"} transition-colors`}>
+                  <span aria-hidden="true" className={`text-[10px] ${isActive(href) ? "text-violet-400" : "text-neutral-700"} transition-colors`}>
                     {icon}
                   </span>
                   {t(label)}
@@ -261,16 +254,16 @@ export function Header() {
               <div className="relative" ref={moreRef}>
                 <button
                   onClick={() => setMoreOpen((o) => !o)}
-                  className={`relative px-4 py-2.5 transition-all flex items-center gap-2 font-mono border-b-2 ${
+                  className={`relative min-h-11 px-4 py-2.5 focus-visible:outline-2 focus-visible:outline-violet-300 transition-all flex items-center gap-2 font-mono border-b-2 ${
                     navMore.some((l) => isActive(l.href))
                       ? "text-white border-violet-500"
-                      : "text-neutral-500 border-transparent hover:text-neutral-300 hover:border-neutral-700"
+                      : "text-neutral-300 border-transparent hover:text-neutral-300 hover:border-neutral-700"
                   }`}
                   aria-haspopup="menu"
                   aria-expanded={moreOpen}
                 >
                   {t("more")}
-                  <svg className={`w-2.5 h-2.5 text-neutral-600 transition-transform ${moreOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <svg className={`w-2.5 h-2.5 text-neutral-400 transition-transform ${moreOpen ? "rotate-180" : ""}`} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <path d="M3 5l3 3 3-3" />
                   </svg>
                 </button>
@@ -281,13 +274,13 @@ export function Header() {
                         key={href}
                         href={href}
                         onClick={() => setMoreOpen(false)}
-                        className={`flex items-center gap-2.5 px-4 py-2 text-[13px] transition-all ${
+                        className={`flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] transition-all ${
                           isActive(href)
                             ? "text-white bg-white/[0.04]"
                             : "text-neutral-400 hover:text-white hover:bg-white/[0.04]"
                         }`}
                       >
-                        <span className={`w-4 text-center ${isActive(href) ? "text-violet-400" : "text-neutral-700"}`}>{icon}</span>
+                        <span aria-hidden="true" className={`w-4 text-center ${isActive(href) ? "text-violet-400" : "text-neutral-700"}`}>{icon}</span>
                         {t(label)}
                       </Link>
                     ))}
@@ -296,19 +289,19 @@ export function Header() {
                         href={GITHUB_URL}
                         target="_blank"
                         onClick={() => setMoreOpen(false)}
-                        className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all"
+                        className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all"
                       >
-                        <span className="w-4 text-center text-neutral-700"><GithubIcon /></span>
+                        <span aria-hidden="true" className="w-4 text-center text-neutral-700"><GithubIcon /></span>
                         GitHub
                       </a>
                       <a
                         href={`${API_URL}/skill.md`}
                         target="_blank"
                         onClick={() => setMoreOpen(false)}
-                        className="flex items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all"
+                        className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all"
                         title={t("skillSpec")}
                       >
-                        <span className="w-4 text-center text-neutral-700 text-[10px]">AI</span>
+                        <span aria-hidden="true" className="w-4 text-center text-neutral-700 text-[10px]">AI</span>
                         {t("forAI")}
                       </a>
                     </div>
@@ -322,7 +315,7 @@ export function Header() {
         {/* === MOBILE === */}
         <div className="lg:hidden">
           <div className="px-4 py-3 flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-3 flex-shrink-0">
+            <Link href="/" className="flex min-h-11 items-center gap-3 flex-shrink-0">
               <div className="header-logo-hex w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-neutral-900 border border-neutral-700/80 text-violet-400 font-mono">
                 &#x2B21;
               </div>
@@ -340,7 +333,7 @@ export function Header() {
                 ref={mobileToggleRef}
                 aria-expanded={mobileOpen}
                 onClick={() => setMobileOpen((o) => !o)}
-                className="p-2 text-neutral-500 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all"
+                className="min-h-11 min-w-11 p-2 text-neutral-300 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all"
                 aria-label={t("menu")}
               >
                 {mobileOpen ? (
@@ -365,13 +358,13 @@ export function Header() {
                 key={href}
                 href={href}
                 onClick={() => setMobileOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg transition-all font-mono ${
+                className={`flex min-h-11 items-center gap-3 px-3 py-2.5 text-sm rounded-lg transition-all font-mono ${
                   isActive(href)
                     ? "text-white bg-white/[0.06]"
                     : "text-neutral-400 hover:text-white hover:bg-white/[0.04]"
                 }`}
               >
-                <span className={`text-xs w-4 text-center ${isActive(href) ? "text-violet-400" : "text-neutral-700"}`}>
+                <span aria-hidden="true" className={`text-xs w-4 text-center ${isActive(href) ? "text-violet-400" : "text-neutral-700"}`}>
                   {icon}
                 </span>
                 {t(label)}
@@ -384,7 +377,7 @@ export function Header() {
             <a
               href={GITHUB_URL}
               target="_blank"
-              className="flex items-center gap-3 px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all font-mono"
+              className="flex min-h-11 items-center gap-3 px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all font-mono"
             >
               <GithubIcon /> GitHub
             </a>
@@ -399,37 +392,37 @@ export function Header() {
                       </div>
                       <div>
                         <p className="text-sm text-white font-medium">{user.name}</p>
-                        <p className="text-[11px] text-neutral-500 mt-0.5 font-mono">{user.email}</p>
+                        <p className="text-[11px] text-neutral-400 mt-0.5 font-mono">{user.email}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 px-3 py-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
                       <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString(localeTag(locale))} $ASPORE</span>
                     </div>
-                    <Link href="/profile" onClick={() => setMobileOpen(false)} className="flex items-center gap-2 px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all">
-                      <span className="text-neutral-600">&#x25CE;</span> {t("profile")}
+                    <Link href="/profile" onClick={() => setMobileOpen(false)} className="flex min-h-11 items-center gap-2 px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all">
+                      <span aria-hidden="true" className="text-neutral-400">&#x25CE;</span> {t("profile")}
                     </Link>
-                    <button onClick={() => { signOut(); setMobileOpen(false); }} className="w-full text-left flex items-center gap-2 px-3 py-2.5 text-sm text-red-400/80 hover:text-red-300 hover:bg-red-500/[0.06] rounded-lg transition-all">
+                    <button onClick={() => { signOut(); setMobileOpen(false); }} className="min-h-11 w-full text-left flex items-center gap-2 px-3 py-2.5 text-sm text-red-400/80 hover:text-red-300 hover:bg-red-500/[0.06] rounded-lg transition-all">
                       <span>&#x21A9;</span> {t("signOut")}
                     </button>
                   </>
                 ) : (
-                  <Link href="/login" onClick={() => setMobileOpen(false)} className="px-3 py-2.5 text-sm text-neutral-500 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all font-mono">
+                  <Link href="/login" onClick={() => setMobileOpen(false)} className="min-h-11 px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all font-mono">
                     {t("signIn")}
                   </Link>
                 )
               )}
               <Link
-                href="/hosted-agents/new"
+                href="/workspace#connect-agent"
                 onClick={() => setMobileOpen(false)}
-                className="connect-btn mt-1 px-4 py-2.5 text-sm font-medium font-mono rounded-lg bg-white text-black text-center transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
+                className="connect-btn min-h-11 mt-1 px-4 py-2.5 text-sm font-medium font-mono rounded-lg bg-white text-black text-center transition-all hover:bg-neutral-100 hover:shadow-[0_0_20px_rgba(139,92,246,0.15)]"
               >
-                {t("createAgent")} &#x2192;
+                {t("connectAgent")} &#x2192;
               </Link>
               <a
                 href={`${API_URL}/skill.md`}
                 target="_blank"
-                className="px-3 py-2 text-[11px] text-neutral-600 hover:text-neutral-300 font-mono rounded-lg text-center transition-all"
+                className="inline-flex min-h-11 items-center justify-center px-3 py-2 text-[11px] text-neutral-400 hover:text-neutral-300 font-mono rounded-lg text-center transition-all"
                 title={t("skillSpec")}
               >
                 {t("forAIAgents")} ↗

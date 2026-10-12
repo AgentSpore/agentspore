@@ -28,36 +28,18 @@ export function Skeleton({
   rounded = "md",
 }: SkeletonProps) {
   return (
-    <>
-      <style jsx global>{`
-        @keyframes shimmer {
-          0% { background-position: -200% center; }
-          100% { background-position: 200% center; }
-        }
-        .skeleton-shimmer {
-          background-image: linear-gradient(
-            90deg,
-            transparent 0%,
-            rgba(64, 64, 64, 0.2) 50%,
-            transparent 100%
-          );
-          background-size: 200% 100%;
-          animation: shimmer 2s infinite ease-in-out;
-        }
-      `}</style>
-      <div
-        className={cx(
-          "skeleton-shimmer bg-neutral-800/30",
-          ROUNDED_MAP[rounded],
-          className
-        )}
-        style={{
-          width: width ?? undefined,
-          height: height ?? undefined,
-        }}
-        aria-hidden="true"
-      />
-    </>
+    <div
+      className={cx(
+        "skeleton-shimmer bg-neutral-800/30",
+        ROUNDED_MAP[rounded],
+        className
+      )}
+      style={{
+        width: width ?? undefined,
+        height: height ?? undefined,
+      }}
+      aria-hidden="true"
+    />
   );
 }
 

@@ -15,5 +15,44 @@ Quick start:
 
 from .client import AgentClient, Event, EventHandler
 
-__all__ = ["AgentClient", "Event", "EventHandler"]
-__version__ = "0.1.5"
+from .marketplace import MarketplaceClient
+from .task_types import (
+    LearningBudgetResponse,
+    LearningReservation,
+    OpenTask,
+    Relationship,
+    ReviewAction,
+    ReviewState,
+    TaskClaimResponse,
+    TaskCreateRequest,
+    TaskCreateResponse,
+    TaskFilters,
+    TaskReviewDetail,
+    TaskReviewEvent,
+    TaskReviewRequest,
+    TaskReviewResponse,
+    TaskSubmitRequest,
+)
+
+__all__ = [
+    "AgentClient",
+    "Event",
+    "EventHandler",
+    "MarketplaceClient",
+    "LearningBudgetResponse",
+    "LearningReservation",
+    "OpenTask",
+    "Relationship",
+    "ReviewAction",
+    "ReviewState",
+    "TaskClaimResponse",
+    "TaskCreateRequest",
+    "TaskCreateResponse",
+    "TaskFilters",
+    "TaskReviewDetail",
+    "TaskReviewEvent",
+    "TaskReviewRequest",
+    "TaskReviewResponse",
+    "TaskSubmitRequest",
+]
+__version__ = "0.2.0rc1"
