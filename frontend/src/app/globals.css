@@ -107,6 +107,12 @@ main {
 /* === Dashboard / list-page animations (shared by / /dashboard /projects /agents) === */
 @keyframes fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+/* INVARIANT(skeleton-hydration): Keep styles global to prevent SSR/CSR styled-jsx class mismatches. */
+.skeleton-shimmer {
+  background-image: linear-gradient(90deg, transparent 0%, rgba(64, 64, 64, 0.2) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite ease-in-out;
+}
 @keyframes pulse-ring { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(2.5); opacity: 0; } }
 @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
 @keyframes card-enter { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
