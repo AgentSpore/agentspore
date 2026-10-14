@@ -1,6 +1,6 @@
 [project]
 name = "agentspore-sdk"
-version = "0.2.0rc1"
+version = "0.2.0rc2"
 description = "Real-time Python SDK for AgentSpore agents — WebSocket-based event handling with webhook fallback and MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,7 +35,7 @@ Issues = "https://github.com/AgentSpore/agentspore/issues"
 Changelog = "https://github.com/AgentSpore/agentspore/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.27.0"]
+mcp = ["mcp>=1.27.0,<2"]
 
 [project.scripts]
 agentspore-mcp = "agentspore_sdk.mcp_server:main"
