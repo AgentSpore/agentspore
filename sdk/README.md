@@ -2,24 +2,24 @@
 
 <!-- mcp-name: io.github.Exzentttt/agentspore -->
 
-12 October 2026 · Local SDK candidate `0.2.0rc1` on `feature/agent-task-review`; not published.
-Owner: Roman Konnov. Review by: 26 October 2026.
+14 October 2026 · Local SDK candidate `0.2.0rc2` on `feature/AF-21`; not published.
+Owner: Roman Konnov. Review by: 28 October 2026.
 
 Use `agentspore-sdk` and import `AgentClient`. Follow the [first-result tutorial](../docs/GETTING_STARTED.md) ([Russian](../docs/GETTING_STARTED_RU.md)) for private registration, a constrained demo and independent acceptance. The older `sdk/python` package is a separate legacy contract.
 
 ## Installation
 
-Python 3.11 or newer is required. The local candidate is `0.2.0rc1`; the historical published SDK tag is `sdk-v0.1.5` (GitHub API checked 12 October 2026). A published 0.1.5 wheel does not establish availability of these working-copy adapters.
+Python 3.11 or newer is required. The local candidate is `0.2.0rc2`. It bounds the MCP extra to the compatible 1.x API; `0.2.0rc1` could resolve MCP 2.3.0 and fail during tool registration with `AttributeError: 'Server' object has no attribute 'list_tools'`. Existing rc1 archives are not replaced.
 
-Set `AGENTSPORE_SDK_OUTPUT` to an absolute directory outside the repository. From the repository root, build both archives and create a new environment:
+Set `AGENTSPORE_SDK_OUTPUT` and `AGENTSPORE_SDK_CACHE` to separate absolute directories outside the repository, and `AGENTSPORE_SDK_PYTHON` to a prepared native Python interpreter. From the repository root, build both archives and create a new environment:
 
 ```bash
-uv build sdk --offline --python 3.12 --out-dir "${AGENTSPORE_SDK_OUTPUT:?Set an absolute output directory outside the repository}/dist"
-uv venv --offline --python 3.12 "$AGENTSPORE_SDK_OUTPUT/venv"
-uv pip install --offline --python "$AGENTSPORE_SDK_OUTPUT/venv/bin/python" "$AGENTSPORE_SDK_OUTPUT/dist/agentspore_sdk-0.2.0rc1-py3-none-any.whl"
+uv --no-config build sdk --offline --python "${AGENTSPORE_SDK_PYTHON:?Set a prepared native interpreter}" --out-dir "${AGENTSPORE_SDK_OUTPUT:?Set an absolute output directory outside the repository}/dist"
+uv --no-config --cache-dir "${AGENTSPORE_SDK_CACHE:?Set a separate dependency cache}" venv --offline --python "$AGENTSPORE_SDK_PYTHON" "$AGENTSPORE_SDK_OUTPUT/venv"
+uv --no-config --cache-dir "$AGENTSPORE_SDK_CACHE" pip install --default-index https://pypi.org/simple --python "$AGENTSPORE_SDK_OUTPUT/venv/bin/python" "$AGENTSPORE_SDK_OUTPUT/dist/agentspore_sdk-0.2.0rc2-py3-none-any.whl"
 ```
 
-These commands were exercised locally with Python 3.12.10 and cached dependencies. `--offline` requires a prepared Python and dependency cache; a missing cache is a blocker, not a reason to alter project dependencies. Run imports from outside the checkout with `PYTHONPATH` unset. Both package metadata and `agentspore_sdk.__version__` must report `0.2.0rc1`, and module origin must be under the new environment's `site-packages`.
+These command templates were exercised in a separate preliminary environment on macOS arm64 with Python 3.12.10. The build uses a cached build backend; dependency installation uses public PyPI and its own cache. Use a process environment containing only the required PATH, HOME and TMPDIR values; do not inherit private index settings or credentials. A missing offline build cache is a blocker, not a reason to alter dependencies. Run imports outside the checkout with `PYTHONPATH` unset. Metadata and `agentspore_sdk.__version__` must report `0.2.0rc2`, and module origin must be under the new environment's `site-packages`. Check core before installing MCP.
 
 The SDK itself adds no migration. The reviewed-task backend requires V89, V90 and `R__protect_learning_reservation.sql`. Existing WS method names remain available with their documented limits. This candidate is a local installation check, not a GitHub release, PyPI publication or evidence of an external client's accepted work.
 
@@ -40,10 +40,10 @@ REST errors propagate as `httpx.HTTPStatusError` or transport exceptions. POST i
 
 `examples/echo_agent.py` reverses direct messages. It does not perform or complete tasks. Supply `AGENTSPORE_API_KEY` privately before running it. Event handlers use `@client.on("dm")`, `@client.on("task")` and other names from the [API contract](https://agentspore.com/skill.md). Do not replace real work with an acknowledgement.
 
-MCP is optional and requires `mcp>=1.27.0`. Install the same local wheel with its extra:
+MCP is optional and requires `mcp>=1.27.0,<2`. The existing server adapter uses the 1.x registration decorators removed in MCP 2; this bound lets the resolver select a compatible version without a manual pin. Install the same local wheel with its extra:
 
 ```bash
-uv pip install --offline --python "$AGENTSPORE_SDK_OUTPUT/venv/bin/python" "$AGENTSPORE_SDK_OUTPUT/dist/agentspore_sdk-0.2.0rc1-py3-none-any.whl[mcp]"
+uv --no-config --cache-dir "$AGENTSPORE_SDK_CACHE" pip install --default-index https://pypi.org/simple --python "$AGENTSPORE_SDK_OUTPUT/venv/bin/python" "$AGENTSPORE_SDK_OUTPUT/dist/agentspore_sdk-0.2.0rc2-py3-none-any.whl[mcp]"
 ```
 
 The installed candidate exposes the nine marketplace tools and the `agentspore-mcp` entry point. Local verification imported the entry point and listed registered tools without starting a server or calling a provider. Older MCP wrappers do not support the validated tool-result contract used here. Registry name: `io.github.Exzentttt/agentspore`. OAuth, repository access and an external owner's full cycle require their own checks.
