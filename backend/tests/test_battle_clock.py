@@ -1,7 +1,7 @@
 """Battle deadlines use DB time; abort timestamps retain their persisted lower bound."""
 
 from datetime import timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -218,3 +218,81 @@ async def test_judge_completion_preserves_future_created_timestamp(db_session, t
     assert completed["created_at"] == created_at
     assert completed["completed_at"] >= created_at
     assert completed["lease_token"] is None and completed["lease_expires_at"] is None
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def future_finalization_battle(db_session, task_id):
+    """Retain a legal judging timeline ahead of the current database clock."""
+    battle_id, agent_a, agent_b, token = await baseline._battle_in_judging(
+        db_session, task_id, votes=[baseline.Vote.A, baseline.Vote.A, baseline.Vote.B]
+    )
+    result = await db_session.execute(
+        text(
+            "UPDATE battles "
+            "SET challenged_at = statement_timestamp() + INTERVAL '1 hour', "
+            "queued_at = statement_timestamp() + INTERVAL '1 hour', "
+            "started_at = statement_timestamp() + INTERVAL '1 hour', "
+            "deadline_at = statement_timestamp() + INTERVAL '1 hour 10 minutes' "
+            "WHERE id = CAST(:b AS UUID) "
+            "RETURNING challenged_at, queued_at, started_at, deadline_at"
+        ),
+        {"b": battle_id},
+    )
+    predecessors = dict(result.mappings().one())
+    await db_session.commit()
+    return battle_id, agent_a, agent_b, token, predecessors
+
+
+async def test_settlement_preserves_future_challenge_and_equal_terminal_timestamps(
+    future_finalization_battle, session_maker
+):
+    """Real settlement respects the saved lower bound without changing the verdict."""
+    battle_id, _, _, token, predecessors = future_finalization_battle
+    with patch("app.services.agent_service.AgentService.create_notification_task", AsyncMock()):
+        change = await baseline._settle_in_own_session(session_maker, battle_id, token)
+    assert change is not None
+    async with session_maker() as session:
+        completed = await BattleRepository(session).get(battle_id)
+    assert completed is not None
+    assert completed["status"] == "completed"
+    assert completed["winner"] == "a"
+    for field, value in predecessors.items():
+        assert completed[field] == value
+    assert completed["ended_at"] == completed["finalized_at"] >= predecessors["challenged_at"]
+    assert await baseline._reservation_count(session_maker, battle_id) == 0
+
+
+async def test_future_challenge_settlement_keeps_wrong_token_and_repeat_fences(
+    future_finalization_battle, session_maker
+):
+    """An unauthorized or repeated settlement cannot change timestamps or ratings."""
+    battle_id, agent_a, agent_b, token, _ = future_finalization_battle
+    agents = (agent_a, agent_b)
+    async with session_maker() as session:
+        before = await BattleRepository(session).get(battle_id)
+    assert before is not None
+    ratings_before = {agent: await baseline._elo(session_maker, agent) for agent in agents}
+    counters_before = {agent: await baseline._counters(session_maker, agent) for agent in agents}
+    assert await baseline._settle_in_own_session(session_maker, battle_id, str(uuid4())) is None
+    async with session_maker() as session:
+        after_wrong_token = await BattleRepository(session).get(battle_id)
+    assert after_wrong_token == before
+    for agent in agents:
+        assert await baseline._elo(session_maker, agent) == ratings_before[agent]
+        assert await baseline._counters(session_maker, agent) == counters_before[agent]
+
+    with patch("app.services.agent_service.AgentService.create_notification_task", AsyncMock()):
+        assert await baseline._settle_in_own_session(session_maker, battle_id, token) is not None
+        async with session_maker() as session:
+            completed = await BattleRepository(session).get(battle_id)
+        assert completed is not None
+        ratings_once = {agent: await baseline._elo(session_maker, agent) for agent in agents}
+        counters_once = {agent: await baseline._counters(session_maker, agent) for agent in agents}
+        assert await baseline._settle_in_own_session(session_maker, battle_id, token) is None
+    async with session_maker() as session:
+        after_repeat = await BattleRepository(session).get(battle_id)
+    assert after_repeat == completed
+    assert completed["ended_at"] == completed["finalized_at"] >= before["challenged_at"]
+    for agent in agents:
+        assert await baseline._elo(session_maker, agent) == ratings_once[agent]
+        assert await baseline._counters(session_maker, agent) == counters_once[agent]

@@ -3228,8 +3228,8 @@ class BattleRepository:
                     elo_b_before = :elo_b_before,
                     elo_a_after = :elo_a_after,
                     elo_b_after = :elo_b_after,
-                    finalized_at = statement_timestamp(),
-                    ended_at = statement_timestamp(),
+                    finalized_at = GREATEST(statement_timestamp(), challenged_at),
+                    ended_at = GREATEST(statement_timestamp(), challenged_at),
                     lease_token = NULL,
                     lease_expires_at = NULL
                 WHERE id = CAST(:battle_id AS UUID)
