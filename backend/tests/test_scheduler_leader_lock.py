@@ -31,7 +31,6 @@ from app.core.background import (
     ALL_TASKS,
     MIN_RENEW_INTERVAL_S,
     BattleRunTask,
-    CronSchedulerTask,
     ScheduledTask,
     lock_ttl_with_headroom,
 )
@@ -415,7 +414,7 @@ async def test_release_never_deletes_a_lease_owned_by_another_worker():
 
 
 class _NoLockTask(_CountingTask):
-    """CronSchedulerTask's shape: row-level claims, leader gate disabled."""
+    """Row-level claims can disable the generic leader gate."""
 
     name = "test_no_lock"
     lock_ttl_s = None
@@ -498,17 +497,6 @@ def test_no_task_lets_a_crash_stall_it_longer_than_interval_plus_headroom():
     assert drifted == {}, (
         f"lock_ttl_s drifted above formula+tolerance (actual, expected): {drifted}"
     )
-
-
-def test_cron_scheduler_keeps_its_gate_disabled():
-    """`lock_ttl_s = None` is deliberate (row-level FOR UPDATE SKIP LOCKED).
-
-    Guard against a future bulk retune of the TTLs sweeping this one up: giving
-    cron_scheduler a leader lock would REMOVE the exactly-once guarantee's
-    fast-failover property, not add safety.
-    """
-    assert CronSchedulerTask.lock_ttl_s is None
-    assert CronSchedulerTask in ALL_TASKS
 
 
 @pytest.mark.asyncio

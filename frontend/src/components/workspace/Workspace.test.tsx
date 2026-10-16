@@ -26,7 +26,7 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key) });
   vi.stubGlobal("fetch", vi.fn(fixtureFetch));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it.each(["en", "ru"] as const)("reads a selected result as text, distinguishes internal work and preserves selection across locale changes from %s", async locale => {
   render(<LocaleProvider initialLocale={locale}><Workspace /><LanguageSelector /></LocaleProvider>);
@@ -183,4 +183,132 @@ it.each(["en", "ru"] as const)("expands received history, collapses it and reset
   fireEvent.click(screen.getByRole("button", { name: /Review the document/ }));
   expect(await screen.findByText("Synthetic history event 8")).toBeTruthy();
   expect(screen.queryByText("Synthetic history event 1")).toBeNull();
+});
+
+function observeReveal({ alertY, alertHeight, headerHeight = 121 }: { alertY: number; alertHeight: number; headerHeight?: number }) {
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  const scroll = vi.fn();
+  const cancel = vi.fn((id: number) => frames.delete(id));
+  vi.stubGlobal("innerHeight", 900);
+  vi.stubGlobal("scrollBy", scroll);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const id = ++nextFrame;
+    frames.set(id, callback);
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", cancel);
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    if (this.matches("[data-agent-header]")) return DOMRect.fromRect({ x: 0, y: 0, width: 320, height: headerHeight });
+    if (this.matches('[role="alert"]')) return DOMRect.fromRect({ x: 16, y: alertY, width: 288, height: alertHeight });
+    return DOMRect.fromRect();
+  });
+  const runFrame = () => act(() => {
+    const pending = [...frames.values()];
+    frames.clear();
+    pending.forEach(callback => callback(0));
+  });
+  return { scroll, frames, cancel, runFrame };
+}
+
+async function failWorkspace(locale: "en" | "ru", status = 503) {
+  const view = render(<LocaleProvider initialLocale={locale}><Workspace /></LocaleProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: /Review the document/ }));
+  expect(await screen.findByText(detail.result)).toBeTruthy();
+  const refresh = screen.getByRole("button", { name: locale === "en" ? "Refresh workspace" : "Обновить рабочую область" });
+  refresh.focus();
+  vi.mocked(fetch).mockImplementation(input => String(input).includes("agent-workspace") ? Promise.resolve(new Response("", { status })) : fixtureFetch(input));
+  fireEvent.click(refresh);
+  const alert = await screen.findByRole("alert");
+  expect(screen.queryByText(detail.result)).toBeNull();
+  expect(screen.queryByRole("button", { name: /Review the document/ })).toBeNull();
+  return { view, refresh, alert };
+}
+
+it.each([
+  { locale: "en", alertY: 87, alertHeight: 156, correction: -345.5 },
+  { locale: "ru", alertY: 63, alertHeight: 180, correction: -357.5 },
+] as const)("reveals the collapsed workspace error below the measured Header in $locale without stealing focus", async geometry => {
+  const observed = observeReveal(geometry);
+  const { refresh } = await failWorkspace(geometry.locale);
+  expect(observed.frames.size).toBe(1);
+  observed.runFrame();
+  expect(observed.scroll).toHaveBeenCalledExactlyOnceWith({ top: geometry.correction, behavior: "instant" });
+  expect(document.activeElement).toBe(refresh);
+});
+
+it("reveals a missing workspace using a different measured Header height", async () => {
+  const observed = observeReveal({ alertY: 87, alertHeight: 156, headerHeight: 180 });
+  await failWorkspace("en", 404);
+  observed.runFrame();
+  expect(observed.scroll).toHaveBeenCalledExactlyOnceWith({ top: -375, behavior: "instant" });
+});
+
+it("does not scroll an error already fully visible below the Header", async () => {
+  const observed = observeReveal({ alertY: 200, alertHeight: 156 });
+  await failWorkspace("en");
+  expect(observed.frames.size).toBe(1);
+  observed.runFrame();
+  expect(observed.scroll).not.toHaveBeenCalled();
+});
+
+it("reveals an error below the viewport", async () => {
+  const observed = observeReveal({ alertY: 920, alertHeight: 156 });
+  await failWorkspace("en");
+  observed.runFrame();
+  expect(observed.scroll).toHaveBeenCalledExactlyOnceWith({ top: 487.5, behavior: "instant" });
+});
+
+it("aligns an oversized error below the Header instead of above it", async () => {
+  const observed = observeReveal({ alertY: 87, alertHeight: 850 });
+  await failWorkspace("en");
+  observed.runFrame();
+  expect(observed.scroll).toHaveBeenCalledExactlyOnceWith({ top: -34, behavior: "instant" });
+});
+
+it("does not replay reveal on a same-error rerender", async () => {
+  const observed = observeReveal({ alertY: 87, alertHeight: 156 });
+  const { view } = await failWorkspace("en");
+  observed.runFrame();
+  view.rerender(<LocaleProvider initialLocale="en"><Workspace /></LocaleProvider>);
+  expect(observed.frames.size).toBe(0);
+  expect(observed.scroll).toHaveBeenCalledTimes(1);
+});
+
+it.each(["retry", "unmount"] as const)("cancels pending reveal on %s", async action => {
+  const observed = observeReveal({ alertY: 87, alertHeight: 156 });
+  const { view, alert } = await failWorkspace("en");
+  expect(observed.frames.size).toBe(1);
+  if (action === "unmount") view.unmount();
+  else {
+    vi.mocked(fetch).mockImplementation(fixtureFetch);
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: /Review the document/ })).toBeTruthy();
+    expect(await screen.findByText(detail.result)).toBeTruthy();
+  }
+  expect(observed.cancel).toHaveBeenCalledTimes(1);
+  expect(observed.frames.size).toBe(0);
+  observed.runFrame();
+  expect(observed.scroll).not.toHaveBeenCalled();
+});
+
+it.each(["list", "detail"] as const)("does not reveal a child %s error", async child => {
+  const observed = observeReveal({ alertY: 87, alertHeight: 156 });
+  if (child === "list") vi.mocked(fetch).mockImplementation(input => String(input).includes("agent-tasks?") ? Promise.resolve(new Response("", { status: 503 })) : fixtureFetch(input));
+  render(<LocaleProvider initialLocale="en"><Workspace /></LocaleProvider>);
+  if (child === "detail") {
+    const select = await screen.findByRole("button", { name: /Review the document/ });
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 503 }));
+    fireEvent.click(select);
+  }
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(observed.frames.size).toBe(0);
+  observed.runFrame();
+  expect(observed.scroll).not.toHaveBeenCalled();
+});
+
+it.each(["en", "ru"] as const)("keeps external agent profiles accessible from the workspace in %s", async locale => {
+  render(<LocaleProvider initialLocale={locale}><Workspace /></LocaleProvider>);
+  const link = await screen.findByRole("link", { name: actor.name });
+  expect(link.getAttribute("href")).toBe(`/agents/${actor.id}`);
 });

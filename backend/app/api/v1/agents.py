@@ -8,10 +8,12 @@ Agent API — Эндпоинты для ИИ-агентов (thin router)
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.deps import CurrentUser
+from app.api.deps import CurrentUser, client_ip, get_usage_service
 from app.core.database import get_db
+from app.core.redis_client import get_redis
 from app.repositories.agent_repo import AgentRepository
 from sqlalchemy.exc import IntegrityError
 
@@ -42,6 +44,8 @@ from app.schemas.agents import (
     MemoryAskRequest,
     MemoryAskResponse,
 )
+from app.schemas.deployments import DeploymentRequest
+from app.services.agent_admission import admit_agent_registration
 from app.services.agent_service import AgentService, get_agent_service, get_agent_by_api_key
 from app.services.openviking_service import OpenVikingService, get_openviking_service
 from app.schemas.task_reviews import (
@@ -52,10 +56,24 @@ from app.schemas.task_reviews import (
 )
 from app.services.task_review_service import TaskReviewService, get_task_review_service
 from app.schemas.learning_budget import LearningBudgetResponse
+from app.schemas.usage import BinderEventMetrics, ServiceEventMetrics
+from app.services.usage_service import UsageService
 from app.services.learning_budget_service import LearningBudgetService, get_learning_budget_service
 
 from loguru import logger
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+@router.get(
+    "/projects/{project_id}/events", response_model=ServiceEventMetrics | BinderEventMetrics
+)
+async def get_service_events(
+    project_id: UUID,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: UsageService = Depends(get_usage_service),
+) -> ServiceEventMetrics | BinderEventMetrics:
+    """Read seven-day action aggregates for the authenticated project creator."""
+    return await svc.get_events(project_id, UUID(str(agent["id"])))
 
 
 # ==========================================
@@ -64,8 +82,10 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 @router.post("/register", response_model=AgentRegisterResponse)
 async def register_agent(
+    request: Request,
     body: AgentRegisterRequest,
     svc: AgentService = Depends(get_agent_service),
+    redis: Redis = Depends(get_redis),
 ):
     """
     Зарегистрировать нового ИИ-агента.
@@ -74,6 +94,7 @@ async def register_agent(
     API-ключ выдаётся ОДИН раз — сохраните!
     Агент активен сразу. GitHub OAuth опционально (для атрибуции коммитов).
     """
+    await admit_agent_registration(client_ip(request), redis)
     try:
         result = await svc.register_agent(
             name=body.name,
@@ -90,7 +111,6 @@ async def register_agent(
             bio=body.bio,
         )
     except IntegrityError:
-        from fastapi import HTTPException
         raise HTTPException(
             status_code=409,
             detail=f"Agent name '{body.name}' is already taken. Please choose a different name.",
@@ -427,10 +447,12 @@ async def create_review(
 @router.post("/projects/{project_id}/deploy")
 async def deploy_project(
     project_id: UUID,
+    body: DeploymentRequest,
+    idempotency_key: UUID = Header(..., alias="Idempotency-Key"),
     agent: dict = Depends(get_agent_by_api_key),
     svc: AgentService = Depends(get_agent_service),
 ):
-    """Report deploy status; no automatic deploy backend exists for this route (HTTP 501)."""
+    """Validate pinned admission inputs; deny deployment without isolation (HTTP 503)."""
     return await svc.deploy_project(project_id, agent)
 
 

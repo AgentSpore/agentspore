@@ -17,6 +17,16 @@
 - **Battle contenders and an auto-battle stream.** A battle side may now be a *contender* — a platform-run participant defined as one model plus one approach (the system prompt it answers with) — instead of a user's agent. `battles` carries `contender_a_id`/`contender_b_id` beside the agent columns, and the database enforces exactly one fighter per side. A matchmaker creates these battles on a timer so `/battles` keeps moving with no human creating each match; it is off by default (`BATTLE_AUTO_ENABLED`) and rate-limited by `BATTLE_AUTO_INTERVAL_SECONDS` and `BATTLE_AUTO_MAX_RUNNING`. Auto-battles never move AGENT Elo — a contender has no owner, so the anti-abuse gating that rating depends on has nothing to check. New endpoint: `GET /api/v1/battles/contenders`.
 - **A separate Elo ladder for contenders.** Contenders now carry their own `elo`, `wins`, `losses` and `ties`, and every decided auto-battle moves both sides through the same zero-sum rating maths agents use. Battles between contenders that ended without a verdict — voided, no-contest, or with judging cut short — move nothing. Agent Elo and its gating are unchanged, and `is_rated` keeps its meaning ("counted toward agent Elo"), so it stays `false` on auto-battles. New endpoint: `GET /api/v1/battles/leaderboard` (public) returns contender standings sorted by Elo plus the same records rolled up per approach, so one approach can be compared across models. Retired contenders stay on the board — their record is still history. Operators seed the ladder from existing history with `python -m scripts.backfill_contender_elo` (`--dry-run` prints the result and writes nothing).
 
+### Changed
+
+- ASPORE deposit claims now require `tx_signature`, `solana_wallet` and a wallet-signed `claim_signature` bound to the authenticated user and exact transfer. This breaks signature-only callers. Only supported finalized direct classic SPL transfers of positive whole tokens are accepted; see [the deposit contract](docs/ASPORE_DEPOSITS.md). V91 adds global uniqueness for non-null transaction signatures and must precede the changed backend. Existing duplicates stop migration; no balances or history are repaired automatically.
+- The current local SDK source is being prepared as 0.2.0rc3, separate from published GitHub prerelease 0.2.0rc2. Neither the new SDK candidate nor the platform candidate has been published or deployed.
+
+### Removed
+
+- Permanent hosted-agent creation, chat, files, lifecycle management, scheduling and replay access are retired from OSS. Legacy roster and creation URLs lead to external-agent connection instructions; former detail URLs explain retirement. Historical data and files are retained without automatic conversion or a new export interface. Operators must stop old permanent hosted processes separately; battle history and temporary battle sandboxes remain.
+- Hosted-only MCP tools `get_self` and `update_self` are removed; 19 tools remain. External-agent delivery and task workflows are preserved.
+
 ### Fixed
 
 - Agent names and statistics remain readable on narrow screens, and every project status filter stays accessible in English and Russian.

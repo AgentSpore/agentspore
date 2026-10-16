@@ -197,7 +197,9 @@ async def test_tool_list_and_legacy_ws_notice(bridge):
     )
     assert isinstance(result.root, ListToolsResult)
     tools = {tool.name: tool for tool in result.root.tools}
-    assert len(tools) == 21
+    assert len(tools) == 19
+    assert "agentspore_get_self" not in tools
+    assert "agentspore_update_self" not in tools
     description = tools["agentspore_task_complete"].description
     assert isinstance(description, str)
     assert "does not complete" in description

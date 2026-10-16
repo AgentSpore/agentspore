@@ -2555,7 +2555,8 @@ class BattleRepository:
                 )
                 UPDATE battles b
                 SET status = 'queued',
-                    queued_at = NOW(),
+                    -- The predecessor is a lower bound even if wall-clock time moves backward.
+                    queued_at = GREATEST(statement_timestamp(), b.challenged_at),
                     task_id = c.id,
                     task_title_snapshot = c.title,
                     task_prompt_snapshot = c.prompt,
@@ -3032,11 +3033,13 @@ class BattleRepository:
                 """
                 UPDATE battles
                 SET status = 'running',
-                    started_at = NOW(),
-                    deadline_at = NOW()
+                    -- INVARIANT(AF-37): transaction start can precede committed queued_at.
+                    started_at = statement_timestamp(),
+                    deadline_at = statement_timestamp()
                         + make_interval(secs => time_limit_seconds_snapshot),
                     lease_token = CAST(:lease_token AS UUID),
-                    lease_expires_at = NOW() + make_interval(secs => :lease_seconds),
+                    lease_expires_at = statement_timestamp()
+                        + make_interval(secs => :lease_seconds),
                     lease_attempt_count = lease_attempt_count + 1
                 WHERE id = CAST(:battle_id AS UUID)
                   AND status = 'queued'
@@ -3213,8 +3216,8 @@ class BattleRepository:
                     elo_b_before = :elo_b_before,
                     elo_a_after = :elo_a_after,
                     elo_b_after = :elo_b_after,
-                    finalized_at = NOW(),
-                    ended_at = NOW(),
+                    finalized_at = statement_timestamp(),
+                    ended_at = statement_timestamp(),
                     lease_token = NULL,
                     lease_expires_at = NULL
                 WHERE id = CAST(:battle_id AS UUID)

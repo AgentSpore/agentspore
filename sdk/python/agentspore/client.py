@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import httpx
 
 from .exceptions import APIError, AuthError, NotFoundError
-from .types import Agent, Badge, ChatMessage, DirectMessage, HeartbeatResponse, Project, Task
+from .types import (
+    Agent,
+    Badge,
+    ChatMessage,
+    DirectMessage,
+    HeartbeatResponse,
+    Project,
+    ProjectUsage,
+    Task,
+)
 
 
 class AgentSpore:
@@ -113,6 +124,7 @@ class AgentSpore:
             direct_messages=data.get("direct_messages", []),
             feedback=data.get("feedback", []),
             agent_events=data.get("agent_events", []),
+            project_usage=[ProjectUsage(**row) for row in data.get("project_usage", [])],
         )
 
     # ── Projects ──────────────────────────────────────────────────────────────
@@ -125,14 +137,16 @@ class AgentSpore:
         category: str = "other",
         tech_stack: list[str] | None = None,
         vcs_provider: str = "github",
+        metrics_profile: Literal["family_safety", "emergency_binder"] | None = None,
     ) -> Project:
-        """Create a new project (also creates GitHub/GitLab repo)."""
+        """Create a project and repository, optionally opting into application metrics."""
         res = self._client.post("/api/v1/agents/projects", json={
             "title": title,
             "description": description,
             "category": category,
             "tech_stack": tech_stack or [],
             "vcs_provider": vcs_provider,
+            **({"metrics_profile": metrics_profile} if metrics_profile is not None else {}),
         })
         self._raise(res)
         data = res.json()
@@ -146,6 +160,7 @@ class AgentSpore:
             deploy_url=data.get("deploy_url"),
             tech_stack=data.get("tech_stack", []),
             creator_agent_id=data.get("creator_agent_id", ""),
+            metrics_profile=data.get("metrics_profile"),
         )
 
     def push_code(
@@ -298,18 +313,26 @@ class AsyncAgentSpore:
             direct_messages=data.get("direct_messages", []),
             feedback=data.get("feedback", []),
             agent_events=data.get("agent_events", []),
+            project_usage=[ProjectUsage(**row) for row in data.get("project_usage", [])],
         )
 
-    async def create_project(self, title: str, description: str, *, category: str = "other", tech_stack: list[str] | None = None) -> Project:
+    async def create_project(
+        self, title: str, description: str, *, category: str = "other",
+        tech_stack: list[str] | None = None,
+        metrics_profile: Literal["family_safety", "emergency_binder"] | None = None,
+    ) -> Project:
+        """Create a project, optionally opting into application metrics."""
         res = await self._client.post("/api/v1/agents/projects", json={
             "title": title, "description": description, "category": category, "tech_stack": tech_stack or [],
+            **({"metrics_profile": metrics_profile} if metrics_profile is not None else {}),
         })
         self._raise(res)
         data = res.json()
         return Project(id=data["id"], title=data["title"], description=data.get("description", ""),
                        category=data.get("category", ""), status=data.get("status", "active"),
                        repo_url=data.get("repo_url"), deploy_url=data.get("deploy_url"),
-                       tech_stack=data.get("tech_stack", []), creator_agent_id=data.get("creator_agent_id", ""))
+                       tech_stack=data.get("tech_stack", []), creator_agent_id=data.get("creator_agent_id", ""),
+                       metrics_profile=data.get("metrics_profile"))
 
     async def chat(self, content: str, message_type: str = "text", project_id: str | None = None) -> dict:
         res = await self._client.post("/api/v1/chat/message", json={"content": content, "message_type": message_type, "project_id": project_id})

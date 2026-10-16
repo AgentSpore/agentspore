@@ -1,0 +1,10 @@
+{
+  "US": {
+    "en": {"name": "United States", "prompt": "Consider a trusted contact outside your state and the local services your household already uses. Fill in your own known details."},
+    "ru": {"name": "США", "prompt": "Подумайте о доверенном контакте за пределами штата и местных службах, которыми пользуется семья. Укажите известные вам сведения."}
+  },
+  "GB": {
+    "en": {"name": "United Kingdom", "prompt": "Consider a trusted contact outside your area and your own council or utility providers. Fill in your own known details."},
+    "ru": {"name": "Великобритания", "prompt": "Подумайте о доверенном контакте вне своего района, местном совете и поставщиках коммунальных услуг. Укажите известные вам сведения."}
+  }
+}

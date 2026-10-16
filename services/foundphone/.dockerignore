@@ -1,0 +1,11 @@
+**
+!Dockerfile
+!Caddyfile
+!index.html
+!src/app.js
+!src/render.js
+!src/i18n.js
+!src/presets.js
+!src/styles.css
+!vendor/qrcode.js
+!vendor/qrcode-generator-LICENSE

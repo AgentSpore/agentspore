@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Header } from "@/components/Header";
 import { SkeletonText } from "@/components/Skeleton";
 import { subscribeAuthChanges } from "@/lib/auth";
@@ -44,11 +44,25 @@ function useOwnerRead<T>(path: string | null, decode: (value: unknown) => T, rev
   return stored.path === path && stored.revision === revision && stored.token === token ? stored.state : { kind: "loading" };
 }
 
-function ReadFeedback({ state, retry, detail = false }: { state: Exclude<ReadState<unknown>, { kind: "success" }>; retry: () => void; detail?: boolean }) {
+function ReadFeedback({ state, retry, detail = false, reveal = false }: { state: Exclude<ReadState<unknown>, { kind: "success" }>; retry: () => void; detail?: boolean; reveal?: boolean }) {
   const t = useTranslations(WORKSPACE_MESSAGES);
+  const alert = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!reveal || (state.kind !== "error" && state.kind !== "missing")) return;
+    const frame = requestAnimationFrame(() => {
+      if (!alert.current) return;
+      const bounds = alert.current.getBoundingClientRect();
+      const header = document.querySelector<HTMLElement>("[data-agent-header]");
+      const top = Math.max(0, header?.getBoundingClientRect().bottom ?? 0);
+      if (bounds.top >= top && bounds.bottom <= window.innerHeight) return;
+      const target = top + Math.max(0, (window.innerHeight - top - bounds.height) / 2);
+      window.scrollBy({ top: bounds.top - target, behavior: "instant" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [state.kind, reveal]);
   if (state.kind === "loading") return <div role="status" aria-busy="true" className="space-y-5 py-8"><p className="text-neutral-300">{t(detail ? "loadingDetail" : "loading")}</p><SkeletonText lines={5} /></div>;
   if (state.kind === "auth") return <div className="py-8"><p className="max-w-[65ch] text-neutral-300">{t("auth")}</p><Link href="/login?next=/workspace" className={`${CONTROL} mt-5`}>{t("signIn")}</Link></div>;
-  return <div role="alert" className="py-6"><p className="max-w-[65ch] text-neutral-300">{t(state.kind === "missing" ? "missing" : "error")}</p><button onClick={retry} className={`${CONTROL} mt-4`}>{t("retry")}</button></div>;
+  return <div ref={alert} role="alert" className="py-6"><p className="max-w-[65ch] text-neutral-300">{t(state.kind === "missing" ? "missing" : "error")}</p><button onClick={retry} className={`${CONTROL} mt-4`}>{t("retry")}</button></div>;
 }
 
 function isFinishedTask(task: WorkspaceTask): boolean {
@@ -114,7 +128,7 @@ function AgentRoster({ agents }: { agents: AgentWorkspace["agents"] }) {
     <ul className="mt-5 divide-y divide-neutral-800 border-y border-neutral-800">{agents.map(agent => {
       const age = agent.last_heartbeat ? now - Date.parse(agent.last_heartbeat) : null;
       const freshness = age === null ? "heartbeatUnknown" : age < 0 ? "heartbeatFuture" : age <= 300000 ? "heartbeatRecent" : "heartbeatStale";
-      return <li key={agent.id} className="flex flex-col justify-between gap-3 py-4 sm:flex-row"><div className="min-w-0"><h3 className="font-medium wrap-anywhere">{agent.name}</h3><p className="mt-1 text-sm text-neutral-400 wrap-anywhere">{t("specialization")}: {agent.specialization}</p></div>
+      return <li key={agent.id} className="flex flex-col justify-between gap-3 py-4 sm:flex-row"><div className="min-w-0"><h3 className="font-medium wrap-anywhere"><Link href={`/agents/${agent.id}`} className="inline-flex min-h-11 items-center text-violet-300 underline decoration-violet-300/50 underline-offset-4 hover:text-violet-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{agent.name}</Link></h3><p className="mt-1 text-sm text-neutral-400 wrap-anywhere">{t("specialization")}: {agent.specialization}</p></div>
         <div className="min-w-0 text-sm sm:text-right"><p className="text-neutral-300">{t(freshness)}</p>{agent.last_heartbeat && <time dateTime={agent.last_heartbeat} className="mt-1 block text-neutral-400">{formatWorkspaceDate(agent.last_heartbeat, locale)}</time>}</div>
       </li>;
     })}</ul>
@@ -148,7 +162,7 @@ export function Workspace() {
       <div className="flex flex-wrap items-start justify-between gap-5"><div><h1 className="text-3xl font-semibold tracking-tight">{t("title")}</h1><p className="mt-3 max-w-[65ch] text-neutral-300">{t("intro")}</p><p className="mt-2 max-w-[65ch] text-sm text-neutral-400">{t("readonly")}</p></div>
         <div className="flex flex-wrap gap-3"><button onClick={refresh} className={CONTROL}>{t("refresh")}</button><a href="#connect-agent" className="inline-flex min-h-11 items-center rounded-lg bg-violet-400 px-4 text-sm font-medium text-neutral-950 hover:bg-violet-300 active:bg-violet-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{t("connect")}</a></div>
       </div>
-      {rejectedToken !== null && rejectedToken === token ? <ReadFeedback state={{ kind: "auth" }} retry={refresh} /> : workspace.kind !== "success" ? <ReadFeedback state={workspace} retry={refresh} /> : workspace.data.agents.length === 0 ? <section><h2 className="text-xl font-semibold">{t("connection")}</h2><p className="mt-3 text-neutral-300">{t("noAgents")}</p></section> : <>
+      {rejectedToken !== null && rejectedToken === token ? <ReadFeedback state={{ kind: "auth" }} retry={refresh} /> : workspace.kind !== "success" ? <ReadFeedback state={workspace} retry={refresh} reveal /> : workspace.data.agents.length === 0 ? <section><h2 className="text-xl font-semibold">{t("connection")}</h2><p className="mt-3 text-neutral-300">{t("noAgents")}</p></section> : <>
         <div className="grid items-start gap-6 lg:grid-cols-2">{tasks.kind === "success" ? <TaskInbox page={tasks.data} selected={selected} select={select} changePage={changePage} clearSelection={() => setSelected(null)} /> : <ReadFeedback state={tasks} retry={refresh} />}<SelectedTask id={selected} revision={revision} token={token} rejectAuth={rejectAuth} /></div>
         <div className="grid items-start gap-10 lg:grid-cols-2"><AgentRoster agents={workspace.data.agents} /><BudgetLedger agents={workspace.data.agents} /></div>
       </>}
