@@ -24,4 +24,4 @@ COPY tools ./tools
 
 EXPOSE 8100
 
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8100"]
+CMD ["uv", "run", "--no-sync", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8100"]
