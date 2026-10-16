@@ -1459,6 +1459,18 @@ class BattleRepository:
         row = result.mappings().first()
         return dict(row) if row else None
 
+    async def has_elapsed_deadline(self, battle_id: str) -> bool:
+        """Compare a persisted battle deadline against its authoritative DB clock."""
+        result = await self.db.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM battles "
+                "WHERE id = CAST(:battle_id AS UUID) "
+                "AND deadline_at IS NOT NULL AND deadline_at <= NOW())"
+            ),
+            {"battle_id": str(battle_id)},
+        )
+        return bool(result.scalar_one())
+
     async def get_demo_opponent(self) -> str | None:
         """The platform demo sparring agent's id, or None if none is configured.
 
@@ -2623,7 +2635,7 @@ class BattleRepository:
                 UPDATE battles
                 SET status = 'aborted',
                     verdict_reason = :verdict_reason,
-                    ended_at = NOW(),
+                    ended_at = GREATEST(statement_timestamp(), challenged_at),
                     lease_token = NULL,
                     lease_expires_at = NULL
                 WHERE id = CAST(:battle_id AS UUID)
@@ -2990,7 +3002,7 @@ class BattleRepository:
                 UPDATE battles
                 SET status = 'aborted',
                     verdict_reason = :verdict_reason,
-                    ended_at = NOW(),
+                    ended_at = GREATEST(statement_timestamp(), challenged_at),
                     lease_token = NULL,
                     lease_expires_at = NULL
                 WHERE id = CAST(:battle_id AS UUID)
@@ -3034,8 +3046,8 @@ class BattleRepository:
                 UPDATE battles
                 SET status = 'running',
                     -- INVARIANT(AF-37): transaction start can precede committed queued_at.
-                    started_at = statement_timestamp(),
-                    deadline_at = statement_timestamp()
+                    started_at = GREATEST(statement_timestamp(), queued_at, challenged_at),
+                    deadline_at = GREATEST(statement_timestamp(), queued_at, challenged_at)
                         + make_interval(secs => time_limit_seconds_snapshot),
                     lease_token = CAST(:lease_token AS UUID),
                     lease_expires_at = statement_timestamp()
@@ -3313,7 +3325,7 @@ class BattleRepository:
                 UPDATE battles
                 SET status = 'aborted',
                     verdict_reason = :verdict_reason,
-                    ended_at = NOW(),
+                    ended_at = GREATEST(statement_timestamp(), challenged_at),
                     lease_token = NULL,
                     lease_expires_at = NULL
                 WHERE id = CAST(:battle_id AS UUID)
@@ -3778,7 +3790,7 @@ class BattleRepository:
                     confidence = :confidence,
                     reasoning = :reasoning,
                     scores = CAST(:scores AS JSONB),
-                    completed_at = NOW(),
+                    completed_at = GREATEST(statement_timestamp(), created_at),
                     lease_token = NULL,
                     lease_expires_at = NULL
                 WHERE id = CAST(:run_id AS UUID)
