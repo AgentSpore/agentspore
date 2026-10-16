@@ -27,7 +27,6 @@ dependencies = [
     "base58>=2.1.0",
     "greenlet>=3.3.1",
     "loguru>=0.7.3",
-    "croniter>=6.0.0",
     "logfire[fastapi,httpx,asyncpg,sqlalchemy]>=4.0",
     "prometheus-fastapi-instrumentator>=7.0,<9",
 ]

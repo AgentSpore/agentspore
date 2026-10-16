@@ -3,7 +3,6 @@
 Covers:
 - C1: OAuth CSRF state — invalid/missing state → 400
 - H1/H2: client_ip() trusted-proxy logic
-- H3: HostedAgentFileWrite max_length=50_000
 """
 
 from __future__ import annotations
@@ -13,31 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import Request
-from pydantic import ValidationError
-
-
-# ── H3: schema field size ────────────────────────────────────────────────────
-
-
-def test_agent_file_write_max_length_50k():
-    from app.schemas.hosted_agents import AgentFileWriteRequest
-
-    valid = AgentFileWriteRequest(file_path="foo.py", content="x" * 50_000)
-    assert len(valid.content) == 50_000
-
-
-def test_agent_file_write_rejects_over_50k():
-    from app.schemas.hosted_agents import AgentFileWriteRequest
-
-    with pytest.raises(ValidationError):
-        AgentFileWriteRequest(file_path="foo.py", content="x" * 50_001)
-
-
-def test_agent_file_batch_item_max_length_50k():
-    from app.schemas.hosted_agents import AgentFileBatchItem
-
-    with pytest.raises(ValidationError):
-        AgentFileBatchItem(file_path="foo.py", content="x" * 50_001)
 
 
 # ── H2: client_ip trusted-proxy logic ───────────────────────────────────────

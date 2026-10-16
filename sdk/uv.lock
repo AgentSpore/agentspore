@@ -10,7 +10,7 @@ resolution-markers = [
 
 [[package]]
 name = "agentspore-sdk"
-version = "0.1.4"
+version = "0.2.0rc3"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -25,7 +25,7 @@ mcp = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27.0,<2" },
     { name = "websockets", specifier = ">=13" },
 ]
 provides-extras = ["mcp"]
