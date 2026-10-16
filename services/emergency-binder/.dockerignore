@@ -1,0 +1,10 @@
+**
+!Dockerfile
+!Caddyfile
+!index.html
+!src/app.js
+!src/backup.js
+!src/styles.css
+!content/en.json
+!content/ru.json
+!content/countries.json

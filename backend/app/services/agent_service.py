@@ -22,6 +22,7 @@ from app.core.redis_client import get_redis
 from app.repositories import governance_repo, hackathon_repo
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
+from app.repositories.code_karma_repo import CodeKarmaRepository
 from app.repositories.flow_repo import get_flow_repo
 from app.repositories.mixer_repo import get_mixer_repo
 from app.repositories.rental_repo import get_rental_repo
@@ -41,6 +42,7 @@ from app.services.gitlab_oauth_service import get_gitlab_oauth_service
 from app.services.openviking_service import get_openviking_service
 from app.services.web3_service import get_web3_service
 from app.services.task_review_service import TaskReviewService
+from app.services.usage_service import UsageService
 
 from loguru import logger
 
@@ -594,6 +596,7 @@ class AgentService:
         flow_steps = await self._heartbeat_collect_flow_steps(agent_id)
         mixer_chunks = await self._heartbeat_collect_mixer_chunks(agent_id)
         agent_events = await self._heartbeat_collect_agent_events(agent_id)
+        project_usage = await UsageService(self.db).get_agent_usage(agent_id)
 
         hb_summary = (
             f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, "
@@ -616,6 +619,7 @@ class AgentService:
             flow_steps=flow_steps, mixer_chunks=mixer_chunks,
             memory_context=memory_context, agent_events=agent_events,
             warnings=warnings,
+            project_usage=project_usage,
         )
 
     async def _heartbeat_collect_agent_events(self, agent_id: Any) -> list[dict[str, Any]]:
@@ -961,6 +965,7 @@ class AgentService:
             "id": project_id, "title": body.title, "desc": body.description,
             "cat": body.category, "agent_id": agent_id, "stack": body.tech_stack,
             "git_url": git_repo_url, "hackathon_id": body.hackathon_id, "vcs": vcs,
+            "metrics_profile": getattr(body, "metrics_profile", None),
         })
 
         if git_repo_url:
@@ -1145,10 +1150,8 @@ class AgentService:
     ) -> None:
         """Record which model an agent used for one task.
 
-        A client-reported model is authoritative (an external agent may run a
-        different model than its hosted default); otherwise the model is resolved
-        server-side from the agent's hosted-agent record. An agent that is neither
-        hosted nor reporting simply gets no usage row.
+        A client-reported model is authoritative. An agent that does not report
+        its model gets no usage row.
 
         This is telemetry: it must never break the caller's action, so the writes
         run inside a savepoint that can roll back without poisoning the outer
@@ -1156,10 +1159,10 @@ class AgentService:
         """
         try:
             async with self.repo.db.begin_nested():
-                model = reported_model or await self.repo.get_hosted_agent_model(agent_id)
+                model = reported_model
                 if not model:
                     logger.debug(
-                        "No model usage for agent {} ({}): not hosted, none reported",
+                        "No model usage for agent {} ({}): none reported",
                         agent_id,
                         task_type,
                     )
@@ -1262,20 +1265,20 @@ class AgentService:
         }
 
     async def deploy_project(self, project_id: UUID, agent: dict) -> NoReturn:
-        """Report that automatic deployment is unavailable.
-
-        The platform has no automatic deploy backend for this endpoint — it
-        must not claim a deployment happened or invent a preview URL.
-        """
-        project = await self.repo.get_project_basic(project_id, "id, title, repo_url")
+        """Authorize the creator before denying deployment without isolation."""
+        project = await self.repo.get_project_basic(project_id, "id, creator_agent_id")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+        if str(project["creator_agent_id"]) != str(agent["id"]):
+            raise HTTPException(status_code=403, detail="Only project creator can deploy projects")
 
+        # INVARIANT(A4.4): untrusted builds stay closed until isolation is available.
         raise HTTPException(
-            status_code=501,
+            status_code=503,
             detail={
-                "status": "not_implemented",
-                "message": "Automatic deployment is not available on this platform.",
+                "status": "unavailable",
+                "reason_code": "isolation_unavailable",
+                "message": "Deployment isolation is unavailable.",
             },
         )
 
@@ -1964,6 +1967,7 @@ class AgentService:
             repo_url=p.get("repo_url"),
             vcs_provider=p.get("vcs_provider") or "github",
             created_at=str(p["created_at"]),
+            metrics_profile=p.get("metrics_profile"),
         )
 
     # ── GitHub Proxy ─────────────────────────────────────────────────
@@ -2263,12 +2267,12 @@ class AgentService:
         if status_code < 400:
             for (rule_method, rule_pattern), (action, points) in KARMA_RULES.items():
                 if method == rule_method and fnmatch.fnmatch(path_for_match, rule_pattern):
-                    await self.db.execute(
-                        text("UPDATE agents SET karma = karma + :pts WHERE id = :id"),
-                        {"pts": points, "id": agent["id"]},
-                    )
+                    if action in {"files_pushed", "file_pushed", "file_deleted"}:
+                        points = await CodeKarmaRepository(self.db).award(agent["id"], points)
+                    else:
+                        await self.repo.add_karma(agent["id"], points)
                     logger.info(
-                        "Karma +%d to %s for %s (%s %s)",
+                        "Karma +{} to {} for {} ({} {})",
                         points, agent.get("handle"), action, method, path_for_match,
                     )
                     break

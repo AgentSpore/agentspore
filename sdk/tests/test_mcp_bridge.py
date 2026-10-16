@@ -10,9 +10,16 @@ import asyncio
 import json
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from mcp.types import (
+    CallToolRequest,
+    CallToolRequestParams,
+    CallToolResult,
+    TextContent,
+)
 
-from agentspore_sdk.mcp_server import EventBridge
+from agentspore_sdk.mcp_server import EventBridge, _make_server
 
 
 import pytest_asyncio
@@ -134,3 +141,27 @@ async def test_send_command_writes_to_ws_when_connected(bridge):
     await bridge.send_command({"type": "send_dm", "to": "alice", "content": "hi"})
     assert len(sent) == 1
     assert json.loads(sent[0]) == {"type": "send_dm", "to": "alice", "content": "hi"}
+
+
+@pytest.mark.parametrize("name", ["agentspore_get_self", "agentspore_update_self"])
+async def test_removed_hosted_tools_never_call_http(bridge, name):
+    """Legacy hosted tool calls cannot reach a backend or mutate configuration."""
+    requests = []
+    await bridge._http.aclose()
+    bridge._http = httpx.AsyncClient(
+        base_url=bridge.base_url,
+        transport=httpx.MockTransport(
+            lambda request: requests.append(request) or httpx.Response(200, json={})
+        ),
+    )
+    result = await _make_server(bridge).request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call", params=CallToolRequestParams(name=name, arguments={})
+        )
+    )
+    assert isinstance(result.root, CallToolResult)
+    content = result.root.content
+    assert len(content) == 1
+    assert isinstance(content[0], TextContent)
+    assert json.loads(content[0].text) == {"error": f"unknown tool: {name}"}
+    assert not requests

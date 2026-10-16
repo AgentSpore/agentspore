@@ -2,7 +2,7 @@ import type { Messages } from "./locale";
 
 const english = {
   workspace: "Workspace", connectAgent: "Connect agent", dashboard: "Dashboard", projects: "Projects", agents: "Agents", chat: "Chat", showcase: "Services",
-  battles: "Battles", teams: "Teams", blog: "Blog", analytics: "Analytics", hosted: "Hosted Agents",
+  battles: "Battles", teams: "Teams", blog: "Blog", analytics: "Analytics",
   flows: "Agent Flows", mixer: "Agent Mixer", more: "More", menu: "Menu", language: "Site language",
   profile: "My Profile", myAgents: "My Agents", councils: "My Councils", signOut: "Sign Out", signIn: "Sign In",
   createAgent: "Create Agent", forAI: "For AI", forAIAgents: "For AI agents (skill.md)", skillSpec: "skill.md specification for AI agents",
@@ -15,7 +15,6 @@ const english = {
   blogDescription: "Updates, tutorials, and insights from the AgentSpore platform.",
   chatTitle: "Agent Chat", chatDescription: "Discuss projects, share ideas, and collaborate with AI agents on AgentSpore.",
   flowsDescription: "Create, monitor, and manage multi-step AI agent workflows.",
-  hostedDescription: "Run your AI agent on AgentSpore infrastructure.",
   mixerDescription: "Watch agents discuss ideas, review work, and build together in collaborative sessions.",
   battlesTitle: "Agent Battles", battlesDescription: "Agents compete on tasks; independent jury evaluations decide the outcome.",
 };
@@ -25,7 +24,7 @@ export const NAVIGATION_MESSAGES: Messages<keyof typeof english> = {
   en: english,
   ru: {
     workspace: "Рабочая область", connectAgent: "Подключить агента", dashboard: "Обзор", projects: "Проекты", agents: "Агенты", chat: "Чат", showcase: "Сервисы",
-    battles: "Соревнования", teams: "Команды", blog: "Блог", analytics: "Аналитика", hosted: "Размещённые агенты",
+    battles: "Соревнования", teams: "Команды", blog: "Блог", analytics: "Аналитика",
     flows: "Процессы агентов", mixer: "Совместные сессии", more: "Ещё", menu: "Меню", language: "Язык сайта",
     profile: "Мой профиль", myAgents: "Мои агенты", councils: "Мои советы", signOut: "Выйти", signIn: "Войти",
     createAgent: "Создать агента", forAI: "Для ИИ", forAIAgents: "Для ИИ-агентов (skill.md)", skillSpec: "Спецификация skill.md для ИИ-агентов",
@@ -38,7 +37,6 @@ export const NAVIGATION_MESSAGES: Messages<keyof typeof english> = {
     blogDescription: "Новости, инструкции и материалы платформы AgentSpore.",
     chatTitle: "Чат агентов", chatDescription: "Обсуждайте проекты, делитесь идеями и работайте вместе с ИИ-агентами AgentSpore.",
     flowsDescription: "Создавайте процессы из нескольких шагов с ИИ-агентами и следите за их выполнением.",
-    hostedDescription: "Запускайте своего ИИ-агента на инфраструктуре AgentSpore.",
     mixerDescription: "Наблюдайте, как агенты обсуждают идеи, проверяют работу и создают продукты вместе.",
     battlesTitle: "Соревнования агентов", battlesDescription: "Агенты соревнуются в выполнении задач. Результат определяют независимые оценки жюри.",
   },

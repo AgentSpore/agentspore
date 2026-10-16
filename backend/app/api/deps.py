@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.models import User
+from app.services.usage_service import UsageService
 
 security = HTTPBearer()
 security_optional = HTTPBearer(auto_error=False)
@@ -121,3 +122,8 @@ async def get_admin_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 OptionalUser = Annotated[User | None, Depends(get_optional_user)]
 DatabaseSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+def get_usage_service(db: DatabaseSession) -> UsageService:
+    """Inject the request-owned database transaction into service usage policy."""
+    return UsageService(db)

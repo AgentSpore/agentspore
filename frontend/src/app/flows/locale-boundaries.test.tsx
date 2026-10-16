@@ -7,7 +7,6 @@ import MixerListPage from "../mixer/page";
 import FlowDetailPage from "./[id]/page";
 import StepChatPage from "./[id]/steps/[stepId]/page";
 import MixerDetailPage from "../mixer/[id]/page";
-import CreateHostedAgentPage from "../hosted-agents/new/page";
 import NewCouncilPage from "../councils/new/page";
 import RentalChatPage from "../rentals/[id]/page";
 import AgentChatPage from "../agents/[id]/chat/page";
@@ -68,29 +67,7 @@ it("returns from audit to the chunks panel in Russian", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Части (1)" }));
   expect(screen.getByText("Raw chunk fixture")).toBeTruthy();
 });
-it("clears a template without translating the specialization in the API payload", async () => {
-  const fetcher = fixtures([]);
-  render(<LocaleProvider initialLocale="ru"><CreateHostedAgentPage /></LocaleProvider>);
-  fireEvent.click(await screen.findByText("Заметки о подкасте"));
-  fireEvent.click(screen.getByRole("button", { name: "сбросить ×" }));
-  fireEvent.click(screen.getByText("Дополнительные настройки"));
-  for (const [value, label] of [
-    ["programmer", "программист"], ["devops", "инженер инфраструктуры"],
-    ["researcher", "исследователь"], ["analyst", "аналитик"],
-    ["designer", "дизайнер"], ["writer", "автор"],
-    ["tester", "тестировщик"], ["security", "безопасность"],
-  ]) {
-    expect(screen.getByRole("option", { name: label }).getAttribute("value")).toBe(value);
-  }
-  fireEvent.change(screen.getByLabelText("Имя агента"), { target: { value: "Active" } });
-  fireEvent.change(screen.getByLabelText("Что должен делать агент?", { exact: false }), { target: { value: "Keep original input unchanged" } });
-  fireEvent.click(screen.getByRole("button", { name: "Создать агента" }));
-  await waitFor(() => {
-    const post = fetcher.mock.calls.find(([, init]) => init?.method === "POST");
-    expect(post).toBeTruthy();
-    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ specialization: "programmer", name: "Active" });
-  });
-});
+
 it("retranslates failed-send fallback without repeating POST or changing the draft", async () => {
   const fetcher = fixtures([], true);
   render(<LocaleProvider initialLocale="ru"><AgentChatPage /></LocaleProvider>);
@@ -124,16 +101,7 @@ it("switches rental language without losing the draft or posting any action", as
   expect(screen.getByRole("button", { name: "Отправить" })).toBeTruthy();
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
 });
-it("retranslates hosted HTTP fallback codes without creating another agent", async () => {
-  const fetcher = fixtures([], true);
-  render(<LocaleProvider initialLocale="ru"><CreateHostedAgentPage /></LocaleProvider>);
-  fireEvent.click(await screen.findByText("Заметки о подкасте"));
-  fireEvent.click(screen.getByRole("button", { name: "Создать агента" }));
-  await screen.findByText("Ошибка 500");
-  fireEvent.click(screen.getByRole("button", { name: "English" }));
-  expect(screen.getByText("Error 500")).toBeTruthy();
-  expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
-});
+
 it("translates the closed rental state as a label while retaining its machine status", async () => {
   fixtures({ ...flow, status: "completed", rating: null, agent_id: "fixture", agent_handle: "fixture", agent_name: "Fixture", specialization: "programmer" });
   render(<LocaleProvider initialLocale="ru"><RentalChatPage /></LocaleProvider>);

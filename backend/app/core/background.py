@@ -78,14 +78,11 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
-from app.repositories.hosted_agent_repo import HostedAgentRepository
 from app.repositories.mixer_repo import MixerRepository
-from app.services.agent_service import AgentService
 from app.services.github_service import get_github_service
-from app.services.hosted_agent_service import HostedAgentService
 from app.services.mixer_service import MixerService
-from app.services.openrouter_service import OpenRouterService
 from app.services.openviking_service import get_openviking_service
+from app.services.usage_service import UsageService
 
 # Extend the lease only while we still own it: compare-and-expire, so a
 # task whose lease already expired (and was taken by another worker)
@@ -765,45 +762,14 @@ class MixerCleanupTask(ScheduledTask):
             # up on `self.repo.get_expired_sessions()`.
             svc = MixerService(db, MixerRepository(db))
             count = await svc.cleanup_expired()
+            usage_count = await UsageService(db).purge_expired()
             await db.commit()
             if count:
                 logger.info("Mixer TTL cleanup: cleaned {} sessions", count)
+            if usage_count:
+                logger.info("Service usage cleanup: removed {} expired visits", usage_count)
 
 
-class CronSchedulerTask(ScheduledTask):
-    """Hosted agent cron tasks.
-
-    No leader lock: `HostedAgentRepository.get_due_cron_tasks` uses
-    FOR UPDATE SKIP LOCKED + UPDATE RETURNING to atomically claim each
-    row, so every worker can safely poll — exactly-once is guaranteed
-    at the row level. Skipping the leader gate means a crashed worker's
-    replacement picks up the next cycle immediately instead of waiting
-    for a 60-second TTL.
-    """
-
-    name = "cron_scheduler"
-    interval_s = 60
-    lock_ttl_s = None  # row-level claim
-    initial_delay_s = 30
-
-    async def run_once(self) -> None:
-        async with async_session_maker() as db:
-            # Local import: circular dep — hosted_agent_service imports connection_manager
-            # at module top, so the service layer can't be imported at this core module's top.
-            from app.repositories.hosted_agent_repo import HostedAgentRepository  # noqa: PLC0415
-            from app.services.agent_service import AgentService  # noqa: PLC0415
-            from app.services.hosted_agent_service import HostedAgentService  # noqa: PLC0415
-            from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
-
-            repo = HostedAgentRepository(db)
-            agent_svc = AgentService(db)
-            openrouter = OpenRouterService()
-            svc = HostedAgentService(
-                repo=repo, agent_service=agent_svc, openrouter=openrouter,
-            )
-            count = await svc.execute_due_cron_tasks()
-            if count:
-                logger.info("Cron scheduler: executed {} tasks", count)
 
 
 class BattleRunTask(ScheduledTask):
@@ -1013,39 +979,6 @@ class BattleHarvesterTask(ScheduledTask):
             )
 
 
-class HostedAgentReconcileTask(ScheduledTask):
-    """Corrects hosted-agent rows that claim running with no container behind them.
-
-    get_hosted_agent already probes the runner, but only for the one agent an
-    owner opens. Measured on production: three rows had claimed running since
-    19 July, updated_at never advancing past started_at, while the runner host
-    had zero hosted containers — nobody had opened those pages in three weeks,
-    so nothing ever ran the probe. The dashboard and the public agent list both
-    read that status, so the platform was advertising agents that do not exist.
-
-    fail_closed stays False: a pass only moves a row from running to stopped
-    after the runner explicitly said the agent is not there, and repeating that
-    correction is idempotent.
-    """
-
-    name = "hosted_agent_reconcile"
-    interval_s = 900
-    lock_ttl_s = lock_ttl_with_headroom(interval_s)  # see module docstring
-    initial_delay_s = 120
-
-    async def run_once(self) -> None:
-        async with async_session_maker() as db:
-            svc = HostedAgentService(
-                repo=HostedAgentRepository(db),
-                agent_service=AgentService(db),
-                openrouter=OpenRouterService(),
-            )
-            # No commit here: HostedAgentRepository.update_status commits each
-            # correction itself, so there is nothing left uncommitted and a
-            # commit would read as if the writes depended on it.
-            corrected = await svc.reconcile_running_agents()
-        if corrected:
-            logger.info("Hosted agent reconcile: corrected={}", corrected)
 
 
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
@@ -1053,11 +986,9 @@ ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     HackathonAdvanceTask,
     GitHubSyncTask,
     MixerCleanupTask,
-    CronSchedulerTask,
     BattleRunTask,
     BattleMatchmakerTask,
     BattleHarvesterTask,
-    HostedAgentReconcileTask,
 )
 
 

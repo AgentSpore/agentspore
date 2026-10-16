@@ -84,7 +84,8 @@ class PayoutRepository:
     # ── Payout Records ──────────────────────────────────────────────────
 
     async def insert_payout(
-        self, *,
+        self,
+        *,
         user_id: str,
         solana_wallet: str,
         amount: int,
@@ -104,15 +105,21 @@ class PayoutRepository:
                 RETURNING id, status, created_at
             """),
             {
-                "user_id": user_id, "wallet": solana_wallet,
-                "amount": amount, "points": contribution_points,
-                "pool": pool_total, "ps": period_start, "pe": period_end,
+                "user_id": user_id,
+                "wallet": solana_wallet,
+                "amount": amount,
+                "points": contribution_points,
+                "pool": pool_total,
+                "ps": period_start,
+                "pe": period_end,
             },
         )
-        return dict(result.mappings().first())
+        return dict(result.mappings().one())
 
     async def update_payout_status(
-        self, payout_id: str, *,
+        self,
+        payout_id: str,
+        *,
         status: str,
         tx_signature: str | None = None,
         error_message: str | None = None,
@@ -181,6 +188,28 @@ class PayoutRepository:
         )
         return row.scalar_one_or_none() or 0
 
+    async def lock_deposit_claim(self, tx_signature: str) -> None:
+        """Serialize one transaction claim until the caller commits or rolls back."""
+        await self.db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:signature, 0))"),
+            {"signature": tx_signature},
+        )
+
+    async def credit_deposit(self, user_id: str, amount: int) -> int:
+        """Credit whole tokens without overflowing the existing BIGINT balance."""
+        result = await self.db.execute(
+            text(
+                "UPDATE users SET aspore_balance = aspore_balance + :amount, updated_at = NOW() "
+                "WHERE id = :uid AND aspore_balance >= 0 AND aspore_balance <= :ceiling "
+                "RETURNING aspore_balance"
+            ),
+            {"uid": user_id, "amount": amount, "ceiling": (1 << 63) - 1 - amount},
+        )
+        balance = result.scalar_one_or_none()
+        if balance is None:
+            raise ValueError("Deposit balance exceeds supported range")
+        return balance
+
     async def credit_aspore(self, user_id: str, amount: int) -> int:
         """Add $ASPORE to user balance. Returns new balance."""
         result = await self.db.execute(
@@ -211,7 +240,8 @@ class PayoutRepository:
     # ── $ASPORE Transaction Log ─────────────────────────────────────────
 
     async def insert_aspore_tx(
-        self, *,
+        self,
+        *,
         user_id: str,
         tx_type: str,
         amount: int,
@@ -232,12 +262,17 @@ class PayoutRepository:
                 RETURNING id, created_at
             """),
             {
-                "uid": user_id, "tx_type": tx_type, "amount": amount,
-                "bal": balance_after, "stx": solana_tx,
-                "ref_type": reference_type, "ref_id": reference_id, "note": note,
+                "uid": user_id,
+                "tx_type": tx_type,
+                "amount": amount,
+                "bal": balance_after,
+                "stx": solana_tx,
+                "ref_type": reference_type,
+                "ref_id": reference_id,
+                "note": note,
             },
         )
-        return dict(result.mappings().first())
+        return dict(result.mappings().one())
 
     async def check_solana_tx_used(self, solana_tx: str) -> bool:
         """Check if a Solana tx signature was already used (prevent double-credit)."""

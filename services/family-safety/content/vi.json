@@ -1,0 +1,92 @@
+{
+  "locale": "vi",
+  "name": "Tiếng Việt",
+  "ui": {
+    "brandNote": "một nhịp dừng đáng chia sẻ",
+    "language": "Ngôn ngữ",
+    "eyebrow": "Một kế hoạch nhỏ cho gia đình",
+    "title": "Dừng lại trước. Gọi người bạn quen.",
+    "intro": "Tin nhắn khẩn có thể nghe rất thuyết phục. Hãy thống nhất một câu riêng trong gia đình, giữ thẻ nhắc nhở và tập nhận ra những yêu cầu cần kiểm tra thêm.",
+    "stepOne": "01 / Lập kế hoạch cho gia đình",
+    "phraseTitle": "Một câu cả nhà cùng thống nhất",
+    "phraseIntro": "Chọn câu này riêng với gia đình. Đừng dùng mật khẩu đang dùng ở nơi khác. Bạn có thể để trống ô này.",
+    "phraseLabel": "Câu riêng của gia đình (không bắt buộc)",
+    "phrasePrivacy": "Chỉ nằm trong bộ nhớ của trang đang mở này. Không bao giờ được gửi đi hay lưu lại. Tải lại trang sẽ xóa câu đó. Tối đa 80 ký tự, emoji ghép được tính là một ký tự.",
+    "phraseTooLong": "Vui lòng dùng không quá 80 ký tự. Câu của bạn chưa bị cắt ngắn.",
+    "phraseUnsupported": "Trình duyệt này không thể kiểm tra độ dài câu một cách an toàn. Hãy để trống câu để in thẻ nhắc nhở.",
+    "includePhrase": "In câu của tôi trên thẻ",
+    "printCard": "In thẻ nhắc nhở",
+    "cardEyebrow": "Để gần điện thoại",
+    "cardTitle": "Yêu cầu khẩn? Dừng lại. Cúp máy. Tự gọi lại.",
+    "cardPause": "Đừng gửi tiền, chia sẻ mã đăng nhập hoặc mở liên kết khi ai đó đang thúc giục bạn.",
+    "cardCall": "Gọi cho người đó bằng số bạn đã biết từ trước. Đừng dùng số hay liên kết trong tin nhắn khẩn.",
+    "cardAsk": "Nếu không liên lạc được, hãy kiểm tra với một người đáng tin khác, kể cả khi tin nhắn yêu cầu giữ bí mật.",
+    "cardPhraseLabel": "Câu cả nhà đã thống nhất",
+    "phraseLimit": "Giọng quen hoặc câu đúng tự nó không chứng minh được danh tính. Vẫn cần gọi lại bằng số đã biết.",
+    "stepTwo": "02 / Thử mười tin nhắn ngắn",
+    "practiceTitle": "Bạn sẽ dừng lại để kiểm tra chứ?",
+    "practiceIntro": "Mười tin nhắn này đều hư cấu. Tám tin cần dừng lại và kiểm tra qua kênh riêng; hai tin là yêu cầu thông thường. Chọn, đọc giải thích rồi tiếp tục.",
+    "startTraining": "Bắt đầu luyện tập với mười tin nhắn",
+    "pauseVerify": "Dừng lại và xác minh",
+    "ordinaryRequest": "Yêu cầu thông thường",
+    "nextRound": "Tin nhắn tiếp theo",
+    "finishTraining": "Xem kết quả của tôi",
+    "restartTraining": "Bắt đầu lượt luyện tập mới",
+    "roundStatus": "Tin nhắn {current} trên {total}",
+    "correct": "Lựa chọn tốt.",
+    "incorrect": "Nên xem xét thêm một lần.",
+    "resultScore": "{score}/{total} lựa chọn phù hợp với hướng dẫn",
+    "resultAdvice": "Bạn có thể luyện tập lại. Trong tình huống thật, hãy bình tĩnh và kiểm tra bằng số bạn đã biết. Điểm số không xác minh được một người hay bảo đảm sự an toàn.",
+    "stepThree": "03 / Chia sẻ kế hoạch",
+    "shareTitle": "Gửi trang này, không gửi câu riêng",
+    "sharePrivacy": "Các liên kết này chỉ chia sẻ ứng dụng. Hãy thống nhất câu riêng với gia đình qua cách khác.",
+    "shareWhatsApp": "Chia sẻ qua WhatsApp",
+    "shareTelegram": "Chia sẻ qua Telegram",
+    "shareText": "Lời nhắc cho gia đình: dừng lại và gọi lại bằng số đã biết. Thử mười tin nhắn hư cấu tại đây.",
+    "metricsPrivacy": "Bài luyện tập chỉ gửi mã lượt làm ngẫu nhiên ẩn danh, phiên bản, ngôn ngữ ban đầu, câu trả lời đúng hay sai và trạng thái hoàn thành. Không gửi câu riêng, nội dung tin nhắn hay thông tin liên hệ. Các lượt làm được giữ trong tám ngày theo UTC.",
+    "fictionNote": "Tài liệu học tập, không phải xác minh danh tính. Không cần tài khoản.",
+    "loadError": "Không tải được ngôn ngữ này. Trang hiện tại của bạn vẫn giữ nguyên."
+  },
+  "rounds": {
+    "1": {
+      "message": "Anh họ đây. Anh gặp chuyện rồi, cần em chuyển tiền ngay. Đừng gọi cho anh nhé.",
+      "explanation": "Sự gấp gáp và áp lực không cho gọi là lý do để dừng lại. Hãy gọi cho người anh họ bằng số đã biết trước khi gửi bất cứ thứ gì."
+    },
+    "2": {
+      "message": "Mẹ ơi, điện thoại con hỏng rồi. Đây là số mới. Hôm nay mẹ trả giúp con một hóa đơn nhé?",
+      "explanation": "Số mới kèm yêu cầu thanh toán cần được kiểm tra riêng. Liên hệ người nhà bằng số quen hoặc một kênh đáng tin khác."
+    },
+    "3": {
+      "message": "Anh trai em nhờ tôi gom tiền cho việc khẩn cấp. Giữ chuyện này giữa chúng ta thôi để cả nhà khỏi lo.",
+      "explanation": "Yêu cầu giữ bí mật có thể ngăn bạn kiểm tra câu chuyện. Hãy dừng lại và nói chuyện với anh trai hoặc người nhà đáng tin khác qua cách liên lạc đã biết."
+    },
+    "4": {
+      "message": "Tôi bị kẹt ở đây. Hãy mua thẻ quà tặng rồi gửi ảnh mã thẻ để tôi về nhà được.",
+      "explanation": "Mã thẻ quà tặng có thể bị dùng ngay khi được chia sẻ. Đừng gửi mã. Hãy kiểm tra yêu cầu bằng cách gọi một số đã biết."
+    },
+    "5": {
+      "message": "Chúng tôi là bộ phận an ninh ngân hàng của bạn. Hãy chuyển tiền tiết kiệm sang tài khoản an toàn của chúng tôi ngay trong lúc xử lý sự cố.",
+      "explanation": "Yêu cầu chuyển tiền sang tài khoản được gọi là an toàn là lúc cần dừng lại. Kết thúc cuộc trò chuyện và liên hệ ngân hàng bằng số chính thức."
+    },
+    "6": {
+      "message": "Tài khoản của bạn sẽ bị đóng hôm nay. Mở liên kết đăng nhập trong tin này và nhập mật khẩu để giữ tài khoản.",
+      "explanation": "Đừng mở liên kết đăng nhập bất ngờ. Tự mở dịch vụ qua ứng dụng hoặc địa chỉ đã biết và kiểm tra tại đó."
+    },
+    "7": {
+      "message": "Tôi đang giúp sửa tài khoản của bạn. Hãy cho tôi mã đăng nhập dùng một lần vừa gửi đến điện thoại.",
+      "explanation": "Mã đăng nhập có thể cho người khác truy cập tài khoản của bạn. Đừng đưa mã cho người gửi. Nếu cần giúp đỡ, hãy tự liên hệ dịch vụ qua kênh riêng."
+    },
+    "8": {
+      "message": "Tôi làm việc cho một quan chức cấp cao. Hãy gửi bản sao giấy tờ tùy thân qua cuộc trò chuyện này ngay lập tức.",
+      "explanation": "Chức danh tự xưng không xác minh được người gửi. Dừng lại và kiểm tra qua kênh chính thức bạn đã biết độc lập trước khi chia sẻ giấy tờ."
+    },
+    "9": {
+      "message": "Chủ nhật này cả nhà ăn tối như mọi khi lúc sáu hay bảy giờ?",
+      "explanation": "Ví dụ này chỉ hỏi giờ ăn tối, không có liên kết, thanh toán hay thông tin riêng. Đây là yêu cầu thông thường; vẫn không chứng minh ai là người gửi."
+    },
+    "10": {
+      "message": "Khi nào rảnh, bạn gửi công thức món súp mình đã nói đến nhé? Không vội đâu.",
+      "explanation": "Ví dụ này xin công thức nấu ăn, không thúc giục, không có liên kết hay chi tiết nhạy cảm. Đây là yêu cầu thông thường, không bảo đảm danh tính người gửi."
+    }
+  }
+}

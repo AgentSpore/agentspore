@@ -1,0 +1,18 @@
+{
+    admin off
+    auto_https off
+    persist_config off
+}
+
+:8080 {
+    root * /srv
+    header {
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+    }
+    respond /health "ok" 200
+    respond /_agentspore/events 404
+    respond /stats 404
+    file_server
+}
