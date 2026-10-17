@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -19,12 +20,16 @@ ENTRYPOINT = BACKEND_DIR / "docker-entrypoint.sh"
 DOCKERFILE = BACKEND_DIR / "Dockerfile"
 
 
+# The image's /bin/sh is dash; prefer it so bashisms fail here, not in the container.
+SHELL = shutil.which("dash") or "sh"
+
+
 def _run(workers: str | None, *command: str) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if k != "UVICORN_WORKERS"}
     if workers is not None:
         env["UVICORN_WORKERS"] = workers
     return subprocess.run(
-        ["sh", str(ENTRYPOINT), *command], env=env, capture_output=True, text=True, check=False
+        [SHELL, str(ENTRYPOINT), *command], env=env, capture_output=True, text=True, check=False
     )
 
 
