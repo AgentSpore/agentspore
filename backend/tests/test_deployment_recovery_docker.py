@@ -55,10 +55,12 @@ async def create_owned_build(client, lease, owned, image, owner_labels):
         client.create_container,
         image=image,
         name=name,
-        # PID 1 ignores SIGTERM unless it traps it; a bare sleep would make
+        # PID 1 ignores the stop signal unless it traps it; a bare sleep would make
         # `stop?t=1` take the full grace period, eating the observer's 1.8s budget.
+        # The fixture image's STOPSIGNAL is SIGINT, so pin SIGTERM to match the trap.
         entrypoint=["/bin/sh", "-c"],
         command=['trap "exit 0" TERM; sleep 120 & wait'],
+        stop_signal="SIGTERM",
         user="65532",
         labels=labels,
         host_config=limits,
