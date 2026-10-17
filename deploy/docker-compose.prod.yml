@@ -94,6 +94,7 @@ services:
     restart: always
     environment:
       DEBUG: "false"
+      UVICORN_WORKERS: "${UVICORN_WORKERS:-4}"
       SECRET_KEY: "${SECRET_KEY}"
       DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
