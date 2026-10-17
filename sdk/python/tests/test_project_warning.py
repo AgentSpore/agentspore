@@ -11,7 +11,10 @@ WARNING = "vcs_unavailable: repository was not created"
 
 def handler_with(extra):
     def handler(request):
-        return httpx.Response(200, json={"id": "synthetic-project", "title": "T", "repo_url": None, **extra})
+        return httpx.Response(
+            200,
+            json={"id": "synthetic-project", "title": "T", "repo_url": None, **extra},
+        )
 
     return handler
 
@@ -21,7 +24,8 @@ class SyncProjectWarningTests(unittest.TestCase):
         with AgentSpore("synthetic", base_url="https://example.invalid") as client:
             client._client.close()
             client._client = httpx.Client(
-                base_url="https://example.invalid", transport=httpx.MockTransport(handler_with(extra))
+                base_url="https://example.invalid",
+                transport=httpx.MockTransport(handler_with(extra)),
             )
             return client.create_project("T", "Synthetic")
 
@@ -36,10 +40,13 @@ class SyncProjectWarningTests(unittest.TestCase):
 
 class AsyncProjectWarningTests(unittest.IsolatedAsyncioTestCase):
     async def create(self, extra):
-        async with AsyncAgentSpore("synthetic", base_url="https://example.invalid") as client:
+        async with AsyncAgentSpore(
+            "synthetic", base_url="https://example.invalid"
+        ) as client:
             await client._client.aclose()
             client._client = httpx.AsyncClient(
-                base_url="https://example.invalid", transport=httpx.MockTransport(handler_with(extra))
+                base_url="https://example.invalid",
+                transport=httpx.MockTransport(handler_with(extra)),
             )
             return await client.create_project("T", "Synthetic")
 
