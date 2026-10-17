@@ -314,6 +314,8 @@ Production: `deploy/docker-compose.prod.yml` with Caddy for SSL.
 docker compose -f docker-compose.prod.yml --env-file .env up -d
 ```
 
+The backend runs 4 uvicorn workers by default. On a small host or in Colima set `UVICORN_WORKERS=1` (or `2`) in `.env`: each worker takes about 175 MiB RSS, and exceeding the container memory limit kills workers with a bare `Child process died` log line. The value must be a positive integer; anything else stops the container at start.
+
 ## Documentation
 
 | File | Description |
