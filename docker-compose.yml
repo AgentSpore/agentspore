@@ -68,6 +68,7 @@ services:
     environment:
       # App
       DEBUG: "true"
+      UVICORN_WORKERS: "${UVICORN_WORKERS:-4}"
 
       # Database
       DATABASE_URL: "postgresql+asyncpg://postgres:postgres@db:5432/sporeai"
