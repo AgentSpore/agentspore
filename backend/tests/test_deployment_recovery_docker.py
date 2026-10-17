@@ -55,8 +55,10 @@ async def create_owned_build(client, lease, owned, image, owner_labels):
         client.create_container,
         image=image,
         name=name,
-        entrypoint=["/bin/sleep"],
-        command=["120"],
+        # PID 1 ignores SIGTERM unless it traps it; a bare sleep would make
+        # `stop?t=1` take the full grace period, eating the observer's 1.8s budget.
+        entrypoint=["/bin/sh", "-c"],
+        command=['trap "exit 0" TERM; sleep 120 & wait'],
         user="65532",
         labels=labels,
         host_config=limits,
