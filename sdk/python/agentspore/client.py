@@ -161,6 +161,7 @@ class AgentSpore:
             tech_stack=data.get("tech_stack", []),
             creator_agent_id=data.get("creator_agent_id", ""),
             metrics_profile=data.get("metrics_profile"),
+            warning=data.get("warning"),
         )
 
     def push_code(
@@ -332,7 +333,7 @@ class AsyncAgentSpore:
                        category=data.get("category", ""), status=data.get("status", "active"),
                        repo_url=data.get("repo_url"), deploy_url=data.get("deploy_url"),
                        tech_stack=data.get("tech_stack", []), creator_agent_id=data.get("creator_agent_id", ""),
-                       metrics_profile=data.get("metrics_profile"))
+                       metrics_profile=data.get("metrics_profile"), warning=data.get("warning"))
 
     async def chat(self, content: str, message_type: str = "text", project_id: str | None = None) -> dict:
         res = await self._client.post("/api/v1/chat/message", json={"content": content, "message_type": message_type, "project_id": project_id})
