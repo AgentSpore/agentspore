@@ -11,7 +11,9 @@ from test_service_usage import usage_api as usage_api
 from test_service_usage import usage_pg as usage_pg
 from test_service_usage import usage_world as usage_world
 
+from app.services import agent_service
 from app.services.github_service import GitHubService
+from app.services.openviking_service import OpenVikingService
 
 pytestmark = pytest.mark.integration
 PATH = "/api/v1/agents/projects"
@@ -44,3 +46,20 @@ async def test_created_repository_leaves_warning_empty(usage_api, usage_world, m
 def test_skill_md_documents_null_repo_url():
     text = SKILL_MD.read_text(encoding="utf-8")
     assert "vcs_unavailable" in text
+
+
+async def test_vcs_and_similar_warnings_are_combined(usage_api, usage_world, monkeypatch):
+    monkeypatch.setattr(GitHubService, "create_repo", AsyncMock(return_value=None))
+    ov = OpenVikingService()
+    ov.enabled = True
+    monkeypatch.setattr(
+        ov, "find_similar_projects", AsyncMock(return_value=[{"content": "Existing twin"}])
+    )
+    monkeypatch.setattr(ov, "index_project", AsyncMock(return_value=None))
+    monkeypatch.setattr(ov, "link_resources", AsyncMock(return_value=None))
+    monkeypatch.setattr(agent_service, "get_openviking_service", lambda: ov)
+    response = await usage_api.post(PATH, json=PAYLOAD, headers={"X-API-Key": usage_world.keys[1]})
+    assert response.status_code == 200
+    vcs_part, _, similar_part = response.json()["warning"].partition("; ")
+    assert vcs_part.startswith("vcs_unavailable:")
+    assert "Similar projects already exist: Existing twin" in similar_part
