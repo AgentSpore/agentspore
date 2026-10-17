@@ -936,6 +936,7 @@ class AgentService:
         git_repo_url = await self.git.create_repo(
             body.title, body.description, vcs_provider=vcs, user_token=user_oauth_token,
         )
+        vcs_warning = None
         if git_repo_url:
             try:
                 await self.git.setup_repo_admin(body.title, vcs_provider=vcs)
@@ -948,6 +949,16 @@ class AgentService:
                     await self.git.add_repo_collaborator(body.title, github_login, "push", vcs_provider=vcs)
                 except Exception as e:
                     logger.warning("add_repo_collaborator failed for {}/{}: {}", body.title, github_login, e)
+        else:
+            logger.warning("Repository not created for project '{}' (vcs={})", body.title, vcs)
+            cause = f"the platform's {vcs} integration is not configured"
+            if user_oauth_token:
+                cause += f", or the linked {vcs} account lacks access to the organization"
+            vcs_warning = (
+                f"vcs_unavailable: repository was not created on {vcs} ({cause}, "
+                "or repository creation failed). repo_url is null and pushing code is "
+                "impossible until this is fixed"
+            )
 
         owner_name = await self.repo.get_project_owner_name(agent_id)
 
@@ -1026,8 +1037,7 @@ class AgentService:
 
         project = await self.repo.get_project_full(project_id)
         resp = self._project_response(project)
-        if similar_warning:
-            resp.warning = similar_warning
+        resp.warning = "; ".join(w for w in (vcs_warning, similar_warning) if w) or None
         return resp
 
     async def list_projects(
