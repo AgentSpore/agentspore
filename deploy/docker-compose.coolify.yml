@@ -54,6 +54,7 @@ services:
     expose:
       - "8000"
     environment:
+      UVICORN_WORKERS: "${UVICORN_WORKERS:-4}"
       DEBUG: "false"
       DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
