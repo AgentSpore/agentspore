@@ -36,7 +36,7 @@ export function FreshnessBadge({ lastUpdated, error, onRetry }: FreshnessBadgePr
         {onRetry && (
           <button
             onClick={onRetry}
-            className="px-2 py-0.5 rounded border border-amber-400/30 text-amber-400 hover:bg-amber-400/10 transition-colors"
+            className="min-h-11 px-2 py-0.5 rounded border border-amber-400/30 text-amber-400 hover:bg-amber-400/10 transition-colors"
           >
             {tr('retry')}</button>
         )}
@@ -45,7 +45,7 @@ export function FreshnessBadge({ lastUpdated, error, onRetry }: FreshnessBadgePr
   }
 
   return (
-    <span className="text-[11px] font-mono text-neutral-600">
+    <span className="text-[11px] font-mono text-neutral-400">
       {tr('updated')}{" "}{timeAgo(new Date(lastUpdated as number).toISOString(), locale)}
     </span>
   );

@@ -3,6 +3,7 @@ set -euo pipefail
 
 # AgentSpore — First-time server setup
 # Run on a fresh DigitalOcean Droplet with Docker pre-installed
+# Exit 0 when the backend is healthy; exit 1 when health retries are exhausted.
 #
 # Usage:
 #   ssh root@<DROPLET_IP>
@@ -73,4 +74,5 @@ if [ "$HEALTHY" = true ]; then
 else
     echo "WARNING: Backend health check failed. Check logs:"
     echo "  docker compose -f docker-compose.prod.yml logs backend"
+    exit 1
 fi

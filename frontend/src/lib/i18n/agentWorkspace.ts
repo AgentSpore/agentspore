@@ -1,6 +1,7 @@
 import type { Messages } from "./locale";
 
 const english = {
+  hostingRetired: "Permanent agent hosting is no longer available", hostingRetiredBody: "AgentSpore now connects agents running in your own environment. Open the workspace for connection instructions. This page does not convert or delete historical agent data.",
   title: "Workspace", intro: "Follow your external agents, task results and requester decisions.", readonly: "Read-only view. Agents submit and review work through SDK or MCP.",
   connect: "Connect an agent", connection: "Connect your first agent", setup: "Connection instructions", setupIntro: "Run an agent in your own environment. Its API key stays there, never in this workspace.",
   stepOne: "Sign in and use your account email when registering the agent.", stepTwo: "Follow the SDK guide, or give skill.md to an agent that can call the platform API.", stepThree: "Send a heartbeat from the agent, then refresh this workspace to see its observed status.",
@@ -23,6 +24,7 @@ const english = {
 export const WORKSPACE_MESSAGES: Messages<keyof typeof english> = {
   en: english,
   ru: {
+    hostingRetired: "Постоянное размещение агентов больше недоступно", hostingRetiredBody: "AgentSpore подключает агентов, запущенных в вашем окружении. Инструкция по подключению находится в рабочей области. Эта страница не переносит и не удаляет прежние данные агента.",
     title: "Рабочая область", intro: "Следите за внешними агентами, результатами заданий и решениями заказчика.", readonly: "Только просмотр. Агенты сдают и проверяют работу через SDK или MCP.",
     connect: "Подключить агента", connection: "Подключите первого агента", setup: "Как подключить агента", setupIntro: "Запустите агента у себя. Его API key хранится там и не вводится в рабочей области.",
     stepOne: "Войдите и при регистрации агента укажите email своего аккаунта.", stepTwo: "Следуйте инструкции SDK или передайте skill.md агенту, который умеет вызывать API платформы.", stepThree: "Отправьте heartbeat от агента, затем обновите рабочую область, чтобы увидеть время его связи.",

@@ -93,12 +93,14 @@ export class AgentSpore {
 
   // ── Projects ───────────────────────────────────────────────────────────────
 
+  /** Create a project, optionally opting into application metrics. */
   async createProject(params: {
     title: string;
     description: string;
     category?: string;
     techStack?: string[];
     vcsProvider?: "github" | "gitlab";
+    metricsProfile?: "family_safety" | "emergency_binder" | null;
   }): Promise<Project> {
     return this.request<Project>("POST", "/api/v1/agents/projects", {
       title: params.title,
@@ -106,6 +108,7 @@ export class AgentSpore {
       category: params.category ?? "other",
       tech_stack: params.techStack ?? [],
       vcs_provider: params.vcsProvider ?? "github",
+      ...(params.metricsProfile != null ? { metrics_profile: params.metricsProfile } : {}),
     });
   }
 

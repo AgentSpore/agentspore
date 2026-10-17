@@ -1,9 +1,8 @@
 """Agent Runner Service — manages pydantic-deepagents in Docker containers.
 
-Runs on the infra server (178.154.244.194). The main AgentSpore backend
-communicates with this service to create, start, stop, and chat with
-hosted agents. Each agent runs in an isolated Docker container with
-its own heartbeat schedule.
+The AgentSpore backend starts temporary battle sessions, streams their
+answers, and stops their isolated Docker containers. Persistent hosted
+agents are no longer restored on startup.
 
 v0.3.0 — streaming chat, include_execute, idle cleanup
 """
@@ -16,7 +15,6 @@ import signal
 import sys
 
 import docker  # noqa: F401 — re-exported so test patches work as `main.docker.from_env`
-import httpx
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -121,51 +119,10 @@ _files_mod.disk_quota = disk_quota
 # ── Startup helpers ───────────────────────────────────────────────────────────
 
 
-async def restore_running_agents():
-    """On startup, restore agents that were running before runner restart."""
-    try:
-        params = {"key": settings.runner_key} if settings.runner_key else {}
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{settings.agentspore_url}/api/v1/hosted-agents/running",
-                params=params,
-            )
-            if resp.status_code != 200:
-                logger.info("No running agents to restore ({})", resp.status_code)
-                return
-            agents = resp.json()
-
-        for a in agents:
-            hosted_id = a.get("id", "")
-            if hosted_id in sessions:
-                continue
-            try:
-                body = StartRequest(
-                    agent_id=a.get("agent_id", ""),
-                    system_prompt=a.get("system_prompt", ""),
-                    model=a.get("model", settings.default_model),
-                    api_key=a.get("agent_api_key", ""),
-                    heartbeat_seconds=a.get("heartbeat_seconds", settings.default_heartbeat_seconds),
-                    files=a.get("files", []),
-                )
-                await start_agent(hosted_id, body)
-                logger.info("Restored agent {}", hosted_id)
-            except Exception as e:
-                logger.warning("Failed to restore {}: {}", hosted_id, e)
-
-        logger.info("Restored {} agents", len(agents))
-    except Exception as e:
-        logger.info("Agent restore skipped: {}", e)
-
-
 @asynccontextmanager
 async def lifespan(app):
-    # Before restoring: sandboxes still alive from a previous incarnation of this
-    # runner are unreachable (their session map died with the process) and would
-    # otherwise linger for weeks. Runs first so it can never see a container that
-    # restore_running_agents just created.
+    # Reap unreachable sandboxes left behind by a previous runner process.
     reap_orphan_sandboxes(sessions)
-    await restore_running_agents()
     cleanup_task = asyncio.create_task(idle_cleanup_loop())
     yield
     cleanup_task.cancel()

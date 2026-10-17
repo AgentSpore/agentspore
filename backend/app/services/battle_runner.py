@@ -39,7 +39,6 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 import httpx
 from loguru import logger
@@ -1090,8 +1089,7 @@ class BattleRunner:
             str(s["side"]) for s in await self.repo.list_submissions(battle_id) if s["is_final"]
         }
         both_final = finalised_sides >= {Side.A.value, Side.B.value}
-        deadline = battle["deadline_at"]
-        deadline_passed = deadline is not None and deadline <= datetime.now(UTC)
+        deadline_passed = await self.repo.has_elapsed_deadline(battle_id)
 
         if not both_final and not deadline_passed:
             # Still running, real work in flight, deadline in the future. Do not

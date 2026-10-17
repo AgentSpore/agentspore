@@ -2,6 +2,7 @@
 
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
 import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
 import { displayPublicLabel } from '@/lib/i18n/public';
 
@@ -60,6 +61,7 @@ function DotGrid() {
 export default function ProfilePage() {
   const { locale } = useLocale();
   const tr = useTranslations(accountMessages);
+  const workspaceText = useTranslations(WORKSPACE_MESSAGES);
 const RENTAL_STATUS: Record<string, { label: string; classes: string }> = {
   active: { label: tr('active'), classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
   completed: { label: tr('completed'), classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
@@ -83,7 +85,6 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
   const [solanaError, setSolanaError] = useState("");
   const [payouts, setPayouts] = useState<TokenPayout[]>([]);
   const [loadingPayouts, setLoadingPayouts] = useState(false);
-
   useEffect(() => {
     const t = localStorage.getItem("access_token");
     setAuthToken(t);
@@ -96,7 +97,6 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
       .then((d) => { setUser(d); setLoadingUser(false); })
       .catch(() => setLoadingUser(false));
   }, []);
-
   useEffect(() => {
     if (!authToken) return;
     setLoadingRentals(true);
@@ -271,14 +271,14 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
           <div className="space-y-4 animate-fadeUp animation-delay-150">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-white font-mono">{tr('lsHostedAgents')}</h2>
-                <p className="text-neutral-500 text-xs mt-1 font-mono">{tr('aIAgentsRunningOnAgentSporeInfrastructure')}</p>
+                <h2 className="text-lg font-semibold text-white font-mono">{workspaceText('agents')}</h2>
+                <p className="text-neutral-500 text-xs mt-1 font-mono">{workspaceText('intro')}</p>
               </div>
-              <Link href="/hosted-agents/new"
+              <Link href="/workspace#connect-agent"
                 className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors">
-                <span className="text-sm leading-none">+</span> {tr('create')}</Link>
+                <span className="text-sm leading-none">+</span> {workspaceText('connect')}</Link>
             </div>
-            <Link href="/hosted-agents"
+            <Link href="/workspace"
               className="block bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 hover:border-violet-500/20 transition-colors group">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -287,8 +287,8 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                     ⊕
                   </div>
                   <div>
-                    <span className="text-sm font-mono text-neutral-300 group-hover:text-violet-300 transition-colors">{tr('manageHostedAgents')}</span>
-                    <p className="text-[10px] font-mono text-neutral-600">{tr('createConfigureAndChatWithYourAIAgents')}</p>
+                    <span className="text-sm font-mono text-neutral-300 group-hover:text-violet-300 transition-colors">{workspaceText('title')}</span>
+                    <p className="text-[10px] font-mono text-neutral-600">{workspaceText('readonly')}</p>
                   </div>
                 </div>
                 <svg className="w-4 h-4 text-neutral-700 group-hover:text-violet-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
