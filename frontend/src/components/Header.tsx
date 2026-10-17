@@ -2,7 +2,7 @@
 
 import { LanguageSelector } from "@/components/LanguageSelector";
 import Link from "next/link";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { clearAuthSession, fetchWithAuth, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
@@ -62,6 +62,7 @@ export function Header() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const accountPanelId = useId();
   const moreRef = useRef<HTMLDivElement>(null);
   const mobileToggleRef = useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
@@ -94,11 +95,15 @@ export function Header() {
       if (e.key !== "Escape") return;
       if (moreOpen) { setMoreOpen(false); moreRef.current?.querySelector("button")?.focus(); }
       if (mobileOpen) { setMobileOpen(false); mobileToggleRef.current?.focus(); }
+      if (menuOpen) {
+        setMenuOpen(false);
+        if ((!moreOpen && !mobileOpen) || menuRef.current?.contains(e.target as Node)) menuRef.current?.querySelector("button")?.focus();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("mousedown", handler);
     return () => { document.removeEventListener("mousedown", handler); document.removeEventListener("keydown", onKeyDown); };
-  }, [moreOpen, mobileOpen]);
+  }, [moreOpen, mobileOpen, menuOpen]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -170,6 +175,8 @@ export function Header() {
                   <div className="relative" ref={menuRef}>
                     <button
                       onClick={() => setMenuOpen((o) => !o)}
+                      aria-expanded={menuOpen}
+                      aria-controls={accountPanelId}
                       className="flex min-h-11 items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-all group"
                     >
                       <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300 group-hover:border-violet-500/40 transition-colors">
@@ -181,7 +188,7 @@ export function Header() {
                       </svg>
                     </button>
                     {menuOpen && (
-                      <div className="header-menu-enter absolute right-0 top-full mt-2 w-56 rounded-xl border border-neutral-800/80 bg-[#0c0c0c] shadow-[0_8px_40px_rgba(0,0,0,0.6)] py-1 z-50">
+                      <div id={accountPanelId} className="header-menu-enter absolute right-0 top-full mt-2 w-56 rounded-xl border border-neutral-800/80 bg-[#0c0c0c] shadow-[0_8px_40px_rgba(0,0,0,0.6)] py-1 z-50">
                         <div className="px-4 py-3 border-b border-neutral-800/60">
                           <p className="text-sm text-white font-medium truncate">{user.name}</p>
                           <p className="text-[11px] text-neutral-400 truncate mt-0.5 font-mono">{user.email}</p>
@@ -314,7 +321,7 @@ export function Header() {
 
         {/* === MOBILE === */}
         <div className="lg:hidden">
-          <div className="px-4 py-3 flex items-center justify-between">
+          <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <Link href="/" className="flex min-h-11 items-center gap-3 flex-shrink-0">
               <div className="header-logo-hex w-8 h-8 rounded-lg flex items-center justify-center text-sm bg-neutral-900 border border-neutral-700/80 text-violet-400 font-mono">
                 &#x2B21;
@@ -322,7 +329,7 @@ export function Header() {
               <span className="text-[15px] font-bold tracking-tight text-white">AgentSpore</span>
             </Link>
 
-            <div className="flex items-center gap-2">
+            <div className="ml-auto flex shrink-0 items-center gap-2">
               <LanguageSelector />
               {ready && user && (
                 <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300">
@@ -387,12 +394,12 @@ export function Header() {
                 user ? (
                   <>
                     <div className="px-3 py-2 flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300">
+                      <div className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-xs font-bold bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300">
                         {initials}
                       </div>
-                      <div>
-                        <p className="text-sm text-white font-medium">{user.name}</p>
-                        <p className="text-[11px] text-neutral-400 mt-0.5 font-mono">{user.email}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-white font-medium wrap-anywhere">{user.name}</p>
+                        <p className="text-[11px] text-neutral-400 mt-0.5 font-mono wrap-anywhere">{user.email}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 px-3 py-1.5">

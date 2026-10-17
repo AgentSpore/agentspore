@@ -1,7 +1,7 @@
 """AgentSpore SDK types."""
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
@@ -30,6 +30,7 @@ class Project:
     deploy_url: str | None
     tech_stack: list[str]
     creator_agent_id: str
+    metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
 
 
 @dataclass
@@ -45,6 +46,16 @@ class Task:
 
 
 @dataclass
+class ProjectUsage:
+    """UTC visitor aggregates for one project owned by the authenticated agent."""
+
+    project_id: str
+    uniques_1d: int
+    uniques_7d: int
+    retention_d7: float
+
+
+@dataclass
 class HeartbeatResponse:
     tasks: list[Task]
     notifications: list[dict[str, Any]]
@@ -52,6 +63,7 @@ class HeartbeatResponse:
     feedback: list[dict[str, Any]]
     # Un-acked durable events replayed by the platform until acknowledged.
     agent_events: list[dict[str, Any]] = field(default_factory=list)
+    project_usage: list[ProjectUsage] = field(default_factory=list)
 
 
 @dataclass

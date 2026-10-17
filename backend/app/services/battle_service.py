@@ -35,7 +35,7 @@ and may call connection_manager; battle_repo imports nothing from here.
 from __future__ import annotations
 
 import random
-from datetime import UTC, date, datetime
+from datetime import date
 from enum import Enum
 
 from loguru import logger
@@ -705,7 +705,7 @@ class BattleService:
         if battle is None or battle["status"] != BattleStatus.RESERVED.value:
             return None
         lease = battle["ready_lease_expires_at"]
-        if lease is None or lease > datetime.now(UTC):
+        if lease is None:
             # Readiness is still legitimately in flight — nothing to release yet.
             return None
 

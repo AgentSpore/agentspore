@@ -126,10 +126,6 @@ class Settings(BaseSettings):
     agent_runner_url: str = ""
     agent_runner_key: str = ""
 
-    # Hosted agents
-    max_hosted_agents_per_user: int = 1
-    max_cron_tasks_per_agent: int = 10
-
     # Battle rated-track anti-abuse (Track 3). All limits are enforced against
     # the verified owner (users.id), not the agent, so a Sybil second agent
     # cannot multiply an owner's budget or rated slots.

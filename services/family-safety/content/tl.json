@@ -1,0 +1,92 @@
+{
+  "locale": "tl",
+  "name": "Tagalog",
+  "ui": {
+    "brandNote": "isang paghintong magandang ibahagi",
+    "language": "Wika",
+    "eyebrow": "Isang simpleng plano para sa pamilya",
+    "title": "Huminto muna. Tumawag sa kakilala mo.",
+    "intro": "Maaaring kapani-paniwala ang apurahang mensahe. Magkasundo sa isang pariralang pampamilya, magtabi ng kard na paalala, at magsanay sa pagkilala ng mga hiling na kailangang tiyakin sa ibang paraan.",
+    "stepOne": "01 / Gumawa ng plano ng pamilya",
+    "phraseTitle": "Pariralang sama-samang napagkasunduan",
+    "phraseIntro": "Pribadong pumili ng parirala kasama ang pamilya. Huwag gumamit ng password na ginagamit mo na sa ibang lugar. Maaari mong iwang blangko ang patlang na ito.",
+    "phraseLabel": "Parirala ng inyong pamilya (opsyonal)",
+    "phrasePrivacy": "Nasa memorya lamang ng nakabukas na pahinang ito. Hindi kailanman ipinapadala o sine-save. Nabubura kapag ni-reload ang pahina. Hanggang 80 karakter; ang pinagsamang emoji ay binibilang na isa.",
+    "phraseTooLong": "Gumamit ng hindi hihigit sa 80 karakter. Hindi pinaikli ang iyong parirala.",
+    "phraseUnsupported": "Hindi ligtas na masusuri ng browser na ito ang haba ng parirala. Iwang blangko ito para mai-print ang kard na paalala.",
+    "includePhrase": "Isama ang parirala ko sa naka-print na kard",
+    "printCard": "I-print ang kard na paalala",
+    "cardEyebrow": "Ilagay malapit sa telepono",
+    "cardTitle": "Apurahang hiling? Huminto. Ibaba ang tawag. Ikaw ang tumawag muli.",
+    "cardPause": "Huwag magpadala ng pera, magbigay ng login code, o magbukas ng link habang may nagmamadali sa iyo.",
+    "cardCall": "Tawagan ang tao gamit ang numerong kilala mo na. Huwag gamitin ang numero o link sa apurahang mensahe.",
+    "cardAsk": "Kung hindi siya makontak, tiyakin sa ibang pinagkakatiwalaang tao, kahit hinihiling ng mensahe na ilihim ito.",
+    "cardPhraseLabel": "Ang napagkasunduan naming parirala",
+    "phraseLimit": "Ang pamilyar na boses o tamang parirala lamang ay hindi patunay ng pagkakakilanlan. Tumawag pa rin sa numerong kilala mo na.",
+    "stepTwo": "02 / Subukan ang sampung maiikling mensahe",
+    "practiceTitle": "Hihinto ka ba para tiyakin muna?",
+    "practiceIntro": "Kathang-isip ang sampung mensaheng ito. Walo ang dapat pag-isipan at tiyakin sa hiwalay na paraan; dalawa ang karaniwang hiling. Pumili, basahin ang paliwanag, saka magpatuloy.",
+    "startTraining": "Simulan ang pagsasanay sa sampung mensahe",
+    "pauseVerify": "Huminto at tiyakin",
+    "ordinaryRequest": "Karaniwang hiling",
+    "nextRound": "Susunod na mensahe",
+    "finishTraining": "Tingnan ang resulta ko",
+    "restartTraining": "Magsimula ng bagong pagsasanay",
+    "roundStatus": "Mensahe {current} sa {total}",
+    "correct": "Magandang pagpili.",
+    "incorrect": "Makakatulong ang muling pagtingin.",
+    "resultScore": "{score}/{total} na pinili ang tumugma sa gabay",
+    "resultAdvice": "Maaari kang magsanay muli. Sa totoong sitwasyon, huwag magmadali at tiyakin gamit ang numerong kilala mo na. Hindi makakapagpatunay ng tao o makakagarantiya ng proteksiyon ang puntos.",
+    "stepThree": "03 / Ibahagi ang plano",
+    "shareTitle": "Ipadala ang pahina, hindi ang parirala mo",
+    "sharePrivacy": "Ang app lamang ang ibinabahagi ng mga link na ito. Pribadong pagkasunduan ang parirala kasama ang pamilya sa ibang paraan.",
+    "shareWhatsApp": "Ibahagi sa WhatsApp",
+    "shareTelegram": "Ibahagi sa Telegram",
+    "shareText": "Paalala para sa pamilya: huminto at tumawag muli sa kilalang numero. Subukan dito ang sampung kathang-isip na mensahe.",
+    "metricsPrivacy": "Nagpapadala lamang ang pagsasanay ng random at walang-pangalang ID ng pagsubok, bersiyon, panimulang wika, kung tama o mali ang mga sagot, at kung tapos na. Walang parirala, teksto ng mensahe o detalye ng kontak. Itinatago ang mga pagsubok nang walong araw ayon sa UTC.",
+    "fictionNote": "Materyal sa pag-aaral, hindi pagpapatunay ng pagkakakilanlan. Hindi kailangan ng account.",
+    "loadError": "Hindi ma-load ang wikang ito. Hindi nabago ang kasalukuyan mong pahina."
+  },
+  "rounds": {
+    "1": {
+      "message": "Pinsan mo ito. May problema ako at kailangan mong magpadala ng pera ngayon din. Pakiusap, huwag mo akong tawagan.",
+      "explanation": "Dahilan para huminto ang pagmamadali at pamimilit na huwag tumawag. Tawagan ang pinsan sa numerong kilala mo na bago magpadala ng anuman."
+    },
+    "2": {
+      "message": "Ma, nasira ang phone ko. Ito ang bago kong numero. Puwede mo bang bayaran ang bill ko ngayon?",
+      "explanation": "Kailangang tiyakin nang hiwalay ang bagong numero at hiling na magbayad. Kontakin ang kapamilya sa dati mong kilalang numero o ibang pinagkakatiwalaang paraan."
+    },
+    "3": {
+      "message": "Inutusan ako ng kuya mo na mangalap ng perang pang-emergency. Sa atin lang ito para hindi mag-alala ang ibang kapamilya.",
+      "explanation": "Maaaring hadlangan ng paglilihim ang pagtiyak sa kuwento. Huminto at kausapin ang kuya o ibang pinagkakatiwalaang kapamilya gamit ang kilalang kontak."
+    },
+    "4": {
+      "message": "Na-stranded ako. Bumili ka ng mga gift card at ipadala ang litrato ng mga code para makauwi ako.",
+      "explanation": "Maaaring gastusin agad ang code ng gift card kapag naibahagi. Huwag itong ipadala. Tiyakin ang hiling sa pamamagitan ng pagtawag sa kilalang numero."
+    },
+    "5": {
+      "message": "Kami ang security team ng bangko mo. Ilipat agad ang ipon mo sa ligtas naming account habang inaayos ang problema.",
+      "explanation": "Huminto kapag hinihiling na ilipat ang pera sa sinasabing ligtas na account. Tapusin ang usapan at kontakin ang bangko sa opisyal nitong numero."
+    },
+    "6": {
+      "message": "Isasara ang account mo ngayong araw. Buksan ang login link sa mensaheng ito at ilagay ang password para manatili ito.",
+      "explanation": "Huwag buksan ang hindi inaasahang login link. Ikaw mismo ang magbukas ng serbisyo gamit ang kilalang app o address at doon tiyakin."
+    },
+    "7": {
+      "message": "Tinutulungan kitang ayusin ang account mo. Sabihin mo ang minsanang login code na kararating lang sa phone mo.",
+      "explanation": "Maaaring makapasok ang iba sa account mo gamit ang login code. Huwag itong ibigay sa nagpadala. Kung kailangan ng tulong, ikaw mismo ang kumontak sa serbisyo sa hiwalay na paraan."
+    },
+    "8": {
+      "message": "Nagtatrabaho ako para sa isang mataas na opisyal. Ipadala agad ang kopya ng dokumento ng pagkakakilanlan mo sa chat na ito.",
+      "explanation": "Hindi patunay ng pagkakakilanlan ang inaangking katungkulan. Huminto at tiyakin ang hiling sa opisyal na paraang alam mo nang hiwalay bago magbahagi ng mga dokumento."
+    },
+    "9": {
+      "message": "Anong oras ang karaniwan nating hapunan ng pamilya sa Linggo, alas-sais o alas-siyete?",
+      "explanation": "Oras lang ng hapunan ang tanong sa halimbawang ito, walang link, bayad o pribadong impormasyon. Karaniwang hiling ito; hindi pa rin patunay kung sino ang nagpadala."
+    },
+    "10": {
+      "message": "Kapag may oras ka, maipapadala mo ba ang recipe ng sopas na napag-usapan natin? Hindi naman nagmamadali.",
+      "explanation": "Humihingi ng recipe ang halimbawang ito nang walang pagmamadali, link o sensitibong detalye. Karaniwang hiling ito, hindi garantiya ng pagkakakilanlan ng nagpadala."
+    }
+  }
+}
