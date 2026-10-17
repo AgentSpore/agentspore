@@ -21,7 +21,7 @@ const STATUS_BADGE: Record<string, string> = {
   proposed:  "bg-neutral-800 text-neutral-400 border-neutral-700",
   building:  "bg-amber-500/10 text-amber-400 border-amber-500/20",
   review:    "bg-violet-500/10 text-violet-400 border-violet-500/20",
-  archived:  "bg-neutral-800/50 text-neutral-500 border-neutral-700/50",
+  archived:  "bg-neutral-800/50 text-neutral-400 border-neutral-700/50",
   active:    "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
 };
 
@@ -71,16 +71,16 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
   };
 
   return (
-    <Link href={`/projects/${p.id}`}
+    <article
       className="group project-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl p-5 backdrop-blur-sm hover:border-neutral-700/60 transition-all duration-300 flex flex-col gap-3 overflow-hidden min-w-0"
       style={{ animationDelay: `${index * 60}ms` }}>
 
       {/* Title row */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors truncate">{p.title}</h3>
+          <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors"><Link href={`/projects/${p.id}`} className="block truncate focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">{p.title}</Link></h3>
           {repoPath && (
-            <span className="text-[10px] font-mono text-neutral-600 tracking-wide truncate block mt-1">{repoPath}</span>
+            <span className="text-[10px] font-mono text-neutral-400 tracking-wide truncate block mt-1">{repoPath}</span>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -97,48 +97,48 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
       </div>
 
       {/* Description */}
-      <p className="text-neutral-500 text-xs line-clamp-2 leading-relaxed flex-1">{p.description || tr('noDescription')}</p>
+      <p className="text-neutral-400 text-xs line-clamp-2 leading-relaxed flex-1">{p.description || tr('noDescription')}</p>
 
       {/* Tech stack */}
       {p.tech_stack.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {p.tech_stack.slice(0, 4).map(t => (
-            <span key={t} className="text-[10px] px-2 py-0.5 rounded-md bg-neutral-800/40 text-neutral-500 font-mono border border-neutral-800/30">{t}</span>
+            <span key={t} className="text-[10px] px-2 py-0.5 rounded-md bg-neutral-800/40 text-neutral-400 font-mono border border-neutral-800/30">{t}</span>
           ))}
           {p.tech_stack.length > 4 && (
-            <span className="text-[10px] text-neutral-700 font-mono">+{new Intl.NumberFormat(localeTag(locale)).format(p.tech_stack.length - 4)}</span>
+            <span className="text-[10px] text-neutral-400 font-mono">+{new Intl.NumberFormat(localeTag(locale)).format(p.tech_stack.length - 4)}</span>
           )}
         </div>
       )}
 
       {/* Footer */}
       <div className="flex items-center justify-between gap-2 pt-3 border-t border-neutral-800/40 overflow-hidden">
-        <div className="flex items-center gap-2 text-[11px] text-neutral-600 font-mono min-w-0">
+        <div className="flex items-center gap-2 text-[11px] text-neutral-400 font-mono min-w-0">
           <span className="text-neutral-400 truncate">{p.agent_name}</span>
-          <span className="text-neutral-700 shrink-0">{timeAgo(p.created_at, locale)}</span>
+          <span className="text-neutral-400 shrink-0">{timeAgo(p.created_at, locale)}</span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <button onClick={(e) => vote(1, e)} disabled={voting}
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-emerald-400 hover:bg-emerald-500/10 transition-all disabled:opacity-50">
+          <button onClick={(e) => vote(1, e)} disabled={voting} aria-label={tr("upvoteProject", { title: p.title })}
+            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-emerald-400 hover:bg-emerald-500/10 transition-all disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
             ↑{new Intl.NumberFormat(localeTag(locale)).format(votesUp)}
           </button>
-          <button onClick={(e) => vote(-1, e)} disabled={voting}
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50">
+          <button onClick={(e) => vote(-1, e)} disabled={voting} aria-label={tr("downvoteProject", { title: p.title })}
+            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
             ↓{new Intl.NumberFormat(localeTag(locale)).format(votesDown)}
           </button>
           {p.repo_url && (
-            <a href={p.repo_url} target="_blank" rel="noopener noreferrer"
+            <a href={p.repo_url} target="_blank" rel="noopener noreferrer" aria-label={tr("openProjectRepository", { title: p.title })}
               onClick={e => e.stopPropagation()}
-              className="text-neutral-600 hover:text-neutral-300 transition-colors text-[11px] font-mono">gh</a>
+              className="text-neutral-400 hover:text-neutral-300 transition-colors text-[11px] font-mono focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">gh</a>
           )}
           {p.deploy_url && p.status !== "archived" && (
-            <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
+            <a href={p.deploy_url} target="_blank" rel="noopener noreferrer" aria-label={tr("openProjectDemo", { title: p.title })}
               onClick={e => e.stopPropagation()}
-              className="text-neutral-500 hover:text-white transition-colors text-[11px] font-mono">{tr('demo')}</a>
+              className="text-neutral-400 hover:text-white transition-colors text-[11px] font-mono focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">{tr('demo')}</a>
           )}
         </div>
       </div>
-    </Link>
+    </article>
   );
 }
 
@@ -203,7 +203,7 @@ export default function ProjectsPage() {
       <main className="relative z-10 max-w-6xl mx-auto px-6 py-12">
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 mb-8 text-[10px] font-mono fade-up">
-          <Link href="/" className="text-neutral-600 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
+          <Link href="/" className="text-neutral-400 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
           <span className="text-neutral-700">/</span>
           <span className="text-neutral-400">{tr('projects3')}</span>
         </div>
@@ -212,15 +212,15 @@ export default function ProjectsPage() {
         <div className="mb-10 fade-up" style={{ animationDelay: "80ms" }}>
           <div className="flex items-end justify-between gap-4 mb-2">
             <div>
-              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('explore2')}</p>
+              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-400 mb-2">{tr('explore2')}</p>
               <h1 className="text-2xl font-semibold text-white tracking-tight">{tr('projects')}</h1>
             </div>
-            <div className="flex items-center gap-4 text-[11px] font-mono text-neutral-600">
+            <div className="flex items-center gap-4 text-[11px] font-mono text-neutral-400">
               <span>{new Intl.NumberFormat(localeTag(locale)).format(filtered.length)} {tr('total')}</span>
               <span className="text-emerald-400/70">{new Intl.NumberFormat(localeTag(locale)).format(deployed)} {tr('live')}</span>
             </div>
           </div>
-          <p className="text-neutral-500 text-sm mt-1">{tr('openSourceStartupsBuiltByAIAgentsOn')}</p>
+          <p className="text-neutral-400 text-sm mt-1">{tr('openSourceStartupsBuiltByAIAgentsOn')}</p>
           <div className="mt-2">
             <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
           </div>
@@ -232,15 +232,15 @@ export default function ProjectsPage() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder={tr('search')}
-            className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 w-56 font-mono backdrop-blur-sm"
+            aria-label={tr('search')} placeholder={tr('search')}
+            className="min-h-11 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-400 focus:outline-none focus:border-neutral-700/60 w-56 font-mono backdrop-blur-sm"
           />
 
           {/* Status filter */}
           <div className="flex flex-wrap max-w-full rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
             {["all", "deployed", "building", "review", "proposed", "archived"].map(s => (
-              <button key={s} onClick={() => setStatusFilter(s)}
-                className={`whitespace-nowrap px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
+              <button key={s} aria-pressed={statusFilter === s} onClick={() => setStatusFilter(s)}
+                className={`min-h-11 whitespace-nowrap px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
                 {displayPublicLabel(locale, s)}
               </button>
             ))}
@@ -249,8 +249,8 @@ export default function ProjectsPage() {
           {/* Time filter */}
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
             {(["all", "24h", "7d", "30d"] as const).map(t => (
-              <button key={t} onClick={() => setTimeFilter(t)}
-                className={`px-3 py-2 transition-colors ${timeFilter === t ? "bg-neutral-800/60 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
+              <button key={t} aria-pressed={timeFilter === t} onClick={() => setTimeFilter(t)}
+                className={`min-h-11 px-3 py-2 transition-colors ${timeFilter === t ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
                 {displayPublicLabel(locale, t)}
               </button>
             ))}
@@ -259,8 +259,8 @@ export default function ProjectsPage() {
           {/* Sort */}
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
             {(["newest", "stars", "votes"] as const).map(s => (
-              <button key={s} onClick={() => setSort(s)}
-                className={`px-3 py-2 transition-colors ${sort === s ? "bg-neutral-800/60 text-white" : "text-neutral-600 hover:text-neutral-300"}`}>
+              <button key={s} aria-pressed={sort === s} onClick={() => setSort(s)}
+                className={`min-h-11 px-3 py-2 transition-colors ${sort === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
                 {displayPublicLabel(locale, s === "stars" ? "stars" : s === "votes" ? "votes" : "new")}
               </button>
             ))}
@@ -269,11 +269,11 @@ export default function ProjectsPage() {
           {/* Category filter */}
           <div className="flex flex-wrap gap-1.5">
             {CATEGORIES.map(c => (
-              <button key={c} onClick={() => setCategory(c)}
-                className={`px-2.5 py-1.5 rounded-lg text-xs transition-all font-mono ${
+              <button key={c} aria-pressed={category === c} onClick={() => setCategory(c)}
+                className={`min-h-11 px-2.5 py-1.5 rounded-lg text-xs transition-all font-mono ${
                   category === c
                     ? "bg-white text-black font-medium"
-                    : "text-neutral-600 hover:text-neutral-300 hover:bg-neutral-800/30"
+                    : "text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800/30"
                 }`}>
                 {displayPublicLabel(locale, c)}
               </button>
@@ -286,7 +286,7 @@ export default function ProjectsPage() {
           <SkeletonList items={6} />
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
-            <p className="text-neutral-600 text-sm font-mono">{tr('noProjectsFound')}</p>
+            <p className="text-neutral-400 text-sm font-mono">{tr('noProjectsFound')}</p>
           </div>
         ) : (
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">

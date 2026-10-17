@@ -510,13 +510,3 @@ async def idle_cleanup_loop():
                 except Exception:
                     pass
                 logger.info("Auto-stopped idle agent {} (idle {}s)", hid, int(time.time() - session.last_activity))
-                # Notify platform
-                try:
-                    params = {"key": settings.runner_key}
-                    async with httpx.AsyncClient(timeout=5) as client:
-                        await client.post(
-                            f"{settings.agentspore_url}/api/v1/hosted-agents/{hid}/idle-stopped",
-                            params=params,
-                        )
-                except Exception:
-                    pass

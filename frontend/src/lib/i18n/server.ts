@@ -11,7 +11,7 @@ export async function getLocale(): Promise<Locale> {
 const routeKeys = {
   agents: ["agentsTitle", "agentsDescription"], projects: ["projectsTitle", "projectsDescription"],
   teams: ["teams", "teamsDescription"], blog: ["blog", "blogDescription"], chat: ["chatTitle", "chatDescription"],
-  flows: ["flows", "flowsDescription"], "hosted-agents": ["hosted", "hostedDescription"],
+  flows: ["flows", "flowsDescription"],
   mixer: ["mixer", "mixerDescription"], battles: ["battlesTitle", "battlesDescription"],
 } as const;
 

@@ -140,3 +140,62 @@ it("detects direct same-tab logout on the bounded poll and cleans up", async () 
   expect(vi.getTimerCount()).toBe(0);
   vi.useRealTimers();
 });
+
+
+it.each(["en", "ru"] as const)("exposes account disclosure state and restores focus on Escape in %s", async locale => {
+  localStorage.setItem("access_token", "synthetic-access");
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(SYNTHETIC_USER)));
+  render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
+  const account = await screen.findByRole("button", { name: /Synthetic Person/ });
+  expect(account.getAttribute("aria-expanded")).toBe("false");
+  account.focus();
+  fireEvent.click(account);
+  expect(account.getAttribute("aria-expanded")).toBe("true");
+  const panelId = account.getAttribute("aria-controls");
+  expect(panelId).toBeTruthy();
+  const profile = screen.getByRole("link", { name: locale === "en" ? "My Profile" : "Мой профиль" });
+  expect(document.getElementById(panelId ?? "")?.contains(profile)).toBe(true);
+  profile.focus();
+  fireEvent.keyDown(profile, { key: "Escape" });
+  expect(screen.queryByRole("link", { name: locale === "en" ? "My Profile" : "Мой профиль" })).toBeNull();
+  expect(account.getAttribute("aria-expanded")).toBe("false");
+  expect(document.activeElement).toBe(account);
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+it.each(["en", "ru"] as const)("preserves account pointer dismissal and closed Escape focus in %s", async locale => {
+  localStorage.setItem("access_token", "synthetic-access");
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(SYNTHETIC_USER)));
+  render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
+  const account = await screen.findByRole("button", { name: /Synthetic Person/ });
+  const more = screen.getByRole("button", { name: locale === "en" ? "More" : "Ещё" });
+  more.focus();
+  fireEvent.keyDown(more, { key: "Escape" });
+  expect(document.activeElement).toBe(more);
+  fireEvent.click(account);
+  fireEvent.mouseDown(document.body);
+  expect(account.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(account);
+  fireEvent.click(screen.getByRole("link", { name: locale === "en" ? "My Agents" : "Мои агенты" }));
+  expect(account.getAttribute("aria-expanded")).toBe("false");
+});
+
+it.each(["en", "ru"] as const)("restores the originating disclosure when account and More are open in %s", async locale => {
+  localStorage.setItem("access_token", "synthetic-access");
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(SYNTHETIC_USER)));
+  render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
+  const account = await screen.findByRole("button", { name: /Synthetic Person/ });
+  const more = screen.getByRole("button", { name: locale === "en" ? "More" : "Ещё" });
+  const profileName = locale === "en" ? "My Profile" : "Мой профиль";
+  const chatName = locale === "en" ? "Chat" : "Чат";
+  for (const origin of ["account", "more"]) {
+    fireEvent.click(account);
+    fireEvent.click(more);
+    const link = screen.getByRole("link", { name: origin === "account" ? profileName : chatName });
+    link.focus();
+    fireEvent.keyDown(link, { key: "Escape" });
+    expect(account.getAttribute("aria-expanded")).toBe("false");
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(origin === "account" ? account : more);
+  }
+});

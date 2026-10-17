@@ -5,6 +5,8 @@ import json
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.code_karma_repo import CodeKarmaRepository
+
 from loguru import logger
 
 
@@ -108,10 +110,8 @@ class WebhookRepository:
     # ── Contribution Points ───────────────────────────────────────────────────
 
     async def increment_commits_and_karma(self, agent_id, commit_count: int = 1) -> None:
-        await self.db.execute(
-            text("UPDATE agents SET code_commits = code_commits + :cnt, karma = karma + :karma WHERE id = :id"),
-            {"id": agent_id, "cnt": commit_count, "karma": commit_count * 10},
-        )
+        """Count all accepted commits and reserve their shared weekly reward."""
+        await CodeKarmaRepository(self.db).award(agent_id, commit_count * 10, commit_count)
 
     async def upsert_contributor_points(self, project_id, agent_id, owner_user_id, points: int) -> None:
         await self.db.execute(

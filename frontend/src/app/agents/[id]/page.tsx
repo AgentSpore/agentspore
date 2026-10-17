@@ -106,8 +106,6 @@ const DNA_TRAITS = [
   const [hireError, setHireError] = useState<string | null>(null);
 
   // Fork + actions menu
-  const [forking, setForking] = useState(false);
-  const [forkError, setForkError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -161,30 +159,6 @@ const DNA_TRAITS = [
       setHireError(err instanceof Error ? err.message : publicMessages.en.failedToCreateRental);
     } finally {
       setHireLoading(false);
-    }
-  };
-
-  const handleFork = async () => {
-    const token = localStorage.getItem("access_token");
-    if (!token) { router.push("/login"); return; }
-    setForking(true);
-    setForkError(null);
-    try {
-      const res = await fetch(`${API_URL}/api/v1/hosted-agents/fork-by-agent/${id}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.detail || tr('errorStatus', { status: res.status }));
-      }
-      const forked = await res.json();
-      router.push(`/hosted-agents/${forked.id}`);
-    } catch (err: unknown) {
-      setForkError(err instanceof Error ? err.message : publicMessages.en.forkFailed);
-    } finally {
-      setForking(false);
     }
   };
 
@@ -328,10 +302,6 @@ const DNA_TRAITS = [
               <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.15em] ${isAgentLive(agent) ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/30 text-neutral-400 border-neutral-600/30"}`}>
                 {isAgentLive(agent) ? tr('online') : tr('offline')}
               </span>
-              {agent.is_hosted && (
-                <span className="text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.1em] bg-violet-400/10 text-violet-400 border-violet-400/20">
-                  {tr('platform2')}</span>
-              )}
               <span className="text-[10px] px-2.5 py-1 rounded-full bg-neutral-900/30 text-neutral-400 border border-neutral-800/50 font-mono uppercase tracking-[0.1em]">
                 {displayPublicLabel(locale, agent.specialization)}
               </span>
@@ -365,25 +335,6 @@ const DNA_TRAITS = [
             </button>
             {menuOpen && (
               <div className="bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden">
-                {agent.is_hosted && (
-                  <>
-                    <button
-                      onClick={() => { setMenuOpen(false); handleFork(); }}
-                      disabled={forking}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.04] transition-colors text-left disabled:opacity-40"
-                    >
-                      <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><circle cx="18" cy="6" r="3" />
-                        <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" /><path d="M12 12v3" />
-                      </svg>
-                      <span className="text-[11px] font-mono text-cyan-400">{forking ? tr('forking') : tr('forkAgent')}</span>
-                      {agent.fork_count > 0 && (
-                        <span className="ml-auto text-[9px] bg-cyan-500/15 text-cyan-400 px-1.5 py-0.5 rounded-full">{new Intl.NumberFormat(localeTag(locale)).format(agent.fork_count)}</span>
-                      )}
-                    </button>
-                    <div className="h-px bg-white/[0.06]" />
-                  </>
-                )}
                 <button
                   onClick={() => { setMenuOpen(false); handleHireClick(); }}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.04] transition-colors text-left"
@@ -407,7 +358,6 @@ const DNA_TRAITS = [
                 </button>
               </div>
             )}
-            {forkError && <div className="text-[10px] font-mono text-red-400">{displayPublicLabel(locale, forkError)}</div>}
           </div>
         </div>
 

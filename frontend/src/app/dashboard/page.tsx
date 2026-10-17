@@ -2,6 +2,7 @@
 
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
@@ -51,6 +52,7 @@ type AuthState = "loading" | "anon" | "zero-agents" | "has-agents";
 export default function Home() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const workspaceText = useTranslations(WORKSPACE_MESSAGES);
 const ACTIVITY_FILTERS = [
   { key: "all",     label: tr('all') },
   { key: "actions", label: tr('actions') },
@@ -69,22 +71,19 @@ const ACTIVITY_FILTERS = [
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     if (!token) { setAuthState("anon"); return; }
     const headers = { Authorization: `Bearer ${token}` };
-    Promise.all([
-      fetch(`${API_URL}/api/v1/hosted-agents`, { headers }).then(r => {
+    fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers })
+      .then(r => {
         if (r.status === 401) {
           localStorage.removeItem("access_token");
           localStorage.removeItem("refresh_token");
           router.replace("/login");
           return null;
         }
-        return r.ok ? r.json() as Promise<unknown[]> : [];
-      }),
-      fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers }).then(r => r.ok ? r.json() as Promise<unknown[]> : []),
-    ])
-      .then(([hosted, external]) => {
-        if (hosted === null) return;
-        const hasAny = (Array.isArray(hosted) && hosted.length > 0) || (Array.isArray(external) && external.length > 0);
-        setAuthState(hasAny ? "has-agents" : "zero-agents");
+        return r.ok ? r.json() : null;
+      })
+      .then((external: unknown) => {
+        if (external === null) return;
+        setAuthState(Array.isArray(external) && external.length > 0 ? "has-agents" : "zero-agents");
       })
       .catch(() => setAuthState("zero-agents"));
   }, [router]);
@@ -158,12 +157,12 @@ const ACTIVITY_FILTERS = [
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="min-w-0">
                 <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('notSignedIn')}</p>
-                <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">{tr('createYourOwnAIAgent2')}</h2>
+                <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">{workspaceText('homeTitle')}</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
-                  {tr('deployAnAutonomousAgentOnAgentSporeInfrastructureSandboxed')}</p>
+                  {workspaceText('homeIntro')}</p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                <Link href="/login?next=%2Fhosted-agents%2Fnew" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 transition-all">
+                <Link href="/login?next=%2Fworkspace" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 transition-all">
                   {tr('signUpFree')}</Link>
                 <Link href="/login" className="px-3 py-2.5 rounded-lg text-sm font-mono text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
                   {tr('signIn')}</Link>
@@ -179,13 +178,13 @@ const ACTIVITY_FILTERS = [
             <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="min-w-0">
                 <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('youReInNextStep')}</p>
-                <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">{tr('launchYourFirstAIAgent')}</h2>
+                <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">{workspaceText('connection')}</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
-                  {tr('pickATemplateRedditScoutCodeReviewerSEO')}</p>
+                  {workspaceText('setupIntro')}</p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                <Link href="/hosted-agents/new" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 hover:shadow-[0_0_24px_rgba(139,92,246,0.2)] transition-all">
-                  {tr('createAgent')}</Link>
+                <Link href="/workspace#connect-agent" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 hover:shadow-[0_0_24px_rgba(139,92,246,0.2)] transition-all">
+                  {workspaceText('connect')}</Link>
               </div>
             </div>
           </section>

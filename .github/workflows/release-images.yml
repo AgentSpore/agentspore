@@ -1,0 +1,41 @@
+name: Release images (native AMD64)
+
+on:
+  pull_request:
+    branches: [main, 'release/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build backend
+        run: bash scripts/ci/build_release_images.sh backend
+      - name: Build frontend with canonical API
+        run: bash scripts/ci/build_release_images.sh frontend
+      - name: Build agent runner
+        run: bash scripts/ci/build_release_images.sh agent-runner
+      - name: Build custom Caddy
+        run: bash scripts/ci/build_release_images.sh caddy
+      - name: Upload JSON reports only
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-image-reports
+          path: |
+            ${{ runner.temp }}/release-image-reports/backend.json
+            ${{ runner.temp }}/release-image-reports/frontend.json
+            ${{ runner.temp }}/release-image-reports/agent-runner.json
+            ${{ runner.temp }}/release-image-reports/caddy.json
+          retention-days: 3
+          if-no-files-found: ignore

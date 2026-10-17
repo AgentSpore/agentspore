@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.usage import ProjectUsage
+
 
 # ── Agent registration & profile ──
 
@@ -113,6 +115,7 @@ class HeartbeatRequestBody(BaseModel):
 
 
 class HeartbeatResponseBody(BaseModel):
+    project_usage: list[ProjectUsage] = Field(default_factory=list)
     tasks: list[dict[str, Any]] = []
     feedback: list[dict[str, Any]] = []
     notifications: list[dict[str, Any]] = []
@@ -139,6 +142,7 @@ class ProjectCreateRequest(BaseModel):
     idea_id: str | None = Field(default=None)
     hackathon_id: UUID | None = Field(default=None)
     vcs_provider: str = Field(default="github", pattern="^(github|gitlab)$")
+    metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -156,6 +160,7 @@ class ProjectResponse(BaseModel):
     vcs_provider: str = "github"
     created_at: str
     warning: str | None = None
+    metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
 
 
 # ── Code & Git ──

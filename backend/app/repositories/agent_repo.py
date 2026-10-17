@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.repositories.code_karma_repo import CodeKarmaRepository
 
 
 class AgentRepository:
@@ -424,8 +425,11 @@ class AgentRepository:
     async def insert_project(self, params: dict) -> None:
         await self.db.execute(
             text("""
-                INSERT INTO projects (id, title, description, category, creator_agent_id, tech_stack, status, repo_url, hackathon_id, vcs_provider)
-                VALUES (:id, :title, :desc, :cat, :agent_id, :stack, 'building', :git_url, :hackathon_id, :vcs)
+                INSERT INTO projects (id, title, description, category, creator_agent_id,
+                                      tech_stack, status, repo_url, hackathon_id,
+                                      vcs_provider, metrics_profile)
+                VALUES (:id, :title, :desc, :cat, :agent_id, :stack, 'building', :git_url,
+                        :hackathon_id, :vcs, :metrics_profile)
             """),
             params,
         )
@@ -522,14 +526,6 @@ class AgentRepository:
             text("INSERT INTO code_reviews (id, project_id, reviewer_agent_id, status, summary, model_used) VALUES (:id, :pid, :aid, :st, :sum, :model)"),
             {"id": review_id, "pid": project_id, "aid": agent_id, "st": status, "sum": summary, "model": model},
         )
-
-    async def get_hosted_agent_model(self, agent_id) -> str | None:
-        result = await self.db.execute(
-            text("SELECT model FROM hosted_agents WHERE agent_id = :agent_id"),
-            {"agent_id": agent_id},
-        )
-        row = result.mappings().first()
-        return row["model"] if row else None
 
     async def insert_model_usage(self, agent_id, model: str, task_type: str, ref_id, ref_type: str) -> None:
         await self.db.execute(
@@ -818,10 +814,8 @@ class AgentRepository:
     # ── Contribution Points ──
 
     async def increment_commits_and_karma(self, agent_id, commit_count: int = 1) -> None:
-        await self.db.execute(
-            text("UPDATE agents SET code_commits = code_commits + :cnt, karma = karma + :karma WHERE id = :id"),
-            {"id": agent_id, "cnt": commit_count, "karma": commit_count * 10},
-        )
+        """Count all accepted commits and reserve their shared weekly reward."""
+        await CodeKarmaRepository(self.db).award(agent_id, commit_count * 10, commit_count)
 
     async def record_commit_shas(
         self, agent_id, shas: list[str], project_id=None, description: str = "",

@@ -1,15 +1,26 @@
 """PayoutService — business logic for $ASPORE token payouts, deposits, and spending."""
 
 import os
+from uuid import UUID
 
 import httpx
 from fastapi import Depends
+from loguru import logger
+from solders.pubkey import Pubkey
+from solders.signature import Signature
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.repositories.payout_repo import PayoutRepository
-
-from loguru import logger
+from app.schemas.ownership import (
+    AsporeDepositRequest,
+    DepositMessage,
+    DepositParsedTransfer,
+    DepositRpcResponse,
+    DepositTokenAmount,
+    DepositTokenBalance,
+    DepositTransactionResult,
+)
 
 # Minimum payout threshold (avoid dust transactions)
 MIN_PAYOUT_ASPORE = 1_000
@@ -38,112 +49,166 @@ class PayoutService:
 
     # ── Deposit (verify on-chain tx → credit balance) ────────────────
 
-    async def verify_and_credit_deposit(self, user_id: str, tx_signature: str) -> dict:
-        """
-        Verify a Solana tx that sent $ASPORE to treasury.
-        If valid, credit user's aspore_balance.
-        Returns {amount, balance_after}.
-        """
-        # Prevent double-credit
-        if await self.repo.check_solana_tx_used(tx_signature):
-            raise ValueError("Transaction already processed")
-
+    async def verify_and_credit_deposit(self, user_id: str, claim: AsporeDepositRequest) -> dict:
+        """Verify wallet and transfer before entering the caller-owned DB transaction."""
+        message = self.deposit_claim_message(user_id, claim)
+        signature = Signature.from_string(claim.claim_signature)
+        if not signature.verify(Pubkey.from_string(claim.solana_wallet), message):
+            raise ValueError("Invalid deposit ownership proof")
         # Verify on Solana RPC
-        amount = await self._verify_solana_transfer(tx_signature)
-        if amount <= 0:
-            raise ValueError("No valid $ASPORE transfer to treasury found in this transaction")
-
+        amount = await self._verify_solana_transfer(claim)
+        # Prevent double-credit
+        await self.repo.lock_deposit_claim(claim.tx_signature)
+        if await self.repo.check_solana_tx_used(claim.tx_signature):
+            raise ValueError("Transaction already processed")
         # Credit balance
-        new_balance = await self.repo.credit_aspore(user_id, amount)
-
+        new_balance = await self.repo.credit_deposit(user_id, amount)
         # Log transaction
         await self.repo.insert_aspore_tx(
             user_id=user_id,
             tx_type="deposit",
             amount=amount,
             balance_after=new_balance,
-            solana_tx=tx_signature,
+            solana_tx=claim.tx_signature,
             note=f"Deposit {amount} $ASPORE",
         )
-
         return {"amount": amount, "balance_after": new_balance}
 
-    async def _verify_solana_transfer(self, tx_signature: str) -> int:
-        """
-        Call Solana RPC to verify tx transfers $ASPORE to treasury.
-        Returns amount in UI units (not raw).
-        """
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(SOLANA_RPC_URL, json={
-                "jsonrpc": "2.0", "id": 1,
-                "method": "getTransaction",
-                "params": [tx_signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
-            })
-            data = resp.json()
+    @staticmethod
+    def deposit_claim_message(user_id: str, claim: AsporeDepositRequest) -> bytes:
+        """Build the fixed UTF-8 authorization message without a trailing newline."""
+        return (
+            "AgentSpore ASPORE deposit claim v1\nnetwork:solana:mainnet-beta\n"
+            f"user_id:{UUID(user_id)}\ntx_signature:{claim.tx_signature}\n"
+            f"solana_wallet:{claim.solana_wallet}\nmint:{ASPORE_TOKEN_MINT}\n"
+            f"treasury:{TREASURY_WALLET}"
+        ).encode("utf-8")
 
-        result = data.get("result")
-        if not result:
-            raise ValueError("Transaction not found or not confirmed")
+    async def _verify_solana_transfer(self, claim: AsporeDepositRequest) -> int:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.post(
+                    SOLANA_RPC_URL,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getTransaction",
+                        "params": [
+                            claim.tx_signature,
+                            {
+                                "encoding": "jsonParsed",
+                                "maxSupportedTransactionVersion": 0,
+                                "commitment": "finalized",
+                            },
+                        ],
+                    },
+                )
+                response.raise_for_status()
+                envelope = DepositRpcResponse.model_validate(response.json())
+            if envelope.id != 1:
+                raise ValueError("Invalid RPC response identity")
+            transaction = envelope.result
+            if not transaction.transaction.signatures or (
+                transaction.transaction.signatures[0] != claim.tx_signature
+            ):
+                raise ValueError("Invalid transaction identity")
+            return self._attributed_amount(transaction, claim.solana_wallet)
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            raise ValueError("Unable to verify deposit transaction") from exc
 
-        if result.get("meta", {}).get("err"):
-            raise ValueError("Transaction failed on-chain")
+    @staticmethod
+    def _direct_transfer(message: DepositMessage) -> DepositParsedTransfer:
+        transfers = []
+        keys = {account.pubkey for account in message.account_keys}
+        for instruction in message.instructions:
+            if instruction.program_id not in keys:
+                raise ValueError("Instruction program is not in account keys")
+            if instruction.program_id == "ComputeBudget111111111111111111111111111111":
+                if (
+                    instruction.parsed is not None
+                    or instruction.accounts != []
+                    or not instruction.data
+                ):
+                    raise ValueError("Unsupported compute-budget instruction")
+            elif instruction.program_id == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
+                if instruction.parsed is None:
+                    raise ValueError("A parsed direct transfer is required")
+                transfers.append(instruction.parsed)
+            else:
+                raise ValueError("Unsupported deposit program")
+        if len(transfers) != 1:
+            raise ValueError("Exactly one direct transfer is required")
+        return transfers[0]
 
-        # Search for SPL token transfer to treasury
-        instructions = result.get("transaction", {}).get("message", {}).get("instructions", [])
-        inner = result.get("meta", {}).get("innerInstructions", [])
-        all_instructions = list(instructions)
-        for group in inner:
-            all_instructions.extend(group.get("instructions", []))
+    @staticmethod
+    def _raw_amount(amount: DepositTokenAmount) -> int:
+        raw = int(amount.amount)
+        if amount.decimals != ASPORE_DECIMALS or raw > (1 << 64) - 1:
+            raise ValueError("Unsupported token amount")
+        return raw
 
-        for ix in all_instructions:
-            parsed = ix.get("parsed")
-            if not parsed:
-                continue
-            ix_type = parsed.get("type", "")
-            info = parsed.get("info", {})
+    @classmethod
+    def _instruction_amount(cls, transfer: DepositParsedTransfer) -> int:
+        info = transfer.info
+        if transfer.type == "transferChecked":
+            if (
+                info.mint != ASPORE_TOKEN_MINT
+                or info.token_amount is None
+                or info.amount is not None
+            ):
+                raise ValueError("Invalid checked transfer")
+            return cls._raw_amount(info.token_amount)
+        if info.amount is None or info.token_amount is not None or info.mint is not None:
+            raise ValueError("Invalid direct transfer")
+        return cls._raw_amount(DepositTokenAmount(amount=info.amount, decimals=ASPORE_DECIMALS))
 
-            if ix_type in ("transfer", "transferChecked"):
-                mint = info.get("mint", "")
-                dest_owner = info.get("authority", "")
-                destination = info.get("destination", "")
+    @classmethod
+    def _owned_balance(cls, balance: DepositTokenBalance, owner: str) -> int:
+        if balance.mint != ASPORE_TOKEN_MINT or balance.owner != owner:
+            raise ValueError("Token account ownership differs")
+        return cls._raw_amount(balance.ui_token_amount)
 
-                # For transferChecked, amount is in tokenAmount
-                if ix_type == "transferChecked":
-                    token_amount = info.get("tokenAmount", {})
-                    ui_amount = token_amount.get("uiAmount", 0)
-                    mint = info.get("mint", "")
-                else:
-                    raw_amount = int(info.get("amount", 0))
-                    ui_amount = raw_amount / (10 ** ASPORE_DECIMALS)
-
-                if mint == ASPORE_TOKEN_MINT or not mint:
-                    # Check if destination is treasury (need to resolve token account → owner)
-                    # For simplicity, check post-balances for treasury
-                    pass
-
-        # Alternative: check token balance changes
-        pre_balances = result.get("meta", {}).get("preTokenBalances", [])
-        post_balances = result.get("meta", {}).get("postTokenBalances", [])
-
-        treasury_received = 0
-        for post in post_balances:
-            if (post.get("owner") == TREASURY_WALLET and
-                    post.get("mint") == ASPORE_TOKEN_MINT):
-                post_amount = float(post.get("uiTokenAmount", {}).get("uiAmountString", "0"))
-                # Find matching pre-balance
-                pre_amount = 0
-                for pre in pre_balances:
-                    if (pre.get("owner") == TREASURY_WALLET and
-                            pre.get("mint") == ASPORE_TOKEN_MINT and
-                            pre.get("accountIndex") == post.get("accountIndex")):
-                        pre_amount = float(pre.get("uiTokenAmount", {}).get("uiAmountString", "0"))
-                        break
-                treasury_received = post_amount - pre_amount
-
-        if treasury_received <= 0:
-            raise ValueError("No $ASPORE received by treasury in this transaction")
-
-        return int(treasury_received)
+    @classmethod
+    def _attributed_amount(cls, result: DepositTransactionResult, wallet: str) -> int:
+        message = result.transaction.message
+        keys = [str(Pubkey.from_string(account.pubkey)) for account in message.account_keys]
+        if len(keys) != len(set(keys)) or result.meta.inner_instructions:
+            raise ValueError("Ambiguous transaction accounts or CPI")
+        if wallet == TREASURY_WALLET or not any(
+            account.pubkey == wallet and account.signer for account in message.account_keys
+        ):
+            raise ValueError("The source owner must sign the transaction")
+        transfer = cls._direct_transfer(message)
+        info = transfer.info
+        if transfer.type == "transferChecked" and info.mint not in keys:
+            raise ValueError("Transfer mint is not in account keys")
+        if info.authority != wallet or info.source == info.destination:
+            raise ValueError("Invalid transfer authority")
+        source, destination = keys.index(info.source), keys.index(info.destination)
+        expected = {source, destination}
+        before = {record.account_index: record for record in result.meta.pre_token_balances}
+        after = {record.account_index: record for record in result.meta.post_token_balances}
+        if (
+            set(before) != expected
+            or set(after) != expected
+            or (
+                len(result.meta.pre_token_balances) != 2
+                or len(result.meta.post_token_balances) != 2
+            )
+        ):
+            raise ValueError("Existing source and treasury token accounts are required")
+        debit = cls._owned_balance(before[source], wallet) - cls._owned_balance(
+            after[source], wallet
+        )
+        credit = cls._owned_balance(after[destination], TREASURY_WALLET) - cls._owned_balance(
+            before[destination],
+            TREASURY_WALLET,
+        )
+        raw = cls._instruction_amount(transfer)
+        scale = 10**ASPORE_DECIMALS
+        if raw <= 0 or debit != raw or credit != raw or raw % scale:
+            raise ValueError("Exact positive whole-token transfer required")
+        return raw // scale
 
     # ── Spend (rental payment) ──────────────────────────────────────────
 
@@ -168,9 +233,11 @@ class PayoutService:
         except Exception:
             return None
         for tx in txs:
-            if (tx["tx_type"] == "rental_payment" and
-                    str(tx.get("reference_id")) == rental_id and
-                    tx["amount"] < 0):
+            if (
+                tx["tx_type"] == "rental_payment"
+                and str(tx.get("reference_id")) == rental_id
+                and tx["amount"] < 0
+            ):
                 return await self.refund_rental(user_id, rental_id, abs(tx["amount"]))
         return None
 
@@ -202,7 +269,8 @@ class PayoutService:
     # ── Monthly Payout Calculation ──────────────────────────────────────
 
     async def calculate_payouts(
-        self, *,
+        self,
+        *,
         pool_total: int,
         period_start: str,
         period_end: str,
@@ -226,19 +294,22 @@ class PayoutService:
             amount = int((u["total_points"] / total_points) * pool_total)
             if amount < MIN_PAYOUT_ASPORE:
                 continue
-            payouts.append({
-                "user_id": str(u["user_id"]),
-                "name": u["name"],
-                "email": u["email"],
-                "solana_wallet": u["solana_wallet"],
-                "contribution_points": u["total_points"],
-                "amount": amount,
-            })
+            payouts.append(
+                {
+                    "user_id": str(u["user_id"]),
+                    "name": u["name"],
+                    "email": u["email"],
+                    "solana_wallet": u["solana_wallet"],
+                    "contribution_points": u["total_points"],
+                    "amount": amount,
+                }
+            )
 
         return payouts
 
     async def create_payout_records(
-        self, *,
+        self,
+        *,
         payouts: list[dict],
         pool_total: int,
         period_start: str,

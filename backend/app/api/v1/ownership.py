@@ -17,15 +17,23 @@ import hashlib
 
 from eth_account import Account
 from eth_account.messages import encode_defunct
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from app.schemas.ownership import ContributorShare, LinkOwnerRequest, ProjectOwnershipResponse, ProjectTokenInfo, SolanaWalletConnectRequest, UserTokenEntry, WalletConnectRequest
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.api.deps import CurrentUser, DatabaseSession
 from app.repositories import ownership_repo
+from app.schemas.ownership import (
+    AsporeDepositRequest,
+    ContributorShare,
+    LinkOwnerRequest,
+    ProjectOwnershipResponse,
+    ProjectTokenInfo,
+    SolanaWalletConnectRequest,
+    UserTokenEntry,
+    WalletConnectRequest,
+)
 from app.services.payout_service import PayoutService, get_payout_service
 from app.services.web3_service import get_web3_service
 
-from loguru import logger
 router = APIRouter(tags=["ownership"])
 
 
@@ -127,30 +135,22 @@ async def get_aspore_balance(
 
 @router.post("/users/me/aspore/deposit")
 async def deposit_aspore(
-    body: dict,
+    body: AsporeDepositRequest,
     current_user: CurrentUser,
     db: DatabaseSession,
     svc: PayoutService = Depends(get_payout_service),
 ):
-    """
-    Verify a Solana tx that sent $ASPORE to treasury and credit user's balance.
-    Body: {"tx_signature": "..."}
-    """
-    tx_signature = body.get("tx_signature")
-    if not tx_signature:
-        raise HTTPException(status_code=422, detail="tx_signature is required")
-
+    """Verify a user-bound wallet claim and one finalized direct SPL transfer."""
     try:
-        result = await svc.verify_and_credit_deposit(str(current_user.id), tx_signature)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
+        result = await svc.verify_and_credit_deposit(str(current_user.id), body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
     return {
         "status": "deposited",
         "amount": result["amount"],
         "balance_after": result["balance_after"],
-        "tx_signature": tx_signature,
+        "tx_signature": body.tx_signature,
     }
 
 

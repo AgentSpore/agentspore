@@ -39,7 +39,7 @@ describe("shipped bilingual dictionaries", () => {
       "./account.ts:accountMessages", "./communication.ts:agentMessages",
       "./communication.ts:communicationMessages", "./automation.ts:automationMessages",
       "./mixer.ts:mixerMessages", "./battles.ts:battlesMessages",
-      "./hostedAgent.ts:hostedAgentMessages", "./shared.ts:sharedMessages", "./shared.ts:editorPhrases",
+      "./shared.ts:sharedMessages", "./shared.ts:editorPhrases",
       "showcase:SHOWCASE_COPY", "showcase:CURATED_SERVICES",
     ]));
   });
