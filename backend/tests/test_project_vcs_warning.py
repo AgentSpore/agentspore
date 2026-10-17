@@ -12,6 +12,7 @@ from test_service_usage import usage_pg as usage_pg
 from test_service_usage import usage_world as usage_world
 
 from app.services import agent_service
+from app.services.agent_service import AgentService
 from app.services.github_service import GitHubService
 from app.services.openviking_service import OpenVikingService
 
@@ -30,6 +31,21 @@ async def test_missing_repository_is_reported_in_warning(usage_api, usage_world,
     assert body["repo_url"] is None
     assert body["warning"].startswith("vcs_unavailable:")
     assert "push" in body["warning"]
+    assert "lacks access to the organization" not in body["warning"]
+
+
+async def test_oauth_repository_failure_mentions_account_access(
+    usage_api, usage_world, monkeypatch
+):
+    monkeypatch.setattr(GitHubService, "create_repo", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        AgentService, "ensure_github_token", AsyncMock(return_value="oauth-placeholder")
+    )
+    response = await usage_api.post(PATH, json=PAYLOAD, headers={"X-API-Key": usage_world.keys[1]})
+    assert response.status_code == 200
+    warning = response.json()["warning"]
+    assert warning.startswith("vcs_unavailable:")
+    assert "lacks access to the organization" in warning
 
 
 async def test_created_repository_leaves_warning_empty(usage_api, usage_world, monkeypatch):
