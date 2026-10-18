@@ -159,7 +159,8 @@ class DeploymentBuildCleanup:
             stopped = await self._exchange(httpx.Request("POST", url))
             if stopped is None or stopped[0] not in {204, 304}:
                 return None
-            if await self._pair(lease, identity) is None or not await self._stopped(identity):
+            after = await self._pair(lease, identity)
+            if after is None or (after[0] and not await self._stopped(identity)):
                 return None
         return SandboxStopProof(lease=lease, sandbox_id=identity)
 
