@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.github_proxy import ALLOWED_OPERATIONS, KARMA_RULES, RATE_LIMIT_PER_HOUR
 from app.core.redis_client import get_redis
-from app.repositories import governance_repo, hackathon_repo
+from app.repositories import governance_repo, team_repo
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
 from app.repositories.code_karma_repo import CodeKarmaRepository
@@ -77,7 +77,6 @@ class AgentService:
         owner_name: str | None,
         project_id: str,
         idea_id: str | None = None,
-        hackathon_id: str | None = None,
         category: str | None = None,
         tech_stack: list[str] | None = None,
         platform_url: str = "https://agentspore.com",
@@ -102,8 +101,6 @@ class AgentService:
             rows.append(f"| **Tech Stack** | {', '.join(tech_stack)} |")
         if idea_id:
             rows.append(f"| **Source Idea** | `{idea_id}` |")
-        if hackathon_id:
-            rows.append(f"| **Hackathon** | `{hackathon_id}` |")
         rows.append(f"| **Project ID** | `{project_id}` |")
         rows.append(f"| **Created** | {created_at} |")
         rows.append(f"| **Platform** | [{platform_url}]({platform_url}) |")
@@ -923,20 +920,10 @@ class AgentService:
 
         owner_name = await self.repo.get_project_owner_name(agent_id)
 
-        if body.hackathon_id:
-            h = await self.repo.get_hackathon_status(body.hackathon_id)
-            if not h:
-                raise HTTPException(status_code=404, detail="Hackathon not found")
-            if h["status"] != "active":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot submit to hackathon with status '{h['status']}' — only 'active' hackathons accept projects",
-                )
-
         await self.repo.insert_project({
             "id": project_id, "title": body.title, "desc": body.description,
             "cat": body.category, "agent_id": agent_id, "stack": body.tech_stack,
-            "git_url": git_repo_url, "hackathon_id": body.hackathon_id, "vcs": vcs,
+            "git_url": git_repo_url, "hackathon_id": None, "vcs": vcs,
             "metrics_profile": getattr(body, "metrics_profile", None),
         })
 
@@ -948,7 +935,6 @@ class AgentService:
                 owner_name=owner_name,
                 project_id=str(project_id),
                 idea_id=str(body.idea_id) if getattr(body, "idea_id", None) else None,
-                hackathon_id=str(body.hackathon_id) if body.hackathon_id else None,
                 category=body.category,
                 tech_stack=list(body.tech_stack) if body.tech_stack else None,
             )
@@ -1384,7 +1370,7 @@ class AgentService:
 
         is_member = False
         if not is_creator and not is_admin and project.get("team_id"):
-            is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
+            is_member = await team_repo.is_team_member(self.db, project["team_id"], agent["id"])
 
         if not is_creator and not is_member and not is_admin:
             raise HTTPException(
@@ -1445,7 +1431,7 @@ class AgentService:
 
         is_member = False
         if not is_creator and not is_admin and project.get("team_id"):
-            is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
+            is_member = await team_repo.is_team_member(self.db, project["team_id"], agent["id"])
 
         # Pipeline agents owned by the same user can push to each other's projects
         is_same_owner = False
@@ -2014,7 +2000,7 @@ class AgentService:
 
             is_member = False
             if not is_creator and not is_admin and project.get("team_id"):
-                is_member = await hackathon_repo.is_team_member(
+                is_member = await team_repo.is_team_member(
                     self.db, project["team_id"], agent["id"],
                 )
 

@@ -16,7 +16,6 @@ from app.api.v1 import (
     chat,
     events,
     governance,
-    hackathons,
     oauth,
     ownership,
     projects,
@@ -42,7 +41,6 @@ api_router.include_router(oauth.router)
 api_router.include_router(tokens.router)
 
 # === Live Features ===
-api_router.include_router(hackathons.router)
 api_router.include_router(activity.router)
 api_router.include_router(projects.router)
 api_router.include_router(chat.router)

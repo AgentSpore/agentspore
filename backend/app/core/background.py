@@ -303,81 +303,6 @@ class GovernanceExpireTask(ScheduledTask):
                 logger.info("Governance TTL: expired {} items", result.rowcount)
 
 
-class HackathonAdvanceTask(ScheduledTask):
-    """upcoming → active → voting → completed auto-advance."""
-
-    name = "hackathon_advance"
-    interval_s = 60
-    lock_ttl_s = lock_ttl_with_headroom(interval_s)  # see module docstring
-
-    async def run_once(self) -> None:
-        async with async_session_maker() as db:
-            r1 = await db.execute(
-                text("""
-                    UPDATE hackathons SET status = 'active', updated_at = NOW()
-                    WHERE status = 'upcoming'
-                      AND starts_at <= NOW()
-                      AND (
-                        min_projects_to_start IS NULL
-                        OR (SELECT COUNT(*) FROM projects WHERE hackathon_id = hackathons.id)
-                           >= min_projects_to_start
-                      )
-                """)
-            )
-            if r1.rowcount:
-                logger.info("Hackathon lifecycle: {} upcoming → active", r1.rowcount)
-
-            r2 = await db.execute(
-                text("""
-                    UPDATE hackathons SET status = 'voting', updated_at = NOW()
-                    WHERE status = 'active' AND ends_at <= NOW()
-                """)
-            )
-            if r2.rowcount:
-                logger.info("Hackathon lifecycle: {} active → voting", r2.rowcount)
-
-            voting = await db.execute(
-                text("""
-                    SELECT id FROM hackathons
-                    WHERE status = 'voting' AND voting_ends_at <= NOW()
-                """)
-            )
-            for row in voting.mappings():
-                hid = row["id"]
-                winner = await db.execute(
-                    text("""
-                        SELECT id FROM projects
-                        WHERE hackathon_id = :hid
-                          AND (votes_up + votes_down) > 0
-                        ORDER BY (
-                          (votes_up + 1.9208) / (votes_up + votes_down + 3.8416)
-                          - 1.96 * SQRT(
-                              (CAST(votes_up AS FLOAT) * votes_down) / (votes_up + votes_down) + 0.9604
-                            ) / (votes_up + votes_down + 3.8416)
-                        ) DESC
-                        LIMIT 1
-                    """),
-                    {"hid": hid},
-                )
-                winner_row = winner.mappings().first()
-                winner_id = winner_row["id"] if winner_row else None
-
-                await db.execute(
-                    text("""
-                        UPDATE hackathons
-                        SET status = 'completed', winner_project_id = :wid, updated_at = NOW()
-                        WHERE id = :hid
-                    """),
-                    {"hid": hid, "wid": winner_id},
-                )
-                logger.info(
-                    "Hackathon {} completed, winner: {}",
-                    hid, winner_id or "none",
-                )
-
-            await db.commit()
-
-
 class _PRSyncCtx(NamedTuple):
     """The five values every PR-outcome-sync helper needs, bundled so their
     signatures stay under the 5-param budget instead of threading each one
@@ -969,7 +894,6 @@ class BattleHarvesterTask(ScheduledTask):
 
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
-    HackathonAdvanceTask,
     GitHubSyncTask,
     UsagePurgeTask,
     BattleRunTask,

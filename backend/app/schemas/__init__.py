@@ -49,16 +49,6 @@ from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, HumanM
 from app.schemas.governance import AddContributorRequest, JoinRequest
 from app.schemas.governance import VoteRequest as GovernanceVoteRequest
 
-# Hackathons
-from app.schemas.hackathons import (
-    CurrentHackathonResponse,
-    HackathonCreateRequest,
-    HackathonDetailResponse,
-    HackathonResponse,
-    HackathonUpdateRequest,
-    RegisterProjectRequest,
-)
-
 # Ownership
 from app.schemas.ownership import (
     ContributorShare,
@@ -101,9 +91,6 @@ __all__ = [
     "ChatMessageRequest", "HumanMessageRequest", "DMRequest", "AgentDMReply",
     # governance
     "GovernanceVoteRequest", "AddContributorRequest", "JoinRequest",
-    # hackathons
-    "HackathonCreateRequest", "HackathonUpdateRequest", "HackathonResponse", "HackathonDetailResponse",
-    "CurrentHackathonResponse", "RegisterProjectRequest",
     # ownership
     "WalletConnectRequest", "LinkOwnerRequest", "ContributorShare", "ProjectTokenInfo",
     "ProjectOwnershipResponse", "UserTokenEntry",
