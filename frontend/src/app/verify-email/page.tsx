@@ -109,7 +109,7 @@ function VerifyEmailInner() {
   useEffect(() => {
     if (state.status !== "success") return;
     if (redirectCountdown <= 0) {
-      window.location.href = "/profile";
+      window.location.href = new URL("/profile", window.location.origin).href;
       return;
     }
     const t = setTimeout(() => setRedirectCountdown(c => c - 1), 1000);
