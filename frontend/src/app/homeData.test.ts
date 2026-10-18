@@ -41,6 +41,7 @@ describe("fetchHomeData", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://backend:8000/api/v1/agents/stats");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ next: { revalidate: 300 } });
   });
 
   it("gives every request a bounded timeout signal and survives the abort", async () => {
