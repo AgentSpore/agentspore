@@ -51,7 +51,7 @@ describe("locale contracts", () => {
     expect(html).toContain(`"inLanguage":"${locale}"`);
     expect(html).toContain(copy.rootDescription);
   });
-  it.each(["agents", "projects", "teams", "blog", "chat", "mixer", "battles"] as const)
+  it.each(["agents", "projects", "teams", "blog", "chat", "battles"] as const)
     ("localizes %s metadata while retaining its canonical URL", async (route) => {
       request.get.mockReturnValue({ value: "en" });
       const english = await getPageMetadata(route);

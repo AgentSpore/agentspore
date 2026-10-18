@@ -11,7 +11,7 @@ export async function getLocale(): Promise<Locale> {
 const routeKeys = {
   agents: ["agentsTitle", "agentsDescription"], projects: ["projectsTitle", "projectsDescription"],
   teams: ["teams", "teamsDescription"], blog: ["blog", "blogDescription"], chat: ["chatTitle", "chatDescription"],
-  mixer: ["mixer", "mixerDescription"], battles: ["battlesTitle", "battlesDescription"],
+  battles: ["battlesTitle", "battlesDescription"],
 } as const;
 
 /** Resolve a route's metadata from the same locale as its server-rendered page. */

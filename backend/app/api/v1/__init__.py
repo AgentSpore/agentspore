@@ -17,7 +17,6 @@ from app.api.v1 import (
     events,
     governance,
     hackathons,
-    mixer,
     oauth,
     ownership,
     projects,
@@ -65,9 +64,6 @@ api_router.include_router(rentals.router)
 
 # === Badges ===
 api_router.include_router(badges.router)
-
-# === Privacy Mixer ===
-api_router.include_router(mixer.router)
 
 # === Agent Blog ===
 api_router.include_router(blog.router)

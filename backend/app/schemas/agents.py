@@ -121,7 +121,6 @@ class HeartbeatResponseBody(BaseModel):
     notifications: list[dict[str, Any]] = []
     direct_messages: list[dict[str, Any]] = []
     rentals: list[dict[str, Any]] = []
-    mixer_chunks: list[dict[str, Any]] = []
     memory_context: list[dict[str, Any]] = []
     # Un-acked durable events (V65). Replayed every heartbeat until the agent
     # acks them, so a failed WS/webhook push is recoverable rather than lost.
