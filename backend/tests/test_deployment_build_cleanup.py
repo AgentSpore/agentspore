@@ -54,8 +54,9 @@ class Engine(httpx.MockTransport):
             },
         }
         self.stream = StalledClose()
+        self.live = self.row["State"]
         if mode in {"exited", "created", "dead"}:
-            self.row["State"] = mode
+            self.row["State"] = self.live = mode
         if mode in {"lost_labels", "runtime", "wrong_fence"}:
             key = {"lost_labels": "namespace", "runtime": "role", "wrong_fence": "generation"}[mode]
             self.row["Labels"][PREFIX + key] = "other"
@@ -71,6 +72,8 @@ class Engine(httpx.MockTransport):
         if request.method == "POST":
             return self.stop_response(request)
         assert request.url.host == "docker"
+        if request.url.path == f"/containers/{BUILD}/json":
+            return self.inspect_response()
         assert request.url.path == "/containers/json"
         assert request.url.params.get("all") == "true"
         filters = json.loads(request.url.params["filters"])
@@ -103,13 +106,24 @@ class Engine(httpx.MockTransport):
             rows = [*rows, {**self.row, "Id": "b" * 64}]
         return httpx.Response(200, json=rows, headers={"Set-Cookie": "untrusted=value"})
 
+    def inspect_response(self):
+        """Authoritative container state; the list below may lag behind it."""
+        if self.mode == "inspect404":
+            return httpx.Response(404)
+        if self.mode == "inspect_malformed":
+            return httpx.Response(200, content=b"{")
+        identity = "b" * 64 if self.mode == "inspect_wrong_id" else BUILD
+        return httpx.Response(200, json={"Id": identity, "State": {"Status": self.live}})
+
     def stop_response(self, request):
         assert request.url.path == f"/containers/{BUILD}/stop"
         assert request.url.params.get("t") == "1"
         stop_status = {"stop404": 404, "stop500": 500, "stop301": 301}.get(self.mode, 204)
         if stop_status != 204:
             return httpx.Response(stop_status, headers={"Location": "http://other.invalid/"})
-        if self.mode != "still_running":
+        if self.mode not in {"still_running", "inspect_running"}:
+            self.live = "exited"
+        if self.mode not in {"still_running", "stale_list"}:
             self.row["State"] = "exited"
         return httpx.Response(304 if self.mode == "already_stopped" else 204)
 
@@ -129,7 +143,7 @@ def cleanup_adapter():
 
 
 @pytest.mark.parametrize(
-    "state", ["running", "exited", "created", "dead", "absent", "already_stopped"]
+    "state", ["running", "exited", "created", "dead", "absent", "already_stopped", "stale_list"]
 )
 async def test_owned_build_requires_verified_stop(cleanup_adapter, lease, state):
     engine = Engine(lease, state)
@@ -185,7 +199,8 @@ async def test_pre_id_proof_matches_observation(cleanup_adapter, lease, mode):
     "mode",
     (
         "daemon_error timeout malformed wrong_shape truncated oversize still_running slow_close "
-        "stop404 stop500 stop301 inventory301"
+        "stop404 stop500 stop301 inventory301 inspect_running inspect404 inspect_malformed "
+        "inspect_wrong_id"
     ).split(),
 )
 async def test_engine_failure_produces_no_proof(cleanup_adapter, lease, mode):

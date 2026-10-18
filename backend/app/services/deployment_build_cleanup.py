@@ -107,6 +107,26 @@ class DeploymentBuildCleanup:
             return None
         return by_id, namespace
 
+    async def _stopped(self, identity: str) -> bool:
+        """Read the post-stop state from inspect, never from the container list.
+
+        moby `handleContainerExit` wakes `stop` waiters in `SetStopped` before
+        `CheckpointTo(containersReplica)`, and `/containers/json` reads that replica,
+        so right after a 204 the list can still say `running`. Inspect takes the
+        container lock and is consistent.
+        """
+        result = await self._exchange(
+            httpx.Request("GET", f"http://docker/containers/{identity}/json")
+        )
+        if result is None or result[0] != 200:
+            return False
+        try:
+            body = json.loads(result[1])
+        except (ValueError, RecursionError):
+            return False
+        state = body.get("Id") == identity and body.get("State") if isinstance(body, dict) else None
+        return isinstance(state, dict) and state.get("Status") in {"exited", "created", "dead"}
+
     async def observe_stopped(
         self,
         lease: DeploymentLease,
@@ -140,9 +160,7 @@ class DeploymentBuildCleanup:
             if stopped is None or stopped[0] not in {204, 304}:
                 return None
             after = await self._pair(lease, identity)
-            if after is None or any(
-                row["State"] not in {"exited", "created", "dead"} for rows in after for row in rows
-            ):
+            if after is None or (after[0] and not await self._stopped(identity)):
                 return None
         return SandboxStopProof(lease=lease, sandbox_id=identity)
 

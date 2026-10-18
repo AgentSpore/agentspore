@@ -1,6 +1,7 @@
 """Real owned Docker stop observations persisted by real PostgreSQL recovery."""
 
 import asyncio
+import json
 import os
 import re
 from functools import partial
@@ -8,6 +9,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import docker
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
@@ -141,6 +143,40 @@ async def owned_build(deployment_postgres):
             await asyncio.to_thread(client.close)
 
 
+def _recorded_state(body):
+    """Summarize a Docker answer without ever raising into the observer under test."""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return f"<{len(body)} bytes>"
+    if isinstance(parsed, dict):
+        return parsed.get("State", parsed.get("message"))
+    if isinstance(parsed, list):
+        return [row.get("State") if isinstance(row, dict) else None for row in parsed]
+    return None
+
+
+class RecordingTransport(httpx.AsyncBaseTransport):
+    """Keep what Docker answered to the observer, so a withheld proof names its cause."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.calls = []
+
+    async def handle_async_request(self, request):
+        response = await self.inner.handle_async_request(request)
+        body = b"".join([chunk async for chunk in response.aiter_raw()])
+        await response.aclose()
+        seen = None
+        if request.method == "GET":
+            seen = _recorded_state(body)
+        self.calls.append((request.method, request.url.path[-12:], response.status_code, seen))
+        return httpx.Response(response.status_code, content=body)
+
+    async def aclose(self):
+        await self.inner.aclose()
+
+
 async def test_real_pre_id_stop_adopts_full_id_and_unlocks_queue(recovery_world, owned_build):
     maker, lease, next_job = recovery_world
     create, socket = owned_build
@@ -181,11 +217,21 @@ async def test_real_recorded_build_stop_preserves_active_revision(queue_world, o
         for _ in range(3):
             assert await repo.record_health(lease, 200)
         assert await repo.promote(lease)
-    observer = DeploymentBuildCleanup(socket)
+    transport = RecordingTransport(httpx.AsyncHTTPTransport(uds=socket, trust_env=False))
+    observer = DeploymentBuildCleanup(socket, transport=transport)
+    observed = []
+
+    async def record_observation(lease, recorded_id):
+        observed.append(await observer.observe_stopped(lease, recorded_id))
+        return observed[-1]
+
     try:
-        assert await DeploymentRecoveryService(maker, observer.observe_stopped).recover_once()
+        recovered = await DeploymentRecoveryService(maker, record_observation).recover_once()
     finally:
         await observer.aclose()
+    assert observed, "stage 1: recovery_snapshot found no ownership to observe"
+    assert observed[0] is not None, f"stage 2: observer withheld the proof; wire={transport.calls}"
+    assert recovered, "stage 3: confirm_stopped rejected the proof"
     async with maker() as db:
         assert await db.scalar(text("SELECT deployment_id FROM deployment_worker_lease")) is None
         assert (
