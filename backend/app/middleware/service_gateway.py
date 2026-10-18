@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.deps import client_ip
+from app.core.config import get_settings
 from app.schemas.family_training import FamilyTrainingEvent
 from app.schemas.usage import BinderEvent, GatewayVisit, ServiceEvent, ServiceRoute
 from app.services.family_training_service import FamilyTrainingService
@@ -23,16 +24,19 @@ from app.services.service_gateway import ServiceGateway
 class ServiceGatewayMiddleware:
     """Keep service hosts isolated and acquire database connections only after bounded input."""
 
-    PLATFORM_HOSTS = frozenset({"agentspore.com", "www.agentspore.com", "api.agentspore.com"})
-    SUFFIX = ".agentspore.com"
+    PLATFORM_LABELS = ("", "www.", "api.")
     HANDLE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", re.ASCII)
     BODY_LIMIT = 256 * 1024
     EVENTS_PATH = "/_agentspore/events"
     EVENT_LIMIT = 512
 
-    def __init__(self, app: ASGIApp, resources: State):
+    def __init__(self, app: ASGIApp, resources: State, domains: list[str] | None = None):
         self.app = app
         self.resources = resources
+        self.domains = domains or get_settings().domains
+        self.platform_hosts = frozenset(
+            label + domain for domain in self.domains for label in self.PLATFORM_LABELS
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in {"http", "websocket"}:
@@ -40,14 +44,15 @@ class ServiceGatewayMiddleware:
             return
         request = Request({**scope, "type": "http"}, receive=receive)
         host = request.headers.get("host", "").partition(":")[0].lower().rstrip(".")
-        if host in self.PLATFORM_HOSTS or not host.endswith(self.SUFFIX):
+        suffix = next((f".{d}" for d in self.domains if host.endswith(f".{d}")), None)
+        if host in self.platform_hosts or suffix is None:
             await self.app(scope, receive, send)
             return
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 1008})
             return
         try:
-            handle = host.removesuffix(self.SUFFIX)
+            handle = host.removesuffix(suffix)
             if not self.HANDLE.fullmatch(handle):
                 raise HTTPException(status_code=404, detail="Service not found")
             is_event = request.method == "POST" and request.url.path == self.EVENTS_PATH

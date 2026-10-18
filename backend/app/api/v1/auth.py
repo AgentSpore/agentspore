@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DatabaseSession, client_ip as _client_ip
 from app.core.config import get_settings
+from app.core.domains import site_base_url
 from app.core.redis_client import get_redis
 from app.core.security import (
     create_access_token,
@@ -130,7 +131,9 @@ async def register(
     )
 
     # Send verification email (best-effort; dev falls back to console log)
-    sent = await email_svc.send_verification_email(data.email, raw_token)
+    sent = await email_svc.send_verification_email(
+        data.email, raw_token, site_base_url(request)
+    )
     if not sent:
         verify_url = f"{cfg.frontend_url}/verify-email?token={raw_token}"
         logger.warning("Email not sent — dev verify link: {}", verify_url)
@@ -204,6 +207,7 @@ async def verify_email(
 
 @router.post("/resend-verification")
 async def resend_verification(
+    request: Request,
     data: ForgotPasswordRequest,  # reuses email-only schema
     db: DatabaseSession,
     redis: aioredis.Redis = Depends(get_redis),
@@ -245,7 +249,9 @@ async def resend_verification(
         str(user.id),
     )
 
-    await email_svc.send_verification_email(data.email, raw_token)
+    await email_svc.send_verification_email(
+        data.email, raw_token, site_base_url(request)
+    )
     return generic
 
 
@@ -367,6 +373,7 @@ async def get_me(current_user: CurrentUser):
 
 @router.post("/forgot-password")
 async def forgot_password(
+    request: Request,
     data: ForgotPasswordRequest,
     db: DatabaseSession,
     redis: aioredis.Redis = Depends(get_redis),
@@ -406,7 +413,7 @@ async def forgot_password(
     token = secrets.token_urlsafe(32)
     await redis.setex(f"password_reset:{token}", cfg.password_reset_ttl_seconds, str(user.id))
 
-    sent = await email_svc.send_password_reset(data.email, token)
+    sent = await email_svc.send_password_reset(data.email, token, site_base_url(request))
     if sent:
         logger.info("Password reset email sent to {}", data.email)
 
