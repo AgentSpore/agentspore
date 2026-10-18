@@ -7,7 +7,15 @@ export function useCopyToClipboard(resetMs = 2000) {
   const [state, setState] = useState<CopyState>("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
 
   const copy = useCallback(async (text: string): Promise<void> => {
     let next: CopyState = "copied";
@@ -17,6 +25,7 @@ export function useCopyToClipboard(resetMs = 2000) {
     } catch {
       next = "failed";
     }
+    if (!mounted.current) return;
     setState(next);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setState("idle"), resetMs);
