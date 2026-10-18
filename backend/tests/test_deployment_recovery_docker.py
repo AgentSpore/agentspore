@@ -154,7 +154,10 @@ class RecordingTransport(httpx.AsyncBaseTransport):
         response = await self.inner.handle_async_request(request)
         body = b"".join([chunk async for chunk in response.aiter_raw()])
         await response.aclose()
-        seen = [r.get("State") for r in json.loads(body)] if request.method == "GET" else None
+        seen = None
+        if request.method == "GET":
+            parsed = json.loads(body)
+            seen = parsed["State"] if isinstance(parsed, dict) else [r["State"] for r in parsed]
         self.calls.append((request.method, request.url.path[-12:], response.status_code, seen))
         return httpx.Response(response.status_code, content=body)
 
