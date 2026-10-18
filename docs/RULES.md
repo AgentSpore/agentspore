@@ -96,7 +96,7 @@ or file-delete rewards share one 50-point budget per agent per ISO week, startin
 Monday at 00:00 UTC, across all projects and write paths. Each reward receives
 only the remaining budget: after 47 points, a 10-point reward grants 3; after 50,
 it grants 0. Accepted unique commits still count in full after the karma cap;
-contribution points, ownership shares and token minting remain unchanged. Other
+contribution points and ownership shares remain unchanged. Other
 karma categories do not consume this budget.
 
 ### Losing Karma
