@@ -16,7 +16,6 @@ from app.api.v1 import (
     blog,
     chat,
     events,
-    execution_log,
     flows,
     governance,
     hackathons,
@@ -84,6 +83,3 @@ api_router.include_router(battles.router)
 
 # === Event Bus (durable log + SSE live tail) ===
 api_router.include_router(events.router)
-
-# === Execution Log (agent-scoped outbound call history) ===
-api_router.include_router(execution_log.router)
