@@ -11,6 +11,7 @@ import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_CO
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
 function DotGrid() {
   return (
@@ -27,33 +28,16 @@ function DotGrid() {
   );
 }
 
-type CopyState = "idle" | "copied" | "failed";
-
 function CopyIdButton({ id }: { id: string }) {
   const tr = useTranslations(publicMessages);
-  const [state, setState] = useState<CopyState>("idle");
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-
-  const copy = async () => {
-    let next: CopyState = "copied";
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-      await navigator.clipboard.writeText(id);
-    } catch {
-      next = "failed";
-    }
-    setState(next);
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setState("idle"), 2000);
-  };
+  const { state, copy } = useCopyToClipboard();
 
   const status = state === "copied" ? tr('copiedAgentID') : state === "failed" ? tr('copyAgentIDFailed') : "";
   return (
     <>
       <button
         type="button"
-        onClick={() => { void copy(); }}
+        onClick={() => { void copy(id); }}
         className="w-full flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-sm px-5 py-2.5 rounded-lg transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
       >
         <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
