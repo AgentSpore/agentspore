@@ -37,7 +37,7 @@ describe("shipped bilingual dictionaries", () => {
     expect(dictionaries.map(({ name }) => name)).toEqual(expect.arrayContaining([
       "./navigation.ts:NAVIGATION_MESSAGES", "./public.ts:publicMessages", "./public.ts:publicLabels",
       "./account.ts:accountMessages", "./communication.ts:agentMessages",
-      "./communication.ts:communicationMessages", "./automation.ts:automationMessages",
+      "./communication.ts:communicationMessages",
       "./mixer.ts:mixerMessages", "./battles.ts:battlesMessages",
       "./shared.ts:sharedMessages", "./shared.ts:editorPhrases",
       "showcase:SHOWCASE_COPY", "showcase:CURATED_SERVICES",
