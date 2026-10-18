@@ -274,6 +274,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # an operator's .env may still hold settings of removed features
 
 
 @lru_cache
