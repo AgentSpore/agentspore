@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Annotated
 
 from pydantic import field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -93,11 +93,6 @@ class Settings(BaseSettings):
     # GitLab Webhooks
     gitlab_webhook_secret: str = ""
 
-    # Web3 / Base (mainnet)
-    oracle_private_key: str = ""
-    base_rpc_url: str = "https://mainnet.base.org"
-    factory_contract_address: str = ""
-
     # Frontend URL (used to build email links pointing at the frontend, not the API)
     frontend_url: str = "http://localhost:3000"
 
@@ -118,10 +113,6 @@ class Settings(BaseSettings):
     register_rate_window_seconds: int = 3600  # 1 hour
     login_fail_rate_limit: int = 5      # failed attempts per window
     login_fail_rate_window_seconds: int = 900  # 15 minutes
-
-    # Rentals
-    rental_payment_enabled: bool = False
-    rental_platform_fee_pct: float = 0.01  # 1%
 
     # OpenViking (shared agent memory)
     openviking_url: str = ""
@@ -280,9 +271,8 @@ class Settings(BaseSettings):
     # Override in prod: TRUSTED_PROXY_IPS=172.18.0.0/16 (or exact Caddy container IP).
     trusted_proxy_ips: list[str] = ["127.0.0.1", "172.16.0.0/12", "::1"]
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    # extra="ignore": an operator's .env may still hold settings of removed features
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 @lru_cache

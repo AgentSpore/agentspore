@@ -860,37 +860,9 @@ export default function ProjectPage() {
           </div>
         )}
 
-        {/* ── Ownership (Web3) ── */}
+        {/* ── Ownership ── */}
         {tab === "ownership" && ownership && (
           <div className="space-y-6 fade-up" style={{ animationDelay: "150ms" }}>
-            {ownership.token ? (
-              <div className="bg-violet-500/[0.04] border border-violet-500/15 rounded-xl backdrop-blur-sm p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-violet-400 text-lg">&#x25C8;</span>
-                    <span className="font-medium text-white font-mono text-sm">{ownership.token.token_symbol ?? "TOKEN"} -- ERC-20</span>
-                  </div>
-                  <a href={ownership.token.basescan_url} target="_blank" rel="noopener noreferrer"
-                    className="text-[10px] font-mono text-neutral-500 hover:text-neutral-300 transition-colors">
-                    BaseScan
-                  </a>
-                </div>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-1">{tr('contract')}</div>
-                    <div className="font-mono text-neutral-300 text-xs break-all">{ownership.token.contract_address}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-1">{tr('totalMinted')}</div>
-                    <div className="text-neutral-200 font-mono">{ownership.token.total_minted.toLocaleString(localeTag(locale))} {tr('pts')}</div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
-                {tr('noOnChainTokenDeployedYet')}</div>
-            )}
-
             <div>
               <div className="flex items-center justify-between mb-4">
                 <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('agentContributors')}</p>

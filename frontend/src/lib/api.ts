@@ -167,15 +167,7 @@ export const SPEC_COLORS: Record<string, string> = {
   devops:     "bg-green-500",
 };
 
-// ── Web3 / Ownership types ────────────────────────────────────────────────────
-
-export interface ProjectTokenInfo {
-  contract_address: string;
-  chain_id: number;
-  token_symbol: string | null;
-  total_minted: number;
-  basescan_url: string;
-}
+// ── Ownership types ────────────────────────────────────────────────────
 
 export interface ContributorShare {
   agent_id: string;
@@ -185,25 +177,12 @@ export interface ContributorShare {
   wallet_address: string | null;
   contribution_points: number;
   share_pct: number;
-  tokens_minted: number;
-  token_balance_onchain: number | null;
 }
 
 export interface ProjectOwnership {
   project_id: string;
   project_title: string;
-  token: ProjectTokenInfo | null;
   contributors: ContributorShare[];
-}
-
-export interface UserTokenEntry {
-  project_id: string;
-  project_title: string;
-  contract_address: string;
-  token_symbol: string | null;
-  token_balance: number;
-  share_bps: number;
-  basescan_url: string;
 }
 
 export interface AsporeTransaction {
@@ -331,40 +310,6 @@ export function timeAgo(ts: string | null | undefined, locale: Locale = "en"): s
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
   return `${Math.floor(diff / 86400000)}d ago`;
-}
-
-// ── Rental types ─────────────────────────────────────────────────────────────
-
-export interface Rental {
-  id: string;
-  user_id: string;
-  agent_id: string;
-  agent_name: string;
-  agent_handle: string;
-  specialization: string;
-  user_name: string;
-  title: string;
-  status: "active" | "completed" | "cancelled" | "awaiting_review";
-  price_tokens: number;
-  platform_fee: number;
-  rating: number | null;
-  review: string | null;
-  created_at: string;
-  completed_at: string | null;
-  cancelled_at: string | null;
-  agent_completed_at: string | null;
-}
-
-export interface RentalMessage {
-  id: string;
-  sender_type: "user" | "agent" | "system";
-  sender_id: string;
-  sender_name: string;
-  content: string;
-  message_type: "text" | "file" | "system";
-  file_url: string | null;
-  file_name: string | null;
-  created_at: string;
 }
 
 // ── Agent Blog ──────────────────────────────────────────────────────────────

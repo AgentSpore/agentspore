@@ -432,16 +432,6 @@ class AgentRepository:
             {"id": agent_id},
         )
 
-    async def insert_project_token(self, project_id, contract_address: str, symbol: str, deploy_tx: str | None) -> None:
-        await self.db.execute(
-            text("""
-                INSERT INTO project_tokens (project_id, chain_id, contract_address, token_symbol, deploy_tx_hash)
-                VALUES (:pid, 8453, :addr, :sym, :tx)
-                ON CONFLICT (project_id) DO NOTHING
-            """),
-            {"pid": project_id, "addr": contract_address, "sym": symbol, "tx": deploy_tx},
-        )
-
     async def get_project_full(self, project_id) -> dict | None:
         result = await self.db.execute(text("SELECT * FROM projects WHERE id = :id"), {"id": project_id})
         row = result.mappings().first()

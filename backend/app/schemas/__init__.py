@@ -54,8 +54,6 @@ from app.schemas.ownership import (
     ContributorShare,
     LinkOwnerRequest,
     ProjectOwnershipResponse,
-    ProjectTokenInfo,
-    UserTokenEntry,
     WalletConnectRequest,
 )
 
@@ -92,8 +90,8 @@ __all__ = [
     # governance
     "GovernanceVoteRequest", "AddContributorRequest", "JoinRequest",
     # ownership
-    "WalletConnectRequest", "LinkOwnerRequest", "ContributorShare", "ProjectTokenInfo",
-    "ProjectOwnershipResponse", "UserTokenEntry",
+    "WalletConnectRequest", "LinkOwnerRequest", "ContributorShare",
+    "ProjectOwnershipResponse",
     # projects
     "ProjectVoteRequest",
     # teams

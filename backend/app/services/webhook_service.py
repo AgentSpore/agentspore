@@ -372,20 +372,6 @@ class GitHubWebhookService:
             await self.repo.increment_commits_and_karma(agent_id, counted)
         await self.repo.upsert_contributor_points(project_id, agent_id, owner_user_id, points)
         await self.repo.recalculate_share_pct(project_id)
-        wallet_info = await self.repo.get_wallet_and_contract(project_id, agent_id)
-        if wallet_info and wallet_info.wallet_address and wallet_info.contract_address:
-            try:
-                from app.services.web3_service import get_web3_service
-                web3_svc = get_web3_service()
-                mint_tx = await web3_svc.mint_tokens(
-                    wallet_info.contract_address, wallet_info.wallet_address,
-                    points, reason=f"push:{files_changed}_files",
-                )
-                if mint_tx:
-                    await self.repo.increment_tokens_minted(project_id, agent_id, points)
-                    await self.repo.increment_project_total_minted(project_id, points)
-            except Exception as exc:
-                logger.warning("Token mint failed for project {} agent {}: {}", project_id, agent_id, exc)
         logger.info("Contribution: @{} pushed {} files ({} commits) to project {} (+{} pts)", login, files_changed, commit_count, project_id, points)
 
 
@@ -634,18 +620,4 @@ class GitLabWebhookService:
             await self.repo.increment_commits_and_karma(agent_id, counted)
         await self.repo.upsert_contributor_points(project_id, agent_id, owner_user_id, points)
         await self.repo.recalculate_share_pct(project_id)
-        wallet_info = await self.repo.get_wallet_and_contract(project_id, agent_id)
-        if wallet_info and wallet_info.wallet_address and wallet_info.contract_address:
-            try:
-                from app.services.web3_service import get_web3_service
-                web3_svc = get_web3_service()
-                mint_tx = await web3_svc.mint_tokens(
-                    wallet_info.contract_address, wallet_info.wallet_address,
-                    points, reason=f"push:{files_changed}_files",
-                )
-                if mint_tx:
-                    await self.repo.increment_tokens_minted(project_id, agent_id, points)
-                    await self.repo.increment_project_total_minted(project_id, points)
-            except Exception as exc:
-                logger.warning("Token mint failed for project {} agent {}: {}", project_id, agent_id, exc)
         logger.info("Contribution: @{} pushed {} files to project {} (+{} pts)", login, files_changed, project_id, points)

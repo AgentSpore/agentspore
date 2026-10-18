@@ -23,7 +23,6 @@ from app.repositories import governance_repo, team_repo
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
 from app.repositories.code_karma_repo import CodeKarmaRepository
-from app.repositories.rental_repo import get_rental_repo
 from app.schemas.agents import (
     AgentProfile,
     GitHubActivityItem,
@@ -38,7 +37,6 @@ from app.services.git_service import get_git_service
 from app.services.github_oauth_service import get_github_oauth_service
 from app.services.gitlab_oauth_service import get_gitlab_oauth_service
 from app.services.openviking_service import get_openviking_service
-from app.services.web3_service import get_web3_service
 from app.services.task_review_service import TaskReviewService
 from app.services.usage_service import UsageService
 
@@ -53,10 +51,8 @@ class AgentService:
         self.redis = redis
         self.repo = get_agent_repo(db)
         self.task_reviews = TaskReviewService(db)
-        self.rental_repo = get_rental_repo(db)
         self.ov = get_openviking_service()
         self.git = get_git_service()
-        self.web3 = get_web3_service()
 
     # ── Static / utility helpers ──────────────────────────────────────
 
@@ -585,13 +581,12 @@ class AgentService:
         feedback = await self._heartbeat_collect_feedback(agent_id)
         notifications = await self._heartbeat_collect_notifications(agent_id)
         direct_messages = await self._heartbeat_collect_dms(agent_id)
-        active_rentals = await self._heartbeat_collect_rentals(agent_id)
         agent_events = await self._heartbeat_collect_agent_events(agent_id)
         project_usage = await UsageService(self.db).get_agent_usage(agent_id)
 
         hb_summary = (
             f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, "
-            f"{len(direct_messages)} DMs, {len(active_rentals)} rentals"
+            f"{len(direct_messages)} DMs"
         )
         await self.log_activity(agent_id, "heartbeat", hb_summary)
 
@@ -605,7 +600,7 @@ class AgentService:
 
         return HeartbeatResponseBody(
             tasks=tasks, feedback=feedback, notifications=notifications,
-            direct_messages=direct_messages, rentals=active_rentals,
+            direct_messages=direct_messages,
             memory_context=memory_context, agent_events=agent_events,
             warnings=warnings,
             project_usage=project_usage,
@@ -752,19 +747,6 @@ class AgentService:
                 "created_at": str(dm["created_at"]),
             }
             for dm in dm_raw
-        ]
-
-    async def _heartbeat_collect_rentals(self, agent_id: Any) -> list[dict]:
-        """Collect active rental assignments."""
-        raw = await self.rental_repo.list_agent_rentals(str(agent_id), status="active")
-        return [
-            {
-                "rental_id": str(r["id"]),
-                "user_name": r["user_name"],
-                "title": r["title"],
-                "created_at": str(r["created_at"]),
-            }
-            for r in raw
         ]
 
     def _heartbeat_build_warnings(self, agent: dict) -> list[str]:
@@ -949,17 +931,6 @@ class AgentService:
                 logger.warning("README push failed for project {}", project_id)
 
         await self.repo.increment_projects_created(agent_id)
-
-        try:
-            contract_address, deploy_tx = await self.web3.deploy_project_token(
-                str(project_id), body.title
-            )
-            if contract_address:
-                words = body.title.upper().split()
-                symbol = "".join(w[0] for w in words if w)[:6] or "SPORE"
-                await self.repo.insert_project_token(project_id, contract_address, symbol, deploy_tx or None)
-        except Exception as exc:
-            logger.warning("Token deploy failed for project {}: {}", project_id, exc)
 
         owner_user_id = await self.repo.get_agent_owner_user_id(agent_id)
         if owner_user_id:
