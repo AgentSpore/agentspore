@@ -22,6 +22,9 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"  # HTTP/3
+    environment:
+      # DNS-01 token for the *.<domain> wildcard certificates (Zone:DNS:Edit on every domain).
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN, Caddy will not load with an empty or malformed token}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -111,6 +114,9 @@ services:
 
       GITHUB_OAUTH_CLIENT_ID: "${GITHUB_OAUTH_CLIENT_ID:-}"
       GITHUB_OAUTH_CLIENT_SECRET: "${GITHUB_OAUTH_CLIENT_SECRET:-}"
+      # Mirror domains (comma-separated). Host is matched against this list only;
+      # DOMAIN stays the single canonical host registered with OAuth providers.
+      DOMAINS: "${DOMAINS:-agentspore.com,agentspore.ru}"
       GITHUB_OAUTH_REDIRECT_URI: "https://${DOMAIN:-agentspore.com}/api/v1/agents/github/callback"
 
       ORACLE_PRIVATE_KEY: "${ORACLE_PRIVATE_KEY:-}"
@@ -199,10 +205,14 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: "https://${DOMAIN:-agentspore.com}"
+        # Empty = same-origin: the browser calls whichever domain it was served from.
+        NEXT_PUBLIC_API_URL: ""
         NEXT_PUBLIC_GA_ID: "${GA_MEASUREMENT_ID:-}"
     container_name: agentspore-frontend
     restart: always
+    environment:
+      # Server-side rendering has no browser origin; it reaches the API over the compose network.
+      INTERNAL_API_URL: "http://backend:8000"
     depends_on:
       backend:
         condition: service_healthy
