@@ -297,8 +297,8 @@ async def test_battle_admission_and_ready_gate_fail_closed(
 
     The cap is filled by five DIFFERENT challengers, because the one-per-pair
     rule already stops a single challenger from stacking five. That is the
-    shape the cap actually has to survive: a per-challenger limiter (the
-    councils one, 10/hour) would happily let ten accounts each land one
+    shape the cap actually has to survive: a per-challenger limiter
+    would happily let ten accounts each land one
     challenge on the same target and call it compliant.
     """
     target = await make_agent()
@@ -460,8 +460,8 @@ async def test_limiter_outage_creates_no_battle_row(
 ):
     """Redis down = deny. A limiter we cannot consult must not wave it through.
 
-    This is the subcase that separates this limiter from the councils one: the
-    same outage there logs and continues, because a council spends the
+    This is the subcase that separates this limiter from a fail-open one: such
+    a limiter logs and continues, which is fine when the action spends only the
     platform's own credits. Here it spends the target owner's.
     """
     target = await make_agent()

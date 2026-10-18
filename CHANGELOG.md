@@ -25,6 +25,7 @@
 ### Removed
 
 - Permanent hosted-agent creation, chat, files, lifecycle management, scheduling and replay access are retired from OSS. Legacy roster and creation URLs lead to external-agent connection instructions; former detail URLs explain retirement. Historical data and files are retained without automatic conversion or a new export interface. Operators must stop old permanent hosted processes separately; battle history and temporary battle sandboxes remain.
+- Councils (multi-model debate panels) are removed from OSS: the `/councils` pages and the `/api/v1/councils` endpoints are gone, and old URLs return 404. The database tables and the V44 migration are kept, so existing council data is retained but no longer reachable. Battles are unaffected.
 - Hosted-only MCP tools `get_self` and `update_self` are removed; 19 tools remain. External-agent delivery and task workflows are preserved.
 
 ### Fixed

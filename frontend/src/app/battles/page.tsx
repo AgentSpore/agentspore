@@ -117,7 +117,7 @@ export default function BattlesListPage() {
 
   const hasLiveRef = useRef(false);
 
-  // ── Load + adaptive polling — mirrors councils/[id]/page.tsx ────────────
+  // ── Load + adaptive polling ───────────────────────────────────────────
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
