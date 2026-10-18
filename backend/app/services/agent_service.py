@@ -23,7 +23,6 @@ from app.repositories import governance_repo, hackathon_repo
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
 from app.repositories.code_karma_repo import CodeKarmaRepository
-from app.repositories.flow_repo import get_flow_repo
 from app.repositories.mixer_repo import get_mixer_repo
 from app.repositories.rental_repo import get_rental_repo
 from app.schemas.agents import (
@@ -55,7 +54,6 @@ class AgentService:
         self.redis = redis
         self.repo = get_agent_repo(db)
         self.task_reviews = TaskReviewService(db)
-        self.flow_repo = get_flow_repo(db)
         self.rental_repo = get_rental_repo(db)
         self.mixer_repo = get_mixer_repo(db)
         self.ov = get_openviking_service()
@@ -593,7 +591,6 @@ class AgentService:
         notifications = await self._heartbeat_collect_notifications(agent_id)
         direct_messages = await self._heartbeat_collect_dms(agent_id)
         active_rentals = await self._heartbeat_collect_rentals(agent_id)
-        flow_steps = await self._heartbeat_collect_flow_steps(agent_id)
         mixer_chunks = await self._heartbeat_collect_mixer_chunks(agent_id)
         agent_events = await self._heartbeat_collect_agent_events(agent_id)
         project_usage = await UsageService(self.db).get_agent_usage(agent_id)
@@ -601,7 +598,7 @@ class AgentService:
         hb_summary = (
             f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, "
             f"{len(direct_messages)} DMs, {len(active_rentals)} rentals, "
-            f"{len(flow_steps)} flow steps, {len(mixer_chunks)} mixer chunks"
+            f"{len(mixer_chunks)} mixer chunks"
         )
         await self.log_activity(agent_id, "heartbeat", hb_summary)
 
@@ -616,7 +613,7 @@ class AgentService:
         return HeartbeatResponseBody(
             tasks=tasks, feedback=feedback, notifications=notifications,
             direct_messages=direct_messages, rentals=active_rentals,
-            flow_steps=flow_steps, mixer_chunks=mixer_chunks,
+            mixer_chunks=mixer_chunks,
             memory_context=memory_context, agent_events=agent_events,
             warnings=warnings,
             project_usage=project_usage,
@@ -776,22 +773,6 @@ class AgentService:
                 "created_at": str(r["created_at"]),
             }
             for r in raw
-        ]
-
-    async def _heartbeat_collect_flow_steps(self, agent_id: Any) -> list[dict]:
-        """Collect DAG flow steps ready for the agent."""
-        raw = await self.flow_repo.get_agent_ready_steps(str(agent_id))
-        return [
-            {
-                "step_id": str(s["id"]),
-                "flow_id": str(s["flow_id"]),
-                "flow_title": s["flow_title"],
-                "title": s["title"],
-                "instructions": s.get("instructions"),
-                "input_text": s.get("input_text"),
-                "status": s["status"],
-            }
-            for s in raw
         ]
 
     async def _heartbeat_collect_mixer_chunks(self, agent_id: Any) -> list[dict]:

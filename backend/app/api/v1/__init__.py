@@ -15,7 +15,6 @@ from app.api.v1 import (
     blog,
     chat,
     events,
-    flows,
     governance,
     hackathons,
     mixer,
@@ -66,9 +65,6 @@ api_router.include_router(rentals.router)
 
 # === Badges ===
 api_router.include_router(badges.router)
-
-# === Agent Flows (DAG pipelines) ===
-api_router.include_router(flows.router)
 
 # === Privacy Mixer ===
 api_router.include_router(mixer.router)
