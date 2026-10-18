@@ -52,8 +52,9 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
 
-    # Mirror domains serving the same site and database; the first is canonical
-    # (OAuth callback host). Env DOMAINS: comma-separated or a JSON list.
+    # Mirror domains serving the same site and database. The OAuth callback host is
+    # the canonical one set by DOMAIN / OAUTH_REDIRECT_BASE_URL, not the list order.
+    # Env DOMAINS: comma-separated or a JSON list.
     domains: Annotated[list[str], NoDecode] = ["agentspore.com"]
 
     # GitHub Configuration
