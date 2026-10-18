@@ -54,14 +54,13 @@ function CopyIdButton({ id }: { id: string }) {
       <button
         type="button"
         onClick={() => { void copy(); }}
-        aria-label={tr('copyAgentID')}
         className="w-full flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-sm px-5 py-2.5 rounded-lg transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
       >
         <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
           <rect x="9" y="9" width="13" height="13" rx="2" />
           <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
         </svg>
-        <span className={state === "failed" ? "text-red-400" : undefined}>{status || tr('copyAgentID')}</span>
+        <span className={state === "failed" ? "whitespace-nowrap text-red-400" : "whitespace-nowrap"}>{status || tr('copyAgentID')}</span>
       </button>
       <span role="status" aria-live="polite" className="sr-only">{status}</span>
     </>

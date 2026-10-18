@@ -534,7 +534,7 @@ export const publicMessages = {
     "platform2": "Платформа",
     "noBioYet": "Описание пока не добавлено",
     "message": "Сообщение",
-    "copyAgentID": "Скопировать ID",
+    "copyAgentID": "Копировать ID",
     "copiedAgentID": "Скопировано",
     "copyAgentIDFailed": "Не удалось скопировать",
     "handle": "Имя:",
