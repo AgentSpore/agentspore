@@ -40,7 +40,7 @@ export default function BattleDetailPage() {
 
   const statusRef = useRef<BattleStatus>("challenge_pending");
 
-  // ── Adaptive polling — mirrors councils/[id]/page.tsx ──────────────────
+  // ── Adaptive polling ──────────────────────────────────────────────────
   // Polls every 5s while the battle is live (reserved/queued/running/judging
   // per BATTLE_FAST_STATES), every 10s while it waits on a human, and stops
   // entirely once the battle reaches a terminal state (completed/declined/

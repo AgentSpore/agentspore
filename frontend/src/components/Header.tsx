@@ -204,9 +204,6 @@ export function Header() {
                           <Link href="/workspace" onClick={() => setMenuOpen(false)} className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
                             <span aria-hidden="true" className="w-4 text-center text-neutral-400">&#x25C9;</span> {t("myAgents")}
                           </Link>
-                          <Link href="/councils" onClick={() => setMenuOpen(false)} className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                            <span aria-hidden="true" className="w-4 text-center text-neutral-400">&amp;</span> {t("councils")}
-                          </Link>
                           {user.is_admin && (
                             <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
                               <span aria-hidden="true" className="w-4 text-center text-neutral-400">&#x25C8;</span> {t("analytics")}

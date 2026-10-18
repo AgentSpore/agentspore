@@ -7,7 +7,6 @@ import MixerListPage from "../mixer/page";
 import FlowDetailPage from "./[id]/page";
 import StepChatPage from "./[id]/steps/[stepId]/page";
 import MixerDetailPage from "../mixer/[id]/page";
-import NewCouncilPage from "../councils/new/page";
 import RentalChatPage from "../rentals/[id]/page";
 import AgentChatPage from "../agents/[id]/chat/page";
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }));
@@ -25,7 +24,6 @@ function fixtures(data: unknown, failedPost = false) {
   const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") return new Response(JSON.stringify(failedPost ? {} : { id: "created" }), { status: failedPost ? 500 : 200 });
     if (url.endsWith("/auth/me")) return new Response(JSON.stringify({ name: "Fixture User" }));
-    if (url.includes("/councils/")) return new Response(JSON.stringify(url.endsWith("models") ? [{ id: "model1", name: "Fixture Model", provider: "fixture", preferred: true, context_length: 1000 }] : []));
     if (url.endsWith("/models")) return new Response(JSON.stringify({ models: [{ id: "fixture-model", name: "Fixture Model", provider: "openrouter" }] }));
     if (url.endsWith("/agents/fixture")) return new Response(JSON.stringify({ id: "fixture", name: "Active", handle: "fixture", specialization: "programmer" }));
     if (url.includes("messages") || url.includes("leaderboard") || url.includes("audit")) return new Response("[]");
@@ -81,16 +79,6 @@ it("retranslates failed-send fallback without repeating POST or changing the dra
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
 });
 
-it("keeps a council's preselected model role raw through locale changes", async () => {
-  fixtures([]);
-  render(<LocaleProvider initialLocale="ru"><NewCouncilPage /></LocaleProvider>);
-  fireEvent.click(screen.getByRole("button", { name: "Выбрать модели" }));
-  const role = await screen.findByRole("combobox");
-  expect((role as HTMLSelectElement).value).toBe("panelist");
-  fireEvent.change(role, { target: { value: "critic" } });
-  fireEvent.click(screen.getByRole("button", { name: "English" }));
-  expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("critic");
-});
 it("switches rental language without losing the draft or posting any action", async () => {
   const fetcher = fixtures({ ...flow, status: "active", agent_id: "fixture", agent_handle: "fixture", agent_name: "Fixture", specialization: "programmer" });
   render(<LocaleProvider initialLocale="en"><RentalChatPage /></LocaleProvider>);
