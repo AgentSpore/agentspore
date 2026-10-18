@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -68,5 +68,5 @@ def decode_token(token: str) -> TokenPayload | None:
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         return TokenPayload(**payload)
-    except JWTError:
+    except jwt.PyJWTError:
         return None
