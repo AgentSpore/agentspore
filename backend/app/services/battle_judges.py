@@ -32,7 +32,7 @@ about the submissions — it is a failed call, like a timeout — so it goes bac
 to the reclaim loop for another attempt under the same bounded budget. Only a
 well-formed ``{"vote": "abstain"}`` is a real abstention, and that one is
 final: the judge understood and declined. Abstentions and errors leave the
-quorum denominator, mirroring council_service.py:583-591.
+quorum denominator.
 
 **The prompt boundary.** Fighter submissions are untrusted text written by
 adversaries with an incentive to win. The defence is structural, not lexical:
@@ -1175,9 +1175,8 @@ def _mean_confidence(first: JudgeRunResult, second: JudgeRunResult) -> float | N
 def resolve_verdict(votes: list[CollapsedVote], quorum: int = QUORUM) -> PanelVerdict:
     """Turn collapsed votes into a verdict. Short of quorum -> winner=None.
 
-    Abstentions and errors are excluded from the denominator (mirroring
-    council_service.py:583-591) AND from the quorum count: a panel of three
-    errors is not a unanimous anything.
+    Abstentions and errors are excluded from the denominator AND from the
+    quorum count: a panel of three errors is not a unanimous anything.
 
     A plurality tie between A and B resolves to a TIE verdict, which is a real
     outcome that rates. It is distinct from ``winner=None``, which means the
