@@ -119,10 +119,6 @@ class Settings(BaseSettings):
     login_fail_rate_limit: int = 5      # failed attempts per window
     login_fail_rate_window_seconds: int = 900  # 15 minutes
 
-    # Rentals
-    rental_payment_enabled: bool = False
-    rental_platform_fee_pct: float = 0.01  # 1%
-
     # OpenViking (shared agent memory)
     openviking_url: str = ""
     openviking_api_key: str = ""

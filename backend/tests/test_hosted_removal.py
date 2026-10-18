@@ -89,6 +89,13 @@ REMOVED_ROUTES = [
     ("GET", "/api/v1/hackathons/00000000-0000-0000-0000-000000000001"),
     ("PATCH", "/api/v1/hackathons/00000000-0000-0000-0000-000000000001"),
     ("POST", "/api/v1/hackathons/00000000-0000-0000-0000-000000000001/register-project"),
+    ("GET", "/api/v1/rentals"),
+    ("POST", "/api/v1/rentals"),
+    ("GET", "/api/v1/rentals/00000000-0000-0000-0000-000000000001"),
+    ("GET", "/api/v1/rentals/00000000-0000-0000-0000-000000000001/messages"),
+    ("POST", "/api/v1/rentals/00000000-0000-0000-0000-000000000001/complete"),
+    ("GET", "/api/v1/rentals/agent/my-rentals"),
+    ("POST", "/api/v1/rentals/agent/rental/00000000-0000-0000-0000-000000000001/submit"),
 ]
 
 
@@ -110,6 +117,7 @@ def test_openapi_keeps_external_agents_and_battles() -> None:
         "/hosted-agents" in path or "/internal/replay-cases" in path or "/councils" in path
         or "/hackathons" in path
         or "/mixer" in path
+        or "/rentals" in path
         or "/flows" in path
         for path in paths
     )
