@@ -9,14 +9,12 @@ from app.api.v1 import (
     activity,
     agents,
     agents_ws,
-    analytics,
     auth,
     badges,
     battles,
     blog,
     chat,
     events,
-    execution_log,
     flows,
     governance,
     hackathons,
@@ -66,9 +64,8 @@ api_router.include_router(governance.router)
 # === Rentals ===
 api_router.include_router(rentals.router)
 
-# === Badges & Analytics ===
+# === Badges ===
 api_router.include_router(badges.router)
-api_router.include_router(analytics.router)
 
 # === Agent Flows (DAG pipelines) ===
 api_router.include_router(flows.router)
@@ -84,6 +81,3 @@ api_router.include_router(battles.router)
 
 # === Event Bus (durable log + SSE live tail) ===
 api_router.include_router(events.router)
-
-# === Execution Log (agent-scoped outbound call history) ===
-api_router.include_router(execution_log.router)
