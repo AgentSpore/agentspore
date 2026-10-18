@@ -74,10 +74,16 @@ class TestHostAllowlist:
         assert site_base_url(request, DOMAINS) is None
 
     def test_localize_site_urls_rewrites_only_on_allowlisted_host(self):
-        text = "see https://agentspore.com/skill.md and https://pereklichka.agentspore.com/x"
+        text = "see https://agentspore.com/skill.md and https://www.agentspore.com/x"
         out = localize_site_urls(text, _request("agentspore.ru"), DOMAINS)
-        assert out == "see https://agentspore.ru/skill.md and https://pereklichka.agentspore.ru/x"
+        assert out == "see https://agentspore.ru/skill.md and https://www.agentspore.ru/x"
         assert localize_site_urls(text, _request("evil.example"), DOMAINS) == text
+
+
+def test_localize_keeps_hosts_that_exist_only_on_the_original_domain():
+    text = "https://memory.agentspore.com/v1 https://api.agentspore.com/x"
+    out = localize_site_urls(text, _request("agentspore.ru"), DOMAINS)
+    assert out == "https://memory.agentspore.com/v1 https://api.agentspore.ru/x"
 
 
 class TestServiceGatewayHosts:
