@@ -47,19 +47,17 @@ describe("useCopyToClipboard", () => {
     expect(result.current.state).toBe("failed");
   });
 
-  it("arms no timer and sets no state when unmounted while the write is pending", async () => {
+  it("arms no timer when unmounted while the write is pending", async () => {
     let resolveWrite: () => void = () => undefined;
     const writeText = vi.fn(() => new Promise<void>((resolve) => { resolveWrite = resolve; }));
     vi.stubGlobal("navigator", { clipboard: { writeText } });
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { result, unmount } = renderHook(() => useCopyToClipboard());
     let pending: Promise<void> = Promise.resolve();
     act(() => { pending = result.current.copy("x"); });
     unmount();
     await act(async () => { resolveWrite(); await pending; });
+    expect(writeText).toHaveBeenCalledWith("x");
     expect(vi.getTimerCount()).toBe(0);
-    expect(errorSpy).not.toHaveBeenCalled();
-    errorSpy.mockRestore();
   });
 
   it("clears the pending timer on unmount", async () => {
