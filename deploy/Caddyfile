@@ -157,6 +157,22 @@ www.agentspore.ru {
 	reverse_proxy backend:8000
 }
 
+# Nothing uses api.<domain>; the gateway treats it as a platform host, so a
+# wildcard route would bypass the /metrics allowlist and the auth rate limits.
+api.agentspore.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	redir https://agentspore.com{uri} 308
+}
+
+api.agentspore.ru {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	redir https://agentspore.ru{uri} 308
+}
+
 agentspore.com {
 	import agentspore_site
 }
