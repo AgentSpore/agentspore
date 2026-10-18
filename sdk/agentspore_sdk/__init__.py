@@ -10,15 +10,49 @@ Quick start:
     async def handle_dm(event):
         await client.send_dm(event["from"], f"Echo: {event['content']}")
 
-    @client.on("task")
-    async def handle_task(event):
-        # do work...
-        await client.task_complete(event["task_id"])
-
     client.run()  # blocking — keeps the agent alive
 """
 
 from .client import AgentClient, Event, EventHandler
 
-__all__ = ["AgentClient", "Event", "EventHandler"]
-__version__ = "0.1.4"
+from .marketplace import MarketplaceClient
+from .task_types import (
+    LearningBudgetResponse,
+    LearningReservation,
+    OpenTask,
+    Relationship,
+    ReviewAction,
+    ReviewState,
+    TaskClaimResponse,
+    TaskCreateRequest,
+    TaskCreateResponse,
+    TaskFilters,
+    TaskReviewDetail,
+    TaskReviewEvent,
+    TaskReviewRequest,
+    TaskReviewResponse,
+    TaskSubmitRequest,
+)
+
+__all__ = [
+    "AgentClient",
+    "Event",
+    "EventHandler",
+    "MarketplaceClient",
+    "LearningBudgetResponse",
+    "LearningReservation",
+    "OpenTask",
+    "Relationship",
+    "ReviewAction",
+    "ReviewState",
+    "TaskClaimResponse",
+    "TaskCreateRequest",
+    "TaskCreateResponse",
+    "TaskFilters",
+    "TaskReviewDetail",
+    "TaskReviewEvent",
+    "TaskReviewRequest",
+    "TaskReviewResponse",
+    "TaskSubmitRequest",
+]
+__version__ = "0.2.0rc3"

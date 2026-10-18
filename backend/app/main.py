@@ -7,9 +7,12 @@ autonomously build startups, while humans observe and steer.
 import asyncio
 import contextlib
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from pathlib import Path
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,8 +27,10 @@ from app.api.v1 import api_router
 from app.core.background import spawn_background_tasks
 from app.core.config import get_settings
 from app.core.database import async_session_maker
+from app.core.domains import localize_site_urls
 from app.core.logging import setup_logging
 from app.core.redis_client import close_redis, get_redis, init_redis
+from app.middleware.service_gateway import ServiceGatewayMiddleware
 from app.observability import configure as configure_observability
 
 setup_logging()
@@ -36,22 +41,31 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle events."""
-    await init_redis()
-    app.state.bg_tasks = spawn_background_tasks()
-    logger.info("AgentSpore API starting — /api/v1/agents/register | /skill.md | /docs")
-    yield
-    # Cancel and await every ScheduledTask loop BEFORE closing Redis: each
-    # loop's finally releases its leader lease via Redis, and a lease
-    # released against an already-closed client is swallowed (background.py
-    # never raises on release), leaving an orphan lease for the next worker
-    # to wait out at full lock_ttl_s.
-    for task in app.state.bg_tasks:
-        task.cancel()
-    for task in app.state.bg_tasks:
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-    await close_redis()
-    logger.info("AgentSpore API shutting down")
+    async with httpx.AsyncClient(
+        timeout=10.0,
+        trust_env=False,
+        follow_redirects=False,
+        limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
+        # INVARIANT(A2): never retain upstream cookies in the pool shared by visitors.
+        cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+    ) as gateway_client:
+        app.state.service_gateway_http_client = gateway_client
+        await init_redis()
+        app.state.bg_tasks = spawn_background_tasks()
+        logger.info("AgentSpore API starting — /api/v1/agents/register | /skill.md | /docs")
+        yield
+        # Cancel and await every ScheduledTask loop BEFORE closing Redis: each
+        # loop's finally releases its leader lease via Redis, and a lease
+        # released against an already-closed client is swallowed (background.py
+        # never raises on release), leaving an orphan lease for the next worker
+        # to wait out at full lock_ttl_s.
+        for task in app.state.bg_tasks:
+            task.cancel()
+        for task in app.state.bg_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        await close_redis()
+        logger.info("AgentSpore API shutting down")
 
 
 app = FastAPI(
@@ -116,6 +130,20 @@ async def log_requests(request: Request, call_next) -> Response:
     return response
 
 
+app.state.service_gateway_db_factory = async_session_maker
+app.state.service_gateway_redis_factory = get_redis
+
+
+@asynccontextmanager
+async def service_gateway_client() -> AsyncIterator[httpx.AsyncClient]:
+    """Borrow the process-lived HTTP pool without closing it after each service request."""
+    yield app.state.service_gateway_http_client
+
+
+app.state.service_gateway_client_factory = service_gateway_client
+app.add_middleware(ServiceGatewayMiddleware, resources=app.state)
+
+
 # Self-hosted Swagger UI assets (bypass CDN + CSP)
 _STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
@@ -170,11 +198,11 @@ async def _read_doc_file(path: Path) -> str:
 
 
 @app.get("/skill.md", response_class=PlainTextResponse)
-async def get_skill_md():
+async def get_skill_md(request: Request):
     """Agent onboarding guide for connecting to AgentSpore."""
     path = _find_doc_file("SKILL.md") or _find_doc_file("skill.md")
     if path:
-        return await _read_doc_file(path)
+        return localize_site_urls(await _read_doc_file(path), request)
 
     return """# AgentSpore Agent Skill
 
@@ -185,20 +213,20 @@ Docs: /docs
 
 
 @app.get("/dev-skill.md", response_class=PlainTextResponse)
-async def dev_skill_md() -> str:
+async def dev_skill_md(request: Request) -> str:
     """MVP development standards for hosted agents."""
     path = _find_doc_file("DEV-SKILL.md") or _find_doc_file("dev-skill.md")
     if path:
-        return await _read_doc_file(path)
+        return localize_site_urls(await _read_doc_file(path), request)
     return "# AgentSpore MVP Development Standards\nSee /skill.md"
 
 
 @app.get("/heartbeat.md", response_class=PlainTextResponse)
-async def get_heartbeat_md():
+async def get_heartbeat_md(request: Request):
     """Heartbeat protocol for AI agents."""
     path = _find_doc_file("HEARTBEAT.md") or _find_doc_file("heartbeat.md")
     if path:
-        return await _read_doc_file(path)
+        return localize_site_urls(await _read_doc_file(path), request)
 
     return """# AgentSpore Heartbeat Protocol
 
@@ -208,11 +236,11 @@ See /skill.md for full documentation.
 
 
 @app.get("/rules.md", response_class=PlainTextResponse)
-async def get_rules_md():
+async def get_rules_md(request: Request):
     """Code of conduct and rules for AI agents on the platform."""
     path = _find_doc_file("RULES.md") or _find_doc_file("rules.md")
     if path:
-        return await _read_doc_file(path)
+        return localize_site_urls(await _read_doc_file(path), request)
 
     return """# AgentSpore Agent Rules
 

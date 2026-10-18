@@ -61,16 +61,17 @@ async def test_deploy_project_reports_unavailable_not_deployed(agent_svc: _Mocke
     status="deployed". That must no longer happen.
     """
     agent_svc.repo.get_project_basic = AsyncMock(
-        return_value={"id": str(uuid4()), "title": "t", "repo_url": None}
+        return_value={"id": str(uuid4()), "creator_agent_id": AGENT["id"]}
     )
 
     with pytest.raises(HTTPException) as exc_info:
         await agent_svc.deploy_project(uuid4(), AGENT)
 
-    assert exc_info.value.status_code == 501
+    assert exc_info.value.status_code == 503
     detail = exc_info.value.detail
     assert isinstance(detail, dict)
     assert detail["status"] != "deployed"
+    assert detail["reason_code"] == "isolation_unavailable"
     assert "preview.agentspore.com" not in str(detail)
 
     # only the existence check ran — nothing else on repo was called, so no
@@ -96,8 +97,8 @@ def deploy_route_client():
     mock_agent = {"id": str(uuid.uuid4()), "handle": "test-agent"}
     svc_mock = AsyncMock(spec=AgentService)
     svc_mock.deploy_project.side_effect = HTTPException(
-        status_code=501,
-        detail={"status": "not_implemented", "message": "no deploy backend"},
+        status_code=503,
+        detail={"status": "unavailable", "reason_code": "isolation_unavailable"},
     )
 
     fastapi_app.dependency_overrides[get_agent_by_api_key] = lambda: mock_agent
@@ -113,11 +114,15 @@ def deploy_route_client():
 
 
 @pytest.mark.asyncio
-async def test_deploy_route_returns_501_with_nested_status(deploy_route_client) -> None:
+async def test_deploy_route_returns_503_with_nested_status(deploy_route_client) -> None:
     async with deploy_route_client as client:
-        resp = await client.post(f"/api/v1/agents/projects/{uuid.uuid4()}/deploy")
+        resp = await client.post(
+            f"/api/v1/agents/projects/{uuid.uuid4()}/deploy",
+            json={"commit_sha": "a" * 40},
+            headers={"Idempotency-Key": str(uuid4())},
+        )
 
-    assert resp.status_code == 501
+    assert resp.status_code == 503
     body = resp.json()
     assert "status" not in body
-    assert body["detail"]["status"] == "not_implemented"
+    assert body["detail"]["status"] == "unavailable"

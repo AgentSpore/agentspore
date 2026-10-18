@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from app.api.deps import DatabaseSession
 from app.core.config import get_settings
+from app.core.domains import match_domain, request_domain
 from app.core.redis_client import get_redis
 from app.core.security import create_access_token, create_refresh_token
 from app.models import User
@@ -22,9 +23,26 @@ FRONTEND_URL = settings.oauth_redirect_base_url.replace(":8000", ":3000")
 _OAUTH_STATE_TTL = 300  # 5 minutes
 
 
-async def _store_oauth_state(redis: aioredis.Redis, state: str) -> None:
-    """Store CSRF state token in Redis with 5-minute TTL."""
+async def _store_oauth_state(
+    redis: aioredis.Redis, state: str, origin: str | None = None
+) -> None:
+    """Store CSRF state token in Redis with 5-minute TTL.
+
+    ``origin`` is the allowlisted mirror domain the login started on. The provider
+    callback always lands on the one registered host, so it is remembered here,
+    server-side, to send the user back — never taken from the callback request.
+    """
     await redis.setex(f"oauth_state:{state}", _OAUTH_STATE_TTL, "1")
+    if origin:
+        await redis.setex(f"oauth_origin:{state}", _OAUTH_STATE_TTL, origin)
+
+
+async def _consume_oauth_origin(redis: aioredis.Redis, state: str) -> str | None:
+    """Single-use read of the origin domain; re-checked against the allowlist."""
+    raw = await redis.getdel(f"oauth_origin:{state}")
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    return match_domain(raw, settings.domains) if raw else None
 
 
 async def _consume_oauth_state(redis: aioredis.Redis, state: str) -> bool:
@@ -34,11 +52,12 @@ async def _consume_oauth_state(redis: aioredis.Redis, state: str) -> bool:
     return deleted == 1
 
 
-def _make_token_response_redirect(user_id: str) -> RedirectResponse:
+def _make_token_response_redirect(user_id: str, origin: str | None = None) -> RedirectResponse:
     access = create_access_token(user_id)
     refresh = create_refresh_token(user_id)
+    base = f"https://{origin}" if origin else FRONTEND_URL
     return RedirectResponse(
-        f"{FRONTEND_URL}/auth/callback?access_token={access}&refresh_token={refresh}",
+        f"{base}/auth/callback?access_token={access}&refresh_token={refresh}",
         status_code=302,
     )
 
@@ -99,12 +118,12 @@ async def _upsert_oauth_user(
 # ── Google ──────────────────────────────────────────────────────────────────
 
 @router.get("/google")
-async def google_login(redis: aioredis.Redis = Depends(get_redis)):
+async def google_login(request: Request, redis: aioredis.Redis = Depends(get_redis)):
     """Redirect → Google OAuth consent screen (CSRF-protected via state param)."""
     if not settings.google_oauth_client_id:
         raise HTTPException(status_code=501, detail="Google OAuth not configured")
     state = secrets.token_urlsafe(32)
-    await _store_oauth_state(redis, state)
+    await _store_oauth_state(redis, state, request_domain(request, settings.domains))
     params = (
         "response_type=code"
         f"&client_id={settings.google_oauth_client_id}"
@@ -126,6 +145,7 @@ async def google_callback(
     """Обработать callback от Google и выдать JWT."""
     if not await _consume_oauth_state(redis, state):
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    origin = await _consume_oauth_origin(redis, state)
     if not settings.google_oauth_client_id:
         raise HTTPException(status_code=501, detail="Google OAuth not configured")
 
@@ -163,18 +183,18 @@ async def google_callback(
         avatar_url=profile.get("picture"),
     )
     await db.commit()
-    return _make_token_response_redirect(str(user.id))
+    return _make_token_response_redirect(str(user.id), origin)
 
 
 # ── GitHub ───────────────────────────────────────────────────────────────────
 
 @router.get("/github")
-async def github_login(redis: aioredis.Redis = Depends(get_redis)):
+async def github_login(request: Request, redis: aioredis.Redis = Depends(get_redis)):
     """Redirect → GitHub OAuth consent screen (CSRF-protected via state param)."""
     if not settings.user_github_oauth_client_id:
         raise HTTPException(status_code=501, detail="GitHub user OAuth not configured")
     state = secrets.token_urlsafe(32)
-    await _store_oauth_state(redis, state)
+    await _store_oauth_state(redis, state, request_domain(request, settings.domains))
     params = (
         f"client_id={settings.user_github_oauth_client_id}"
         f"&redirect_uri={settings.oauth_redirect_base_url}/api/v1/oauth/github/callback"
@@ -194,6 +214,7 @@ async def github_callback(
     """Обработать callback от GitHub и выдать JWT."""
     if not await _consume_oauth_state(redis, state):
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    origin = await _consume_oauth_origin(redis, state)
     if not settings.user_github_oauth_client_id:
         raise HTTPException(status_code=501, detail="GitHub user OAuth not configured")
 
@@ -246,4 +267,4 @@ async def github_callback(
         avatar_url=profile.get("avatar_url"),
     )
     await db.commit()
-    return _make_token_response_redirect(str(user.id))
+    return _make_token_response_redirect(str(user.id), origin)

@@ -3,13 +3,14 @@ set -euo pipefail
 
 # AgentSpore — First-time server setup
 # Run on a fresh DigitalOcean Droplet with Docker pre-installed
+# Exit 0 when the backend is healthy; exit 1 when health retries are exhausted.
 #
 # Usage:
 #   ssh root@<DROPLET_IP>
 #   git clone https://github.com/AgentSpore/agentspore.git /opt/agentspore
 #   cd /opt/agentspore/deploy
-#   cp .env.prod.example .env.prod
-#   nano .env.prod  # fill in secrets
+#   cp .env.example .env
+#   nano .env  # fill in secrets
 #   bash setup.sh
 
 DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -19,10 +20,10 @@ echo "=== AgentSpore Production Setup ==="
 echo "Deploy dir: $DEPLOY_DIR"
 echo "Repo dir:   $REPO_DIR"
 
-# 1. Check .env.prod exists
-if [ ! -f "$DEPLOY_DIR/.env.prod" ]; then
-    echo "ERROR: .env.prod not found!"
-    echo "Copy .env.prod.example to .env.prod and fill in values."
+# 1. Check .env exists
+if [ ! -f "$DEPLOY_DIR/.env" ]; then
+    echo "ERROR: .env not found!"
+    echo "Copy .env.example to .env and fill in values."
     exit 1
 fi
 
@@ -46,13 +47,21 @@ ufw --force enable
 # 4. Start services
 echo ">>> Starting services..."
 cd "$DEPLOY_DIR"
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+docker compose -f docker-compose.prod.yml up -d --build
 
-# 5. Wait and verify
+# 5. Wait and verify. The backend is not published on the host, so probe it
+# through the container's own loopback instead of curl-ing localhost:8000.
 echo ">>> Waiting for services to start..."
-sleep 15
+HEALTHY=false
+for _ in $(seq 1 12); do
+    if docker exec agentspore-backend curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+        HEALTHY=true
+        break
+    fi
+    sleep 5
+done
 
-if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+if [ "$HEALTHY" = true ]; then
     echo ""
     echo "=== SUCCESS ==="
     echo "Backend is healthy!"
@@ -65,4 +74,5 @@ if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
 else
     echo "WARNING: Backend health check failed. Check logs:"
     echo "  docker compose -f docker-compose.prod.yml logs backend"
+    exit 1
 fi

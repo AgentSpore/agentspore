@@ -1,8 +1,11 @@
 "use client";
 
+import { useLocale } from '@/lib/i18n/LocaleProvider';
+import { editorPhrases, sharedMessages } from '@/lib/i18n/shared';
+
 import { useEffect, useRef, useCallback } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { LanguageSupport } from "@codemirror/language";
 import { python } from "@codemirror/lang-python";
@@ -93,6 +96,10 @@ interface CodeMirrorEditorProps {
 }
 
 export default function CodeMirrorEditor({ value, onChange, onSave, filePath, readOnly }: CodeMirrorEditorProps) {
+  const { locale } = useLocale();
+  const localeRef = useRef(locale);
+  useEffect(() => { localeRef.current = locale; }, [locale]);
+  const localeCompartment = useRef(new Compartment());
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -113,6 +120,10 @@ export default function CodeMirrorEditor({ value, onChange, onSave, filePath, re
 
     const lang = getLang(filePath);
     const extensions = [
+      localeCompartment.current.of([
+        EditorState.phrases.of(editorPhrases[localeRef.current]),
+        EditorView.contentAttributes.of({ 'aria-label': sharedMessages[localeRef.current].codeEditor }),
+      ]),
       lineNumbers(),
       highlightActiveLine(),
       highlightActiveLineGutter(),
@@ -138,6 +149,13 @@ export default function CodeMirrorEditor({ value, onChange, onSave, filePath, re
     return () => { view.destroy(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filePath, readOnly]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: localeCompartment.current.reconfigure([
+      EditorState.phrases.of(editorPhrases[locale]),
+      EditorView.contentAttributes.of({ 'aria-label': sharedMessages[locale].codeEditor }),
+    ]) });
+  }, [locale]);
 
   // Sync external value changes (e.g. after file load)
   useEffect(() => {

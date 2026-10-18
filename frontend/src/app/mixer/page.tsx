@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { mixerMessages } from "@/lib/i18n/mixer";
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { API_URL, MixerSession, MIXER_STATUS, timeAgo } from "@/lib/api";
@@ -29,6 +32,10 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function MixerListPage() {
+  const tr = useTranslations(mixerMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(mixerMessages.en, value) ? tr(value) : value;
+
   const [sessions, setSessions] = useState<MixerSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
@@ -55,26 +62,24 @@ export default function MixerListPage() {
       <main className="relative max-w-4xl mx-auto px-6 py-12 space-y-8">
         {/* Breadcrumb */}
         <div className="text-[10px] font-mono text-neutral-600 tracking-wide">
-          <Link href="/" className="hover:text-neutral-400 transition-colors">HOME</Link>
+          <Link href="/" className="hover:text-neutral-400 transition-colors">{tr("HOME")}</Link>
           <span className="mx-2">/</span>
-          <span className="text-neutral-400">MIXER</span>
+          <span className="text-neutral-400">{tr("MIXER")}</span>
         </div>
 
         {/* Page header */}
         <div className="flex items-end justify-between gap-4 fade-up" style={{ animationDelay: "0.05s" }}>
           <div>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-2">Privacy Layer</span>
-            <h1 className="text-3xl font-bold tracking-tight">Privacy Mixer</h1>
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-2">{tr("Privacy Layer")}</span>
+            <h1 className="text-3xl font-bold tracking-tight">{tr("Privacy Mixer")}</h1>
             <p className="text-neutral-500 text-sm mt-2 max-w-md">
-              Split sensitive tasks across agents — no single agent sees the full picture.
-            </p>
+              {" " + tr("Split sensitive tasks across agents — no single agent sees the full picture.") + " "}</p>
           </div>
           <Link
             href="/mixer/new"
             className="px-5 py-2.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all flex-shrink-0"
           >
-            + New Session
-          </Link>
+            {" " + tr("+ New Session") + " "}</Link>
         </div>
 
         {/* Filters */}
@@ -89,7 +94,7 @@ export default function MixerListPage() {
                   : "border-neutral-800/50 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700/60 bg-neutral-900/30"
               }`}
             >
-              {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+              {s === "all" ? tr("All") : display(s.charAt(0).toUpperCase() + s.slice(1))}
               {s !== "all" && (
                 <span className="ml-1.5 text-neutral-600">
                   {sessions.filter((ss) => ss.status === s).length}
@@ -102,7 +107,7 @@ export default function MixerListPage() {
         {loading && (
           <div className="flex items-center gap-3 py-12 justify-center fade-up">
             <div className="w-4 h-4 border-2 border-violet-500/30 border-t-violet-400 rounded-full animate-spin" />
-            <span className="text-neutral-600 text-sm font-mono">Loading sessions...</span>
+            <span className="text-neutral-600 text-sm font-mono">{tr("Loading sessions...")}</span>
           </div>
         )}
 
@@ -115,14 +120,12 @@ export default function MixerListPage() {
               </svg>
             </div>
             <p className="text-neutral-400 text-sm">
-              No mixer sessions yet. Create your first privacy-preserving task.
-            </p>
+              {" " + tr("No mixer sessions yet. Create your first privacy-preserving task.") + " "}</p>
             <Link
               href="/mixer/new"
               className="inline-block mt-2 px-6 py-2.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all"
             >
-              Create Session
-            </Link>
+              {" " + tr("Create Session") + " "}</Link>
           </div>
         )}
 
@@ -133,7 +136,7 @@ export default function MixerListPage() {
               const statusColor = STATUS_COLORS[s.status] || STATUS_COLORS.draft;
               const progress = s.chunk_count
                 ? `${s.completed_chunk_count ?? 0}/${s.chunk_count}`
-                : "0 chunks";
+                : tr("0 chunks");
               return (
                 <Link
                   key={s.id}
@@ -148,17 +151,17 @@ export default function MixerListPage() {
                         <div className="text-neutral-600 text-xs mt-1.5 truncate">{s.description}</div>
                       )}
                       <div className="flex items-center gap-2 mt-3">
-                        <span className="text-neutral-500 text-[11px] font-mono">{progress} chunks</span>
+                        <span className="text-neutral-500 text-[11px] font-mono">{progress} {" " + tr("chunks")}</span>
                         <span className="text-neutral-800">&middot;</span>
-                        <span className="text-neutral-600 text-[11px] font-mono">{s.fragment_count} fragments</span>
+                        <span className="text-neutral-600 text-[11px] font-mono">{s.fragment_count.toLocaleString(locale)} {" " + tr("fragments")}</span>
                         <span className="text-neutral-800">&middot;</span>
-                        <span className="text-neutral-600 text-[11px] font-mono">TTL {s.fragment_ttl_hours}h</span>
+                        <span className="text-neutral-600 text-[11px] font-mono">{tr("TTL") + " "}{s.fragment_ttl_hours.toLocaleString(locale)}{tr("h")}</span>
                         <span className="text-neutral-800">&middot;</span>
-                        <span className="text-neutral-600 text-[11px] font-mono">{timeAgo(s.created_at)}</span>
+                        <span className="text-neutral-600 text-[11px] font-mono">{timeAgo(s.created_at, locale)}</span>
                       </div>
                     </div>
                     <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono flex-shrink-0 ${statusColor}`}>
-                      {st.label}
+                      {display(st.label)}
                     </span>
                   </div>
                 </Link>
