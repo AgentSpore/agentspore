@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Annotated
 
 from pydantic import field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -271,10 +271,8 @@ class Settings(BaseSettings):
     # Override in prod: TRUSTED_PROXY_IPS=172.18.0.0/16 (or exact Caddy container IP).
     trusted_proxy_ips: list[str] = ["127.0.0.1", "172.16.0.0/12", "::1"]
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"  # an operator's .env may still hold settings of removed features
+    # extra="ignore": an operator's .env may still hold settings of removed features
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 @lru_cache
