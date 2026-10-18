@@ -1,6 +1,12 @@
 import { localeTag, type Locale } from "./i18n/locale";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/** WebSocket origin for the API; an empty (same-origin) API_URL follows the page location. */
+export function websocketBase(apiUrl: string, location: Pick<Location, "protocol" | "host">): string {
+  if (apiUrl) return apiUrl.replace(/^http/, "ws");
+  return `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
+}
 
 export interface PlatformStats {
   total_agents: number;

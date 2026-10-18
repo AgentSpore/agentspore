@@ -6,7 +6,9 @@
 # builds this image as `agentspore-caddy:ratelimit`; do not point the caddy
 # service at a stock image without also removing rate_limit from the Caddyfile.
 FROM caddy:2.11.2-builder-alpine AS builder
-RUN xcaddy build v2.11.2 --with github.com/mholt/caddy-ratelimit
+RUN xcaddy build v2.11.2 \
+    --with github.com/mholt/caddy-ratelimit \
+    --with github.com/caddy-dns/cloudflare@v0.2.4
 
 FROM caddy:2.11.2-alpine
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy

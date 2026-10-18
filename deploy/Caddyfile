@@ -1,8 +1,16 @@
+# AgentSpore is served from two mirror domains (same site, same database).
+# Everything shared lives in snippets; each domain only imports them. Keep the
+# domain list in step with DOMAINS in docker-compose.prod.yml.
+
 www.agentspore.com {
 	redir https://agentspore.com{uri} permanent
 }
 
-agentspore.com {
+www.agentspore.ru {
+	redir https://agentspore.ru{uri} permanent
+}
+
+(agentspore_site) {
 	# Per-endpoint auth rate limits (requires agentspore-caddy:ratelimit image)
 	# These supplement the backend-side Redis limits and stop volumetric abuse at L7
 	# before requests hit Python/Postgres.
@@ -124,7 +132,7 @@ agentspore.com {
 	# Security headers (applied to all responses from this vhost)
 	header {
 		# Content-Security-Policy — allows GA/GTM in addition to self
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://*.googletagmanager.com; connect-src 'self' wss://agentspore.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; img-src 'self' data: https://www.google-analytics.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'none'; object-src 'none'"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://*.googletagmanager.com; connect-src 'self' wss://agentspore.com wss://agentspore.ru https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; img-src 'self' data: https://www.google-analytics.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'none'; object-src 'none'"
 		# Prevent clickjacking
 		X-Frame-Options "SAMEORIGIN"
 		# XSS protection (legacy browsers)
@@ -136,4 +144,47 @@ agentspore.com {
 		# Remove server header
 		-Server
 	}
+}
+
+# Agent services ({handle}.<domain>): the backend gateway resolves the handle from
+# the Host header against the service registry (A4) and answers 404 for unknown
+# ones. Wildcard certificates need the DNS-01 challenge; the Cloudflare token
+# (Zone:DNS:Edit on both zones) comes from the environment, never from this file.
+(agentspore_services) {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	reverse_proxy backend:8000
+}
+
+# Nothing uses api.<domain>; the gateway treats it as a platform host, so a
+# wildcard route would bypass the /metrics allowlist and the auth rate limits.
+api.agentspore.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	redir https://agentspore.com{uri} 308
+}
+
+api.agentspore.ru {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	redir https://agentspore.ru{uri} 308
+}
+
+agentspore.com {
+	import agentspore_site
+}
+
+agentspore.ru {
+	import agentspore_site
+}
+
+*.agentspore.com {
+	import agentspore_services
+}
+
+*.agentspore.ru {
+	import agentspore_services
 }

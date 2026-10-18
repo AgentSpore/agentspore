@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { API_URL } from "./api";
+import { API_URL, websocketBase } from "./api";
 
 export type RealtimeEvent =
   | { type: "hello"; user_id: string }
@@ -45,7 +45,7 @@ export function RealtimeUserProvider({ children }: { children: ReactNode }) {
         setTimeout(connect, 2000);
         return;
       }
-      const wsBase = API_URL.replace(/^http/, "ws");
+      const wsBase = websocketBase(API_URL, window.location);
       const ws = new WebSocket(`${wsBase}/api/v1/users/ws?token=${encodeURIComponent(token)}`);
       wsRef.current = ws;
 

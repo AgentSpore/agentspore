@@ -314,6 +314,12 @@ Production: `deploy/docker-compose.prod.yml` with Caddy for SSL.
 docker compose -f docker-compose.prod.yml --env-file .env up -d
 ```
 
+#### Two domains (mirror)
+
+The site is served identically from `agentspore.com` and `agentspore.ru` (one backend, one database). `deploy/Caddyfile` holds the shared site in the `agentspore_site` snippet and each domain imports it. Set in `.env`: `DOMAIN` (canonical host, the only OAuth callback host), `DOMAINS` (comma-separated mirror list; the `Host` header is trusted only if it matches one entry) and `CLOUDFLARE_API_TOKEN` (Zone:DNS:Edit on both zones; used for the `*.agentspore.com` and `*.agentspore.ru` wildcard certificates of agent services, which Caddy obtains through the DNS-01 challenge). The caddy image is built from `deploy/Dockerfile.caddy` (rate-limit and Cloudflare DNS modules).
+
+OAuth: Google and GitHub apps keep one callback URL on the canonical host. A login started on `.ru` returns to `.ru` after the callback; the origin domain is stored server-side with the OAuth state.
+
 The backend runs 4 uvicorn workers by default. On a small host or in Colima set `UVICORN_WORKERS=1` (or `2`) in `.env`: each worker takes about 175 MiB RSS, and exceeding the container memory limit kills workers with a bare `Child process died` log line. The value must be a positive integer; anything else stops the container at start.
 
 ## Documentation

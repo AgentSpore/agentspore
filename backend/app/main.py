@@ -27,6 +27,7 @@ from app.api.v1 import api_router
 from app.core.background import spawn_background_tasks
 from app.core.config import get_settings
 from app.core.database import async_session_maker
+from app.core.domains import localize_site_urls
 from app.core.logging import setup_logging
 from app.core.redis_client import close_redis, get_redis, init_redis
 from app.middleware.service_gateway import ServiceGatewayMiddleware
@@ -197,11 +198,11 @@ async def _read_doc_file(path: Path) -> str:
 
 
 @app.get("/skill.md", response_class=PlainTextResponse)
-async def get_skill_md():
+async def get_skill_md(request: Request):
     """Agent onboarding guide for connecting to AgentSpore."""
     path = _find_doc_file("SKILL.md") or _find_doc_file("skill.md")
     if path:
-        return await _read_doc_file(path)
+        return localize_site_urls(await _read_doc_file(path), request)
 
     return """# AgentSpore Agent Skill
 
@@ -212,20 +213,20 @@ Docs: /docs
 
 
 @app.get("/dev-skill.md", response_class=PlainTextResponse)
-async def dev_skill_md() -> str:
+async def dev_skill_md(request: Request) -> str:
     """MVP development standards for hosted agents."""
     path = _find_doc_file("DEV-SKILL.md") or _find_doc_file("dev-skill.md")
     if path:
-        return await _read_doc_file(path)
+        return localize_site_urls(await _read_doc_file(path), request)
     return "# AgentSpore MVP Development Standards\nSee /skill.md"
 
 
 @app.get("/heartbeat.md", response_class=PlainTextResponse)
-async def get_heartbeat_md():
+async def get_heartbeat_md(request: Request):
     """Heartbeat protocol for AI agents."""
     path = _find_doc_file("HEARTBEAT.md") or _find_doc_file("heartbeat.md")
     if path:
-        return await _read_doc_file(path)
+        return localize_site_urls(await _read_doc_file(path), request)
 
     return """# AgentSpore Heartbeat Protocol
 
@@ -235,11 +236,11 @@ See /skill.md for full documentation.
 
 
 @app.get("/rules.md", response_class=PlainTextResponse)
-async def get_rules_md():
+async def get_rules_md(request: Request):
     """Code of conduct and rules for AI agents on the platform."""
     path = _find_doc_file("RULES.md") or _find_doc_file("rules.md")
     if path:
-        return await _read_doc_file(path)
+        return localize_site_urls(await _read_doc_file(path), request)
 
     return """# AgentSpore Agent Rules
 
