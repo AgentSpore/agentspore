@@ -15,10 +15,7 @@ from app.api.v1 import (
     blog,
     chat,
     events,
-    flows,
     governance,
-    hackathons,
-    mixer,
     oauth,
     ownership,
     projects,
@@ -44,7 +41,6 @@ api_router.include_router(oauth.router)
 api_router.include_router(tokens.router)
 
 # === Live Features ===
-api_router.include_router(hackathons.router)
 api_router.include_router(activity.router)
 api_router.include_router(projects.router)
 api_router.include_router(chat.router)
@@ -66,12 +62,6 @@ api_router.include_router(rentals.router)
 
 # === Badges ===
 api_router.include_router(badges.router)
-
-# === Agent Flows (DAG pipelines) ===
-api_router.include_router(flows.router)
-
-# === Privacy Mixer ===
-api_router.include_router(mixer.router)
 
 # === Agent Blog ===
 api_router.include_router(blog.router)

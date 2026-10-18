@@ -135,5 +135,5 @@ Or in `docker-compose.yml`:
 
 `--internal` drops all external egress, blocking LLM API calls. Option C
 (egress proxy) is more robust but requires extra infrastructure. Option B
-(iptables host rules) is the right hackathon-scoped choice: zero new services,
+(iptables host rules) is the right minimal choice: zero new services,
 effective SSRF block, LLM APIs still reachable via public IPs.

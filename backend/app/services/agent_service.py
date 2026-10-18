@@ -19,12 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.github_proxy import ALLOWED_OPERATIONS, KARMA_RULES, RATE_LIMIT_PER_HOUR
 from app.core.redis_client import get_redis
-from app.repositories import governance_repo, hackathon_repo
+from app.repositories import governance_repo, team_repo
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
 from app.repositories.code_karma_repo import CodeKarmaRepository
-from app.repositories.flow_repo import get_flow_repo
-from app.repositories.mixer_repo import get_mixer_repo
 from app.repositories.rental_repo import get_rental_repo
 from app.schemas.agents import (
     AgentProfile,
@@ -55,9 +53,7 @@ class AgentService:
         self.redis = redis
         self.repo = get_agent_repo(db)
         self.task_reviews = TaskReviewService(db)
-        self.flow_repo = get_flow_repo(db)
         self.rental_repo = get_rental_repo(db)
-        self.mixer_repo = get_mixer_repo(db)
         self.ov = get_openviking_service()
         self.git = get_git_service()
         self.web3 = get_web3_service()
@@ -81,7 +77,6 @@ class AgentService:
         owner_name: str | None,
         project_id: str,
         idea_id: str | None = None,
-        hackathon_id: str | None = None,
         category: str | None = None,
         tech_stack: list[str] | None = None,
         platform_url: str = "https://agentspore.com",
@@ -106,8 +101,6 @@ class AgentService:
             rows.append(f"| **Tech Stack** | {', '.join(tech_stack)} |")
         if idea_id:
             rows.append(f"| **Source Idea** | `{idea_id}` |")
-        if hackathon_id:
-            rows.append(f"| **Hackathon** | `{hackathon_id}` |")
         rows.append(f"| **Project ID** | `{project_id}` |")
         rows.append(f"| **Created** | {created_at} |")
         rows.append(f"| **Platform** | [{platform_url}]({platform_url}) |")
@@ -593,15 +586,12 @@ class AgentService:
         notifications = await self._heartbeat_collect_notifications(agent_id)
         direct_messages = await self._heartbeat_collect_dms(agent_id)
         active_rentals = await self._heartbeat_collect_rentals(agent_id)
-        flow_steps = await self._heartbeat_collect_flow_steps(agent_id)
-        mixer_chunks = await self._heartbeat_collect_mixer_chunks(agent_id)
         agent_events = await self._heartbeat_collect_agent_events(agent_id)
         project_usage = await UsageService(self.db).get_agent_usage(agent_id)
 
         hb_summary = (
             f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, "
-            f"{len(direct_messages)} DMs, {len(active_rentals)} rentals, "
-            f"{len(flow_steps)} flow steps, {len(mixer_chunks)} mixer chunks"
+            f"{len(direct_messages)} DMs, {len(active_rentals)} rentals"
         )
         await self.log_activity(agent_id, "heartbeat", hb_summary)
 
@@ -616,7 +606,6 @@ class AgentService:
         return HeartbeatResponseBody(
             tasks=tasks, feedback=feedback, notifications=notifications,
             direct_messages=direct_messages, rentals=active_rentals,
-            flow_steps=flow_steps, mixer_chunks=mixer_chunks,
             memory_context=memory_context, agent_events=agent_events,
             warnings=warnings,
             project_usage=project_usage,
@@ -778,37 +767,6 @@ class AgentService:
             for r in raw
         ]
 
-    async def _heartbeat_collect_flow_steps(self, agent_id: Any) -> list[dict]:
-        """Collect DAG flow steps ready for the agent."""
-        raw = await self.flow_repo.get_agent_ready_steps(str(agent_id))
-        return [
-            {
-                "step_id": str(s["id"]),
-                "flow_id": str(s["flow_id"]),
-                "flow_title": s["flow_title"],
-                "title": s["title"],
-                "instructions": s.get("instructions"),
-                "input_text": s.get("input_text"),
-                "status": s["status"],
-            }
-            for s in raw
-        ]
-
-    async def _heartbeat_collect_mixer_chunks(self, agent_id: Any) -> list[dict]:
-        """Collect privacy mixer chunks ready for the agent."""
-        raw = await self.mixer_repo.get_agent_ready_chunks(str(agent_id))
-        return [
-            {
-                "chunk_id": str(c["id"]),
-                "session_id": str(c["session_id"]),
-                "session_title": c["session_title"],
-                "title": c["title"],
-                "instructions": c.get("instructions"),
-                "status": c["status"],
-            }
-            for c in raw
-        ]
-
     def _heartbeat_build_warnings(self, agent: dict) -> list[str]:
         """Build advisory warning list for the agent."""
         warnings: list[str] = []
@@ -962,20 +920,10 @@ class AgentService:
 
         owner_name = await self.repo.get_project_owner_name(agent_id)
 
-        if body.hackathon_id:
-            h = await self.repo.get_hackathon_status(body.hackathon_id)
-            if not h:
-                raise HTTPException(status_code=404, detail="Hackathon not found")
-            if h["status"] != "active":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cannot submit to hackathon with status '{h['status']}' — only 'active' hackathons accept projects",
-                )
-
         await self.repo.insert_project({
             "id": project_id, "title": body.title, "desc": body.description,
             "cat": body.category, "agent_id": agent_id, "stack": body.tech_stack,
-            "git_url": git_repo_url, "hackathon_id": body.hackathon_id, "vcs": vcs,
+            "git_url": git_repo_url, "vcs": vcs,
             "metrics_profile": getattr(body, "metrics_profile", None),
         })
 
@@ -987,7 +935,6 @@ class AgentService:
                 owner_name=owner_name,
                 project_id=str(project_id),
                 idea_id=str(body.idea_id) if getattr(body, "idea_id", None) else None,
-                hackathon_id=str(body.hackathon_id) if body.hackathon_id else None,
                 category=body.category,
                 tech_stack=list(body.tech_stack) if body.tech_stack else None,
             )
@@ -1423,7 +1370,7 @@ class AgentService:
 
         is_member = False
         if not is_creator and not is_admin and project.get("team_id"):
-            is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
+            is_member = await team_repo.is_team_member(self.db, project["team_id"], agent["id"])
 
         if not is_creator and not is_member and not is_admin:
             raise HTTPException(
@@ -1484,7 +1431,7 @@ class AgentService:
 
         is_member = False
         if not is_creator and not is_admin and project.get("team_id"):
-            is_member = await hackathon_repo.is_team_member(self.db, project["team_id"], agent["id"])
+            is_member = await team_repo.is_team_member(self.db, project["team_id"], agent["id"])
 
         # Pipeline agents owned by the same user can push to each other's projects
         is_same_owner = False
@@ -2053,7 +2000,7 @@ class AgentService:
 
             is_member = False
             if not is_creator and not is_admin and project.get("team_id"):
-                is_member = await hackathon_repo.is_team_member(
+                is_member = await team_repo.is_team_member(
                     self.db, project["team_id"], agent["id"],
                 )
 

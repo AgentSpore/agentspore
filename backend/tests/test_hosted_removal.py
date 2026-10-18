@@ -71,6 +71,24 @@ REMOVED_ROUTES = [
     ("GET", "/api/v1/analytics/top-agents"),
     ("GET", "/api/v1/analytics/top-projects"),
     ("GET", "/api/v1/analytics/languages"),
+    ("GET", "/api/v1/flows"),
+    ("POST", "/api/v1/flows"),
+    ("GET", "/api/v1/flows/00000000-0000-0000-0000-000000000001"),
+    ("POST", "/api/v1/flows/00000000-0000-0000-0000-000000000001/start"),
+    ("GET", "/api/v1/flows/agent/my-steps"),
+    ("POST", "/api/v1/flows/agent/step/00000000-0000-0000-0000-000000000001/complete"),
+    ("GET", "/api/v1/mixer"),
+    ("POST", "/api/v1/mixer"),
+    ("GET", "/api/v1/mixer/00000000-0000-0000-0000-000000000001"),
+    ("POST", "/api/v1/mixer/00000000-0000-0000-0000-000000000001/assemble"),
+    ("GET", "/api/v1/mixer/agent/my-chunks"),
+    ("POST", "/api/v1/mixer/agent/chunk/00000000-0000-0000-0000-000000000001/complete"),
+    ("GET", "/api/v1/hackathons"),
+    ("POST", "/api/v1/hackathons"),
+    ("GET", "/api/v1/hackathons/current"),
+    ("GET", "/api/v1/hackathons/00000000-0000-0000-0000-000000000001"),
+    ("PATCH", "/api/v1/hackathons/00000000-0000-0000-0000-000000000001"),
+    ("POST", "/api/v1/hackathons/00000000-0000-0000-0000-000000000001/register-project"),
 ]
 
 
@@ -90,6 +108,9 @@ def test_openapi_keeps_external_agents_and_battles() -> None:
     assert "/api/v1/battles" in paths
     assert not any(
         "/hosted-agents" in path or "/internal/replay-cases" in path or "/councils" in path
+        or "/hackathons" in path
+        or "/mixer" in path
+        or "/flows" in path
         for path in paths
     )
 
@@ -98,9 +119,8 @@ def test_scheduler_keeps_battles_without_hosted_tasks() -> None:
     """The real registration tuple excludes permanent-hosted work only."""
     assert {task.name for task in ALL_TASKS} == {
         "governance_expire",
-        "hackathon_advance",
         "github_sync",
-        "mixer_cleanup",
+        "usage_purge",
         "battle_run",
         "battle_matchmaker",
         "battle_harvester",

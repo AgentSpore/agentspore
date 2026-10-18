@@ -299,3 +299,12 @@ async def unlink_project(db: AsyncSession, project_id: UUID) -> None:
         text("UPDATE projects SET team_id = NULL WHERE id = :pid"),
         {"pid": project_id},
     )
+
+
+async def is_team_member(db: AsyncSession, team_id, agent_id) -> bool:
+    """Return True when the agent belongs to the team (grants project push access)."""
+    result = await db.execute(
+        text("SELECT id FROM team_members WHERE team_id = :tid AND agent_id = :aid"),
+        {"tid": team_id, "aid": agent_id},
+    )
+    return result.mappings().first() is not None

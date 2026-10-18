@@ -78,9 +78,7 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
-from app.repositories.mixer_repo import MixerRepository
 from app.services.github_service import get_github_service
-from app.services.mixer_service import MixerService
 from app.services.openviking_service import get_openviking_service
 from app.services.usage_service import UsageService
 
@@ -226,7 +224,7 @@ class ScheduledTask(ABC):
 
         A transient error must NOT end renewal for the rest of the cycle: a
         single dropped round-trip used to fall through the `while True` and
-        stop renewing for up to `interval_s` (3600s for mixer_cleanup). The
+        stop renewing for up to `interval_s` (3600s for usage_purge). The
         try/except now sits INSIDE the loop, so one failed renewal just logs
         and is retried on the next tick.
         """
@@ -303,81 +301,6 @@ class GovernanceExpireTask(ScheduledTask):
             await db.commit()
             if result.rowcount:
                 logger.info("Governance TTL: expired {} items", result.rowcount)
-
-
-class HackathonAdvanceTask(ScheduledTask):
-    """upcoming → active → voting → completed auto-advance."""
-
-    name = "hackathon_advance"
-    interval_s = 60
-    lock_ttl_s = lock_ttl_with_headroom(interval_s)  # see module docstring
-
-    async def run_once(self) -> None:
-        async with async_session_maker() as db:
-            r1 = await db.execute(
-                text("""
-                    UPDATE hackathons SET status = 'active', updated_at = NOW()
-                    WHERE status = 'upcoming'
-                      AND starts_at <= NOW()
-                      AND (
-                        min_projects_to_start IS NULL
-                        OR (SELECT COUNT(*) FROM projects WHERE hackathon_id = hackathons.id)
-                           >= min_projects_to_start
-                      )
-                """)
-            )
-            if r1.rowcount:
-                logger.info("Hackathon lifecycle: {} upcoming → active", r1.rowcount)
-
-            r2 = await db.execute(
-                text("""
-                    UPDATE hackathons SET status = 'voting', updated_at = NOW()
-                    WHERE status = 'active' AND ends_at <= NOW()
-                """)
-            )
-            if r2.rowcount:
-                logger.info("Hackathon lifecycle: {} active → voting", r2.rowcount)
-
-            voting = await db.execute(
-                text("""
-                    SELECT id FROM hackathons
-                    WHERE status = 'voting' AND voting_ends_at <= NOW()
-                """)
-            )
-            for row in voting.mappings():
-                hid = row["id"]
-                winner = await db.execute(
-                    text("""
-                        SELECT id FROM projects
-                        WHERE hackathon_id = :hid
-                          AND (votes_up + votes_down) > 0
-                        ORDER BY (
-                          (votes_up + 1.9208) / (votes_up + votes_down + 3.8416)
-                          - 1.96 * SQRT(
-                              (CAST(votes_up AS FLOAT) * votes_down) / (votes_up + votes_down) + 0.9604
-                            ) / (votes_up + votes_down + 3.8416)
-                        ) DESC
-                        LIMIT 1
-                    """),
-                    {"hid": hid},
-                )
-                winner_row = winner.mappings().first()
-                winner_id = winner_row["id"] if winner_row else None
-
-                await db.execute(
-                    text("""
-                        UPDATE hackathons
-                        SET status = 'completed', winner_project_id = :wid, updated_at = NOW()
-                        WHERE id = :hid
-                    """),
-                    {"hid": hid, "wid": winner_id},
-                )
-                logger.info(
-                    "Hackathon {} completed, winner: {}",
-                    hid, winner_id or "none",
-                )
-
-            await db.commit()
 
 
 class _PRSyncCtx(NamedTuple):
@@ -745,31 +668,19 @@ class GitHubSyncTask(ScheduledTask):
         return all_commits
 
 
-class MixerCleanupTask(ScheduledTask):
-    name = "mixer_cleanup"
+class UsagePurgeTask(ScheduledTask):
+    """Deletes service-usage visits older than the retention window."""
+
+    name = "usage_purge"
     interval_s = 3600
     lock_ttl_s = lock_ttl_with_headroom(interval_s)  # see module docstring
 
     async def run_once(self) -> None:
         async with async_session_maker() as db:
-            # Build the service directly. `get_mixer_service` is a FastAPI-DI
-            # factory: called outside a request its `repo=Depends(...)` default is
-            # the Depends marker, not a repository, so `cleanup_expired` would blow
-            # up on `self.repo.get_expired_sessions()`.
-            # Build the service directly. `get_mixer_service` is a FastAPI-DI
-            # factory: called outside a request its `repo=Depends(...)` default is
-            # the Depends marker, not a repository, so `cleanup_expired` would blow
-            # up on `self.repo.get_expired_sessions()`.
-            svc = MixerService(db, MixerRepository(db))
-            count = await svc.cleanup_expired()
             usage_count = await UsageService(db).purge_expired()
             await db.commit()
-            if count:
-                logger.info("Mixer TTL cleanup: cleaned {} sessions", count)
             if usage_count:
                 logger.info("Service usage cleanup: removed {} expired visits", usage_count)
-
-
 
 
 class BattleRunTask(ScheduledTask):
@@ -983,9 +894,8 @@ class BattleHarvesterTask(ScheduledTask):
 
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
-    HackathonAdvanceTask,
     GitHubSyncTask,
-    MixerCleanupTask,
+    UsagePurgeTask,
     BattleRunTask,
     BattleMatchmakerTask,
     BattleHarvesterTask,

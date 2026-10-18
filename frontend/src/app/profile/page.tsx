@@ -8,7 +8,7 @@ import { displayPublicLabel } from '@/lib/i18n/public';
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { API_URL, TokenPayout, Flow, FLOW_STATUS, timeAgo } from "@/lib/api";
+import { API_URL, TokenPayout, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { BlockedOwnersPanel } from "@/components/battles/BlockedOwnersPanel";
 
@@ -78,8 +78,6 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
   const [loadingUser, setLoadingUser] = useState(true);
   const [rentals, setRentals] = useState<RentalSummary[]>([]);
   const [loadingRentals, setLoadingRentals] = useState(false);
-  const [flows, setFlows] = useState<Flow[]>([]);
-  const [loadingFlows, setLoadingFlows] = useState(false);
   const [solanaInput, setSolanaInput] = useState("");
   const [solanaLoading, setSolanaLoading] = useState(false);
   const [solanaError, setSolanaError] = useState("");
@@ -106,17 +104,6 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
       .then((r) => (r.ok ? r.json() : []))
       .then((d: RentalSummary[]) => { setRentals(d); setLoadingRentals(false); })
       .catch(() => setLoadingRentals(false));
-  }, [authToken]);
-
-  useEffect(() => {
-    if (!authToken) return;
-    setLoadingFlows(true);
-    fetch(`${API_URL}/api/v1/flows`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d: Flow[]) => { setFlows(d); setLoadingFlows(false); })
-      .catch(() => setLoadingFlows(false));
   }, [authToken]);
 
   useEffect(() => {
@@ -294,68 +281,6 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                 </svg>
               </div>
             </Link>
-          </div>
-        )}
-
-        {/* My Flows */}
-        {user && (
-          <div className="space-y-4 animate-fadeUp animation-delay-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-white font-mono">{tr('lsFlows')}</h2>
-                <p className="text-neutral-500 text-xs mt-1 font-mono">{tr('multiAgentPipelines')}</p>
-              </div>
-              <div className="flex items-center gap-3">
-                {flows.filter(f => f.status === "running").length > 0 && (
-                  <span className="text-xs font-mono text-emerald-400">
-                    {new Intl.NumberFormat(localeTag(locale)).format(flows.filter(f => f.status === "running").length)} {tr('running')}</span>
-                )}
-                <Link
-                  href="/flows/new"
-                  className="text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono"
-                >
-                  {tr('new')}</Link>
-              </div>
-            </div>
-
-            {loadingFlows && <p className="text-neutral-600 text-sm font-mono">{tr('loadingFlows')}</p>}
-
-            {!loadingFlows && flows.length === 0 && (
-              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
-                {tr('noFlowsYetCreateAMultiAgentPipeline')}</div>
-            )}
-
-            {flows.length > 0 && (
-              <div className="space-y-2">
-                {flows.map((f) => {
-                  const st = FLOW_STATUS[f.status] || FLOW_STATUS.draft;
-                  const progress = f.step_count
-                    ? `${f.completed_step_count ?? 0}/${f.step_count}`
-                    : "0";
-                  return (
-                    <Link
-                      key={f.id}
-                      href={`/flows/${f.id}`}
-                      className="block bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4 hover:border-violet-500/30 transition-colors"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-white font-medium text-sm truncate font-mono">{f.title}</div>
-                          <div className="flex items-center gap-2 mt-1.5">
-                            <span className="text-neutral-500 text-xs font-mono">{progress} {tr('steps')}</span>
-                            <span className="text-neutral-700">·</span>
-                            <span className="text-neutral-600 text-xs font-mono">{timeAgo(f.created_at, locale)}</span>
-                          </div>
-                        </div>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono ${st.classes}`}>
-                          {displayPublicLabel(locale, st.label)}
-                        </span>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
           </div>
         )}
 
