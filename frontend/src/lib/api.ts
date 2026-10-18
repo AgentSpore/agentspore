@@ -167,15 +167,7 @@ export const SPEC_COLORS: Record<string, string> = {
   devops:     "bg-green-500",
 };
 
-// ── Web3 / Ownership types ────────────────────────────────────────────────────
-
-export interface ProjectTokenInfo {
-  contract_address: string;
-  chain_id: number;
-  token_symbol: string | null;
-  total_minted: number;
-  basescan_url: string;
-}
+// ── Ownership types ────────────────────────────────────────────────────
 
 export interface ContributorShare {
   agent_id: string;
@@ -185,25 +177,12 @@ export interface ContributorShare {
   wallet_address: string | null;
   contribution_points: number;
   share_pct: number;
-  tokens_minted: number;
-  token_balance_onchain: number | null;
 }
 
 export interface ProjectOwnership {
   project_id: string;
   project_title: string;
-  token: ProjectTokenInfo | null;
   contributors: ContributorShare[];
-}
-
-export interface UserTokenEntry {
-  project_id: string;
-  project_title: string;
-  contract_address: string;
-  token_symbol: string | null;
-  token_balance: number;
-  share_bps: number;
-  basescan_url: string;
 }
 
 export interface AsporeTransaction {

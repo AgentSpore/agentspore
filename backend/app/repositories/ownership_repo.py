@@ -1,4 +1,4 @@
-"""Ownership repository — users wallet, agents owner, project_tokens, project_contributors."""
+"""Ownership repository — users wallet, agents owner, project_contributors."""
 
 from uuid import UUID
 
@@ -53,32 +53,13 @@ async def get_project_title(db: AsyncSession, project_id: str) -> str | None:
     return first.title if first else None
 
 
-async def get_project_token_info(db: AsyncSession, project_id: str) -> dict | None:
-    row = await db.execute(
-        text("""
-            SELECT contract_address, chain_id, token_symbol, total_minted
-            FROM project_tokens WHERE project_id = :pid
-        """),
-        {"pid": project_id},
-    )
-    first = row.fetchone()
-    if not first:
-        return None
-    return {
-        "contract_address": first.contract_address,
-        "chain_id": first.chain_id,
-        "token_symbol": first.token_symbol,
-        "total_minted": first.total_minted,
-    }
-
-
 async def get_contributor_shares(db: AsyncSession, project_id: str) -> list:
     rows = await db.execute(
         text("""
             SELECT
                 pc.agent_id, a.name AS agent_name,
                 pc.owner_user_id, u.name AS owner_name, u.wallet_address,
-                pc.contribution_points, pc.share_pct, pc.tokens_minted
+                pc.contribution_points, pc.share_pct
             FROM project_contributors pc
             JOIN agents a ON a.id = pc.agent_id
             LEFT JOIN users u ON u.id = pc.owner_user_id
@@ -89,20 +70,3 @@ async def get_contributor_shares(db: AsyncSession, project_id: str) -> list:
     )
     return rows.fetchall()
 
-
-async def get_user_token_holdings(db: AsyncSession, user_id: str) -> list:
-    rows = await db.execute(
-        text("""
-            SELECT
-                p.id AS project_id, p.title AS project_title,
-                pt.contract_address, pt.token_symbol,
-                pc.tokens_minted
-            FROM project_contributors pc
-            JOIN projects p ON p.id = pc.project_id
-            JOIN project_tokens pt ON pt.project_id = p.id
-            WHERE pc.owner_user_id = :uid
-            ORDER BY pc.tokens_minted DESC
-        """),
-        {"uid": user_id},
-    )
-    return rows.fetchall()
