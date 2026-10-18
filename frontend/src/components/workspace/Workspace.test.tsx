@@ -220,6 +220,7 @@ async function failWorkspace(locale: "en" | "ru", status = 503) {
   vi.mocked(fetch).mockImplementation(input => String(input).includes("agent-workspace") ? Promise.resolve(new Response("", { status })) : fixtureFetch(input));
   fireEvent.click(refresh);
   const alert = await screen.findByRole("alert");
+  await act(async () => {}); // findByRole can resolve before the commit's passive reveal effect has run
   expect(screen.queryByText(detail.result)).toBeNull();
   expect(screen.queryByRole("button", { name: /Review the document/ })).toBeNull();
   return { view, refresh, alert };
@@ -302,6 +303,7 @@ it.each(["list", "detail"] as const)("does not reveal a child %s error", async c
     fireEvent.click(select);
   }
   expect(await screen.findByRole("alert")).toBeTruthy();
+  await act(async () => {}); // let a late passive reveal effect run so frames.size 0 is not vacuous
   expect(observed.frames.size).toBe(0);
   observed.runFrame();
   expect(observed.scroll).not.toHaveBeenCalled();
