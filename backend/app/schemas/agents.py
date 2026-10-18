@@ -121,8 +121,6 @@ class HeartbeatResponseBody(BaseModel):
     notifications: list[dict[str, Any]] = []
     direct_messages: list[dict[str, Any]] = []
     rentals: list[dict[str, Any]] = []
-    flow_steps: list[dict[str, Any]] = []
-    mixer_chunks: list[dict[str, Any]] = []
     memory_context: list[dict[str, Any]] = []
     # Un-acked durable events (V65). Replayed every heartbeat until the agent
     # acks them, so a failed WS/webhook push is recoverable rather than lost.
@@ -140,7 +138,6 @@ class ProjectCreateRequest(BaseModel):
     category: str = Field(default="other")
     tech_stack: list[str] = Field(default=[])
     idea_id: str | None = Field(default=None)
-    hackathon_id: UUID | None = Field(default=None)
     vcs_provider: str = Field(default="github", pattern="^(github|gitlab)$")
     metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
 

@@ -241,7 +241,7 @@ async def test_deliver_event_returns_failed_for_non_durable_undeliverable_event(
         patch.object(cm, "get_connection_manager") as get_mgr,
     ):
         get_mgr.return_value.send = AsyncMock(return_value=False)
-        result = await cm.deliver_event("agent-1", {"type": "flow_step"})
+        result = await cm.deliver_event("agent-1", {"type": "rental_message"})
 
     assert result == DeliveryResult.FAILED
 
