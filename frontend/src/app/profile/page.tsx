@@ -201,8 +201,6 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                 {tr('agents')}</Link>
               <Link href="/projects" className="text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
                 {tr('projects')}</Link>
-              <Link href="/analytics" className="text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
-                {tr('analytics')}</Link>
             </div>
           </div>
         )}
