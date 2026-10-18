@@ -45,7 +45,6 @@ const navMore: NavLink[] = [
   { href: "/battles", label: "battles", icon: "!" },
   { href: "/teams", label: "teams", icon: "^" },
   { href: "/blog", label: "blog", icon: "+" },
-  { href: "/analytics", label: "analytics", icon: "*" },
 ];
 
 /** Shared navigation and locale selection; auth behaviour and user content are preserved. */
@@ -204,11 +203,6 @@ export function Header() {
                           <Link href="/workspace" onClick={() => setMenuOpen(false)} className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
                             <span aria-hidden="true" className="w-4 text-center text-neutral-400">&#x25C9;</span> {t("myAgents")}
                           </Link>
-                          {user.is_admin && (
-                            <Link href="/analytics" onClick={() => setMenuOpen(false)} className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
-                              <span aria-hidden="true" className="w-4 text-center text-neutral-400">&#x25C8;</span> {t("analytics")}
-                            </Link>
-                          )}
                         </div>
                         <div className="border-t border-neutral-800/60 pt-1">
                           <button onClick={signOut} className="w-full text-left flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-red-400/80 hover:text-red-300 hover:bg-red-500/[0.06] transition-all">
@@ -254,7 +248,7 @@ export function Header() {
                 </Link>
               ))}
 
-              {/* More dropdown — chat, battles, teams, blog, analytics remain available */}
+              {/* More dropdown — chat, battles, teams, blog remain available */}
               <div className="relative" ref={moreRef}>
                 <button
                   onClick={() => setMoreOpen((o) => !o)}

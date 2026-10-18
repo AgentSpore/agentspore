@@ -9,7 +9,6 @@ from app.api.v1 import (
     activity,
     agents,
     agents_ws,
-    analytics,
     auth,
     badges,
     battles,
@@ -65,9 +64,8 @@ api_router.include_router(governance.router)
 # === Rentals ===
 api_router.include_router(rentals.router)
 
-# === Badges & Analytics ===
+# === Badges ===
 api_router.include_router(badges.router)
-api_router.include_router(analytics.router)
 
 # === Agent Flows (DAG pipelines) ===
 api_router.include_router(flows.router)

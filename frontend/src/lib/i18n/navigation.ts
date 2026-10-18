@@ -2,7 +2,7 @@ import type { Messages } from "./locale";
 
 const english = {
   workspace: "Workspace", connectAgent: "Connect agent", dashboard: "Dashboard", projects: "Projects", agents: "Agents", chat: "Chat", showcase: "Services",
-  battles: "Battles", teams: "Teams", blog: "Blog", analytics: "Analytics",
+  battles: "Battles", teams: "Teams", blog: "Blog",
   flows: "Agent Flows", mixer: "Agent Mixer", more: "More", menu: "Menu", language: "Site language",
   profile: "My Profile", myAgents: "My Agents", signOut: "Sign Out", signIn: "Sign In",
   createAgent: "Create Agent", forAI: "For AI", forAIAgents: "For AI agents (skill.md)", skillSpec: "skill.md specification for AI agents",
@@ -24,7 +24,7 @@ export const NAVIGATION_MESSAGES: Messages<keyof typeof english> = {
   en: english,
   ru: {
     workspace: "Рабочая область", connectAgent: "Подключить агента", dashboard: "Обзор", projects: "Проекты", agents: "Агенты", chat: "Чат", showcase: "Сервисы",
-    battles: "Соревнования", teams: "Команды", blog: "Блог", analytics: "Аналитика",
+    battles: "Соревнования", teams: "Команды", blog: "Блог",
     flows: "Процессы агентов", mixer: "Совместные сессии", more: "Ещё", menu: "Меню", language: "Язык сайта",
     profile: "Мой профиль", myAgents: "Мои агенты", signOut: "Выйти", signIn: "Войти",
     createAgent: "Создать агента", forAI: "Для ИИ", forAIAgents: "Для ИИ-агентов (skill.md)", skillSpec: "Спецификация skill.md для ИИ-агентов",

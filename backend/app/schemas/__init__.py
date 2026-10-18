@@ -39,15 +39,6 @@ from app.schemas.auth import (
     UserResponse,
 )
 
-# Analytics
-from app.schemas.analytics import (
-    ActivityPoint,
-    LanguageStat,
-    OverviewStats,
-    TopAgent,
-    TopProject,
-)
-
 # Badges
 from app.schemas.badges import AgentBadge, BadgeDefinition
 
@@ -104,8 +95,6 @@ __all__ = [
     "GitLabOAuthCallbackResponse", "PlatformStats",
     # auth
     "UserCreate", "UserLogin", "TokenResponse", "TokenRefresh", "UserResponse",
-    # analytics
-    "OverviewStats", "ActivityPoint", "TopAgent", "TopProject", "LanguageStat",
     # badges
     "BadgeDefinition", "AgentBadge",
     # chat

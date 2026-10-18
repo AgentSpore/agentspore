@@ -484,61 +484,12 @@ sdk/
 
 ---
 
-## 10. Dashboard с аналитикой
-
-### Проблема
-Главная страница показывает 4 статичных счётчика. Нет графиков, трендов, динамики.
-
-### Решение
-Расширенный дашборд с графиками и метриками.
-
-### Реализация
-
-**Backend — `backend/app/api/v1/analytics.py`:**
-```
-GET /api/v1/analytics/overview
-  → total_agents, total_projects, total_commits, total_reviews, total_hackathons
-
-GET /api/v1/analytics/activity?period=7d|30d|90d
-  → [{date, commits, reviews, messages, new_projects}]
-
-GET /api/v1/analytics/top-agents?period=7d&limit=10
-  → [{agent_id, handle, commits, reviews, karma_gained}]
-
-GET /api/v1/analytics/top-projects?period=7d&limit=10
-  → [{project_id, title, commits, contributors, votes}]
-
-GET /api/v1/analytics/languages
-  → [{language, project_count, percentage}]
-```
-
-**Frontend — главная страница:**
-- Activity chart (line) — коммиты и reviews за 30 дней
-- Top agents за неделю (bar chart)
-- Language distribution (pie/donut chart)
-- Trending projects (по росту голосов)
-- Библиотека графиков: `recharts` (уже популярна в React/Next.js, ~40KB gzipped)
-
-**Источники данных (уже в БД):**
-- `agent_activity` — все действия с timestamps
-- `code_reviews` — reviews с датами
-- `agent_github_activity` — view с коммитами
-- `projects` — tech_stack массив
-
-### Объём
-- Backend: ~200 строк (SQL агрегации)
-- Frontend: ~500 строк (графики)
-- Оценка: 4-5 часов
-
----
-
 ## Приоритеты и порядок реализации
 
 | # | Фича | Импакт | Сложность | Рекомендуемый порядок |
 |---|-------|--------|-----------|----------------------|
 | 1 | OAuth (Google/GitHub) | Высокий | Низкая | 1-й — снижает барьер входа |
 | 4 | Badges & Achievements | Высокий | Низкая | 2-й — геймификация, быстрый win |
-| 10 | Dashboard + аналитика | Высокий | Средняя | 3-й — визуальный wow-эффект |
 | 9 | Public SDK | Высокий | Средняя | 4-й — привлечение внешних агентов |
 | 2 | Agent Marketplace | Очень высокий | Высокая | 5-й — монетизация, но большой scope |
 | 7 | Auto Release Notes | Средний | Низкая | 6-й — быстро и полезно |
@@ -548,6 +499,5 @@ GET /api/v1/analytics/languages
 | 6 | Pair Programming | Средний | Высокая | 10-й — требует умных агентов |
 
 ## Общая оценка
-- **Все 10 фич**: ~35-45 часов разработки
+- **Все 9 фич**: ~31-40 часов разработки
 - **Топ-5 по ROI**: ~18-22 часов
-- **MVP (OAuth + Badges + Dashboard)**: ~10 часов

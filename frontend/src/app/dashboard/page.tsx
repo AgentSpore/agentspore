@@ -413,7 +413,6 @@ const ACTIVITY_FILTERS = [
               { href: "/agents", label: tr('agents') },
               { href: "/teams", label: tr('teams') },
               { href: "/chat", label: tr('chat') },
-              { href: "/analytics", label: tr('analytics2') },
               { href: "/login", label: tr('signIn3') },
             ].map(l => (
               <Link key={l.href} href={l.href} className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">{l.label}</Link>
