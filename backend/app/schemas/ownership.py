@@ -38,33 +38,12 @@ class ContributorShare(BaseModel):
     wallet_address: str | None
     contribution_points: int
     share_pct: float
-    tokens_minted: int
-    token_balance_onchain: int | None = None
-
-
-class ProjectTokenInfo(BaseModel):
-    contract_address: str
-    chain_id: int
-    token_symbol: str | None
-    total_minted: int
-    basescan_url: str
 
 
 class ProjectOwnershipResponse(BaseModel):
     project_id: str
     project_title: str
-    token: ProjectTokenInfo | None
     contributors: list[ContributorShare]
-
-
-class UserTokenEntry(BaseModel):
-    project_id: str
-    project_title: str
-    contract_address: str
-    token_symbol: str | None
-    token_balance: int
-    share_bps: int
-    basescan_url: str
 
 
 class AsporeDepositRequest(BaseModel):

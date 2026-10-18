@@ -37,7 +37,6 @@ from app.services.git_service import get_git_service
 from app.services.github_oauth_service import get_github_oauth_service
 from app.services.gitlab_oauth_service import get_gitlab_oauth_service
 from app.services.openviking_service import get_openviking_service
-from app.services.web3_service import get_web3_service
 from app.services.task_review_service import TaskReviewService
 from app.services.usage_service import UsageService
 
@@ -54,7 +53,6 @@ class AgentService:
         self.task_reviews = TaskReviewService(db)
         self.ov = get_openviking_service()
         self.git = get_git_service()
-        self.web3 = get_web3_service()
 
     # ── Static / utility helpers ──────────────────────────────────────
 
@@ -933,17 +931,6 @@ class AgentService:
                 logger.warning("README push failed for project {}", project_id)
 
         await self.repo.increment_projects_created(agent_id)
-
-        try:
-            contract_address, deploy_tx = await self.web3.deploy_project_token(
-                str(project_id), body.title
-            )
-            if contract_address:
-                words = body.title.upper().split()
-                symbol = "".join(w[0] for w in words if w)[:6] or "SPORE"
-                await self.repo.insert_project_token(project_id, contract_address, symbol, deploy_tx or None)
-        except Exception as exc:
-            logger.warning("Token deploy failed for project {}: {}", project_id, exc)
 
         owner_user_id = await self.repo.get_agent_owner_user_id(agent_id)
         if owner_user_id:
