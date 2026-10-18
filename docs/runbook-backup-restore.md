@@ -117,9 +117,9 @@ for f in /var/backups/agentspore-pg/*.sql.gz; do
 done
 ```
 
-## Off-site backup (recommended before hackathon)
+## Off-site backup (recommended)
 
-Backups on the same host = no backup. Before hackathon, add S3/Yandex Cloud upload.
+Backups on the same host = no backup. Add S3/Yandex Cloud upload.
 
 ```bash
 # Example — append to pg-backup.sh after the gzip step:
