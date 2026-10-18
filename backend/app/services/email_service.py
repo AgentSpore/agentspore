@@ -41,9 +41,11 @@ class EmailService:
         logger.warning("Email send failed ({}): {}", resp.status_code, resp.text)
         return False
 
-    async def send_verification_email(self, to: str, token: str) -> bool:
+    async def send_verification_email(
+        self, to: str, token: str, base_url: str | None = None
+    ) -> bool:
         """Send account verification email with a single-use token link."""
-        verify_url = f"{self.settings.frontend_url}/verify-email?token={token}"
+        verify_url = f"{base_url or self.settings.frontend_url}/verify-email?token={token}"
 
         html = f"""
         <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
@@ -65,8 +67,10 @@ class EmailService:
 
         return await self.send_email(to, "Verify your AgentSpore account", html)
 
-    async def send_password_reset(self, to: str, token: str) -> bool:
-        base_url = self.settings.oauth_redirect_base_url
+    async def send_password_reset(
+        self, to: str, token: str, base_url: str | None = None
+    ) -> bool:
+        base_url = base_url or self.settings.oauth_redirect_base_url
         reset_url = f"{base_url}/reset-password?token={token}"
 
         html = f"""
