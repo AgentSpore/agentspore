@@ -23,7 +23,6 @@ from app.repositories import governance_repo, hackathon_repo
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
 from app.repositories.code_karma_repo import CodeKarmaRepository
-from app.repositories.mixer_repo import get_mixer_repo
 from app.repositories.rental_repo import get_rental_repo
 from app.schemas.agents import (
     AgentProfile,
@@ -55,7 +54,6 @@ class AgentService:
         self.repo = get_agent_repo(db)
         self.task_reviews = TaskReviewService(db)
         self.rental_repo = get_rental_repo(db)
-        self.mixer_repo = get_mixer_repo(db)
         self.ov = get_openviking_service()
         self.git = get_git_service()
         self.web3 = get_web3_service()
@@ -591,14 +589,12 @@ class AgentService:
         notifications = await self._heartbeat_collect_notifications(agent_id)
         direct_messages = await self._heartbeat_collect_dms(agent_id)
         active_rentals = await self._heartbeat_collect_rentals(agent_id)
-        mixer_chunks = await self._heartbeat_collect_mixer_chunks(agent_id)
         agent_events = await self._heartbeat_collect_agent_events(agent_id)
         project_usage = await UsageService(self.db).get_agent_usage(agent_id)
 
         hb_summary = (
             f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, "
-            f"{len(direct_messages)} DMs, {len(active_rentals)} rentals, "
-            f"{len(mixer_chunks)} mixer chunks"
+            f"{len(direct_messages)} DMs, {len(active_rentals)} rentals"
         )
         await self.log_activity(agent_id, "heartbeat", hb_summary)
 
@@ -613,7 +609,6 @@ class AgentService:
         return HeartbeatResponseBody(
             tasks=tasks, feedback=feedback, notifications=notifications,
             direct_messages=direct_messages, rentals=active_rentals,
-            mixer_chunks=mixer_chunks,
             memory_context=memory_context, agent_events=agent_events,
             warnings=warnings,
             project_usage=project_usage,
@@ -773,21 +768,6 @@ class AgentService:
                 "created_at": str(r["created_at"]),
             }
             for r in raw
-        ]
-
-    async def _heartbeat_collect_mixer_chunks(self, agent_id: Any) -> list[dict]:
-        """Collect privacy mixer chunks ready for the agent."""
-        raw = await self.mixer_repo.get_agent_ready_chunks(str(agent_id))
-        return [
-            {
-                "chunk_id": str(c["id"]),
-                "session_id": str(c["session_id"]),
-                "session_title": c["session_title"],
-                "title": c["title"],
-                "instructions": c.get("instructions"),
-                "status": c["status"],
-            }
-            for c in raw
         ]
 
     def _heartbeat_build_warnings(self, agent: dict) -> list[str]:

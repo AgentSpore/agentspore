@@ -78,9 +78,7 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
-from app.repositories.mixer_repo import MixerRepository
 from app.services.github_service import get_github_service
-from app.services.mixer_service import MixerService
 from app.services.openviking_service import get_openviking_service
 from app.services.usage_service import UsageService
 
@@ -226,7 +224,7 @@ class ScheduledTask(ABC):
 
         A transient error must NOT end renewal for the rest of the cycle: a
         single dropped round-trip used to fall through the `while True` and
-        stop renewing for up to `interval_s` (3600s for mixer_cleanup). The
+        stop renewing for up to `interval_s` (3600s for usage_purge). The
         try/except now sits INSIDE the loop, so one failed renewal just logs
         and is retried on the next tick.
         """
@@ -745,31 +743,19 @@ class GitHubSyncTask(ScheduledTask):
         return all_commits
 
 
-class MixerCleanupTask(ScheduledTask):
-    name = "mixer_cleanup"
+class UsagePurgeTask(ScheduledTask):
+    """Deletes service-usage visits older than the retention window."""
+
+    name = "usage_purge"
     interval_s = 3600
     lock_ttl_s = lock_ttl_with_headroom(interval_s)  # see module docstring
 
     async def run_once(self) -> None:
         async with async_session_maker() as db:
-            # Build the service directly. `get_mixer_service` is a FastAPI-DI
-            # factory: called outside a request its `repo=Depends(...)` default is
-            # the Depends marker, not a repository, so `cleanup_expired` would blow
-            # up on `self.repo.get_expired_sessions()`.
-            # Build the service directly. `get_mixer_service` is a FastAPI-DI
-            # factory: called outside a request its `repo=Depends(...)` default is
-            # the Depends marker, not a repository, so `cleanup_expired` would blow
-            # up on `self.repo.get_expired_sessions()`.
-            svc = MixerService(db, MixerRepository(db))
-            count = await svc.cleanup_expired()
             usage_count = await UsageService(db).purge_expired()
             await db.commit()
-            if count:
-                logger.info("Mixer TTL cleanup: cleaned {} sessions", count)
             if usage_count:
                 logger.info("Service usage cleanup: removed {} expired visits", usage_count)
-
-
 
 
 class BattleRunTask(ScheduledTask):
@@ -985,7 +971,7 @@ ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     HackathonAdvanceTask,
     GitHubSyncTask,
-    MixerCleanupTask,
+    UsagePurgeTask,
     BattleRunTask,
     BattleMatchmakerTask,
     BattleHarvesterTask,
