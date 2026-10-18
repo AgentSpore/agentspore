@@ -24,7 +24,7 @@ services:
       - "443:443/udp"  # HTTP/3
     environment:
       # DNS-01 token for the *.<domain> wildcard certificates (Zone:DNS:Edit on every domain).
-      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:-}"
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN, Caddy will not load with an empty or malformed token}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
