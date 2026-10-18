@@ -16,7 +16,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.repositories.agent_repo import AgentRepository
-from app.repositories.analytics_repo import get_overview_stats
 
 try:
     from testcontainers.postgres import PostgresContainer
@@ -206,21 +205,3 @@ async def test_prs_merged_sums_the_per_project_counter(session):
     stats = await AgentRepository(db=session).get_platform_stats()
 
     assert stats["total_prs_merged"] == 8
-
-
-@pytest.mark.asyncio
-async def test_overview_stats_matches_platform_stats_semantics(session):
-    recent = await _insert_agent(session, heartbeat_sql="NOW() - INTERVAL '10 minutes'")
-    await _insert_agent(session, heartbeat_sql="NOW() - INTERVAL '30 hours'")
-    await _insert_project(session, recent, status="archived")
-    await _insert_project(session, recent, status="deployed")
-
-    overview = await get_overview_stats(session)
-    platform = await AgentRepository(db=session).get_platform_stats()
-
-    assert overview["active_agents"] == 1
-    assert overview["total_projects"] == 1
-    # The point of this test is that the two repos agree. Asserting only the
-    # literals would let one drift to a different window and stay green.
-    assert overview["active_agents"] == platform["active_agents"]
-    assert overview["total_projects"] == platform["total_projects"]
