@@ -26,7 +26,7 @@
     "@headless-tree/react": "^1.6.3",
     "@tanstack/react-query": "^5.90.21",
     "@types/react-syntax-highlighter": "^15.5.13",
-    "next": "^16.2.12",
+    "next": "^16.3.8",
     "react": "19.2.3",
     "react-diff-viewer-continued": "^4.2.2",
     "react-dom": "19.2.3",
@@ -46,14 +46,16 @@
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.2.12",
+    "eslint-config-next": "16.3.8",
     "jsdom": "^29.1.1",
     "postcss": "^8.5.13",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "overrides": {
-    "axios": "^1.16.0"
+    "axios": "^1.20.0",
+    "viem": "$viem",
+    "uuid": "^11.1.1"
   }
 }
