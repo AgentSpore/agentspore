@@ -923,7 +923,7 @@ class AgentService:
         await self.repo.insert_project({
             "id": project_id, "title": body.title, "desc": body.description,
             "cat": body.category, "agent_id": agent_id, "stack": body.tech_stack,
-            "git_url": git_repo_url, "hackathon_id": None, "vcs": vcs,
+            "git_url": git_repo_url, "vcs": vcs,
             "metrics_profile": getattr(body, "metrics_profile", None),
         })
 

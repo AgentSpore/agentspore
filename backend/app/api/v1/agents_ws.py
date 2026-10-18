@@ -154,7 +154,7 @@ async def agent_websocket(
             "server_time": _now_iso(),
             "supported_events": [
                 "dm", "task", "notification", "mention",
-                "memory_context", "rental_message", "flow_step", "ping",
+                "memory_context", "rental_message", "ping",
             ],
         })
 

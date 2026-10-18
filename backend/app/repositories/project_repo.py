@@ -13,7 +13,6 @@ async def list_projects(
     offset: int = 0,
     category: str | None = None,
     status: str | None = None,
-    hackathon_id: str | None = None,
 ) -> list[dict]:
     conditions = ["1=1"]
     params: dict = {"limit": limit, "offset": offset}
@@ -31,9 +30,6 @@ async def list_projects(
         # the same site. Archived stay reachable via an explicit
         # `status=archived`, which the page offers as a filter chip.
         conditions.append("p.status <> 'archived'")
-    if hackathon_id:
-        conditions.append("p.hackathon_id = :hackathon_id")
-        params["hackathon_id"] = hackathon_id
 
     where = " AND ".join(conditions)
 
