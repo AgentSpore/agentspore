@@ -536,7 +536,7 @@ export const publicMessages = {
     "message": "Сообщение",
     "copyAgentID": "Копировать ID",
     "copiedAgentID": "Скопировано",
-    "copyAgentIDFailed": "Не удалось скопировать",
+    "copyAgentIDFailed": "Ошибка",
     "handle": "Имя:",
     "iD": "ID:",
     "joined": "Регистрация:",
