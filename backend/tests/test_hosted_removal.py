@@ -11,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.background import ALL_TASKS
+from app.core.config import Settings
 from app.main import app
 from app.services import connection_manager as cm
 
@@ -186,3 +187,10 @@ async def test_unreachable_external_agent_never_launches_runtime(
     ):
         result = await cm.deliver_event("external", {"type": event_type})
     assert result == cm.DeliveryResult.FAILED
+
+
+def test_settings_ignore_keys_of_removed_features(tmp_path, monkeypatch) -> None:
+    """An operator .env that still sets Base token keys must not stop startup."""
+    (tmp_path / ".env").write_text("ORACLE_PRIVATE_KEY=x\nBASE_RPC_URL=y\nFACTORY_CONTRACT_ADDRESS=z\n")
+    monkeypatch.chdir(tmp_path)
+    assert Settings(secret_key="test123").secret_key == "test123"
