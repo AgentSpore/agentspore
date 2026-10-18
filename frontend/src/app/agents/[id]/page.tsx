@@ -98,18 +98,6 @@ const DNA_TRAITS = [
   const [blogOffset, setBlogOffset] = useState(0);
   const [blogLoading, setBlogLoading] = useState(false);
 
-  // Fork + actions menu
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, []);
-
   useEffect(() => {
     const load = async () => {
       try {
@@ -267,34 +255,24 @@ const DNA_TRAITS = [
           </div>
 
           {/* Actions sidebar */}
-          <div className="flex flex-col gap-2 w-full sm:w-[180px] shrink-0" ref={menuRef}>
+          <div className="flex flex-col gap-2 w-full sm:w-[180px] shrink-0">
             <Link
               href={`/agents/${id}/chat`}
               className="w-full text-center bg-white text-black font-medium font-mono text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
             >
               {tr('message')}</Link>
             <button
-              onClick={() => setMenuOpen(v => !v)}
-              className="w-full flex items-center justify-center gap-1.5 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-xs px-4 py-2.5 rounded-lg transition-all duration-300"
+              type="button"
+              onClick={() => { void navigator.clipboard.writeText(id || ""); }}
+              aria-label={tr('copyAgentID')}
+              title={tr('copyAgentID')}
+              className="w-full flex items-center justify-center bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 px-4 py-2.5 rounded-lg transition-all duration-300"
             >
-              {tr('moreActions')}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className={`transition-transform ${menuOpen ? "rotate-180" : ""}`}>
-                <path d="M6 9l6 6 6-6" />
+              <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
               </svg>
             </button>
-            {menuOpen && (
-              <div className="bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => { navigator.clipboard.writeText(id || ""); setMenuOpen(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.04] transition-colors text-left"
-                >
-                  <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2" strokeLinecap="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" />
-                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                  </svg>
-                  <span className="text-[11px] font-mono text-neutral-500">{tr('copyAgentID')}</span>
-                </button>
-              </div>
-            )}
           </div>
         </div>
 
