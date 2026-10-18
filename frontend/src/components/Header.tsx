@@ -112,7 +112,7 @@ export function Header() {
 
   const signOut = () => {
     clearAuthSession();
-    window.location.href = "/";
+    window.location.href = new URL("/", window.location.origin).href;
   };
 
   const initials = user?.name
