@@ -8,24 +8,9 @@ import { displayPublicLabel } from '@/lib/i18n/public';
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { API_URL, TokenPayout, timeAgo } from "@/lib/api";
+import { API_URL, TokenPayout } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { BlockedOwnersPanel } from "@/components/battles/BlockedOwnersPanel";
-
-interface RentalSummary {
-  id: string;
-  agent_id: string;
-  agent_name: string;
-  agent_handle: string;
-  specialization: string;
-  title: string;
-  status: "active" | "completed" | "cancelled";
-  price_tokens: number;
-  rating: number | null;
-  created_at: string;
-  completed_at: string | null;
-  cancelled_at: string | null;
-}
 
 
 
@@ -62,11 +47,6 @@ export default function ProfilePage() {
   const { locale } = useLocale();
   const tr = useTranslations(accountMessages);
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
-const RENTAL_STATUS: Record<string, { label: string; classes: string }> = {
-  active: { label: tr('active'), classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
-  completed: { label: tr('completed'), classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
-  cancelled: { label: tr('cancelled'), classes: "bg-red-400/10 text-red-400 border-red-400/20" },
-};
 const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
   pending: { label: tr('pending'), classes: "bg-amber-400/10 text-amber-400 border-amber-400/20" },
   sent: { label: tr('sent'), classes: "bg-blue-400/10 text-blue-400 border-blue-400/20" },
@@ -76,8 +56,6 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [user, setUser] = useState<UserInfo | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
-  const [rentals, setRentals] = useState<RentalSummary[]>([]);
-  const [loadingRentals, setLoadingRentals] = useState(false);
   const [solanaInput, setSolanaInput] = useState("");
   const [solanaLoading, setSolanaLoading] = useState(false);
   const [solanaError, setSolanaError] = useState("");
@@ -95,17 +73,6 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
       .then((d) => { setUser(d); setLoadingUser(false); })
       .catch(() => setLoadingUser(false));
   }, []);
-  useEffect(() => {
-    if (!authToken) return;
-    setLoadingRentals(true);
-    fetch(`${API_URL}/api/v1/rentals`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d: RentalSummary[]) => { setRentals(d); setLoadingRentals(false); })
-      .catch(() => setLoadingRentals(false));
-  }, [authToken]);
-
   useEffect(() => {
     if (!authToken) return;
     setLoadingPayouts(true);
@@ -189,65 +156,6 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
               <Link href="/projects" className="text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
                 {tr('projects')}</Link>
             </div>
-          </div>
-        )}
-
-        {/* My Rentals */}
-        {user && (
-          <div className="space-y-4 animate-fadeUp animation-delay-100">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-white font-mono">{tr('lsRentals')}</h2>
-                <p className="text-neutral-500 text-xs mt-1 font-mono">{tr('agentsYouHiredForTasks')}</p>
-              </div>
-              {rentals.filter(r => r.status === "active").length > 0 && (
-                <span className="text-xs font-mono text-emerald-400">
-                  {new Intl.NumberFormat(localeTag(locale)).format(rentals.filter(r => r.status === "active").length)} {tr('active2')}</span>
-              )}
-            </div>
-
-            {loadingRentals && <p className="text-neutral-600 text-sm font-mono">{tr('loadingRentals')}</p>}
-
-            {!loadingRentals && rentals.length === 0 && (
-              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
-                {tr('noRentalsYetVisitAnAgentSPage')}</div>
-            )}
-
-            {rentals.length > 0 && (
-              <div className="space-y-2">
-                {rentals.map((r) => {
-                  const st = RENTAL_STATUS[r.status] || RENTAL_STATUS.active;
-                  return (
-                    <Link
-                      key={r.id}
-                      href={`/rentals/${r.id}`}
-                      className="block bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4 hover:border-violet-500/30 transition-colors"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-white font-medium text-sm truncate font-mono">{r.title}</div>
-                          <div className="flex items-center gap-2 mt-1.5">
-                            <span className="text-violet-400 text-xs font-mono">@{r.agent_handle}</span>
-                            <span className="text-neutral-700">·</span>
-                            <span className="text-neutral-600 text-xs font-mono">{timeAgo(r.created_at, locale)}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          {r.rating && (
-                            <span className="text-amber-400 text-xs font-mono">
-                              {"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}
-                            </span>
-                          )}
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono ${st.classes}`}>
-                            {displayPublicLabel(locale, st.label)}
-                          </span>
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
           </div>
         )}
 
