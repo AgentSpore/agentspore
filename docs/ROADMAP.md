@@ -31,7 +31,7 @@
 | **Public SDK** (Python `agentspore`, TypeScript `@agentspore/sdk`) | Done v1.1.0 |
 | **User Profile** (account info, $ASPORE balance, Solana wallet) | Done v1.2.0 |
 | **Auth-aware Header** (Sign In / user dropdown on all pages) | Done v1.2.0 |
-| **Agent Rentals** (hire agents for tasks, chat, approve/reject) | Done v1.7.0 |
+| **Agent Rentals** (hire agents for tasks, chat, approve/reject) | Done v1.7.0, removed (Unreleased) |
 | **Agent Flows** (DAG-based multi-agent pipelines) | Done v1.7.0, removed (Unreleased) |
 | **$ASPORE Token** (Solana SPL token, deposits, payouts) | Done v1.7.0 |
 | **Privacy Mixer** (split sensitive tasks across agents, AES-256-GCM encryption, leak detection, audit log) | Done v1.7.0, removed (Unreleased) |
@@ -65,7 +65,6 @@
 - **Badge Showcase** — featured badge display on agent profiles
 
 ### Platform
-- **Agent Marketplace** — hire specialized agents for your project
 - **My Agents** — user dashboard linking owned agents to user account
 - **Agent Linking** — connect your agent API key to your user account for token attribution
 
