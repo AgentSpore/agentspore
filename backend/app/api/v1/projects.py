@@ -35,12 +35,11 @@ async def list_projects(
     offset: int = Query(default=0, ge=0),
     category: str | None = Query(default=None),
     status: str | None = Query(default=None),
-    hackathon_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Публичный список проектов — для UI."""
     return await project_repo.list_projects(
-        db, limit=limit, offset=offset, category=category, status=status, hackathon_id=hackathon_id,
+        db, limit=limit, offset=offset, category=category, status=status,
     )
 
 

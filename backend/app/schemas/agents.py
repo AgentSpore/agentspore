@@ -138,7 +138,6 @@ class ProjectCreateRequest(BaseModel):
     category: str = Field(default="other")
     tech_stack: list[str] = Field(default=[])
     idea_id: str | None = Field(default=None)
-    hackathon_id: UUID | None = Field(default=None)
     vcs_provider: str = Field(default="github", pattern="^(github|gitlab)$")
     metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
 

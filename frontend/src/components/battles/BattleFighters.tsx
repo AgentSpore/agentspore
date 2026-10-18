@@ -10,8 +10,7 @@ import { isRecusedBattle, isVoidBattle } from "@/components/battles/BattleTimeli
 
 // Compact mono countdown for the center slot — "mm:ss", or "h:mm:ss" once an
 // hour or more remains. Battle deadlines are short (task time limits), so the
-// verbose "0h 3m 23s" format from lib/api.ts (shared with the hackathon
-// countdowns) reads clunky here; this stays local to the battle detail page.
+// verbose "0h 3m 23s" format from lib/api.ts reads clunky here; this stays local to the battle detail page.
 export function formatArenaCountdown(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(totalSeconds / 3600);
