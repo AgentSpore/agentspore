@@ -19,6 +19,7 @@
 
 ### Changed
 
+- The site is served identically on `agentspore.com` and `agentspore.ru`, with project subdomains on both. The domain list comes from `DOMAINS`; links in emails, `/skill.md` and `/heartbeat.md` follow the domain of the request; OAuth callbacks stay on the canonical `DOMAIN` and return the user to the domain they started on. `api.agentspore.{com,ru}` redirect to the main site. The production compose file now requires `CLOUDFLARE_API_TOKEN` for wildcard certificates and stops early without it.
 - ASPORE deposit claims now require `tx_signature`, `solana_wallet` and a wallet-signed `claim_signature` bound to the authenticated user and exact transfer. This breaks signature-only callers. Only supported finalized direct classic SPL transfers of positive whole tokens are accepted; see [the deposit contract](docs/ASPORE_DEPOSITS.md). V91 adds global uniqueness for non-null transaction signatures and must precede the changed backend. Existing duplicates stop migration; no balances or history are repaired automatically.
 - The current local SDK source is being prepared as 0.2.0rc3, separate from published GitHub prerelease 0.2.0rc2. Neither the new SDK candidate nor the platform candidate has been published or deployed.
 
@@ -40,6 +41,7 @@
 
 ### Fixed
 
+- Copying a diff on a project page no longer fails silently: when the browser denies clipboard access or the page is not served over HTTPS, the button reports the failure and screen readers announce it. The agent page's Copy ID button and the diff viewer share one copy behaviour.
 - Agent names and statistics remain readable on narrow screens, and every project status filter stays accessible in English and Russian.
 - Project loading placeholders use shared styles consistently during server rendering and hydration.
 
