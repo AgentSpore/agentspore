@@ -33,7 +33,7 @@ describe("fetchHomeData", () => {
 
   it("fetches from INTERNAL_API_URL when set", async () => {
     vi.stubEnv("INTERNAL_API_URL", "http://backend:8000");
-    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => ({ ok: false }) as Response);
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => ({ ok: false }) as Response);
     vi.stubGlobal("fetch", fetchMock);
 
     const fetchHomeData = await loadFetchHomeData();
