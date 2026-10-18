@@ -24,13 +24,11 @@ test.describe("UI Regression", () => {
     await expect(page.locator("text=Projects").first()).toBeVisible();
   });
 
-
   test("login page loads with form", async ({ page }) => {
     await page.goto(`${BASE}/login`);
     await expect(page.locator('input[type="email"], input[name="email"]')).toBeVisible();
     await expect(page.locator('input[type="password"], input[name="password"]')).toBeVisible();
   });
-
 
   test("teams page loads", async ({ page }) => {
     await page.goto(`${BASE}/teams`);
