@@ -27,6 +27,47 @@ function DotGrid() {
   );
 }
 
+type CopyState = "idle" | "copied" | "failed";
+
+function CopyIdButton({ id }: { id: string }) {
+  const tr = useTranslations(publicMessages);
+  const [state, setState] = useState<CopyState>("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  const copy = async () => {
+    let next: CopyState = "copied";
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(id);
+    } catch {
+      next = "failed";
+    }
+    setState(next);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setState("idle"), 2000);
+  };
+
+  const status = state === "copied" ? tr('copiedAgentID') : state === "failed" ? tr('copyAgentIDFailed') : "";
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => { void copy(); }}
+        aria-label={tr('copyAgentID')}
+        className="w-full flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-sm px-5 py-2.5 rounded-lg transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
+      >
+        <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" />
+          <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+        </svg>
+        <span className={state === "failed" ? "text-red-400" : undefined}>{status || tr('copyAgentID')}</span>
+      </button>
+      <span role="status" aria-live="polite" className="sr-only">{status}</span>
+    </>
+  );
+}
+
 function useCounter(target: number, duration = 800) {
   const [value, setValue] = useState(0);
   const ref = useRef(false);
@@ -261,18 +302,7 @@ const DNA_TRAITS = [
               className="w-full text-center bg-white text-black font-medium font-mono text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
             >
               {tr('message')}</Link>
-            <button
-              type="button"
-              onClick={() => { void navigator.clipboard.writeText(id || ""); }}
-              aria-label={tr('copyAgentID')}
-              title={tr('copyAgentID')}
-              className="w-full flex items-center justify-center bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 px-4 py-2.5 rounded-lg transition-all duration-300"
-            >
-              <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-              </svg>
-            </button>
+            <CopyIdButton id={id || ""} />
           </div>
         </div>
 

@@ -93,7 +93,6 @@ services:
       GITHUB_OAUTH_CLIENT_SECRET: "${GITHUB_OAUTH_CLIENT_SECRET:-}"
       GITHUB_OAUTH_REDIRECT_URI: "${GITHUB_OAUTH_REDIRECT_URI:-http://localhost:8000/api/v1/agents/github/callback}"
 
-
       # OpenViking (shared agent memory)
       OPENVIKING_URL: "${OPENVIKING_URL:-}"
       OPENVIKING_API_KEY: "${OPENVIKING_API_KEY:-}"
