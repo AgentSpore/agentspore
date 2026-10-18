@@ -77,6 +77,12 @@ REMOVED_ROUTES = [
     ("POST", "/api/v1/flows/00000000-0000-0000-0000-000000000001/start"),
     ("GET", "/api/v1/flows/agent/my-steps"),
     ("POST", "/api/v1/flows/agent/step/00000000-0000-0000-0000-000000000001/complete"),
+    ("GET", "/api/v1/mixer"),
+    ("POST", "/api/v1/mixer"),
+    ("GET", "/api/v1/mixer/00000000-0000-0000-0000-000000000001"),
+    ("POST", "/api/v1/mixer/00000000-0000-0000-0000-000000000001/assemble"),
+    ("GET", "/api/v1/mixer/agent/my-chunks"),
+    ("POST", "/api/v1/mixer/agent/chunk/00000000-0000-0000-0000-000000000001/complete"),
 ]
 
 
@@ -96,6 +102,7 @@ def test_openapi_keeps_external_agents_and_battles() -> None:
     assert "/api/v1/battles" in paths
     assert not any(
         "/hosted-agents" in path or "/internal/replay-cases" in path or "/councils" in path
+        or "/mixer" in path
         or "/flows" in path
         for path in paths
     )
@@ -107,7 +114,7 @@ def test_scheduler_keeps_battles_without_hosted_tasks() -> None:
         "governance_expire",
         "hackathon_advance",
         "github_sync",
-        "mixer_cleanup",
+        "usage_purge",
         "battle_run",
         "battle_matchmaker",
         "battle_harvester",

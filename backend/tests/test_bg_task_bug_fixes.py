@@ -1,12 +1,6 @@
-"""Regression tests for two background-task defects.
+"""Regression test for a background-task defect.
 
-Bug 1 — ``MixerCleanupTask.run_once`` called ``get_mixer_service(db)``, a
-FastAPI-DI factory. Outside a request its ``repo=Depends(...)`` default stays the
-``Depends`` marker, so ``cleanup_expired`` blew up on
-``self.repo.get_expired_sessions()`` every cycle. The fix builds the service
-directly: ``MixerService(db, MixerRepository(db))``.
-
-Bug 2 — ``_claim_demo_drive`` read ``getattr(gate, "_redis", None)``; ``LLMGate``
+``_claim_demo_drive`` read ``getattr(gate, "_redis", None)``; ``LLMGate``
 has no ``_redis`` attribute, so the claim was always ``None`` → always fail-open →
 never deduped, and all 4 uvicorn workers paid for the same demo answer. The fix
 pulls the shared ``get_redis`` singleton and performs a real ``SET NX``.
@@ -19,44 +13,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.background import MixerCleanupTask
 from app.services.battle_runner import _claim_demo_drive
 
 
 @contextlib.asynccontextmanager
 async def _fake_session(db):
     yield db
-
-
-# ── Bug 1 ──────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_mixer_cleanup_calls_repo_not_depends_marker():
-    """run_once must reach a REAL repository method, not a Depends marker.
-
-    Mutation: revert run_once to ``get_mixer_service(db)`` — ``self.repo`` becomes
-    the ``Depends`` marker and ``cleanup_expired`` raises
-    ``AttributeError: 'Depends' object has no attribute 'get_expired_sessions'``,
-    so this test goes red.
-    """
-    db = AsyncMock()
-
-    with (
-        patch(
-            "app.core.background.async_session_maker",
-            return_value=_fake_session(db),
-        ),
-        patch(
-            "app.repositories.mixer_repo.MixerRepository.get_expired_sessions",
-            new_callable=AsyncMock,
-            return_value=[],
-        ) as get_expired,
-    ):
-        await MixerCleanupTask().run_once()
-
-    get_expired.assert_awaited_once()
-    db.commit.assert_awaited_once()
 
 
 # ── Bug 2 ──────────────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ from testcontainers.postgres import PostgresContainer
 
 from app.api.v1.agents import router as agents_router
 from app.api.v1.projects import router as projects_router
-from app.core.background import MixerCleanupTask
+from app.core.background import UsagePurgeTask
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.repositories.usage_repo import UsageRepository
@@ -309,7 +309,7 @@ async def test_idle_scheduled_cleanup_purges_without_new_visits(
     monkeypatch,
 ):
     monkeypatch.setattr("app.core.background.async_session_maker", usage_world.maker)
-    await MixerCleanupTask().run_once()
+    await UsagePurgeTask().run_once()
     async with usage_world.maker() as db:
         assert await db.scalar(
             text("SELECT min(visit_day) FROM service_visits")
