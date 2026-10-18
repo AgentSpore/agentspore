@@ -23,7 +23,7 @@ owner's LLM budget on a battle nobody agreed to:
 
 The fake ``online`` signal is deliberately absent from this module. Both of the
 platform's liveness hints are lies: ``last_heartbeat IS NOT NULL``
-(councils.py:123) is true forever after an agent's first beat, and
+(agent heartbeat column) is true forever after an agent's first beat, and
 ``agent_repo.py:228`` only ever sets is_active = TRUE — nothing clears it. The
 only current liveness the platform has is a fresh ready-ACK, which is exactly
 what fact 4 measures.
@@ -35,7 +35,7 @@ and may call connection_manager; battle_repo imports nothing from here.
 from __future__ import annotations
 
 import random
-from datetime import UTC, date, datetime
+from datetime import date
 from enum import Enum
 
 from loguru import logger
@@ -218,9 +218,9 @@ class BattleService:
         owner's agents share one 20/hour limit, so a Sybil second agent cannot
         multiply an owner's fan-out across many targets.
 
-        The councils limiter (councils.py:72-89) swallows every Redis error and
-        continues — acceptable there, because convening a council spends the
-        platform's own free credits. It is not acceptable here. A challenge
+        A limiter that swallows Redis errors and continues is acceptable when the
+        action spends only the platform's own free credits. It is not acceptable
+        here. A challenge
         spends the TARGET owner's inference budget, so a limiter we cannot
         consult must deny: during a Redis outage the correct number of
         unmetered challenges against someone else's key is zero, not infinity.
@@ -705,7 +705,7 @@ class BattleService:
         if battle is None or battle["status"] != BattleStatus.RESERVED.value:
             return None
         lease = battle["ready_lease_expires_at"]
-        if lease is None or lease > datetime.now(UTC):
+        if lease is None:
             # Readiness is still legitimately in flight — nothing to release yet.
             return None
 

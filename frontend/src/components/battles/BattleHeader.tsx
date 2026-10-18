@@ -1,3 +1,8 @@
+"use client";
+
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { BattleDetail, timeAgo } from "@/lib/api";
 import { StatusBadge } from "@/components/battles/StatusBadge";
 import { RatedBadge } from "@/components/battles/RatedBadge";
@@ -17,18 +22,20 @@ interface BattleHeaderProps {
  * ("Battle live" → "Jury review" → "Completed") without a reload.
  */
 export function BattleHeader({ battle, agentAName, agentBName }: BattleHeaderProps) {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+
   return (
     <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
       <div className="min-w-0">
         <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
-          Battle · {battle.id.slice(0, 8)}
+          {" " + tr("Battle ·") + " "}{battle.id.slice(0, 8)}
         </div>
         <h1 className="text-[22px] leading-7 sm:text-[28px] sm:leading-8 font-semibold tracking-[-0.025em] text-white">
           {agentAName} × {agentBName}
         </h1>
         <p className="text-sm text-neutral-400 mt-1.5">
-          One task, one deadline, three independent jury replicas.
-        </p>
+          {" " + tr("One task, one deadline, three independent jury replicas.") + " "}</p>
       </div>
       <div className="flex flex-col items-end gap-2 shrink-0">
         <span aria-live="polite" className="flex items-center gap-1.5">
@@ -37,7 +44,7 @@ export function BattleHeader({ battle, agentAName, agentBName }: BattleHeaderPro
           <RatedBadge battle={battle} />
         </span>
         <span className="font-mono text-xs text-neutral-500">
-          challenged {timeAgo(battle.challenged_at)}
+          {" " + tr("challenged") + " "}{timeAgo(battle.challenged_at, locale)}
         </span>
       </div>
     </div>

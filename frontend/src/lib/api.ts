@@ -1,4 +1,12 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { localeTag, type Locale } from "./i18n/locale";
+
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/** WebSocket origin for the API; an empty (same-origin) API_URL follows the page location. */
+export function websocketBase(apiUrl: string, location: Pick<Location, "protocol" | "host">): string {
+  if (apiUrl) return apiUrl.replace(/^http/, "ws");
+  return `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
+}
 
 export interface PlatformStats {
   total_agents: number;
@@ -299,11 +307,20 @@ export function isAgentLive(agent: { last_heartbeat: string | null }): boolean {
   return Date.now() - ms < AGENT_LIVE_WINDOW_MS;
 }
 
-export function timeAgo(ts: string | null | undefined): string {
+/** Format relative UI time; English defaults preserve the existing caller contract. */
+export function timeAgo(ts: string | null | undefined, locale: Locale = "en"): string {
   if (!ts) return "—";
   const ms = new Date(ts).getTime();
   if (!Number.isFinite(ms)) return "—";
   const diff = Date.now() - ms;
+  if (locale === "ru") {
+    if (diff < 0 && Math.abs(diff) < 60000) return "только что";
+    const magnitude = Math.abs(diff);
+    const [divisor, unit]: [number, Intl.RelativeTimeFormatUnit] = magnitude < 60000 ? [1000, "second"]
+      : magnitude < 3600000 ? [60000, "minute"] : magnitude < 86400000 ? [3600000, "hour"] : [86400000, "day"];
+    const value = Math.floor(magnitude / divisor) * (diff >= 0 ? -1 : 1);
+    return new Intl.RelativeTimeFormat(localeTag(locale), { numeric: "always" }).format(value, unit);
+  }
   if (Math.abs(diff) < 60000) return diff >= 0 ? `${Math.floor(diff / 1000)}s ago` : "just now";
   if (diff < 0) {
     const pos = -diff;
@@ -559,26 +576,6 @@ export const REACTION_META: Record<string, { emoji: string; label: string }> = {
 
 // ── Hosted Agents ──────────────────────────────────────────────────────────
 
-export interface HostedAgent {
-  id: string;
-  agent_id: string;
-  agent_name: string;
-  agent_handle: string;
-  system_prompt: string;
-  model: string;
-  status: "stopped" | "starting" | "running" | "error";
-  last_error?: string | null;
-  memory_limit_mb: number;
-  heartbeat_enabled: boolean;
-  heartbeat_seconds: number;
-  stuck_loop_detection: boolean;
-  total_cost_usd: number;
-  budget_usd: number;
-  started_at: string | null;
-  stopped_at: string | null;
-  created_at: string;
-}
-
 export interface ExternalAgentItem {
   id: string;
   name: string;
@@ -594,49 +591,6 @@ export interface ExternalAgentItem {
   created_at: string | null;
   last_heartbeat: string | null;
 }
-
-export interface HostedAgentListItem {
-  id: string;
-  agent_id: string;
-  agent_name: string;
-  agent_handle: string;
-  status: string;
-  model: string;
-  total_cost_usd: number;
-  created_at: string;
-}
-
-export interface AgentFile {
-  id: string;
-  file_path: string;
-  file_type: string;
-  content?: string;
-  size_bytes: number;
-  updated_at: string;
-  version?: string;
-  truncated?: boolean;
-  is_binary?: boolean;
-}
-
-export interface OwnerMessage {
-  id: string;
-  sender_type: "user" | "agent" | "system";
-  content: string;
-  tool_calls?: { tool: string; args: string | Record<string, unknown>; status: string; result?: string }[];
-  thinking?: string;
-  edited_at: string | null;
-  is_deleted: boolean;
-  created_at: string;
-}
-
-export const HOSTED_STATUS: Record<string, { label: string; icon: string; color: string; classes: string }> = {
-  stopped:  { label: "Sleeping",  icon: "💤", color: "neutral", classes: "bg-neutral-700/50 text-neutral-400 border-neutral-600/30" },
-  starting: { label: "Starting…", icon: "⚡", color: "yellow",  classes: "bg-amber-400/10 text-amber-300 border-amber-400/20" },
-  running:  { label: "Online",    icon: "●",  color: "green",   classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
-  error:    { label: "Error",     icon: "⚠",  color: "red",     classes: "bg-red-400/10 text-red-400 border-red-400/20" },
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ── Battles ─────────────────────────────────────────────────────────────────
 

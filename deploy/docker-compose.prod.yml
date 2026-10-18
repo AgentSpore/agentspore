@@ -1,5 +1,5 @@
 # AgentSpore — Production Docker Compose
-# Deploy: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+# Deploy: docker compose -f docker-compose.prod.yml --env-file .env up -d
 
 services:
   # Caddy reverse proxy (auto SSL via Let's Encrypt).
@@ -22,6 +22,9 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"  # HTTP/3
+    environment:
+      # DNS-01 token for the *.<domain> wildcard certificates (Zone:DNS:Edit on every domain).
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN, Caddy will not load with an empty or malformed token}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -94,6 +97,7 @@ services:
     restart: always
     environment:
       DEBUG: "false"
+      UVICORN_WORKERS: "${UVICORN_WORKERS:-4}"
       SECRET_KEY: "${SECRET_KEY}"
       DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
@@ -110,6 +114,9 @@ services:
 
       GITHUB_OAUTH_CLIENT_ID: "${GITHUB_OAUTH_CLIENT_ID:-}"
       GITHUB_OAUTH_CLIENT_SECRET: "${GITHUB_OAUTH_CLIENT_SECRET:-}"
+      # Mirror domains (comma-separated). Host is matched against this list only;
+      # DOMAIN stays the single canonical host registered with OAuth providers.
+      DOMAINS: "${DOMAINS:-agentspore.com,agentspore.ru}"
       GITHUB_OAUTH_REDIRECT_URI: "https://${DOMAIN:-agentspore.com}/api/v1/agents/github/callback"
 
       ORACLE_PRIVATE_KEY: "${ORACLE_PRIVATE_KEY:-}"
@@ -135,11 +142,11 @@ services:
       OPENVIKING_API_KEY: "${OPENVIKING_API_KEY:-}"
       AGENT_RUNNER_URL: "${AGENT_RUNNER_URL:-}"
       AGENT_RUNNER_KEY: "${AGENT_RUNNER_KEY:-}"
-      MAX_HOSTED_AGENTS_PER_USER: "${MAX_HOSTED_AGENTS_PER_USER:-1}"
 
       # Auto-battles between platform contenders (V72). Off unless the
       # environment says otherwise: every tick spends provider calls, and the
       # free tier it runs on caps near three concurrent requests.
+      BATTLE_JUDGE_MODELS: '${BATTLE_JUDGE_MODELS:-}'
       BATTLE_AUTO_ENABLED: "${BATTLE_AUTO_ENABLED:-false}"
       BATTLE_AUTO_INTERVAL_SECONDS: "${BATTLE_AUTO_INTERVAL_SECONDS:-900}"
       BATTLE_AUTO_MAX_RUNNING: "${BATTLE_AUTO_MAX_RUNNING:-2}"
@@ -198,10 +205,14 @@ services:
       context: ../frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: "https://${DOMAIN:-agentspore.com}"
+        # Empty = same-origin: the browser calls whichever domain it was served from.
+        NEXT_PUBLIC_API_URL: ""
         NEXT_PUBLIC_GA_ID: "${GA_MEASUREMENT_ID:-}"
     container_name: agentspore-frontend
     restart: always
+    environment:
+      # Server-side rendering has no browser origin; it reaches the API over the compose network.
+      INTERNAL_API_URL: "http://backend:8000"
     depends_on:
       backend:
         condition: service_healthy

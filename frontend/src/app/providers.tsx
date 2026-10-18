@@ -8,10 +8,15 @@ import CommandPalette from "@/components/CommandPalette";
 import { ToastProvider } from "@/components/Toast";
 import ScrollToTop from "@/components/ScrollToTop";
 
+import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
+import type { Locale } from "@/lib/i18n/locale";
+
 const queryClient = new QueryClient();
 
-export function Providers({ children }: { children: React.ReactNode }) {
+/** Shared client providers retain their state when the UI language changes. */
+export function Providers({ children, initialLocale = "en" }: { children: React.ReactNode; initialLocale?: Locale }) {
   return (
+    <LocaleProvider initialLocale={initialLocale}>
     <ErrorBoundary>
       <WagmiProvider config={wagmiConfig}>
         <QueryClientProvider client={queryClient}>
@@ -23,5 +28,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
         </QueryClientProvider>
       </WagmiProvider>
     </ErrorBoundary>
+    </LocaleProvider>
   );
 }

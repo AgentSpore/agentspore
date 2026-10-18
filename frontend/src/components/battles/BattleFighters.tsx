@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { BATTLE_DIFFICULTY, BattleDetail, BattleSide } from "@/lib/api";
 import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { eloChanged, eloDeltaText } from "@/components/battles/battleUi";
@@ -28,6 +31,8 @@ function FighterCard({
   side: BattleSide;
   name: string;
 }) {
+  const tr = useTranslations(battlesMessages);
+
   const agentId = side === "a" ? battle.agent_a_id : battle.agent_b_id;
   // A contender side has no agent id, and AgentIdentity reads exactly that
   // pair — no id plus a name — as "platform contender". Blanking the name
@@ -64,11 +69,11 @@ function FighterCard({
         </div>
       ) : (
         <div className={`flex items-baseline gap-2 font-mono text-[13px] tabular-nums ${side === "b" ? "sm:flex-row-reverse" : ""}`}>
-          <span className="text-neutral-500">Elo {before ?? "—"}</span>
+          <span className="text-neutral-500">{tr("Elo") + " "}{before ?? "—"}</span>
           {before !== null && after === null && (
             <>
               <span className="text-neutral-600">·</span>
-              <span className="text-neutral-500">at stake</span>
+              <span className="text-neutral-500">{tr("at stake")}</span>
             </>
           )}
         </div>
@@ -94,6 +99,10 @@ interface BattleFightersProps {
  * page auto-polls.
  */
 export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: BattleFightersProps) {
+  const tr = useTranslations(battlesMessages);
+  const { locale } = useLocale();
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const isRunning = battle.status === "running";
   const isJudging = battle.status === "judging";
   const isCompleted = battle.status === "completed";
@@ -112,7 +121,7 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
 
   return (
     <section
-      aria-label="Fighters"
+      aria-label={tr("Fighters")}
       className="overflow-hidden rounded-xl border border-neutral-800/80 bg-neutral-900/35"
     >
       <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-stretch">
@@ -123,8 +132,7 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
           {isRunning ? (
             <>
               <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
-                Time to deadline
-              </span>
+                {" " + tr("Time to deadline") + " "}</span>
               {battle.deadline_at && deadlineMs !== null ? (
                 <span
                   aria-live="polite"
@@ -140,52 +148,45 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
               <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
                 {timeLimitMin !== null && (
                   <>
-                    {timeLimitMin} min limit
-                    <br />
+                    {timeLimitMin.toLocaleString(locale)} {" " + tr("min limit") + " "}<br />
                   </>
                 )}
-                replies hidden
-              </span>
+                {" " + tr("replies hidden") + " "}</span>
             </>
           ) : isJudging ? (
             <>
-              <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">VS</span>
+              <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">{tr("VS")}</span>
               <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
-                replies locked in
-                <br />
-                jury of three replicas at work
-              </span>
+                {" " + tr("replies locked in") + " "}<br />
+                {" " + tr("jury of three replicas at work") + " "}</span>
             </>
           ) : isCompleted ? (
             battleEloChanged ? (
               <>
                 <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
-                  Elo after battle
-                </span>
+                  {" " + tr("Elo after battle") + " "}</span>
                 <span className="font-mono tabular-nums text-lg font-semibold text-white">
-                  {eloAFinal ?? "—"} : {eloBFinal ?? "—"}
+                  {eloAFinal?.toLocaleString(locale) ?? "—"} : {eloBFinal?.toLocaleString(locale) ?? "—"}
                 </span>
                 <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
                   {battle.winner === null &&
                     (isVoidBattle(battle)
-                      ? "unchanged · void"
+                      ? tr("unchanged · void")
                       : isRecusedBattle(battle)
-                        ? "unchanged · no impartial judge"
-                        : "unchanged · no quorum")}
+                        ? tr("unchanged · no impartial judge")
+                        : tr("unchanged · no quorum"))}
                 </span>
               </>
             ) : (
               <>
                 <span className="text-[10px] font-mono uppercase tracking-[0.16em] text-neutral-500">
-                  Unrated
-                </span>
+                  {" " + tr("Unrated") + " "}</span>
                 <span className="text-[11px] leading-[1.5] text-neutral-500 text-center">
-                  Elo unchanged
-                </span>
+                  {" " + tr("Elo unchanged") + " "}</span>
               </>
             )
           ) : (
-            <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">VS</span>
+            <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500">{tr("VS")}</span>
           )}
         </div>
 
@@ -197,17 +198,17 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
       <div className="border-t border-neutral-800/70 px-5 sm:px-6 py-2.5 flex items-center justify-center gap-2 text-xs text-neutral-500 flex-wrap">
         {timeLimitMin !== null && (
           <>
-            <span>{timeLimitMin} min limit</span>
+            <span>{timeLimitMin.toLocaleString(locale)} {" " + tr("min limit")}</span>
             <span className="text-neutral-700">·</span>
           </>
         )}
-        <span>category: {battle.task_category_filter ?? "any"}</span>
+        <span>{tr("category:") + " "}{battle.task_category_filter ?? tr("any")}</span>
         <span className="text-neutral-700">·</span>
         <span>
-          difficulty: {battle.task_difficulty_filter ? BATTLE_DIFFICULTY[battle.task_difficulty_filter] : "any"}
+          {" " + tr("difficulty:") + " "}{battle.task_difficulty_filter ? ui(BATTLE_DIFFICULTY[battle.task_difficulty_filter]) : tr("any")}
         </span>
         <span className="text-neutral-700">·</span>
-        <span>jury: 3 independent replicas</span>
+        <span>{tr("jury: 3 independent replicas")}</span>
       </div>
     </section>
   );
