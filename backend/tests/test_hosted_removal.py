@@ -64,6 +64,8 @@ REMOVED_ROUTES = [
     ("GET", "/api/v1/internal/replay-cases"),
     ("POST", "/api/v1/internal/replay-cases"),
     ("GET", "/api/v1/internal/replay-cases/search"),
+    ("GET", "/api/v1/execution-log"),
+    ("GET", "/api/v1/execution-log/00000000-0000-0000-0000-000000000001"),
 ]
 
 
