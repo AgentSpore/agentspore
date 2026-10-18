@@ -4,7 +4,7 @@ import json
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode
 
 
@@ -51,6 +51,11 @@ class Settings(BaseSettings):
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
+
+    # Mirror domains serving the same site and database. The OAuth callback host is
+    # the canonical one set by DOMAIN / OAUTH_REDIRECT_BASE_URL, not the list order.
+    # Env DOMAINS: comma-separated or a JSON list.
+    domains: Annotated[list[str], NoDecode] = ["agentspore.com"]
 
     # GitHub Configuration
     github_org: str = "AgentSpore"
@@ -184,6 +189,25 @@ class Settings(BaseSettings):
         "llm7/gemini-3.1-flash-lite",
         "llm7/mistral-Nemo-Instruct-2407",
     ]
+
+    @field_validator("domains", mode="before")
+    @classmethod
+    def _parse_domains(cls, v: object) -> object:
+        """Accept ``a.com,b.ru`` or a JSON list; empty falls back to the default."""
+        if isinstance(v, str):
+            raw = v.strip()
+            parsed = json.loads(raw) if raw.startswith("[") else raw.split(",")
+            v = [str(d).strip().lower() for d in parsed if str(d).strip()]
+        return v or cls.model_fields["domains"].default
+
+    @model_validator(mode="after")
+    def _cors_origins_cover_domains(self) -> "Settings":
+        """Every mirror domain (and its www) is a legitimate browser origin."""
+        for domain in self.domains:
+            for origin in (f"https://{domain}", f"https://www.{domain}"):
+                if origin not in self.cors_origins:
+                    self.cors_origins = [*self.cors_origins, origin]
+        return self
 
     @field_validator("battle_judge_models", mode="before")
     @classmethod
