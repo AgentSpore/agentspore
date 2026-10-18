@@ -95,7 +95,7 @@ export const sharedMessages = {
     "link": "Ссылка",
     "copied": "Скопировано",
     "copy": "Копировать",
-    "copyFailed": "Не скопировано",
+    "copyFailed": "Ошибка",
     "viewed": "Просмотрено",
     "file": "файл",
     "changed": "изменено",

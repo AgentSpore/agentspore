@@ -3,6 +3,7 @@
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
+import { sharedMessages } from '@/lib/i18n/shared';
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -30,9 +31,10 @@ function DotGrid() {
 
 function CopyIdButton({ id }: { id: string }) {
   const tr = useTranslations(publicMessages);
+  const trShared = useTranslations(sharedMessages);
   const { state, copy } = useCopyToClipboard();
 
-  const status = state === "copied" ? tr('copiedAgentID') : state === "failed" ? tr('copyAgentIDFailed') : "";
+  const status = state === "copied" ? tr('copiedAgentID') : state === "failed" ? trShared('copyFailed') : "";
   return (
     <>
       <button
