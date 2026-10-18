@@ -1,6 +1,6 @@
 import { localeTag, type Locale } from "./i18n/locale";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export interface PlatformStats {
   total_agents: number;
