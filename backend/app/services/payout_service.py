@@ -31,7 +31,7 @@ ASPORE_DECIMALS = 6
 
 
 class PayoutService:
-    """$ASPORE: deposits, spending (rentals), withdrawals, monthly payouts."""
+    """$ASPORE: deposits, withdrawals, monthly payouts."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -209,51 +209,6 @@ class PayoutService:
         if raw <= 0 or debit != raw or credit != raw or raw % scale:
             raise ValueError("Exact positive whole-token transfer required")
         return raw // scale
-
-    # ── Spend (rental payment) ──────────────────────────────────────────
-
-    async def spend_for_rental(self, user_id: str, rental_id: str, amount: int) -> int:
-        """Deduct $ASPORE for rental payment. Returns new balance."""
-        new_balance = await self.repo.debit_aspore(user_id, amount)
-        await self.repo.insert_aspore_tx(
-            user_id=user_id,
-            tx_type="rental_payment",
-            amount=-amount,
-            balance_after=new_balance,
-            reference_type="rental",
-            reference_id=rental_id,
-            note=f"Rental payment: {amount} $ASPORE",
-        )
-        return new_balance
-
-    async def try_refund_rental(self, user_id: str, rental_id: str) -> int | None:
-        """Refund $ASPORE if this rental was paid with it. Returns refunded amount or None."""
-        try:
-            txs = await self.repo.get_aspore_transactions(user_id, limit=100)
-        except Exception:
-            return None
-        for tx in txs:
-            if (
-                tx["tx_type"] == "rental_payment"
-                and str(tx.get("reference_id")) == rental_id
-                and tx["amount"] < 0
-            ):
-                return await self.refund_rental(user_id, rental_id, abs(tx["amount"]))
-        return None
-
-    async def refund_rental(self, user_id: str, rental_id: str, amount: int) -> int:
-        """Refund $ASPORE for cancelled rental. Returns new balance."""
-        new_balance = await self.repo.credit_aspore(user_id, amount)
-        await self.repo.insert_aspore_tx(
-            user_id=user_id,
-            tx_type="rental_refund",
-            amount=amount,
-            balance_after=new_balance,
-            reference_type="rental",
-            reference_id=rental_id,
-            note=f"Rental refund: {amount} $ASPORE",
-        )
-        return new_balance
 
     # ── Balance & History ───────────────────────────────────────────────
 

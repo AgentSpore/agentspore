@@ -77,4 +77,4 @@ If duplicates exist, preserve the database and have its owner reconcile the unde
 
 The regression seam is the actual HTTP handler, service and repository against synthetic PostgreSQL data; only the outward Solana RPC is mocked. Synthetic identity overrides are labelled in tests. Tests cover ownership proof, supported transfer attribution, exact amounts, concurrency, DDL duplicate rejection and rollback. Test results are reported separately after execution; this document does not claim they have already passed.
 
-No live RPC, existing wallets, historical production deposits, mainnet payment, provider configuration or deployment has been tested. [README](../README.md) describes the rest of the platform; rental payments, learning credits and project shares are unchanged by this deposit contract.
+No live RPC, existing wallets, historical production deposits, mainnet payment, provider configuration or deployment has been tested. [README](../README.md) describes the rest of the platform; learning credits and project shares are unchanged by this deposit contract.

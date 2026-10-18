@@ -1,14 +1,13 @@
 """
-Ownership API — Web3 wallet + on-chain token endpoints
-=======================================================
+Ownership API — wallet, $ASPORE and contributor-share endpoints
+===============================================================
 Endpoints:
   PATCH  /api/v1/users/wallet         — connect wallet (EIP-191 sig verify)
   PATCH  /api/v1/users/solana-wallet   — connect Solana wallet for $ASPORE payouts
   DELETE /api/v1/users/solana-wallet   — disconnect Solana wallet
   GET    /api/v1/users/me/payouts      — payout history
   POST   /api/v1/agents/link-owner     — link agent to human user (JWT + X-API-Key)
-  GET    /api/v1/projects/{id}/ownership — per-project contributor shares + token info
-  GET    /api/v1/users/me/tokens       — all tokens owned by current user
+  GET    /api/v1/projects/{id}/ownership — per-project contributor shares
 """
 
 from __future__ import annotations
@@ -26,13 +25,10 @@ from app.schemas.ownership import (
     ContributorShare,
     LinkOwnerRequest,
     ProjectOwnershipResponse,
-    ProjectTokenInfo,
     SolanaWalletConnectRequest,
-    UserTokenEntry,
     WalletConnectRequest,
 )
 from app.services.payout_service import PayoutService, get_payout_service
-from app.services.web3_service import get_web3_service
 
 router = APIRouter(tags=["ownership"])
 
@@ -198,38 +194,15 @@ async def get_project_ownership(
     project_id: str,
     db: DatabaseSession,
 ):
-    """Public endpoint — returns contributor shares and on-chain token info."""
+    """Public endpoint — returns contributor shares."""
     project_title = await ownership_repo.get_project_title(db, project_id)
     if not project_title:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    token_data = await ownership_repo.get_project_token_info(db, project_id)
-
-    token_info: ProjectTokenInfo | None = None
-    if token_data:
-        token_info = ProjectTokenInfo(
-            contract_address=token_data["contract_address"],
-            chain_id=token_data["chain_id"],
-            token_symbol=token_data["token_symbol"],
-            total_minted=token_data["total_minted"],
-            basescan_url=f"https://basescan.org/address/{token_data['contract_address']}",
-        )
-
     contrib_rows = await ownership_repo.get_contributor_shares(db, project_id)
 
     contributors: list[ContributorShare] = []
-    web3_svc = get_web3_service()
-
     for row in contrib_rows:
-        on_chain_balance: int | None = None
-        if token_data and row.wallet_address:
-            try:
-                on_chain_balance = await web3_svc.get_balance(
-                    token_data["contract_address"], row.wallet_address
-                )
-            except Exception:
-                pass
-
         contributors.append(
             ContributorShare(
                 agent_id=str(row.agent_id),
@@ -239,56 +212,12 @@ async def get_project_ownership(
                 wallet_address=row.wallet_address,
                 contribution_points=row.contribution_points,
                 share_pct=float(row.share_pct),
-                tokens_minted=row.tokens_minted,
-                token_balance_onchain=on_chain_balance,
             )
         )
 
     return ProjectOwnershipResponse(
         project_id=project_id,
         project_title=project_title,
-        token=token_info,
         contributors=contributors,
     )
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# GET /users/me/tokens
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-@router.get("/users/me/tokens", response_model=list[UserTokenEntry])
-async def get_my_tokens(
-    current_user: CurrentUser,
-    db: DatabaseSession,
-):
-    """Return all ERC-20 token holdings for the authenticated user."""
-    rows = await ownership_repo.get_user_token_holdings(db, str(current_user.id))
-
-    web3_svc = get_web3_service()
-    result: list[UserTokenEntry] = []
-    wallet = getattr(current_user, "wallet_address", None)
-
-    for row in rows:
-        balance = 0
-        share_bps = 0
-        if wallet:
-            try:
-                balance = await web3_svc.get_balance(row.contract_address, wallet)
-                share_bps = await web3_svc.get_share_bps(row.contract_address, wallet)
-            except Exception:
-                pass
-
-        result.append(
-            UserTokenEntry(
-                project_id=str(row.project_id),
-                project_title=row.project_title,
-                contract_address=row.contract_address,
-                token_symbol=row.token_symbol,
-                token_balance=balance or row.tokens_minted,
-                share_bps=share_bps,
-                basescan_url=f"https://basescan.org/address/{row.contract_address}",
-            )
-        )
-
-    return result

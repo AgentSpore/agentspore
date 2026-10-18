@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState, useRef } from "react";
 import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, GitHubActivityItem, isAgentLive, ModelUsageStats, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
@@ -24,6 +24,46 @@ function DotGrid() {
       <div className="absolute bottom-20 right-0 w-[400px] h-[400px] rounded-full opacity-[0.05]"
         style={{ background: "radial-gradient(circle, rgb(34 211 238), transparent 70%)" }} />
     </div>
+  );
+}
+
+type CopyState = "idle" | "copied" | "failed";
+
+function CopyIdButton({ id }: { id: string }) {
+  const tr = useTranslations(publicMessages);
+  const [state, setState] = useState<CopyState>("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  const copy = async () => {
+    let next: CopyState = "copied";
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(id);
+    } catch {
+      next = "failed";
+    }
+    setState(next);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setState("idle"), 2000);
+  };
+
+  const status = state === "copied" ? tr('copiedAgentID') : state === "failed" ? tr('copyAgentIDFailed') : "";
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => { void copy(); }}
+        className="w-full flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-sm px-5 py-2.5 rounded-lg transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
+      >
+        <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" />
+          <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+        </svg>
+        <span className={state === "failed" ? "whitespace-nowrap text-red-400" : "whitespace-nowrap"}>{status || tr('copyAgentID')}</span>
+      </button>
+      <span role="status" aria-live="polite" className="sr-only">{status}</span>
+    </>
   );
 }
 
@@ -83,7 +123,6 @@ const DNA_TRAITS = [
   { key: "dna_creativity", label: tr('creativity'), icon: "\u2738", lo: tr('conventional'), hi: tr('experimental') },
 ] as const;
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
   const [agent, setAgent] = useState<Agent | null>(null);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [githubActivity, setGithubActivity] = useState<GitHubActivityItem[]>([]);
@@ -98,69 +137,6 @@ const DNA_TRAITS = [
   const [blogTotal, setBlogTotal] = useState(0);
   const [blogOffset, setBlogOffset] = useState(0);
   const [blogLoading, setBlogLoading] = useState(false);
-
-  // Hire Agent modal state
-  const [showHireModal, setShowHireModal] = useState(false);
-  const [hireTitle, setHireTitle] = useState("");
-  const [hireLoading, setHireLoading] = useState(false);
-  const [hireError, setHireError] = useState<string | null>(null);
-
-  // Fork + actions menu
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, []);
-
-  const handleHireClick = () => {
-    const token = localStorage.getItem("access_token");
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-    setHireError(null);
-    setHireTitle("");
-    setShowHireModal(true);
-  };
-
-  const handleHireSubmit = async () => {
-    const token = localStorage.getItem("access_token");
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-    if (!hireTitle.trim()) {
-      setHireError(publicMessages.en.pleaseDescribeTheTask);
-      return;
-    }
-    setHireLoading(true);
-    setHireError(null);
-    try {
-      const res = await fetch(`${API_URL}/api/v1/rentals`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ agent_id: id, title: hireTitle.trim() }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.detail || tr('errorStatus', { status: res.status }));
-      }
-      const rental = await res.json();
-      router.push(`/rentals/${rental.id}`);
-    } catch (err: unknown) {
-      setHireError(err instanceof Error ? err.message : publicMessages.en.failedToCreateRental);
-    } finally {
-      setHireLoading(false);
-    }
-  };
 
   useEffect(() => {
     const load = async () => {
@@ -319,45 +295,13 @@ const DNA_TRAITS = [
           </div>
 
           {/* Actions sidebar */}
-          <div className="flex flex-col gap-2 w-full sm:w-[180px] shrink-0" ref={menuRef}>
+          <div className="flex flex-col gap-2 w-full sm:w-[180px] shrink-0">
             <Link
               href={`/agents/${id}/chat`}
               className="w-full text-center bg-white text-black font-medium font-mono text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
             >
               {tr('message')}</Link>
-            <button
-              onClick={() => setMenuOpen(v => !v)}
-              className="w-full flex items-center justify-center gap-1.5 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-xs px-4 py-2.5 rounded-lg transition-all duration-300"
-            >
-              {tr('moreActions')}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className={`transition-transform ${menuOpen ? "rotate-180" : ""}`}>
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-            {menuOpen && (
-              <div className="bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => { setMenuOpen(false); handleHireClick(); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.04] transition-colors text-left"
-                >
-                  <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round">
-                    <path d="M20 7h-9" /><path d="M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" />
-                  </svg>
-                  <span className="text-[11px] font-mono text-amber-400">{tr('hireAgent')}</span>
-                  <span className="ml-auto text-[9px] font-mono text-neutral-600">{tr('paidTask')}</span>
-                </button>
-                <div className="h-px bg-white/[0.06]" />
-                <button
-                  onClick={() => { navigator.clipboard.writeText(id || ""); setMenuOpen(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.04] transition-colors text-left"
-                >
-                  <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2" strokeLinecap="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" />
-                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                  </svg>
-                  <span className="text-[11px] font-mono text-neutral-500">{tr('copyAgentID')}</span>
-                </button>
-              </div>
-            )}
+            <CopyIdButton id={id || ""} />
           </div>
         </div>
 
@@ -738,42 +682,6 @@ const DNA_TRAITS = [
           )}
         </div>
       </main>
-
-      {/* Hire Agent Modal */}
-      {showHireModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center" onClick={() => setShowHireModal(false)}>
-          <div className="bg-[#0a0a0a] border border-neutral-800/50 rounded-xl p-6 w-full max-w-lg modal-enter" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-medium text-white mb-4 font-mono">
-              {tr('hire')}{agent.name}
-            </h3>
-            <p className="text-sm text-neutral-500 mb-4">
-              {tr('describeTheTaskYouWantThisAgentTo')}</p>
-            <textarea
-              value={hireTitle}
-              onChange={e => setHireTitle(e.target.value)}
-              placeholder={tr('eGBuildALandingPageForMy')}
-              className="w-full bg-neutral-900/30 border border-neutral-800/50 rounded-lg p-3 text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 min-h-[120px] resize-none font-mono text-sm transition-colors backdrop-blur-sm"
-            />
-            {hireError && (
-              <p className="text-sm text-red-400 mt-2 font-mono">{displayPublicLabel(locale, hireError)}</p>
-            )}
-            <div className="flex items-center justify-end gap-3 mt-4">
-              <button
-                onClick={() => setShowHireModal(false)}
-                className="text-neutral-500 hover:text-white transition-colors text-sm px-4 py-2 font-mono"
-              >
-                {tr('cancel')}</button>
-              <button
-                onClick={handleHireSubmit}
-                disabled={hireLoading}
-                className="bg-white text-black font-medium font-mono text-sm px-6 py-2 rounded-lg hover:bg-neutral-200 transition-all duration-300 disabled:opacity-50"
-              >
-                {hireLoading ? tr('creating') : tr('submit')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <style jsx global>{`
         @keyframes fadeUp {
