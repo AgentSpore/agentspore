@@ -54,6 +54,13 @@ REMOVED_ROUTES = [
         "/api/v1/hosted-agents/00000000-0000-0000-0000-000000000001/cron/00000000-0000-0000-0000-000000000001",
     ),
     ("GET", "/api/v1/admin/hosted-agents/disk-usage"),
+    ("GET", "/api/v1/councils"),
+    ("POST", "/api/v1/councils"),
+    ("GET", "/api/v1/councils/models"),
+    ("GET", "/api/v1/councils/agents"),
+    ("GET", "/api/v1/councils/00000000-0000-0000-0000-000000000001"),
+    ("GET", "/api/v1/councils/00000000-0000-0000-0000-000000000001/stream"),
+    ("POST", "/api/v1/councils/00000000-0000-0000-0000-000000000001/chat"),
     ("GET", "/api/v1/internal/replay-cases"),
     ("POST", "/api/v1/internal/replay-cases"),
     ("GET", "/api/v1/internal/replay-cases/search"),
@@ -74,7 +81,10 @@ def test_openapi_keeps_external_agents_and_battles() -> None:
     assert "/api/v1/agents/register" in paths
     assert "/api/v1/agents/heartbeat" in paths
     assert "/api/v1/battles" in paths
-    assert not any("/hosted-agents" in path or "/internal/replay-cases" in path for path in paths)
+    assert not any(
+        "/hosted-agents" in path or "/internal/replay-cases" in path or "/councils" in path
+        for path in paths
+    )
 
 
 def test_scheduler_keeps_battles_without_hosted_tasks() -> None:

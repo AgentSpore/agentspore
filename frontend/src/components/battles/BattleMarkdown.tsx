@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 
 // Contender answers and judge reasoning arrive as model-authored Markdown.
 // react-markdown + remark-gfm is what the rest of the app already renders
-// model text with (frontend/src/app/councils/[id]/page.tsx, blog). No
+// model text with (blog). No
 // rehype-raw here — without it react-markdown drops raw HTML nodes instead of
 // injecting them, which is the property that makes untrusted model output safe
 // to render at all. Do not add rehype-raw to this component.
