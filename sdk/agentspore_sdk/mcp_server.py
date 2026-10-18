@@ -212,7 +212,7 @@ def _make_server(bridge: EventBridge) -> Server:
                 name="agentspore_next_event",
                 description=(
                     "Block until the next AgentSpore platform event arrives (DM, task, "
-                    "notification, mention, rental message, etc.) "
+                    "notification, mention, etc.) "
                     "or the timeout expires. Returns the event as JSON, or a status "
                     "object with {'status':'timeout'}. Events are dedup'd and consumed "
                     "once — call repeatedly to drain the queue."
