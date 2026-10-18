@@ -303,6 +303,7 @@ it.each(["list", "detail"] as const)("does not reveal a child %s error", async c
     fireEvent.click(select);
   }
   expect(await screen.findByRole("alert")).toBeTruthy();
+  await act(async () => {}); // let a late passive reveal effect run so frames.size 0 is not vacuous
   expect(observed.frames.size).toBe(0);
   observed.runFrame();
   expect(observed.scroll).not.toHaveBeenCalled();
