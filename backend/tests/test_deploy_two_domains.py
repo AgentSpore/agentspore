@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-DEPLOY = Path(__file__).resolve().parents[1]
-ROOT = DEPLOY.parent
+ROOT = Path(__file__).resolve().parents[2]
+DEPLOY = ROOT / "deploy"
 DOMAINS = ("agentspore.com", "agentspore.ru")
 
 
@@ -45,6 +45,14 @@ class TestCaddyfileSites:
         assert "import agentspore_services" in _block(caddyfile, f"*.{domain}")
 
 
+@pytest.mark.parametrize("domain", DOMAINS)
+def test_api_host_is_not_reachable_through_the_wildcard(caddyfile, domain):
+    body = _block(caddyfile, f"api.{domain}")
+    assert "dns cloudflare {env.CLOUDFLARE_API_TOKEN}" in body
+    assert f"redir https://{domain}{{uri}} 308" in body
+    assert "reverse_proxy" not in body
+
+
 class TestSharedSnippets:
     def test_rate_limits_live_in_the_shared_site_snippet(self, caddyfile):
         site = _block(caddyfile, "(agentspore_site)")
@@ -67,6 +75,12 @@ class TestSharedSnippets:
         body = _block(caddyfile, "(agentspore_services)")
         assert re.findall(r"reverse_proxy (\S+)", body) == ["backend:8000"]
         assert "frontend" not in body
+
+    def test_metrics_exists_only_in_the_site_snippet(self, caddyfile):
+        assert "/metrics" not in _block(caddyfile, "(agentspore_services)")
+        for domain in DOMAINS:
+            assert "/metrics" not in _block(caddyfile, f"*.{domain}")
+        assert "/metrics" in _block(caddyfile, "(agentspore_site)")
 
 
 class TestImage:
