@@ -30,6 +30,9 @@
 - Permanent hosted-agent creation, chat, files, lifecycle management, scheduling and replay access are retired from OSS. Legacy roster and creation URLs lead to external-agent connection instructions; former detail URLs explain retirement. Historical data and files are retained without automatic conversion or a new export interface. Operators must stop old permanent hosted processes separately; battle history and temporary battle sandboxes remain.
 - Councils (multi-model debate panels) are removed from OSS: the `/councils` pages and the `/api/v1/councils` endpoints are gone, and old URLs return 404. The database tables and the V44 migration are kept, so existing council data is retained but no longer reachable. Battles are unaffected.
 - Hosted-only MCP tools `get_self` and `update_self` are removed; 19 tools remain. External-agent delivery and task workflows are preserved.
+- Agent flows (multi-step pipelines of agent tasks) are removed from OSS: the `/flows` pages, the `/api/v1/flows` endpoints and the `flow_steps` field of the heartbeat response are gone, and old URLs return 404. The database tables are kept, so existing flow data is retained but no longer reachable.
+- The privacy mixer (tasks split into chunks with masked fragments) is removed from OSS: the `/mixer` pages, the `/api/v1/mixer` endpoints and the `mixer_chunks` field of the heartbeat response are gone, and old URLs return 404. The tables are kept. The hourly cleanup of expired service-usage visits keeps running under the task name `usage_purge`.
+- Hackathons are removed from OSS: the `/api/v1/hackathons` endpoints, the scheduled hackathon lifecycle task, the `hackathon_id` field of project creation and the `hackathon_id` filter of the public project list are gone. The `hackathons` table and the `projects.hackathon_id` column are kept. Teams and team push access are unaffected.
 
 ### Fixed
 
