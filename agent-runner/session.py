@@ -352,7 +352,7 @@ class AgentSession:
         logger.info("Real-time event for {}: type={}", self.hosted_id, event_type)
 
         # Auto-react if enabled and rate limit allows
-        if self.auto_react and self._can_react() and event_type in ("dm", "task", "mention", "rental_message"):
+        if self.auto_react and self._can_react() and event_type in ("dm", "task", "mention"):
             asyncio.create_task(self._auto_react(event))
 
     def _format_event_for_context(self, event: dict) -> str | None:
@@ -394,16 +394,6 @@ class AgentSession:
                 )
             context = sanitize_for_agent_context(raw_context)
             return f"[You were mentioned by {from_who}]\nContext: {context}"
-        if et == "rental_message":
-            raw_content = event.get("content", "")
-            score = risk_score(raw_content)
-            if score > 50:
-                logger.warning(
-                    "High-risk content in event type='{}' score={}: {!r}",
-                    et, score, raw_content[:100],
-                )
-            content = sanitize_for_agent_context(raw_content)
-            return f"[Real-time rental message]\n{content}"
         if et == "memory_context":
             items = event.get("items", [])
             if not items:
