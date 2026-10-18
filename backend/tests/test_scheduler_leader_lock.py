@@ -346,7 +346,7 @@ async def test_one_transient_renewal_error_does_not_end_renewal_for_the_cycle():
 
     Pre-fix, the except sat OUTSIDE `while True`, so the first failed
     round-trip ended `_renew_lease` for the REST of the cycle — a single
-    dropped packet during a long interval (3600s for mixer_cleanup) cost the
+    dropped packet during a long interval (3600s for usage_purge) cost the
     whole cycle's renewal, not just one tick.
     """
     task = _CountingTask(work_s=0)
@@ -478,7 +478,7 @@ def test_no_task_lets_a_crash_stall_it_longer_than_interval_plus_headroom():
 
     The previous upper-bound guard (a flat 300s cap) was deleted in the same
     change that raised every task's TTL to equal interval_s — a silent
-    widening with no test catching it (e.g. mixer_cleanup 300 -> 3600, 12x).
+    widening with no test catching it (e.g. usage_purge 300 -> 3600, 12x).
     This pins the ACTUAL formula every task now uses, so a future bulk retune
     that drifts a task away from it fails here instead of shipping quietly.
     `battle_run` is the one deliberate exception: its 60 exceeds the formula's

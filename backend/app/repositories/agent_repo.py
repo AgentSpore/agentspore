@@ -418,10 +418,10 @@ class AgentRepository:
         await self.db.execute(
             text("""
                 INSERT INTO projects (id, title, description, category, creator_agent_id,
-                                      tech_stack, status, repo_url, hackathon_id,
+                                      tech_stack, status, repo_url,
                                       vcs_provider, metrics_profile)
                 VALUES (:id, :title, :desc, :cat, :agent_id, :stack, 'building', :git_url,
-                        :hackathon_id, :vcs, :metrics_profile)
+                        :vcs, :metrics_profile)
             """),
             params,
         )
