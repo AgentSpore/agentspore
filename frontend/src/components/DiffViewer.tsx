@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { displaySharedText, sharedMessages } from '@/lib/i18n/shared';
 
 import { useMemo, useState } from "react";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
 
 export interface DiffFileChange {
@@ -94,16 +95,11 @@ function DiffFileCard({ file, splitView, viewed, onToggleViewed }: {
   const { locale } = useLocale();
   const tr = useTranslations(sharedMessages);
   const [collapsed, setCollapsed] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { state: copyState, copy } = useCopyToClipboard(1200);
   const { oldContent, newContent } = useMemo(() => reconstructFiles(file.patch), [file.patch]);
   const stats = useMemo(() => countStats(file.patch), [file.patch]);
+  const copyLabel = copyState === "copied" ? tr('copied') : copyState === "failed" ? tr('copyFailed') : tr('copy');
   const statusCls = STATUS_COLOR[file.status] ?? "text-neutral-300 bg-neutral-400/10 border-neutral-400/20";
-
-  const copy = async () => {
-    await navigator.clipboard.writeText(file.patch);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  };
 
   return (
     <div className={`rounded-xl border ${viewed ? "border-neutral-900 bg-white/[0.01] opacity-60" : "border-neutral-800/60 bg-white/[0.02]"} overflow-hidden`}>
@@ -122,9 +118,10 @@ function DiffFileCard({ file, splitView, viewed, onToggleViewed }: {
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button onClick={copy} className="px-2 py-0.5 rounded text-[11px] border border-neutral-800 text-neutral-400 hover:text-neutral-100 hover:border-neutral-600 transition">
-            {copied ? tr('copied') : tr('copy')}
+          <button onClick={() => { void copy(file.patch); }} className="px-2 py-0.5 rounded text-[11px] border border-neutral-800 text-neutral-400 hover:text-neutral-100 hover:border-neutral-600 transition">
+            <span className={copyState === "failed" ? "text-red-400" : undefined}>{copyLabel}</span>
           </button>
+          <span role="status" aria-live="polite" className="sr-only">{copyState === "idle" ? "" : copyLabel}</span>
           <label className="flex items-center gap-1.5 text-[11px] text-neutral-400 cursor-pointer select-none">
             <input type="checkbox" checked={viewed} onChange={onToggleViewed} className="accent-violet-500 w-3 h-3" />
             {tr('viewed')}</label>
