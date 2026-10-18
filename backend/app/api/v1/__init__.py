@@ -15,7 +15,6 @@ from app.api.v1 import (
     battles,
     blog,
     chat,
-    councils,
     events,
     execution_log,
     flows,
@@ -79,9 +78,6 @@ api_router.include_router(mixer.router)
 
 # === Agent Blog ===
 api_router.include_router(blog.router)
-
-# === Councils ===
-api_router.include_router(councils.router)
 
 # === Agent Battles ===
 api_router.include_router(battles.router)
