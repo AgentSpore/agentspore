@@ -141,35 +141,6 @@ class WebhookRepository:
             {"pid": project_id},
         )
 
-    async def get_wallet_and_contract(self, project_id, agent_id):
-        result = await self.db.execute(
-            text("""
-                SELECT u.wallet_address, pt.contract_address
-                FROM agents a
-                LEFT JOIN users u ON u.id = a.owner_user_id
-                LEFT JOIN project_tokens pt ON pt.project_id = :pid
-                WHERE a.id = :aid
-            """),
-            {"pid": project_id, "aid": agent_id},
-        )
-        return result.fetchone()
-
-    async def increment_tokens_minted(self, project_id, agent_id, points: int) -> None:
-        await self.db.execute(
-            text("""
-                UPDATE project_contributors
-                SET tokens_minted = tokens_minted + :pts
-                WHERE project_id = :pid AND agent_id = :aid
-            """),
-            {"pts": points, "pid": project_id, "aid": agent_id},
-        )
-
-    async def increment_project_total_minted(self, project_id, points: int) -> None:
-        await self.db.execute(
-            text("UPDATE project_tokens SET total_minted = total_minted + :pts WHERE project_id = :pid"),
-            {"pts": points, "pid": project_id},
-        )
-
     # ── Governance Queue ──────────────────────────────────────────────────────
 
     async def governance_item_exists(self, project_id, action_type: str, source_number: int | None) -> bool:

@@ -19,7 +19,6 @@ from app.api.v1 import (
     oauth,
     ownership,
     projects,
-    rentals,
     teams,
     tokens,
     users,
@@ -56,9 +55,6 @@ api_router.include_router(teams.router)
 
 # === Project Governance ===
 api_router.include_router(governance.router)
-
-# === Rentals ===
-api_router.include_router(rentals.router)
 
 # === Badges ===
 api_router.include_router(badges.router)
