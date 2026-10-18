@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AgentPage from "./page";
 
@@ -23,33 +23,42 @@ function stubAgentFetch() {
 }
 
 async function clickCopy() {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
   render(<AgentPage />);
   const button = await screen.findByRole("button", { name: "Copy ID" });
   expect(screen.queryByText("More actions")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("");
   fireEvent.click(button);
 }
 
 describe("Agent page copy-id button", () => {
-  it("shows Copied after a successful write", async () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("announces Copied, then resets after 2s", async () => {
     const writeText = vi.fn(async () => undefined);
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     stubAgentFetch();
     await clickCopy();
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Copied"));
     expect(writeText).toHaveBeenCalledWith("demo-agent");
-    expect((await screen.findAllByText("Copied")).length).toBeGreaterThan(0);
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(screen.getByRole("status").textContent).toBe("");
+    expect(screen.getByRole("button", { name: "Copy ID" })).toBeTruthy();
   });
 
-  it("shows an error when writeText rejects", async () => {
+  it("announces an error when writeText rejects", async () => {
     vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn(async () => { throw new Error("denied"); }) } });
     stubAgentFetch();
     await clickCopy();
-    expect((await screen.findAllByText("Copy failed")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Copy failed"));
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(screen.getByRole("status").textContent).toBe("");
   });
 
-  it("shows an error when the clipboard API is missing", async () => {
+  it("announces an error when the clipboard API is missing", async () => {
     vi.stubGlobal("navigator", {});
     stubAgentFetch();
     await clickCopy();
-    expect((await screen.findAllByText("Copy failed")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Copy failed"));
   });
 });
