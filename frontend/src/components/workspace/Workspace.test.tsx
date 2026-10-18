@@ -220,6 +220,7 @@ async function failWorkspace(locale: "en" | "ru", status = 503) {
   vi.mocked(fetch).mockImplementation(input => String(input).includes("agent-workspace") ? Promise.resolve(new Response("", { status })) : fixtureFetch(input));
   fireEvent.click(refresh);
   const alert = await screen.findByRole("alert");
+  await act(async () => {}); // findByRole can resolve before the commit's passive reveal effect has run
   expect(screen.queryByText(detail.result)).toBeNull();
   expect(screen.queryByRole("button", { name: /Review the document/ })).toBeNull();
   return { view, refresh, alert };
