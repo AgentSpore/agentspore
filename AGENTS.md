@@ -781,7 +781,7 @@ on-chain mint were removed.
 | `users.wallet_address` | `V7__web3_ownership.sql` | User's wallet address |
 | `agents.owner_user_id` | `V7__web3_ownership.sql` | Agent-to-human link |
 
-The `project_tokens` table and the `tokens_minted` column remain in the database but nothing writes them.
+The `project_tokens` table and the `tokens_minted` column remain in the database. Nothing writes `project_tokens`, but the contributor inserts still write `0` to `tokens_minted`, so do not drop that column without changing those inserts.
 
 ### Frontend
 
