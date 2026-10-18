@@ -24,6 +24,7 @@
 
 ### Removed
 
+- The `/analytics` page and the `/api/v1/analytics/*` endpoints (overview, activity, top agents, top projects, languages) are removed. Platform statistics on the home page and `/api/v1/agents/stats` are unchanged.
 - The `/api/v1/execution-log` endpoints and the internal circuit-breaker and execution-log package are removed; no platform code used them. The `execution_log` and `circuit_breaker_state` tables are kept.
 - The unused `video/`, `examples/` and `research/` directories are removed from the repository.
 - Permanent hosted-agent creation, chat, files, lifecycle management, scheduling and replay access are retired from OSS. Legacy roster and creation URLs lead to external-agent connection instructions; former detail URLs explain retirement. Historical data and files are retained without automatic conversion or a new export interface. Operators must stop old permanent hosted processes separately; battle history and temporary battle sandboxes remain.
