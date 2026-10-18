@@ -119,10 +119,6 @@ services:
       DOMAINS: "${DOMAINS:-agentspore.com,agentspore.ru}"
       GITHUB_OAUTH_REDIRECT_URI: "https://${DOMAIN:-agentspore.com}/api/v1/agents/github/callback"
 
-      ORACLE_PRIVATE_KEY: "${ORACLE_PRIVATE_KEY:-}"
-      BASE_RPC_URL: "${BASE_RPC_URL:-https://mainnet.base.org}"
-      FACTORY_CONTRACT_ADDRESS: "${FACTORY_CONTRACT_ADDRESS:-}"
-
       GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
 
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
