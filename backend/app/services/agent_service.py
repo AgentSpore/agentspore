@@ -22,6 +22,7 @@ from app.core.redis_client import get_redis
 from app.repositories import governance_repo, hackathon_repo
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
+from app.repositories.code_karma_repo import CodeKarmaRepository
 from app.repositories.flow_repo import get_flow_repo
 from app.repositories.mixer_repo import get_mixer_repo
 from app.repositories.rental_repo import get_rental_repo
@@ -31,6 +32,7 @@ from app.schemas.agents import (
     HeartbeatResponseBody,
     PlatformStats,
     ProjectResponse,
+    TaskCreateRequest,
 )
 from app.services.badge_service import award_badges
 from app.services.events import EventSource, safe_publish
@@ -39,6 +41,8 @@ from app.services.github_oauth_service import get_github_oauth_service
 from app.services.gitlab_oauth_service import get_gitlab_oauth_service
 from app.services.openviking_service import get_openviking_service
 from app.services.web3_service import get_web3_service
+from app.services.task_review_service import TaskReviewService
+from app.services.usage_service import UsageService
 
 from loguru import logger
 
@@ -50,6 +54,7 @@ class AgentService:
         self.db = db
         self.redis = redis
         self.repo = get_agent_repo(db)
+        self.task_reviews = TaskReviewService(db)
         self.flow_repo = get_flow_repo(db)
         self.rental_repo = get_rental_repo(db)
         self.mixer_repo = get_mixer_repo(db)
@@ -591,6 +596,7 @@ class AgentService:
         flow_steps = await self._heartbeat_collect_flow_steps(agent_id)
         mixer_chunks = await self._heartbeat_collect_mixer_chunks(agent_id)
         agent_events = await self._heartbeat_collect_agent_events(agent_id)
+        project_usage = await UsageService(self.db).get_agent_usage(agent_id)
 
         hb_summary = (
             f"Heartbeat: {body.status}, {len(tasks)} tasks, {len(notifications)} notifications, "
@@ -613,6 +619,7 @@ class AgentService:
             flow_steps=flow_steps, mixer_chunks=mixer_chunks,
             memory_context=memory_context, agent_events=agent_events,
             warnings=warnings,
+            project_usage=project_usage,
         )
 
     async def _heartbeat_collect_agent_events(self, agent_id: Any) -> list[dict[str, Any]]:
@@ -929,6 +936,7 @@ class AgentService:
         git_repo_url = await self.git.create_repo(
             body.title, body.description, vcs_provider=vcs, user_token=user_oauth_token,
         )
+        vcs_warning = None
         if git_repo_url:
             try:
                 await self.git.setup_repo_admin(body.title, vcs_provider=vcs)
@@ -941,6 +949,16 @@ class AgentService:
                     await self.git.add_repo_collaborator(body.title, github_login, "push", vcs_provider=vcs)
                 except Exception as e:
                     logger.warning("add_repo_collaborator failed for {}/{}: {}", body.title, github_login, e)
+        else:
+            logger.warning("Repository not created for project '{}' (vcs={})", body.title, vcs)
+            cause = f"the platform's {vcs} integration is not configured"
+            if user_oauth_token:
+                cause += f", or the linked {vcs} account lacks access to the organization"
+            vcs_warning = (
+                f"vcs_unavailable: repository was not created on {vcs} ({cause}, "
+                "or repository creation failed). repo_url is null and pushing code is "
+                "impossible until this is fixed"
+            )
 
         owner_name = await self.repo.get_project_owner_name(agent_id)
 
@@ -958,6 +976,7 @@ class AgentService:
             "id": project_id, "title": body.title, "desc": body.description,
             "cat": body.category, "agent_id": agent_id, "stack": body.tech_stack,
             "git_url": git_repo_url, "hackathon_id": body.hackathon_id, "vcs": vcs,
+            "metrics_profile": getattr(body, "metrics_profile", None),
         })
 
         if git_repo_url:
@@ -1018,8 +1037,7 @@ class AgentService:
 
         project = await self.repo.get_project_full(project_id)
         resp = self._project_response(project)
-        if similar_warning:
-            resp.warning = similar_warning
+        resp.warning = "; ".join(w for w in (vcs_warning, similar_warning) if w) or None
         return resp
 
     async def list_projects(
@@ -1142,10 +1160,8 @@ class AgentService:
     ) -> None:
         """Record which model an agent used for one task.
 
-        A client-reported model is authoritative (an external agent may run a
-        different model than its hosted default); otherwise the model is resolved
-        server-side from the agent's hosted-agent record. An agent that is neither
-        hosted nor reporting simply gets no usage row.
+        A client-reported model is authoritative. An agent that does not report
+        its model gets no usage row.
 
         This is telemetry: it must never break the caller's action, so the writes
         run inside a savepoint that can roll back without poisoning the outer
@@ -1153,10 +1169,10 @@ class AgentService:
         """
         try:
             async with self.repo.db.begin_nested():
-                model = reported_model or await self.repo.get_hosted_agent_model(agent_id)
+                model = reported_model
                 if not model:
                     logger.debug(
-                        "No model usage for agent {} ({}): not hosted, none reported",
+                        "No model usage for agent {} ({}): none reported",
                         agent_id,
                         task_type,
                     )
@@ -1259,20 +1275,20 @@ class AgentService:
         }
 
     async def deploy_project(self, project_id: UUID, agent: dict) -> NoReturn:
-        """Report that automatic deployment is unavailable.
-
-        The platform has no automatic deploy backend for this endpoint — it
-        must not claim a deployment happened or invent a preview URL.
-        """
-        project = await self.repo.get_project_basic(project_id, "id, title, repo_url")
+        """Authorize the creator before denying deployment without isolation."""
+        project = await self.repo.get_project_basic(project_id, "id, creator_agent_id")
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+        if str(project["creator_agent_id"]) != str(agent["id"]):
+            raise HTTPException(status_code=403, detail="Only project creator can deploy projects")
 
+        # INVARIANT(A4.4): untrusted builds stay closed until isolation is available.
         raise HTTPException(
-            status_code=501,
+            status_code=503,
             detail={
-                "status": "not_implemented",
-                "message": "Automatic deployment is not available on this platform.",
+                "status": "unavailable",
+                "reason_code": "isolation_unavailable",
+                "message": "Deployment isolation is unavailable.",
             },
         )
 
@@ -1286,6 +1302,9 @@ class AgentService:
         if str(project["creator_agent_id"]) != str(agent["id"]):
             raise HTTPException(status_code=403, detail="Only project creator can delete projects")
 
+        await self.repo.lock_task_project(project_id)
+        if await self.task_reviews.budgets.repo.project_has_reservations(project_id):
+            raise HTTPException(status_code=409, detail="Project has educational credit history")
         await self.repo.delete_project_and_related(project_id)
         await self.db.commit()
 
@@ -1680,6 +1699,37 @@ class AgentService:
 
     # ── Tasks ─────────────────────────────────────────────────────────
 
+    async def create_task(self, project_id: UUID, agent: dict, body: TaskCreateRequest) -> dict:
+        """Create or recover the creator's manual task under a project row lock."""
+        project = await self.repo.lock_task_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if str(project["creator_agent_id"]) != str(agent["id"]):
+            raise HTTPException(status_code=403, detail="Only the project creator can create tasks")
+        if project["status"] == "archived":
+            raise HTTPException(status_code=409, detail="Project is archived")
+        content = {"type": body.type, "title": body.title, "description": body.description,
+                   "source_key": f"manual:{body.idempotency_key}"}
+        existing = await self.repo.get_manual_task(project_id, content["source_key"])
+        if existing:
+            existing, review = await self.task_reviews.load(existing["id"])
+            reservation = await self.task_reviews.budgets.repo.reservation(existing["id"])
+            price = reservation["amount"] if reservation else None
+            if (price != body.learning_credit_amount
+                    or any(existing[key] != content[key]
+                           for key in ("type", "title", "description"))
+                    or (review is not None) != body.review_required):
+                raise HTTPException(status_code=409, detail="Idempotency key payload differs")
+            return {"task_id": str(existing["id"]), "status": existing["status"], "created": False}
+        task = await self.repo.insert_manual_task(project_id, agent["id"], content)
+        if body.review_required:
+            await self.task_reviews.create(task, agent["id"])
+        if body.learning_credit_amount is not None:
+            await self.task_reviews.budgets.reserve(
+                task["id"], agent["id"], body.learning_credit_amount
+            )
+        return {"task_id": str(task["id"]), "status": task["status"], "created": True}
+
     async def list_tasks(
         self,
         *,
@@ -1712,19 +1762,26 @@ class AgentService:
                 "status": r["status"],
                 "source_type": r["source_type"],
                 "created_at": str(r["created_at"]),
+                "review_required": r["review_required"],
+                "review_version": r["review_version"],
+                "learning_credit_amount": r["learning_credit_amount"],
             }
             for r in rows
         ]
 
     async def claim_task(self, task_id: UUID, agent: dict) -> dict:
         """Claim a task for the agent."""
-        task = await self.repo.get_task_by_id(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+        task, review = await self.task_reviews.load(task_id)
+        if review is not None and str(review["requester_agent_id"]) == str(agent["id"]):
+            raise HTTPException(status_code=403, detail="Requester cannot claim a reviewed task")
         if task["status"] != "open":
             raise HTTPException(status_code=409, detail=f"Task is already '{task['status']}'")
 
-        await self.repo.claim_task(task_id, agent["id"])
+        task = await self.repo.claim_task(task_id, agent["id"])
+        if not task:
+            raise HTTPException(status_code=409, detail="Task is no longer open")
+        if review is not None:
+            await self.task_reviews.claimed(task, review, agent["id"])
         await self.log_activity(
             agent["id"], "task_claimed",
             f"Agent '{agent['name']}' claimed task: {task['title']}",
@@ -1735,15 +1792,20 @@ class AgentService:
 
     async def complete_task(self, task_id: UUID, agent: dict, result_text: str) -> dict:
         """Complete a claimed task."""
-        task = await self.repo.get_task_by_id(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+        task, review = await self.task_reviews.load(task_id)
         if str(task["claimed_by_agent_id"]) != str(agent["id"]):
             raise HTTPException(status_code=403, detail="Only the claiming agent can complete this task")
+        if review is not None:
+            # INVARIANT(AF-02): a claimant cannot accept its own result or earn legacy karma.
+            raise HTTPException(
+                status_code=409, detail="Reviewed tasks require /submit, not /complete"
+            )
         if task["status"] not in ("claimed",):
             raise HTTPException(status_code=409, detail=f"Task is '{task['status']}', cannot complete")
 
-        await self.repo.complete_task(task_id, result_text)
+        task = await self.repo.complete_task(task_id, agent["id"], result_text)
+        if not task:
+            raise HTTPException(status_code=409, detail="Task is no longer claimed by this agent")
         await self.repo.add_karma(agent["id"], 15)
         await self.log_activity(
             agent["id"], "task_completed",
@@ -1755,13 +1817,17 @@ class AgentService:
 
     async def unclaim_task(self, task_id: UUID, agent: dict) -> dict:
         """Return a task to the queue."""
-        task = await self.repo.get_task_by_id(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+        task, review = await self.task_reviews.load(task_id)
         if str(task["claimed_by_agent_id"]) != str(agent["id"]):
             raise HTTPException(status_code=403, detail="Only the claiming agent can unclaim this task")
+        if review is not None and review["submission_version"] > 0:
+            raise HTTPException(status_code=409, detail="Submitted tasks cannot be unclaimed")
 
-        await self.repo.unclaim_task(task_id)
+        task = await self.repo.unclaim_task(task_id, agent["id"])
+        if not task:
+            raise HTTPException(status_code=409, detail="Task is no longer claimed by this agent")
+        if review is not None:
+            await self.task_reviews.unclaimed(task, review, agent["id"])
         return {"status": "open", "task_id": str(task_id), "message": "Task returned to queue"}
 
     # ── Leaderboard & Stats ───────────────────────────────────────────
@@ -1911,6 +1977,7 @@ class AgentService:
             repo_url=p.get("repo_url"),
             vcs_provider=p.get("vcs_provider") or "github",
             created_at=str(p["created_at"]),
+            metrics_profile=p.get("metrics_profile"),
         )
 
     # ── GitHub Proxy ─────────────────────────────────────────────────
@@ -2210,12 +2277,12 @@ class AgentService:
         if status_code < 400:
             for (rule_method, rule_pattern), (action, points) in KARMA_RULES.items():
                 if method == rule_method and fnmatch.fnmatch(path_for_match, rule_pattern):
-                    await self.db.execute(
-                        text("UPDATE agents SET karma = karma + :pts WHERE id = :id"),
-                        {"pts": points, "id": agent["id"]},
-                    )
+                    if action in {"files_pushed", "file_pushed", "file_deleted"}:
+                        points = await CodeKarmaRepository(self.db).award(agent["id"], points)
+                    else:
+                        await self.repo.add_karma(agent["id"], points)
                     logger.info(
-                        "Karma +%d to %s for %s (%s %s)",
+                        "Karma +{} to {} for {} ({} {})",
                         points, agent.get("handle"), action, method, path_for_match,
                     )
                     break

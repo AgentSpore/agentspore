@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { mixerMessages } from "@/lib/i18n/mixer";
+
 import Link from "next/link";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
@@ -50,6 +53,10 @@ const SESSION_STATUS_COLORS: Record<string, string> = {
 };
 
 export default function MixerDetailPage() {
+  const tr = useTranslations(mixerMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(mixerMessages.en, value) ? tr(value) : value;
+
   const { id } = useParams<{ id: string }>();
   const [session, setSession] = useState<MixerSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -283,7 +290,7 @@ export default function MixerDetailPage() {
         <main className="relative max-w-4xl mx-auto px-6 py-12">
           <div className="flex items-center gap-3 py-20 justify-center">
             <div className="w-4 h-4 border-2 border-violet-500/30 border-t-violet-400 rounded-full animate-spin" />
-            <span className="text-neutral-600 text-sm font-mono">Loading session...</span>
+            <span className="text-neutral-600 text-sm font-mono">{tr("Loading session...")}</span>
           </div>
         </main>
       </div>
@@ -296,7 +303,7 @@ export default function MixerDetailPage() {
         <DotGrid />
         <Header />
         <main className="relative max-w-4xl mx-auto px-6 py-12">
-          <p className="text-neutral-500 text-center py-20">Session not found.</p>
+          <p className="text-neutral-500 text-center py-20">{tr("Session not found.")}</p>
         </main>
       </div>
     );
@@ -314,11 +321,11 @@ export default function MixerDetailPage() {
       <main className="relative max-w-4xl mx-auto px-6 py-12 space-y-8">
         {/* Breadcrumb */}
         <div className="text-[10px] font-mono text-neutral-600 tracking-wide fade-up">
-          <Link href="/" className="hover:text-neutral-400 transition-colors">HOME</Link>
+          <Link href="/" className="hover:text-neutral-400 transition-colors">{tr("HOME")}</Link>
           <span className="mx-2">/</span>
-          <Link href="/mixer" className="hover:text-neutral-400 transition-colors">MIXER</Link>
+          <Link href="/mixer" className="hover:text-neutral-400 transition-colors">{tr("MIXER")}</Link>
           <span className="mx-2">/</span>
-          <span className="text-neutral-400">SESSION</span>
+          <span className="text-neutral-400">{tr("SESSION")}</span>
         </div>
 
         {/* Session header */}
@@ -326,9 +333,9 @@ export default function MixerDetailPage() {
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-3 mb-2">
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Session</span>
+                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Session")}</span>
                 <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono ${sessionStatusColor}`}>
-                  {st.label}
+                  {display(st.label)}
                 </span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight truncate">{session.title}</h1>
@@ -336,21 +343,20 @@ export default function MixerDetailPage() {
                 <p className="text-neutral-500 text-sm mt-2">{session.description}</p>
               )}
               <div className="flex items-center gap-3 mt-3 text-[11px] text-neutral-600 font-mono">
-                <span>{session.fragment_count} fragments</span>
+                <span>{session.fragment_count.toLocaleString(locale)} {" " + tr("fragments")}</span>
                 <span className="text-neutral-800">&middot;</span>
-                <span>{chunks.length} chunks</span>
+                <span>{chunks.length.toLocaleString(locale)} {" " + tr("chunks")}</span>
                 <span className="text-neutral-800">&middot;</span>
-                <span>TTL {session.fragment_ttl_hours}h</span>
+                <span>{tr("TTL") + " "}{session.fragment_ttl_hours.toLocaleString(locale)}{tr("h")}</span>
                 <span className="text-neutral-800">&middot;</span>
-                <span>{timeAgo(session.created_at)}</span>
+                <span>{timeAgo(session.created_at, locale)}</span>
               </div>
             </div>
             <Link
               href="/mixer"
               className="text-[11px] font-mono text-neutral-500 hover:text-neutral-300 transition-colors flex-shrink-0 px-3 py-1.5 rounded-lg border border-neutral-800/50 bg-neutral-900/30 hover:border-neutral-700/60"
             >
-              &larr; Back
-            </Link>
+              {" " + tr("← Back") + " "}</Link>
           </div>
         </div>
 
@@ -362,7 +368,7 @@ export default function MixerDetailPage() {
               disabled={actionLoading === "start"}
               className="px-5 py-2.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50"
             >
-              {actionLoading === "start" ? "Starting..." : "Start Session"}
+              {actionLoading === "start" ? tr("Starting...") : tr("Start Session")}
             </button>
           )}
           {["draft", "running"].includes(session.status) && (
@@ -371,15 +377,14 @@ export default function MixerDetailPage() {
               disabled={actionLoading === "cancel"}
               className="px-5 py-2.5 rounded-lg text-sm font-mono border border-neutral-800/50 bg-neutral-900/30 text-neutral-400 hover:text-red-400 hover:border-red-500/30 transition-all disabled:opacity-50"
             >
-              Cancel
-            </button>
+              {" " + tr("Cancel") + " "}</button>
           )}
         </div>
 
         {/* Fragments */}
         {session.fragments && session.fragments.length > 0 && (
           <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 space-y-3 fade-up" style={{ animationDelay: "0.12s" }}>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Encrypted Fragments</span>
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Encrypted Fragments")}</span>
             <div className="flex flex-wrap gap-2">
               {session.fragments.map((f) => (
                 <span
@@ -406,7 +411,7 @@ export default function MixerDetailPage() {
                   : "text-neutral-500 hover:text-neutral-300"
               }`}
             >
-              {t === "chunks" ? `Chunks (${chunks.length})` : "Audit Log"}
+              {t === "chunks" ? tr("Chunks ({count})", { count: chunks.length.toLocaleString(locale) }) : tr("Audit Log")}
             </button>
           ))}
         </div>
@@ -416,11 +421,11 @@ export default function MixerDetailPage() {
             {/* Add chunk (draft only) */}
             {session.status === "draft" && (
               <div className="rounded-xl border border-dashed border-neutral-700/60 bg-neutral-900/20 backdrop-blur-sm p-5 space-y-4 fade-up" style={{ animationDelay: "0.18s" }}>
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Add Chunk</span>
+                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Add Chunk")}</span>
                 <input
                   value={newChunkTitle}
                   onChange={(e) => setNewChunkTitle(e.target.value)}
-                  placeholder="Chunk title"
+                  placeholder={tr("Chunk title")}
                   className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
                   maxLength={300}
                 />
@@ -429,17 +434,17 @@ export default function MixerDetailPage() {
                   onChange={(e) => setNewChunkAgentId(e.target.value)}
                   className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-violet-500/50 transition-colors"
                 >
-                  <option value="">Select agent...</option>
+                  <option value="">{tr("Select agent...")}</option>
                   {agents.map((a) => (
                     <option key={a.id} value={a.id}>
-                      @{a.handle} &mdash; {a.name} ({a.specialization}, {a.model_provider})
+                      @{a.handle} &mdash; {a.name} ({display(a.specialization)}, {a.model_provider})
                     </option>
                   ))}
                 </select>
                 <textarea
                   value={newChunkInstructions}
                   onChange={(e) => setNewChunkInstructions(e.target.value)}
-                  placeholder="Instructions with {{MIX_xxxxxx}} placeholders"
+                  placeholder={tr("Instructions with {{MIX_xxxxxx}} placeholders")}
                   rows={3}
                   className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors resize-none"
                   maxLength={50000}
@@ -449,7 +454,7 @@ export default function MixerDetailPage() {
                   disabled={!newChunkTitle.trim() || !newChunkAgentId || actionLoading === "add-chunk"}
                   className="px-5 py-2.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {actionLoading === "add-chunk" ? "Adding..." : "+ Add Chunk"}
+                  {actionLoading === "add-chunk" ? tr("Adding...") : tr("+ Add Chunk")}
                 </button>
               </div>
             )}
@@ -476,13 +481,13 @@ export default function MixerDetailPage() {
                           {c.specialization && (
                             <>
                               <span className="text-neutral-800">&middot;</span>
-                              <span>{c.specialization}</span>
+                              <span>{display(c.specialization)}</span>
                             </>
                           )}
                         </div>
                       </div>
                       <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono flex-shrink-0 ${chunkStatusColor}`}>
-                        {cst.label}
+                        {display(cst.label)}
                       </span>
                     </div>
 
@@ -492,14 +497,14 @@ export default function MixerDetailPage() {
                         <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
                         </svg>
-                        Leak detected: {c.leak_details}
+                        {" " + tr("Leak detected:") + " "}{c.leak_details}
                       </div>
                     )}
 
                     {/* Output */}
                     {c.output_text && (
                       <div className="rounded-lg bg-neutral-800/30 border border-neutral-800/50 p-4">
-                        <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-2">Output</span>
+                        <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 block mb-2">{tr("Output")}</span>
                         <pre className="text-xs text-neutral-300 font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto leading-relaxed">
                           {c.output_text}
                         </pre>
@@ -515,21 +520,19 @@ export default function MixerDetailPage() {
                             disabled={actionLoading === `approve-${c.id}`}
                             className="px-4 py-2 rounded-lg text-xs font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all disabled:opacity-50"
                           >
-                            Approve
-                          </button>
+                            {" " + tr("Approve") + " "}</button>
                           <button
                             onClick={() => { setRejectChunkId(c.id); setRejectFeedback(""); }}
                             className="px-4 py-2 rounded-lg text-xs font-mono bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-all"
                           >
-                            Reject
-                          </button>
+                            {" " + tr("Reject") + " "}</button>
                         </>
                       )}
                       <button
                         onClick={() => setExpandedChunk(isExpanded ? null : c.id)}
                         className="px-4 py-2 rounded-lg text-xs font-mono text-neutral-500 border border-neutral-800/50 bg-neutral-900/30 hover:text-neutral-300 hover:border-neutral-700/60 transition-all"
                       >
-                        {isExpanded ? "Close Chat" : "Open Chat"}
+                        {isExpanded ? tr("Close Chat") : tr("Open Chat")}
                       </button>
                     </div>
                   </div>
@@ -537,11 +540,11 @@ export default function MixerDetailPage() {
                   {/* Reject dialog */}
                   {rejectChunkId === c.id && (
                     <div className="border-t border-neutral-800/50 p-5 space-y-3 bg-red-500/[0.02]">
-                      <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Rejection Feedback</span>
+                      <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Rejection Feedback")}</span>
                       <textarea
                         value={rejectFeedback}
                         onChange={(e) => setRejectFeedback(e.target.value)}
-                        placeholder="Feedback for the agent..."
+                        placeholder={tr("Feedback for the agent...")}
                         rows={2}
                         className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-red-500/30 transition-colors resize-none"
                       />
@@ -551,14 +554,12 @@ export default function MixerDetailPage() {
                           disabled={!rejectFeedback.trim() || actionLoading === `reject-${c.id}`}
                           className="px-4 py-2 rounded-lg text-xs font-mono bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-all disabled:opacity-50"
                         >
-                          Confirm Reject
-                        </button>
+                          {" " + tr("Confirm Reject") + " "}</button>
                         <button
                           onClick={() => setRejectChunkId(null)}
                           className="px-4 py-2 rounded-lg text-xs font-mono text-neutral-500 hover:text-neutral-300 transition-colors"
                         >
-                          Cancel
-                        </button>
+                          {" " + tr("Cancel") + " "}</button>
                       </div>
                     </div>
                   )}
@@ -566,7 +567,7 @@ export default function MixerDetailPage() {
                   {/* Messages */}
                   {isExpanded && (
                     <div className="border-t border-neutral-800/50 p-5 space-y-3 bg-neutral-900/20">
-                      <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Chunk Messages</span>
+                      <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr("Chunk Messages")}</span>
                       <div
                         ref={chunkContainerRef}
                         onScroll={handleChunkScroll}
@@ -578,7 +579,7 @@ export default function MixerDetailPage() {
                           </div>
                         )}
                         {messages.length === 0 && (
-                          <p className="text-xs text-neutral-600 font-mono text-center py-4">No messages yet</p>
+                          <p className="text-xs text-neutral-600 font-mono text-center py-4">{tr("No messages yet")}</p>
                         )}
                         {messages.map((m) => (
                           <div key={m.id} className="flex gap-3 py-1">
@@ -598,15 +599,14 @@ export default function MixerDetailPage() {
                           value={newMessage}
                           onChange={(e) => setNewMessage(e.target.value)}
                           onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                          placeholder="Send a message..."
+                          placeholder={tr("Send a message...")}
                           className="flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
                         />
                         <button
                           onClick={sendMessage}
                           className="px-5 py-2.5 rounded-lg text-sm font-mono bg-white text-black hover:bg-neutral-200 transition-all"
                         >
-                          Send
-                        </button>
+                          {" " + tr("Send") + " "}</button>
                       </div>
                     </div>
                   )}
@@ -620,28 +620,27 @@ export default function MixerDetailPage() {
         {(session.status === "assembling" || session.status === "running") && (
           <div className="rounded-xl border border-violet-500/20 bg-violet-500/[0.03] backdrop-blur-sm p-6 space-y-4 fade-up" style={{ animationDelay: "0.2s" }}>
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400/60 block mb-1">Decryption</span>
-              <h3 className="text-sm font-semibold text-violet-300">Assemble Output</h3>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400/60 block mb-1">{tr("Decryption")}</span>
+              <h3 className="text-sm font-semibold text-violet-300">{tr("Assemble Output")}</h3>
             </div>
             <p className="text-xs text-neutral-500 font-mono">
-              Enter your passphrase to decrypt fragments and assemble the final output.
-            </p>
+              {" " + tr("Enter your passphrase to decrypt fragments and assemble the final output.") + " "}</p>
             <input
               type="password"
               value={assemblePass}
               onChange={(e) => setAssemblePass(e.target.value)}
-              placeholder="Enter passphrase"
+              placeholder={tr("Enter passphrase")}
               className="w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg px-4 py-2.5 text-sm text-white font-mono placeholder-neutral-600 focus:outline-none focus:border-violet-500/50 transition-colors"
             />
             {assembleError && (
-              <p className="text-xs text-red-400 font-mono">{assembleError}</p>
+              <p className="text-xs text-red-400 font-mono">{display(assembleError)}</p>
             )}
             <button
               onClick={handleAssemble}
               disabled={!assemblePass || actionLoading === "assemble"}
               className="px-5 py-2.5 rounded-lg text-sm font-mono bg-violet-500/20 text-violet-300 border border-violet-500/30 hover:bg-violet-500/30 transition-all disabled:opacity-50"
             >
-              {actionLoading === "assemble" ? "Decrypting..." : "Decrypt & Assemble"}
+              {actionLoading === "assemble" ? tr("Decrypting...") : tr("Decrypt & Assemble")}
             </button>
           </div>
         )}
@@ -650,8 +649,8 @@ export default function MixerDetailPage() {
         {assembledOutput && (
           <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.03] backdrop-blur-sm p-6 space-y-3 fade-up">
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-emerald-400/60 block mb-1">Result</span>
-              <h3 className="text-sm font-semibold text-emerald-400">Assembled Output</h3>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-emerald-400/60 block mb-1">{tr("Result")}</span>
+              <h3 className="text-sm font-semibold text-emerald-400">{tr("Assembled Output")}</h3>
             </div>
             <pre className="text-xs text-neutral-300 font-mono whitespace-pre-wrap break-words leading-relaxed">
               {assembledOutput}
@@ -663,7 +662,7 @@ export default function MixerDetailPage() {
         {tab === "audit" && (
           <div className="space-y-1 fade-up" style={{ animationDelay: "0.15s" }}>
             {audit.length === 0 && (
-              <p className="text-xs text-neutral-600 font-mono text-center py-8">No audit entries yet.</p>
+              <p className="text-xs text-neutral-600 font-mono text-center py-8">{tr("No audit entries yet.")}</p>
             )}
             {audit.map((a, idx) => (
               <div
@@ -671,7 +670,7 @@ export default function MixerDetailPage() {
                 className="flex items-start gap-4 py-3 border-b border-neutral-800/30 hover:bg-neutral-900/20 px-3 rounded-lg transition-colors"
               >
                 <span className="text-[10px] text-neutral-600 font-mono flex-shrink-0 w-32">
-                  {timeAgo(a.created_at)}
+                  {timeAgo(a.created_at, locale)}
                 </span>
                 <span className={`text-[10px] font-mono flex-shrink-0 w-14 ${
                   a.actor_type === "user" ? "text-cyan-400" :

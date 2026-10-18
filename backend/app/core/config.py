@@ -1,8 +1,11 @@
 """Конфигурация приложения."""
 
+import json
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic_settings import BaseSettings
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 
 class Settings(BaseSettings):
@@ -48,6 +51,11 @@ class Settings(BaseSettings):
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080"]
+
+    # Mirror domains serving the same site and database. The OAuth callback host is
+    # the canonical one set by DOMAIN / OAUTH_REDIRECT_BASE_URL, not the list order.
+    # Env DOMAINS: comma-separated or a JSON list.
+    domains: Annotated[list[str], NoDecode] = ["agentspore.com"]
 
     # GitHub Configuration
     github_org: str = "AgentSpore"
@@ -123,10 +131,6 @@ class Settings(BaseSettings):
     agent_runner_url: str = ""
     agent_runner_key: str = ""
 
-    # Hosted agents
-    max_hosted_agents_per_user: int = 1
-    max_cron_tasks_per_agent: int = 10
-
     # Battle rated-track anti-abuse (Track 3). All limits are enforced against
     # the verified owner (users.id), not the agent, so a Sybil second agent
     # cannot multiply an owner's budget or rated slots.
@@ -178,13 +182,48 @@ class Settings(BaseSettings):
     # precondition for it either way.
     # llm7/mistral-Nemo-Instruct-2407 is a DIFFERENT account (keyless llm7) and
     # is unaffected by mistral's billing.
-    battle_judge_models: list[str] = [
+    battle_judge_models: Annotated[list[str], NoDecode] = [
         "zai/glm-4.5-flash",
         "llm7/DeepSeek-V4-Flash-0731",
         "llm7/codestral-latest",
         "llm7/gemini-3.1-flash-lite",
         "llm7/mistral-Nemo-Instruct-2407",
     ]
+
+    @field_validator("domains", mode="before")
+    @classmethod
+    def _parse_domains(cls, v: object) -> object:
+        """Accept ``a.com,b.ru`` or a JSON list; empty falls back to the default."""
+        if isinstance(v, str):
+            raw = v.strip()
+            parsed = json.loads(raw) if raw.startswith("[") else raw.split(",")
+            v = [str(d).strip().lower() for d in parsed if str(d).strip()]
+        return v or cls.model_fields["domains"].default
+
+    @model_validator(mode="after")
+    def _cors_origins_cover_domains(self) -> "Settings":
+        """Every mirror domain (and its www) is a legitimate browser origin."""
+        for domain in self.domains:
+            for origin in (f"https://{domain}", f"https://www.{domain}"):
+                if origin not in self.cors_origins:
+                    self.cors_origins = [*self.cors_origins, origin]
+        return self
+
+    @field_validator("battle_judge_models", mode="before")
+    @classmethod
+    def _battle_judge_models_empty_is_unset(cls, v: object) -> object:
+        """Compose passes ``BATTLE_JUDGE_MODELS: '${BATTLE_JUDGE_MODELS:-}'``, so
+        an unset var arrives here as an empty string, not a missing key. An
+        empty string is not valid JSON, so it must fall back to the default
+        list rather than fail settings parsing. NoDecode above disables
+        pydantic-settings' own JSON decode so this validator can special-case
+        the empty value before applying it for every other case.
+        """
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return cls.model_fields["battle_judge_models"].default
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
     battle_judge_owner_daily_call_limit: int = 60
     battle_judge_global_daily_call_limit: int = 10_000
     battle_judge_max_attempts_per_battle: int = 12

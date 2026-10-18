@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.repositories.code_karma_repo import CodeKarmaRepository
 
 
 class AgentRepository:
@@ -424,8 +425,11 @@ class AgentRepository:
     async def insert_project(self, params: dict) -> None:
         await self.db.execute(
             text("""
-                INSERT INTO projects (id, title, description, category, creator_agent_id, tech_stack, status, repo_url, hackathon_id, vcs_provider)
-                VALUES (:id, :title, :desc, :cat, :agent_id, :stack, 'building', :git_url, :hackathon_id, :vcs)
+                INSERT INTO projects (id, title, description, category, creator_agent_id,
+                                      tech_stack, status, repo_url, hackathon_id,
+                                      vcs_provider, metrics_profile)
+                VALUES (:id, :title, :desc, :cat, :agent_id, :stack, 'building', :git_url,
+                        :hackathon_id, :vcs, :metrics_profile)
             """),
             params,
         )
@@ -523,14 +527,6 @@ class AgentRepository:
             {"id": review_id, "pid": project_id, "aid": agent_id, "st": status, "sum": summary, "model": model},
         )
 
-    async def get_hosted_agent_model(self, agent_id) -> str | None:
-        result = await self.db.execute(
-            text("SELECT model FROM hosted_agents WHERE agent_id = :agent_id"),
-            {"agent_id": agent_id},
-        )
-        row = result.mappings().first()
-        return row["model"] if row else None
-
     async def insert_model_usage(self, agent_id, model: str, task_type: str, ref_id, ref_type: str) -> None:
         await self.db.execute(
             text("""
@@ -569,14 +565,48 @@ class AgentRepository:
 
     # ── Tasks ──
 
+    async def lock_task_project(self, project_id: UUID) -> dict | None:
+        """Serialize manual task creation until the request transaction ends."""
+        # INVARIANT(AF-02): allow project FK checks while reviewed tasks remain locked.
+        result = await self.db.execute(text(
+            "SELECT creator_agent_id, status FROM projects WHERE id = :id FOR NO KEY UPDATE"
+        ), {"id": project_id})
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def get_manual_task(self, project_id: UUID, source_key: str) -> dict | None:
+        """Find an idempotency key across every task state in this project."""
+        result = await self.db.execute(text(
+            "SELECT * FROM tasks WHERE project_id = :project_id "
+            "AND source_type = 'manual' AND source_key = :source_key"
+        ), {"project_id": project_id, "source_key": source_key})
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def insert_manual_task(self, project_id: UUID, agent_id: UUID, content: dict) -> dict:
+        """Insert server-owned task state while the project row remains locked."""
+        result = await self.db.execute(text("""
+            INSERT INTO tasks (project_id, type, title, description, priority, status,
+                               source_type, source_key, created_by_agent_id)
+            VALUES (:project_id, :type, :title, :description, 'medium', 'open',
+                    'manual', :source_key, :agent_id)
+            RETURNING id, status
+        """), {"project_id": project_id, "agent_id": agent_id, **content})
+        return dict(result.mappings().one())
+
+
     async def list_open_tasks(self, where_clause: str, params: dict) -> list[dict]:
         result = await self.db.execute(
             text(f"""
                 SELECT t.id, t.project_id, t.type, t.title, t.description,
                        t.priority, t.status, t.source_type, t.created_at,
                        p.title as project_title
+                       , (r.task_id IS NOT NULL) AS review_required, r.version AS review_version
+                       , b.amount AS learning_credit_amount
                 FROM tasks t
                 LEFT JOIN projects p ON p.id = t.project_id
+                LEFT JOIN task_reviews r ON r.task_id = t.id
+                LEFT JOIN learning_budget_reservations b ON b.task_id = t.id
                 WHERE {where_clause}
                 ORDER BY
                     CASE t.priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
@@ -592,35 +622,45 @@ class AgentRepository:
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def claim_task(self, task_id, agent_id) -> None:
-        await self.db.execute(
-            text("""
-                UPDATE tasks
-                SET status = 'claimed', claimed_by_agent_id = :agent_id, claimed_at = NOW(), updated_at = NOW()
-                WHERE id = :id AND status = 'open'
-            """),
-            {"id": task_id, "agent_id": agent_id},
-        )
+    async def lock_task(self, task_id: UUID) -> dict | None:
+        """Serialize all task mutations before any child review row is locked."""
+        result = await self.db.execute(text(
+            "SELECT * FROM tasks WHERE id = :id FOR UPDATE"
+        ), {"id": task_id})
+        row = result.mappings().first()
+        return dict(row) if row else None
 
-    async def complete_task(self, task_id, result_text: str) -> None:
-        await self.db.execute(
-            text("""
-                UPDATE tasks
-                SET status = 'completed', result = :result, completed_at = NOW(), updated_at = NOW()
-                WHERE id = :id
-            """),
-            {"id": task_id, "result": result_text},
-        )
+    async def claim_task(self, task_id: UUID, agent_id: UUID) -> dict | None:
+        """Return only the winner of the open-to-claimed transition."""
+        result = await self.db.execute(text("""
+            UPDATE tasks SET status = 'claimed', claimed_by_agent_id = :agent_id,
+                             claimed_at = NOW(), updated_at = NOW()
+            WHERE id = :id AND status = 'open' RETURNING *
+        """), {"id": task_id, "agent_id": agent_id})
+        row = result.mappings().first()
+        return dict(row) if row else None
 
-    async def unclaim_task(self, task_id) -> None:
-        await self.db.execute(
-            text("""
-                UPDATE tasks
-                SET status = 'open', claimed_by_agent_id = NULL, claimed_at = NULL, updated_at = NOW()
-                WHERE id = :id
-            """),
-            {"id": task_id},
-        )
+    async def complete_task(self, task_id: UUID, agent_id: UUID, result_text: str) -> dict | None:
+        """Complete a claimed task only once and only for its claiming agent."""
+        result = await self.db.execute(text("""
+            UPDATE tasks SET status = 'completed', result = :result,
+                             completed_at = NOW(), updated_at = NOW()
+            WHERE id = :id AND status = 'claimed' AND claimed_by_agent_id = :agent_id
+            RETURNING *
+        """), {"id": task_id, "agent_id": agent_id, "result": result_text})
+        row = result.mappings().first()
+        return dict(row) if row else None
+
+    async def unclaim_task(self, task_id: UUID, agent_id: UUID) -> dict | None:
+        """Return only the winner of a claimed-to-open transition."""
+        result = await self.db.execute(text("""
+            UPDATE tasks SET status = 'open', claimed_by_agent_id = NULL,
+                             claimed_at = NULL, updated_at = NOW()
+            WHERE id = :id AND status = 'claimed' AND claimed_by_agent_id = :agent_id
+            RETURNING *
+        """), {"id": task_id, "agent_id": agent_id})
+        row = result.mappings().first()
+        return dict(row) if row else None
 
     # ── Leaderboard & Stats ──
 
@@ -774,10 +814,8 @@ class AgentRepository:
     # ── Contribution Points ──
 
     async def increment_commits_and_karma(self, agent_id, commit_count: int = 1) -> None:
-        await self.db.execute(
-            text("UPDATE agents SET code_commits = code_commits + :cnt, karma = karma + :karma WHERE id = :id"),
-            {"id": agent_id, "cnt": commit_count, "karma": commit_count * 10},
-        )
+        """Count all accepted commits and reserve their shared weekly reward."""
+        await CodeKarmaRepository(self.db).award(agent_id, commit_count * 10, commit_count)
 
     async def record_commit_shas(
         self, agent_id, shas: list[str], project_id=None, description: str = "",

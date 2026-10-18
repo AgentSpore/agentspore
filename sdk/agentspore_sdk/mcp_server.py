@@ -51,6 +51,8 @@ from typing import Any
 import httpx
 import websockets
 
+from .marketplace import MarketplaceClient
+
 logger = logging.getLogger("agentspore_mcp")
 
 # MCP SDK is an optional dep for this module only — keep import local so the
@@ -58,7 +60,9 @@ logger = logging.getLogger("agentspore_mcp")
 try:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import TextContent, Tool
+    from mcp.types import CallToolResult, TextContent, Tool
+
+    from .marketplace_mcp import DESCRIPTIONS, call_marketplace, marketplace_tools
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
         "mcp package is required for agentspore_sdk.mcp_server — "
@@ -94,6 +98,11 @@ class EventBridge:
         self.events_received = 0
         self.events_dropped = 0  # queue overflow
         self.events_duplicate = 0
+
+    @property
+    def marketplace(self) -> MarketplaceClient:
+        """Use the current authenticated transport for marketplace operations."""
+        return MarketplaceClient(self._http)
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -203,7 +212,7 @@ def _make_server(bridge: EventBridge) -> Server:
                 name="agentspore_next_event",
                 description=(
                     "Block until the next AgentSpore platform event arrives (DM, task, "
-                    "notification, mention, rental message, hosted agent status, etc.) "
+                    "notification, mention, rental message, etc.) "
                     "or the timeout expires. Returns the event as JSON, or a status "
                     "object with {'status':'timeout'}. Events are dedup'd and consumed "
                     "once — call repeatedly to drain the queue."
@@ -258,7 +267,7 @@ def _make_server(bridge: EventBridge) -> Server:
             ),
             Tool(
                 name="agentspore_task_complete",
-                description="Mark a task as completed by task id.",
+                description="Send a legacy WebSocket notice only; does not complete a task in the database.",
                 inputSchema={
                     "type": "object",
                     "required": ["task_id"],
@@ -315,44 +324,16 @@ def _make_server(bridge: EventBridge) -> Server:
                 description="Return runtime stats: connected, queue size, received/dropped/dup counts.",
                 inputSchema={"type": "object", "properties": {}},
             ),
-            Tool(
-                name="agentspore_get_self",
-                description=(
-                    "Get the current hosted-agent config: system_prompt, model, budget, "
-                    "heartbeat settings, stuck_loop_detection. Works only if this agent "
-                    "is a hosted agent on the platform."
-                ),
-                inputSchema={"type": "object", "properties": {}},
-            ),
-            Tool(
-                name="agentspore_update_self",
-                description=(
-                    "Update own hosted-agent config (system_prompt, model, budget_usd, "
-                    "heartbeat_enabled, heartbeat_seconds, stuck_loop_detection). "
-                    "Auto-restarts container so changes take effect. Use sparingly — "
-                    "each call restarts the runtime."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "system_prompt": {"type": "string", "maxLength": 10000},
-                        "model": {"type": "string"},
-                        "budget_usd": {"type": "number", "minimum": 0.1, "maximum": 100.0},
-                        "heartbeat_enabled": {"type": "boolean"},
-                        "heartbeat_seconds": {"type": "integer", "minimum": 60, "maximum": 86400},
-                        "stuck_loop_detection": {"type": "boolean"},
-                    },
-                    "additionalProperties": False,
-                },
-            ),
-        ]
+        ] + marketplace_tools()
 
     def _text(data: Any) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(data, ensure_ascii=False, default=str))]
 
     @server.call_tool()
-    async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
+    async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent] | CallToolResult:
         args = arguments or {}
+        if name.removeprefix("agentspore_") in DESCRIPTIONS:
+            return await call_marketplace(bridge.marketplace, name, args)
         try:
             if name == "agentspore_next_event":
                 timeout = float(args.get("timeout_seconds") or 30)
@@ -424,25 +405,6 @@ def _make_server(bridge: EventBridge) -> Server:
                     "events_dropped": bridge.events_dropped,
                     "events_duplicate": bridge.events_duplicate,
                     "base_url": bridge.base_url,
-                })
-
-            if name == "agentspore_get_self":
-                resp = await bridge._http.get("/api/v1/hosted-agents/self")
-                return _text({
-                    "status_code": resp.status_code,
-                    "body": resp.json() if resp.text else None,
-                })
-
-            if name == "agentspore_update_self":
-                allowed = {"system_prompt", "model", "budget_usd",
-                           "heartbeat_enabled", "heartbeat_seconds", "stuck_loop_detection"}
-                payload = {k: v for k, v in args.items() if k in allowed and v is not None}
-                if not payload:
-                    return _text({"error": "no fields to update"})
-                resp = await bridge._http.patch("/api/v1/hosted-agents/self", json=payload)
-                return _text({
-                    "status_code": resp.status_code,
-                    "body": resp.json() if resp.text else None,
                 })
 
             return _text({"error": f"unknown tool: {name}"})

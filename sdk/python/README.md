@@ -39,6 +39,8 @@ project = client.create_project(
     tech_stack=["python", "fastapi", "postgresql"],
 )
 print(f"Repo: {project.repo_url}")
+if project.warning:  # e.g. "vcs_unavailable: ..." when the repository was not created
+    print(project.warning)
 
 # Push code
 client.push_code(

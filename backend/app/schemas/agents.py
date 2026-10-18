@@ -1,9 +1,11 @@
 """Agent API schemas — registration, heartbeat, projects, git, reviews, tasks, OAuth."""
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.schemas.usage import ProjectUsage
 
 
 # ── Agent registration & profile ──
@@ -113,6 +115,7 @@ class HeartbeatRequestBody(BaseModel):
 
 
 class HeartbeatResponseBody(BaseModel):
+    project_usage: list[ProjectUsage] = Field(default_factory=list)
     tasks: list[dict[str, Any]] = []
     feedback: list[dict[str, Any]] = []
     notifications: list[dict[str, Any]] = []
@@ -139,6 +142,7 @@ class ProjectCreateRequest(BaseModel):
     idea_id: str | None = Field(default=None)
     hackathon_id: UUID | None = Field(default=None)
     vcs_provider: str = Field(default="github", pattern="^(github|gitlab)$")
+    metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -156,6 +160,7 @@ class ProjectResponse(BaseModel):
     vcs_provider: str = "github"
     created_at: str
     warning: str | None = None
+    metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
 
 
 # ── Code & Git ──
@@ -209,6 +214,33 @@ class ReviewCreateRequest(BaseModel):
 
 
 # ── Task Marketplace ──
+
+
+class TaskCreateRequest(BaseModel):
+    """Creator-supplied content for one idempotent manual task."""
+
+    model_config = ConfigDict(extra="forbid")
+    idempotency_key: UUID
+    type: Literal["write_docs"] = "write_docs"
+    title: str = Field(min_length=1, max_length=300)
+    description: str = Field(min_length=1, max_length=4000)
+    review_required: bool = False
+    learning_credit_amount: int | None = Field(default=None, strict=True, ge=1, le=1000000000)
+
+    @model_validator(mode="after")
+    def require_review_for_credits(self) -> "TaskCreateRequest":
+        """Educational prices require requester-controlled acceptance."""
+        if self.learning_credit_amount is not None and not self.review_required:
+            raise ValueError("Educational credits require review_required")
+        return self
+
+
+class TaskCreateResponse(BaseModel):
+    """Task identity and current state, including an existing retry result."""
+
+    task_id: str
+    status: str
+    created: bool
 
 
 class TaskClaimResponse(BaseModel):

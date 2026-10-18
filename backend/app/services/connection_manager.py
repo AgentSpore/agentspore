@@ -6,12 +6,11 @@ Architecture:
 - Redis pub/sub channel `agent:{agent_id}` for cross-worker delivery
 - Webhook fallback for agents without active WS
 - Heartbeat queue fallback for agents without webhook (legacy)
-- Auto-wake: hosted agents are cold-started when a wakeable event cannot be delivered
 
 Events flow:
 1. Platform endpoint (e.g. POST /agents/dm) saves to DB
 2. Calls manager.send(target_agent_id, event)
-3. Manager tries: local WS -> Redis publish -> webhook -> heartbeat queue -> auto-wake
+3. Manager tries: local WS -> Redis publish -> webhook -> heartbeat queue
 """
 
 from __future__ import annotations
@@ -30,11 +29,6 @@ from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.services.agent_webhook_service import AgentWebhookService
-
-# Event types that warrant auto-waking a stopped hosted agent.
-WAKEABLE_EVENTS: frozenset[str] = frozenset({
-    "dm", "task", "mention", "rental_message", "notification", "cron_task_triggered",
-})
 
 # Event types persisted to the durable agent_events outbox (V65) and replayed
 # by the heartbeat drain until acked.
@@ -360,7 +354,7 @@ async def deliver_event(
        committed BEFORE transport, so the event survives a process restart.
     2. WebSocket (local, or via Redis pub/sub with a confirmed subscriber)
     3. Webhook (if registered)
-    4. Heartbeat drain (durable types) / auto-wake (wakeable types)
+    4. Heartbeat drain (durable types)
 
     ``ttl_seconds`` overrides how long a durable event stays live; defaults to
     DURABLE_EVENT_TTL_SECONDS, which clears the documented heartbeat cadence.
@@ -411,10 +405,6 @@ async def deliver_event(
     if event_id:
         await _record_dispatch(event_id, "queued")
         logger.debug("Event {} for {} queued for next heartbeat", event_id, event.get("type"))
-
-    # Fallback 3: auto-wake hosted agent for wakeable event types.
-    if event.get("type") in WAKEABLE_EVENTS:
-        asyncio.create_task(_auto_wake_hosted(agent_id, event))
 
     if event_id:
         return DeliveryResult.QUEUED
@@ -483,39 +473,3 @@ async def dispatch_existing(agent_id: str, event_id: str) -> DeliveryResult:
         str(event_id), "delivered" if delivered else "queued"
     )
     return DeliveryResult.DELIVERED if delivered else DeliveryResult.QUEUED
-
-
-async def _auto_wake_hosted(agent_id: str, event: dict[str, Any]) -> None:
-    """Background task: find the hosted agent for ``agent_id`` and ensure it is running.
-
-    After ensure_running the runner re-establishes its WS connection and
-    will receive pending events from the heartbeat queue — no need to
-    re-publish the triggering event manually.
-    """
-    try:
-        # Local import: circular dep — hosted_agent_service imports connection_manager
-        # (deliver_user_event) at module top, so it can't be imported here at module top.
-        from app.core.database import async_session_maker  # noqa: PLC0415
-        from app.repositories.hosted_agent_repo import HostedAgentRepository  # noqa: PLC0415
-        from app.services.agent_service import AgentService  # noqa: PLC0415
-        from app.services.hosted_agent_service import HostedAgentService  # noqa: PLC0415
-        from app.services.openrouter_service import OpenRouterService  # noqa: PLC0415
-
-        async with async_session_maker() as db:
-            repo = HostedAgentRepository(db)
-            hosted = await repo.get_by_agent_id(agent_id)
-            if not hosted:
-                return  # not a hosted agent — nothing to do
-            if hosted["status"] == "running":
-                return  # already running
-
-            svc = HostedAgentService(
-                repo=repo,
-                agent_service=AgentService(db),
-                openrouter=OpenRouterService(),
-            )
-            hosted_id = str(hosted["id"])
-            logger.info("Auto-waking hosted agent {} for event type={}", hosted_id, event.get("type"))
-            await svc.ensure_running(hosted_id, source="ws_event")
-    except Exception as exc:
-        logger.warning("Auto-wake failed for agent {}: {}", agent_id, exc)

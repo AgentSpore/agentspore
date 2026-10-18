@@ -1,5 +1,8 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { communicationMessages } from "@/lib/i18n/communication";
+
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -9,6 +12,10 @@ import { Agent, API_URL, DirectMessage, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 
 export default function AgentChatPage() {
+  const tr = useTranslations(communicationMessages);
+  const { locale } = useLocale();
+  const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
+
   const { id } = useParams<{ id: string }>();
   const [agent, setAgent] = useState<Agent | null>(null);
   const [messages, setMessages] = useState<DirectMessage[]>([]);
@@ -160,7 +167,7 @@ export default function AgentChatPage() {
     <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
       <div className="flex flex-col items-center gap-3">
         <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
-        <span className="text-neutral-600 text-[11px] font-mono">Loading chat...</span>
+        <span className="text-neutral-600 text-[11px] font-mono">{tr("Loading chat...")}</span>
       </div>
     </div>
   );
@@ -170,8 +177,8 @@ export default function AgentChatPage() {
       <div className="w-12 h-12 rounded-2xl bg-red-950/20 border border-red-800/20 flex items-center justify-center">
         <span className="text-red-400 text-lg">!</span>
       </div>
-      <div className="text-red-400 text-sm font-mono">{error || "Not found"}</div>
-      <Link href="/" className="text-neutral-500 text-[11px] hover:text-white font-mono transition-colors">&larr; Back to dashboard</Link>
+      <div className="text-red-400 text-sm font-mono">{error ? display(error) : tr("Not found")}</div>
+      <Link href="/" className="text-neutral-500 text-[11px] hover:text-white font-mono transition-colors">{tr("← Back to dashboard")}</Link>
     </div>
   );
 
@@ -229,10 +236,10 @@ export default function AgentChatPage() {
                 {agent.handle && <span className="text-[10px] text-neutral-600 font-mono">@{agent.handle}</span>}
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-neutral-600 font-mono">{agent.specialization}</span>
+                <span className="text-[10px] text-neutral-600 font-mono">{display(agent.specialization)}</span>
                 <span className="text-neutral-800">&middot;</span>
                 <span className={`text-[9px] font-mono ${isAgentLive(agent) ? "text-emerald-400" : "text-neutral-600"}`}>
-                  {isAgentLive(agent) ? "online" : "offline"}
+                  {isAgentLive(agent) ? tr("online") : tr("offline")}
                 </span>
               </div>
             </div>
@@ -240,7 +247,7 @@ export default function AgentChatPage() {
 
           <div className="flex-1" />
 
-          <span className="text-[10px] text-neutral-700 font-mono">{messages.length} messages</span>
+          <span className="text-[10px] text-neutral-700 font-mono">{messages.length.toLocaleString(locale)} {" " + tr("messages")}</span>
         </div>
       </div>
 
@@ -251,7 +258,7 @@ export default function AgentChatPage() {
             <div className="flex justify-center py-3">
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 rounded-full border-2 border-neutral-800 border-t-neutral-500 animate-spin" />
-                <span className="text-[10px] text-neutral-600 font-mono">Loading older messages</span>
+                <span className="text-[10px] text-neutral-600 font-mono">{tr("Loading older messages")}</span>
               </div>
             </div>
           )}
@@ -260,10 +267,9 @@ export default function AgentChatPage() {
               <div className="w-14 h-14 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center">
                 <span className="text-2xl text-neutral-700">&equiv;</span>
               </div>
-              <p className="text-neutral-500 text-sm">No messages yet</p>
+              <p className="text-neutral-500 text-sm">{tr("No messages yet")}</p>
               <p className="text-neutral-700 text-[11px] font-mono text-center max-w-xs">
-                Send a message to {agent.name}. The agent will receive it at its next heartbeat.
-              </p>
+                {" " + tr("Send a message to") + " "}{agent.name}{tr(". The agent will receive it at its next heartbeat.") + " "}</p>
             </div>
           ) : grouped.map((group, gi) => {
             const first = group[0];
@@ -277,7 +283,7 @@ export default function AgentChatPage() {
                   <div className="flex items-center gap-3 my-5">
                     <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                     <span className="text-[9px] text-neutral-600 font-mono uppercase tracking-[0.15em] bg-[#0a0a0a] px-3">
-                      {new Date(first.created_at).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
+                      {new Date(first.created_at).toLocaleDateString(locale, { weekday: "long", month: "short", day: "numeric" })}
                     </span>
                     <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                   </div>
@@ -301,8 +307,8 @@ export default function AgentChatPage() {
                       <span className={`text-[12px] font-semibold font-mono ${isAgent ? "text-cyan-300" : "text-violet-300"}`}>
                         {first.from_name}
                       </span>
-                      <span className="text-[9px] text-neutral-700 font-mono uppercase">{isAgent ? "agent" : "you"}</span>
-                      <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(first.created_at)}</span>
+                      <span className="text-[9px] text-neutral-700 font-mono uppercase">{isAgent ? tr("agent") : tr("you")}</span>
+                      <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(first.created_at, locale)}</span>
                     </div>
 
                     {/* Bubbles */}
@@ -354,7 +360,7 @@ export default function AgentChatPage() {
                               }}>{msg.content}</ReactMarkdown>
                             </div>
                             <span className="text-[9px] text-neutral-800 font-mono opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap mb-1">
-                              {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              {new Date(msg.created_at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
                             </span>
                           </div>
                         );
@@ -375,7 +381,7 @@ export default function AgentChatPage() {
           <div className="max-w-3xl mx-auto px-4 py-3">
             {sendError && (
               <div className="mb-2 px-3 py-1.5 rounded-lg bg-red-950/30 border border-red-800/20 text-[11px] text-red-400 font-mono">
-                {sendError}
+                {display(sendError)}
               </div>
             )}
             <div className="flex items-end gap-2 bg-neutral-900/40 border border-neutral-800/50 rounded-2xl px-3 py-2 focus-within:border-neutral-700/60 transition-colors">
@@ -387,7 +393,7 @@ export default function AgentChatPage() {
                 value={content}
                 onChange={e => setContent(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={`Message ${agent.name}...`}
+                placeholder={tr("Message {name}...", { name: agent.name })}
                 maxLength={2000}
                 rows={1}
                 className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 outline-none resize-none font-mono leading-relaxed max-h-[120px]"
@@ -410,15 +416,14 @@ export default function AgentChatPage() {
                 )}
               </button>
             </div>
-            <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">Enter to send, Shift+Enter for newline</p>
+            <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">{tr("Enter to send, Shift+Enter for newline")}</p>
           </div>
         </form>
       ) : (
         <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-4 text-center">
             <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono">
-              Sign in to send messages
-            </Link>
+              {" " + tr("Sign in to send messages") + " "}</Link>
           </div>
         </div>
       )}

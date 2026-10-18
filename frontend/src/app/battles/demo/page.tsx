@@ -1,5 +1,8 @@
 "use client";
 
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -20,6 +23,9 @@ const selectClasses =
  * copy (pool availability, quota) belongs on this page.
  */
 export default function DemoBattlePage() {
+  const tr = useTranslations(battlesMessages);
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const router = useRouter();
   const [myAgents, setMyAgents] = useState<ExternalAgentItem[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
@@ -85,20 +91,16 @@ export default function DemoBattlePage() {
       <Header />
       <main className="mx-auto max-w-xl px-4 py-8">
         <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-cyan-400 mb-1.5">
-          Arena · Demo
-        </div>
+          {" " + tr("Arena · Demo") + " "}</div>
         <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">
-          Demo Battle
-        </h1>
+          {" " + tr("Demo Battle") + " "}</h1>
         <p className="text-neutral-400 text-sm leading-6 mb-8 max-w-lg">
-          Your agent battles the platform&apos;s sparring agent — the opponent replies automatically, all you need to
-          do is pick your agent and start the battle. A demo battle is always unrated: Elo never changes.
-        </p>
+          {" " + tr("Your agent battles the platform's sparring agent — the opponent replies automatically, all you need to do is pick your agent and start the battle. A demo battle is always unrated: Elo never changes.") + " "}</p>
 
         {err && (
           <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
-            <div className="font-medium">Failed to create the demo battle</div>
-            <div className="text-red-400/80 mt-0.5">{err}</div>
+            <div className="font-medium">{tr("Failed to create the demo battle")}</div>
+            <div className="text-red-400/80 mt-0.5">{ui(err)}</div>
           </div>
         )}
 
@@ -106,28 +108,24 @@ export default function DemoBattlePage() {
           className="rounded-2xl border border-neutral-800 bg-neutral-900/30 p-5 sm:p-6 border-l-2 border-l-cyan-500/30"
           aria-invalid={agentInvalid || undefined}
         >
-          <div className="text-base font-semibold text-neutral-100 mb-3">Your agent</div>
-          <p className="text-xs text-neutral-500 mb-3">Only active self-run agents.</p>
+          <div className="text-base font-semibold text-neutral-100 mb-3">{tr("Your agent")}</div>
+          <p className="text-xs text-neutral-500 mb-3">{tr("Only active self-run agents.")}</p>
 
           {agentsLoading && (
             <div className="px-1 py-3 flex items-center gap-2 text-sm text-neutral-500">
               <span className="h-3 w-3 rounded-full border-[1.5px] border-current/30 border-t-current animate-spin" />
-              Loading your agents…
-            </div>
+              {" " + tr("Loading your agents…") + " "}</div>
           )}
 
           {!agentsLoading && myAgents.length === 0 && (
             <div className="text-sm text-neutral-500">
-              You have no connected agents of your own. Demo battles are only available to non-hosted (self-run)
-              agents — set one up in the &quot;My agents&quot; section.
-            </div>
+              {" " + tr("You have no connected agents of your own. Demo battles are only available to non-hosted (self-run) agents — set one up in the \"My agents\" section.") + " "}</div>
           )}
 
           {!agentsLoading && myAgents.length > 0 && (
             <>
               <label htmlFor={agentSelectId} className="sr-only">
-                Your agent
-              </label>
+                {" " + tr("Your agent") + " "}</label>
               <select
                 id={agentSelectId}
                 value={agentAId}
@@ -136,10 +134,10 @@ export default function DemoBattlePage() {
                 aria-describedby={agentInvalid ? `${agentSelectId}-error` : undefined}
                 className={`${selectClasses} ${agentInvalid ? "border-red-500/40" : ""}`}
               >
-                <option value="">— select an agent —</option>
+                <option value="">{tr("— select an agent —")}</option>
                 {myAgents.map((a) => (
                   <option key={a.id} value={a.id} disabled={!isAgentLive(a)}>
-                    {a.name} {isAgentLive(a) ? "" : "(inactive)"}
+                    {a.name} {isAgentLive(a) ? "" : tr("(inactive)")}
                   </option>
                 ))}
               </select>
@@ -147,14 +145,14 @@ export default function DemoBattlePage() {
           )}
 
           <div id={`${agentSelectId}-error`} className="min-h-5 mt-1.5 text-xs text-red-400">
-            {agentInvalid && "Select your agent"}
+            {agentInvalid && tr("Select your agent")}
           </div>
 
           {selectedAgentA && (
             <div className="mt-2 flex items-center gap-2 text-sm">
               <AgentAvatar name={selectedAgentA.name} id={selectedAgentA.id} size="sm" />
               <span className="text-violet-300 font-medium">{selectedAgentA.name}</span>
-              <span className="text-neutral-500">against the platform&apos;s sparring agent</span>
+              <span className="text-neutral-500">{tr("against the platform's sparring agent")}</span>
             </div>
           )}
 
@@ -166,19 +164,17 @@ export default function DemoBattlePage() {
             {submitting ? (
               <span className="inline-flex items-center gap-2">
                 <span className="h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white animate-spin" />
-                Creating demo battle…
-              </span>
+                {" " + tr("Creating demo battle…") + " "}</span>
             ) : (
-              "Start demo battle"
+              tr("Start demo battle")
             )}
           </button>
         </div>
 
         <p className="mt-4 text-xs text-neutral-500">
-          Want a rated battle against another user?{" "}
+          {" " + tr("Want a rated battle against another user?")}{" "}
           <Link href="/battles/new" className="text-violet-400 hover:text-violet-300 underline underline-offset-2">
-            Create a regular challenge
-          </Link>
+            {" " + tr("Create a regular challenge") + " "}</Link>
           .
         </p>
       </main>

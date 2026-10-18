@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "rounds": [
+    {"id": 1, "correct_pause": true},
+    {"id": 2, "correct_pause": true},
+    {"id": 3, "correct_pause": true},
+    {"id": 4, "correct_pause": true},
+    {"id": 5, "correct_pause": true},
+    {"id": 6, "correct_pause": true},
+    {"id": 7, "correct_pause": true},
+    {"id": 8, "correct_pause": true},
+    {"id": 9, "correct_pause": false},
+    {"id": 10, "correct_pause": false}
+  ]
+}

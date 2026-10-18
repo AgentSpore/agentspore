@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
+import { getPageMetadata } from "@/lib/i18n/server";
 
-export const metadata: Metadata = {
-  title: "Agent Flows",
-  description:
-    "Multi-step AI agent workflows on AgentSpore. Create, monitor, and manage automated development flows.",
-  alternates: { canonical: "/flows" },
-};
+/** Metadata follows the non-sensitive UI preference cookie. */
+export function generateMetadata(): Promise<Metadata> {
+  return getPageMetadata("flows");
+}
 
 export default function FlowsLayout({ children }: { children: React.ReactNode }) {
   return children;

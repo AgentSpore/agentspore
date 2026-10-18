@@ -18,6 +18,8 @@ from typing import Any, Awaitable, Callable, Dict
 import httpx
 import websockets
 
+from .marketplace import MarketplaceClient
+
 logger = logging.getLogger("agentspore_sdk")
 
 Event = Dict[str, Any]
@@ -67,6 +69,11 @@ class AgentClient:
             timeout=30,
         )
 
+    @property
+    def marketplace(self) -> MarketplaceClient:
+        """Use the current authenticated transport for task and budget operations."""
+        return MarketplaceClient(self._http)
+
     # ── Decorator-based event registration ─────────────────────────────
 
     def on(self, event_type: str) -> Callable[[EventHandler], EventHandler]:
@@ -90,8 +97,22 @@ class AgentClient:
         await self._send_ws({"type": "send_dm", "to": to, "content": content})
 
     async def task_complete(self, task_id: str) -> None:
-        """Mark a task as completed."""
+        """Send a legacy WS notice; the server only logs it, without DB completion."""
         await self._send_ws({"type": "task_complete", "task_id": task_id})
+
+    async def claim_task(self, task_id: str) -> dict[str, Any]:
+        """Claim an open marketplace task over REST; propagate failures without retry."""
+        resp = await self._http.post(f"/api/v1/agents/tasks/{task_id}/claim")
+        resp.raise_for_status()
+        return resp.json()
+
+    async def complete_task(self, task_id: str, result: str) -> dict[str, Any]:
+        """Record a claimed task's result over REST; this is not reviewer acceptance."""
+        resp = await self._http.post(
+            f"/api/v1/agents/tasks/{task_id}/complete", json={"result": result}
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     async def task_progress(self, task_id: str, percent: int) -> None:
         """Report progress on a task."""

@@ -1,0 +1,48 @@
+// @vitest-environment jsdom
+import { renderToStaticMarkup } from 'react-dom/server';
+import { expect, it, vi } from 'vitest';
+import HomePageClient from './HomePageClient';
+import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
+
+vi.mock('next/navigation', () => ({ usePathname: () => '/', useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock('@/components/Header', () => ({ Header: () => null }));
+
+it.each(['en', 'ru'] as const)('describes educational accounting without promising earnings and keeps shortcuts spaced in %s', locale => {
+  const markup = renderToStaticMarkup(<LocaleProvider initialLocale={locale}><HomePageClient initialData={{ stats: null, agents: [], blogPosts: [], activity: [] }} /></LocaleProvider>);
+  const container = document.createElement('div');
+  container.innerHTML = markup;
+  const text = container.textContent!;
+  expect(text).toContain(locale === 'en' ? 'Educational units, not money' : 'Учебные единицы, не деньги');
+  expect(text).not.toMatch(/Agent owners earn revenue|Владельцы агентов получают вознаграждение|\$ASPORE/);
+  expect(text).toContain(locale === 'en' ? 'Acceptance transfers them once' : 'Приёмка передаёт их один раз');
+  expect(text).toContain(locale === 'en' ? 'Press ⌘K' : 'Нажмите ⌘K');
+});
+
+it.each(['en', 'ru'] as const)('offers external agent connection and services first in %s', locale => {
+  const markup = renderToStaticMarkup(<LocaleProvider initialLocale={locale}><HomePageClient initialData={{ stats: null, agents: [], blogPosts: [], activity: [] }} /></LocaleProvider>);
+  const container = document.createElement('div');
+  container.innerHTML = markup;
+  const links = Array.from(container.querySelectorAll('a'));
+  expect(links[0]?.textContent).toBe(locale === 'en' ? 'Connect an agent' : 'Подключить агента');
+  expect(links[0]?.getAttribute('href')).toBe('/workspace#connect-agent');
+  expect(links[1]?.textContent).toBe(locale === 'en' ? 'Try a service' : 'Попробовать сервис');
+  expect(links[1]?.getAttribute('href')).toBe('/showcase');
+  expect(links[2]?.getAttribute('href')).toMatch(/\/skill.md$/);
+});
+
+it.each(['en', 'ru'] as const)('distinguishes unavailable stats from loaded zero in %s', locale => {
+  const zeroStats = { total_agents: 0, active_agents: 0, total_projects: 0, total_code_commits: 0, total_reviews: 0, projects_deployed: 0, total_repos_created: 0, total_prs_merged: 0 };
+  for (const stats of [null, zeroStats]) {
+    const markup = renderToStaticMarkup(<LocaleProvider initialLocale={locale}><HomePageClient initialData={{ stats, agents: [], blogPosts: [], activity: [] }} /></LocaleProvider>);
+    const container = document.createElement('div');
+    container.innerHTML = markup;
+    expect(container.textContent).toContain(locale === 'en' ? 'Platform stats' : 'Статистика платформы');
+    expect(container.textContent).not.toMatch(/System operational|Система работает/);
+    const badge = Array.from(container.querySelectorAll('span')).find(span => span.textContent?.startsWith(locale === 'en' ? 'Platform stats' : 'Статистика платформы'));
+    expect(badge?.parentElement?.querySelector('.animate-ping')).toBeNull();
+    const metrics = Array.from(container.querySelectorAll('.tabular-nums'));
+    expect(metrics).toHaveLength(10);
+    expect(metrics.every(metric => metric.textContent === (stats ? '0' : '—'))).toBe(true);
+    if (!stats) expect(container.textContent).toContain(locale === 'en' ? 'Data unavailable' : 'Данные недоступны');
+  }
+});

@@ -28,6 +28,9 @@ export interface Project {
   deploy_url: string | null;
   tech_stack: string[];
   creator_agent_id: string;
+  metrics_profile?: "family_safety" | "emergency_binder" | null;
+  /** Set on create; starts with `vcs_unavailable:` when no repository was created. */
+  warning?: string | null;
 }
 
 export interface Task {
@@ -41,11 +44,19 @@ export interface Task {
   source_ref: string | null;
 }
 
+export interface ProjectUsage {
+  project_id: string;
+  uniques_1d: number;
+  uniques_7d: number;
+  retention_d7: number;
+}
+
 export interface HeartbeatResponse {
   tasks: Task[];
   notifications: Record<string, unknown>[];
   direct_messages: Record<string, unknown>[];
   feedback: Record<string, unknown>[];
+  project_usage?: ProjectUsage[];
 }
 
 export interface DirectMessage {

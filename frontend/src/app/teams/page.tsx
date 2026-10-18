@@ -1,5 +1,10 @@
 "use client";
 
+import { localeTag } from '@/lib/i18n/locale';
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { publicMessages } from '@/lib/i18n/public';
+
 import Link from "next/link";
 import { API_URL, Team, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
@@ -30,6 +35,8 @@ async function fetchTeams(): Promise<Team[]> {
 }
 
 export default function TeamsPage() {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchTeams, {
     intervalMs: POLL_INTERVAL_MS,
   });
@@ -63,10 +70,9 @@ export default function TeamsPage() {
           {/* Breadcrumbs */}
           <div className="flex items-center gap-2 mb-8 fade-up">
             <Link href="/" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
-              Home
-            </Link>
+              {tr('home2')}</Link>
             <span className="text-neutral-700 text-[10px]">/</span>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400">Teams</span>
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400">{tr('teams')}</span>
           </div>
 
           {/* Page header */}
@@ -76,8 +82,8 @@ export default function TeamsPage() {
                 <span className="text-violet-400 font-mono text-sm">^</span>
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Teams</h1>
-                <p className="text-neutral-500 text-xs font-mono">Agent and human teams collaborating on projects</p>
+                <h1 className="text-2xl font-bold text-white">{tr('teams')}</h1>
+                <p className="text-neutral-500 text-xs font-mono">{tr('agentAndHumanTeamsCollaboratingOnProjects')}</p>
                 <div className="mt-1">
                   <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
                 </div>
@@ -89,8 +95,8 @@ export default function TeamsPage() {
           <div className="flex items-center gap-4 mb-8 fade-up fade-up-2">
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2 flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">Total</span>
-              <span className="text-sm font-mono text-white">{teams.length}</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
+              <span className="text-sm font-mono text-white">{new Intl.NumberFormat(localeTag(locale)).format(teams.length)}</span>
             </div>
           </div>
 
@@ -99,7 +105,7 @@ export default function TeamsPage() {
               <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center mb-4 animate-pulse">
                 <span className="text-violet-400 font-mono text-xs">...</span>
               </div>
-              <p className="text-neutral-600 text-xs font-mono">Loading teams</p>
+              <p className="text-neutral-600 text-xs font-mono">{tr('loadingTeams')}</p>
             </div>
           )}
 
@@ -108,8 +114,8 @@ export default function TeamsPage() {
               <div className="w-12 h-12 rounded-xl bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center mx-auto mb-4">
                 <span className="text-neutral-600 font-mono">^</span>
               </div>
-              <p className="text-neutral-400 text-sm mb-1">No teams yet</p>
-              <p className="text-neutral-600 text-xs font-mono">Create one via the API</p>
+              <p className="text-neutral-400 text-sm mb-1">{tr('noTeamsYet')}</p>
+              <p className="text-neutral-600 text-xs font-mono">{tr('createOneViaTheAPI')}</p>
             </div>
           )}
 
@@ -127,12 +133,11 @@ export default function TeamsPage() {
                       <h3 className="font-semibold text-white text-base leading-snug group-hover:text-violet-300 transition-colors">
                         {t.name}
                       </h3>
-                      <p className="text-neutral-600 text-[10px] font-mono mt-1">by {t.creator_name}</p>
+                      <p className="text-neutral-600 text-[10px] font-mono mt-1">{tr('by')}{' '}{t.creator_name}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-medium">
-                        {t.member_count} members
-                      </span>
+                        {new Intl.NumberFormat(localeTag(locale)).format(t.member_count)} {tr('members')}</span>
                     </div>
                   </div>
 
@@ -141,11 +146,10 @@ export default function TeamsPage() {
                   )}
 
                   <div className="flex items-center justify-between pt-3 border-t border-neutral-800/30">
-                    <span className="text-[10px] font-mono text-neutral-700">{timeAgo(t.created_at)}</span>
+                    <span className="text-[10px] font-mono text-neutral-700">{timeAgo(t.created_at, locale)}</span>
                     {t.project_count > 0 && (
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-violet-400/10 text-violet-400 border border-violet-400/20">
-                        {t.project_count} projects
-                      </span>
+                        {new Intl.NumberFormat(localeTag(locale)).format(t.project_count)} {tr('projects3')}</span>
                     )}
                   </div>
                 </Link>

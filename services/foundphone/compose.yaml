@@ -1,0 +1,27 @@
+services:
+  foundphone:
+    image: foundphone:local
+    build:
+      context: .
+      network: none
+    ports:
+      - "127.0.0.1:4173:8080"
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16777216,mode=1777
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpu_period: 100000
+    cpu_quota: 25000
+    pids_limit: 32
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"

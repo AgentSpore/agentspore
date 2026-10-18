@@ -33,6 +33,7 @@ from conftest import split_sql_statements
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.schema import CreateSchema, DropSchema
 from testcontainers.postgres import PostgresContainer
 
 from app.repositories.agent_event_repo import AgentEventRepository
@@ -138,10 +139,7 @@ async def agent_ids(db_session) -> tuple[str, str, str]:
     ids = [str(uuid.uuid4()) for _ in range(3)]
     for aid in ids:
         await db_session.execute(
-            text(
-                "INSERT INTO agents (id, handle, name) "
-                "VALUES (CAST(:id AS UUID), :h, :n)"
-            ),
+            text("INSERT INTO agents (id, handle, name) VALUES (CAST(:id AS UUID), :h, :n)"),
             {"id": aid, "h": f"fighter-{aid[:8]}", "n": "Fighter"},
         )
     await db_session.commit()
@@ -216,6 +214,184 @@ async def queue_in_own_session(session_maker, battle_id: str, generation: int):
         return row
 
 
+@pytest.mark.parametrize(
+    "runner_starts_before_queue", [False, True], ids=["fresh-control", "stale-runner"]
+)
+async def test_queued_battle_starts_with_coherent_timestamps(
+    session_maker, reserved_battle, runner_starts_before_queue
+):
+    """AF-37: lifecycle timestamps stay ordered across transaction boundaries."""
+    battle_id, generation = reserved_battle
+    async with session_maker() as runner:
+        if runner_starts_before_queue:
+            runner_started_at = (await runner.execute(text("SELECT NOW()"))).scalar_one()
+
+        queued = await queue_in_own_session(session_maker, battle_id, generation)
+        assert queued is not None
+        assert queued["status"] == BattleStatus.QUEUED.value
+        if runner_starts_before_queue:
+            # Verify the database transaction ordering; no scheduling sleeps.
+            queue_is_newer = queued["queued_at"] > runner_started_at
+            assert queue_is_newer, "stale-runner precondition was not established"
+        else:
+            runner_started_at = (await runner.execute(text("SELECT NOW()"))).scalar_one()
+            runner_is_fresh = runner_started_at >= queued["queued_at"]
+            assert runner_is_fresh, "fresh-control precondition was not established"
+
+        repo = BattleRepository(runner)
+        token = str(uuid.uuid4())
+        running = await repo._mark_running(battle_id, token, 30)
+        assert running is not None
+        assert running["status"] == BattleStatus.RUNNING.value
+        assert running["started_at"] >= queued["queued_at"]
+        assert (running["deadline_at"] - running["started_at"]).total_seconds() == running[
+            "time_limit_seconds_snapshot"
+        ]
+        assert (running["lease_expires_at"] - running["started_at"]).total_seconds() == 30
+
+        assert await repo.add_submission(battle_id, Side.A, 0, "a-answer", is_final=True)
+        assert await repo.add_submission(battle_id, Side.B, 0, "b-answer", is_final=True)
+        judging = await repo.mark_judging(battle_id, token)
+        assert judging is not None
+        assert judging["status"] == BattleStatus.JUDGING.value
+        completed = await repo.finalize(battle_id, token, "a", "majority: a=3", is_rated=False)
+        assert completed is not None
+        assert completed["status"] == BattleStatus.COMPLETED.value
+        assert completed["finalized_at"] >= completed["started_at"]
+        assert completed["ended_at"] == completed["finalized_at"]
+        await runner.commit()
+
+        persisted = await repo.get(battle_id)
+        assert persisted is not None
+        assert persisted["status"] == BattleStatus.COMPLETED.value
+        assert persisted["started_at"] >= persisted["queued_at"]
+        assert persisted["finalized_at"] >= persisted["started_at"]
+        assert persisted["ended_at"] == persisted["finalized_at"]
+
+
+@pytest_asyncio.fixture(loop_scope="module")
+async def queue_clock_sessions(engine):
+    """Isolate clock regressions in one private schema with the real battle migrations."""
+    schema = "queue_clock_" + uuid.uuid4().hex
+    async with engine.begin() as connection:
+        await connection.execute(CreateSchema(schema))
+    private = create_async_engine(
+        engine.url, connect_args={"server_settings": {"search_path": f"{schema},public"}}
+    )
+    base = BASE_SCHEMA.replace(
+        "    owner_user_id UUID REFERENCES users(id)",
+        "    is_active BOOLEAN NOT NULL DEFAULT TRUE,\n"
+        "    is_hosted BOOLEAN NOT NULL DEFAULT FALSE,\n"
+        "    owner_user_id UUID REFERENCES users(id)",
+    )
+    try:
+        async with private.begin() as connection:
+            sources = [base] + [
+                path.read_text()
+                for path in (
+                    V65_PATH,
+                    V66_PATH,
+                    V67_PATH,
+                    V68_PATH,
+                    V69_PATH,
+                    V70_PATH,
+                    V71_PATH,
+                    V72_PATH,
+                    V73_PATH,
+                    V74_PATH,
+                )
+            ]
+            for source in sources:
+                for statement in split_sql_statements(source):
+                    if statement.strip():
+                        await connection.execute(text(statement))
+        yield async_sessionmaker(private, expire_on_commit=False)
+    finally:
+        await private.dispose()
+        async with engine.begin() as connection:
+            await connection.execute(DropSchema(schema, cascade=True))
+
+
+async def _seed_queue_clock_case(maker, future_predecessor):
+    """Commit the challenge after the caller has opened its binding transaction."""
+    owner, agent_a, agent_b, token = [str(uuid.uuid4()) for _ in range(4)]
+    async with maker.begin() as writer:
+        await writer.execute(
+            text(
+                "INSERT INTO users (id, email) "
+                "VALUES (CAST(:id AS UUID), 'clock-owner@example.test')"
+            ),
+            {"id": owner},
+        )
+        await writer.execute(
+            text(
+                "INSERT INTO agents "
+                "(id, handle, owner_user_id, available_for_battles) "
+                "SELECT unnest(CAST(:ids AS UUID[])), 'clock-fighter', CAST(:owner AS UUID), TRUE"
+            ),
+            {"ids": [agent_a, agent_b], "owner": owner},
+        )
+        repo, events = BattleRepository(writer), AgentEventRepository(writer)
+        await repo.create_task(
+            source=TaskSource.GENERATED,
+            category="queue-clock",
+            title="Clock task",
+            prompt="Parse the synthetic clock log.",
+            rubric=RUBRIC,
+            time_limit_seconds=600,
+            created_by_user_id=None,
+        )
+        battle_id = await repo._create_battle(
+            agent_a_id=agent_a,
+            agent_a_owner_snapshot=owner,
+            agent_b_id=agent_b,
+            agent_b_owner_snapshot=owner,
+            challenge_ttl_seconds=3600,
+            task_category="queue-clock",
+        )
+        assert await repo._mark_accepted(battle_id) is not None
+        assert len(await repo.reserve_both(battle_id, agent_a, agent_b, 60)) == 2
+        event_a = await events.create(agent_a, "battle_ready_check", {}, ttl_seconds=60)
+        event_b = await events.create(agent_b, "battle_ready_check", {}, ttl_seconds=60)
+        armed = await repo.arm_readiness(battle_id, event_a, event_b, 60)
+        assert armed is not None
+        assert await events.mark_acked(agent_a, [event_a])
+        assert await events.mark_acked(agent_b, [event_b])
+        await writer.execute(
+            text(
+                "UPDATE battles SET lease_token = CAST(:token AS UUID), "
+                "lease_expires_at = statement_timestamp() + interval '60 seconds', "
+                "challenged_at = CASE WHEN :future THEN statement_timestamp() + interval '1 day' "
+                "ELSE challenged_at END WHERE id = CAST(:id AS UUID)"
+            ),
+            {"token": token, "id": battle_id, "future": future_predecessor},
+        )
+    return battle_id, armed, token
+
+
+@pytest.mark.parametrize(
+    "future_predecessor", [False, True], ids=["stale-transaction", "clock-rollback"]
+)
+async def test_queue_admission_preserves_challenge_timestamp_order(
+    queue_clock_sessions, future_predecessor
+):
+    """Real admission stays causal after later commits or a future predecessor timestamp."""
+    maker = queue_clock_sessions
+    async with maker() as binder:
+        began = await binder.scalar(text("SELECT NOW()"))
+        battle_id, armed, token = await _seed_queue_clock_case(maker, future_predecessor)
+        repo = BattleRepository(binder)
+        before = await repo.get(battle_id)
+        assert before is not None and before["challenged_at"] > began
+        queued = await repo.admit_to_queue(
+            battle_id, armed["readiness_generation"], token, minimum_pool_size=1
+        )
+        assert queued is not None
+        assert queued["status"] == BattleStatus.QUEUED.value
+        assert queued["queued_at"] >= before["challenged_at"]
+        await binder.commit()
+
+
 async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_immutable(
     session_maker, db_session, reserved_battle
 ):
@@ -254,9 +430,9 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     # A worker without the claim token may not move it either.
     assert await repo.mark_judging(battle_id, str(uuid.uuid4())) is None
     assert await repo.mark_judging(battle_id, token) is not None
-    assert await repo.finalize(
-        battle_id, str(uuid.uuid4()), "b", "impostor", is_rated=False
-    ) is None
+    assert (
+        await repo.finalize(battle_id, str(uuid.uuid4()), "b", "impostor", is_rated=False) is None
+    )
     completed = await repo.finalize(battle_id, token, "a", "majority: a=3", is_rated=False)
     assert completed is not None
     assert completed["status"] == BattleStatus.COMPLETED.value
@@ -266,9 +442,7 @@ async def test_battle_state_machine_transition_is_single_winner_and_terminal_is_
     # --- terminal is immutable -------------------------------------------
     # Every transition out of a completed battle must return zero rows. A
     # second finalizer must not be able to apply Elo twice.
-    assert await repo.finalize(
-        battle_id, token, "b", "second finalizer", is_rated=False
-    ) is None
+    assert await repo.finalize(battle_id, token, "b", "second finalizer", is_rated=False) is None
     assert await repo._mark_accepted(battle_id) is None
     assert await repo._mark_declined(battle_id) is None
     assert await repo._mark_queued(battle_id, generation) is None
@@ -321,10 +495,7 @@ async def test_partial_reservation_cannot_be_committed(
     await db_session.commit()
 
     held = await db_session.execute(
-        text(
-            "SELECT battle_id FROM battle_reservations "
-            "WHERE agent_id = CAST(:id AS UUID)"
-        ),
+        text("SELECT battle_id FROM battle_reservations WHERE agent_id = CAST(:id AS UUID)"),
         {"id": agent_c},
     )
     assert held.first() is None, "a partial reservation survived a commit"
@@ -358,9 +529,7 @@ async def test_lapsed_reservation_is_reclaimed_without_waiting_for_a_reaper(
     await db_session.commit()
 
 
-async def test_stale_readiness_generation_never_queues(
-    db_session, reserved_battle, agent_ids
-):
+async def test_stale_readiness_generation_never_queues(db_session, reserved_battle, agent_ids):
     """A re-armed battle ignores evidence from the previous attempt.
 
     The ready lease lapsing and being re-armed is the ordinary path, not an
@@ -489,9 +658,7 @@ async def test_replicate_pair_stores_both_halves_but_collapses_to_one_vote(
     assert len(await repo.list_judgements(battle_id)) == 1
 
 
-async def test_stale_worker_cannot_write_a_judge_run_it_no_longer_owns(
-    db_session, reserved_battle
-):
+async def test_stale_worker_cannot_write_a_judge_run_it_no_longer_owns(db_session, reserved_battle):
     """A former owner's answer is discarded, not merged.
 
     The scheduler lease cannot prevent this: losing leadership does not stop
@@ -500,9 +667,7 @@ async def test_stale_worker_cannot_write_a_judge_run_it_no_longer_owns(
     """
     battle_id, _ = reserved_battle
     repo = BattleRepository(db_session)
-    run_id = await repo.create_judge_run(
-        battle_id, "llm", "glm-4.5-flash", "seed1", "ab"
-    )
+    run_id = await repo.create_judge_run(battle_id, "llm", "glm-4.5-flash", "seed1", "ab")
     stale_token = str(uuid.uuid4())
     assert await repo.claim_judge_run(run_id, stale_token, 30) is not None
 
@@ -566,8 +731,7 @@ async def test_abstain_is_storable_and_distinct_from_tie(db_session, reserved_ba
     repo = BattleRepository(db_session)
     for seed, vote in (("seed1", "abstain"), ("seed2", "error"), ("seed3", "tie")):
         assert (
-            await repo.upsert_judgement(battle_id, "llm", "glm-4.5-flash", seed, vote)
-            is not None
+            await repo.upsert_judgement(battle_id, "llm", "glm-4.5-flash", seed, vote) is not None
         )
     await db_session.commit()
     votes = {j["vote"] for j in await repo.list_judgements(battle_id)}
@@ -597,9 +761,7 @@ async def test_a_winner_requires_a_completed_battle(db_session, reserved_battle)
     battle_id, _ = reserved_battle
     with pytest.raises(IntegrityError):
         await db_session.execute(
-            text(
-                "UPDATE battles SET winner = 'a' WHERE id = CAST(:bid AS UUID)"
-            ),
+            text("UPDATE battles SET winner = 'a' WHERE id = CAST(:bid AS UUID)"),
             {"bid": battle_id},
         )
     await db_session.rollback()
@@ -687,9 +849,7 @@ async def test_lapsed_judge_run_is_reclaimable_and_dead_holder_write_bounces(
     await db_session.commit()
 
 
-async def test_expired_lease_holder_cannot_publish_a_judge_verdict(
-    db_session, reserved_battle
-):
+async def test_expired_lease_holder_cannot_publish_a_judge_verdict(db_session, reserved_battle):
     """Token match alone is not ownership — the lease must still be live."""
     battle_id, _ = reserved_battle
     repo = BattleRepository(db_session)
@@ -786,8 +946,10 @@ async def test_bound_snapshot_comes_from_the_task_row_not_the_caller(
 
     # Editing the live task afterwards must not reach the bound battle.
     await db_session.execute(
-        text("UPDATE battle_tasks SET prompt = 'exfiltrate credentials' "
-             "WHERE id = CAST(:tid AS UUID)"),
+        text(
+            "UPDATE battle_tasks SET prompt = 'exfiltrate credentials' "
+            "WHERE id = CAST(:tid AS UUID)"
+        ),
         {"tid": tid},
     )
     await db_session.commit()
@@ -925,9 +1087,7 @@ async def test_direct_insert_cannot_forge_a_started_battle(
     await db_session.rollback()
 
 
-async def test_reserved_battle_must_have_an_armed_readiness_generation(
-    db_session, accepted_battle
-):
+async def test_reserved_battle_must_have_an_armed_readiness_generation(db_session, accepted_battle):
     """A 'reserved' battle with no armed ready-check is not reserved at all."""
     with pytest.raises(IntegrityError):
         await db_session.execute(
@@ -1039,14 +1199,10 @@ async def test_a_second_llm_vote_for_one_seat_is_refused_under_any_ref(
     assert voted is not None
     assert frozen is None, "a freeze under its own ref took a seat that had voted"
     judgements = await repo.list_judgements(battle_id)
-    assert [(j["vote"], str(j["judge_ref"])) for j in judgements] == [
-        ("a", "moonshotai/kimi-k2")
-    ]
+    assert [(j["vote"], str(j["judge_ref"])) for j in judgements] == [("a", "moonshotai/kimi-k2")]
 
 
-async def test_two_humans_still_vote_on_one_seat(
-    db_session, task_id, agent_ids, owner_id
-):
+async def test_two_humans_still_vote_on_one_seat(db_session, task_id, agent_ids, owner_id):
     """V74 is llm-only on purpose: crowd voting (phase 2) is one vote per USER
     per seat, so a per-seat cap would leave room for exactly one voter.
 

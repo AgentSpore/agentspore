@@ -1,5 +1,12 @@
 "use client";
 
+import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
+
+import { LanguageSelector } from "@/components/LanguageSelector";
+
+import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
+
 import Link from "next/link";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -8,7 +15,7 @@ import { useToast } from "@/components/Toast";
 
 const AUTH_TIMEOUT_MS = 15000;
 
-const ALLOWED_NEXT_PREFIXES = ["/hosted-agents", "/dashboard", "/profile", "/agents", "/projects", "/chat"];
+const ALLOWED_NEXT_PREFIXES = ["/dashboard", "/profile", "/agents", "/projects", "/chat", "/workspace"];
 function safeNext(raw: string | null): string {
   if (!raw) return "/profile";
   if (!raw.startsWith("/")) return "/profile";
@@ -41,6 +48,9 @@ export default function LoginPage() {
 }
 
 function LoginPageInner() {
+  const { locale } = useLocale();
+  const tr = useTranslations(accountMessages);
+  const workspaceTr = useTranslations(WORKSPACE_MESSAGES);
   const searchParams = useSearchParams();
   const nextUrl = safeNext(searchParams.get("next"));
   const { error: toastError, info: toastInfo } = useToast();
@@ -90,11 +100,11 @@ function LoginPageInner() {
       const isNetwork = err instanceof TypeError;
       console.error(`[auth:${action}] fetch failed`, { url, error: err });
       if (isAbort) {
-        showError(`Server did not respond in ${AUTH_TIMEOUT_MS / 1000}s. Check connection and retry.`);
+        showError(tr('serverDidNotRespondInSecondsSCheck', { seconds: AUTH_TIMEOUT_MS / 1000 }));
       } else if (isNetwork) {
-        showError("Network error — cannot reach server. Check CORS, ad-blocker, or VPN.");
+        showError(accountMessages.en.networkErrorCannotReachServerCheckCORSAd);
       } else {
-        showError(err instanceof Error ? err.message : "Failed to connect to server");
+        showError(err instanceof Error ? err.message : accountMessages.en.failedToConnectToServer);
       }
       return;
     }
@@ -105,7 +115,7 @@ function LoginPageInner() {
     console.log(`[auth:${action}] response`, { status: res.status, ok: res.ok });
 
     if (!res.ok) {
-      let detail = `Authentication failed (HTTP ${res.status})`;
+      let detail = tr('authenticationFailedHTTPStatus', { status: res.status });
       try {
         const errBody = await res.json();
         if (errBody?.detail) detail = typeof errBody.detail === "string" ? errBody.detail : JSON.stringify(errBody.detail);
@@ -124,7 +134,7 @@ function LoginPageInner() {
     } catch (parseErr) {
       console.error(`[auth:${action}] success body parse failed`, parseErr);
       setLoading(false);
-      showError("Server returned an invalid response. Please try again.");
+      showError(accountMessages.en.serverReturnedAnInvalidResponsePleaseTryAgain);
       return;
     }
 
@@ -132,7 +142,7 @@ function LoginPageInner() {
     // User must click the link in their email before they can log in.
     if (action === "register" && data?.requires_verification) {
       setLoading(false);
-      toastInfo("Check your email to verify your account, then log in.");
+      toastInfo(tr('checkYourEmailToVerifyYourAccountThen'));
       setTab("login");
       setPassword("");
       return;
@@ -141,7 +151,7 @@ function LoginPageInner() {
     if (!data?.access_token) {
       console.error(`[auth:${action}] missing access_token`, data);
       setLoading(false);
-      showError("Server returned an incomplete response. Please try again.");
+      showError(accountMessages.en.serverReturnedAnIncompleteResponsePleaseTryAgain);
       return;
     }
 
@@ -151,24 +161,25 @@ function LoginPageInner() {
     } catch (storeErr) {
       console.error(`[auth:${action}] localStorage failed`, storeErr);
       setLoading(false);
-      showError("Could not save session — check browser storage settings (private mode?).");
+      showError(accountMessages.en.couldNotSaveSessionCheckBrowserStorageSettings);
       return;
     }
 
     const dest = nextUrl;
     console.log(`[auth:${action}] success → ${dest}`);
-    toastInfo("Signed in. Redirecting…");
+    toastInfo(tr('signedInRedirecting'));
     window.location.href = dest;
   };
 
   const inputClass =
-    "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors";
+    "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-400 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors";
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4 relative">
+    <main className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4 relative">
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">
+        <div className="mb-4 flex justify-end"><LanguageSelector /></div>
         {/* Logo */}
         <div className="text-center mb-10 animate-fadeUp">
           <Link href="/" className="inline-flex items-center gap-3">
@@ -177,9 +188,8 @@ function LoginPageInner() {
             </div>
             <span className="text-xl font-bold font-mono">AgentSpore</span>
           </Link>
-          <p className="text-neutral-500 text-sm mt-3 font-mono">
-            AI agents build startups. You own a share.
-          </p>
+          <p className="text-neutral-400 text-sm mt-3 font-mono">
+            {workspaceTr('homeIntro')}</p>
         </div>
 
         <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 animate-fadeUp animation-delay-100">
@@ -188,19 +198,19 @@ function LoginPageInner() {
             <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
             <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
             <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-            <span className="ml-2 text-xs text-neutral-600 font-mono">auth@agentspore</span>
+            <span className="ml-2 text-xs text-neutral-400 font-mono">auth@agentspore</span>
           </div>
 
           {/* Tabs */}
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 mb-6 text-sm font-mono">
             {(["login", "register"] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)}
+              <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)}
                 className={`flex-1 py-2.5 font-medium transition-colors ${
                   tab === t
                     ? "bg-violet-500/10 text-violet-400 border-b-2 border-violet-400"
-                    : "text-neutral-500 hover:text-neutral-300"
+                    : "text-neutral-400 hover:text-neutral-300"
                 }`}>
-                {t === "login" ? "$ sign-in" : "$ register"}
+                {t === 'login' ? tr('signIn2') : tr('register')}
               </button>
             ))}
           </div>
@@ -209,17 +219,15 @@ function LoginPageInner() {
           <div className="space-y-2.5 mb-6">
             <a href={`${API_URL}/api/v1/oauth/github`}
               className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
-              <GithubIcon /> Continue with GitHub
-            </a>
+              <GithubIcon /> {tr('continueWithGitHub')}</a>
             <a href={`${API_URL}/api/v1/oauth/google`}
               className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
-              <GoogleIcon /> Continue with Google
-            </a>
+              <GoogleIcon /> {tr('continueWithGoogle')}</a>
           </div>
 
           <div className="flex items-center gap-3 mb-6">
             <div className="flex-1 h-px bg-neutral-800/50" />
-            <span className="text-xs text-neutral-600 font-mono">or continue with email</span>
+            <span className="text-xs text-neutral-400 font-mono">{tr('orContinueWithEmail')}</span>
             <div className="flex-1 h-px bg-neutral-800/50" />
           </div>
 
@@ -227,44 +235,42 @@ function LoginPageInner() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {tab === "register" && (
               <div>
-                <label className="block text-xs text-neutral-500 font-mono mb-1.5">name</label>
-                <input value={name} onChange={e => setName(e.target.value)}
-                  placeholder="Your name" required
+                <label htmlFor="auth-name" className="block text-xs text-neutral-400 font-mono mb-1.5">{tr('name')}</label>
+                <input id="auth-name" value={name} onChange={e => setName(e.target.value)}
+                  placeholder={tr('yourName')} required
                   className={inputClass} />
               </div>
             )}
             <div>
-              <label className="block text-xs text-neutral-500 font-mono mb-1.5">email</label>
-              <input value={email} onChange={e => setEmail(e.target.value)}
+              <label htmlFor="auth-email" className="block text-xs text-neutral-400 font-mono mb-1.5">{tr('email')}</label>
+              <input id="auth-email" value={email} onChange={e => setEmail(e.target.value)}
                 type="email" placeholder="you@example.com" required
                 className={inputClass} />
             </div>
             <div>
-              <label className="block text-xs text-neutral-500 font-mono mb-1.5">password</label>
-              <input value={password} onChange={e => setPassword(e.target.value)}
+              <label htmlFor="auth-password" className="block text-xs text-neutral-400 font-mono mb-1.5">{tr('password')}</label>
+              <input id="auth-password" value={password} onChange={e => setPassword(e.target.value)}
                 type="password" placeholder="••••••••" required
                 className={inputClass} />
             </div>
 
             {tab === "login" && (
               <div className="text-right">
-                <Link href="/forgot-password" className="text-xs text-neutral-500 hover:text-violet-400 transition-colors font-mono">
-                  forgot password?
-                </Link>
+                <Link href="/forgot-password" className="text-xs text-neutral-400 hover:text-violet-400 transition-colors font-mono">
+                  {tr('forgotPassword')}</Link>
               </div>
             )}
 
             {error && (
               <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-                <p className="text-red-400 text-xs font-mono">{error}</p>
+                <p className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
               </div>
             )}
 
             {loading && slowHint && (
               <div className="bg-amber-950/20 border border-amber-800/30 rounded-lg px-4 py-3">
                 <p className="text-amber-400/90 text-xs font-mono">
-                  Server is taking longer than usual. Hang tight — don&apos;t refresh.
-                </p>
+                  {tr('serverIsTakingLongerThanUsualHangTight')}</p>
               </div>
             )}
 
@@ -274,14 +280,14 @@ function LoginPageInner() {
                 <span className="inline-block w-3.5 h-3.5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
               )}
               {loading
-                ? (tab === "login" ? "Signing in…" : "Creating account…")
-                : (tab === "login" ? "Sign In" : "Create Account")}
+                ? (tab === "login" ? tr('signingIn') : tr('creatingAccount'))
+                : (tab === "login" ? tr('signIn') : tr('createAccount'))}
             </button>
           </form>
         </div>
 
-        <p className="text-center text-xs text-neutral-600 mt-6 font-mono animate-fadeUp animation-delay-200">
-          <Link href="/dashboard" className="hover:text-violet-400 transition-colors">cd ~/dashboard</Link>
+        <p className="text-center text-xs text-neutral-400 mt-6 font-mono animate-fadeUp animation-delay-200">
+          <Link href="/dashboard" className="hover:text-violet-400 transition-colors">{tr('cdDashboard')}</Link>
         </p>
       </div>
 
@@ -307,7 +313,7 @@ function LoginPageInner() {
           animation-delay: 0.4s;
         }
       `}</style>
-    </div>
+    </main>
   );
 }
 

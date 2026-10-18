@@ -8,10 +8,12 @@ Agent API — Эндпоинты для ИИ-агентов (thin router)
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.deps import CurrentUser
+from app.api.deps import CurrentUser, client_ip, get_usage_service
 from app.core.database import get_db
+from app.core.redis_client import get_redis
 from app.repositories.agent_repo import AgentRepository
 from sqlalchemy.exc import IntegrityError
 
@@ -36,15 +38,42 @@ from app.schemas.agents import (
     PushFilesRequest,
     ReviewCreateRequest,
     TaskClaimResponse,
+    TaskCreateRequest,
+    TaskCreateResponse,
     TaskCompleteRequest,
     MemoryAskRequest,
     MemoryAskResponse,
 )
+from app.schemas.deployments import DeploymentRequest
+from app.services.agent_admission import admit_agent_registration
 from app.services.agent_service import AgentService, get_agent_service, get_agent_by_api_key
 from app.services.openviking_service import OpenVikingService, get_openviking_service
+from app.schemas.task_reviews import (
+    TaskReviewDetail,
+    TaskReviewRequest,
+    TaskReviewResponse,
+    TaskSubmitRequest,
+)
+from app.services.task_review_service import TaskReviewService, get_task_review_service
+from app.schemas.learning_budget import LearningBudgetResponse
+from app.schemas.usage import BinderEventMetrics, ServiceEventMetrics
+from app.services.usage_service import UsageService
+from app.services.learning_budget_service import LearningBudgetService, get_learning_budget_service
 
 from loguru import logger
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+@router.get(
+    "/projects/{project_id}/events", response_model=ServiceEventMetrics | BinderEventMetrics
+)
+async def get_service_events(
+    project_id: UUID,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: UsageService = Depends(get_usage_service),
+) -> ServiceEventMetrics | BinderEventMetrics:
+    """Read seven-day action aggregates for the authenticated project creator."""
+    return await svc.get_events(project_id, UUID(str(agent["id"])))
 
 
 # ==========================================
@@ -53,8 +82,10 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 @router.post("/register", response_model=AgentRegisterResponse)
 async def register_agent(
+    request: Request,
     body: AgentRegisterRequest,
     svc: AgentService = Depends(get_agent_service),
+    redis: Redis = Depends(get_redis),
 ):
     """
     Зарегистрировать нового ИИ-агента.
@@ -63,6 +94,7 @@ async def register_agent(
     API-ключ выдаётся ОДИН раз — сохраните!
     Агент активен сразу. GitHub OAuth опционально (для атрибуции коммитов).
     """
+    await admit_agent_registration(client_ip(request), redis)
     try:
         result = await svc.register_agent(
             name=body.name,
@@ -79,7 +111,6 @@ async def register_agent(
             bio=body.bio,
         )
     except IntegrityError:
-        from fastapi import HTTPException
         raise HTTPException(
             status_code=409,
             detail=f"Agent name '{body.name}' is already taken. Please choose a different name.",
@@ -158,8 +189,10 @@ async def update_webhook(
 
 @router.get("/github/callback", response_model=GitHubOAuthCallbackResponse)
 async def github_oauth_callback(
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    error_description: str | None = Query(None),
     svc: AgentService = Depends(get_agent_service),
 ):
     """
@@ -168,7 +201,22 @@ async def github_oauth_callback(
     GitHub редиректит сюда после авторизации пользователя.
     Обменивает code на token, получает информацию о пользователе,
     активирует агента.
+
+    GitHub also redirects here with `error`/`error_description` (no `code`)
+    when the user denies access, or the link can be opened by hand with
+    neither: both cases must surface a readable 400, not a bare 422.
     """
+    reconnect_hint = "Request a new link via POST /api/v1/agents/github/reconnect."
+    if error:
+        detail = f"GitHub OAuth error: {error}"
+        if error_description:
+            detail += f": {error_description[:200]}"
+        raise HTTPException(status_code=400, detail=f"{detail}. {reconnect_hint}")
+    if not code or not state:
+        raise HTTPException(
+            status_code=400,
+            detail=f"GitHub OAuth callback missing code/state. {reconnect_hint}",
+        )
     result = await svc.github_oauth_callback(code, state)
     return GitHubOAuthCallbackResponse(**result)
 
@@ -230,11 +278,30 @@ async def gitlab_oauth_login(
 
 @router.get("/gitlab/callback", response_model=GitLabOAuthCallbackResponse)
 async def gitlab_oauth_callback(
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    error_description: str | None = Query(None),
     svc: AgentService = Depends(get_agent_service),
 ):
-    """Callback для GitLab OAuth авторизации."""
+    """
+    Callback для GitLab OAuth авторизации.
+
+    GitLab also redirects here with `error`/`error_description` (no `code`)
+    when the user denies access, or the link can be opened by hand with
+    neither: both cases must surface a readable 400, not a bare 422.
+    """
+    reconnect_hint = "Start a new GitLab OAuth flow via GET /api/v1/agents/gitlab/login."
+    if error:
+        detail = f"GitLab OAuth error: {error}"
+        if error_description:
+            detail += f": {error_description[:200]}"
+        raise HTTPException(status_code=400, detail=f"{detail}. {reconnect_hint}")
+    if not code or not state:
+        raise HTTPException(
+            status_code=400,
+            detail=f"GitLab OAuth callback missing code/state. {reconnect_hint}",
+        )
     result = await svc.gitlab_oauth_callback(code, state)
     return GitLabOAuthCallbackResponse(**result)
 
@@ -380,10 +447,12 @@ async def create_review(
 @router.post("/projects/{project_id}/deploy")
 async def deploy_project(
     project_id: UUID,
+    body: DeploymentRequest,
+    idempotency_key: UUID = Header(..., alias="Idempotency-Key"),
     agent: dict = Depends(get_agent_by_api_key),
     svc: AgentService = Depends(get_agent_service),
 ):
-    """Report deploy status; no automatic deploy backend exists for this route (HTTP 501)."""
+    """Validate pinned admission inputs; deny deployment without isolation (HTTP 503)."""
     return await svc.deploy_project(project_id, agent)
 
 
@@ -590,6 +659,35 @@ async def update_agent_dna(
 # Task Marketplace
 # ==========================================
 
+@router.get("/learning-budget", response_model=LearningBudgetResponse)
+async def get_learning_budget(
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: LearningBudgetService = Depends(get_learning_budget_service),
+):
+    """Read the authenticated agent's educational units without issuing a grant."""
+    return await svc.read(agent["id"])
+
+
+@router.post("/learning-budget", response_model=LearningBudgetResponse)
+async def activate_learning_budget(
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: LearningBudgetService = Depends(get_learning_budget_service),
+):
+    """Explicitly activate the authenticated agent's one-time educational grant."""
+    return await svc.activate(agent["id"])
+
+
+@router.post("/projects/{project_id}/tasks", response_model=TaskCreateResponse)
+async def create_task(
+    project_id: UUID,
+    body: TaskCreateRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: AgentService = Depends(get_agent_service),
+):
+    """Create a manual documentation task in the authenticated creator's project."""
+    return await svc.create_task(project_id, agent, body)
+
+
 @router.get("/tasks")
 async def list_tasks(
     type: str | None = Query(default=None, description="fix_bug | add_feature | review_code | write_docs"),
@@ -631,6 +729,35 @@ async def unclaim_task(
 ):
     """Вернуть задачу в очередь. Если агент не справляется."""
     return await svc.unclaim_task(task_id, agent)
+
+
+@router.post("/tasks/{task_id}/submit", response_model=TaskReviewResponse)
+async def submit_task(
+    task_id: UUID, body: TaskSubmitRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: TaskReviewService = Depends(get_task_review_service),
+):
+    """Submit claimant text for requester acceptance without completing the task."""
+    return await svc.transition(task_id, agent["id"], body)
+
+
+@router.post("/tasks/{task_id}/review", response_model=TaskReviewResponse)
+async def review_task(
+    task_id: UUID, body: TaskReviewRequest,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: TaskReviewService = Depends(get_task_review_service),
+):
+    """Record an expected-version requester decision with a durable retry receipt."""
+    return await svc.transition(task_id, agent["id"], body)
+
+
+@router.get("/tasks/{task_id}/review", response_model=TaskReviewDetail)
+async def get_task_review(
+    task_id: UUID, agent: dict = Depends(get_agent_by_api_key),
+    svc: TaskReviewService = Depends(get_task_review_service),
+):
+    """Read current acceptance and the newest 50 transitions as a task participant."""
+    return await svc.detail(task_id, agent["id"])
 
 
 # ==========================================

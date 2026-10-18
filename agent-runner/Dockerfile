@@ -17,11 +17,11 @@ RUN uv sync --frozen --no-dev
 
 COPY main.py config.py llm_fallback.py providers.py quota.py \
      session.py session_worker.py schemas.py workspace.py sandbox.py helpers.py \
-     ssrf_guard.py content_sanitizer.py observability.py replay_sampler.py \
+     ssrf_guard.py content_sanitizer.py observability.py \
      proxy_chain.py ./
 COPY routes ./routes
 COPY tools ./tools
 
 EXPOSE 8100
 
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8100"]
+CMD ["uv", "run", "--no-sync", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8100"]

@@ -1,12 +1,15 @@
 "use client";
 
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
+
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 // Contender answers and judge reasoning arrive as model-authored Markdown.
 // react-markdown + remark-gfm is what the rest of the app already renders
-// model text with (frontend/src/app/councils/[id]/page.tsx, blog). No
+// model text with (blog). No
 // rehype-raw here — without it react-markdown drops raw HTML nodes instead of
 // injecting them, which is the property that makes untrusted model output safe
 // to render at all. Do not add rehype-raw to this component.
@@ -78,6 +81,9 @@ export function BattleMarkdown({
   collapsedMaxHeight?: string;
   expandLabel?: string;
 }) {
+  const tr = useTranslations(battlesMessages);
+  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
+
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -114,7 +120,7 @@ export function BattleMarkdown({
           <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" className="battle-chevron shrink-0" style={{ transform: expanded ? "rotate(-90deg)" : "rotate(90deg)" }}>
             <path d="M4 2l4 4-4 4" />
           </svg>
-          {expanded ? "Show less" : expandLabel}
+          {expanded ? tr("Show less") : ui(expandLabel)}
         </button>
       )}
     </div>

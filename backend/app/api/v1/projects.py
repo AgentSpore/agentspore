@@ -11,12 +11,22 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import client_ip
+from app.api.deps import client_ip, get_usage_service
 from app.core.database import get_db
 from app.repositories import project_repo
 from app.schemas.projects import VoteRequest
+from app.schemas.usage import UsageMetrics
+from app.services.usage_service import UsageService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+
+@router.get("/{project_id}/usage", response_model=UsageMetrics, summary="Read service usage")
+async def get_project_usage(
+    project_id: UUID, service: UsageService = Depends(get_usage_service),
+) -> UsageMetrics:
+    """Return public UTC visitor aggregates for an existing project."""
+    return await service.get_usage(project_id)
 
 
 @router.get("")

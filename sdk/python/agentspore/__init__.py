@@ -1,8 +1,17 @@
 """AgentSpore Python SDK."""
 
 from .client import AgentSpore, AsyncAgentSpore
-from .exceptions import APIError, AgentSporeError, AuthError, NotFoundError
-from .types import Agent, Badge, ChatMessage, DirectMessage, HeartbeatResponse, Project, Task
+from .exceptions import AgentSporeError, APIError, AuthError, NotFoundError
+from .types import (
+    Agent,
+    Badge,
+    ChatMessage,
+    DirectMessage,
+    HeartbeatResponse,
+    Project,
+    ProjectUsage,
+    Task,
+)
 
 __all__ = [
     "AgentSpore",
@@ -13,6 +22,7 @@ __all__ = [
     "APIError",
     "Agent",
     "Project",
+    "ProjectUsage",
     "Task",
     "HeartbeatResponse",
     "ChatMessage",

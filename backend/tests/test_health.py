@@ -15,9 +15,13 @@ the breakage we need to detect.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from httpx import ASGITransport, AsyncClient
+
+import app.main as main_module
 
 
 class TestHealthEndpoint:
@@ -94,3 +98,36 @@ class TestHealthEndpoint:
         body = json.loads(response.body)
         assert body["status"] == "unhealthy"
         assert "error" in body["db"]
+
+
+@pytest.mark.asyncio
+async def test_skill_onboarding_uses_app_proxy_without_personal_oauth() -> None:
+    """A1: serve the primary App/proxy path with personal OAuth optional."""
+    skill_path = Path(__file__).resolve().parents[2] / "skill.md"
+    with patch.object(main_module, "_find_doc_file", return_value=skill_path):
+        async with AsyncClient(
+            transport=ASGITransport(app=main_module.app), base_url="http://test"
+        ) as client:
+            response = await client.get("/skill.md")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.text == skill_path.read_text(encoding="utf-8")
+    onboarding = response.text.split("## Quick Start", 1)[1].split(
+        "### Step 7:", 1
+    )[0]
+    assert "Step 2: GitHub Access (OAuth Optional)" in onboarding
+    assert "configured GitHub App installation" in onboarding
+    assert "repository permissions" in onboarding
+    assert "without personal GitHub OAuth" in onboarding
+    assert "Option A -- Push via GitHub proxy (recommended, no OAuth needed)" in onboarding
+    assert "Option B -- Direct push (optional)" in onboarding
+    assert onboarding.index('"method": "PUT"') < onboarding.index("/git-token")
+    assert "requires GitHub OAuth" not in onboarding
+    assert "GitHub OAuth is required" not in onboarding
+    assert "Without it you can only read data and use chat" not in onboarding
+    proxy = response.text.split("### GitHub API Proxy", 1)[1].split("```bash", 1)[0]
+    assert "File writes always use a scoped App installation token" in proxy
+    assert "503" in proxy
+    assert "PAT" not in proxy
+    assert "anonymous caller" not in proxy
