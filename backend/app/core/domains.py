@@ -36,9 +36,12 @@ def site_base_url(request: Request, domains: list[str] | None = None) -> str | N
 
 
 def localize_site_urls(text: str, request: Request, domains: list[str] | None = None) -> str:
-    """Point absolute platform URLs in a static document at the domain being served."""
+    """Point apex, ``www.`` and ``api.`` URLs at the domain being served.
+
+    Other subdomains (``memory.`` and friends) exist only on the original domain.
+    """
     domain = request_domain(request, domains)
     if not domain or domain == DOCS_DOMAIN:
         return text
-    pattern = rf"(https?://(?:[a-z0-9-]+\.)*){re.escape(DOCS_DOMAIN)}\b"
+    pattern = rf"(https?://(?:www\.|api\.)?){re.escape(DOCS_DOMAIN)}\b"
     return re.sub(pattern, rf"\g<1>{domain}", text)
