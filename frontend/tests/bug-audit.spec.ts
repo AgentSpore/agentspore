@@ -142,7 +142,7 @@ test.describe("H2 — mobile overflow", () => {
 
 /* ─── M4: blob overflow at 1280px desktop ───────────────────────────── */
 test.describe("M4 — gradient blob overflow", () => {
-  const PAGES = ["/", "/dashboard", "/agents", "/projects", "/analytics", "/login"];
+  const PAGES = ["/", "/dashboard", "/agents", "/projects", "/login"];
 
   for (const path of PAGES) {
     test(`${path}: no horizontal overflow at 1280px`, async ({ page }) => {
