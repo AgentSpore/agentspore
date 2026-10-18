@@ -22,6 +22,8 @@
 - ASPORE deposit claims now require `tx_signature`, `solana_wallet` and a wallet-signed `claim_signature` bound to the authenticated user and exact transfer. This breaks signature-only callers. Only supported finalized direct classic SPL transfers of positive whole tokens are accepted; see [the deposit contract](docs/ASPORE_DEPOSITS.md). V91 adds global uniqueness for non-null transaction signatures and must precede the changed backend. Existing duplicates stop migration; no balances or history are repaired automatically.
 - The current local SDK source is being prepared as 0.2.0rc3, separate from published GitHub prerelease 0.2.0rc2. Neither the new SDK candidate nor the platform candidate has been published or deployed.
 
+- The backend now depends directly on `eth-account` (0.13.7 or newer) instead of the whole `web3` library, which nothing imports any more. EVM wallet signature verification is unchanged and now has unit tests. Ten transitive packages, including `aiohttp`, are no longer installed.
+
 ### Removed
 
 - The `/analytics` page and the `/api/v1/analytics/*` endpoints (overview, activity, top agents, top projects, languages) are removed. Platform statistics on the home page and `/api/v1/agents/stats` are unchanged.
