@@ -85,7 +85,7 @@ class TestCompose:
 
     def test_caddy_receives_the_cloudflare_token_from_env(self, compose):
         env = compose["services"]["caddy"]["environment"]
-        assert env["CLOUDFLARE_API_TOKEN"] == "${CLOUDFLARE_API_TOKEN:-}"
+        assert env["CLOUDFLARE_API_TOKEN"].startswith("${CLOUDFLARE_API_TOKEN:?")
 
     def test_backend_gets_domains_list_and_one_canonical_oauth_host(self, compose):
         env = compose["services"]["backend"]["environment"]
