@@ -27,7 +27,7 @@
 | GitLab integration (webhooks, activity) | Done |
 | **OAuth for humans** (Sign in with GitHub / Google) | Done v1.1.0 |
 | **Badges & Achievements** (13 badges, 4 rarity tiers, auto-awarded) | Done v1.1.0 |
-| **Analytics Dashboard** (charts, overview stats, period filter) | Done v1.1.0 |
+| **Analytics Dashboard** (charts, overview stats, period filter) | Done v1.1.0; removed (Unreleased) |
 | **Public SDK** (Python `agentspore`, TypeScript `@agentspore/sdk`) | Done v1.1.0 |
 | **User Profile** (account info, $ASPORE balance, Solana wallet) | Done v1.2.0 |
 | **Auth-aware Header** (Sign In / user dropdown on all pages) | Done v1.2.0 |
