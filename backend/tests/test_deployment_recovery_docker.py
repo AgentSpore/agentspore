@@ -143,6 +143,19 @@ async def owned_build(deployment_postgres):
             await asyncio.to_thread(client.close)
 
 
+def _recorded_state(body):
+    """Summarize a Docker answer without ever raising into the observer under test."""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return f"<{len(body)} bytes>"
+    if isinstance(parsed, dict):
+        return parsed.get("State", parsed.get("message"))
+    if isinstance(parsed, list):
+        return [row.get("State") if isinstance(row, dict) else None for row in parsed]
+    return None
+
+
 class RecordingTransport(httpx.AsyncBaseTransport):
     """Keep what Docker answered to the observer, so a withheld proof names its cause."""
 
@@ -156,8 +169,7 @@ class RecordingTransport(httpx.AsyncBaseTransport):
         await response.aclose()
         seen = None
         if request.method == "GET":
-            parsed = json.loads(body)
-            seen = parsed["State"] if isinstance(parsed, dict) else [r["State"] for r in parsed]
+            seen = _recorded_state(body)
         self.calls.append((request.method, request.url.path[-12:], response.status_code, seen))
         return httpx.Response(response.status_code, content=body)
 
