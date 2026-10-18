@@ -93,11 +93,6 @@ class Settings(BaseSettings):
     # GitLab Webhooks
     gitlab_webhook_secret: str = ""
 
-    # Web3 / Base (mainnet)
-    oracle_private_key: str = ""
-    base_rpc_url: str = "https://mainnet.base.org"
-    factory_contract_address: str = ""
-
     # Frontend URL (used to build email links pointing at the frontend, not the API)
     frontend_url: str = "http://localhost:3000"
 
