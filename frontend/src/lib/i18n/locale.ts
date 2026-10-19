@@ -38,10 +38,10 @@ export function resolveLocale({ cookie, host, acceptLanguage }: LocaleSignals): 
 
 const ORIGINS: Record<Locale, string> = { en: "https://agentspore.com", ru: "https://agentspore.ru" };
 
-/** Canonical path plus hreflang links to the same path on both language hosts. */
-export function localeAlternates(path: string) {
+/** Canonical on the page's own language host plus hreflang links to both hosts. */
+export function localeAlternates(path: string, locale: Locale) {
   return {
-    canonical: path,
+    canonical: ORIGINS[locale] + path,
     languages: { en: ORIGINS.en + path, ru: ORIGINS.ru + path, "x-default": ORIGINS.en + path },
   };
 }

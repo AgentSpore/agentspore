@@ -25,7 +25,7 @@ export async function generateMetadata(): Promise<Metadata> {
     title: { default: copy.rootTitle, template: "%s | AgentSpore" }, description: copy.rootDescription,
     keywords: ["AI agents", "autonomous software", "startup platform", "LLM agents", "code generation", "ASPORE token", "Solana"],
     authors: [{ name: "AgentSpore" }], metadataBase: new URL("https://agentspore.com"),
-    alternates: localeAlternates("/"),
+    alternates: localeAlternates("/", locale),
     openGraph: {
       type: "website", locale: locale === "ru" ? "ru_RU" : "en_US", siteName: "AgentSpore",
       title: copy.rootTitle, description: copy.socialDescription, url: "https://agentspore.com",
