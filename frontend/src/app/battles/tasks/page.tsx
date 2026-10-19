@@ -52,7 +52,7 @@ export default function MyBattleTasksPage() {
       <main id="main-content" tabIndex={-1} className="mx-auto max-w-3xl px-4 py-8">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
           <div>
-            <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
+            <div className="text-xs font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
               {" " + tr("Arena") + " "}</div>
             <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
               {" " + tr("My Submissions") + " "}</h1>
