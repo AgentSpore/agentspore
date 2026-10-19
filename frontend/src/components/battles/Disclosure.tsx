@@ -26,7 +26,7 @@ export function Disclosure({ label, openLabel, defaultOpen = false, children, cl
       <button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="battle-press flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-neutral-500 hover:text-neutral-300 transition-colors"
+        className="battle-press min-h-11 flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-neutral-500 hover:text-neutral-300 transition-colors"
       >
         <svg
           width="10"
