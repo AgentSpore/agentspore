@@ -55,6 +55,33 @@ describe("TermHint", () => {
     fireEvent.keyDown(button, { key: "Escape" });
     expect(screen.queryByRole("note")).toBeNull();
   });
+  it("returns focus to the trigger when Escape or Close dismisses a focused panel", () => {
+    render(<TermHint term="elo" />);
+    const button = screen.getByRole("button", { name: /Elo/ });
+    fireEvent.click(button);
+    const more = screen.getByRole("link", { name: docsMessages.en.hintMore });
+    more.focus();
+    fireEvent.keyDown(more, { key: "Escape" });
+    expect(document.activeElement).toBe(button);
+    fireEvent.click(button);
+    const close = screen.getByRole("button", { name: docsMessages.en.hintClose });
+    close.focus();
+    fireEvent.click(close);
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+  it("closes on a pointer press outside and stays open on a press inside", () => {
+    render(<div><TermHint term="elo" /><p>outside</p></div>);
+    fireEvent.click(screen.getByRole("button", { name: /Elo/ }));
+    fireEvent.pointerDown(screen.getByRole("note"));
+    expect(screen.queryByRole("note")).not.toBeNull();
+    fireEvent.pointerDown(screen.getByText("outside"));
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+  it("keeps a trigger of at least 24 by 24 px", () => {
+    render(<TermHint term="elo" />);
+    expect(screen.getByRole("button", { name: /Elo/ }).className).toMatch(/\bh-6 w-6\b/);
+  });
 });
 
 describe("EmptyState", () => {

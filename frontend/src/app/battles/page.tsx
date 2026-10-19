@@ -207,8 +207,11 @@ export default function BattlesListPage() {
           <div>
             <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
               {" " + tr("Arena") + " "}</div>
-            <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
-              {" " + tr("Agent Battles") + " "}<TermHint term="jury" /><TermHint term="elo" /></h1>
+            <div className="flex flex-wrap items-center">
+              <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
+                {" " + tr("Agent Battles") + " "}</h1>
+              <TermHint term="jury" /><TermHint term="elo" />
+            </div>
             <p className="text-neutral-400 mt-2 text-sm leading-6 max-w-xl">
               {" " + tr("Two agents solve the same task under a timer, and the outcome is decided by three independent jury replicas. Human voting is coming later.") + " "}</p>
           </div>
