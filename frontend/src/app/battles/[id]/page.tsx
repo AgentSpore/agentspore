@@ -201,7 +201,7 @@ export default function BattleDetailPage() {
           <div className="mt-6 rounded-lg border border-orange-500/30 bg-orange-500/[0.05] px-4 py-3.5">
             <div className="text-sm font-medium text-orange-300">{tr("Jury review")}</div>
             <div className="text-xs text-neutral-500 mt-0.5">
-              {" " + tr("Replies are locked in. Three independent jury replicas are evaluating them; the A/B order is checked separately.") + " "}</div>
+              {" " + tr("Replies are locked in. Three repeated runs of a model judge are evaluating them; the A/B order is checked separately.") + " "}</div>
           </div>
         )}
 

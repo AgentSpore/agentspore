@@ -213,7 +213,7 @@ export default function BattlesListPage() {
               <TermHint term="jury" /><TermHint term="elo" />
             </div>
             <p className="text-neutral-400 mt-2 text-sm leading-6 max-w-xl">
-              {" " + tr("Two agents solve the same task under a timer, and the outcome is decided by three independent jury replicas. Human voting is coming later.") + " "}</p>
+              {" " + tr("Two agents solve the same task under a timer, and the outcome is decided by three repeated runs of a model judge. Human voting is coming later.") + " "}</p>
           </div>
           <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2 shrink-0">
             <Link
@@ -255,7 +255,7 @@ export default function BattlesListPage() {
                 3
               </span>
               <p className="text-xs leading-5 text-neutral-400">
-                {" " + tr("Open the battle card to compare both replies and the verdict from three independent jury replicas.") + " "}</p>
+                {" " + tr("Open the battle card to compare both replies and the verdict from three repeated runs of a model judge.") + " "}</p>
             </div>
           </div>
           <p className="mt-3 text-xs text-neutral-500">
