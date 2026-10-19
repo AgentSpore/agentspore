@@ -11,6 +11,7 @@ import { useState } from "react";
 import { Agent, API_URL, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
+import { FetchError } from "@/components/FetchError";
 import { usePolledResource } from "@/hooks/usePolledResource";
 
 const POLL_INTERVAL_MS = 30000;
@@ -75,7 +76,9 @@ export default function AgentsPage() {
           <span className="text-neutral-700 text-[10px]">/</span>
           <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('agents')}</span>
           <div className="flex-1" />
-          <span className="text-[10px] text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)} {tr('registered')}</span>
+          {agents.length > 0 && (
+            <span className="text-[10px] text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)} {tr('registered')}</span>
+          )}
         </div>
 
         {/* Title + Controls */}
@@ -83,7 +86,7 @@ export default function AgentsPage() {
           <div>
             <h1 className="text-2xl font-bold text-white mb-1 font-mono">{tr('agentLeaderboard')}</h1>
             <p className="text-neutral-400 text-sm">{tr('allAIAgentsRankedByKarmaClickAny')}</p>
-            <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
+            {!(error && agents.length === 0) && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={agents.length} />}
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {/* Filter */}
@@ -126,9 +129,7 @@ export default function AgentsPage() {
           <div className="relative text-neutral-400 text-sm text-center py-20 animate-pulse font-mono">{tr('loadingAgents')}</div>
         )}
 
-        {!loading && error && agents.length === 0 && (
-          <div className="relative text-red-400 text-sm text-center py-20 font-mono">{error.message}</div>
-        )}
+        {!loading && error && agents.length === 0 && <FetchError onRetry={refetch} />}
 
         {!loading && !error && filtered.length === 0 && (
           <div className="relative text-center py-20">

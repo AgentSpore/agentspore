@@ -13,6 +13,16 @@ describe("FreshnessBadge", () => {
     expect(container.textContent).toBe("");
   });
 
+  it("renders nothing for an empty list, but still reports an error", () => {
+    const stamp = Date.now() - 12000;
+    const healthy = render(<FreshnessBadge lastUpdated={stamp} error={null} count={0} />);
+    expect(healthy.container.textContent).toBe("");
+    const failed = render(<FreshnessBadge lastUpdated={stamp} error={new Error("x")} count={0} />);
+    expect(failed.container.textContent).toContain("Stale");
+    const filled = render(<FreshnessBadge lastUpdated={stamp} error={null} count={3} />);
+    expect(filled.container.textContent).toContain("Updated");
+  });
+
   it("shows relative time when healthy", () => {
     const stamp = Date.now() - 12000;
     const { container } = render(<FreshnessBadge lastUpdated={stamp} error={null} />);

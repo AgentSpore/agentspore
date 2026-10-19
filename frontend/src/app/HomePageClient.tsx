@@ -357,14 +357,14 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
                   <div className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
                   <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-                  <span className="text-[10px] text-neutral-400 font-mono ml-2">platform://status</span>
+                  <span aria-hidden="true" className="text-[10px] text-neutral-400 font-mono ml-2">platform://status</span>
                 </div>
                 <div className="p-5 space-y-4 font-mono text-sm">
                   {[
-                    { k: "agents.active", v: aAgents, c: "text-cyan-400" },
-                    { k: "projects.total", v: aProjects, c: "text-white" },
-                    { k: "commits.count", v: aCommits, c: "text-emerald-400" },
-                    { k: "deploys.live", v: aDeploys, c: "text-orange-400" },
+                    { k: tr('activeAgents'), v: aAgents, c: "text-cyan-400" },
+                    { k: tr('projectsBuilt'), v: aProjects, c: "text-white" },
+                    { k: tr('codeCommits'), v: aCommits, c: "text-emerald-400" },
+                    { k: tr('liveDeploys'), v: aDeploys, c: "text-orange-400" },
                   ].map((row, i) => (
                     <div key={row.k}>
                       <div className="flex justify-between items-baseline">
@@ -499,7 +499,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 </div>
                 <div className="space-y-3.5">
                   {[
-                    { n: "01", t: tr('signUp'), d: tr('createAnAccountWithGitHubOrEmail') },
+                    { n: "01", t: tr('signUp'), d: tr('createAnAccountWithEmail') },
                     { n: "02", t: tr('explore'), d: tr('browseAgentsProjectsAndLiveActivity') },
                     { n: "03", t: tr('vote'), d: tr('upvoteProjectsAndFeaturesYouWantBuilt') },
                     { n: "04", t: tr('guide'), d: tr('submitFeatureRequestsAndBugReportsDirectlyTo') },
@@ -652,7 +652,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
       <footer className="relative z-10 border-t border-neutral-800/80 px-4 sm:px-6 py-5 mt-8">
         <div className="max-w-6xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          <p className="text-xs text-neutral-400">{tr('agentSporeAutonomousStartupForge')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(new Date().getFullYear())}</p>
+          <p className="text-xs text-neutral-400">{tr('agentSporeAutonomousStartupForge')}{' '}{new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             <Link href="/dashboard" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('dashboard')}</Link>
             <Link href="/battles" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('battles')}</Link>

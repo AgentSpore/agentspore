@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { interpolate, LOCALE_COOKIE, localeTag, parseLocale } from "./locale";
+import { interpolate, LOCALE_COOKIE, localeAlternates, localeTag, parseLocale, resolveLocale } from "./locale";
 import { timeAgo } from "@/lib/api";
 import { NAVIGATION_MESSAGES } from "./navigation";
 import { getLocale, getPageMetadata } from "./server";
 import RootLayout, { generateMetadata } from "@/app/layout";
 import { renderToStaticMarkup } from "react-dom/server";
 
-const request = vi.hoisted(() => ({ get: vi.fn() }));
-vi.mock("next/headers", () => ({ cookies: async () => ({ get: request.get }) }));
+const request = vi.hoisted(() => ({ get: vi.fn(), header: vi.fn() }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: request.get }),
+  headers: async () => ({ get: request.header }),
+}));
 vi.mock("next/font/google", () => ({ Geist: () => ({ variable: "sans" }), Geist_Mono: () => ({ variable: "mono" }) }));
 vi.mock("next/script", () => ({ default: () => null }));
 vi.mock("@/app/providers", () => ({ Providers: ({ children }: { children: React.ReactNode }) => children }));
@@ -51,7 +54,7 @@ describe("locale contracts", () => {
     expect(html).toContain(`"inLanguage":"${locale}"`);
     expect(html).toContain(copy.rootDescription);
   });
-  it.each(["agents", "projects", "teams", "blog", "chat", "battles"] as const)
+  it.each(["agents", "projects", "teams", "blog", "chat", "battles", "showcase", "login", "profile", "workspace", "dashboard"] as const)
     ("localizes %s metadata while retaining its canonical URL", async (route) => {
       request.get.mockReturnValue({ value: "en" });
       const english = await getPageMetadata(route);
@@ -59,9 +62,52 @@ describe("locale contracts", () => {
       const russian = await getPageMetadata(route);
       expect(russian.title).not.toBe(english.title);
       expect(russian.description).not.toBe(english.description);
-      expect(russian.alternates).toEqual({ canonical: `/${route}` });
+      expect(russian.alternates).toEqual(localeAlternates(`/${route}`, "ru"));
+      expect(russian.alternates?.canonical).toBe(`https://agentspore.ru/${route}`);
+      expect(english.alternates?.canonical).toBe(`https://agentspore.com/${route}`);
       expect(russian.openGraph).toMatchObject({ locale: "ru_RU", title: russian.title });
     });
+});
+
+describe("locale resolution order", () => {
+  it("explicit cookie beats host and Accept-Language", () => {
+    expect(resolveLocale({ cookie: "en", host: "agentspore.ru", acceptLanguage: "ru-RU" })).toBe("en");
+    expect(resolveLocale({ cookie: "ru", host: "agentspore.com", acceptLanguage: "en-US" })).toBe("ru");
+  });
+  it("host beats Accept-Language when no valid cookie exists", () => {
+    expect(resolveLocale({ cookie: "fr", host: "agentspore.ru", acceptLanguage: "en-US" })).toBe("ru");
+    expect(resolveLocale({ host: "www.agentspore.ru:443", acceptLanguage: "en" })).toBe("ru");
+    expect(resolveLocale({ host: "agentspore.com", acceptLanguage: "ru-RU,ru;q=0.9" })).toBe("ru");
+  });
+  it("Accept-Language picks the best supported language by weight", () => {
+    expect(resolveLocale({ acceptLanguage: "de-DE,de;q=0.9,ru;q=0.8,en;q=0.5" })).toBe("ru");
+    expect(resolveLocale({ acceptLanguage: "en;q=0.9,ru;q=0.4" })).toBe("en");
+    expect(resolveLocale({ acceptLanguage: "ru;q=0,en" })).toBe("en");
+  });
+  it("falls back to English", () => {
+    expect(resolveLocale({})).toBe("en");
+    expect(resolveLocale({ host: "agentspore.com", acceptLanguage: "de,fr" })).toBe("en");
+    expect(resolveLocale({ host: "notagentspore.ru.example.com" })).toBe("en");
+  });
+  it("getLocale reads cookie, then forwarded host, then Accept-Language", async () => {
+    request.get.mockReturnValue(undefined);
+    request.header.mockImplementation((name: string) => ({ "x-forwarded-host": "agentspore.ru", "accept-language": "en" })[name] ?? null);
+    expect(await getLocale()).toBe("ru");
+    request.get.mockReturnValue({ value: "en" });
+    expect(await getLocale()).toBe("en");
+    request.get.mockReturnValue(undefined);
+    request.header.mockImplementation((name: string) => ({ host: "agentspore.com", "accept-language": "ru-RU" })[name] ?? null);
+    expect(await getLocale()).toBe("ru");
+    request.header.mockReset();
+  });
+  it("links hreflang alternates to the .com and .ru twins at the same path", () => {
+    expect(localeAlternates("/agents", "en")).toEqual({
+      canonical: "https://agentspore.com/agents",
+      languages: { en: "https://agentspore.com/agents", ru: "https://agentspore.ru/agents", "x-default": "https://agentspore.com/agents" },
+    });
+    expect(localeAlternates("/", "ru").languages?.ru).toBe("https://agentspore.ru/");
+    expect(localeAlternates("/", "ru").canonical).toBe("https://agentspore.ru/");
+  });
 });
 
 describe("localized relative time", () => {

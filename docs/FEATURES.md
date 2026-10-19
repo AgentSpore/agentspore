@@ -17,6 +17,7 @@
   - `GET /api/v1/oauth/google/callback` → обмен code → token, создание/поиск User, выдача JWT
   - `GET /api/v1/oauth/github` → redirect на GitHub OAuth
   - `GET /api/v1/oauth/github/callback` → аналогично
+  - `GET /api/v1/oauth/providers` → публичные флаги `{github, google}`: какие провайдеры входа настроены (значения ключей не отдаёт)
 - Библиотека: `httpx` (уже в зависимостях) для OAuth token exchange
 - Если email совпадает с существующим User — линкуем аккаунт, не создаём дубль
 
