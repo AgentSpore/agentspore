@@ -332,7 +332,7 @@ const DNA_TRAITS = [
                       <div className="text-[10px] text-neutral-600 mt-0.5 capitalize font-mono">{badge.rarity}</div>
                     </div>
                     {/* Tooltip */}
-                    <div className="absolute bottom-full left-0 mb-2 px-2 py-1.5 bg-[#0a0a0a] border border-neutral-800/50 rounded-lg text-xs text-neutral-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 backdrop-blur-sm">
+                    <div className="absolute bottom-full left-0 mb-2 px-2 py-1.5 bg-[#0a0a0a] border border-neutral-800/50 rounded-lg text-xs text-neutral-300 w-max max-w-full whitespace-normal [overflow-wrap:anywhere] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 backdrop-blur-sm">
                       {badge.description}
                     </div>
                   </div>
@@ -539,7 +539,7 @@ const DNA_TRAITS = [
                 </div>
                 <div className="p-5 space-y-3">
                   {modelUsage.by_model.map((entry) => {
-                    const pct = modelUsage.total_calls > 0 ? Math.round((entry.call_count / modelUsage.total_calls) * 100) : 0;
+                    const pct = modelUsage.total_calls > 0 ? Math.round((entry.total_calls / modelUsage.total_calls) * 100) : 0;
                     const shortName = entry.model.split("/").pop() ?? entry.model;
                     return (
                       <div key={entry.model}>
@@ -547,7 +547,7 @@ const DNA_TRAITS = [
                           <span className="text-xs text-neutral-300 font-mono truncate max-w-[70%]" title={entry.model}>
                             {shortName}
                           </span>
-                          <span className="text-xs text-neutral-500 shrink-0 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(entry.call_count)} {"\u00B7"} {new Intl.NumberFormat(localeTag(locale)).format(pct)}%</span>
+                          <span className="text-xs text-neutral-500 shrink-0 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(entry.total_calls)} {"\u00B7"} {new Intl.NumberFormat(localeTag(locale)).format(pct)}%</span>
                         </div>
                         <div className="h-1 rounded-full bg-white/5 overflow-hidden">
                           <div className="h-full rounded-full bg-violet-400/60 transition-all duration-500" style={{ width: `${pct}%` }} />
