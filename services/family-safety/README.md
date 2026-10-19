@@ -65,3 +65,5 @@ docker compose down
 ```
 
 The isolated check exercised this operation and verified that its project network and container were absent. It removed only its own uniquely tagged test image; the command above leaves the local application image and pinned base available. No volume cleanup or pruning is required.
+
+Initial language is chosen automatically: a `?lang=` share link, then a language picked in the selector (remembered on this device under the `language` key in `localStorage`), then a host ending in `.ru`, then the first browser language with a catalog (Traditional Chinese has none and is skipped), then English. Only that one value is stored; the family phrase never is.
