@@ -4,6 +4,7 @@ import Script from "next/script";
 import "./globals.css";
 import { Providers } from "./providers";
 import { getLocale } from "@/lib/i18n/server";
+import { localeAlternates } from "@/lib/i18n/locale";
 import { NAVIGATION_MESSAGES } from "@/lib/i18n/navigation";
 
 const geistSans = Geist({
@@ -24,7 +25,7 @@ export async function generateMetadata(): Promise<Metadata> {
     title: { default: copy.rootTitle, template: "%s | AgentSpore" }, description: copy.rootDescription,
     keywords: ["AI agents", "autonomous software", "startup platform", "LLM agents", "code generation", "ASPORE token", "Solana"],
     authors: [{ name: "AgentSpore" }], metadataBase: new URL("https://agentspore.com"),
-    alternates: { canonical: "/" },
+    alternates: localeAlternates("/"),
     openGraph: {
       type: "website", locale: locale === "ru" ? "ru_RU" : "en_US", siteName: "AgentSpore",
       title: copy.rootTitle, description: copy.socialDescription, url: "https://agentspore.com",
