@@ -404,8 +404,16 @@ async def test_deleted_project_keeps_hostname_reserved_and_cannot_be_rebound(usa
             text("INSERT INTO service_routes VALUES (:project, 'a2-permanent', :revision)"), params
         )
         await db.execute(text("DELETE FROM projects WHERE id = :project"), params)
-        assert await db.scalar(text("SELECT count(*) FROM service_routes")) == 0
-        assert await db.scalar(text("SELECT original_project_id FROM service_hostnames")) == project
+        assert (
+            await db.scalar(text("SELECT count(*) FROM service_routes WHERE handle LIKE 'a2-%'"))
+            == 0
+        )
+        assert (
+            await db.scalar(
+                text("SELECT original_project_id FROM service_hostnames WHERE handle LIKE 'a2-%'")
+            )
+            == project
+        )
         for statement, state in [
             ("INSERT INTO service_hostnames VALUES ('a2-permanent', :other)", "23505"),
             ("INSERT INTO service_routes VALUES (:other, 'a2-permanent', :revision)", "23503"),
@@ -415,8 +423,16 @@ async def test_deleted_project_keeps_hostname_reserved_and_cannot_be_rebound(usa
                     await db.execute(text(statement), params)
             assert getattr(error.value.orig, "sqlstate", None) == state
     async with usage_world.maker() as db:
-        assert await db.scalar(text("SELECT original_project_id FROM service_hostnames")) == project
-        assert await db.scalar(text("SELECT count(*) FROM service_routes")) == 0
+        assert (
+            await db.scalar(
+                text("SELECT original_project_id FROM service_hostnames WHERE handle LIKE 'a2-%'")
+            )
+            == project
+        )
+        assert (
+            await db.scalar(text("SELECT count(*) FROM service_routes WHERE handle LIKE 'a2-%'"))
+            == 0
+        )
 
 
 async def test_registry_identity_is_immutable_but_active_revision_can_change(usage_world):
@@ -441,15 +457,27 @@ async def test_registry_identity_is_immutable_but_active_revision_can_change(usa
                     await db.execute(text(statement), params)
             assert getattr(error.value.orig, "sqlstate", None) == "23514"
         params["revision"] = uuid4()
-        await db.execute(text("UPDATE service_routes SET active_revision = :revision"), params)
+        await db.execute(
+            text("UPDATE service_routes SET active_revision = :revision WHERE handle LIKE 'a2-%'"),
+            params,
+        )
     async with usage_world.maker() as db:
-        row = (await db.execute(text("SELECT * FROM service_routes"))).mappings().one()
+        row = (
+            (await db.execute(text("SELECT * FROM service_routes WHERE handle LIKE 'a2-%'")))
+            .mappings()
+            .one()
+        )
         assert dict(row) == {
             "project_id": project,
             "handle": "a2-identity",
             "active_revision": params["revision"],
         }
-        assert await db.scalar(text("SELECT original_project_id FROM service_hostnames")) == project
+        assert (
+            await db.scalar(
+                text("SELECT original_project_id FROM service_hostnames WHERE handle LIKE 'a2-%'")
+            )
+            == project
+        )
 
 
 async def test_repeatable_registry_sql_can_run_twice_and_preserves_identity_guards(usage_world):
@@ -479,10 +507,20 @@ async def test_repeatable_registry_sql_can_run_twice_and_preserves_identity_guar
                     await db.execute(text(statement))
             assert getattr(error.value.orig, "sqlstate", None) == "23514"
         params["revision"] = uuid4()
-        await db.execute(text("UPDATE service_routes SET active_revision = :revision"), params)
+        await db.execute(
+            text("UPDATE service_routes SET active_revision = :revision WHERE handle LIKE 'a2-%'"),
+            params,
+        )
     async with usage_world.maker() as db:
-        assert await db.scalar(text("SELECT original_project_id FROM service_hostnames")) == project
         assert (
-            await db.scalar(text("SELECT active_revision FROM service_routes"))
+            await db.scalar(
+                text("SELECT original_project_id FROM service_hostnames WHERE handle LIKE 'a2-%'")
+            )
+            == project
+        )
+        assert (
+            await db.scalar(
+                text("SELECT active_revision FROM service_routes WHERE handle LIKE 'a2-%'")
+            )
             == params["revision"]
         )
