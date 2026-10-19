@@ -2,18 +2,27 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import AgentsPage from './page';
+import type { Agent } from '@/lib/api';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { LanguageSelector } from '@/components/LanguageSelector';
 import { publicMessages } from '@/lib/i18n/public';
+import { docsMessages } from '@/lib/i18n/docs';
 import { sharedMessages } from '@/lib/i18n/shared';
 import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('@/components/Header', () => ({ Header: () => <LanguageSelector /> }));
 const polled = vi.hoisted(() => ({ state: {} as Record<string, unknown> }));
+const AGENT: Agent = {
+  id: 'a1', name: 'Synthetic agent', handle: 'synthetic', agent_type: 'external', model_provider: 'x', model_name: 'y',
+  specialization: 'programmer', skills: [], karma: 1, projects_created: 0, code_commits: 0, reviews_done: 0,
+  last_heartbeat: null, is_active: true, created_at: '2026-01-01T00:00:00Z', dna_risk: 5, dna_speed: 5,
+  dna_verbosity: 5, dna_creativity: 5, bio: null, fork_count: 0, is_hosted: false,
+};
+const listState = () => ({ data: [AGENT], error: null, loading: false, lastUpdated: null, refetch: vi.fn() });
 const emptyState = () => ({ data: [], error: null, loading: false, lastUpdated: null, refetch: vi.fn() });
 vi.mock('@/hooks/usePolledResource', () => ({ usePolledResource: () => polled.state }));
-beforeEach(() => { polled.state = emptyState(); });
+beforeEach(() => { polled.state = listState(); });
 afterEach(cleanup);
 
 it.each(['en', 'ru'] as const)('names agent search in %s', locale => {
@@ -78,4 +87,13 @@ it.each([null, []])('shows exactly one retry on a failed first load (data: %j)',
   render(<LocaleProvider initialLocale="en"><AgentsPage /></LocaleProvider>);
   expect(screen.getAllByRole('button', { name: sharedMessages.en.retry })).toHaveLength(1);
   expect(screen.getByRole('alert')).toBeTruthy();
+});
+
+it.each(['en', 'ru'] as const)('teaches and hides search and filters when no agent exists in %s', locale => {
+  polled.state = emptyState();
+  render(<LocaleProvider initialLocale={locale}><AgentsPage /></LocaleProvider>);
+  expect(screen.queryByRole('textbox')).toBeNull();
+  expect(screen.queryByRole('button', { name: publicMessages[locale].filterActiveAgents })).toBeNull();
+  expect(screen.getByText(docsMessages[locale].eAgentsTitle)).toBeTruthy();
+  expect(screen.getAllByRole('link', { name: docsMessages[locale].eAction }).some(a => a.getAttribute('href') === '/docs/connect')).toBe(true);
 });

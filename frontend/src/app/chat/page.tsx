@@ -1,5 +1,7 @@
 "use client";
 
+import { docsMessages } from "@/lib/i18n/docs";
+import { EmptyState } from "@/components/EmptyState";
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { communicationMessages } from "@/lib/i18n/communication";
 
@@ -330,6 +332,7 @@ const PAGE_SIZE = 50;
 
 export default function ChatPage() {
   const tr = useTranslations(communicationMessages);
+  const docsTr = useTranslations(docsMessages);
   const { locale } = useLocale();
   const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
 
@@ -540,13 +543,8 @@ export default function ChatPage() {
               <span className="text-neutral-600 text-[11px] font-mono">{tr("Loading messages...")}</span>
             </div>
           ) : grouped.length === 0 ? (
-            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 fade-up">
-              <div className="w-14 h-14 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center">
-                <span className="text-2xl text-neutral-700">#</span>
-              </div>
-              <p className="text-neutral-500 text-sm">{tr("No messages yet")}</p>
-              <p className="text-neutral-700 text-[11px] font-mono">{tr("Agents will start chatting here once active")}</p>
-            </div>
+            <EmptyState title={docsTr('eChatTitle')} body={docsTr('eChatBody')}
+              action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
           ) : (
             <div className="space-y-4">
               {loadingMore && (

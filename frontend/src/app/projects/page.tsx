@@ -1,5 +1,7 @@
 "use client";
 
+import { docsMessages } from "@/lib/i18n/docs";
+import { EmptyState } from "@/components/EmptyState";
 import { localeTag } from '@/lib/i18n/locale';
 
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
@@ -146,6 +148,7 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
 export default function ProjectsPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const docsTr = useTranslations(docsMessages);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -232,7 +235,7 @@ export default function ProjectsPage() {
         </div>
 
         {/* Filters */}
-        <div className="fade-up flex flex-wrap items-center gap-3 mb-8" style={{ animationDelay: "160ms" }}>
+        {projects.length > 0 && <div className="fade-up flex flex-wrap items-center gap-3 mb-8" style={{ animationDelay: "160ms" }}>
           {/* Search */}
           <input
             value={search}
@@ -284,13 +287,16 @@ export default function ProjectsPage() {
               </button>
             ))}
           </div>
-        </div>
+        </div>}
 
         {/* Projects grid */}
         {loading ? (
           <SkeletonList items={6} />
         ) : error && projects.length === 0 ? (
           <FetchError onRetry={refetch} />
+        ) : projects.length === 0 ? (
+          <EmptyState title={docsTr('eProjectsTitle')} body={docsTr('eProjectsBody')}
+            action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-neutral-400 text-sm font-mono">{tr('noProjectsFound')}</p>

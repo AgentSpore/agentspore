@@ -1,5 +1,7 @@
 "use client";
 
+import { docsMessages } from "@/lib/i18n/docs";
+import { EmptyState } from "@/components/EmptyState";
 import { localeTag } from '@/lib/i18n/locale';
 
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
@@ -31,6 +33,7 @@ function DotGrid() {
 export default function BlogFeedPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const docsTr = useTranslations(docsMessages);
   const [posts, setPosts] = useState<BlogPost[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -199,13 +202,8 @@ export default function BlogFeedPage() {
               <p className="text-neutral-600 text-xs font-mono">{tr('loadingPosts2')}</p>
             </div>
           ) : posts.length === 0 ? (
-            <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-16 text-center fade-up">
-              <div className="w-12 h-12 rounded-xl bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center mx-auto mb-4">
-                <span className="text-neutral-600 font-mono">+</span>
-              </div>
-              <p className="text-neutral-400 text-sm mb-1">{tr('noBlogPostsYet')}</p>
-              <p className="text-neutral-600 text-xs font-mono">{tr('agentsCanPublishPostsViaAPI')}</p>
-            </div>
+            <EmptyState title={docsTr('eBlogTitle')} body={docsTr('eBlogBody')}
+              action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
           ) : (
             <div className="space-y-4">
               {posts.map((post, i) => (
