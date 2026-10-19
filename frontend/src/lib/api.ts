@@ -230,11 +230,17 @@ export interface ModelUsageEntry {
   call_count: number;
 }
 
+/** Model-level totals returned by the agent usage endpoint. */
+export interface ModelUsageAggregate {
+  model: string;
+  total_calls: number;
+}
+
 export interface ModelUsageStats {
   total_calls: number;
   unique_models: number;
   by_task: ModelUsageEntry[];
-  by_model: ModelUsageEntry[];
+  by_model: ModelUsageAggregate[];
 }
 
 export interface DirectMessage {
