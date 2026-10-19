@@ -167,7 +167,7 @@ export function Header() {
         <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-violet-500/40 to-transparent" />
 
         {/* === DESKTOP === */}
-        <div className="hidden lg:block">
+        <div className="hidden lg:block relative max-w-7xl mx-auto">
           {/* Top row */}
           <div className="max-w-7xl mx-auto px-6 pt-3 pb-1.5 flex items-center justify-between">
             {/* Logo */}
@@ -182,7 +182,7 @@ export function Header() {
                 <span className="text-[15px] font-bold tracking-tight text-white group-hover:text-violet-100 transition-colors">
                   AgentSpore
                 </span>
-                <span className="hidden xl:inline text-neutral-400 text-[10px] font-mono tracking-wider uppercase">
+                <span className="hidden xl:inline text-neutral-400 text-xs font-mono tracking-wider uppercase">
                   {t("tagline")}
                 </span>
               </div>
@@ -195,14 +195,14 @@ export function Header() {
 
               {(ready || anonymous) && (
                 user ? (
-                  <div className="relative" ref={menuRef}>
+                  <div className="static" ref={menuRef}>
                     <button
                       onClick={() => setMenuOpen((o) => !o)}
                       aria-expanded={menuOpen}
                       aria-controls={accountPanelId}
                       className="flex min-h-11 items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] transition-all group"
                     >
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300 group-hover:border-violet-500/40 transition-colors">
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300 group-hover:border-violet-500/40 transition-colors">
                         {initials}
                       </div>
                       <span className="text-[13px] text-neutral-400 max-w-[100px] truncate group-hover:text-neutral-200 transition-colors">{user.name}</span>
@@ -211,13 +211,13 @@ export function Header() {
                       </svg>
                     </button>
                     {menuOpen && (
-                      <div id={accountPanelId} className="header-menu-enter absolute right-0 top-full mt-2 w-56 rounded-xl border border-neutral-800/80 bg-[#0c0c0c] shadow-[0_8px_40px_rgba(0,0,0,0.6)] py-1 z-50">
+                      <div id={accountPanelId} className="header-menu-enter absolute right-6 top-full mt-2 w-56 rounded-xl border border-neutral-800/80 bg-[#0c0c0c] shadow-[0_8px_40px_rgba(0,0,0,0.6)] py-1 z-50">
                         <div className="px-4 py-3 border-b border-neutral-800/60">
                           <p className="text-sm text-white font-medium truncate">{user.name}</p>
-                          <p className="text-[11px] text-neutral-400 truncate mt-0.5 font-mono">{user.email}</p>
+                          <p className="text-xs text-neutral-400 truncate mt-0.5 font-mono">{user.email}</p>
                           <div className="flex items-center gap-1.5 mt-2">
                             {user.token_balance > 0 && <><span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                            <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString(localeTag(locale))} $ASPORE</span></>}
+                            <span className="text-xs text-violet-400 font-mono">{user.token_balance.toLocaleString(localeTag(locale))} $ASPORE</span></>}
                           </div>
                         </div>
                         <div className="py-1">
@@ -349,7 +349,7 @@ export function Header() {
             <div className="ml-auto flex shrink-0 items-center gap-2">
               <LanguageSelector />
               {ready && user && (
-                <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300">
+                <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 bg-gradient-to-br from-violet-600/30 to-violet-900/30 border border-violet-500/20 text-violet-300">
                   {initials}
                 </div>
               )}
@@ -377,7 +377,7 @@ export function Header() {
 
         {/* Mobile dropdown */}
         {mobileOpen && (
-          <div id={mobilePanelId} className="mobile-menu-enter max-h-[calc(100dvh-7rem)] overflow-y-auto overscroll-contain lg:hidden border-t border-neutral-800/60 bg-[#0a0a0a]/98 backdrop-blur-md px-4 py-3 flex flex-col gap-0.5">
+          <div id={mobilePanelId} className="mobile-menu-enter max-h-[calc(100dvh-8rem)] overflow-y-auto overscroll-contain lg:hidden border-t border-neutral-800/60 bg-[#0a0a0a]/98 backdrop-blur-md px-4 py-3 flex flex-col gap-0.5">
             <MobileNavGroup title={t("peopleGroup")} links={navLinks.filter(link => link.label === "showcase")}
               isActive={isActive} onNavigate={() => setMobileOpen(false)} />
             <MobileNavGroup title={t("platformGroup")} links={navLinks.filter(link => link.label !== "showcase")}
@@ -403,12 +403,12 @@ export function Header() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-white font-medium wrap-anywhere">{user.name}</p>
-                        <p className="text-[11px] text-neutral-400 mt-0.5 font-mono wrap-anywhere">{user.email}</p>
+                        <p className="text-xs text-neutral-400 mt-0.5 font-mono wrap-anywhere">{user.email}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 px-3 py-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                      <span className="text-[11px] text-violet-400 font-mono">{user.token_balance.toLocaleString(localeTag(locale))} $ASPORE</span>
+                      <span className="text-xs text-violet-400 font-mono">{user.token_balance.toLocaleString(localeTag(locale))} $ASPORE</span>
                     </div>
                     <Link href="/profile" onClick={() => setMobileOpen(false)} className="flex min-h-11 items-center gap-2 px-3 py-2.5 text-sm text-neutral-400 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all">
                       <span aria-hidden="true" className="text-neutral-400">&#x25CE;</span> {t("profile")}
@@ -433,7 +433,7 @@ export function Header() {
               <a
                 href={`${API_URL}/skill.md`}
                 target="_blank"
-                className="inline-flex min-h-11 items-center justify-center px-3 py-2 text-[11px] text-neutral-400 hover:text-neutral-300 font-mono rounded-lg text-center transition-all"
+                className="inline-flex min-h-11 items-center justify-center px-3 py-2 text-xs text-neutral-400 hover:text-neutral-300 font-mono rounded-lg text-center transition-all"
                 title={t("skillSpec")}
               >
                 {t("forAIAgents")} ↗
