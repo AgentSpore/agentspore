@@ -127,7 +127,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
               <span className="ml-2 text-xs text-neutral-600 font-mono">profile@agentspore</span>
             </div>
 
-            <div className="flex items-center gap-5">
+            <div className="grid grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-5 gap-y-3 sm:flex sm:gap-5">
               <div
                 className="w-16 h-16 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-2xl font-bold font-mono text-violet-400 flex-shrink-0"
               >
@@ -135,7 +135,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-xl font-bold text-white font-mono">{user.name}</h1>
+                  <h1 className="min-w-0 max-w-full break-words text-xl font-bold text-white font-mono">{user.name}</h1>
                   {user.is_admin && (
                     <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30 font-mono font-medium">
                       {tr('admin')}</span>
@@ -144,7 +144,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                 <p className="text-neutral-400 text-sm mt-0.5 truncate font-mono">{user.email}</p>
                 <p className="text-neutral-600 text-xs mt-1 font-mono">{tr('joined')}{' '}{joinedDate}</p>
               </div>
-              <div className="text-right flex-shrink-0">
+              <div className="col-start-2 text-left flex-shrink-0 sm:text-right">
                 <div className="text-2xl font-bold font-mono text-white">
                   {(user.aspore_balance ?? 0).toLocaleString(localeTag(locale))}
                 </div>
@@ -154,9 +154,9 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
 
             {/* Quick links */}
             <div className="mt-5 pt-5 border-t border-neutral-800/50 flex items-center gap-3 flex-wrap">
-              <Link href="/agents" className="text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
+              <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
                 {tr('agents')}</Link>
-              <Link href="/projects" className="text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
+              <Link href="/projects" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
                 {tr('projects')}</Link>
             </div>
           </div>
@@ -165,29 +165,29 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
         {/* My Hosted Agents */}
         {user && (
           <div className="space-y-4 animate-fadeUp animation-delay-150">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-white font-mono">{workspaceText('agents')}</h2>
                 <p className="text-neutral-500 text-xs mt-1 font-mono">{workspaceText('intro')}</p>
               </div>
               <Link href="/workspace#connect-agent"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors">
+                className="inline-flex min-h-11 min-w-11 self-stretch shrink-0 items-center justify-center gap-1.5 whitespace-nowrap sm:self-auto px-3 py-1.5 text-xs font-mono bg-violet-500/10 text-violet-400 border border-violet-500/20 rounded-lg hover:bg-violet-500/20 transition-colors">
                 <span className="text-sm leading-none">+</span> {workspaceText('connect')}</Link>
             </div>
             <Link href="/workspace"
               className="block bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 hover:border-violet-500/20 transition-colors group">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg flex items-center justify-center text-sm"
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center text-sm"
                     style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.15), rgba(34,211,238,0.1))", border: "1px solid rgba(139,92,246,0.2)" }}>
                     ⊕
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <span className="text-sm font-mono text-neutral-300 group-hover:text-violet-300 transition-colors">{workspaceText('title')}</span>
-                    <p className="text-[10px] font-mono text-neutral-600">{workspaceText('readonly')}</p>
+                    <p className="text-xs break-words font-mono text-neutral-600">{workspaceText('readonly')}</p>
                   </div>
                 </div>
-                <svg className="w-4 h-4 text-neutral-700 group-hover:text-violet-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <svg className="w-4 h-4 shrink-0 text-neutral-700 group-hover:text-violet-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                 </svg>
               </div>
@@ -226,7 +226,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                         setSolanaLoading(false);
                       }}
                       disabled={solanaLoading}
-                      className="text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 font-mono"
+                      className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 font-mono"
                     >
                       {tr('disconnect')}</button>
                   </div>
@@ -234,7 +234,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                     href={`https://solscan.io/account/${user.solana_wallet}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-[10px] text-neutral-600 hover:text-cyan-400 transition-colors font-mono"
+                    className="inline-flex min-h-11 min-w-11 items-center text-xs text-neutral-600 hover:text-cyan-400 transition-colors font-mono"
                   >
                     {tr('viewOnSolscan')}</a>
                 </div>
@@ -307,12 +307,12 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                     key={p.id}
                     className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4"
                   >
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="text-white font-medium text-sm font-mono">
                           {p.amount.toLocaleString(localeTag(locale))} $ASPORE
                         </div>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
                           <span className="text-neutral-500 text-xs font-mono">
                             {p.period_start} — {p.period_end}
                           </span>
@@ -321,17 +321,17 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                             {new Intl.NumberFormat(localeTag(locale)).format(p.contribution_points)} {tr('pts')}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         {p.tx_signature && (
                           <a
                             href={`https://solscan.io/tx/${p.tx_signature}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] text-neutral-500 hover:text-cyan-400 transition-colors font-mono"
+                            className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono"
                           >
                             {tr('tx')}</a>
                         )}
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-mono ${st.classes}`}>
+                        <span className={`text-xs px-2 py-0.5 rounded-full border font-mono ${st.classes}`}>
                           {displayPublicLabel(locale, st.label)}
                         </span>
                       </div>
