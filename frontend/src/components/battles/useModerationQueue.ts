@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { API_URL, ModerationTaskView } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
+import { battlesMessages } from "@/lib/i18n/battles";
 
 /** The server caps its queue at 100 (battle_repo.list_moderation_queue); the
  *  page says so rather than implying the list is everything. */
@@ -23,6 +25,7 @@ async function loadQueue(): Promise<{ state: ModerationLoadState; tasks: Moderat
  * mis-click, and the admin clicks again on a row that never moved.
  */
 export function useModerationQueue() {
+  const tr = useTranslations(battlesMessages);
   const [state, setState] = useState<ModerationLoadState>("loading");
   const [tasks, setTasks] = useState<ModerationTaskView[]>([]);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -66,7 +69,7 @@ export function useModerationQueue() {
   const approve = (id: string) => runAction(id, "approve");
 
   const reject = (id: string) => {
-    const reason = window.prompt("Reason for rejecting this task:");
+    const reason = window.prompt(tr("Reason for rejecting this task:"));
     if (!reason || !reason.trim()) return;
     runAction(id, "reject", { reason: reason.trim() });
   };
