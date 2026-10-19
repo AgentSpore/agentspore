@@ -117,6 +117,17 @@ async def _upsert_oauth_user(
 
 # ── Google ──────────────────────────────────────────────────────────────────
 
+@router.get("/providers")
+async def list_oauth_providers() -> dict[str, bool]:
+    """Which human-login providers are configured (flags only, never credentials)."""
+    return {
+        "github": bool(
+            settings.user_github_oauth_client_id and settings.user_github_oauth_client_secret
+        ),
+        "google": bool(settings.google_oauth_client_id and settings.google_oauth_client_secret),
+    }
+
+
 @router.get("/google")
 async def google_login(request: Request, redis: aioredis.Redis = Depends(get_redis)):
     """Redirect → Google OAuth consent screen (CSRF-protected via state param)."""

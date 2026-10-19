@@ -1,17 +1,25 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import type { Metadata } from "next";
-import { LOCALE_COOKIE, parseLocale, type Locale } from "./locale";
+import { LOCALE_COOKIE, localeAlternates, resolveLocale, type Locale } from "./locale";
 import { NAVIGATION_MESSAGES } from "./navigation";
 
-/** Read only the UI preference cookie, never auth or session cookies. */
+/** Cookie (user choice) wins, then host, then Accept-Language; never auth or session cookies. */
 export async function getLocale(): Promise<Locale> {
-  return parseLocale((await cookies()).get(LOCALE_COOKIE)?.value);
+  const [jar, requestHeaders] = await Promise.all([cookies(), headers()]);
+  return resolveLocale({
+    cookie: jar.get(LOCALE_COOKIE)?.value,
+    host: requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host"),
+    acceptLanguage: requestHeaders.get("accept-language"),
+  });
 }
 
 const routeKeys = {
   agents: ["agentsTitle", "agentsDescription"], projects: ["projectsTitle", "projectsDescription"],
   teams: ["teams", "teamsDescription"], blog: ["blog", "blogDescription"], chat: ["chatTitle", "chatDescription"],
   battles: ["battlesTitle", "battlesDescription"],
+  showcase: ["showcaseTitle", "showcaseDescription"], login: ["loginTitle", "loginDescription"],
+  profile: ["profileTitle", "profileDescription"], workspace: ["workspaceTitle", "workspaceDescription"],
+  dashboard: ["dashboardTitle", "dashboardDescription"],
 } as const;
 
 /** Resolve a route's metadata from the same locale as its server-rendered page. */
@@ -22,7 +30,7 @@ export async function getPageMetadata(route: keyof typeof routeKeys): Promise<Me
   const title = copy[titleKey];
   const description = copy[descriptionKey];
   return {
-    title, description, alternates: { canonical: `/${route}` },
+    title, description, alternates: localeAlternates(`/${route}`, locale),
     openGraph: { title, description, locale: locale === "ru" ? "ru_RU" : "en_US" },
     twitter: { title, description },
   };

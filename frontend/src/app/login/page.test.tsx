@@ -12,6 +12,13 @@ vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(n
 vi.mock('@/components/Toast', () => ({ useToast: () => ({ error: vi.fn(), info: vi.fn() }) }));
 
 
+/** Calls other than the public OAuth-provider lookup, i.e. real authentication requests. */
+const authCalls = (mock: { mock: { calls: unknown[][] } }) =>
+  mock.mock.calls.filter(([url]) => !String(url).endsWith('/oauth/providers'));
+
+const providersFetch = (flags: { github: boolean; google: boolean }) =>
+  vi.fn<typeof fetch>(async () => ({ ok: true, status: 200, json: async () => flags }) as Response);
+
 afterEach(() => { cleanup(); navigation.query = ''; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it.each([
@@ -55,8 +62,8 @@ it.each(['en', 'ru'] as const)('describes the external agent workspace inside th
   expect(screen.queryByText(accountMessages[locale].aIAgentsBuildStartupsYouOwnAShare)).toBeNull();
 });
 
-  it('changes login labels while preserving entered values and does not submit', () => {
-    const fetchMock = vi.fn();
+  it('changes login labels while preserving entered values and does not submit', async () => {
+    const fetchMock = providersFetch({ github: true, google: false });
     vi.stubGlobal('fetch', fetchMock);
     render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
     const email = screen.getByPlaceholderText('you@example.com');
@@ -64,11 +71,11 @@ it.each(['en', 'ru'] as const)('describes the external agent workspace inside th
     fireEvent.change(email, { target: { value: 'synthetic@example.invalid' } });
     fireEvent.change(password, { target: { value: 'synthetic-password' } });
     fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
-    expect(screen.getByText('Продолжить с GitHub')).toBeTruthy();
+    expect(await screen.findByText('Продолжить с GitHub')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Войти' })).toBeTruthy();
     expect((email as HTMLInputElement).value).toBe('synthetic@example.invalid');
     expect((password as HTMLInputElement).value).toBe('synthetic-password');
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(authCalls(fetchMock)).toHaveLength(0);
   });
 
   it('translates a local failure after switching without repeating authentication', async () => {
@@ -81,7 +88,7 @@ it.each(['en', 'ru'] as const)('describes the external agent workspace inside th
     await waitFor(() => expect(screen.getByText(accountMessages.en.networkErrorCannotReachServerCheckCORSAd)).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
     expect(screen.getByText(accountMessages.ru.networkErrorCannotReachServerCheckCORSAd)).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(authCalls(fetchMock)).toHaveLength(1);
   });
 
   it('translates the HTTP fallback without resubmitting authentication', async () => {
@@ -94,7 +101,7 @@ it.each(['en', 'ru'] as const)('describes the external agent workspace inside th
     await waitFor(() => expect(screen.getByText('Authentication failed (HTTP 503)')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
     expect(screen.getByText('Не удалось войти (HTTP 503)')).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(authCalls(fetchMock)).toHaveLength(1);
   });
 
   it('has matching domain keys and preserves unknown machine values', () => {
@@ -147,5 +154,24 @@ it.each(['en', 'ru'] as const)('exposes authentication mode without submitting o
   expect(screen.queryByLabelText(accountMessages[switched].name)).toBeNull();
   expect(email).toHaveProperty('value', 'synthetic@example.invalid');
   expect(password).toHaveProperty('value', 'synthetic-password');
-  expect(fetchMock).not.toHaveBeenCalled();
+  expect(authCalls(fetchMock)).toHaveLength(0);
+});
+
+it.each(['en', 'ru'] as const)('offers only the configured OAuth providers in %s', async locale => {
+  vi.stubGlobal('fetch', providersFetch({ github: false, google: true }));
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  expect(await screen.findByText(accountMessages[locale].continueWithGoogle)).toBeTruthy();
+  expect(screen.queryByText(accountMessages[locale].continueWithGitHub)).toBeNull();
+  expect(screen.getByText(accountMessages[locale].orSignInWith)).toBeTruthy();
+});
+
+it.each(['en', 'ru'] as const)('hides the OAuth block and the divider when no provider is configured in %s', async locale => {
+  const fetchMock = providersFetch({ github: false, google: false });
+  vi.stubGlobal('fetch', fetchMock);
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(document.querySelector('a[href$="/oauth/github"], a[href$="/oauth/google"]')).toBeNull();
+  expect(screen.queryByText(accountMessages[locale].orSignInWith)).toBeNull();
+  expect(screen.getByLabelText(accountMessages[locale].email)).toBeTruthy();
 });

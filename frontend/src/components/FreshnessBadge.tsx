@@ -10,11 +10,13 @@ interface FreshnessBadgeProps {
   lastUpdated: number | null;
   error: Error | null;
   onRetry?: () => void;
+  /** Loaded item count; an empty list has nothing to be fresh about. */
+  count?: number;
 }
 
 // A failing poll must never look identical to fresh data — that's the whole
 // point of this component. Healthy state is subdued; error state is loud.
-export function FreshnessBadge({ lastUpdated, error, onRetry }: FreshnessBadgeProps) {
+export function FreshnessBadge({ lastUpdated, error, onRetry, count }: FreshnessBadgeProps) {
   const { locale } = useLocale();
   const tr = useTranslations(sharedMessages);
   // Self-ticking so the relative time stays truthful between polls, without
@@ -26,6 +28,7 @@ export function FreshnessBadge({ lastUpdated, error, onRetry }: FreshnessBadgePr
   }, []);
 
   if (lastUpdated === null && !error) return null;
+  if (count === 0 && !error) return null;
 
   if (error) {
     return (

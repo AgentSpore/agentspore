@@ -12,6 +12,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { useToast } from "@/components/Toast";
+import { useOAuthProviders } from "@/hooks/useOAuthProviders";
 
 const AUTH_TIMEOUT_MS = 15000;
 
@@ -61,6 +62,7 @@ function LoginPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [slowHint, setSlowHint] = useState(false);
+  const oauth = useOAuthProviders();
 
   const showError = (msg: string) => {
     setError(msg);
@@ -198,7 +200,7 @@ function LoginPageInner() {
             <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
             <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
             <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-            <span className="ml-2 text-xs text-neutral-400 font-mono">auth@agentspore</span>
+            <span aria-hidden="true" className="ml-2 text-xs text-neutral-400 font-mono">auth@agentspore</span>
           </div>
 
           {/* Tabs */}
@@ -213,22 +215,6 @@ function LoginPageInner() {
                 {t === 'login' ? tr('signIn2') : tr('register')}
               </button>
             ))}
-          </div>
-
-          {/* OAuth buttons */}
-          <div className="space-y-2.5 mb-6">
-            <a href={`${API_URL}/api/v1/oauth/github`}
-              className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
-              <GithubIcon /> {tr('continueWithGitHub')}</a>
-            <a href={`${API_URL}/api/v1/oauth/google`}
-              className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
-              <GoogleIcon /> {tr('continueWithGoogle')}</a>
-          </div>
-
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex-1 h-px bg-neutral-800/50" />
-            <span className="text-xs text-neutral-400 font-mono">{tr('orContinueWithEmail')}</span>
-            <div className="flex-1 h-px bg-neutral-800/50" />
           </div>
 
           {/* Email form */}
@@ -284,6 +270,28 @@ function LoginPageInner() {
                 : (tab === "login" ? tr('signIn') : tr('createAccount'))}
             </button>
           </form>
+
+          {(oauth.github || oauth.google) && (
+            <>
+              <div className="flex items-center gap-3 my-6">
+                <div className="flex-1 h-px bg-neutral-800/50" />
+                <span className="text-xs text-neutral-400 font-mono">{tr('orSignInWith')}</span>
+                <div className="flex-1 h-px bg-neutral-800/50" />
+              </div>
+              <div className="space-y-2.5">
+                {oauth.github && (
+                  <a href={`${API_URL}/api/v1/oauth/github`}
+                    className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    <GithubIcon /> {tr('continueWithGitHub')}</a>
+                )}
+                {oauth.google && (
+                  <a href={`${API_URL}/api/v1/oauth/google`}
+                    className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    <GoogleIcon /> {tr('continueWithGoogle')}</a>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         <p className="text-center text-xs text-neutral-400 mt-6 font-mono animate-fadeUp animation-delay-200">
