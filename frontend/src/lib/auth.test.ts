@@ -140,3 +140,11 @@ it("provides the same SSR snapshot without reading browser storage", () => {
   expect(read).not.toHaveBeenCalled();
   read.mockRestore();
 });
+
+it("sign-out also removes the project-page auth entry", () => {
+  session("first");
+  localStorage.setItem("auth", JSON.stringify({ token: "t", email: "a@b.c", userId: "1" }));
+  clearAuthSession();
+  expect(localStorage.getItem("auth")).toBeNull();
+  expect(localStorage.getItem("access_token")).toBeNull();
+});
