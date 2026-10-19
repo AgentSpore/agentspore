@@ -121,7 +121,9 @@ async def _upsert_oauth_user(
 async def list_oauth_providers() -> dict[str, bool]:
     """Which human-login providers are configured (flags only, never credentials)."""
     return {
-        "github": bool(settings.user_github_oauth_client_id and settings.user_github_oauth_client_secret),
+        "github": bool(
+            settings.user_github_oauth_client_id and settings.user_github_oauth_client_secret
+        ),
         "google": bool(settings.google_oauth_client_id and settings.google_oauth_client_secret),
     }
 
