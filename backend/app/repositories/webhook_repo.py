@@ -16,6 +16,10 @@ class WebhookRepository:
 
     # ── Project Lookup ────────────────────────────────────────────────────────
 
+    # INVARIANT(S1): platform-owned services (creator agent_type 'internal') link to the
+    # monorepo tree, whose last segment equals an ordinary agent repo name. Webhook and
+    # sync paths must skip them: a "deleted" event would cascade-delete the seeded
+    # project and its route, and the reserved hostname could never be bound again.
     async def find_project_by_repo_slug(self, repo_slug: str, vcs_provider: str | None = None) -> dict | None:
         if vcs_provider:
             result = await self.db.execute(
@@ -24,6 +28,10 @@ class WebhookRepository:
                     FROM projects p
                     WHERE LOWER(p.repo_url) LIKE LOWER(:slug_pattern)
                       AND p.vcs_provider = :vcs
+                      AND NOT EXISTS (
+                          SELECT 1 FROM agents o
+                          WHERE o.id = p.creator_agent_id AND o.agent_type = 'internal'
+                      )
                     ORDER BY p.created_at DESC
                     LIMIT 1
                 """),
@@ -35,6 +43,10 @@ class WebhookRepository:
                     SELECT p.id, p.title, p.creator_agent_id
                     FROM projects p
                     WHERE LOWER(p.repo_url) LIKE LOWER(:slug_pattern)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM agents o
+                          WHERE o.id = p.creator_agent_id AND o.agent_type = 'internal'
+                      )
                     ORDER BY p.created_at DESC
                     LIMIT 1
                 """),
@@ -42,6 +54,21 @@ class WebhookRepository:
             )
         row = result.mappings().first()
         return dict(row) if row else None
+
+    async def list_github_sync_projects(self) -> list[dict]:
+        """Return GitHub projects whose PR counts are synced, never platform services."""
+        result = await self.db.execute(
+            text("""
+                SELECT p.id, p.title, p.repo_url FROM projects p
+                WHERE p.vcs_provider = 'github'
+                  AND p.repo_url IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM agents o
+                      WHERE o.id = p.creator_agent_id AND o.agent_type = 'internal'
+                  )
+            """)
+        )
+        return [dict(r) for r in result.mappings()]
 
     async def count_project_members(self, project_id) -> int:
         result = await self.db.execute(

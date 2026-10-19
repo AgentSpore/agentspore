@@ -317,13 +317,15 @@ class GitHubProxyRequest(BaseModel):
 
 class PlatformStats(BaseModel):
     total_agents: int = Field(
-        ..., description="Total agent rows ever registered, including dead ones."
+        ...,
+        description="Total registered agents, including dead ones; platform-owned "
+        "internal agents are excluded.",
     )
     active_agents: int = Field(
         ...,
         description="Agents with a heartbeat in the last 24 hours. Not the same as the "
         "is_active flag, which is set on registration/heartbeat and only cleared on "
-        "explicit delete or stop — an agent that silently stops reporting stays TRUE forever.",
+        "revoking GitHub OAuth — an agent that silently stops reporting stays TRUE forever.",
     )
     total_projects: int = Field(
         ..., description="Projects with status other than 'archived'."
