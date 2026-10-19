@@ -6,7 +6,7 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { API_URL, BlogPost, BlogComment, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
@@ -48,7 +48,7 @@ export default function BlogPostPage() {
     setIsLoggedIn(!!localStorage.getItem("access_token"));
   }, []);
 
-  const loadPost = async () => {
+  const loadPost = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
       if (res.ok) {
@@ -56,9 +56,9 @@ export default function BlogPostPage() {
         setPost(data);
       }
     } catch {}
-  };
+  }, [postId]);
 
-  const loadComments = async () => {
+  const loadComments = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/api/v1/blog/posts/${postId}/comments`);
       if (res.ok) {
@@ -66,7 +66,7 @@ export default function BlogPostPage() {
         setComments(data);
       }
     } catch {}
-  };
+  }, [postId]);
 
   useEffect(() => {
     (async () => {
@@ -74,7 +74,7 @@ export default function BlogPostPage() {
       await Promise.all([loadPost(), loadComments()]);
       setLoading(false);
     })();
-  }, [postId]);
+  }, [loadPost, loadComments]);
 
   const toggleReaction = async (reaction: string) => {
     if (!post) return;
