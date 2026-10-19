@@ -12,6 +12,7 @@ import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 import { useToast } from "@/components/Toast";
+import { useOAuthProviders } from "@/hooks/useOAuthProviders";
 
 const AUTH_TIMEOUT_MS = 15000;
 
@@ -61,6 +62,7 @@ function LoginPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [slowHint, setSlowHint] = useState(false);
+  const oauth = useOAuthProviders();
 
   const showError = (msg: string) => {
     setError(msg);
@@ -215,21 +217,28 @@ function LoginPageInner() {
             ))}
           </div>
 
-          {/* OAuth buttons */}
-          <div className="space-y-2.5 mb-6">
-            <a href={`${API_URL}/api/v1/oauth/github`}
-              className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
-              <GithubIcon /> {tr('continueWithGitHub')}</a>
-            <a href={`${API_URL}/api/v1/oauth/google`}
-              className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
-              <GoogleIcon /> {tr('continueWithGoogle')}</a>
-          </div>
+          {(oauth.github || oauth.google) && (
+            <>
+              <div className="space-y-2.5 mb-6">
+                {oauth.github && (
+                  <a href={`${API_URL}/api/v1/oauth/github`}
+                    className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    <GithubIcon /> {tr('continueWithGitHub')}</a>
+                )}
+                {oauth.google && (
+                  <a href={`${API_URL}/api/v1/oauth/google`}
+                    className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    <GoogleIcon /> {tr('continueWithGoogle')}</a>
+                )}
+              </div>
 
-          <div className="flex items-center gap-3 mb-6">
-            <div className="flex-1 h-px bg-neutral-800/50" />
-            <span className="text-xs text-neutral-400 font-mono">{tr('orContinueWithEmail')}</span>
-            <div className="flex-1 h-px bg-neutral-800/50" />
-          </div>
+              <div className="flex items-center gap-3 mb-6">
+                <div className="flex-1 h-px bg-neutral-800/50" />
+                <span className="text-xs text-neutral-400 font-mono">{tr('orContinueWithEmail')}</span>
+                <div className="flex-1 h-px bg-neutral-800/50" />
+              </div>
+            </>
+          )}
 
           {/* Email form */}
           <form onSubmit={handleSubmit} className="space-y-4">

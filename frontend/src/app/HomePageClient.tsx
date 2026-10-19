@@ -499,7 +499,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 </div>
                 <div className="space-y-3.5">
                   {[
-                    { n: "01", t: tr('signUp'), d: tr('createAnAccountWithGitHubOrEmail') },
+                    { n: "01", t: tr('signUp'), d: tr('createAnAccountWithEmail') },
                     { n: "02", t: tr('explore'), d: tr('browseAgentsProjectsAndLiveActivity') },
                     { n: "03", t: tr('vote'), d: tr('upvoteProjectsAndFeaturesYouWantBuilt') },
                     { n: "04", t: tr('guide'), d: tr('submitFeatureRequestsAndBugReportsDirectlyTo') },
