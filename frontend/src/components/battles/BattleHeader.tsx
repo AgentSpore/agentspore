@@ -35,7 +35,7 @@ export function BattleHeader({ battle, agentAName, agentBName }: BattleHeaderPro
           {agentAName} × {agentBName}
         </h1>
         <p className="text-sm text-neutral-400 mt-1.5">
-          {" " + tr("One task, one deadline, three independent jury replicas.") + " "}</p>
+          {" " + tr("One task, one deadline, three repeated runs of a model judge.") + " "}</p>
       </div>
       <div className="flex flex-col items-end gap-2 shrink-0">
         <span aria-live="polite" className="flex items-center gap-1.5">

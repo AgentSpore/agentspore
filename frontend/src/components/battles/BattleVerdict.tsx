@@ -386,7 +386,7 @@ interface Props {
 /**
  * "Battle outcome" — the completed-state verdict panel: winner announcement (or the
  * real no-quorum outcome), Elo as a right column at ≥lg, both final answers,
- * jury replica votes (three independent jury replicas, never framed as
+ * jury replica votes (three repeated runs of a model judge, never framed as
  * "judges"), the raw judge runs (position-bias control, collapsible), and the
  * tallies — one dense result block per the approved mockup.
  *
@@ -598,7 +598,7 @@ export function BattleVerdict({ battle, agentAName, agentBName }: Props) {
             <div className="p-5 sm:p-6 border-t border-neutral-800">
               <SectionHead title={tr("Jury replicas")} className="mb-1" />
               <p className="text-xs text-neutral-500 mb-3.5">
-                {tr("Independent jury replicas: {count}. Each model is named on its card; the A/B order is checked separately.", { count: llmJudgements.length.toLocaleString(locale) })}</p>
+                {tr("Jury runs: {count}. Each model is named on its card; the A/B order is checked separately.", { count: llmJudgements.length.toLocaleString(locale) })}</p>
               <div className="grid md:grid-cols-3 gap-3">
                 {llmJudgements.map((j, i) => (
                   <ReplicaCard
