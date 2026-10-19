@@ -7,9 +7,10 @@ import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
 import { displayPublicLabel } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { API_URL, TokenPayout } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 import { BlockedOwnersPanel } from "@/components/battles/BlockedOwnersPanel";
 
 
@@ -44,6 +45,11 @@ function DotGrid() {
 }
 
 export default function ProfilePage() {
+  const auth = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
+  return <ProfileSession key={auth.generation} auth={auth} />;
+}
+
+function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) {
   const { locale } = useLocale();
   const tr = useTranslations(accountMessages);
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
@@ -53,35 +59,32 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
   confirmed: { label: tr('confirmed'), classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
   failed: { label: tr('failed'), classes: "bg-red-400/10 text-red-400 border-red-400/20" },
 };
-  const [authToken, setAuthToken] = useState<string | null>(null);
+  const authToken = auth.accessToken;
   const [user, setUser] = useState<UserInfo | null>(null);
-  const [loadingUser, setLoadingUser] = useState(true);
+  const [loadingUser, setLoadingUser] = useState(auth.generation < 0 || Boolean(authToken));
   const [solanaInput, setSolanaInput] = useState("");
   const [solanaLoading, setSolanaLoading] = useState(false);
   const [solanaError, setSolanaError] = useState("");
   const [payouts, setPayouts] = useState<TokenPayout[]>([]);
-  const [loadingPayouts, setLoadingPayouts] = useState(false);
-  useEffect(() => {
-    const t = localStorage.getItem("access_token");
-    setAuthToken(t);
-    if (!t) { setLoadingUser(false); return; }
-
-    fetch(`${API_URL}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${t}` },
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { setUser(d); setLoadingUser(false); })
-      .catch(() => setLoadingUser(false));
-  }, []);
   useEffect(() => {
     if (!authToken) return;
-    setLoadingPayouts(true);
+    const controller = new AbortController();
+
+    fetch(`${API_URL}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!controller.signal.aborted) { setUser(d); setLoadingUser(false); } })
+      .catch(() => { if (!controller.signal.aborted) setLoadingUser(false); });
     fetch(`${API_URL}/api/v1/users/me/payouts`, {
       headers: { Authorization: `Bearer ${authToken}` },
+      signal: controller.signal,
     })
       .then((r) => (r.ok ? r.json() : []))
-      .then((d: TokenPayout[]) => { setPayouts(d); setLoadingPayouts(false); })
-      .catch(() => setLoadingPayouts(false));
+      .then((d: TokenPayout[]) => { if (!controller.signal.aborted) setPayouts(d); })
+      .catch(() => { if (!controller.signal.aborted) setPayouts([]); });
+    return () => controller.abort();
   }, [authToken]);
 
   const initials = user?.name
@@ -97,7 +100,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
       <DotGrid />
       <Header />
 
-      <main className="relative z-10 max-w-2xl mx-auto px-6 py-10 space-y-8">
+      <main id="main-content" tabIndex={-1} className="relative z-10 max-w-2xl mx-auto px-6 py-10 space-y-8">
 
         {/* Not logged in */}
         {!loadingUser && !user && (

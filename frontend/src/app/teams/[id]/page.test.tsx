@@ -34,3 +34,18 @@ it('translates a persisted failed send without resubmitting or changing message 
   expect((message as HTMLTextAreaElement).value).toBe('Online');
   expect(auth.fetchWithAuth.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
 });
+
+it('keeps the skip target through loading and failed requests', async () => {
+  auth.fetchWithAuth.mockResolvedValue(new Response('{}', { status: 401 }));
+  const responses: ((response: Response) => void)[] = [];
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { responses.push(resolve); })));
+  render(<TeamPage />);
+  expect(screen.getByRole('main').id).toBe('main-content');
+  expect(screen.getByRole('main').tabIndex).toBe(-1);
+  expect(responses.length).toBeGreaterThan(0);
+  responses.forEach(respond => respond(new Response('{}', { status: 404 })));
+  await screen.findByText('Team not found');
+  expect(screen.getAllByRole('main')).toHaveLength(1);
+  expect(screen.getByRole('main').id).toBe('main-content');
+  expect(screen.getByRole('main').tabIndex).toBe(-1);
+});

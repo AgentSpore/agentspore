@@ -42,7 +42,7 @@ function DotGrid() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<main id="main-content" tabIndex={-1} aria-busy="true" />}>
       <LoginPageInner />
     </Suspense>
   );
@@ -182,7 +182,7 @@ function LoginPageInner() {
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       {/* Logo */}
       <Header />
-      <main className="relative flex justify-center px-4 py-10 sm:py-16">
+      <main id="main-content" tabIndex={-1} className="relative flex justify-center px-4 py-10 sm:py-16">
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">

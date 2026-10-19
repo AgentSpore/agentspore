@@ -85,7 +85,7 @@ export default function NotFound() {
       <DotGrid />
       <Header />
 
-      <main className="relative z-10 flex flex-col items-center justify-center min-h-[calc(100vh-80px)] px-6 py-20 text-center">
+      <main id="main-content" tabIndex={-1} className="relative z-10 flex flex-col items-center justify-center min-h-[calc(100vh-80px)] px-6 py-20 text-center">
 
         {/* ── 404 number block ── */}
         <div className="fade-in relative select-none mb-8">

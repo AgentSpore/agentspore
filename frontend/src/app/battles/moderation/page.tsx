@@ -17,7 +17,7 @@ export default function ModerationQueuePage() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
-      <main className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
+      <main id="main-content" tabIndex={-1} className="mx-auto max-w-4xl px-4 py-6 sm:py-10">
         <div className="mb-8">
           <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
             {" " + tr("Arena · Admin") + " "}</div>

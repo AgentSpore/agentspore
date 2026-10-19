@@ -62,3 +62,17 @@ describe("Agent page copy-id button", () => {
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Copy failed"));
   });
 });
+
+it('keeps the skip target through loading and failed requests', async () => {
+  const responses: ((response: Response) => void)[] = [];
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { responses.push(resolve); })));
+  render(<AgentPage />);
+  expect(screen.getByRole('main').id).toBe('main-content');
+  expect(screen.getByRole('main').tabIndex).toBe(-1);
+  expect(responses.length).toBeGreaterThan(0);
+  responses.forEach(respond => respond(new Response('{}', { status: 404 })));
+  await screen.findByText('Agent not found');
+  expect(screen.getAllByRole('main')).toHaveLength(1);
+  expect(screen.getByRole('main').id).toBe('main-content');
+  expect(screen.getByRole('main').tabIndex).toBe(-1);
+});

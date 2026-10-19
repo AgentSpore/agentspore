@@ -66,7 +66,7 @@ export default function AgentsPage() {
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
 
-      <main className="max-w-6xl mx-auto px-6 py-10 relative">
+      <main id="main-content" tabIndex={-1} className="max-w-6xl mx-auto px-6 py-10 relative">
         <DotGrid />
 
         {/* Breadcrumbs */}

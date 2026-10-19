@@ -7,30 +7,32 @@ import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FetchError } from "@/components/FetchError";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { clearAuthSession, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 
 type ActivityFilter = "all" | "actions";
 
 /* ── Animated counter ─────────────────────────────────────────────── */
 function useCounter(target: number, duration = 1200) {
-  const [val, setVal] = useState(0);
+  const [counter, setCounter] = useState({ target, value: 0 });
+  if (counter.target !== target) setCounter({ target, value: 0 });
   useEffect(() => {
-    if (!target) { setVal(0); return; }
+    if (!target) return;
     let start = 0;
     const step = Math.max(1, Math.ceil(target / (duration / 16)));
     const id = setInterval(() => {
       start += step;
-      if (start >= target) { setVal(target); clearInterval(id); }
-      else setVal(start);
+      setCounter({ target, value: Math.min(start, target) });
+      if (start >= target) clearInterval(id);
     }, 16);
     return () => clearInterval(id);
   }, [target, duration]);
-  return val;
+  return target && counter.target === target ? counter.value : 0;
 }
 
 /* ── Dot grid background ──────────────────────────────────────────── */
@@ -51,6 +53,38 @@ function DotGrid() {
 
 type AuthState = "loading" | "anon" | "zero-agents" | "has-agents";
 
+function useDashboardAuth(): AuthState {
+  const auth = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
+  const router = useRouter();
+  const [result, setResult] = useState<{ generation: number; state: AuthState } | null>(null);
+  useEffect(() => {
+    const captured = getAuthSnapshot();
+    if (!captured.accessToken) return;
+    const controller = new AbortController();
+    const current = () => !controller.signal.aborted && getAuthSnapshot().generation === captured.generation;
+    const headers = { Authorization: `Bearer ${captured.accessToken}` };
+    fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers, signal: controller.signal })
+      .then(async r => {
+        if (!current()) return null;
+        if (r.status === 401) {
+          clearAuthSession(captured.generation);
+          router.replace("/login");
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
+      .then((external: unknown) => {
+        if (!current() || external === null) return;
+        setResult({ generation: captured.generation, state: Array.isArray(external) && external.length > 0 ? "has-agents" : "zero-agents" });
+      })
+      .catch(() => { if (current()) setResult({ generation: captured.generation, state: "zero-agents" }); });
+    return () => controller.abort();
+  }, [auth.generation, router]);
+  if (auth.generation < 0) return "loading";
+  if (!auth.accessToken) return "anon";
+  return result?.generation === auth.generation ? result.state : "loading";
+}
+
 export default function Home() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
@@ -59,7 +93,6 @@ const ACTIVITY_FILTERS = [
   { key: "all",     label: tr('all') },
   { key: "actions", label: tr('actions') },
 ] as const;
-  const router = useRouter();
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
@@ -68,30 +101,10 @@ const ACTIVITY_FILTERS = [
   const [reloadKey, setReloadKey] = useState(0);
   const [time, setTime] = useState("");
   const [actFilter, setActFilter] = useState<ActivityFilter>("all");
-  const [authState, setAuthState] = useState<AuthState>("loading");
+  const authState = useDashboardAuth();
   const esRef = useRef<EventSource | null>(null);
   const retry = () => { setError(null); setReloadKey(k => k + 1); };
 
-  useEffect(() => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    if (!token) { setAuthState("anon"); return; }
-    const headers = { Authorization: `Bearer ${token}` };
-    fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers })
-      .then(r => {
-        if (r.status === 401) {
-          localStorage.removeItem("access_token");
-          localStorage.removeItem("refresh_token");
-          router.replace("/login");
-          return null;
-        }
-        return r.ok ? r.json() : null;
-      })
-      .then((external: unknown) => {
-        if (external === null) return;
-        setAuthState(Array.isArray(external) && external.length > 0 ? "has-agents" : "zero-agents");
-      })
-      .catch(() => setAuthState("zero-agents"));
-  }, [router]);
 
   const cAgents = useCounter(stats?.active_agents ?? 0);
   const cProjects = useCounter(stats?.total_projects ?? 0);
@@ -148,7 +161,7 @@ const ACTIVITY_FILTERS = [
 
       <Header />
 
-      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5 sm:space-y-6">
+      <main id="main-content" tabIndex={-1} className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5 sm:space-y-6">
         <DotGrid />
 
         {error && !stats && <FetchError onRetry={retry} />}

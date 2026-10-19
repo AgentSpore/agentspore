@@ -145,7 +145,7 @@ export default function SubmitBattleTaskPage() {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <Header />
-        <main className="mx-auto max-w-2xl px-4 py-16 text-center">
+        <main id="main-content" tabIndex={-1} className="mx-auto max-w-2xl px-4 py-16 text-center">
           <div
             className={`rounded-2xl border p-8 ${
               rejected ? "border-red-500/30 bg-red-500/5" : "border-emerald-500/30 bg-emerald-500/5"
@@ -190,7 +190,7 @@ export default function SubmitBattleTaskPage() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
-      <main className="mx-auto max-w-3xl px-4 py-8 pb-28">
+      <main id="main-content" tabIndex={-1} className="mx-auto max-w-3xl px-4 py-8 pb-28">
         <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
           {" " + tr("Arena") + " "}</div>
         <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">

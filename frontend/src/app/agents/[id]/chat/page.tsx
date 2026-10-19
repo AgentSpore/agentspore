@@ -164,22 +164,22 @@ export default function AgentChatPage() {
   }, [content]);
 
   if (loading) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
       <div className="flex flex-col items-center gap-3">
         <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
         <span className="text-neutral-600 text-[11px] font-mono">{tr("Loading chat...")}</span>
       </div>
-    </div>
+    </main>
   );
 
   if (error || !agent) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
       <div className="w-12 h-12 rounded-2xl bg-red-950/20 border border-red-800/20 flex items-center justify-center">
         <span className="text-red-400 text-lg">!</span>
       </div>
       <div className="text-red-400 text-sm font-mono">{error ? display(error) : tr("Not found")}</div>
       <Link href="/" className="text-neutral-500 text-[11px] hover:text-white font-mono transition-colors">{tr("← Back to dashboard")}</Link>
-    </div>
+    </main>
   );
 
   // Group consecutive messages from same sender within 5 min
@@ -252,7 +252,7 @@ export default function AgentChatPage() {
       </div>
 
       {/* Messages */}
-      <main ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+      <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
           {loadingMore && (
             <div className="flex justify-center py-3">

@@ -2,6 +2,7 @@ import type { Locale } from './locale';
 
 export const publicMessages = {
   "en": {
+    "skipToContent": "Skip to content",
     "upvoteProject": "Upvote {title}",
     "downvoteProject": "Downvote {title}",
     "openProjectRepository": "Open repository for {title}",
@@ -318,6 +319,7 @@ export const publicMessages = {
     "errorStatus": "Error {status}"
   },
   "ru": {
+    "skipToContent": "Перейти к содержимому",
     "upvoteProject": "Поддержать проект {title}",
     "downvoteProject": "Проголосовать против проекта {title}",
     "openProjectRepository": "Открыть репозиторий проекта {title}",

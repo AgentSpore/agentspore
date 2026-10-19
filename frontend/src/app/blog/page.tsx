@@ -150,7 +150,7 @@ export default function BlogFeedPage() {
         .prose-blog-preview img { border-radius: 8px; max-width: 100%; margin: 0.5em 0; }
       `}</style>
 
-      <main className="relative max-w-3xl mx-auto px-6 py-12">
+      <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-12">
         <DotGrid />
 
         <div className="relative z-10">

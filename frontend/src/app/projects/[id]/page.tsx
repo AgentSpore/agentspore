@@ -5,12 +5,13 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { API_URL, ContributorShare, ProjectOwnership, timeAgo } from "@/lib/api";
+import { API_URL, ProjectOwnership, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -193,62 +194,108 @@ interface ProjectMessage {
 
 type Tab = "overview" | "contributors" | "ownership" | "chat";
 
-export default function ProjectPage() {
-  const { locale } = useLocale();
-  const tr = useTranslations(publicMessages);
-  const params = useParams();
-  const projectId = params?.id as string;
+function isProjectAuth(value: unknown): value is AuthState {
+  return typeof value === "object" && value !== null &&
+    ["token", "email", "userId"].every(key => typeof Reflect.get(value, key) === "string");
+}
 
-  const [tab, setTab] = useState<Tab>("overview");
-  const [auth, setAuth] = useState<AuthState | null>(null);
-  const [showLogin, setShowLogin] = useState(false);
+function readOAuthProjectAuth(oauthToken: string): string | null {
+  const payload: unknown = JSON.parse(atob(oauthToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+  if (!payload || typeof payload !== "object" || !("sub" in payload) || typeof payload.sub !== "string") return null;
+  return JSON.stringify({ token: oauthToken, userId: payload.sub, email: "email" in payload && typeof payload.email === "string" ? payload.email : "" });
+}
 
-  // Data
+function readProjectAuth(): string | null {
+  try {
+    // Auth from localStorage (supports both OAuth and email/password flows)
+    // Try legacy email/password auth first
+    const stored = localStorage.getItem("auth");
+    if (stored) {
+      try {
+        const value: unknown = JSON.parse(stored);
+        if (isProjectAuth(value)) return stored;
+      } catch { /* Malformed legacy state must not hide a valid OAuth session. */ }
+    }
+    // Try OAuth token
+    const oauthToken = localStorage.getItem("access_token");
+    if (!oauthToken) return null;
+    return readOAuthProjectAuth(oauthToken);
+  } catch { /* ignore */ }
+  return null;
+}
+
+function getServerProjectAuth() { return null; }
+
+function useProjectAuth() {
+  const snapshot = useSyncExternalStore(subscribeAuthChanges, readProjectAuth, getServerProjectAuth);
+  const auth: AuthState | null = snapshot ? JSON.parse(snapshot) : null;
+  const notify = () => window.dispatchEvent(new Event("storage"));
+  const logout = () => {
+    const captured = getAuthSnapshot();
+    try { localStorage.removeItem("auth"); clearAuthSession(captured.generation); }
+    catch { /* Unavailable storage is already anonymous in readProjectAuth. */ }
+    notify();
+  };
+  return { auth, notify, logout };
+}
+
+function useProjectData(projectId: string) {
   const [project, setProject] = useState<Project | null>(null);
   const [ownership, setOwnership] = useState<ProjectOwnership | null>(null);
-  const [contributors, setContributors] = useState<HumanContributor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [joining, setJoining] = useState(false);
-  const [joinMsg, setJoinMsg] = useState("");
-
-  // Auth from localStorage (supports both OAuth and email/password flows)
-  useEffect(() => {
-    try {
-      // Try legacy email/password auth first
-      const stored = localStorage.getItem("auth");
-      if (stored) { setAuth(JSON.parse(stored)); return; }
-      // Try OAuth token
-      const oauthToken = localStorage.getItem("access_token");
-      if (oauthToken) {
-        const payload = JSON.parse(atob(oauthToken.split(".")[1]));
-        setAuth({ token: oauthToken, email: payload.email ?? "", userId: payload.sub });
-      }
-    } catch { /* ignore */ }
-  }, []);
-
   // Load project info
   useEffect(() => {
     if (!projectId) return;
+    const controller = new AbortController();
     Promise.all([
-      fetch(`${API_URL}/api/v1/projects/${projectId}`).then(r => r.ok ? r.json() : null),
-      fetch(`${API_URL}/api/v1/projects/${projectId}/ownership`).then(r => r.ok ? r.json() : null),
+      fetch(`${API_URL}/api/v1/projects/${projectId}`, { signal: controller.signal }).then(r => r.ok ? r.json() : null),
+      fetch(`${API_URL}/api/v1/projects/${projectId}/ownership`, { signal: controller.signal }).then(r => r.ok ? r.json() : null),
     ]).then(([p, o]) => {
+      if (controller.signal.aborted) return;
       if (!p) { setError(publicMessages.en.projectNotFound); }
       setProject(p); setOwnership(o); setLoading(false);
-    }).catch(() => { setError(publicMessages.en.failedToLoad); setLoading(false); });
+    }).catch(() => { if (!controller.signal.aborted) { setError(publicMessages.en.failedToLoad); setLoading(false); } });
+    return () => controller.abort();
   }, [projectId]);
 
-  const loadContributors = () => {
-    apiFetch(`/projects/${projectId}/contributors`, auth?.token)
+  return { project, ownership, loading, error };
+}
+
+export default function ProjectPage() {
+  const params = useParams();
+  const projectId = typeof params?.id === "string" ? params.id : "";
+  return <ProjectDetails key={projectId} projectId={projectId} />;
+}
+
+function ProjectDetails({ projectId }: { projectId: string }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
+
+  const [tab, setTab] = useState<Tab>("overview");
+  const { auth, notify, logout } = useProjectAuth();
+  const [showLogin, setShowLogin] = useState(false);
+
+  // Data
+  const { project, ownership, loading, error } = useProjectData(projectId);
+  const [contributors, setContributors] = useState<HumanContributor[]>([]);
+  const [joining, setJoining] = useState(false);
+  const [joinMsg, setJoinMsg] = useState("");
+
+  const [contributorsRevision, setContributorsRevision] = useState(0);
+  const authToken = auth?.token;
+  useEffect(() => {
+    if (!projectId) return;
+    const controller = new AbortController();
+    apiFetch(`/projects/${projectId}/contributors`, authToken, { signal: controller.signal })
       .then(r => r.ok ? r.json() : { contributors: [] })
-      .then(d => setContributors(d.contributors ?? []));
-  };
+      .then(d => { if (!controller.signal.aborted) setContributors(d.contributors ?? []); })
+      .catch(() => { if (!controller.signal.aborted) setContributors([]); });
+    return () => controller.abort();
+  }, [projectId, authToken, contributorsRevision]);
 
-  useEffect(() => { if (projectId) { loadContributors(); } }, [projectId, auth]);
-
-  const handleLogin = (a: AuthState) => { setAuth(a); setShowLogin(false); };
-  const handleLogout = () => { setAuth(null); localStorage.removeItem("auth"); };
+  const handleLogin = () => { notify(); setShowLogin(false); };
+  const handleLogout = () => { logout(); };
 
   const handleJoin = async () => {
     if (!auth) { setShowLogin(true); return; }
@@ -259,7 +306,7 @@ export default function ProjectPage() {
     const d = await r.json();
     setJoinMsg(d.status === "auto_approved" ? publicMessages.en.youAreNowAContributor : publicMessages.en.yourRequestIsPendingApproval);
     setJoining(false);
-    loadContributors();
+    setContributorsRevision(value => value + 1);
   };
 
   const isContributor = contributors.some(c => c.user_id === auth?.userId);
@@ -294,8 +341,10 @@ export default function ProjectPage() {
 
   const handleChatDelete = async (id: string) => {
     if (!auth) return;
+    const captured = readProjectAuth();
     try {
       const res = await apiFetch(`/chat/project/${projectId}/human-messages/${id}`, auth.token, { method: "DELETE" });
+      if (captured !== readProjectAuth()) return;
       if (res.ok) {
         setChatMessages(prev => prev.map(m => m.id === id ? { ...m, content: "[deleted]", is_deleted: true } : m));
       }
@@ -304,12 +353,14 @@ export default function ProjectPage() {
 
   const handleChatSaveEdit = async () => {
     if (!chatEditingId || !chatContent.trim() || !auth) return;
+    const captured = readProjectAuth();
     setChatSending(true);
     try {
       const res = await apiFetch(`/chat/project/${projectId}/human-messages/${chatEditingId}`, auth.token, {
         method: "PATCH",
         body: JSON.stringify({ content: chatContent.trim() }),
       });
+      if (captured !== readProjectAuth()) { setChatSending(false); return; }
       if (res.ok) {
         setChatMessages(prev => prev.map(m => m.id === chatEditingId ? { ...m, content: chatContent.trim(), edited_at: new Date().toISOString() } : m));
         setChatContent("");
@@ -325,41 +376,62 @@ export default function ProjectPage() {
     setChatContent("");
   };
 
+  const chatRequest = useRef<AbortController | null>(null);
   const loadChatMessages = useCallback(async () => {
+    const controller = chatRequest.current;
+    if (!controller || controller.signal.aborted) return;
     try {
-      const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50`);
+      const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50`, { signal: controller.signal });
       if (res.ok) {
         const data: ProjectMessage[] = await res.json();
+        if (controller.signal.aborted) return;
         setChatMessages([...data].reverse());
         setChatHasMore(data.length === 50);
-        setTimeout(() => chatBottomRef.current?.scrollIntoView(), 100);
+        setTimeout(() => { if (!controller.signal.aborted) chatBottomRef.current?.scrollIntoView(); }, 100);
       }
     } catch { /* ignore */ }
   }, [projectId]);
 
   const loadOlderChat = useCallback(async () => {
     if (!chatHasMore || chatLoadingMore || chatMessages.length === 0) return;
+    const controller = chatRequest.current;
+    if (!controller || controller.signal.aborted) return;
     setChatLoadingMore(true);
     const oldestId = chatMessages[0].id;
     const container = chatContainerRef.current;
     const prevHeight = container?.scrollHeight ?? 0;
     try {
-      const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50&before=${oldestId}`);
+      const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50&before=${oldestId}`, { signal: controller.signal });
       if (res.ok) {
         const data: ProjectMessage[] = await res.json();
+        if (controller.signal.aborted) { setChatLoadingMore(false); return; }
         setChatMessages(prev => [...[...data].reverse(), ...prev]);
         setChatHasMore(data.length === 50);
         requestAnimationFrame(() => {
-          if (container) container.scrollTop = container.scrollHeight - prevHeight;
+          if (container && !controller.signal.aborted) container.scrollTop = container.scrollHeight - prevHeight;
         });
       }
     } catch { /* ignore */ }
     setChatLoadingMore(false);
   }, [chatHasMore, chatLoadingMore, chatMessages, projectId]);
 
-  useEffect(() => { if (tab === "chat") loadChatMessages(); }, [tab, loadChatMessages]);
+  useEffect(() => {
+    if (tab !== "chat") return;
+    const controller = new AbortController();
+    chatRequest.current = controller;
+    fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50`, { signal: controller.signal })
+      .then(res => res.ok ? res.json() : null)
+      .then((data: ProjectMessage[] | null) => {
+        if (!data || controller.signal.aborted) return;
+        setChatMessages([...data].reverse());
+        setChatHasMore(data.length === 50);
+        setTimeout(() => { if (!controller.signal.aborted) chatBottomRef.current?.scrollIntoView(); }, 100);
+      }).catch(() => { /* A failed chat request leaves the existing messages available. */ });
+    return () => controller.abort();
+  }, [tab, projectId, authToken]);
 
   const handleChatSend = async (e?: React.FormEvent) => {
+    const captured = readProjectAuth();
     e?.preventDefault();
     if (!chatContent.trim() || chatSending) return;
     if (!auth) { setShowLogin(true); return; }
@@ -373,6 +445,7 @@ export default function ProjectPage() {
         method: "POST",
         body: JSON.stringify(body),
       });
+      if (captured !== readProjectAuth()) { setChatSending(false); return; }
       if (res.ok) {
         setChatContent("");
         setChatReplyTo(null);
@@ -383,13 +456,13 @@ export default function ProjectPage() {
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-600 text-sm font-mono">
-      {tr('loading')}</div>
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-600 text-sm font-mono">
+      {tr('loading')}</main>
   );
   if (error || !project) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-500 text-sm font-mono">
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-500 text-sm font-mono">
       {displayPublicLabel(locale, error || publicMessages.en.projectNotFound)}
-    </div>
+    </main>
   );
 
   const STATUS_COLOR: Record<string, string> = {
@@ -517,7 +590,7 @@ export default function ProjectPage() {
       </div>
 
       {/* Content */}
-      <main className="relative z-10 max-w-4xl mx-auto px-6 py-8">
+      <main id="main-content" tabIndex={-1} className="relative z-10 max-w-4xl mx-auto px-6 py-8">
 
         {/* ── Overview ── */}
         {tab === "overview" && (

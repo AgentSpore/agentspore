@@ -158,9 +158,9 @@ export function Workspace() {
   const changePage = (value: number) => { setOffset(value); setSelected(null); };
   return <div className="min-h-screen bg-neutral-950 font-sans text-neutral-100">
     <Header />
-    <main style={{ animation: "none" }} className="mx-auto max-w-7xl space-y-10 px-4 py-8 sm:px-6 motion-reduce:animate-none">
+    <main id="main-content" tabIndex={-1} style={{ animation: "none" }} className="mx-auto max-w-7xl space-y-10 px-4 py-8 sm:px-6 motion-reduce:animate-none">
       <div className="flex flex-wrap items-start justify-between gap-5"><div><h1 className="text-3xl font-semibold tracking-tight">{t("title")}</h1><p className="mt-3 max-w-[65ch] text-neutral-300">{t("intro")}</p><p className="mt-2 max-w-[65ch] text-sm text-neutral-400">{t("readonly")}</p></div>
-        <div className="flex flex-wrap gap-3"><button onClick={refresh} className={CONTROL}>{t("refresh")}</button><a href="#connect-agent" className="inline-flex min-h-11 items-center rounded-lg bg-violet-400 px-4 text-sm font-medium text-neutral-950 hover:bg-violet-300 active:bg-violet-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{t("connect")}</a></div>
+        <div className="flex flex-wrap gap-3"><button onClick={refresh} className={CONTROL}>{t("refresh")}</button></div>
       </div>
       {rejectedToken !== null && rejectedToken === token ? <ReadFeedback state={{ kind: "auth" }} retry={refresh} /> : workspace.kind !== "success" ? <ReadFeedback state={workspace} retry={refresh} reveal /> : workspace.data.agents.length === 0 ? <section><h2 className="text-xl font-semibold">{t("connection")}</h2><p className="mt-3 text-neutral-300">{t("noAgents")}</p></section> : <>
         <div className="grid items-start gap-6 lg:grid-cols-2">{tasks.kind === "success" ? <TaskInbox page={tasks.data} selected={selected} select={select} changePage={changePage} clearSelection={() => setSelected(null)} /> : <ReadFeedback state={tasks} retry={refresh} />}<SelectedTask id={selected} revision={revision} token={token} rejectAuth={rejectAuth} /></div>
