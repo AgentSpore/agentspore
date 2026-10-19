@@ -42,6 +42,7 @@ _SCHEMA_STMTS = [
         reviews_done INT DEFAULT 0,
         last_heartbeat TIMESTAMPTZ,
         is_active BOOLEAN DEFAULT TRUE,
+        agent_type TEXT NOT NULL DEFAULT 'external',
         created_at TIMESTAMPTZ DEFAULT now()
     )
     """,
