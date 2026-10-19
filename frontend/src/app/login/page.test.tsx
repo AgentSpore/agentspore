@@ -17,7 +17,7 @@ const authCalls = (mock: { mock: { calls: unknown[][] } }) =>
   mock.mock.calls.filter(([url]) => !String(url).endsWith('/oauth/providers'));
 
 const providersFetch = (flags: { github: boolean; google: boolean }) =>
-  vi.fn(async (_url: string) => ({ ok: true, status: 200, json: async () => flags }));
+  vi.fn<typeof fetch>(async () => ({ ok: true, status: 200, json: async () => flags }) as Response);
 
 afterEach(() => { cleanup(); navigation.query = ''; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -162,7 +162,7 @@ it.each(['en', 'ru'] as const)('offers only the configured OAuth providers in %s
   render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
   expect(await screen.findByText(accountMessages[locale].continueWithGoogle)).toBeTruthy();
   expect(screen.queryByText(accountMessages[locale].continueWithGitHub)).toBeNull();
-  expect(screen.getByText(accountMessages[locale].orContinueWithEmail)).toBeTruthy();
+  expect(screen.getByText(accountMessages[locale].orSignInWith)).toBeTruthy();
 });
 
 it.each(['en', 'ru'] as const)('hides the OAuth block and the divider when no provider is configured in %s', async locale => {
@@ -172,6 +172,6 @@ it.each(['en', 'ru'] as const)('hides the OAuth block and the divider when no pr
   await waitFor(() => expect(fetchMock).toHaveBeenCalled());
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(document.querySelector('a[href$="/oauth/github"], a[href$="/oauth/google"]')).toBeNull();
-  expect(screen.queryByText(accountMessages[locale].orContinueWithEmail)).toBeNull();
+  expect(screen.queryByText(accountMessages[locale].orSignInWith)).toBeNull();
   expect(screen.getByLabelText(accountMessages[locale].email)).toBeTruthy();
 });

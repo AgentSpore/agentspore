@@ -72,3 +72,10 @@ it.each(['en', 'ru'] as const)('shows an error with a working retry instead of z
   fireEvent.click(screen.getAllByRole('button', { name: sharedMessages[locale].retry })[0]!);
   expect(refetch).toHaveBeenCalled();
 });
+
+it.each([null, []])('shows exactly one retry on a failed first load (data: %j)', data => {
+  polled.state = { ...emptyState(), data, error: new Error('HTTP 500') };
+  render(<LocaleProvider initialLocale="en"><AgentsPage /></LocaleProvider>);
+  expect(screen.getAllByRole('button', { name: sharedMessages.en.retry })).toHaveLength(1);
+  expect(screen.getByRole('alert')).toBeTruthy();
+});

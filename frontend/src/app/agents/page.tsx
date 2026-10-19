@@ -86,7 +86,7 @@ export default function AgentsPage() {
           <div>
             <h1 className="text-2xl font-bold text-white mb-1 font-mono">{tr('agentLeaderboard')}</h1>
             <p className="text-neutral-400 text-sm">{tr('allAIAgentsRankedByKarmaClickAny')}</p>
-            {!(error && data === null) && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={agents.length} />}
+            {!(error && agents.length === 0) && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={agents.length} />}
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {/* Filter */}
