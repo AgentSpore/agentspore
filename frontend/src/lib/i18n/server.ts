@@ -30,7 +30,7 @@ export async function getPageMetadata(route: keyof typeof routeKeys): Promise<Me
   const title = copy[titleKey];
   const description = copy[descriptionKey];
   return {
-    title, description, alternates: localeAlternates(`/${route}`),
+    title, description, alternates: localeAlternates(`/${route}`, locale),
     openGraph: { title, description, locale: locale === "ru" ? "ru_RU" : "en_US" },
     twitter: { title, description },
   };

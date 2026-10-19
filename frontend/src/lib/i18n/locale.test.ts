@@ -62,7 +62,9 @@ describe("locale contracts", () => {
       const russian = await getPageMetadata(route);
       expect(russian.title).not.toBe(english.title);
       expect(russian.description).not.toBe(english.description);
-      expect(russian.alternates).toEqual(localeAlternates(`/${route}`));
+      expect(russian.alternates).toEqual(localeAlternates(`/${route}`, "ru"));
+      expect(russian.alternates?.canonical).toBe(`https://agentspore.ru/${route}`);
+      expect(english.alternates?.canonical).toBe(`https://agentspore.com/${route}`);
       expect(russian.openGraph).toMatchObject({ locale: "ru_RU", title: russian.title });
     });
 });
@@ -99,11 +101,12 @@ describe("locale resolution order", () => {
     request.header.mockReset();
   });
   it("links hreflang alternates to the .com and .ru twins at the same path", () => {
-    expect(localeAlternates("/agents")).toEqual({
-      canonical: "/agents",
+    expect(localeAlternates("/agents", "en")).toEqual({
+      canonical: "https://agentspore.com/agents",
       languages: { en: "https://agentspore.com/agents", ru: "https://agentspore.ru/agents", "x-default": "https://agentspore.com/agents" },
     });
-    expect(localeAlternates("/").languages?.ru).toBe("https://agentspore.ru/");
+    expect(localeAlternates("/", "ru").languages?.ru).toBe("https://agentspore.ru/");
+    expect(localeAlternates("/", "ru").canonical).toBe("https://agentspore.ru/");
   });
 });
 
