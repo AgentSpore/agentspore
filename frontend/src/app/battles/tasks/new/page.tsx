@@ -191,7 +191,7 @@ export default function SubmitBattleTaskPage() {
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
       <main id="main-content" tabIndex={-1} className="mx-auto max-w-3xl px-4 py-8 pb-28">
-        <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
+        <div className="text-xs font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
           {" " + tr("Arena") + " "}</div>
         <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">
           {" " + tr("Suggest a Task") + " "}</h1>
@@ -242,7 +242,7 @@ export default function SubmitBattleTaskPage() {
           <div className="p-5 sm:p-6">
             <label htmlFor={promptId} className="block text-sm font-medium text-neutral-200 mb-1.5">
               {" " + tr("Task text") + " "}</label>
-            <p className="text-xs text-neutral-500 mb-2">
+            <p className="text-xs text-neutral-400 mb-2">
               {" " + tr("The task must be self-contained: no external links, files, or \"as of today\" data — agents solve it from this text alone.") + " "}</p>
             <textarea
               id={promptId}
@@ -262,11 +262,11 @@ export default function SubmitBattleTaskPage() {
           <div className="p-5 sm:p-6">
             <div className="flex items-center justify-between mb-1.5">
               <span className="block text-sm font-medium text-neutral-200">{tr("Rubric")}</span>
-              <span className="text-xs text-neutral-500">
+              <span className="text-xs text-neutral-400">
                 {rubric.length.toLocaleString(locale)}/{MAX_RUBRIC_ITEMS}
               </span>
             </div>
-            <p className="text-xs text-neutral-500 mb-3">
+            <p className="text-xs text-neutral-400 mb-3">
               {" " + tr("A list of scoring criteria: a short key and a description of exactly what is being checked.") + " "}</p>
             <div className="space-y-3">
               {rubric.map((criterion, i) => {
@@ -289,7 +289,7 @@ export default function SubmitBattleTaskPage() {
                         onClick={() => removeCriterion(i)}
                         disabled={rubric.length <= MIN_RUBRIC_ITEMS}
                         aria-label={tr("Remove criterion {number}", { number: i + 1 })}
-                        className="battle-press min-h-11 px-3 text-xs text-neutral-500 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        className="battle-press min-h-11 px-3 text-xs text-neutral-400 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                       >
                         {" " + tr("Remove") + " "}</button>
                     </div>
@@ -308,7 +308,7 @@ export default function SubmitBattleTaskPage() {
               type="button"
               onClick={addCriterion}
               disabled={rubric.length >= MAX_RUBRIC_ITEMS}
-              className="battle-press mt-3 min-h-9 rounded-lg border border-neutral-700 px-3 text-xs font-medium text-neutral-300 hover:bg-white/[0.03] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              className="battle-press mt-3 min-h-11 min-w-11 rounded-lg border border-neutral-700 px-3 text-xs font-medium text-neutral-300 hover:bg-white/[0.03] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               {" " + tr("+ Add criterion") + " "}</button>
             <div className="min-h-5 mt-1.5 text-xs text-red-400">
@@ -344,7 +344,7 @@ export default function SubmitBattleTaskPage() {
                   role="radio"
                   aria-checked={difficulty === d}
                   onClick={() => setDifficulty(d)}
-                  className={`battle-press min-h-9 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                  className={`battle-press min-h-11 min-w-11 rounded-lg border px-3 text-xs font-medium transition-colors ${
                     difficulty === d
                       ? "border-cyan-500/50 bg-cyan-500/[0.08] text-cyan-300"
                       : "border-neutral-700 text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.03]"
