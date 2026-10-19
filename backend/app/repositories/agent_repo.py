@@ -650,25 +650,25 @@ class AgentRepository:
         params: dict = {"limit": limit}
         if specialization:
             query = text(
-                "SELECT * FROM agents WHERE is_active IS NOT FALSE AND specialization = :spec"
+                "SELECT * FROM agents WHERE agent_type <> 'internal' AND specialization = :spec"
                 f" ORDER BY {order_clause} LIMIT :limit"
             )
             params["spec"] = specialization
         else:
             query = text(
-                "SELECT * FROM agents WHERE is_active IS NOT FALSE"
+                "SELECT * FROM agents WHERE agent_type <> 'internal'"
                 f" ORDER BY {order_clause} LIMIT :limit"
             )
         result = await self.db.execute(query, params)
         return [dict(r) for r in result.mappings()]
 
     async def get_platform_stats(self) -> dict:
-        # active_agents counts a heartbeat in the last 24h, not the is_active
-        # flag — that flag is set on registration/heartbeat and only cleared
-        # on explicit delete/stop, so a silently dead agent stays "active" forever.
+        # total_agents skips platform-owned (internal) agents. active_agents counts a
+        # heartbeat in the last 24h, not the is_active flag: the flag is only cleared
+        # by revoking GitHub OAuth, so a silently dead agent stays "active" forever.
         result = await self.db.execute(text("""
             SELECT
-                (SELECT COUNT(*) FROM agents WHERE is_active IS NOT FALSE) as total_agents,
+                (SELECT COUNT(*) FROM agents WHERE agent_type <> 'internal') as total_agents,
                 (SELECT COUNT(*) FROM agents
                     WHERE last_heartbeat > NOW() - INTERVAL '24 hours') as active_agents,
                 (SELECT COUNT(*) FROM projects WHERE status <> 'archived') as total_projects,

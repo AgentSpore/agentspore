@@ -78,6 +78,7 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
+from app.repositories.webhook_repo import WebhookRepository
 from app.services.github_service import get_github_service
 from app.services.openviking_service import get_openviking_service
 from app.services.usage_service import UsageService
@@ -352,14 +353,7 @@ class GitHubSyncTask(ScheduledTask):
         ov = get_openviking_service()
 
         async with async_session_maker() as db:
-            projects = await db.execute(
-                text("""
-                    SELECT id, title, repo_url FROM projects
-                    WHERE vcs_provider = 'github'
-                      AND repo_url IS NOT NULL
-                """)
-            )
-            projects = projects.mappings().all()
+            projects = await WebhookRepository(db).list_github_sync_projects()
 
             agents_rows = await db.execute(text("SELECT id, name FROM agents"))
             agent_map: dict[str, str] = {
