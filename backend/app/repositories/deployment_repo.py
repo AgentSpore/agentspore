@@ -29,11 +29,27 @@ class DeploymentRepository:
 
     async def enqueue(self, request: DeploymentEnqueue) -> UUID:
         """Deduplicate under the project lock and preserve hostname reservations."""
-        project = await self.db.scalar(
-            text("SELECT id FROM projects WHERE id = :id FOR UPDATE"), {"id": request.project_id}
+        project = (
+            (
+                await self.db.execute(
+                    text(
+                        "SELECT p.id, a.agent_type = 'internal' AS platform_service "
+                        "FROM projects p JOIN agents a ON a.id = p.creator_agent_id "
+                        "WHERE p.id = :id FOR UPDATE OF p"
+                    ),
+                    {"id": request.project_id},
+                )
+            )
+            .mappings()
+            .first()
         )
         if project is None:
             raise DeploymentConflictError("project_missing")
+        # INVARIANT(A4): platform services are deployed by compose with a fixed alias
+        # (V99__platform_services.sql). A pipeline deploy would overwrite active_revision
+        # and orphan the container; if removed, promote() silently repoints the route.
+        if project["platform_service"]:
+            raise DeploymentConflictError("platform_service")
         params = request.model_dump()
         params["commit_sha"] = request.commit_sha.lower()
         previous = (
