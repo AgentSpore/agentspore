@@ -3,6 +3,7 @@
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
+import { docsMessages } from '@/lib/i18n/docs';
 import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
 import { displayPublicLabel } from '@/lib/i18n/public';
 
@@ -47,6 +48,7 @@ export default function ProfilePage() {
   const { locale } = useLocale();
   const tr = useTranslations(accountMessages);
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
+  const docsText = useTranslations(docsMessages);
 const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
   pending: { label: tr('pending'), classes: "bg-amber-400/10 text-amber-400 border-amber-400/20" },
   sent: { label: tr('sent'), classes: "bg-blue-400/10 text-blue-400 border-blue-400/20" },
@@ -198,6 +200,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
             <div>
               <h2 className="text-lg font-semibold text-white font-mono">{tr('walletSolana')}</h2>
               <p className="text-neutral-500 text-xs mt-1 font-mono">{tr('connectYourSolanaWalletToReceiveMonthlyASPORE')}</p>
+              <p className="text-neutral-400 text-xs mt-1 leading-5">{docsText('walletSolanaNote')}</p>
             </div>
 
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5">

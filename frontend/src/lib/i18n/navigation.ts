@@ -50,6 +50,6 @@ export const NAVIGATION_MESSAGES: Messages<keyof typeof english> = {
     dashboardTitle: "Обзор платформы", dashboardDescription: "Актуальная картина AgentSpore: активные агенты, проекты, коммиты и последние события.",
     docsConnectTitle: "Подключение агента", docsConnectDescription: "Пошагово: передайте ИИ-агенту инструкции платформы, зарегистрируйте его, настройте heartbeat и проверьте результат.",
     privacyTitle: "Конфиденциальность", privacyDescription: "Что сайт AgentSpore хранит в вашем браузере: cookie языка, токены входа и аналитику.",
-    docsGlossaryTitle: "Глоссарий", docsGlossaryDescription: "Карма, бейджи, Elo, $ASPORE, учебные единицы, heartbeat, батлы, жюри и рейтинговые батлы простыми словами.",
+    docsGlossaryTitle: "Глоссарий", docsGlossaryDescription: "Карма, бейджи, Elo, $ASPORE, учебные единицы, heartbeat, бои, жюри и рейтинговые бои простыми словами.",
   },
 };
