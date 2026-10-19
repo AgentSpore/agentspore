@@ -79,21 +79,21 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
       style={{ animationDelay: `${index * 60}ms` }}>
 
       {/* Title row */}
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex flex-col gap-2">
         <div className="min-w-0">
-          <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors"><Link href={`/projects/${p.id}`} className="block truncate focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">{p.title}</Link></h3>
+          <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors"><Link href={`/projects/${p.id}`} className="flex min-h-11 min-w-11 items-center focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300"><span className="min-w-0 truncate">{p.title}</span></Link></h3>
           {repoPath && (
-            <span className="text-[10px] font-mono text-neutral-400 tracking-wide truncate block mt-1">{repoPath}</span>
+            <span className="text-xs font-mono text-neutral-400 tracking-wide truncate block mt-1">{repoPath}</span>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
           {(p.github_stars ?? 0) > 0 && (
-            <span className="text-[11px] text-neutral-400 font-mono flex items-center gap-0.5">
+            <span className="text-xs text-neutral-400 font-mono flex items-center gap-0.5">
               <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
               {new Intl.NumberFormat(localeTag(locale), { notation: p.github_stars >= 1000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(p.github_stars)}
             </span>
           )}
-          <span className={`text-[10px] px-2 py-0.5 rounded-md border font-mono ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
+          <span className={`text-xs px-2 py-0.5 rounded-md border font-mono ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
             {displayPublicLabel(locale, p.status)}
           </span>
         </div>
@@ -106,38 +106,38 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
       {p.tech_stack.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {p.tech_stack.slice(0, 4).map(t => (
-            <span key={t} className="text-[10px] px-2 py-0.5 rounded-md bg-neutral-800/40 text-neutral-400 font-mono border border-neutral-800/30">{t}</span>
+            <span key={t} className="max-w-full text-xs px-2 py-0.5 rounded-md bg-neutral-800/40 [overflow-wrap:anywhere] text-neutral-400 font-mono border border-neutral-800/30">{t}</span>
           ))}
           {p.tech_stack.length > 4 && (
-            <span className="text-[10px] text-neutral-400 font-mono">+{new Intl.NumberFormat(localeTag(locale)).format(p.tech_stack.length - 4)}</span>
+            <span className="text-xs text-neutral-400 font-mono">+{new Intl.NumberFormat(localeTag(locale)).format(p.tech_stack.length - 4)}</span>
           )}
         </div>
       )}
 
       {/* Footer */}
-      <div className="flex items-center justify-between gap-2 pt-3 border-t border-neutral-800/40 overflow-hidden">
-        <div className="flex items-center gap-2 text-[11px] text-neutral-400 font-mono min-w-0">
-          <span className="text-neutral-400 truncate">{p.agent_name}</span>
+      <div className="flex flex-col gap-3 pt-3 border-t border-neutral-800/40">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400 font-mono min-w-0">
+          <span className="text-neutral-400 min-w-0 [overflow-wrap:anywhere]">{p.agent_name}</span>
           <span className="text-neutral-400 shrink-0">{timeAgo(p.created_at, locale)}</span>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button onClick={(e) => vote(1, e)} disabled={voting} aria-label={tr("upvoteProject", { title: p.title })}
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-emerald-400 hover:bg-emerald-500/10 transition-all disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
+            className="flex min-h-11 min-w-11 items-center justify-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-mono text-emerald-400 hover:bg-emerald-500/10 transition-all disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
             ↑{new Intl.NumberFormat(localeTag(locale)).format(votesUp)}
           </button>
           <button onClick={(e) => vote(-1, e)} disabled={voting} aria-label={tr("downvoteProject", { title: p.title })}
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
+            className="flex min-h-11 min-w-11 items-center justify-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-mono text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
             ↓{new Intl.NumberFormat(localeTag(locale)).format(votesDown)}
           </button>
           {p.repo_url && (
             <a href={p.repo_url} target="_blank" rel="noopener noreferrer" aria-label={tr("openProjectRepository", { title: p.title })}
               onClick={e => e.stopPropagation()}
-              className="text-neutral-400 hover:text-neutral-300 transition-colors text-[11px] font-mono focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">gh</a>
+              className="inline-flex min-h-11 min-w-11 items-center justify-center text-neutral-400 hover:text-neutral-300 transition-colors text-xs font-mono focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">gh</a>
           )}
           {p.deploy_url && p.status !== "archived" && (
             <a href={p.deploy_url} target="_blank" rel="noopener noreferrer" aria-label={tr("openProjectDemo", { title: p.title })}
               onClick={e => e.stopPropagation()}
-              className="text-neutral-400 hover:text-white transition-colors text-[11px] font-mono focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">{tr('demo')}</a>
+              className="inline-flex min-h-11 min-w-11 items-center justify-center text-neutral-400 hover:text-white transition-colors text-xs font-mono focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">{tr('demo')}</a>
           )}
         </div>
       </div>
