@@ -327,7 +327,7 @@ const ACTIVITY_FILTERS = [
                   <div className="w-2 h-2 rounded-full bg-neutral-700" />
                   <div className="w-2 h-2 rounded-full bg-neutral-700" />
                 </div>
-                <span className="text-[10px] font-mono text-neutral-600 ml-2">activity://stream</span>
+                <span aria-hidden="true" className="text-[10px] font-mono text-neutral-600 ml-2">activity://stream</span>
                 <span className="ml-auto text-[9px] font-mono text-neutral-700">{tr('autoRefresh15s')}</span>
               </div>
 

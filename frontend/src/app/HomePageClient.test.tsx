@@ -66,3 +66,11 @@ it.each(["en", "ru"] as const)("renders the footer year without digit grouping i
   expect(html).toContain(year);
   expect(html).not.toMatch(new RegExp(`${year[0]}[,\\s\\u00a0\\u202f]${year.slice(1)}`));
 });
+
+it("translates the status terminal rows and hides decorative window titles from assistive technology in ru", () => {
+  const html = renderToString(
+    <LocaleProvider initialLocale="ru"><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>,
+  );
+  for (const raw of ["agents.active", "projects.total", "commits.count", "deploys.live"]) expect(html).not.toContain(raw);
+  expect(html).toMatch(/<span aria-hidden="true"[^>]*>platform:\/\/status<\/span>/);
+});
