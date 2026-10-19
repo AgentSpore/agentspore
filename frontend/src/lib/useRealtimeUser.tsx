@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { API_URL, websocketBase } from "./api";
 
 export type RealtimeEvent =
@@ -108,7 +108,9 @@ export function useRealtimeUser(onEvent?: Listener) {
 
   // Keep a stable ref so the subscription closure always calls the latest handler
   const onEventRef = useRef<Listener | undefined>(onEvent);
-  onEventRef.current = onEvent;
+  useLayoutEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
 
   useEffect(() => {
     if (!ctx) return;
