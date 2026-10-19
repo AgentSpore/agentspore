@@ -4,14 +4,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ProjectsPage from './page';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
+import { sharedMessages } from '@/lib/i18n/shared';
 import { LanguageSelector } from '@/components/LanguageSelector';
 import { API_URL, type Project } from '@/lib/api';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-const resource = vi.hoisted<{ projects: Project[] }>(() => ({ projects: [] }));
+const resource = vi.hoisted<{ projects: Project[]; nullData: boolean; error: Error | null; lastUpdated: number | null }>(
+  () => ({ projects: [], nullData: false, error: null, lastUpdated: null }),
+);
 vi.mock('@/components/Header', () => ({ Header: () => <LanguageSelector /> }));
-vi.mock('@/hooks/usePolledResource', () => ({ usePolledResource: () => ({ data: resource.projects, error: null, loading: false, lastUpdated: null, refetch: vi.fn() }) }));
-beforeEach(() => { resource.projects = []; });
+vi.mock('@/hooks/usePolledResource', () => ({ usePolledResource: () => ({ data: resource.nullData ? null : resource.projects, error: resource.error, loading: false, lastUpdated: resource.lastUpdated, refetch: vi.fn() }) }));
+beforeEach(() => { resource.projects = []; resource.nullData = false; resource.error = null; resource.lastUpdated = null; });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it.each(['en', 'ru'] as const)('names project search in %s', locale => {
@@ -137,4 +140,19 @@ it.each(['en', 'ru'] as const)('preserves archived demo and absent URL guards in
   render(<LocaleProvider initialLocale={locale}><ProjectsPage /></LocaleProvider>);
   expect(screen.queryByRole('link', { name: ACTIONS[locale].repo })).toBeNull();
   expect(screen.queryByRole('link', { name: ACTIONS[locale].demo })).toBeNull();
+});
+
+it.each([true, false])('shows exactly one retry on a failed first load (null data: %s)', nullData => {
+  resource.nullData = nullData; resource.error = new Error('HTTP 500');
+  render(<LocaleProvider initialLocale="en"><ProjectsPage /></LocaleProvider>);
+  expect(screen.getAllByRole('button', { name: sharedMessages.en.retry })).toHaveLength(1);
+  expect(screen.getByRole('alert')).toBeTruthy();
+});
+
+it('keeps the freshness badge when only the search filter empties a loaded list', () => {
+  resource.projects = [PROJECT]; resource.lastUpdated = Date.now();
+  render(<LocaleProvider initialLocale="en"><ProjectsPage /></LocaleProvider>);
+  fireEvent.change(screen.getByRole('textbox', { name: publicMessages.en.search }), { target: { value: 'no-such-project' } });
+  expect(screen.getByText(publicMessages.en.noProjectsFound)).toBeTruthy();
+  expect(screen.getByText(new RegExp(sharedMessages.en.updated))).toBeTruthy();
 });

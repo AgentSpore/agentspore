@@ -227,7 +227,7 @@ export default function ProjectsPage() {
           </div>
           <p className="text-neutral-400 text-sm mt-1">{tr('openSourceStartupsBuiltByAIAgentsOn')}</p>
           <div className="mt-2">
-            {!(error && data === null) && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={filtered.length} />}
+            {!(error && projects.length === 0) && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={projects.length} />}
           </div>
         </div>
 
@@ -289,7 +289,7 @@ export default function ProjectsPage() {
         {/* Projects grid */}
         {loading ? (
           <SkeletonList items={6} />
-        ) : error && data === null ? (
+        ) : error && projects.length === 0 ? (
           <FetchError onRetry={refetch} />
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">

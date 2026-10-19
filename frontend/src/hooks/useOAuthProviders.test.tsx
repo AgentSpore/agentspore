@@ -6,7 +6,7 @@ import { useOAuthProviders } from "./useOAuthProviders";
 afterEach(() => vi.unstubAllGlobals());
 
 function stubFetch(impl: () => Promise<unknown>) {
-  const fetchMock = vi.fn(async (_url: string) => impl());
+  const fetchMock = vi.fn<typeof fetch>(async () => (await impl()) as Response);
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
