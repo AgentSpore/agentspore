@@ -44,6 +44,7 @@ GETS = {
     "/api/v1/oauth/providers": {"github": True, "google": True},
     "/api/v1/auth/me": USER,
     "/api/v1/users/me/payouts": [],
+    "/api/v1/users/me/aspore": {"aspore_balance": 0},
     "/api/v1/battles/blocks": [],
 }
 

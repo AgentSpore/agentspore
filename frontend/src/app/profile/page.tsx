@@ -5,30 +5,18 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
 import { docsMessages } from '@/lib/i18n/docs';
 import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
-import { displayPublicLabel } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useEffect, useState, useSyncExternalStore } from "react";
-import { API_URL, TokenPayout } from "@/lib/api";
+import { useState, useSyncExternalStore } from "react";
+import { API_URL } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 import { BlockedOwnersPanel } from "@/components/battles/BlockedOwnersPanel";
-
-
-
-interface UserInfo {
-  id: string;
-  email: string;
-  name: string;
-  avatar_url: string | null;
-  token_balance: number;
-  solana_wallet: string | null;
-  aspore_balance: number;
-  is_admin: boolean;
-  created_at: string;
-}
-
-
+import { FetchError } from '@/components/FetchError';
+import { SkeletonText } from '@/components/Skeleton';
+import { decodeDepositBalance, decodePayouts, decodeProfile, useProfileRead } from './useProfileRead';
+import { DepositBalance } from './DepositBalance';
+import { ProfilePayouts } from './ProfilePayouts';
 
 function DotGrid() {
   return (
@@ -55,39 +43,15 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
   const tr = useTranslations(accountMessages);
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
   const docsText = useTranslations(docsMessages);
-const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
-  pending: { label: tr('pending'), classes: "bg-amber-400/10 text-amber-400 border-amber-400/20" },
-  sent: { label: tr('sent'), classes: "bg-blue-400/10 text-blue-400 border-blue-400/20" },
-  confirmed: { label: tr('confirmed'), classes: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" },
-  failed: { label: tr('failed'), classes: "bg-red-400/10 text-red-400 border-red-400/20" },
-};
   const authToken = auth.accessToken;
-  const [user, setUser] = useState<UserInfo | null>(null);
-  const [loadingUser, setLoadingUser] = useState(auth.generation < 0 || Boolean(authToken));
+  const profile = useProfileRead('auth/me', authToken, decodeProfile, auth.generation < 0);
+  const payouts = useProfileRead('users/me/payouts', authToken, decodePayouts);
+  const deposit = useProfileRead('users/me/aspore', authToken, decodeDepositBalance);
+  const user = profile.state.kind === 'success' ? profile.state.data : null;
+  const setUser = profile.replace;
   const [solanaInput, setSolanaInput] = useState("");
   const [solanaLoading, setSolanaLoading] = useState(false);
   const [solanaError, setSolanaError] = useState("");
-  const [payouts, setPayouts] = useState<TokenPayout[]>([]);
-  useEffect(() => {
-    if (!authToken) return;
-    const controller = new AbortController();
-
-    fetch(`${API_URL}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-      signal: controller.signal,
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!controller.signal.aborted) { setUser(d); setLoadingUser(false); } })
-      .catch(() => { if (!controller.signal.aborted) setLoadingUser(false); });
-    fetch(`${API_URL}/api/v1/users/me/payouts`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-      signal: controller.signal,
-    })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d: TokenPayout[]) => { if (!controller.signal.aborted) setPayouts(d); })
-      .catch(() => { if (!controller.signal.aborted) setPayouts([]); });
-    return () => controller.abort();
-  }, [authToken]);
 
   const initials = user?.name
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
@@ -103,9 +67,11 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
       <Header />
 
       <main id="main-content" tabIndex={-1} className="relative z-10 max-w-2xl mx-auto px-6 py-10 space-y-8">
+        {profile.state.kind === 'loading' && <div role="status" aria-busy="true" className="space-y-4 rounded-xl border border-neutral-800/50 p-6 text-sm text-neutral-300 font-mono"><p>{tr('loadingProfile')}</p><SkeletonText lines={4} /></div>}
+        {profile.state.kind === 'error' && <FetchError onRetry={profile.retry} />}
 
         {/* Not logged in */}
-        {!loadingUser && !user && (
+        {profile.state.kind === 'auth' && (
           <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-10 text-center space-y-4 animate-fadeUp">
             <div className="text-5xl opacity-30 font-mono">&gt;_</div>
             <h1 className="text-xl font-semibold text-white font-mono">{tr('whoami')}</h1>
@@ -145,23 +111,19 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                 <p className="text-neutral-400 text-sm mt-0.5 truncate font-mono">{user.email}</p>
                 <p className="text-neutral-600 text-xs mt-1 font-mono">{tr('joined')}{' '}{joinedDate}</p>
               </div>
-              <div className="col-start-2 text-left flex-shrink-0 sm:text-right">
-                <div className="text-2xl font-bold font-mono text-white">
-                  {(user.aspore_balance ?? 0).toLocaleString(localeTag(locale))}
-                </div>
-                <div className="text-xs text-violet-400 mt-0.5 font-mono">$ASPORE</div>
-              </div>
             </div>
 
             {/* Quick links */}
             <div className="mt-5 pt-5 border-t border-neutral-800/50 flex items-center gap-3 flex-wrap">
-              <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
+              <Link href="/agents" className="scroll-mt-32 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
                 {tr('agents')}</Link>
-              <Link href="/projects" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
+              <Link href="/projects" className="scroll-mt-32 inline-flex min-h-11 min-w-11 items-center justify-center text-xs px-3 py-1.5 rounded-lg border border-neutral-800/50 text-neutral-400 hover:text-violet-400 hover:border-violet-500/30 transition-all font-mono">
                 {tr('projects')}</Link>
             </div>
           </div>
         )}
+
+        {user && <DepositBalance read={deposit} />}
 
         {/* My Hosted Agents */}
         {user && (
@@ -296,55 +258,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
         {user && <BlockedOwnersPanel />}
 
         {/* $ASPORE Payout History */}
-        {user && payouts.length > 0 && (
-          <div className="space-y-4 animate-fadeUp animation-delay-400">
-            <div>
-              <h2 className="text-lg font-semibold text-white font-mono">{tr('catPayoutsLog')}</h2>
-              <p className="text-neutral-500 text-xs mt-1 font-mono">{tr('monthlyASPOREDistributions')}</p>
-            </div>
-            <div className="space-y-2">
-              {payouts.map((p) => {
-                const st = PAYOUT_STATUS[p.status] || PAYOUT_STATUS.pending;
-                return (
-                  <div
-                    key={p.id}
-                    className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-white font-medium text-sm font-mono">
-                          {p.amount.toLocaleString(localeTag(locale))} $ASPORE
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 mt-1">
-                          <span className="text-neutral-500 text-xs font-mono">
-                            {p.period_start} — {p.period_end}
-                          </span>
-                          <span className="text-neutral-700">·</span>
-                          <span className="text-neutral-600 text-xs font-mono">
-                            {new Intl.NumberFormat(localeTag(locale)).format(p.contribution_points)} {tr('pts')}</span>
-                        </div>
-                      </div>
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        {p.tx_signature && (
-                          <a
-                            href={`https://solscan.io/tx/${p.tx_signature}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono"
-                          >
-                            {tr('tx')}</a>
-                        )}
-                        <span className={`text-xs px-2 py-0.5 rounded-full border font-mono ${st.classes}`}>
-                          {displayPublicLabel(locale, st.label)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {user && <ProfilePayouts read={payouts} />}
 
         {/* How to earn */}
         {user && (

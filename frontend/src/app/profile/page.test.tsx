@@ -1,26 +1,30 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ProfilePage from './page';
 import { renderToString } from 'react-dom/server';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { accountMessages } from '@/lib/i18n/account';
+import { sharedMessages } from '@/lib/i18n/shared';
+import type { TokenPayout } from '@/lib/api';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/profile', useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }) }));
-const user = (name: string) => ({ id: name, name, email: `${name}@example.invalid`, avatar_url: null, token_balance: 0, solana_wallet: null, aspore_balance: 0, is_admin: false, created_at: '2026-01-01' });
+const user = (name: string) => ({ id: name, name, email: `${name}@example.invalid`, avatar_url: null, token_balance: 0, solana_wallet: null, is_admin: false, created_at: '2026-01-01' });
 const responses = new Map<string, Promise<Response>>();
 const payoutResponses = new Map<string, Promise<Response>>();
+const balanceResponses = new Map<string, Promise<Response>>();
 beforeEach(() => {
   const values = new Map<string, string>();
   vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } });
   vi.stubGlobal('fetch', vi.fn(async (_url: string, options?: RequestInit) => {
     const authorization = new Headers(options?.headers).get('Authorization') ?? '';
     if (String(_url).endsWith('/payouts')) return payoutResponses.get(authorization) ?? Response.json([]);
+    if (String(_url).endsWith('/users/me/aspore')) return balanceResponses.get(authorization) ?? Response.json({ aspore_balance: 0 });
     if (!String(_url).endsWith('/auth/me')) return Response.json([]);
     return responses.get(authorization) ?? new Response('[]', { status: 200 });
   }));
 });
-afterEach(() => { cleanup(); responses.clear(); payoutResponses.clear(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); responses.clear(); payoutResponses.clear(); balanceResponses.clear(); vi.unstubAllGlobals(); });
 const mount = () => render(<LocaleProvider initialLocale="en"><ProfilePage /></LocaleProvider>);
 
 it('observes anonymous, signed-in and signed-out sessions without leaking the previous profile', async () => {
@@ -75,6 +79,7 @@ it('keeps the pending server snapshot without reading browser storage', () => {
 function mountWallet(wallet: string | null, locale: 'en' | 'ru', walletResponse = new Response('{}', { status: 503 })) {
   vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
     if (String(url).endsWith('/auth/me')) return Response.json({ ...user('Synthetic owner'), solana_wallet: wallet });
+    if (String(url).endsWith('/users/me/aspore')) return Response.json({ aspore_balance: 0 });
     if (String(url).endsWith('/users/solana-wallet')) return walletResponse.clone();
     return Response.json([]);
   }));
@@ -124,3 +129,209 @@ it('localizes the wallet ownership conflict in Russian', async () => {
   expect(screen.queryByText(detail)).toBeNull();
   expect(screen.getByText(translated)).toBeTruthy();
 });
+
+const readPayouts = (['pending', 'sent', 'confirmed', 'failed'] as const).map((status, index) => ({
+  id: `00000000-0000-4000-8000-00000000000${index}`,
+  amount: 1111 + index,
+  contribution_points: 10,
+  pool_total: 100000,
+  period_start: '2026-01-01',
+  period_end: '2026-01-31',
+  tx_signature: null,
+  status,
+  created_at: '2026-02-01T00:00:00Z',
+  sent_at: null,
+  confirmed_at: null,
+})) satisfies TokenPayout[];
+
+it('announces the held profile read instead of leaving main blank', async () => {
+  let respond: (response: Response) => void = () => {};
+  responses.set('Bearer synthetic-session-a', new Promise(resolve => { respond = resolve; }));
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => { mount(); });
+  const main = within(screen.getByRole('main'));
+  expect(main.getByRole('status').textContent).toMatch(/loading.*profile/i);
+  expect(main.queryByRole('link', { name: accountMessages.en.signIn })).toBeNull();
+  await act(async () => { respond(Response.json(user('Synthetic Alpha'))); });
+  expect(main.getByRole('heading', { name: 'Synthetic Alpha' })).toBeTruthy();
+  expect(main.queryByText(/loading.*profile/i)).toBeNull();
+});
+
+it.each(['HTTP 503', 'network'])('recovers a failed profile read through retry after %s', async failure => {
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => {
+    responses.set('Bearer synthetic-session-a', Promise.resolve().then(() => {
+      if (failure === 'network') throw new TypeError('Synthetic network failure');
+      return new Response('{}', { status: 503 });
+    }));
+    mount();
+  });
+  const main = within(screen.getByRole('main'));
+  expect(main.queryByRole('link', { name: accountMessages.en.signIn })).toBeNull();
+  expect(main.getByRole('alert').textContent).toContain(sharedMessages.en.couldNotLoadData);
+  expect(localStorage.getItem('access_token')).toBe('synthetic-session-a');
+  responses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(user('Synthetic Alpha'))));
+  await act(async () => { fireEvent.click(main.getByRole('button', { name: sharedMessages.en.retry })); });
+  expect(main.getByRole('heading', { name: 'Synthetic Alpha' })).toBeTruthy();
+  expect(main.queryByRole('alert')).toBeNull();
+});
+
+it('distinguishes a held payout read from a successful empty history', async () => {
+  let respond: (response: Response) => void = () => {};
+  responses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(user('Synthetic Alpha'))));
+  payoutResponses.set('Bearer synthetic-session-a', new Promise(resolve => { respond = resolve; }));
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => { mount(); });
+  const main = within(screen.getByRole('main'));
+  expect(main.getByRole('heading', { name: accountMessages.en.catPayoutsLog })).toBeTruthy();
+  expect(main.getByRole('status').textContent).toMatch(/loading.*payout/i);
+  expect(main.queryByText(/no payouts/i)).toBeNull();
+  await act(async () => { respond(Response.json([])); });
+  expect(main.getByRole('heading', { name: 'Synthetic Alpha' })).toBeTruthy();
+  expect(main.getByText(/no payouts/i)).toBeTruthy();
+  expect(main.queryByText(/loading.*payout/i)).toBeNull();
+  expect(main.queryByRole('alert')).toBeNull();
+});
+
+it.each(['HTTP 503', 'network'])('retains the profile and retries failed payouts after %s', async failure => {
+  responses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(user('Synthetic Alpha'))));
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => {
+    payoutResponses.set('Bearer synthetic-session-a', Promise.resolve().then(() => {
+      if (failure === 'network') throw new TypeError('Synthetic network failure');
+      return new Response('{}', { status: 503 });
+    }));
+    mount();
+  });
+  const main = within(screen.getByRole('main'));
+  expect(main.getByRole('heading', { name: 'Synthetic Alpha' })).toBeTruthy();
+  expect(main.getByRole('heading', { name: accountMessages.en.catPayoutsLog })).toBeTruthy();
+  expect(main.getByRole('alert').textContent).toContain(sharedMessages.en.couldNotLoadData);
+  expect(main.queryByText(/no payouts/i)).toBeNull();
+  let respond: (response: Response) => void = () => {};
+  payoutResponses.set('Bearer synthetic-session-a', new Promise(resolve => { respond = resolve; }));
+  await act(async () => { fireEvent.click(main.getByRole('button', { name: sharedMessages.en.retry })); });
+  expect(main.getByRole('status').textContent).toMatch(/loading.*payout/i);
+  expect(main.getByRole('heading', { name: 'Synthetic Alpha' })).toBeTruthy();
+  await act(async () => { respond(Response.json(readPayouts)); });
+  expect(main.queryByRole('alert')).toBeNull();
+  expect(main.queryByText(/loading.*payout/i)).toBeNull();
+  expect(main.queryByText(/no payouts/i)).toBeNull();
+  readPayouts.forEach(payout => {
+    expect(main.getByText(`${payout.amount.toLocaleString('en-US')} $ASPORE`)).toBeTruthy();
+    expect(main.getByText(accountMessages.en[payout.status])).toBeTruthy();
+  });
+});
+
+it('ignores a late payout retry after the owner changes', async () => {
+  responses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(user('Synthetic Alpha'))));
+  payoutResponses.set('Bearer synthetic-session-a', Promise.resolve(new Response('{}', { status: 503 })));
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => { mount(); });
+  let respond: (response: Response) => void = () => {};
+  payoutResponses.set('Bearer synthetic-session-a', new Promise(resolve => { respond = resolve; }));
+  const main = within(screen.getByRole('main'));
+  await act(async () => { fireEvent.click(main.getByRole('button', { name: sharedMessages.en.retry })); });
+  responses.set('Bearer synthetic-session-b', Promise.resolve(Response.json(user('Synthetic Beta'))));
+  await act(async () => {
+    localStorage.setItem('access_token', 'synthetic-session-b');
+    window.dispatchEvent(new Event('storage'));
+  });
+  await act(async () => { respond(Response.json(readPayouts)); });
+  const currentMain = within(screen.getByRole('main'));
+  expect(currentMain.getByRole('heading', { name: 'Synthetic Beta' })).toBeTruthy();
+  expect(currentMain.queryByRole('heading', { name: 'Synthetic Alpha' })).toBeNull();
+  expect(currentMain.queryByText('1,111 $ASPORE')).toBeNull();
+  expect(currentMain.queryByRole('alert')).toBeNull();
+});
+
+it('shows a pending deposit balance instead of an unverified zero', async () => {
+  let respond: (response: Response) => void = () => {};
+  responses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(user('Synthetic Alpha'))));
+  balanceResponses.set('Bearer synthetic-session-a', new Promise(resolve => { respond = resolve; }));
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => { mount(); });
+  const main = within(screen.getByRole('main'));
+  const deposit = within(main.getByRole('region', { name: /deposit balance/i }));
+  expect(deposit.getByRole('status').textContent).toMatch(/loading.*balance/i);
+  expect(deposit.queryByText('0')).toBeNull();
+  await act(async () => { respond(Response.json({ aspore_balance: 7 })); });
+  expect(deposit.getByText('7')).toBeTruthy();
+  expect(deposit.queryByText(/loading.*balance/i)).toBeNull();
+});
+
+it.each([0, 7])('reads verified deposit balance %i independently of auth/me', async balance => {
+  responses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(user('Synthetic Alpha'))));
+  balanceResponses.set('Bearer synthetic-session-a', Promise.resolve(Response.json({ aspore_balance: balance })));
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => { mount(); });
+  const main = within(screen.getByRole('main'));
+  const deposit = within(main.getByRole('region', { name: /deposit balance/i }));
+  expect(deposit.getByText(String(balance))).toBeTruthy();
+  expect(deposit.queryByRole('alert')).toBeNull();
+});
+
+it.each(['HTTP 503', 'network'])('retains the profile and retries deposit balance after %s', async failure => {
+  responses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(user('Synthetic Alpha'))));
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => {
+    balanceResponses.set('Bearer synthetic-session-a', Promise.resolve().then(() => {
+      if (failure === 'network') throw new TypeError('Synthetic network failure');
+      return new Response('{}', { status: 503 });
+    }));
+    mount();
+  });
+  const main = within(screen.getByRole('main'));
+  const deposit = within(main.getByRole('region', { name: /deposit balance/i }));
+  expect(main.getByRole('heading', { name: 'Synthetic Alpha' })).toBeTruthy();
+  expect(deposit.getByRole('alert').textContent).toContain(sharedMessages.en.couldNotLoadData);
+  expect(deposit.queryByText('0')).toBeNull();
+  balanceResponses.set('Bearer synthetic-session-a', Promise.resolve(Response.json({ aspore_balance: 7 })));
+  await act(async () => { fireEvent.click(deposit.getByRole('button', { name: sharedMessages.en.retry })); });
+  expect(deposit.getByText('7')).toBeTruthy();
+  expect(deposit.queryByRole('alert')).toBeNull();
+});
+
+it('ignores a late deposit balance after the owner changes', async () => {
+  let respond: (response: Response) => void = () => {};
+  responses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(user('Synthetic Alpha'))));
+  balanceResponses.set('Bearer synthetic-session-a', new Promise(resolve => { respond = resolve; }));
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => { mount(); });
+  responses.set('Bearer synthetic-session-b', Promise.resolve(Response.json(user('Synthetic Beta'))));
+  balanceResponses.set('Bearer synthetic-session-b', Promise.resolve(Response.json({ aspore_balance: 7 })));
+  await act(async () => {
+    localStorage.setItem('access_token', 'synthetic-session-b');
+    window.dispatchEvent(new Event('storage'));
+  });
+  await act(async () => { respond(Response.json({ aspore_balance: 987654 })); });
+  const main = within(screen.getByRole('main'));
+  const deposit = within(main.getByRole('region', { name: /deposit balance/i }));
+  expect(main.getByRole('heading', { name: 'Synthetic Beta' })).toBeTruthy();
+  expect(deposit.getByText('7')).toBeTruthy();
+  expect(deposit.queryByText('987,654')).toBeNull();
+});
+
+it('keeps the sign-in state for an unauthorized profile response', async () => {
+  responses.set('Bearer synthetic-session-a', Promise.resolve(new Response('{}', { status: 401 })));
+  localStorage.setItem('access_token', 'synthetic-session-a');
+  await act(async () => { mount(); });
+  const main = within(screen.getByRole('main'));
+  expect(main.getByRole('link', { name: accountMessages.en.signIn })).toBeTruthy();
+  expect(main.queryByRole('alert')).toBeNull();
+});
+
+it.each([{}, { aspore_balance: -1 }, { aspore_balance: 1.5 }, { aspore_balance: Number.MAX_SAFE_INTEGER + 1 }, { aspore_balance: '7' }])(
+  'reports malformed deposit balance %j without inventing zero', async payload => {
+    responses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(user('Synthetic Alpha'))));
+    balanceResponses.set('Bearer synthetic-session-a', Promise.resolve(Response.json(payload)));
+    localStorage.setItem('access_token', 'synthetic-session-a');
+    await act(async () => { mount(); });
+    const main = within(screen.getByRole('main'));
+    const deposit = within(main.getByRole('region', { name: /deposit balance/i }));
+    expect(main.getByRole('heading', { name: 'Synthetic Alpha' })).toBeTruthy();
+    expect(deposit.getByRole('alert').textContent).toContain(sharedMessages.en.couldNotLoadData);
+    expect(deposit.queryByText('0')).toBeNull();
+    expect(deposit.getByRole('button', { name: sharedMessages.en.retry })).toBeTruthy();
+  },
+);

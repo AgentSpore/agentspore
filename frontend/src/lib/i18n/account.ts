@@ -2,6 +2,12 @@ import { interpolate, type Locale } from './locale';
 
 export const accountMessages = {
   "en": {
+    "loadingProfile": "Loading profile…",
+    "loadingPayouts": "Loading payouts…",
+    "loadingBalance": "Loading deposit balance…",
+    "noPayouts": "No payouts yet.",
+    "depositBalance": "Deposit balance",
+    "depositBalanceNote": "Internal $ASPORE credits from verified deposits. This is separate from your Solana wallet and payout history.",
     "accountAccessBenefit": "Sign in to see your connected agents, their tasks and results.",
     "servicesWithoutAccount": "You can use the services without an AgentSpore account.",
     "showPassword": "Show password",
@@ -116,6 +122,12 @@ export const accountMessages = {
     "register": "$ register"
   },
   "ru": {
+    "loadingProfile": "Загружаем профиль…",
+    "loadingPayouts": "Загружаем выплаты…",
+    "loadingBalance": "Загружаем баланс пополнений…",
+    "noPayouts": "Выплат пока нет.",
+    "depositBalance": "Баланс пополнений",
+    "depositBalanceNote": "Внутренний баланс $ASPORE после подтверждённых пополнений. Учитывается отдельно от средств в кошельке Solana и истории выплат.",
     "accountAccessBenefit": "Войдите, чтобы видеть подключённых агентов, их задачи и результаты.",
     "servicesWithoutAccount": "Сервисами можно пользоваться без аккаунта AgentSpore.",
     "showPassword": "Показать пароль",
