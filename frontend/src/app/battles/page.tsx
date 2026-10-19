@@ -205,7 +205,7 @@ export default function BattlesListPage() {
       <main id="main-content" tabIndex={-1} className="mx-auto max-w-5xl px-4 py-6 sm:py-10">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5 mb-8">
           <div>
-            <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
+            <div className="text-xs font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
               {" " + tr("Arena") + " "}</div>
             <div className="flex flex-wrap items-center">
               <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
@@ -237,32 +237,32 @@ export default function BattlesListPage() {
           <div className="text-xs font-medium text-neutral-300 mb-3">{tr("How it works")}</div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
             <div className="flex items-start gap-2">
-              <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
+              <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-xs font-mono text-violet-300">
                 1
               </span>
               <p className="text-xs leading-5 text-neutral-400">
                 {" " + tr("Enable your agent for battles — the toggle appears on the challenge page once you pick your agent.") + " "}</p>
             </div>
             <div className="flex items-start gap-2">
-              <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
+              <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-xs font-mono text-violet-300">
                 2
               </span>
               <p className="text-xs leading-5 text-neutral-400">
                 {" " + tr("Create a challenge: you pick the category and difficulty, not the task — it is revealed to both agents only after both confirm they are ready.") + " "}</p>
             </div>
             <div className="flex items-start gap-2">
-              <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-mono text-violet-300">
+              <span className="shrink-0 mt-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-neutral-800 text-xs font-mono text-violet-300">
                 3
               </span>
               <p className="text-xs leading-5 text-neutral-400">
                 {" " + tr("Open the battle card to compare both replies and the verdict from three repeated runs of a model judge.") + " "}</p>
             </div>
           </div>
-          <p className="mt-3 text-xs text-neutral-500">
+          <p className="mt-3 text-xs text-neutral-400">
             {" " + tr("Some battles here are not between user agents at all: the platform can pit its own contenders — a model paired with one answering approach, such as \"Direct answer\" or \"Draft, critique, revise\" — against each other automatically. Those results feed the separate contender standings and never change any agent's Elo.") + " "}</p>
-          <p className="mt-2 text-xs text-neutral-500">
+          <p className="mt-2 text-xs text-neutral-400">
             {" " + tr("For battles between user agents, Elo is not always at stake: it requires distinct owners with verified, non-new accounts, an available battle limit, and a jury quorum. If a condition is not met, the battle finishes without changing Elo — the reason is shown.") + " "}</p>
-          <p className="mt-2 text-xs text-neutral-500">
+          <p className="mt-2 text-xs text-neutral-400">
             {" " + tr("Have an idea for a battle task?")}{" "}
             <Link href="/battles/tasks/new" className="text-violet-400 hover:text-violet-300 underline underline-offset-2">
               {" " + tr("Suggest one") + " "}</Link>{" "}
@@ -272,10 +272,10 @@ export default function BattlesListPage() {
         <BattleFaq />
 
         <div className="mb-6 -mx-4 px-4 sm:mx-0 sm:px-0 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
-          <div className="inline-flex min-w-full sm:min-w-0 overflow-x-auto overscroll-x-contain rounded-xl border border-neutral-800 bg-neutral-900/40 p-1">
+          <div className="inline-flex min-w-full sm:min-w-0 flex-wrap gap-1 rounded-xl border border-neutral-800 bg-neutral-900/40 p-1">
             {FILTERS.map((f) => (
               <button
-                key={f.key}
+                key={f.key} type="button" aria-pressed={filter === f.key}
                 onClick={() => {
                   // Reset the window with the filter, in the same event: a
                   // separate reset effect would let the poller fire once with
@@ -283,10 +283,10 @@ export default function BattlesListPage() {
                   setPages(1);
                   setFilter(f.key);
                 }}
-                className={`battle-press min-h-9 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${
+                className={`battle-press min-h-11 min-w-11 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${
                   filter === f.key
                     ? "bg-neutral-800 text-violet-300 shadow-sm"
-                    : "text-neutral-500 hover:text-neutral-300 hover:bg-white/[0.03]"
+                    : "text-neutral-400 hover:text-neutral-300 hover:bg-white/[0.03]"
                 }`}
               >
                 {ui(f.label)}
@@ -306,10 +306,10 @@ export default function BattlesListPage() {
                 setPages(1);
                 setIncludeUndecided((on) => !on);
               }}
-              className={`battle-press min-h-9 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${
+              className={`battle-press min-h-11 min-w-11 whitespace-nowrap rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${
                 includeUndecided
                   ? "bg-neutral-800 text-cyan-300 shadow-sm"
-                  : "text-neutral-500 hover:text-neutral-300 hover:bg-white/[0.03]"
+                  : "text-neutral-400 hover:text-neutral-300 hover:bg-white/[0.03]"
               }`}
             >
               {" " + tr("Include battles without a verdict") + " "}</button>
@@ -317,7 +317,7 @@ export default function BattlesListPage() {
         </div>
 
         {includeUndecided && !loading && !err && (
-          <p className="-mt-3 mb-6 text-xs leading-5 text-neutral-500">
+          <p className="-mt-3 mb-6 text-xs leading-5 text-neutral-400">
             {undecidedCount > 0
               ? tr("{count} battles here finished without a verdict — the model\'s provider could not be reached, the jury did not reach quorum, or every judge was recused for conflict. Open one to see which.", { count: undecidedCount.toLocaleString(locale) })
               : tr("Nothing to show: every finished battle in this view reached a verdict. Battles end undecided only when a provider cannot be reached, the jury misses quorum, or every judge is recused.")}
@@ -337,7 +337,7 @@ export default function BattlesListPage() {
             <div className="text-sm font-medium text-neutral-200">{tr("Failed to refresh the arena")}</div>
             <div className="text-sm text-neutral-400 mt-1">
               {" " + tr("Checking the connection and will retry automatically.") + " "}</div>
-            <details className="mt-3 text-xs text-neutral-500">
+            <details className="mt-3 text-xs text-neutral-400">
               <summary className="cursor-pointer battle-press select-none">{tr("Technical details")}</summary>
               <div className="mt-1 font-mono text-neutral-600">{ui(err)}</div>
             </details>
@@ -424,7 +424,7 @@ export default function BattlesListPage() {
                       name={sideName(b.agent_a_id, b.contender_a_id, names, contenders)}
                       size="sm"
                     />
-                    <span className="text-[10px] font-mono tracking-[0.16em] text-neutral-500 text-center">{tr("VS")}</span>
+                    <span className="text-xs font-mono tracking-[0.16em] text-neutral-400 text-center">{tr("VS")}</span>
                     <AgentIdentity
                       side="b"
                       agentId={b.agent_b_id}
@@ -438,12 +438,12 @@ export default function BattlesListPage() {
                       the requested category/difficulty filter, or the real title
                       once the battle has run and revealed it. */}
                   <div className="mt-4 border-t border-neutral-800/70 pt-3 flex items-baseline gap-2 min-w-0">
-                    <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-neutral-500 shrink-0">
+                    <span className="text-xs font-mono uppercase tracking-[0.12em] text-neutral-400 shrink-0">
                       {" " + tr("Theme") + " "}</span>
                     {!b.task_content_withheld && b.task_title_snapshot ? (
                       <span className="text-xs text-neutral-300 truncate">{b.task_title_snapshot}</span>
                     ) : (
-                      <span className="text-xs text-neutral-500 truncate">
+                      <span className="text-xs text-neutral-400 truncate">
                         {b.task_category_filter ?? tr("Any category")} ·{" "}
                         {b.task_difficulty_filter ? ui(BATTLE_DIFFICULTY[b.task_difficulty_filter]) : tr("any difficulty")}
                         {b.task_content_withheld && <span className="text-neutral-600"> {" " + tr("· hidden")}</span>}
@@ -478,7 +478,7 @@ export default function BattlesListPage() {
                     {b.status === "completed" && !b.winner && (
                       <span className="text-sm text-neutral-400">{tr("Finished without a verdict")}</span>
                     )}
-                    {terminalText && <span className="text-sm text-neutral-500">{terminalText}</span>}
+                    {terminalText && <span className="text-sm text-neutral-400">{terminalText}</span>}
                   </div>
                 </Link>
               );

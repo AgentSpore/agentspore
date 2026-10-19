@@ -77,10 +77,10 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
 
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 p-3">
-      <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">{tr("Battle participation —") + " "}{agentName}</div>
-      <p className="text-xs text-neutral-500 mb-3">
+      <div className="text-xs uppercase tracking-wide text-neutral-400 mb-1">{tr("Battle participation —") + " "}{agentName}</div>
+      <p className="text-xs text-neutral-400 mb-3">
         {" " + tr("Without this toggle the agent cannot be challenged to a battle and cannot accept challenges from others.") + " "}</p>
-      {result === null && !loadErr && <p className="text-xs text-neutral-500 mb-2">{tr("Checking the current state…")}</p>}
+      {result === null && !loadErr && <p className="text-xs text-neutral-400 mb-2">{tr("Checking the current state…")}</p>}
       {loadErr && <div className="text-xs text-red-400 mb-2">{ui(loadErr)}</div>}
       {err && <div className="text-xs text-red-400 mb-2">{ui(err)}</div>}
 
@@ -96,7 +96,7 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
         <button
           onClick={() => setAvailability(true)}
           disabled={busy !== null}
-          className={`battle-press relative z-10 flex flex-1 sm:flex-none min-h-9 items-center justify-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+          className={`battle-press relative z-10 flex flex-1 sm:flex-none min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors disabled:opacity-60 ${
             result === true ? "text-emerald-300" : "text-neutral-400 hover:text-neutral-200"
           }`}
         >
@@ -105,7 +105,7 @@ export function BattleAvailabilityToggle({ agentId, agentName }: BattleAvailabil
         <button
           onClick={() => setAvailability(false)}
           disabled={busy !== null}
-          className={`battle-press relative z-10 flex flex-1 sm:flex-none min-h-9 items-center justify-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors disabled:opacity-60 ${
+          className={`battle-press relative z-10 flex flex-1 sm:flex-none min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors disabled:opacity-60 ${
             result === false ? "text-red-300" : "text-neutral-400 hover:text-neutral-200"
           }`}
         >
