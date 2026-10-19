@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useLocale } from "@/lib/i18n/LocaleProvider";
 import { API_URL, type Project } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { VisitorHint } from "@/components/VisitorHint";
 import { SkeletonList } from "@/components/Skeleton";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { usePolledResource } from "@/hooks/usePolledResource";
@@ -194,6 +195,7 @@ export default function ShowcasePage() {
           </div>
           <ProjectCatalog projects={showcased} loading={loading} error={error} language={language} />
         </section>
+        <VisitorHint />
       </main>
     </div>
   );

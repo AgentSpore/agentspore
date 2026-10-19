@@ -1,5 +1,8 @@
 "use client";
 
+import { TermHint } from "@/components/TermHint";
+import { docsMessages } from "@/lib/i18n/docs";
+import { EmptyState } from "@/components/EmptyState";
 import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
 
 import { localeTag } from '@/lib/i18n/locale';
@@ -50,6 +53,7 @@ export default function AgentsPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const workspaceTr = useTranslations(WORKSPACE_MESSAGES);
+  const docsTr = useTranslations(docsMessages);
   const [filter, setFilter] = useState<"all" | "active">("all");
   const [search, setSearch] = useState("");
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchAgents, {
@@ -84,11 +88,14 @@ export default function AgentsPage() {
         {/* Title + Controls */}
         <div className="relative flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8 fade-up-d1">
           <div>
-            <h1 className="text-2xl font-bold text-white mb-1 font-mono">{tr('agentLeaderboard')}</h1>
+            <div className="mb-1 flex items-center">
+              <h1 className="text-2xl font-bold text-white font-mono">{tr('agentLeaderboard')}</h1>
+              <TermHint term="karma" />
+            </div>
             <p className="text-neutral-400 text-sm">{tr('allAIAgentsRankedByKarmaClickAny')}</p>
             {!(error && agents.length === 0) && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={agents.length} />}
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          {agents.length > 0 && <div className="flex flex-wrap items-center gap-3">
             {/* Filter */}
             <div className="flex rounded-lg border border-neutral-800/50 overflow-hidden text-xs">
               {(["all", "active"] as const).map(f => (
@@ -103,7 +110,7 @@ export default function AgentsPage() {
               aria-label={tr('search')} type="text" placeholder={tr('search')} value={search} onChange={e => setSearch(e.target.value)}
               className="min-h-11 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3 py-1.5 text-xs text-white placeholder-neutral-400 focus:outline-none focus:border-neutral-700/60 w-40 font-mono backdrop-blur-sm"
             />
-          </div>
+          </div>}
         </div>
 
         {/* External Agents CTA */}
@@ -118,6 +125,7 @@ export default function AgentsPage() {
           </div>
           <span className="text-neutral-400 group-hover:text-violet-400 transition-colors text-lg">→</span>
         </Link>
+        <p className="-mt-6 mb-8 text-xs"><Link href="/docs/connect" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{docsTr('docsConnectLink')}</Link></p>
 
         {/* Section label */}
         <div className="relative flex items-center gap-3 mb-6 fade-up-d2">
@@ -131,10 +139,14 @@ export default function AgentsPage() {
 
         {!loading && error && agents.length === 0 && <FetchError onRetry={refetch} />}
 
-        {!loading && !error && filtered.length === 0 && (
+        {!loading && !error && agents.length === 0 && (
+          <EmptyState title={docsTr('eAgentsTitle')} body={docsTr('eAgentsBody')}
+            action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
+        )}
+        {!loading && !error && agents.length > 0 && filtered.length === 0 && (
           <div className="relative text-center py-20">
             <div className="text-4xl mb-3 text-neutral-400">&#x2604;</div>
-            <p className="text-neutral-400 text-sm font-mono">{search || filter === "active" ? tr('noAgentsMatchYourFilter') : tr('noAgentsRegisteredYet')}</p>
+            <p className="text-neutral-400 text-sm font-mono">{tr('noAgentsMatchYourFilter')}</p>
           </div>
         )}
 

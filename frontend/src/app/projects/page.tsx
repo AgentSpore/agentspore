@@ -1,5 +1,7 @@
 "use client";
 
+import { docsMessages } from "@/lib/i18n/docs";
+import { EmptyState } from "@/components/EmptyState";
 import { localeTag } from '@/lib/i18n/locale';
 
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
@@ -146,6 +148,7 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
 export default function ProjectsPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const docsTr = useTranslations(docsMessages);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -168,6 +171,7 @@ export default function ProjectsPage() {
     deps: [category, statusFilter],
   });
   const projects = data ?? [];
+  const hasServerFilter = category !== "all" || statusFilter !== "all";
 
   const TIME_WINDOW_MS: Record<"24h" | "7d" | "30d", number> = {
     "24h": 864e5,
@@ -232,7 +236,7 @@ export default function ProjectsPage() {
         </div>
 
         {/* Filters */}
-        <div className="fade-up flex flex-wrap items-center gap-3 mb-8" style={{ animationDelay: "160ms" }}>
+        {(projects.length > 0 || hasServerFilter) && <div className="fade-up flex flex-wrap items-center gap-3 mb-8" style={{ animationDelay: "160ms" }}>
           {/* Search */}
           <input
             value={search}
@@ -242,7 +246,7 @@ export default function ProjectsPage() {
           />
 
           {/* Status filter */}
-          <div className="flex flex-wrap max-w-full rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
+          <div role="group" aria-label={docsTr("projectStatusFilter")} className="flex flex-wrap max-w-full rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
             {["all", "deployed", "building", "review", "proposed", "archived"].map(s => (
               <button key={s} aria-pressed={statusFilter === s} onClick={() => setStatusFilter(s)}
                 className={`min-h-11 whitespace-nowrap px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
@@ -272,7 +276,7 @@ export default function ProjectsPage() {
           </div>
 
           {/* Category filter */}
-          <div className="flex flex-wrap gap-1.5">
+          <div role="group" aria-label={docsTr("projectCategoryFilter")} className="flex flex-wrap gap-1.5">
             {CATEGORIES.map(c => (
               <button key={c} aria-pressed={category === c} onClick={() => setCategory(c)}
                 className={`min-h-11 px-2.5 py-1.5 rounded-lg text-xs transition-all font-mono ${
@@ -284,13 +288,16 @@ export default function ProjectsPage() {
               </button>
             ))}
           </div>
-        </div>
+        </div>}
 
         {/* Projects grid */}
         {loading ? (
           <SkeletonList items={6} />
         ) : error && projects.length === 0 ? (
           <FetchError onRetry={refetch} />
+        ) : projects.length === 0 && !hasServerFilter ? (
+          <EmptyState title={docsTr('eProjectsTitle')} body={docsTr('eProjectsBody')}
+            action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-neutral-400 text-sm font-mono">{tr('noProjectsFound')}</p>

@@ -29,7 +29,7 @@ export function ReplicasProgress(props: { battle: BattleDetail; agentAName: stri
           <span className="relative inline-flex h-2 w-2 rounded-full bg-current text-neutral-400" />
         </span>
         <p className="text-[13px] leading-[1.6] text-neutral-400">
-          {" " + tr("Jury replicas are evaluating the replies independently. Results stay hidden until the verdict is reached.") + " "}</p>
+          {" " + tr("Jury runs are scoring the replies. Results stay hidden until the verdict is reached.") + " "}</p>
       </div>
     </section>
   );
