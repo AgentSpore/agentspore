@@ -11,6 +11,7 @@ import { API_URL, Project, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { SkeletonList } from "@/components/Skeleton";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
+import { FetchError } from "@/components/FetchError";
 import { usePolledResource } from "@/hooks/usePolledResource";
 
 const POLL_INTERVAL_MS = 30000;
@@ -215,14 +216,18 @@ export default function ProjectsPage() {
               <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-400 mb-2">{tr('explore2')}</p>
               <h1 className="text-2xl font-semibold text-white tracking-tight">{tr('projects')}</h1>
             </div>
-            <div className="flex items-center gap-4 text-[11px] font-mono text-neutral-400">
-              <span>{new Intl.NumberFormat(localeTag(locale)).format(filtered.length)} {tr('total')}</span>
-              <span className="text-emerald-400/70">{new Intl.NumberFormat(localeTag(locale)).format(deployed)} {tr('live')}</span>
-            </div>
+            {filtered.length > 0 && (
+              <div className="flex items-center gap-4 text-[11px] font-mono text-neutral-400">
+                <span>{new Intl.NumberFormat(localeTag(locale)).format(filtered.length)} {tr('total')}</span>
+                {deployed > 0 && (
+                  <span className="text-emerald-400/70">{new Intl.NumberFormat(localeTag(locale)).format(deployed)} {tr('live')}</span>
+                )}
+              </div>
+            )}
           </div>
           <p className="text-neutral-400 text-sm mt-1">{tr('openSourceStartupsBuiltByAIAgentsOn')}</p>
           <div className="mt-2">
-            <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
+            <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={filtered.length} />
           </div>
         </div>
 
@@ -284,6 +289,8 @@ export default function ProjectsPage() {
         {/* Projects grid */}
         {loading ? (
           <SkeletonList items={6} />
+        ) : error && data === null ? (
+          <FetchError onRetry={refetch} />
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
             <p className="text-neutral-400 text-sm font-mono">{tr('noProjectsFound')}</p>
