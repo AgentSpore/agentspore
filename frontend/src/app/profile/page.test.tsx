@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import ProfilePage from './page';
 import { renderToString } from 'react-dom/server';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
+import { accountMessages } from '@/lib/i18n/account';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/profile', useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }) }));
 const user = (name: string) => ({ id: name, name, email: `${name}@example.invalid`, avatar_url: null, token_balance: 0, solana_wallet: null, aspore_balance: 0, is_admin: false, created_at: '2026-01-01' });
@@ -69,4 +70,57 @@ it('keeps the pending server snapshot without reading browser storage', () => {
   vi.stubGlobal('localStorage', { getItem: read });
   expect(renderToString(<LocaleProvider initialLocale="en"><ProfilePage /></LocaleProvider>)).not.toContain('Sign In');
   expect(read).not.toHaveBeenCalled();
+});
+
+function mountWallet(wallet: string | null, locale: 'en' | 'ru', walletResponse = new Response('{}', { status: 503 })) {
+  vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).endsWith('/auth/me')) return Response.json({ ...user('Synthetic owner'), solana_wallet: wallet });
+    if (String(url).endsWith('/users/solana-wallet')) return walletResponse.clone();
+    return Response.json([]);
+  }));
+  localStorage.setItem('access_token', 'synthetic-wallet-session');
+  render(<LocaleProvider initialLocale={locale}><ProfilePage /></LocaleProvider>);
+}
+
+it.each(['en', 'ru'] as const)('shows a failed disconnect while keeping the connected wallet in %s', async locale => {
+  const wallet = '11111111111111111111111111111111';
+  mountWallet(wallet, locale);
+  fireEvent.click(await screen.findByRole('button', { name: accountMessages[locale].disconnect }));
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', accountMessages[locale].failedToDisconnect);
+  expect(screen.getByText(wallet)).toBeTruthy();
+});
+
+it('names the wallet input and submits its existing native form', async () => {
+  mountWallet(null, 'en');
+  await screen.findByRole('button', { name: accountMessages.en.connect });
+  const input = screen.getByRole('textbox', { name: accountMessages.en.solanaWalletAddress });
+  const form = input.closest('form');
+  expect(form).not.toBeNull();
+  if (!form) throw new Error('Wallet form missing');
+  fireEvent.change(input, { target: { value: '11111111111111111111111111111111' } });
+  fireEvent.submit(form);
+  expect(await screen.findByRole('alert')).toBeTruthy();
+});
+
+it('renders a schema validation array as invalid address without losing the profile', async () => {
+  const detail = [{ type: 'value_error', loc: ['body', 'solana_wallet'],
+    msg: 'Value error, Invalid Solana address (base58, 32-44 chars)', input: 'invalid-wallet', ctx: { error: {} } }];
+  mountWallet(null, 'en', Response.json({ detail }, { status: 422 }));
+  const input = await screen.findByPlaceholderText(accountMessages.en.solanaWalletAddress);
+  fireEvent.change(input, { target: { value: 'invalid-wallet' } });
+  fireEvent.click(screen.getByRole('button', { name: accountMessages.en.connect }));
+  expect(await screen.findByText(accountMessages.en.invalidAddress)).toBeTruthy();
+  expect(screen.getByRole('main')).toBeTruthy();
+});
+
+it('localizes the wallet ownership conflict in Russian', async () => {
+  const detail = 'Solana wallet already connected to another account';
+  const translated = 'Кошелёк Solana уже подключён к другому аккаунту.';
+  mountWallet(null, 'ru', Response.json({ detail }, { status: 409 }));
+  const input = await screen.findByPlaceholderText(accountMessages.ru.solanaWalletAddress);
+  fireEvent.change(input, { target: { value: '11111111111111111111111111111111' } });
+  fireEvent.click(screen.getByRole('button', { name: accountMessages.ru.connect }));
+  await screen.findByText(text => text === detail || text === translated);
+  expect(screen.queryByText(detail)).toBeNull();
+  expect(screen.getByText(translated)).toBeTruthy();
 });

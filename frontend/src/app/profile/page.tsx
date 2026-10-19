@@ -110,8 +110,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
             <div className="text-5xl opacity-30 font-mono">&gt;_</div>
             <h1 className="text-xl font-semibold text-white font-mono">{tr('whoami')}</h1>
             <p className="text-neutral-500 text-sm font-mono">{tr('signInToViewYourProfileTrackASPORE')}</p>
-            <Link
-              href="/login"
+            <Link href="/login"
               className="inline-block mt-2 px-6 py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200"
             >
               {tr('signIn')}</Link>
@@ -233,8 +232,7 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                     >
                       {tr('disconnect')}</button>
                   </div>
-                  <a
-                    href={`https://solscan.io/account/${user.solana_wallet}`}
+                  <a href={`https://solscan.io/account/${user.solana_wallet}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex min-h-11 min-w-11 items-center text-xs text-neutral-600 hover:text-cyan-400 transition-colors font-mono"
@@ -243,49 +241,51 @@ const PAYOUT_STATUS: Record<string, { label: string; classes: string }> = {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+                  <form onSubmit={async event => {
+                    event.preventDefault();
+                    if (!solanaInput.trim()) return;
+                    setSolanaLoading(true);
+                    setSolanaError("");
+                    try {
+                      const r = await fetch(`${API_URL}/api/v1/users/solana-wallet`, {
+                        method: "PATCH",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization: `Bearer ${authToken}`,
+                        },
+                        body: JSON.stringify({ solana_wallet: solanaInput.trim() }),
+                      });
+                      if (r.ok) {
+                        setUser({ ...user, solana_wallet: solanaInput.trim() });
+                        setSolanaInput("");
+                      } else {
+                        const d = await r.json().catch(() => ({}));
+                        setSolanaError((typeof d.detail === "string" && d.detail) || accountMessages.en.invalidAddress);
+                      }
+                    } catch { setSolanaError(accountMessages.en.networkError); }
+                    setSolanaLoading(false);
+                  }} className="flex min-w-0 flex-col gap-2 sm:flex-row">
                     <input
                       type="text"
                       value={solanaInput}
                       onChange={(e) => setSolanaInput(e.target.value)}
                       placeholder={tr('solanaWalletAddress')}
+                      aria-label={tr('solanaWalletAddress')}
                       className="min-w-0 w-full flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors"
                     />
                     <button
-                      onClick={async () => {
-                        if (!solanaInput.trim()) return;
-                        setSolanaLoading(true);
-                        setSolanaError("");
-                        try {
-                          const r = await fetch(`${API_URL}/api/v1/users/solana-wallet`, {
-                            method: "PATCH",
-                            headers: {
-                              "Content-Type": "application/json",
-                              Authorization: `Bearer ${authToken}`,
-                            },
-                            body: JSON.stringify({ solana_wallet: solanaInput.trim() }),
-                          });
-                          if (r.ok) {
-                            setUser({ ...user, solana_wallet: solanaInput.trim() });
-                            setSolanaInput("");
-                          } else {
-                            const d = await r.json().catch(() => ({}));
-                            setSolanaError(d.detail || accountMessages.en.invalidAddress);
-                          }
-                        } catch { setSolanaError(accountMessages.en.networkError); }
-                        setSolanaLoading(false);
-                      }}
+                      type="submit"
                       disabled={solanaLoading || !solanaInput.trim()}
                       className="px-5 py-3 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-200 transition-all disabled:opacity-50"
                     >
                       {tr('connect')}</button>
-                  </div>
-                  {solanaError && (
-                    <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-                      <p className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, solanaError)}</p>
-                    </div>
-                  )}
+                  </form>
                   <p className="text-neutral-600 text-xs font-mono">{tr('pasteYourPhantomSolflareWalletAddressToReceive')}</p>
+                </div>
+              )}
+              {solanaError && (
+                <div role="alert" className="mt-3 bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
+                  <p className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, solanaError)}</p>
                 </div>
               )}
             </div>
