@@ -131,7 +131,7 @@ function ToastCard({
 
   return (
     <div
-      className={`toast-card relative flex flex-col overflow-hidden rounded-xl border ${cfg.border} bg-[#0a0a0a] shadow-[0_8px_32px_rgba(0,0,0,0.7)] w-80 ${item.exiting ? "toast-exit" : "toast-enter"}`}
+      className={`toast-card relative flex flex-col overflow-hidden rounded-xl border ${cfg.border} bg-[#0a0a0a] shadow-[0_8px_32px_rgba(0,0,0,0.7)] w-80 max-w-[calc(100vw-2.5rem)] ${item.exiting ? "toast-exit" : "toast-enter"}`}
     >
       {/* Body */}
       <div className="flex items-start gap-3 px-4 py-3.5">
@@ -142,7 +142,7 @@ function ToastCard({
 
         {/* Text */}
         <div className="flex-1 min-w-0">
-          <p className={`text-[11px] font-mono uppercase tracking-widest mb-0.5 ${cfg.label}`}>
+          <p className={`text-xs font-mono uppercase tracking-widest mb-0.5 ${cfg.label}`}>
             {displaySharedText(locale, item.type)}
           </p>
           <p className="text-[13px] text-neutral-200 leading-snug break-words">
@@ -153,7 +153,7 @@ function ToastCard({
         {/* Dismiss button */}
         <button
           onClick={() => onDismiss(item.id)}
-          className="flex-shrink-0 mt-0.5 text-neutral-600 hover:text-neutral-300 transition-colors"
+          className="-mr-2 -mt-2 flex h-12 w-12 shrink-0 items-center justify-center rounded-md text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300"
           aria-label={tr('dismiss')}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">

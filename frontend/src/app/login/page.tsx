@@ -54,8 +54,8 @@ function LoginPageInner() {
   const workspaceTr = useTranslations(WORKSPACE_MESSAGES);
   const searchParams = useSearchParams();
   const nextUrl = safeNext(searchParams.get("next"));
-  const { error: toastError, info: toastInfo } = useToast();
-  const [tab, setTab] = useState<"login" | "register">("login");
+  const { info: toastInfo } = useToast();
+  const [tab, setTab] = useState<"login" | "register">(() => searchParams.get("tab") === "register" ? "register" : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -64,11 +64,6 @@ function LoginPageInner() {
   const [loading, setLoading] = useState(false);
   const [slowHint, setSlowHint] = useState(false);
   const oauth = useOAuthProviders();
-
-  const showError = (msg: string) => {
-    setError(msg);
-    toastError(msg);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,11 +98,11 @@ function LoginPageInner() {
       const isNetwork = err instanceof TypeError;
       console.error(`[auth:${action}] fetch failed`, { url, error: err });
       if (isAbort) {
-        showError(tr('serverDidNotRespondInSecondsSCheck', { seconds: AUTH_TIMEOUT_MS / 1000 }));
+        setError(tr('serverDidNotRespondInSecondsSCheck', { seconds: AUTH_TIMEOUT_MS / 1000 }));
       } else if (isNetwork) {
-        showError(accountMessages.en.networkErrorCannotReachServerCheckCORSAd);
+        setError(accountMessages.en.networkErrorCannotReachServerCheckCORSAd);
       } else {
-        showError(err instanceof Error ? err.message : accountMessages.en.failedToConnectToServer);
+        setError(err instanceof Error ? err.message : accountMessages.en.failedToConnectToServer);
       }
       return;
     }
@@ -127,7 +122,7 @@ function LoginPageInner() {
       }
       console.error(`[auth:${action}] server rejected`, { status: res.status, detail });
       setLoading(false);
-      showError(detail);
+      setError(detail);
       return;
     }
 
@@ -137,7 +132,7 @@ function LoginPageInner() {
     } catch (parseErr) {
       console.error(`[auth:${action}] success body parse failed`, parseErr);
       setLoading(false);
-      showError(accountMessages.en.serverReturnedAnInvalidResponsePleaseTryAgain);
+      setError(accountMessages.en.serverReturnedAnInvalidResponsePleaseTryAgain);
       return;
     }
 
@@ -155,7 +150,7 @@ function LoginPageInner() {
     if (!data?.access_token) {
       console.error(`[auth:${action}] missing access_token`, data);
       setLoading(false);
-      showError(accountMessages.en.serverReturnedAnIncompleteResponsePleaseTryAgain);
+      setError(accountMessages.en.serverReturnedAnIncompleteResponsePleaseTryAgain);
       return;
     }
 
@@ -165,7 +160,7 @@ function LoginPageInner() {
     } catch (storeErr) {
       console.error(`[auth:${action}] localStorage failed`, storeErr);
       setLoading(false);
-      showError(accountMessages.en.couldNotSaveSessionCheckBrowserStorageSettings);
+      setError(accountMessages.en.couldNotSaveSessionCheckBrowserStorageSettings);
       return;
     }
 
@@ -182,7 +177,7 @@ function LoginPageInner() {
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       {/* Logo */}
       <Header />
-      <main id="main-content" tabIndex={-1} className="relative flex justify-center px-4 py-10 sm:py-16">
+      <main id="main-content" tabIndex={-1} className="relative flex justify-center px-4 py-10 pb-40 sm:py-16 sm:pb-40">
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">
@@ -243,14 +238,14 @@ function LoginPageInner() {
 
             {tab === "login" && (
               <div className="text-right">
-                <Link href="/forgot-password" className="text-xs text-neutral-400 hover:text-violet-400 transition-colors font-mono">
+                <Link href="/forgot-password" className="inline-flex min-h-11 items-center px-1 text-xs text-neutral-400 hover:text-violet-400 transition-colors font-mono">
                   {tr('forgotPassword')}</Link>
               </div>
             )}
 
             {error && (
               <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-                <p className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
+                <p role="alert" className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
               </div>
             )}
 
@@ -282,12 +277,12 @@ function LoginPageInner() {
               <div className="space-y-2.5">
                 {oauth.github && (
                   <a href={`${API_URL}/api/v1/oauth/github`}
-                    className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
                     <GithubIcon /> {tr('continueWithGitHub')}</a>
                 )}
                 {oauth.google && (
                   <a href={`${API_URL}/api/v1/oauth/google`}
-                    className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
                     <GoogleIcon /> {tr('continueWithGoogle')}</a>
                 )}
               </div>
