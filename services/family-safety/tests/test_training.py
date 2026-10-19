@@ -40,7 +40,7 @@ class TrainingTest(unittest.TestCase):
         cls.base = f"http://127.0.0.1:{cls.server.server_port}/"
         cls.runtime = sync_playwright().start()
         cls.addClassCleanup(cls.runtime.stop)
-        cls.browser = cls.runtime.chromium.launch(headless=True, executable_path=sys.argv[2])
+        cls.browser = cls.runtime.chromium.launch(headless=True, executable_path=sys.argv[2], args=["--accept-lang=en-US"])
         cls.addClassCleanup(cls.browser.close)
 
     def open_page(self, context, status=204):

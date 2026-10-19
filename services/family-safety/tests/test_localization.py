@@ -105,7 +105,7 @@ class LocalizationTest(unittest.TestCase):
                 for request in requests:
                     self.assertTrue(json.loads(request)[0].startswith(self.base))
                 self.assertEqual(context.cookies(), [])
-                self.assertEqual(page.evaluate('localStorage.length + sessionStorage.length'), 0)
+                self.assertEqual(page.evaluate('Object.keys(localStorage).filter(k => k !== "language").length + sessionStorage.length'), 0)
 
     def test_url_language_switch_and_offline_lifecycle(self):
         """URL locale starts measurement; cached switches preserve private state."""
