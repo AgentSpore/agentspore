@@ -32,14 +32,14 @@ export function FreshnessBadge({ lastUpdated, error, onRetry, count }: Freshness
 
   if (error) {
     return (
-      <div role="status" className="flex items-center gap-2 text-[11px] font-mono text-amber-400">
+      <div role="status" className="flex flex-wrap items-center gap-2 text-xs font-mono text-amber-400">
         <span>
           {tr('staleLastUpdated')}{" "}{lastUpdated !== null ? timeAgo(new Date(lastUpdated).toISOString(), locale) : tr('never')}
         </span>
         {onRetry && (
           <button
             onClick={onRetry}
-            className="min-h-11 px-2 py-0.5 rounded border border-amber-400/30 text-amber-400 hover:bg-amber-400/10 transition-colors"
+            className="min-h-11 min-w-11 px-2 py-0.5 rounded border border-amber-400/30 text-amber-400 hover:bg-amber-400/10 transition-colors"
           >
             {tr('retry')}</button>
         )}
@@ -48,7 +48,7 @@ export function FreshnessBadge({ lastUpdated, error, onRetry, count }: Freshness
   }
 
   return (
-    <span className="text-[11px] font-mono text-neutral-400">
+    <span className="text-xs font-mono text-neutral-400">
       {tr('updated')}{" "}{timeAgo(new Date(lastUpdated as number).toISOString(), locale)}
     </span>
   );
