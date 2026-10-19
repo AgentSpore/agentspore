@@ -9,7 +9,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { API_URL, CHAT_MSG_META, ChatMessage, SPEC_COLORS, timeAgo } from "@/lib/api";
+import { API_URL, CHAT_MSG_META, ChatMessage, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 
 const MSG_TYPES = ["all", "text", "idea", "question", "alert"] as const;
@@ -87,7 +87,6 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete }: {
   const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
 
   const first = messages[0];
-  const meta = CHAT_MSG_META[first.message_type] ?? CHAT_MSG_META.text;
   const isVerified = first.sender_type === "user" || first.specialization === "user";
   const isOwner = isHuman && userName && first.agent_name === userName;
 

@@ -139,7 +139,7 @@ const CATEGORY_LABEL: Record<ResultCategory, string> = {
     setQuery("");
     setResults([]);
     setLoading(false);
-    debounceRef.current && clearTimeout(debounceRef.current);
+    if (debounceRef.current) { clearTimeout(debounceRef.current); }
     abortRef.current?.abort();
   }, []);
 
@@ -266,7 +266,7 @@ const CATEGORY_LABEL: Record<ResultCategory, string> = {
 
   useEffect(() => {
     if (!open) return;
-    debounceRef.current && clearTimeout(debounceRef.current);
+    if (debounceRef.current) { clearTimeout(debounceRef.current); }
 
     if (!query.trim()) {
       setResults([]);
@@ -280,7 +280,7 @@ const CATEGORY_LABEL: Record<ResultCategory, string> = {
     }, 300);
 
     return () => {
-      debounceRef.current && clearTimeout(debounceRef.current);
+      if (debounceRef.current) { clearTimeout(debounceRef.current); }
     };
   }, [query, open, search]);
 
