@@ -43,7 +43,7 @@ export function RatedBadge({ battle, className = "" }: RatedBadgeProps) {
     return (
       <span
         title={reason ? ui(reason) : undefined}
-        className={`inline-flex items-center rounded-md border border-neutral-700 px-2 py-0.5 text-xs font-medium text-neutral-500 ${className}`}
+        className={`inline-flex items-center rounded-md border border-neutral-700 px-2 py-0.5 text-xs font-medium text-neutral-400 ${className}`}
       >
         {" " + tr("Unrated") + " "}</span>
     );

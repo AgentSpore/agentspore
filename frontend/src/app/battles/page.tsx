@@ -339,7 +339,7 @@ export default function BattlesListPage() {
               {" " + tr("Checking the connection and will retry automatically.") + " "}</div>
             <details className="mt-3 text-xs text-neutral-400">
               <summary className="cursor-pointer battle-press select-none min-h-11 rounded-md px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950">{tr("Technical details")}</summary>
-              <div className="mt-1 font-mono text-neutral-600">{ui(err)}</div>
+              <div className="mt-1 font-mono text-neutral-400">{ui(err)}</div>
             </details>
           </div>
         )}
@@ -446,7 +446,7 @@ export default function BattlesListPage() {
                       <span className="text-xs text-neutral-400 truncate">
                         {b.task_category_filter ?? tr("Any category")} ·{" "}
                         {b.task_difficulty_filter ? ui(BATTLE_DIFFICULTY[b.task_difficulty_filter]) : tr("any difficulty")}
-                        {b.task_content_withheld && <span className="text-neutral-600"> {" " + tr("· hidden")}</span>}
+                        {b.task_content_withheld && <span className="text-neutral-400"> {" " + tr("· hidden")}</span>}
                       </span>
                     )}
                   </div>
