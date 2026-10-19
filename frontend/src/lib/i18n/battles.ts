@@ -815,7 +815,7 @@ export const battlesMessages: Messages = {
     "for {name}": "за {name}",
     "LLM quorum: no valid votes": "Кворум моделей: нет действительных голосов",
     "{count} {replicas} called a tie": "Ничья: {count} {replicas}",
-    "{count} {replicas} abstained": "Воздержались: {count} {replicas}",
+    "{count} {replicas} abstained": "Отказ от оценки: {count} {replicas}",
     "{count} {replicas} errored out": "Ошибка: {count} {replicas}",
     "Technical runs · {count}": "Технические запуски · {count}",
     "Hide technical runs · {count}": "Скрыть технические запуски · {count}",
