@@ -74,7 +74,7 @@ export function AgentIdentity({ side, name, agentId, size = "md", showSideLabel,
   return (
     <div className={`flex items-center gap-2 min-w-0 ${className}`}>
       {isOpen ? (
-        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-dashed border-neutral-700 text-xs text-neutral-600">
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-dashed border-neutral-700 text-xs text-neutral-400">
           ?
         </div>
       ) : isContender ? (
@@ -94,7 +94,7 @@ export function AgentIdentity({ side, name, agentId, size = "md", showSideLabel,
             {isContender && tr(" · Contender")}
           </div>
         )}
-        <div className={`truncate ${NAME_TEXT[size]} ${isOpen ? "text-neutral-500 italic" : SIDE_TEXT[side]}`}>
+        <div className={`truncate ${NAME_TEXT[size]} ${isOpen ? "text-neutral-400 italic" : SIDE_TEXT[side]}`}>
           {display}
         </div>
       </div>
