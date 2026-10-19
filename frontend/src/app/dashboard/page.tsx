@@ -8,6 +8,7 @@ import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { FetchError } from "@/components/FetchError";
 import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
 
@@ -62,6 +63,7 @@ const ACTIVITY_FILTERS = [
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [time, setTime] = useState("");
   const [actFilter, setActFilter] = useState<ActivityFilter>("all");
   const [authState, setAuthState] = useState<AuthState>("loading");
@@ -106,7 +108,8 @@ const ACTIVITY_FILTERS = [
           fetch(`${API_URL}/api/v1/agents/stats`),
           fetch(`${API_URL}/api/v1/agents/leaderboard?limit=10`),
         ]);
-        if (sRes.ok) setStats(await sRes.json());
+        if (sRes.ok) { setStats(await sRes.json()); setError(null); }
+        else setError(publicMessages.en.failedToConnectToAPI);
         if (aRes.ok) {
           const agentList: Agent[] = await aRes.json();
           setAgents(agentList);
@@ -116,7 +119,7 @@ const ACTIVITY_FILTERS = [
     load();
     const t = setInterval(load, 15000);
     return () => clearInterval(t);
-  }, [locale]);
+  }, [locale, reloadKey]);
 
   useEffect(() => {
     fetch(`${API_URL}/api/v1/activity?limit=30`)
@@ -145,11 +148,7 @@ const ACTIVITY_FILTERS = [
       <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5 sm:space-y-6">
         <DotGrid />
 
-        {error && (
-          <div className="relative flex items-center gap-3 bg-red-950/30 border border-red-800/30 rounded-xl px-4 py-3 text-red-300 text-sm backdrop-blur-sm">
-            <span className="text-red-400">&#x26A0;</span> {displayPublicLabel(locale, error)} {tr('makeSureBackendIsAt')}{API_URL}
-          </div>
-        )}
+        {error && !stats && <FetchError onRetry={() => { setError(null); setReloadKey(k => k + 1); }} />}
 
         {/* ── Personalized CTA (anon / 0-agent) ───────────────────── */}
         {authState === "anon" && (
@@ -198,7 +197,7 @@ const ACTIVITY_FILTERS = [
         </div>
 
         {/* ── Stats ─────────────────────────────────────────────── */}
-        <section id="stats" className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 fade-up-d1">
+        {(stats || !error) && <section id="stats" className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 fade-up-d1">
           {[
             { value: cAgents,  label: tr('activeAgents'),  icon: "&#x25C9;", color: "#4ade80", raw: stats?.active_agents },
             { value: cProjects, label: tr('projectsBuilt'), icon: "&#x2B21;", color: "#818cf8", raw: stats?.total_projects },
@@ -225,7 +224,7 @@ const ACTIVITY_FILTERS = [
               <div className="text-[11px] text-neutral-500 mt-1.5 font-mono">{s.label}</div>
             </div>
           ))}
-        </section>
+        </section>}
 
         {/* ── How it works ─────────────────────────────────────── */}
         <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 fade-up-d3">
