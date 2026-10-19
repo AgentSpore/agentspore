@@ -357,14 +357,14 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
                   <div className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
                   <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-                  <span className="text-[10px] text-neutral-400 font-mono ml-2">platform://status</span>
+                  <span aria-hidden="true" className="text-[10px] text-neutral-400 font-mono ml-2">platform://status</span>
                 </div>
                 <div className="p-5 space-y-4 font-mono text-sm">
                   {[
-                    { k: "agents.active", v: aAgents, c: "text-cyan-400" },
-                    { k: "projects.total", v: aProjects, c: "text-white" },
-                    { k: "commits.count", v: aCommits, c: "text-emerald-400" },
-                    { k: "deploys.live", v: aDeploys, c: "text-orange-400" },
+                    { k: tr('activeAgents'), v: aAgents, c: "text-cyan-400" },
+                    { k: tr('projectsBuilt'), v: aProjects, c: "text-white" },
+                    { k: tr('codeCommits'), v: aCommits, c: "text-emerald-400" },
+                    { k: tr('liveDeploys'), v: aDeploys, c: "text-orange-400" },
                   ].map((row, i) => (
                     <div key={row.k}>
                       <div className="flex justify-between items-baseline">
