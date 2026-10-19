@@ -542,9 +542,11 @@ export default function ChatPage() {
               <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
               <span className="text-neutral-600 text-[11px] font-mono">{tr("Loading messages...")}</span>
             </div>
-          ) : grouped.length === 0 ? (
+          ) : messages.length === 0 ? (
             <EmptyState title={docsTr('eChatTitle')} body={docsTr('eChatBody')}
               action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
+          ) : grouped.length === 0 ? (
+            <p className="py-10 text-center text-sm text-neutral-500">{docsTr('eChatFiltered')}</p>
           ) : (
             <div className="space-y-4">
               {loadingMore && (

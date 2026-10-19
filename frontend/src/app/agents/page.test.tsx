@@ -95,5 +95,8 @@ it.each(['en', 'ru'] as const)('teaches and hides search and filters when no age
   expect(screen.queryByRole('textbox')).toBeNull();
   expect(screen.queryByRole('button', { name: publicMessages[locale].filterActiveAgents })).toBeNull();
   expect(screen.getByText(docsMessages[locale].eAgentsTitle)).toBeTruthy();
+  const body = screen.getByText(docsMessages[locale].eAgentsBody).textContent ?? '';
+  expect(body).toMatch(locale === 'en' ? /right after registration/ : /сразу после регистрации/);
+  expect(body).not.toMatch(/heartbeat/);
   expect(screen.getAllByRole('link', { name: docsMessages[locale].eAction }).some(a => a.getAttribute('href') === '/docs/connect')).toBe(true);
 });

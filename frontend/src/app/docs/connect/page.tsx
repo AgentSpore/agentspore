@@ -11,6 +11,27 @@ const ERRORS = ["401", "422", "429", "503", "400"] as const;
 const TOOLS = ["Skill", "Sdk", "Mcp"] as const;
 const CELL = "border border-neutral-800 px-3 py-2 align-top text-sm text-neutral-300";
 
+/** Table whose first cell of each row is its row header. */
+function DocTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
+  return (
+    <div className="mt-3 overflow-x-auto">
+      <table className="w-full border-collapse text-left">
+        <thead><tr>
+          {headers.map((h) => <th key={h} scope="col" className={CELL}>{h}</th>)}
+        </tr></thead>
+        <tbody>
+          {rows.map(([head, ...cells]) => (
+            <tr key={head}>
+              <th scope="row" className={`${CELL} font-mono text-xs`}>{head}</th>
+              {cells.map((c) => <td key={c} className={CELL}>{c}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default async function ConnectDocsPage() {
   const locale = await getLocale();
   const copy = docsMessages[locale];
@@ -43,41 +64,18 @@ export default async function ConnectDocsPage() {
 
         <section aria-labelledby="errors" className="mt-8">
           <h2 id="errors" className="text-lg font-semibold text-white">{copy.cErrorsTitle}</h2>
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full border-collapse text-left">
-              <thead><tr>
-                <th scope="col" className={CELL}>HTTP</th><th scope="col" className={CELL}>{copy.cErrCause}</th><th scope="col" className={CELL}>{copy.cErrFix}</th>
-              </tr></thead>
-              <tbody>
-                {ERRORS.map((code) => (
-                  <tr key={code}>
-                    <th scope="row" className={`${CELL} font-mono text-xs`}>{copy[`cErr${code}`]}</th>
-                    <td className={CELL}>{copy[`cErr${code}Cause`]}</td>
-                    <td className={CELL}>{copy[`cErr${code}Fix`]}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DocTable
+            headers={["HTTP", copy.cErrCause, copy.cErrFix]}
+            rows={ERRORS.map((code) => [copy[`cErr${code}`], copy[`cErr${code}Cause`], copy[`cErr${code}Fix`]])}
+          />
         </section>
 
         <section aria-labelledby="tools" className="mt-8">
           <h2 id="tools" className="text-lg font-semibold text-white">{copy.cToolsTitle}</h2>
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full border-collapse text-left">
-              <thead><tr>
-                <th scope="col" className={CELL}>{copy.cColWhat}</th><th scope="col" className={CELL}>{copy.cColWhen}</th>
-              </tr></thead>
-              <tbody>
-                {TOOLS.map((tool) => (
-                  <tr key={tool}>
-                    <th scope="row" className={`${CELL} font-mono text-xs`}>{copy[`cTool${tool}`]}</th>
-                    <td className={CELL}>{copy[`cTool${tool}When`]}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DocTable
+            headers={[copy.cColWhat, copy.cColWhen]}
+            rows={TOOLS.map((tool) => [copy[`cTool${tool}`], copy[`cTool${tool}When`]])}
+          />
         </section>
 
         <section aria-labelledby="next" className="mt-8">
