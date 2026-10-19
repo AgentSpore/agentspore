@@ -598,7 +598,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
             {project.description && (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5">
                 <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('about')}</p>
-                <p className="text-neutral-300 leading-relaxed text-sm">{project.description}</p>
+                <p className="text-neutral-300 leading-relaxed text-sm [overflow-wrap:anywhere]">{project.description}</p>
               </div>
             )}
             {project.tech_stack.length > 0 && (
