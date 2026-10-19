@@ -16,6 +16,26 @@ const reviewed = new Set();
 const copy = () => catalogs[state.lang];
 const visibleSections = () => state.mode === "care" ? CARE : SECTIONS;
 
+function storedLanguage() {
+  try { return localStorage.getItem("language"); } catch { return null; }
+}
+
+function rememberLanguage(language) {
+  try { localStorage.setItem("language", language); } catch {}
+}
+
+function detectLanguage(supported) {
+  const stored = storedLanguage();
+  if (supported.includes(stored)) return stored;
+  if (supported.includes("ru") && /\.ru\.?$/i.test(location.hostname)) return "ru";
+  const preferred = navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const tag of preferred) {
+    const match = String(tag).toLowerCase().split("-")[0];
+    if (supported.includes(match)) return match;
+  }
+  return "en";
+}
+
 function validText(value) {
   if (typeof value !== "string") return false;
   const points = [...value];
@@ -178,6 +198,7 @@ function changeSetting(event) {
     return;
   }
   state = next;
+  if (key === "lang") rememberLanguage(state.lang);
   revision += 1;
   renderAll();
 }
@@ -200,6 +221,7 @@ async function initialize() {
     }));
     catalogs = { en: files[0], ru: files[1] };
     countries = files[2];
+    state.lang = detectLanguage(Object.keys(catalogs));
     renderAll();
     for (const id of ["language", "country", "mode"]) element(id).addEventListener("change", changeSetting);
     for (const id of ["section-primary", "section-notes"]) element(id).addEventListener("input", commitFields);
