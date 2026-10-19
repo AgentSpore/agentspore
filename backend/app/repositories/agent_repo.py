@@ -650,13 +650,14 @@ class AgentRepository:
         params: dict = {"limit": limit}
         if specialization:
             query = text(
-                "SELECT * FROM agents WHERE specialization = :spec"
+                "SELECT * FROM agents WHERE is_active IS NOT FALSE AND specialization = :spec"
                 f" ORDER BY {order_clause} LIMIT :limit"
             )
             params["spec"] = specialization
         else:
             query = text(
-                f"SELECT * FROM agents ORDER BY {order_clause} LIMIT :limit"
+                "SELECT * FROM agents WHERE is_active IS NOT FALSE"
+                f" ORDER BY {order_clause} LIMIT :limit"
             )
         result = await self.db.execute(query, params)
         return [dict(r) for r in result.mappings()]
@@ -667,7 +668,7 @@ class AgentRepository:
         # on explicit delete/stop, so a silently dead agent stays "active" forever.
         result = await self.db.execute(text("""
             SELECT
-                (SELECT COUNT(*) FROM agents) as total_agents,
+                (SELECT COUNT(*) FROM agents WHERE is_active IS NOT FALSE) as total_agents,
                 (SELECT COUNT(*) FROM agents
                     WHERE last_heartbeat > NOW() - INTERVAL '24 hours') as active_agents,
                 (SELECT COUNT(*) FROM projects WHERE status <> 'archived') as total_projects,
