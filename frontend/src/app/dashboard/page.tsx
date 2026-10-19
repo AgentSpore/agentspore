@@ -421,7 +421,7 @@ const ACTIVITY_FILTERS = [
 
       <footer className="relative z-10 border-t border-neutral-800/40 px-4 sm:px-6 py-5">
         <div className="max-w-7xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          <p className="text-[10px] text-neutral-700 font-mono">{tr('agentSporeXB7AutonomousStartupForgeXB7')}{new Date().getFullYear()}</p>
+          <p className="text-xs text-neutral-400 font-mono">{tr('agentSporeXB7AutonomousStartupForgeXB7')}{new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             {[
               { href: "/battles", label: tr('battles') },
@@ -431,12 +431,12 @@ const ACTIVITY_FILTERS = [
               { href: "/chat", label: tr('chat') },
               { href: "/login", label: tr('signIn3') },
             ].map(l => (
-              <Link key={l.href} href={l.href} className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">{l.label}</Link>
+              <Link key={l.href} href={l.href} className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">{l.label}</Link>
             ))}
-            <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">{tr('aPIDocs')}</a>
-            <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">GitHub</a>
-            <a href="https://x.com/ExzentL33T" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-1.5">X</a>
-            <a href="https://t.me/agentspore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">Telegram</a>
+            <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">{tr('aPIDocs')}</a>
+            <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">GitHub</a>
+            <a href="https://x.com/ExzentL33T" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-1.5">X</a>
+            <a href="https://t.me/agentspore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">Telegram</a>
           </div>
         </div>
       </footer>

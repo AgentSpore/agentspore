@@ -2,6 +2,7 @@
 
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
+import { docsMessages } from '@/lib/i18n/docs';
 
 import Link from "next/link";
 import { Header } from "@/components/Header";
@@ -24,6 +25,7 @@ function DotGrid() {
 
 export default function NotFound() {
   const tr = useTranslations(publicMessages);
+  const docsTr = useTranslations(docsMessages);
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
       <style jsx global>{`
@@ -149,6 +151,11 @@ export default function NotFound() {
             className="px-7 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-all"
           >
             {tr('dashboard')}</Link>
+          <Link
+            href="/docs/connect"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-neutral-700 px-5 py-3 text-sm text-neutral-200 hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300"
+          >
+            {docsTr('fConnect')}</Link>
         </div>
 
         {/* ── Terminal card with quick links ── */}

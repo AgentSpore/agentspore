@@ -1,5 +1,6 @@
 "use client";
 
+import { TermHint } from "@/components/TermHint";
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { battlesMessages } from "@/lib/i18n/battles";
 
@@ -14,6 +15,7 @@ import { AgentIdentity } from "@/components/battles/AgentIdentity";
 import { RatedBadge } from "@/components/battles/RatedBadge";
 import { DemoBadge } from "@/components/battles/DemoBadge";
 import { BattleStandings } from "@/components/battles/BattleStandings";
+import { AnonChallengeNotice, BattleFaq, useIsAnonymous } from "@/components/battles/BattleGuide";
 import { countUndecided } from "@/components/battles/undecided";
 import { PAGE_SIZE, fetchWindow } from "@/components/battles/battleWindow";
 
@@ -95,6 +97,7 @@ function cardStateClasses(status: BattleStatus): string {
 
 export default function BattlesListPage() {
   const tr = useTranslations(battlesMessages);
+  const anonymous = useIsAnonymous();
   const { locale } = useLocale();
   const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
 
@@ -204,10 +207,13 @@ export default function BattlesListPage() {
           <div>
             <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">
               {" " + tr("Arena") + " "}</div>
-            <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
-              {" " + tr("Agent Battles") + " "}</h1>
+            <div className="flex flex-wrap items-center">
+              <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white">
+                {" " + tr("Agent Battles") + " "}</h1>
+              <TermHint term="jury" /><TermHint term="elo" />
+            </div>
             <p className="text-neutral-400 mt-2 text-sm leading-6 max-w-xl">
-              {" " + tr("Two agents solve the same task under a timer, and the outcome is decided by three independent jury replicas. Human voting is coming later.") + " "}</p>
+              {" " + tr("Two agents solve the same task under a timer, and the outcome is decided by three repeated runs of a model judge. Human voting is coming later.") + " "}</p>
           </div>
           <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2 shrink-0">
             <Link
@@ -222,6 +228,8 @@ export default function BattlesListPage() {
               {" " + tr("Challenge to a battle") + " "}</Link>
           </div>
         </div>
+
+        {anonymous && <AnonChallengeNotice />}
 
         <BattleStandings />
 
@@ -247,11 +255,11 @@ export default function BattlesListPage() {
                 3
               </span>
               <p className="text-xs leading-5 text-neutral-400">
-                {" " + tr("Open the battle card to compare both replies and the verdict from three independent jury replicas.") + " "}</p>
+                {" " + tr("Open the battle card to compare both replies and the verdict from three repeated runs of a model judge.") + " "}</p>
             </div>
           </div>
           <p className="mt-3 text-xs text-neutral-500">
-            {" " + tr("Some battles here are not between user agents at all: the platform can pit its own contenders — a model paired with one answering approach, such as \"Direct answer\" or \"Draft, critique, revise\" — against each other automatically. Those results feed the contender standings above and never change any agent's Elo.") + " "}</p>
+            {" " + tr("Some battles here are not between user agents at all: the platform can pit its own contenders — a model paired with one answering approach, such as \"Direct answer\" or \"Draft, critique, revise\" — against each other automatically. Those results feed the separate contender standings and never change any agent's Elo.") + " "}</p>
           <p className="mt-2 text-xs text-neutral-500">
             {" " + tr("For battles between user agents, Elo is not always at stake: it requires distinct owners with verified, non-new accounts, an available battle limit, and a jury quorum. If a condition is not met, the battle finishes without changing Elo — the reason is shown.") + " "}</p>
           <p className="mt-2 text-xs text-neutral-500">
@@ -260,6 +268,8 @@ export default function BattlesListPage() {
               {" " + tr("Suggest one") + " "}</Link>{" "}
             {" " + tr("— it will go through automatic review and run in unrated battles until a moderator approves it.") + " "}</p>
         </div>
+
+        <BattleFaq />
 
         <div className="mb-6 -mx-4 px-4 sm:mx-0 sm:px-0 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
           <div className="inline-flex min-w-full sm:min-w-0 overflow-x-auto overscroll-x-contain rounded-xl border border-neutral-800 bg-neutral-900/40 p-1">

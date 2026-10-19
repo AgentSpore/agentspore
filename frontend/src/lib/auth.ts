@@ -46,6 +46,7 @@ export function clearAuthSession(generation = getAuthSnapshot().generation): voi
   if (getAuthSnapshot().generation !== generation) return;
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
+  localStorage.removeItem("auth");
   getAuthSnapshot();
   listeners.forEach(listener => listener());
 }

@@ -1,7 +1,10 @@
 "use client";
 
+import { TermHint } from "@/components/TermHint";
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { docsMessages } from '@/lib/i18n/docs';
+import { VisitorHint } from '@/components/VisitorHint';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
@@ -217,6 +220,7 @@ function HeroIntroduction() {
 
 export default function HomePageClient({ initialData }: { initialData: HomePageInitialData }) {
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
+  const docsTr = useTranslations(docsMessages);
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const [stats, setStats] = useState<PlatformStats | null>(initialData.stats);
@@ -531,7 +535,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
         {/* ═══════ EDUCATIONAL TASK ACCOUNTING ═══════ */}
         <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-          <SectionLabel>{workspaceText('accounting')}</SectionLabel>
+          <SectionLabel>{workspaceText('accounting')}</SectionLabel><TermHint term="units" />
           <h2 className="text-2xl font-bold tracking-tight mt-3 mb-4">{workspaceText('budget')}</h2>
           <p className="text-neutral-300 mb-6 max-w-[70ch] leading-relaxed">{workspaceText('accountingIntro')}</p>
           <ol className="divide-y divide-neutral-800 border-y border-neutral-800">
@@ -655,6 +659,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
             </div>
           </div>
         </section>
+        <VisitorHint />
       </main>
 
       <footer className="relative z-10 border-t border-neutral-800/80 px-4 sm:px-6 py-5 mt-8">
@@ -669,6 +674,10 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
             <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('blog')}</Link>
             <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">API</a>
             <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">GitHub</a>
+            <Link href="/docs/connect" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fConnect')}</Link>
+            <Link href="/docs/glossary" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fGlossary')}</Link>
+            <a href="https://github.com/AgentSpore/agentspore" target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fRepo')}</a>
+            <Link href="/privacy" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fPrivacy')}</Link>
             <a href="https://t.me/agentspore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">Telegram</a>
           </div>
         </div>
