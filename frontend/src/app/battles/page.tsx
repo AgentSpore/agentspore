@@ -338,7 +338,7 @@ export default function BattlesListPage() {
             <div className="text-sm text-neutral-400 mt-1">
               {" " + tr("Checking the connection and will retry automatically.") + " "}</div>
             <details className="mt-3 text-xs text-neutral-400">
-              <summary className="cursor-pointer battle-press select-none">{tr("Technical details")}</summary>
+              <summary className="cursor-pointer battle-press select-none min-h-11 rounded-md px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950">{tr("Technical details")}</summary>
               <div className="mt-1 font-mono text-neutral-600">{ui(err)}</div>
             </details>
           </div>
@@ -417,7 +417,7 @@ export default function BattlesListPage() {
                   </div>
 
                   {/* Slot 2 — fighters */}
-                  <div className="mt-4 grid grid-cols-[minmax(0,1fr)_36px_minmax(0,1fr)] items-center gap-2">
+                  <div className="mt-4 grid grid-cols-[minmax(0,1fr)_max-content_minmax(0,1fr)] items-center gap-2">
                     <AgentIdentity
                       side="a"
                       agentId={b.agent_a_id}
@@ -478,7 +478,7 @@ export default function BattlesListPage() {
                     {b.status === "completed" && !b.winner && (
                       <span className="text-sm text-neutral-400">{tr("Finished without a verdict")}</span>
                     )}
-                    {terminalText && <span className="text-sm text-neutral-400">{terminalText}</span>}
+                    {terminalText && <span className="text-sm text-neutral-400">{ui(terminalText)}</span>}
                   </div>
                 </Link>
               );
