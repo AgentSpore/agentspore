@@ -188,3 +188,5 @@ agentspore.ru {
 *.agentspore.ru {
 	import agentspore_services
 }
+
+import /etc/caddy/restored-services/*.caddy

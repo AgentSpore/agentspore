@@ -1,0 +1,117 @@
+# Explicit override: never included by the default production stack.
+x-restored-app: &restored-app
+  user: "10001:10001"
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+  mem_limit: 512m
+  memswap_limit: 512m
+  cpus: 1.0
+  tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777"]
+  logging: &restored-logging
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  caddy:
+    volumes:
+      - ./restored-services.caddy:/etc/caddy/restored-services/native.caddy:ro
+    networks:
+      - restored-otkrytka
+      - restored-podmemory
+      - restored-pereklichka
+    depends_on:
+      restored-otkrytka: {condition: service_healthy}
+      restored-podmemory: {condition: service_healthy}
+      restored-pereklichka: {condition: service_healthy}
+
+  restored-otkrytka:
+    <<: *restored-app
+    image: "${RESTORED_OTKRYTKA_IMAGE:?set an immutable repository@sha256 image reference}"
+    environment:
+      OTKRYTKA_DB_PATH: /data/otkrytka.db
+      OTKRYTKA_UPLOAD_DIR: /data/uploads
+      OTKRYTKA_ENV: production
+      OTKRYTKA_CANONICAL_BASE_URL: https://otkrytka.agentspore.com
+    volumes: [restored_otkrytka_data:/data]
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks: [restored-otkrytka]
+
+  restored-podmemory:
+    <<: *restored-app
+    image: "${RESTORED_PODMEMORY_IMAGE:?set an immutable repository@sha256 image reference}"
+    env_file: "${RESTORED_PODMEMORY_ENV_FILE:?set the operator-owned PodMemory settings file path}"
+    mem_limit: 768m
+    memswap_limit: 768m
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777"]
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks: [restored-podmemory]
+
+  restored-pereklichka:
+    <<: *restored-app
+    image: "${RESTORED_PEREKLICHKA_IMAGE:?set an immutable repository@sha256 image reference}"
+    environment:
+      DATABASE_HOST: restored-pereklichka-db
+      POSTGRES_PASSWORD_FILE: /run/secrets/restored_db_password
+      SKILL_ID_FILE: /run/secrets/restored_skill_id
+    secrets: [restored_db_password, restored_skill_id]
+    depends_on:
+      restored-pereklichka-db: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, deploy/readiness.py]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 30s
+    networks: [restored-pereklichka, restored-pereklichka-db]
+
+  restored-pereklichka-db:
+    <<: *restored-app
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    user: "70:10001"
+    cpus: 0.5
+    environment:
+      POSTGRES_USER: pereklichka
+      POSTGRES_DB: pereklichka
+      POSTGRES_PASSWORD_FILE: /run/secrets/restored_db_password
+    secrets: [restored_db_password]
+    volumes: [restored_pereklichka_data:/var/lib/postgresql/data]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+      - /var/run/postgresql:rw,noexec,nosuid,nodev,size=1m,uid=70,gid=10001,mode=0770
+    healthcheck:
+      test: [CMD, pg_isready, -U, pereklichka, -d, pereklichka]
+      interval: 5s
+      timeout: 3s
+      start_period: 15s
+      retries: 10
+    networks: [restored-pereklichka-db]
+
+networks:
+  restored-otkrytka: {}
+  restored-podmemory: {}
+  restored-pereklichka: {}
+  restored-pereklichka-db: {internal: true}
+
+volumes:
+  restored_otkrytka_data: {}
+  restored_pereklichka_data: {}
+
+secrets:
+  restored_db_password:
+    file: "${RESTORED_POSTGRES_PASSWORD_FILE:?set the operator-owned password file path}"
+  restored_skill_id:
+    file: "${RESTORED_SKILL_ID_FILE:?set the operator-owned skill ID file path}"
