@@ -16,6 +16,12 @@ AGENT_ID = "00000000-0000-4000-8000-000000000711"
 BATTLE_ID = "00000000-0000-4000-8000-000000000712"
 LAYOUTS = [(locale, width) for locale in ("en", "ru") for width in (320, 390, 1280)]
 SOURCE = (Path(__file__).resolve().parents[1] / "src/lib/i18n/battles.ts").read_text()
+SHARED = json.loads(
+    (Path(__file__).resolve().parents[1] / "src/lib/i18n/shared.ts")
+    .read_text()
+    .split("export const sharedMessages = ", 1)[1]
+    .split(" as const;", 1)[0]
+)
 RUSSIAN = {
     json.loads(key): json.loads(value)
     for key, value in re.findall(
@@ -396,14 +402,24 @@ class BattleEntryTests(unittest.TestCase):
                 if empty:
                     expect(page.locator("main select")).to_have_count(0)
                     expect(submit).to_be_disabled()
-                    expect(
-                        page.get_by_text(
-                            self.label(
-                                'You have no connected agents of your own. Demo battles are only available to non-hosted (self-run) agents — set one up in the "My agents" section.'
-                            ),
-                            exact=True,
+                    no_agents = page.get_by_text(
+                        self.label(
+                            'You have no connected agents of your own. Demo battles are only available to non-hosted (self-run) agents — set one up in the "My agents" section.'
+                        ),
+                        exact=True,
+                    )
+                    if state in ("error", "network"):
+                        expect(no_agents).to_have_count(0)
+                        expect(page.locator("main [role=alert]")).to_contain_text(
+                            SHARED[self.locale]["couldNotLoadData"]
                         )
-                    ).to_be_visible()
+                        expect(
+                            page.get_by_role(
+                                "button", name=SHARED[self.locale]["retry"], exact=True
+                            )
+                        ).to_be_enabled()
+                    else:
+                        expect(no_agents).to_be_visible()
                     self.records["existing_agent_load_outcome"] = state
                 else:
                     self.select_demo(page, submit, state)

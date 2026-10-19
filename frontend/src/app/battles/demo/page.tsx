@@ -4,15 +4,64 @@ import { useTranslations } from "@/lib/i18n/LocaleProvider";
 import { battlesMessages } from "@/lib/i18n/battles";
 
 import Link from "next/link";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_URL, CreateDemoBattleRequest, ExternalAgentItem, isAgentLive } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import AgentAvatar from "@/components/AgentAvatar";
+import { FetchError } from "@/components/FetchError";
 
 const selectClasses =
   "w-full min-h-11 rounded-lg bg-neutral-950/70 border border-neutral-700 px-3 text-sm text-neutral-100 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500/30 transition-colors";
+
+type AgentLoadState =
+  | { status: "loading" | "error" }
+  | { status: "ready"; agents: ExternalAgentItem[] };
+
+function useDemoAgents() {
+  const router = useRouter();
+  const [state, setState] = useState<AgentLoadState>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const inFlight = useRef(false);
+
+  useEffect(() => {
+    if (!localStorage.getItem("access_token")) {
+      router.replace("/login?next=/battles/demo");
+      return;
+    }
+    const controller = new AbortController();
+    inFlight.current = true;
+    const load = async () => {
+      try {
+        const response = await fetchWithAuth(`${API_URL}/api/v1/users/me/external-agents`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const agents: ExternalAgentItem[] = await response.json();
+        if (!Array.isArray(agents)) throw new Error("Invalid agent response");
+        if (!controller.signal.aborted) setState({ status: "ready", agents });
+      } catch {
+        if (!controller.signal.aborted) setState({ status: "error" });
+      } finally {
+        if (!controller.signal.aborted) inFlight.current = false;
+      }
+    };
+    void load();
+    return () => {
+      controller.abort();
+      inFlight.current = false;
+    };
+  }, [attempt, router]);
+
+  const retry = () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setState({ status: "loading" });
+    setAttempt((value) => value + 1);
+  };
+  return { state, retry };
+}
 
 /**
  * Demo-battle entry point (V71). Unlike /battles/new, there is no opponent
@@ -27,8 +76,9 @@ export default function DemoBattlePage() {
   const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
 
   const router = useRouter();
-  const [myAgents, setMyAgents] = useState<ExternalAgentItem[]>([]);
-  const [agentsLoading, setAgentsLoading] = useState(true);
+  const { state: agentLoad, retry } = useDemoAgents();
+  const myAgents = agentLoad.status === "ready" ? agentLoad.agents : [];
+  const agentsLoading = agentLoad.status === "loading";
   const [agentAId, setAgentAId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -36,24 +86,12 @@ export default function DemoBattlePage() {
 
   const agentSelectId = useId();
 
-  useEffect(() => {
-    if (typeof window !== "undefined" && !localStorage.getItem("access_token")) {
-      router.replace("/login?next=/battles/demo");
-      return;
-    }
-    fetchWithAuth(`${API_URL}/api/v1/users/me/external-agents`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: ExternalAgentItem[]) => setMyAgents(data))
-      .catch(() => {})
-      .finally(() => setAgentsLoading(false));
-  }, [router]);
-
   const selectedAgentA = myAgents.find((a) => a.id === agentAId);
   const agentInvalid = touched && !agentAId;
 
   const submit = async () => {
     setTouched(true);
-    if (!agentAId) return;
+    if (!agentAId || agentLoad.status !== "ready" || submitting) return;
     setSubmitting(true);
     setErr(null);
     try {
@@ -112,12 +150,14 @@ export default function DemoBattlePage() {
           <p className="text-xs text-neutral-500 mb-3">{tr("Only active self-run agents.")}</p>
 
           {agentsLoading && (
-            <div className="px-1 py-3 flex items-center gap-2 text-sm text-neutral-500">
+            <div role="status" className="px-1 py-3 flex items-center gap-2 text-sm text-neutral-500">
               <span className="h-3 w-3 rounded-full border-[1.5px] border-current/30 border-t-current animate-spin" />
               {" " + tr("Loading your agents…") + " "}</div>
           )}
 
-          {!agentsLoading && myAgents.length === 0 && (
+          {agentLoad.status === "error" && <FetchError onRetry={retry} />}
+
+          {agentLoad.status === "ready" && myAgents.length === 0 && (
             <div className="text-sm text-neutral-500">
               {" " + tr("You have no connected agents of your own. Demo battles are only available to non-hosted (self-run) agents — set one up in the \"My agents\" section.") + " "}</div>
           )}
