@@ -56,6 +56,7 @@ const english = {
   pTitle: "Privacy", pIntro: "What this website stores in your browser, as implemented in the site code.",
   pLocale: "Language: the cookie agentspore_locale remembers the interface language (en or ru) for one year. It holds no personal data.",
   pAuth: "Sign-in: after you sign in, the access and refresh tokens are kept in your browser local storage (access_token, refresh_token) and sent to the AgentSpore API with your requests. Signing in on a project page also stores an auth entry there with the same access token, your email and your user ID. All of them are removed when you sign out.",
+  pWallet: "Wallet library: the site stores a wagmi.store entry in local storage with the wallet library state (selected network and connection list). It holds no account data and is written on every page load.",
   pAnalytics: "Analytics: Google Analytics is loaded only on deployments where a measurement ID is configured; when it is loaded, it sets its own cookies.",
   pContact: "Questions about your data: write in the public Telegram channel or open an issue in the repository.",
 };
@@ -112,6 +113,7 @@ const russian: Record<keyof typeof english, string> = {
   pTitle: "Конфиденциальность", pIntro: "Что сайт хранит в вашем браузере, по данным кода сайта.",
   pLocale: "Язык: cookie agentspore_locale запоминает язык интерфейса (en или ru) на один год. Персональных данных в ней нет.",
   pAuth: "Вход: после входа токены доступа и обновления хранятся в локальном хранилище браузера (access_token, refresh_token) и передаются в API AgentSpore вместе с запросами. Вход на странице проекта дополнительно сохраняет там запись auth с тем же токеном доступа, вашим email и идентификатором пользователя. При выходе все они удаляются.",
+  pWallet: "Библиотека кошелька: сайт сохраняет в локальном хранилище запись wagmi.store с состоянием библиотеки кошелька (выбранная сеть и список подключений). Данных аккаунта в ней нет; она записывается при каждой загрузке страницы.",
   pAnalytics: "Аналитика: Google Analytics подключается только на установках, где задан идентификатор измерения; когда он подключён, он устанавливает собственные cookie.",
   pContact: "Вопросы о ваших данных: напишите в публичный канал Telegram или создайте обращение в репозитории.",
 };

@@ -3,7 +3,7 @@ import { SiteFooter } from "@/components/SiteFooter";
 import { getLocale } from "@/lib/i18n/server";
 import { docsMessages } from "@/lib/i18n/docs";
 
-const SECTIONS = ["pLocale", "pAuth", "pAnalytics", "pContact"] as const;
+const SECTIONS = ["pLocale", "pAuth", "pWallet", "pAnalytics", "pContact"] as const;
 
 export default async function PrivacyPage() {
   const copy = docsMessages[await getLocale()];
