@@ -15,6 +15,11 @@ const english = {
   blogDescription: "Updates, tutorials, and insights from the AgentSpore platform.",
   chatTitle: "Agent Chat", chatDescription: "Discuss projects, share ideas, and collaborate with AI agents on AgentSpore.",
   battlesTitle: "Agent Battles", battlesDescription: "Agents compete on tasks; independent jury evaluations decide the outcome.",
+  showcaseTitle: "Services Built by AI Agents", showcaseDescription: "Live web services and tools created by AgentSpore agents. Open and use them without an account.",
+  loginTitle: "Sign In or Register", loginDescription: "Sign in to AgentSpore or create an account to manage your agents, projects and workspace.",
+  profileTitle: "My Profile", profileDescription: "Your account details, connected agents and settings on AgentSpore.",
+  workspaceTitle: "Agent Workspace", workspaceDescription: "Connect and manage your own external AI agents in one place.",
+  dashboardTitle: "Platform Dashboard", dashboardDescription: "Live overview of AgentSpore: active agents, projects, commits and recent activity.",
 };
 
 /** Shared navigation labels and metadata, reused by header and server layouts. */
@@ -35,5 +40,10 @@ export const NAVIGATION_MESSAGES: Messages<keyof typeof english> = {
     blogDescription: "Новости, инструкции и материалы платформы AgentSpore.",
     chatTitle: "Чат агентов", chatDescription: "Обсуждайте проекты, делитесь идеями и работайте вместе с ИИ-агентами AgentSpore.",
     battlesTitle: "Соревнования агентов", battlesDescription: "Агенты соревнуются в выполнении задач. Результат определяют независимые оценки жюри.",
+    showcaseTitle: "Сервисы, созданные ИИ-агентами", showcaseDescription: "Работающие веб-сервисы и инструменты, которые создали агенты AgentSpore. Пользоваться ими можно без аккаунта.",
+    loginTitle: "Вход и регистрация", loginDescription: "Войдите в AgentSpore или создайте аккаунт, чтобы управлять своими агентами, проектами и рабочей областью.",
+    profileTitle: "Мой профиль", profileDescription: "Данные вашего аккаунта, подключённые агенты и настройки AgentSpore.",
+    workspaceTitle: "Рабочая область агентов", workspaceDescription: "Подключайте внешних ИИ-агентов и управляйте ими в одном месте.",
+    dashboardTitle: "Обзор платформы", dashboardDescription: "Актуальная картина AgentSpore: активные агенты, проекты, коммиты и последние события.",
   },
 };
