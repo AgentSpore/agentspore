@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 import { Header } from "./Header";
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/showcase", useRouter: () => ({ refresh: vi.fn() }) }));
+const route = vi.hoisted(() => ({ pathname: "/showcase" }));
+vi.mock("next/navigation", () => ({ usePathname: () => route.pathname, useRouter: () => ({ refresh: vi.fn() }) }));
 const SYNTHETIC_USER = { id: "synthetic-user", name: "Synthetic Person", email: "person@example.test", avatar_url: null, token_balance: 0, is_admin: false };
 beforeEach(() => {
+  route.pathname = "/showcase";
   const values = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: vi.fn((key: string) => values.get(key) ?? null),
@@ -198,4 +200,60 @@ it.each(["en", "ru"] as const)("restores the originating disclosure when account
     expect(more.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(origin === "account" ? account : more);
   }
+});
+
+
+it.each(["en", "ru"] as const)("keeps Dashboard primary and groups all mobile routes in %s", locale => {
+  render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
+  const dashboard = locale === "en" ? "Dashboard" : "Обзор";
+  expect(screen.getByRole("link", { name: dashboard }).getAttribute("href")).toBe("/dashboard");
+  fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "More" : "Ещё" }));
+  expect(screen.getAllByRole("link", { name: dashboard })).toHaveLength(1);
+  fireEvent.keyDown(document, { key: "Escape" });
+  fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Menu" : "Меню" }));
+  const groups = [
+    { name: locale === "en" ? "Services for people" : "Сервисы для людей", routes: ["/showcase"] },
+    { name: locale === "en" ? "Platform" : "Платформа", routes: ["/workspace", "/projects", "/agents", "/dashboard"] },
+    { name: locale === "en" ? "Community and research" : "Сообщество и исследования", routes: ["/chat", "/battles", "/teams", "/blog"] },
+  ];
+  for (const group of groups) {
+    expect(screen.getByRole("heading", { name: group.name })).toBeTruthy();
+    const navigation = screen.getByRole("navigation", { name: group.name });
+    expect(within(navigation).getAllByRole("link").map(link => link.getAttribute("href"))).toEqual(group.routes);
+    for (const link of within(navigation).getAllByRole("link")) expect(link.textContent).not.toMatch(/^[>/$!^+@~]/);
+  }
+  fireEvent.click(within(screen.getByRole("navigation", { name: groups[2].name })).getByRole("link", { name: locale === "en" ? "Blog" : "Блог" }));
+  expect(screen.queryByRole("navigation", { name: groups[0].name })).toBeNull();
+});
+
+it.each(["/projects/detail", "/projects-old"])("marks only the current route segment for %s", pathname => {
+  route.pathname = pathname;
+  render(<LocaleProvider initialLocale="en"><Header /></LocaleProvider>);
+  expect(screen.getByRole("link", { name: "Projects" }).getAttribute("aria-current")).toBe(pathname === "/projects/detail" ? "page" : null);
+});
+
+
+it("keeps mobile navigation open and translates its groups when the locale changes", () => {
+  render(<LocaleProvider initialLocale="en"><Header /></LocaleProvider>);
+  const toggle = screen.getByRole("button", { name: "Menu" });
+  fireEvent.click(toggle);
+  expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toBeTruthy();
+  fireEvent.click(screen.getAllByRole("button", { name: "Русский" })[1]);
+  expect(screen.getByRole("heading", { name: "Сервисы для людей" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Платформа" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Меню" }).getAttribute("aria-expanded")).toBe("true");
+});
+
+it("preserves mobile account controls and closes navigation when the profile is opened", async () => {
+  localStorage.setItem("access_token", "synthetic-access");
+  vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(SYNTHETIC_USER)));
+  render(<LocaleProvider initialLocale="en"><Header /></LocaleProvider>);
+  await screen.findByRole("button", { name: /Synthetic Person/ });
+  const menu = screen.getByRole("button", { name: "Menu" });
+  fireEvent.click(menu);
+  expect(screen.getByRole("button", { name: /Sign Out/ })).toBeTruthy();
+  expect(screen.getByRole("link", { name: /For AI agents/ }).getAttribute("href")).toContain("/skill.md");
+  fireEvent.click(screen.getByRole("link", { name: "My Profile" }));
+  expect(menu.getAttribute("aria-expanded")).toBe("false");
+  expect(localStorage.removeItem).not.toHaveBeenCalled();
 });

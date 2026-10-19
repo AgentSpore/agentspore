@@ -31,21 +31,43 @@ function GithubIcon() {
 }
 
 interface NavLink { href: string; label: keyof typeof NAVIGATION_MESSAGES.en; icon: string; }
-// Primary nav — core daily-driver pages. Keep ≤4 to avoid choice paralysis.
+// Primary nav — core daily-driver pages. Keep ≤5 to avoid choice paralysis.
 const navLinks: NavLink[] = [
   { href: "/workspace", label: "workspace", icon: ">" },
   { href: "/projects", label: "projects", icon: "/" },
   { href: "/agents", label: "agents", icon: "@" },
   { href: "/showcase", label: "showcase", icon: "~" },
-];
-// Secondary nav — folded under "More ▾" dropdown on desktop, flat list on mobile.
-const navMore: NavLink[] = [
   { href: "/dashboard", label: "dashboard", icon: ">" },
+];
+// Secondary nav — folded under "More ▾" dropdown on desktop, grouped with visible headings on mobile.
+const navMore: NavLink[] = [
   { href: "/chat", label: "chat", icon: "$" },
   { href: "/battles", label: "battles", icon: "!" },
   { href: "/teams", label: "teams", icon: "^" },
   { href: "/blog", label: "blog", icon: "+" },
 ];
+
+function MobileNavGroup({ title, links, isActive, onNavigate }: {
+  title: string; links: NavLink[]; isActive: (href: string) => boolean; onNavigate: () => void;
+}) {
+  const headingId = useId();
+  const t = useTranslations(NAVIGATION_MESSAGES);
+  return (
+    <nav aria-labelledby={headingId} className="py-2">
+      <h2 id={headingId} className="px-3 pb-1 text-xs font-medium text-neutral-300">{title}</h2>
+      {links.map(({ href, label }) => (
+        <Link key={href} href={href} onClick={onNavigate}
+          aria-current={isActive(href) ? "page" : undefined}
+          className={`flex min-h-11 items-center justify-between px-3 py-2.5 text-sm rounded-lg transition-all focus-visible:outline-2 focus-visible:outline-violet-300 ${
+            isActive(href) ? "text-white bg-white/[0.06]" : "text-neutral-400 hover:text-white hover:bg-white/[0.04]"
+          }`}>
+          {t(label)}
+          {isActive(href) && <span aria-hidden="true" className="w-1 h-1 rounded-full bg-violet-400" />}
+        </Link>
+      ))}
+    </nav>
+  );
+}
 
 /** Shared navigation and locale selection; auth behaviour and user content are preserved. */
 export function Header() {
@@ -62,6 +84,8 @@ export function Header() {
   const [scrolled, setScrolled] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const accountPanelId = useId();
+  const morePanelId = useId();
+  const mobilePanelId = useId();
   const moreRef = useRef<HTMLDivElement>(null);
   const mobileToggleRef = useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
@@ -120,7 +144,7 @@ export function Header() {
     : "?";
 
   const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href);
+    pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
 
   return (
     <>
@@ -235,6 +259,7 @@ export function Header() {
                 <Link
                   key={href}
                   href={href}
+                  aria-current={isActive(href) ? "page" : undefined}
                   className={`relative min-h-11 px-4 py-2.5 focus-visible:outline-2 focus-visible:outline-violet-300 transition-all flex items-center gap-2 font-mono border-b-2 ${
                     isActive(href)
                       ? "text-white border-violet-500"
@@ -257,7 +282,7 @@ export function Header() {
                       ? "text-white border-violet-500"
                       : "text-neutral-300 border-transparent hover:text-neutral-300 hover:border-neutral-700"
                   }`}
-                  aria-haspopup="menu"
+                  aria-controls={morePanelId}
                   aria-expanded={moreOpen}
                 >
                   {t("more")}
@@ -266,11 +291,12 @@ export function Header() {
                   </svg>
                 </button>
                 {moreOpen && (
-                  <div className="header-menu-enter absolute left-1/2 -translate-x-1/2 top-full mt-2 w-48 rounded-xl border border-neutral-800/80 bg-[#0c0c0c] shadow-[0_8px_40px_rgba(0,0,0,0.6)] py-1 z-50">
+                  <div id={morePanelId} className="header-menu-enter absolute left-1/2 -translate-x-1/2 top-full mt-2 w-48 rounded-xl border border-neutral-800/80 bg-[#0c0c0c] shadow-[0_8px_40px_rgba(0,0,0,0.6)] py-1 z-50">
                     {navMore.map(({ href, label, icon }) => (
                       <Link
                         key={href}
                         href={href}
+                        aria-current={isActive(href) ? "page" : undefined}
                         onClick={() => setMoreOpen(false)}
                         className={`flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] transition-all ${
                           isActive(href)
@@ -330,6 +356,7 @@ export function Header() {
               <button
                 ref={mobileToggleRef}
                 aria-expanded={mobileOpen}
+                aria-controls={mobilePanelId}
                 onClick={() => setMobileOpen((o) => !o)}
                 className="min-h-11 min-w-11 p-2 text-neutral-300 hover:text-white hover:bg-white/[0.04] rounded-lg transition-all"
                 aria-label={t("menu")}
@@ -350,27 +377,13 @@ export function Header() {
 
         {/* Mobile dropdown */}
         {mobileOpen && (
-          <div className="mobile-menu-enter lg:hidden border-t border-neutral-800/60 bg-[#0a0a0a]/98 backdrop-blur-md px-4 py-3 flex flex-col gap-0.5">
-            {[...navLinks, ...navMore].map(({ href, label, icon }) => (
-              <Link
-                key={href}
-                href={href}
-                onClick={() => setMobileOpen(false)}
-                className={`flex min-h-11 items-center gap-3 px-3 py-2.5 text-sm rounded-lg transition-all font-mono ${
-                  isActive(href)
-                    ? "text-white bg-white/[0.06]"
-                    : "text-neutral-400 hover:text-white hover:bg-white/[0.04]"
-                }`}
-              >
-                <span aria-hidden="true" className={`text-xs w-4 text-center ${isActive(href) ? "text-violet-400" : "text-neutral-700"}`}>
-                  {icon}
-                </span>
-                {t(label)}
-                {isActive(href) && (
-                  <span className="ml-auto w-1 h-1 rounded-full bg-violet-400" />
-                )}
-              </Link>
-            ))}
+          <div id={mobilePanelId} className="mobile-menu-enter max-h-[calc(100dvh-7rem)] overflow-y-auto overscroll-contain lg:hidden border-t border-neutral-800/60 bg-[#0a0a0a]/98 backdrop-blur-md px-4 py-3 flex flex-col gap-0.5">
+            <MobileNavGroup title={t("peopleGroup")} links={navLinks.filter(link => link.label === "showcase")}
+              isActive={isActive} onNavigate={() => setMobileOpen(false)} />
+            <MobileNavGroup title={t("platformGroup")} links={navLinks.filter(link => link.label !== "showcase")}
+              isActive={isActive} onNavigate={() => setMobileOpen(false)} />
+            <MobileNavGroup title={t("communityGroup")} links={navMore}
+              isActive={isActive} onNavigate={() => setMobileOpen(false)} />
 
             <a
               href={GITHUB_URL}

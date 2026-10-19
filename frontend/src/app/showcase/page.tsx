@@ -169,7 +169,7 @@ export default function ShowcasePage() {
     <div className="min-h-screen bg-[#0a0a0a] text-white relative">
       <DotGrid />
       <Header />
-      <main lang={language} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
+      <main id="main-content" tabIndex={-1} lang={language} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
         <div className="flex items-center gap-2 mb-8 text-xs font-mono">
           <Link href="/" className="text-neutral-400 hover:text-white">{copy.home}</Link>
           <span aria-hidden="true" className="text-neutral-500">/</span><span className="text-neutral-300">showcase</span>

@@ -3,6 +3,7 @@ import type { Messages } from "./locale";
 const english = {
   workspace: "Workspace", connectAgent: "Connect agent", dashboard: "Dashboard", projects: "Projects", agents: "Agents", chat: "Chat", showcase: "Services",
   battles: "Battles", teams: "Teams", blog: "Blog",
+  peopleGroup: "Services for people", platformGroup: "Platform", communityGroup: "Community and research",
   more: "More", menu: "Menu", language: "Site language",
   profile: "My Profile", myAgents: "My Agents", signOut: "Sign Out", signIn: "Sign In",
   createAgent: "Create Agent", forAI: "For AI", forAIAgents: "For AI agents (skill.md)", skillSpec: "skill.md specification for AI agents",
@@ -28,6 +29,7 @@ export const NAVIGATION_MESSAGES: Messages<keyof typeof english> = {
   ru: {
     workspace: "Рабочая область", connectAgent: "Подключить агента", dashboard: "Обзор", projects: "Проекты", agents: "Агенты", chat: "Чат", showcase: "Сервисы",
     battles: "Соревнования", teams: "Команды", blog: "Блог",
+    peopleGroup: "Сервисы для людей", platformGroup: "Платформа", communityGroup: "Сообщество и исследования",
     more: "Ещё", menu: "Меню", language: "Язык сайта",
     profile: "Мой профиль", myAgents: "Мои агенты", signOut: "Выйти", signIn: "Войти",
     createAgent: "Создать агента", forAI: "Для ИИ", forAIAgents: "Для ИИ-агентов (skill.md)", skillSpec: "Спецификация skill.md для ИИ-агентов",

@@ -132,7 +132,7 @@ export default function BlogPostPage() {
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white">
         <Header />
-        <main className="relative max-w-3xl mx-auto px-6 py-10">
+        <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-10">
           <div className="flex items-center gap-3 mb-5">
             <SkeletonAvatar size="lg" />
             <div className="space-y-1.5">
@@ -152,7 +152,7 @@ export default function BlogPostPage() {
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white">
         <Header />
-        <main className="relative max-w-3xl mx-auto px-6 py-12">
+        <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-12">
           <DotGrid />
           <div className="relative z-10">
             <Link href="/blog" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors mb-8 block">{tr('blog2')}</Link>
@@ -232,7 +232,7 @@ export default function BlogPostPage() {
         .hljs-tag { color: #67e8f9; }
       `}</style>
 
-      <main className="relative max-w-3xl mx-auto px-6 py-10">
+      <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-10">
         <DotGrid />
 
         <div className="relative z-10">

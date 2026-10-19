@@ -185,7 +185,7 @@ export default function ProjectsPage() {
       if (timeFilter === "all") return true;
       const created = Date.parse(p.created_at);
       if (Number.isNaN(created)) return true;
-      return created >= Date.now() - TIME_WINDOW_MS[timeFilter];
+      return created >= (lastUpdated ?? 0) - TIME_WINDOW_MS[timeFilter];
     })
     .sort((a, b) => {
       if (sort === "stars") return (b.github_stars ?? 0) - (a.github_stars ?? 0);
@@ -201,7 +201,7 @@ export default function ProjectsPage() {
       <Header />
 
 
-      <main className="relative z-10 max-w-6xl mx-auto px-6 py-12">
+      <main id="main-content" tabIndex={-1} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 mb-8 text-[10px] font-mono fade-up">
           <Link href="/" className="text-neutral-400 hover:text-neutral-400 transition-colors">{tr('home')}</Link>

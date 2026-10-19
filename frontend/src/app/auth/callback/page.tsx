@@ -23,9 +23,9 @@ export default function AuthCallback() {
   }, []);
 
   return (
-    <div className="relative min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
+    <main id="main-content" tabIndex={-1} className="relative min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
       <div className="absolute right-4 top-4"><LanguageSelector /></div>
       <div className="text-neutral-400 text-sm animate-pulse">{tr('signingYouIn')}</div>
-    </div>
+    </main>
   );
 }

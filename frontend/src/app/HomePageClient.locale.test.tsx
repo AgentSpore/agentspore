@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import HomePageClient from './HomePageClient';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/', useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock('@/components/Header', () => ({ Header: () => null }));
+
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it.each(['en', 'ru'] as const)('describes educational accounting without promising earnings and keeps shortcuts spaced in %s', locale => {
   const markup = renderToStaticMarkup(<LocaleProvider initialLocale={locale}><HomePageClient initialData={{ stats: null, agents: [], blogPosts: [], activity: [] }} /></LocaleProvider>);
@@ -23,10 +26,10 @@ it.each(['en', 'ru'] as const)('offers external agent connection and services fi
   const container = document.createElement('div');
   container.innerHTML = markup;
   const links = Array.from(container.querySelectorAll('a'));
-  expect(links[0]?.textContent).toBe(locale === 'en' ? 'Connect an agent' : 'Подключить агента');
-  expect(links[0]?.getAttribute('href')).toBe('/workspace#connect-agent');
-  expect(links[1]?.textContent).toBe(locale === 'en' ? 'Try a service' : 'Попробовать сервис');
-  expect(links[1]?.getAttribute('href')).toBe('/showcase');
+  expect(links[0]?.textContent).toBe(locale === 'en' ? 'Browse services' : 'Посмотреть сервисы');
+  expect(links[0]?.getAttribute('href')).toBe('/showcase');
+  expect(links[1]?.textContent).toBe(locale === 'en' ? 'Connect an agent' : 'Подключить агента');
+  expect(links[1]?.getAttribute('href')).toBe('/workspace#connect-agent');
   expect(links[2]?.getAttribute('href')).toMatch(/\/skill.md$/);
 });
 
@@ -45,4 +48,32 @@ it.each(['en', 'ru'] as const)('distinguishes unavailable stats from loaded zero
     expect(metrics.every(metric => metric.textContent === (stats ? '0' : '—'))).toBe(true);
     if (!stats) expect(container.textContent).toContain(locale === 'en' ? 'Data unavailable' : 'Данные недоступны');
   }
+});
+
+
+it.each(['en', 'ru'] as const)('gives each audience one distinct next step without repeating the introduction in %s', locale => {
+  vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+  render(<LocaleProvider initialLocale={locale}><HomePageClient initialData={{ stats: null, agents: [], blogPosts: [], activity: [] }} /></LocaleProvider>);
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(locale === 'en'
+    ? 'Services for people, built by AI agents'
+    : 'Сервисы для людей, созданные ИИ-агентами');
+  const people = within(screen.getByRole('region', { name: locale === 'en' ? 'For people' : 'Для людей' }));
+  const owners = within(screen.getByRole('region', { name: locale === 'en' ? 'For agent owners' : 'Для владельцев агентов' }));
+  expect(people.getAllByRole('link')).toHaveLength(1);
+  expect(people.getByRole('link', { name: locale === 'en' ? 'Browse services' : 'Посмотреть сервисы' }).getAttribute('href')).toBe('/showcase');
+  expect(people.getByText(locale === 'en'
+    ? 'Browse the catalog without an AgentSpore account.'
+    : 'Смотрите каталог без аккаунта AgentSpore.')).toBeTruthy();
+  expect(owners.getAllByRole('link')).toHaveLength(1);
+  expect(owners.getByRole('link', { name: locale === 'en' ? 'Connect an agent' : 'Подключить агента' }).getAttribute('href')).toBe('/workspace#connect-agent');
+  expect(owners.getByText(locale === 'en'
+    ? 'Your agent runs in your environment, with its own model and tools.'
+    : 'Агент работает в вашем окружении, со своей моделью и инструментами.')).toBeTruthy();
+  const introduction = locale === 'en'
+    ? 'Explore projects created by agents, or connect your own agent to contribute.'
+    : 'Посмотрите проекты агентов или подключите своего агента к совместной работе.';
+  expect(screen.getAllByText(introduction)).toHaveLength(1);
+  expect(screen.getByText(locale === 'en'
+    ? 'Open the connection instructions, then register your agent through the SDK or API.'
+    : 'Откройте инструкцию по подключению, затем зарегистрируйте агента через SDK или API.')).toBeTruthy();
 });

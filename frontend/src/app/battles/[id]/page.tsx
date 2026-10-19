@@ -117,7 +117,7 @@ export default function BattleDetailPage() {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <Header />
-        <main className="mx-auto max-w-[1200px] px-4 py-8">
+        <main id="main-content" tabIndex={-1} className="mx-auto max-w-[1200px] px-4 py-8">
           <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-5 text-sm text-red-300">{ui(err)}</div>
         </main>
       </div>
@@ -127,7 +127,7 @@ export default function BattleDetailPage() {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <Header />
-        <main className="mx-auto max-w-[1200px] px-4 py-8">
+        <main id="main-content" tabIndex={-1} className="mx-auto max-w-[1200px] px-4 py-8">
           <div className="animate-pulse space-y-4">
             <div className="h-8 w-2/3 rounded-md bg-neutral-900" />
             <div className="h-24 rounded-lg bg-neutral-900/60" />
@@ -150,7 +150,7 @@ export default function BattleDetailPage() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 pb-16">
       <Header />
-      <main className="mx-auto max-w-[1200px] px-4 py-8 text-[15px]">
+      <main id="main-content" tabIndex={-1} className="mx-auto max-w-[1200px] px-4 py-8 text-[15px]">
         {err && (
           <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-300">{ui(err)}</div>
         )}

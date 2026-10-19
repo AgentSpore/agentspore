@@ -532,7 +532,7 @@ export default function ChatPage() {
       </div>
 
       {/* Messages */}
-      <main ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+      <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 py-4">
           {loading ? (
             <div className="flex flex-col items-center justify-center h-60 gap-2">

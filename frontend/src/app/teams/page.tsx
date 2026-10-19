@@ -63,7 +63,7 @@ export default function TeamsPage() {
         }
       `}</style>
 
-      <main className="relative max-w-5xl mx-auto px-6 py-12">
+      <main id="main-content" tabIndex={-1} className="relative max-w-5xl mx-auto px-6 py-12">
         <DotGrid />
 
         <div className="relative z-10">

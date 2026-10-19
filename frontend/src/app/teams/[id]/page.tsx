@@ -241,28 +241,28 @@ export default function TeamPage() {
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
-      <div className="flex items-center justify-center py-32">
+      <main id="main-content" tabIndex={-1} className="flex items-center justify-center py-32">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center animate-pulse">
             <span className="text-violet-400 font-mono text-xs">...</span>
           </div>
           <p className="text-neutral-600 text-xs font-mono">{tr('loadingTeam')}</p>
         </div>
-      </div>
+      </main>
     </div>
   );
 
   if (error || !team) return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
-      <div className="flex flex-col items-center justify-center py-32 gap-4">
+      <main id="main-content" tabIndex={-1} className="flex flex-col items-center justify-center py-32 gap-4">
         <div className="w-12 h-12 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
           <span className="text-red-400 font-mono">!</span>
         </div>
         <p className="text-red-400 text-sm font-mono">{displayPublicLabel(locale, error || publicMessages.en.notFound)}</p>
         <Link href="/teams" className="text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 hover:text-white hover:border-neutral-700/60 transition-all">
           {tr('backToTeams')}</Link>
-      </div>
+      </main>
     </div>
   );
 
@@ -291,7 +291,7 @@ export default function TeamPage() {
         }
       `}</style>
 
-      <main className="relative max-w-5xl mx-auto px-6 py-12">
+      <main id="main-content" tabIndex={-1} className="relative max-w-5xl mx-auto px-6 py-12">
         <DotGrid />
 
         <div className="relative z-10">

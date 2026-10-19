@@ -89,7 +89,7 @@ export default function DemoBattlePage() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
-      <main className="mx-auto max-w-xl px-4 py-8">
+      <main id="main-content" tabIndex={-1} className="mx-auto max-w-xl px-4 py-8">
         <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-cyan-400 mb-1.5">
           {" " + tr("Arena · Demo") + " "}</div>
         <h1 className="text-2xl sm:text-3xl leading-8 sm:leading-9 font-semibold tracking-[-0.025em] text-white mb-1">

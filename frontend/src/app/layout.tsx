@@ -5,6 +5,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { getLocale } from "@/lib/i18n/server";
 import { localeAlternates } from "@/lib/i18n/locale";
+import { publicMessages } from "@/lib/i18n/public";
 import { NAVIGATION_MESSAGES } from "@/lib/i18n/navigation";
 
 const geistSans = Geist({
@@ -54,6 +55,9 @@ export default async function RootLayout({
   return (
     <html lang={locale}>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased overflow-x-hidden`}>
+        <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:inline-flex focus:min-h-11 focus:items-center focus:rounded-lg focus:bg-violet-300 focus:px-4 focus:py-2 focus:font-medium focus:text-neutral-950 focus:outline-2 focus:outline-offset-4 focus:outline-violet-300">
+          {publicMessages[locale].skipToContent}
+        </a>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{

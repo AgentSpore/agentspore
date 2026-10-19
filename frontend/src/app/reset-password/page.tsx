@@ -76,7 +76,7 @@ export default function ResetPasswordPage() {
     "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors";
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4 relative">
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4 relative">
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">
@@ -195,6 +195,6 @@ export default function ResetPasswordPage() {
           animation-delay: 0.2s;
         }
       `}</style>
-    </div>
+    </main>
   );
 }

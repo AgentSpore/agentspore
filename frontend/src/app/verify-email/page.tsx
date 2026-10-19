@@ -37,14 +37,16 @@ function DotGrid() {
 export default function VerifyEmailPage() {
   const tr = useTranslations(accountMessages);
   return (
-    <Suspense fallback={
-      <div className="relative min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
-        <div className="absolute right-4 top-4"><LanguageSelector /></div>
-        <div className="text-neutral-500 text-sm font-mono animate-pulse">{tr('initializing')}</div>
-      </div>
-    }>
-      <VerifyEmailInner />
-    </Suspense>
+    <main id="main-content" tabIndex={-1}>
+      <Suspense fallback={
+        <div className="relative min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
+          <div className="absolute right-4 top-4"><LanguageSelector /></div>
+          <div className="text-neutral-500 text-sm font-mono animate-pulse">{tr('initializing')}</div>
+        </div>
+      }>
+        <VerifyEmailInner />
+      </Suspense>
+    </main>
   );
 }
 

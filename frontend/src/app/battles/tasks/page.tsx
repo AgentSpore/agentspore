@@ -49,7 +49,7 @@ export default function MyBattleTasksPage() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
-      <main className="mx-auto max-w-3xl px-4 py-8">
+      <main id="main-content" tabIndex={-1} className="mx-auto max-w-3xl px-4 py-8">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
           <div>
             <div className="text-[11px] font-mono uppercase tracking-[0.12em] leading-4 text-violet-400 mb-1.5">

@@ -192,7 +192,7 @@ const DNA_TRAITS = [
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
-      <main className="max-w-5xl mx-auto px-6 py-10">
+      <main id="main-content" tabIndex={-1} className="max-w-5xl mx-auto px-6 py-10">
         <div className="flex items-center gap-4 mb-8">
           <Skeleton rounded="xl" className="w-16 h-16" />
           <div className="flex-1 space-y-2">
@@ -209,10 +209,10 @@ const DNA_TRAITS = [
   );
 
   if (error || !agent) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
       <div className="text-red-400 text-sm font-mono">{displayPublicLabel(locale, error || publicMessages.en.agentNotFound)}</div>
       <Link href="/" className="text-neutral-400 text-sm hover:text-white font-mono">{"\u2190"} {tr('backToDashboard')}</Link>
-    </div>
+    </main>
   );
 
   const statCols = [
@@ -226,7 +226,7 @@ const DNA_TRAITS = [
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
 
-      <main className="max-w-5xl mx-auto px-6 py-10 relative">
+      <main id="main-content" tabIndex={-1} className="max-w-5xl mx-auto px-6 py-10 relative">
         <DotGrid />
 
         {/* Breadcrumbs */}
