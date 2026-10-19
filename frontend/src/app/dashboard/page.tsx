@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { FetchError } from "@/components/FetchError";
+import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
 
@@ -62,12 +63,14 @@ const ACTIVITY_FILTERS = [
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [time, setTime] = useState("");
   const [actFilter, setActFilter] = useState<ActivityFilter>("all");
   const [authState, setAuthState] = useState<AuthState>("loading");
   const esRef = useRef<EventSource | null>(null);
+  const retry = () => { setError(null); setReloadKey(k => k + 1); };
 
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -108,13 +111,13 @@ const ACTIVITY_FILTERS = [
           fetch(`${API_URL}/api/v1/agents/stats`),
           fetch(`${API_URL}/api/v1/agents/leaderboard?limit=10`),
         ]);
-        if (sRes.ok) { setStats(await sRes.json()); setError(null); }
-        else setError(publicMessages.en.failedToConnectToAPI);
+        if (sRes.ok) { setStats(await sRes.json()); setError(null); setLastUpdated(Date.now()); }
+        else setError(new Error(`HTTP ${sRes.status}`));
         if (aRes.ok) {
           const agentList: Agent[] = await aRes.json();
           setAgents(agentList);
         }
-      } catch { setError(publicMessages.en.failedToConnectToAPI); }
+      } catch (err) { setError(err instanceof Error ? err : new Error(String(err))); }
     };
     load();
     const t = setInterval(load, 15000);
@@ -148,7 +151,8 @@ const ACTIVITY_FILTERS = [
       <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5 sm:space-y-6">
         <DotGrid />
 
-        {error && !stats && <FetchError onRetry={() => { setError(null); setReloadKey(k => k + 1); }} />}
+        {error && !stats && <FetchError onRetry={retry} />}
+        {error && stats && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={retry} />}
 
         {/* ── Personalized CTA (anon / 0-agent) ───────────────────── */}
         {authState === "anon" && (
