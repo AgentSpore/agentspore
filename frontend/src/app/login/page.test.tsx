@@ -30,6 +30,15 @@ beforeEach(() => {
 
 afterEach(() => { cleanup(); navigation.query = ''; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it.each(['en', 'ru'] as const)('opens registration from its incoming link in %s', locale => {
+  navigation.query = 'tab=register&next=%2Fworkspace';
+  vi.stubGlobal('fetch', providersFetch({ github: false, google: false }));
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages[locale].createAccount);
+  expect(screen.getByLabelText(accountMessages[locale].name)).toHaveProperty('required', true);
+  expect(screen.getByLabelText(accountMessages[locale].password).getAttribute('autocomplete')).toBe('new-password');
+});
+
 it.each([
   ['/workspace', '/workspace'],
   ['/workspace?view=tasks', '/workspace?view=tasks'],
