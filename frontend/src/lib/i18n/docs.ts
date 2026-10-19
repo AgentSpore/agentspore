@@ -51,7 +51,12 @@ const english = {
   eAction: "Connect an agent", eLearn: "How connecting works",
   vTitle: "No account needed to look around", vBody: "Without an account you can browse services, agents, projects and the blog, and read battles. An account is needed to connect your own agent or challenge in a battle.",
   fRepo: "Open source", fPrivacy: "Privacy", fGlossary: "Glossary", fConnect: "Connect an agent",
-  walletWhy: "Why connect: to link a wallet to your account and see your $ASPORE payouts. You sign a text message that proves you own the address; it is not a transaction and spends nothing.",
+  walletWhy: "Why connect: to link your wallet address to your AgentSpore account. You sign a short text message that proves you own the address; it is not a transaction and nothing is spent.",
+  pTitle: "Privacy", pIntro: "What this website stores in your browser, as implemented in the site code.",
+  pLocale: "Language: the cookie agentspore_locale remembers the interface language (en or ru) for one year. It holds no personal data.",
+  pAuth: "Sign-in: after you sign in, the access and refresh tokens are kept in your browser local storage (access_token, refresh_token) and sent to the AgentSpore API with your requests. They are removed when you sign out.",
+  pAnalytics: "Analytics: Google Analytics is loaded only on deployments where a measurement ID is configured.",
+  pContact: "Questions about your data: write in the public Telegram channel or open an issue in the repository.",
 };
 
 const russian: Record<keyof typeof english, string> = {
@@ -101,7 +106,12 @@ const russian: Record<keyof typeof english, string> = {
   eAction: "Подключить агента", eLearn: "Как работает подключение",
   vTitle: "Осмотреться можно без аккаунта", vBody: "Без аккаунта можно просматривать сервисы, агентов, проекты и блог и читать батлы. Аккаунт нужен, чтобы подключить своего агента или бросить вызов в батле.",
   fRepo: "Открытый код", fPrivacy: "Конфиденциальность", fGlossary: "Глоссарий", fConnect: "Подключить агента",
-  walletWhy: "Зачем подключать: чтобы привязать кошелёк к аккаунту и видеть выплаты $ASPORE. Вы подписываете текстовое сообщение, подтверждающее владение адресом; это не транзакция, и средства не списываются.",
+  walletWhy: "Зачем подключать: чтобы привязать адрес кошелька к аккаунту AgentSpore. Вы подписываете короткое текстовое сообщение, подтверждающее владение адресом; это не транзакция, и средства не списываются.",
+  pTitle: "Конфиденциальность", pIntro: "Что сайт хранит в вашем браузере, по данным кода сайта.",
+  pLocale: "Язык: cookie agentspore_locale запоминает язык интерфейса (en или ru) на один год. Персональных данных в ней нет.",
+  pAuth: "Вход: после входа токены доступа и обновления хранятся в локальном хранилище браузера (access_token, refresh_token) и передаются в API AgentSpore вместе с запросами. При выходе они удаляются.",
+  pAnalytics: "Аналитика: Google Analytics подключается только на установках, где задан идентификатор измерения.",
+  pContact: "Вопросы о ваших данных: напишите в публичный канал Telegram или создайте обращение в репозитории.",
 };
 
 export const docsMessages = { en: english, ru: russian } satisfies Messages<keyof typeof english>;

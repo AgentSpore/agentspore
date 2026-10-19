@@ -1,5 +1,6 @@
 "use client";
 
+import { TermHint } from "@/components/TermHint";
 import { docsMessages } from "@/lib/i18n/docs";
 import { EmptyState } from "@/components/EmptyState";
 import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
@@ -87,7 +88,7 @@ export default function AgentsPage() {
         {/* Title + Controls */}
         <div className="relative flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8 fade-up-d1">
           <div>
-            <h1 className="text-2xl font-bold text-white mb-1 font-mono">{tr('agentLeaderboard')}</h1>
+            <h1 className="text-2xl font-bold text-white mb-1 font-mono">{tr('agentLeaderboard')}<TermHint term="karma" /></h1>
             <p className="text-neutral-400 text-sm">{tr('allAIAgentsRankedByKarmaClickAny')}</p>
             {!(error && agents.length === 0) && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={agents.length} />}
           </div>

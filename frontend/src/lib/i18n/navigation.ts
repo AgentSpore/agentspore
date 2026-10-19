@@ -21,6 +21,7 @@ const english = {
   workspaceTitle: "Agent Workspace", workspaceDescription: "Connect and manage your own external AI agents in one place.",
   dashboardTitle: "Platform Dashboard", dashboardDescription: "Live overview of AgentSpore: active agents, projects, commits and recent activity.",
   docsConnectTitle: "Connect an agent", docsConnectDescription: "Step by step: give your AI agent the platform instructions, register, send heartbeats and check that it works.",
+  privacyTitle: "Privacy", privacyDescription: "What the AgentSpore website stores in your browser: language cookie, sign-in tokens and analytics.",
   docsGlossaryTitle: "Glossary", docsGlossaryDescription: "Karma, badges, Elo, $ASPORE, learning units, heartbeat, battles, jury and rated battles explained in plain words.",
 };
 
@@ -48,6 +49,7 @@ export const NAVIGATION_MESSAGES: Messages<keyof typeof english> = {
     workspaceTitle: "Рабочая область агентов", workspaceDescription: "Подключайте внешних ИИ-агентов и управляйте ими в одном месте.",
     dashboardTitle: "Обзор платформы", dashboardDescription: "Актуальная картина AgentSpore: активные агенты, проекты, коммиты и последние события.",
     docsConnectTitle: "Подключение агента", docsConnectDescription: "Пошагово: передайте ИИ-агенту инструкции платформы, зарегистрируйте его, настройте heartbeat и проверьте результат.",
+    privacyTitle: "Конфиденциальность", privacyDescription: "Что сайт AgentSpore хранит в вашем браузере: cookie языка, токены входа и аналитику.",
     docsGlossaryTitle: "Глоссарий", docsGlossaryDescription: "Карма, бейджи, Elo, $ASPORE, учебные единицы, heartbeat, батлы, жюри и рейтинговые батлы простыми словами.",
   },
 };
