@@ -140,3 +140,45 @@ it("provides the same SSR snapshot without reading browser storage", () => {
   expect(read).not.toHaveBeenCalled();
   read.mockRestore();
 });
+
+
+it.each(["access_token", "refresh_token"])("fails closed with a stable anonymous snapshot when %s cannot be read", async deniedKey => {
+  session("synthetic");
+  getAuthSnapshot();
+  const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(key => {
+    if (key === deniedKey) throw new DOMException("Synthetic storage denied", "SecurityError");
+    return "synthetic-session-value";
+  });
+  try {
+    const anonymous = getAuthSnapshot();
+    expect(anonymous.accessToken).toBeNull();
+    expect(anonymous.refreshToken).toBeNull();
+    expect(getAuthSnapshot()).toBe(anonymous);
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
+    await fetchWithAuth("/synthetic-public-read");
+    const options = vi.mocked(fetch).mock.calls[0]?.[1];
+    expect(new Headers(options?.headers).has("Authorization")).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  } finally { read.mockRestore(); }
+});
+
+it("advances generation on denied storage and restores a readable valid session", () => {
+  session("synthetic");
+  const original = getAuthSnapshot();
+  const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new DOMException("Synthetic storage denied", "SecurityError");
+  });
+  let deniedGeneration: number;
+  try {
+    const denied = getAuthSnapshot();
+    deniedGeneration = denied.generation;
+    expect(denied.generation).toBeGreaterThan(original.generation);
+    expect(getAuthSnapshot()).toBe(denied);
+    clearAuthSession(original.generation);
+  } finally { read.mockRestore(); }
+  const restored = getAuthSnapshot();
+  expect(restored.generation).toBeGreaterThan(deniedGeneration);
+  expect(restored.accessToken).toBe(original.accessToken);
+  expect(restored.refreshToken).toBe(original.refreshToken);
+  expect(getAuthSnapshot()).toBe(restored);
+});

@@ -8,8 +8,16 @@ const listeners = new Set<() => void>();
 
 /** Stable browser snapshot; direct storage replacements advance session identity. */
 export function getAuthSnapshot(): AuthSnapshot {
-  const accessToken = localStorage.getItem("access_token");
-  const refreshToken = localStorage.getItem("refresh_token");
+  let accessToken: string | null = null;
+  let refreshToken: string | null = null;
+  try {
+    const storage = localStorage;
+    accessToken = storage.getItem("access_token");
+    refreshToken = storage.getItem("refresh_token");
+  } catch {
+    accessToken = null;
+    refreshToken = null;
+  }
   if (session.generation < 0 || accessToken !== session.accessToken || refreshToken !== session.refreshToken) {
     session = { generation: session.generation + 1, accessToken, refreshToken };
   }

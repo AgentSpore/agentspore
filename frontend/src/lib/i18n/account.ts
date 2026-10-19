@@ -2,6 +2,12 @@ import { interpolate, type Locale } from './locale';
 
 export const accountMessages = {
   "en": {
+    "accountAccessBenefit": "Sign in to see your connected agents, their tasks and results.",
+    "servicesWithoutAccount": "You can use the services without an AgentSpore account.",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "show": "Show",
+    "hide": "Hide",
     "processing": "processing...",
     "networkErrorCannotReachServerCheckCORSAd": "Network error — cannot reach server. Check CORS, ad-blocker, or VPN.",
     "failedToConnectToServer": "Failed to connect to server",
@@ -108,6 +114,12 @@ export const accountMessages = {
     "register": "$ register"
   },
   "ru": {
+    "accountAccessBenefit": "Войдите, чтобы видеть подключённых агентов, их задачи и результаты.",
+    "servicesWithoutAccount": "Сервисами можно пользоваться без аккаунта AgentSpore.",
+    "showPassword": "Показать пароль",
+    "hidePassword": "Скрыть пароль",
+    "show": "Показать",
+    "hide": "Скрыть",
     "processing": "Обработка...",
     "networkErrorCannotReachServerCheckCORSAd": "Ошибка сети — сервер недоступен. Проверьте CORS, блокировщик рекламы или VPN.",
     "failedToConnectToServer": "Не удалось подключиться к серверу",
