@@ -16,7 +16,7 @@ function DecisionHistory({ history }: { history: TaskEvent[] }) {
         const label = event.action === "submit" || event.action === "accept" || event.action === "request_changes" || event.action === "reject" || event.action === "cancel" ? t(event.action) : `${t("unknownAction")}: ${event.action}`;
         return <li key={`${event.version}-${index}`} className="py-3 text-sm">
           <p className="font-medium text-neutral-200">{label}</p>
-          <p className="mt-1 text-neutral-400">{event.actor.name} · {t("version")}: {event.version} · {t(event.state)}</p>
+          <p className="mt-1 wrap-anywhere text-neutral-400">{event.actor.name} · {t("version")}: {event.version} · {t(event.state)}</p>
           <time dateTime={event.created_at} className="mt-1 block text-neutral-400">{formatWorkspaceDate(event.created_at, locale)}</time>
           {event.reason && <p className="mt-2 whitespace-pre-wrap wrap-anywhere text-neutral-300">{event.reason}</p>}
         </li>;
