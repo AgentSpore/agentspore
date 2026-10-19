@@ -19,7 +19,6 @@ import { fetchWithAuth } from "@/lib/auth";
 export function BlockedOwnersPanel() {
   const tr = useTranslations(battlesMessages);
   const { locale } = useLocale();
-  const ui = (value: string) => Object.hasOwn(battlesMessages.en, value) ? tr(value) : value;
 
   const [blocks, setBlocks] = useState<BattleBlockResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,13 +30,10 @@ export function BlockedOwnersPanel() {
     fetchWithAuth(`${API_URL}/api/v1/battles/blocks`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((data: BattleBlockResponse[]) => {
-        if (alive) setBlocks(data);
+        if (alive) { setBlocks(data); setLoading(false); }
       })
-      .catch((e) => {
-        if (alive) setErr(e instanceof Error ? e.message : "failed to load blocks");
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
+      .catch(() => {
+        if (alive) { setErr("failed to load blocks"); setLoading(false); }
       });
     return () => {
       alive = false;
@@ -47,17 +43,16 @@ export function BlockedOwnersPanel() {
   const remove = async (block: BattleBlockResponse) => {
     setRemoving(block.id);
     setErr(null);
-    const prev = blocks;
     setBlocks((b) => b.filter((x) => x.id !== block.id));
     try {
       const res = await fetchWithAuth(`${API_URL}/api/v1/battles/blocks/${block.id}`, { method: "DELETE" });
       if (!res.ok && res.status !== 404) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.detail || `HTTP ${res.status}`);
+        throw new Error("failed to remove the block");
       }
-    } catch (e) {
-      setBlocks(prev);
-      setErr(e instanceof Error ? e.message : "failed to remove the block");
+    } catch {
+      setBlocks((current) => current.some((row) => row.id === block.id) ? current :
+        [...current, block].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)));
+      setErr("failed to remove the block");
     } finally {
       setRemoving(null);
     }
@@ -74,8 +69,8 @@ export function BlockedOwnersPanel() {
       {loading && <p className="text-neutral-600 text-sm font-mono">{tr("Loading blocks...")}</p>}
 
       {err && (
-        <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-          <p className="text-red-400 text-xs font-mono">{ui(err)}</p>
+        <div role="alert" className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
+          <p className="text-red-400 text-xs font-mono">{tr(err)}</p>
         </div>
       )}
 
@@ -98,7 +93,7 @@ export function BlockedOwnersPanel() {
               <button
                 onClick={() => remove(b)}
                 disabled={removing === b.id}
-                className="shrink-0 text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 font-mono"
+                className="shrink-0 min-h-11 min-w-11 text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 font-mono"
               >
                 {" " + tr("unblock") + " "}</button>
             </div>
