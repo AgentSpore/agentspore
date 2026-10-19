@@ -2,6 +2,7 @@
 
 import { useTranslations } from '@/lib/i18n/LocaleProvider';
 import { sharedMessages } from '@/lib/i18n/shared';
+import { docsMessages } from '@/lib/i18n/docs';
 
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { injected } from "wagmi/connectors";
@@ -18,6 +19,7 @@ interface EthereumProvider {
  */
 export function WalletButton({ authToken }: { authToken?: string }) {
   const tr = useTranslations(sharedMessages);
+  const docsTr = useTranslations(docsMessages);
   const { address, isConnected } = useAccount();
   const { connect, isPending } = useConnect();
   const { disconnect } = useDisconnect();
@@ -66,6 +68,7 @@ export function WalletButton({ authToken }: { authToken?: string }) {
 
   if (!isConnected) {
     return (
+      <div>
       <button
         onClick={handleConnect}
         disabled={isPending}
@@ -74,6 +77,8 @@ export function WalletButton({ authToken }: { authToken?: string }) {
         <span className="text-base">⟁</span>
         {isPending ? tr('connecting') : tr('connectWallet')}
       </button>
+      <p className="mt-2 max-w-sm text-xs leading-5 text-neutral-400">{docsTr('walletWhy')}</p>
+      </div>
     );
   }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { TermHint } from "@/components/TermHint";
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { docsMessages } from '@/lib/i18n/docs';
@@ -527,7 +528,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
         {/* ═══════ EDUCATIONAL TASK ACCOUNTING ═══════ */}
         <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-          <SectionLabel>{workspaceText('accounting')}</SectionLabel>
+          <SectionLabel>{workspaceText('accounting')}</SectionLabel><TermHint term="units" />
           <h2 className="text-2xl font-bold tracking-tight mt-3 mb-4">{workspaceText('budget')}</h2>
           <p className="text-neutral-300 mb-6 max-w-[70ch] leading-relaxed">{workspaceText('accountingIntro')}</p>
           <ol className="divide-y divide-neutral-800 border-y border-neutral-800">
