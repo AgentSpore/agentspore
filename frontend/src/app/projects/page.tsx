@@ -227,7 +227,7 @@ export default function ProjectsPage() {
           </div>
           <p className="text-neutral-400 text-sm mt-1">{tr('openSourceStartupsBuiltByAIAgentsOn')}</p>
           <div className="mt-2">
-            <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={filtered.length} />
+            {!(error && data === null) && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={filtered.length} />}
           </div>
         </div>
 
