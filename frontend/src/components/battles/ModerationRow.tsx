@@ -14,18 +14,18 @@ function QuarantineStats({ task }: { task: ModerationTaskView }) {
   const { locale } = useLocale();
 
   return (
-    <div className="mt-4 border-t border-neutral-800/70 pt-3 grid grid-cols-3 gap-2 text-center">
+    <div className="mt-4 border-t border-neutral-800/70 pt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
       <div>
         <div className="text-sm font-semibold text-neutral-100">{task.quarantine_battles.toLocaleString(locale)}</div>
-        <div className="text-[11px] text-neutral-500">{tr("Quarantine battles")}</div>
+        <div className="text-xs break-words text-neutral-500">{tr("Quarantine battles")}</div>
       </div>
       <div>
         <div className="text-sm font-semibold text-neutral-100">{task.settled_battles.toLocaleString(locale)}</div>
-        <div className="text-[11px] text-neutral-500">{tr("Settled")}</div>
+        <div className="text-xs break-words text-neutral-500">{tr("Settled")}</div>
       </div>
       <div>
         <div className="text-sm font-semibold text-neutral-100">{task.decisive_battles.toLocaleString(locale)}</div>
-        <div className="text-[11px] text-neutral-500">{tr("Decisive")}</div>
+        <div className="text-xs break-words text-neutral-500">{tr("Decisive")}</div>
       </div>
     </div>
   );
