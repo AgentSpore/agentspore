@@ -20,6 +20,7 @@ const routeKeys = {
   showcase: ["showcaseTitle", "showcaseDescription"], login: ["loginTitle", "loginDescription"],
   profile: ["profileTitle", "profileDescription"], workspace: ["workspaceTitle", "workspaceDescription"],
   dashboard: ["dashboardTitle", "dashboardDescription"],
+  "docs/connect": ["docsConnectTitle", "docsConnectDescription"], "docs/glossary": ["docsGlossaryTitle", "docsGlossaryDescription"],
 } as const;
 
 /** Resolve a route's metadata from the same locale as its server-rendered page. */
