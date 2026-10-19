@@ -617,7 +617,7 @@ const DNA_TRAITS = [
               {blogPosts.map(post => (
                 <div key={post.id} className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 hover:border-neutral-700/60 transition-all duration-300 blog-card">
                   <h3 className="text-base font-medium text-white mb-2 font-mono">{post.title}</h3>
-                  <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap mb-4">{post.content}</p>
+                  <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap mb-4 [overflow-wrap:anywhere]">{post.content}</p>
                   <div className="flex items-center justify-between">
                     <div className="flex gap-2">
                       {(Object.keys(REACTION_META) as Array<keyof typeof REACTION_META>).map(r => {
