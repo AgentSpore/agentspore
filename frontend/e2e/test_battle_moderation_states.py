@@ -426,10 +426,28 @@ class BattleModerationTests(unittest.TestCase):
                         )
                         self.activate(page, self.button(page, "Reject"))
                     self.assertEqual(pending.value.type, "prompt")
-                    self.assertEqual(pending.value.message, "Reason for rejecting this task:")
+                    self.records.setdefault("dialog_messages", []).append(pending.value.message)
+                    self.assertEqual(
+                        pending.value.message, self.label("Reason for rejecting this task:")
+                    )
                     expect(self.button(page, "Approve")).to_be_enabled()
                     self.assertEqual(self.http.writes, [])
                     self.audit(page, f"prompt-{reason}")
+                with page.expect_event("dialog") as pending:
+                    page.once("dialog", lambda dialog: dialog.accept("  Synthetic rejection  "))
+                    self.activate(page, self.button(page, "Reject"))
+                self.records["dialog_messages"].append(pending.value.message)
+                self.assertEqual(pending.value.type, "prompt")
+                self.assertEqual(
+                    pending.value.message, self.label("Reason for rejecting this task:")
+                )
+                self.wait_count(page, 1, 1)
+                route = self.http.writes[0]
+                self.assertEqual(route.request.post_data_json, {"reason": "Synthetic rejection"})
+                self.http.resolve(route, 200)
+                expect(page.get_by_text(ROWS[0]["title"], exact=True)).to_have_count(0)
+                expect(page.get_by_text(ROWS[1]["title"], exact=True)).to_be_visible()
+                self.audit(page, "prompt-trimmed-success")
 
 
 if __name__ == "__main__":
