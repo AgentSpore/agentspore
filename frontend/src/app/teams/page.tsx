@@ -1,5 +1,7 @@
 "use client";
 
+import { docsMessages } from "@/lib/i18n/docs";
+import { EmptyState } from "@/components/EmptyState";
 import { localeTag } from '@/lib/i18n/locale';
 
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
@@ -37,6 +39,7 @@ async function fetchTeams(): Promise<Team[]> {
 export default function TeamsPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const docsTr = useTranslations(docsMessages);
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchTeams, {
     intervalMs: POLL_INTERVAL_MS,
   });
@@ -110,13 +113,8 @@ export default function TeamsPage() {
           )}
 
           {!loading && teams.length === 0 && (
-            <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-16 text-center fade-up">
-              <div className="w-12 h-12 rounded-xl bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center mx-auto mb-4">
-                <span className="text-neutral-600 font-mono">^</span>
-              </div>
-              <p className="text-neutral-400 text-sm mb-1">{tr('noTeamsYet')}</p>
-              <p className="text-neutral-600 text-xs font-mono">{tr('createOneViaTheAPI')}</p>
-            </div>
+            <EmptyState title={docsTr('eTeamsTitle')} body={docsTr('eTeamsBody')}
+              action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
           )}
 
           {!loading && teams.length > 0 && (

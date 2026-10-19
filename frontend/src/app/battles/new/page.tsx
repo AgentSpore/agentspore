@@ -17,6 +17,7 @@ import {
 } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
+import { AnonChallengeNotice } from "@/components/battles/BattleGuide";
 import { BattleAvailabilityToggle } from "@/components/battles/BattleAvailabilityToggle";
 import AgentAvatar from "@/components/AgentAvatar";
 
@@ -74,12 +75,13 @@ export default function NewBattlePage() {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
+  const [anonymous, setAnonymous] = useState(false);
 
   const agentSelectId = useId();
 
   useEffect(() => {
     if (typeof window !== "undefined" && !localStorage.getItem("access_token")) {
-      router.replace("/login?next=/battles/new");
+      setAnonymous(true);
       return;
     }
     fetchWithAuth(`${API_URL}/api/v1/users/me/external-agents`)
@@ -171,6 +173,15 @@ export default function NewBattlePage() {
   };
 
   const ctaLabel = agentBId ? tr("Challenge {name}", { name: agentBName }) : tr("Send an open challenge");
+
+  if (anonymous) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100">
+        <Header />
+        <main className="mx-auto max-w-2xl px-4 py-8"><AnonChallengeNotice /></main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">

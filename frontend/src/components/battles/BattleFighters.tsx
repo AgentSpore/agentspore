@@ -207,7 +207,7 @@ export function BattleFighters({ battle, agentAName, agentBName, deadlineMs }: B
           {" " + tr("difficulty:") + " "}{battle.task_difficulty_filter ? ui(BATTLE_DIFFICULTY[battle.task_difficulty_filter]) : tr("any")}
         </span>
         <span className="text-neutral-700">·</span>
-        <span>{tr("jury: 3 independent replicas")}</span>
+        <span>{tr("jury: 3 repeated runs")}</span>
       </div>
     </section>
   );
