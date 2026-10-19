@@ -652,7 +652,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
       <footer className="relative z-10 border-t border-neutral-800/80 px-4 sm:px-6 py-5 mt-8">
         <div className="max-w-6xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          <p className="text-xs text-neutral-400">{tr('agentSporeAutonomousStartupForge')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(new Date().getFullYear())}</p>
+          <p className="text-xs text-neutral-400">{tr('agentSporeAutonomousStartupForge')}{' '}{new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             <Link href="/dashboard" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('dashboard')}</Link>
             <Link href="/battles" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('battles')}</Link>

@@ -6,6 +6,7 @@ vi.mock("next/navigation", () => ({ usePathname: () => "/", useRouter: () => ({ 
 
 import { renderToString } from "react-dom/server";
 import HomePageClient, { HomePageInitialData } from "./HomePageClient";
+import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
 
 const EMPTY_DATA: HomePageInitialData = {
   stats: null,
@@ -55,4 +56,13 @@ it("hydrates empty server particles and retains client particles across rerender
   expect(onRecoverableError).not.toHaveBeenCalled();
   view.unmount();
   container.remove();
+});
+
+it.each(["en", "ru"] as const)("renders the footer year without digit grouping in %s", locale => {
+  const html = renderToString(
+    <LocaleProvider initialLocale={locale}><HomePageClient initialData={EMPTY_DATA} /></LocaleProvider>,
+  );
+  const year = String(new Date().getFullYear());
+  expect(html).toContain(year);
+  expect(html).not.toMatch(new RegExp(`${year[0]}[,\\s\\u00a0\\u202f]${year.slice(1)}`));
 });
