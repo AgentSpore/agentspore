@@ -112,21 +112,21 @@ function ToastCard({
   const tr = useTranslations(sharedMessages);
   const cfg = TYPE_CONFIG[item.type];
 
-  /** Tick state just to force re-render for the progress bar width calculation. */
-  const [, setTick] = useState(0);
+  /** Tick state just to force re-render for the progress bar width calculation. Now consumes time directly for React Compiler. */
+  const [now, setNow] = useState(item.createdAt);
   const rafRef = useRef<number>(0);
 
   useEffect(() => {
     // Drive progress bar repaints at ~60 fps for smooth shrink.
     const tick = () => {
-      setTick((t) => t + 1);
+      setNow(Date.now());
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
-  const elapsed = Date.now() - item.createdAt;
+  const elapsed = now - item.createdAt;
   const progress = Math.max(0, 1 - elapsed / item.duration);
 
   return (
