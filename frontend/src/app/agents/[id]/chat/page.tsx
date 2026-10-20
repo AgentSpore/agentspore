@@ -2,14 +2,36 @@
 
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { communicationMessages } from "@/lib/i18n/communication";
+import { sharedMessages } from "@/lib/i18n/shared";
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Agent, API_URL, DirectMessage, isAgentLive, timeAgo } from "@/lib/api";
+import { API_URL, DirectMessage, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { ChatIdentityNotice } from "@/components/ChatIdentityNotice";
+import { getAuthSnapshot } from "@/lib/auth";
+import { useDirectChat, directReadError, directReadPending } from "./useDirectChat";
+
+const DIRECT_ERRORS = { agent: "Could not load agent.", initial: "Could not load messages.",
+  older: "Could not load older messages.", poll: "Could not refresh messages.", send: "Failed to send" } as const;
+
+function DirectChatError({ kind, disabled, onRetry }: { kind: keyof typeof DIRECT_ERRORS; disabled: boolean; onRetry: () => void }) {
+  const tr = useTranslations(communicationMessages);
+  const sharedTr = useTranslations(sharedMessages);
+  return <div role="alert" className="my-2 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
+    <p>{tr(DIRECT_ERRORS[kind])}</p>
+    <button type="button" onClick={onRetry} disabled={disabled}
+      className="min-h-12 min-w-12 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 disabled:opacity-50">
+      {sharedTr("retry")}
+    </button>
+  </div>;
+}
+
+type SendOperation = { agentId: string; handle: string; owner: string; generation: number;
+  token: string; revision: number; name: string; content: string };
 
 export default function AgentChatPage() {
   const tr = useTranslations(communicationMessages);
@@ -17,135 +39,70 @@ export default function AgentChatPage() {
   const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
 
   const { id } = useParams<{ id: string }>();
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [messages, setMessages] = useState<DirectMessage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const chat = useDirectChat(id);
+  const { agent, messages, profile, session, containerRef, bottomRef } = chat;
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [userName, setUserName] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [sendError, setSendError] = useState(false);
+  const [owner, setOwner] = useState<string | null>(null);
+  const revision = useRef(0);
+  const operationRef = useRef<SendOperation | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const userName = profile.status === "ready" && profile.user.id === owner ? profile.user.name : null;
+  const loadingMore = directReadPending(chat.older.status);
 
   useEffect(() => {
-    const token = localStorage.getItem("access_token");
-    if (!token) return;
-    fetch(`${API_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-      .then(u => setUserName(u.name))
-      .catch(() => setUserName(null));
-  }, []);
-
+    if (profile.status !== "ready" || profile.user.id === owner) return;
+    revision.current += 1;
+    operationRef.current = null;
+    setOwner(profile.user.id); setContent(""); setSendError(false); setSending(false);
+  }, [profile, owner]);
   useEffect(() => {
-    fetch(`${API_URL}/api/v1/agents/${id}`)
-      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((a: Agent) => { setAgent(a); setLoading(false); })
-      .catch(() => { setError("Agent not found"); setLoading(false); });
+    revision.current += 1;
+    operationRef.current = null;
+    setContent(""); setSendError(false); setSending(false);
+    return () => { operationRef.current = null; };
   }, [id]);
 
-  const loadInitial = useCallback(async () => {
-    if (!agent?.handle) return;
-    try {
-      const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=50`);
-      if (res.ok) {
-        const data: DirectMessage[] = await res.json();
-        setMessages([...data].reverse());
-        setHasMore(data.length === 50);
-        setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
-      }
-    } catch {}
-  }, [agent?.handle]);
-
-  const pollNewMessages = useCallback(async () => {
-    if (!agent?.handle) return;
-    try {
-      const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=10`);
-      if (res.ok) {
-        const data: DirectMessage[] = await res.json();
-        const newMsgs = [...data].reverse();
-        setMessages(prev => {
-          if (prev.length === 0) return newMsgs;
-          const lastId = prev[prev.length - 1].id;
-          const toAppend = newMsgs.filter(m => m.id !== lastId && !prev.some(p => p.id === m.id));
-          if (toAppend.length === 0) return prev;
-          const container = containerRef.current;
-          if (container) {
-            const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-            if (isNearBottom) {
-              setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
-            }
-          }
-          return [...prev, ...toAppend];
-        });
-      }
-    } catch {}
-  }, [agent?.handle]);
-
-  const loadOlder = useCallback(async () => {
-    if (!hasMore || loadingMore || messages.length === 0 || !agent?.handle) return;
-    setLoadingMore(true);
-    const oldestId = messages[0].id;
-    const container = containerRef.current;
-    const prevHeight = container?.scrollHeight ?? 0;
-    try {
-      const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}/messages?limit=50&before=${oldestId}`);
-      if (res.ok) {
-        const data: DirectMessage[] = await res.json();
-        setMessages(prev => [...[...data].reverse(), ...prev]);
-        setHasMore(data.length === 50);
-        requestAnimationFrame(() => {
-          if (container) container.scrollTop = container.scrollHeight - prevHeight;
-        });
-      }
-    } catch {}
-    setLoadingMore(false);
-  }, [hasMore, loadingMore, messages, agent?.handle]);
-
-  const handleScroll = () => {
-    const container = containerRef.current;
-    if (container && container.scrollTop < 50) loadOlder();
+  const isCurrentOperation = (operation: SendOperation) => operationRef.current === operation &&
+    operation.agentId === id && getAuthSnapshot().generation === operation.generation && getAuthSnapshot().accessToken === operation.token;
+  const captureSend = (): SendOperation | null => {
+    if (!agent?.handle || !userName || !owner || !session.accessToken || !content.trim() || operationRef.current) return null;
+    const current = getAuthSnapshot();
+    if (current.generation !== session.generation || current.accessToken !== session.accessToken) return null;
+    return { agentId: id, handle: agent.handle, owner, generation: current.generation,
+      token: session.accessToken, revision: revision.current, name: userName, content: content.trim() };
   };
-
-  useEffect(() => {
-    if (!agent) return;
-    loadInitial();
-    pollRef.current = setInterval(pollNewMessages, 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [agent, loadInitial, pollNewMessages]);
-
+  const completeSend = (operation: SendOperation) => {
+    if (!isCurrentOperation(operation)) return false;
+    if (revision.current === operation.revision) { setContent(""); textareaRef.current?.focus(); }
+    return true;
+  };
+  const reportSendError = (operation: SendOperation) => { if (isCurrentOperation(operation)) setSendError(true); };
+  const finishSend = (operation: SendOperation) => {
+    if (operationRef.current !== operation) return;
+    operationRef.current = null;
+    setSending(false);
+  };
+  const handleScroll = () => {
+    if (containerRef.current && containerRef.current.scrollTop < 50) chat.loadOlder();
+  };
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!agent?.handle || !userName || !content.trim() || sending) return;
-    setSending(true);
-    setSendError(null);
+    const operation = captureSend();
+    if (!operation) return;
+    operationRef.current = operation;
+    setSending(true); setSendError(false);
     try {
-      const token = localStorage.getItem("access_token");
-      const res = await fetch(`${API_URL}/api/v1/chat/dm/${agent.handle}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ name: userName, content: content.trim() }),
+      const response = await fetch(`${API_URL}/api/v1/chat/dm/${operation.handle}`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${operation.token}` },
+        body: JSON.stringify({ name: operation.name, content: operation.content }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setSendError(data.detail ?? "Failed to send");
-        return;
-      }
-      setContent("");
-      textareaRef.current?.focus();
-      await pollNewMessages();
-    } catch {
-      setSendError("Network error");
-    } finally {
-      setSending(false);
-    }
+      if (!response.ok) throw new Error("Direct message send failed");
+      if (!completeSend(operation)) return;
+      await chat.refresh();
+    } catch { reportSendError(operation); }
+    finally { finishSend(operation); }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -163,7 +120,7 @@ export default function AgentChatPage() {
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
   }, [content]);
 
-  if (loading) return (
+  if (chat.agentState.status === "loading") return (
     <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
       <div className="flex flex-col items-center gap-3">
         <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
@@ -172,12 +129,13 @@ export default function AgentChatPage() {
     </main>
   );
 
-  if (error || !agent) return (
+  if (!agent) return (
     <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
       <div className="w-12 h-12 rounded-2xl bg-red-950/20 border border-red-800/20 flex items-center justify-center">
         <span className="text-red-400 text-lg">!</span>
       </div>
-      <div className="text-red-400 text-sm font-mono">{error ? display(error) : tr("Not found")}</div>
+      {chat.agentState.status === "error" ? <DirectChatError kind="agent" disabled={false} onRetry={() => void chat.retryAgent()} />
+        : <div className="text-red-400 text-sm font-mono">{tr("Agent not found")}</div>}
       <Link href="/" className="text-neutral-500 text-[11px] hover:text-white font-mono transition-colors">{tr("← Back to dashboard")}</Link>
     </main>
   );
@@ -254,6 +212,10 @@ export default function AgentChatPage() {
       {/* Messages */}
       <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
+          {directReadError(chat.initial.status) && <DirectChatError kind="initial" disabled={directReadPending(chat.initial.status)} onRetry={() => void chat.initial.run()} />}
+          {directReadError(chat.older.status) && <DirectChatError kind="older" disabled={loadingMore} onRetry={() => void chat.older.run()} />}
+          {directReadError(chat.poll.status) && <DirectChatError kind="poll" disabled={directReadPending(chat.poll.status)} onRetry={() => void chat.poll.run()} />}
+          {directReadPending(chat.initial.status) && messages.length === 0 && <p role="status" className="text-sm text-neutral-300">{tr("Loading messages...")}</p>}
           {loadingMore && (
             <div className="flex justify-center py-3">
               <div className="flex items-center gap-2">
@@ -262,7 +224,7 @@ export default function AgentChatPage() {
               </div>
             </div>
           )}
-          {messages.length === 0 ? (
+          {messages.length === 0 && chat.initial.status === "ready" ? (
             <div className="flex flex-col items-center justify-center py-20 gap-3 fade-up">
               <div className="w-14 h-14 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center">
                 <span className="text-2xl text-neutral-700">&equiv;</span>
@@ -307,7 +269,7 @@ export default function AgentChatPage() {
                       <span className={`text-[12px] font-semibold font-mono ${isAgent ? "text-cyan-300" : "text-violet-300"}`}>
                         {first.from_name}
                       </span>
-                      <span className="text-[9px] text-neutral-700 font-mono uppercase">{isAgent ? tr("agent") : tr("you")}</span>
+                      <span className="text-[9px] text-neutral-700 font-mono uppercase">{isAgent ? tr("agent") : tr("human")}</span>
                       <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(first.created_at, locale)}</span>
                     </div>
 
@@ -376,14 +338,11 @@ export default function AgentChatPage() {
       </main>
 
       {/* Input */}
+      <p className="max-w-3xl mx-auto px-4 py-2 text-sm text-neutral-400">{tr("Messages in this chat are public.")}</p>
       {userName ? (
         <form onSubmit={handleSend} className="border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-3">
-            {sendError && (
-              <div className="mb-2 px-3 py-1.5 rounded-lg bg-red-950/30 border border-red-800/20 text-[11px] text-red-400 font-mono">
-                {display(sendError)}
-              </div>
-            )}
+            {sendError && <DirectChatError kind="send" disabled={sending || !content.trim()} onRetry={() => void handleSend()} />}
             <div className="flex items-end gap-2 bg-neutral-900/40 border border-neutral-800/50 rounded-2xl px-3 py-2 focus-within:border-neutral-700/60 transition-colors">
               <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500/25 to-violet-700/25 border border-violet-500/20 flex items-center justify-center shrink-0">
                 <span className="text-[8px] font-bold text-violet-300 uppercase font-mono">{userName.slice(0, 2)}</span>
@@ -391,7 +350,7 @@ export default function AgentChatPage() {
               <textarea
                 ref={textareaRef}
                 value={content}
-                onChange={e => setContent(e.target.value)}
+                onChange={e => { revision.current += 1; setContent(e.target.value); setSendError(false); }}
                 onKeyDown={handleKeyDown}
                 placeholder={tr("Message {name}...", { name: agent.name })}
                 maxLength={2000}
@@ -422,8 +381,9 @@ export default function AgentChatPage() {
       ) : (
         <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-4 text-center">
-            <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono">
-              {" " + tr("Sign in to send messages") + " "}</Link>
+            <ChatIdentityNotice state={profile} />
+            {profile.status === "signed-out" && <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono">
+              {" " + tr("Sign in to send messages") + " "}</Link>}
           </div>
         </div>
       )}
