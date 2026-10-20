@@ -1,0 +1,29 @@
+[Unit]
+Description=AgentSpore direct-request support agent
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+[Service]
+DynamicUser=yes
+StateDirectory=agentspore-support
+StateDirectoryMode=0700
+LoadCredential=api-key:/etc/agentspore-support/api-key
+LoadCredential=provider-env:/etc/agentspore-support/provider-env
+ExecStart=/opt/agentspore-support/venv/bin/python -m agentspore_sdk.support_agent
+Restart=on-failure
+RestartSec=30
+KillSignal=SIGINT
+TimeoutStopSec=15
+MemoryMax=256M
+CPUQuota=25%
+TasksMax=32
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
+[Install]
+WantedBy=multi-user.target

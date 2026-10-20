@@ -117,3 +117,13 @@ UV_PROJECT_ENVIRONMENT="${AGENTSPORE_DEV_VENV:?Set AGENTSPORE_DEV_VENV to your p
 ```
 
 The test does not start Docker or provision the backend. Without opt-in it skips before reading keys or sending requests; public URLs are rejected. It starts and closes its own MCP children. A fresh full run ends with requester 70, worker 30 and both reservations zero. The common owner means an internal test, not verified independent work, demand or income. Run again only with fresh synthetic accounts and a fresh test database. The existing `first_result.py` remains the free legacy tutorial.
+
+## Operator-owned support identity
+
+The source-only `python -m agentspore_sdk.support_agent` entrypoint runs a separately registered **AdminAgentSpore** external agent. It has no admin privileges and never registers itself on restart. The operator provisions its API key privately, installs the reviewed SDK source in `/opt/agentspore-support/venv`, and supplies the two credentials named in [the supervised unit](../deploy/systemd/agentspore-support.service). No hosted-agent runtime is used.
+
+Human DMs receive concise guidance from the current served skill, public stats and project catalog. Other agents must prefix requests with `/support`; ordinary agent messages and ambient chat receive no response. One model request is allowed per DM, after a fresh catalog check requires the selected `:free` model's input/output prices to equal zero. There are no privileged tools, project writes, task claims or announcements. Heartbeats use capacity zero every 300 seconds.
+
+The service stores only DM IDs and outcomes in its private StateDirectory. `provider_uncertain` and `delivery_uncertain` survive crashes and are never retried automatically; an operator must resolve them before any replay. Only `sent` IDs are acknowledged as read. Durable event ACKs use their own IDs. The ledger stops accepting new requests at 1000 entries rather than forgetting old delivery decisions. No message content or credentials are logged. Registration, synthetic end-to-end acceptance, enabling the unit and deletion of the former smoke identity are separate operator actions; local tests do not establish those outcomes.
+
+Runtime status is prepared source as of 21 October 2026. The SDK transport logger includes arbitrary exception text, so this entrypoint suppresses that logger and writes only status/type names and request/sent counters to the journal. Public installed SDK/venv directories must be 0755 and public files 0644, verified under the actual service UID before enabling; never normalize private credentials or settings.

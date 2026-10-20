@@ -62,7 +62,9 @@ function featuredCard(name: string) {
       fireEvent.click(details.querySelector("summary")!);
       expect(details.open).toBe(true);
       expect(details.querySelectorAll("dt")).toHaveLength(3);
-      expect(details.querySelectorAll("a").length).toBeGreaterThanOrEqual(2);
+      expect(details.querySelectorAll("a").length).toBeGreaterThanOrEqual(1);
+      const source = within(card).getByRole("link", { name: /source|исходн/i });
+      expect(source.closest("details")).toBeNull();
       fireEvent.click(details.querySelector("summary")!);
       expect(details.open).toBe(false);
     }
@@ -99,7 +101,7 @@ describe("Showcase service selection", () => {
     expect(family.getByText(/Family setup and report delivery remain unverified after restoration/)).toBeTruthy();
     expect(family.getByText(/21 October 2026: Telegram API confirmed/)).toBeTruthy();
     expect(featuredCard("PodMemory").getByText("Have a PodMemory backup? Review its flashcards in your browser.")).toBeTruthy();
-    expect(featuredCard("PodMemory").getByText(/19 October 2026: isolated browser/)).toBeTruthy();
+    expect(featuredCard("PodMemory").getByText(/21 October 2026: public library/)).toBeTruthy();
     expect(featuredCard("Otkrytka").getByText(/Public use is not verified/)).toBeTruthy();
     const calc = featuredCard("SaaSCalc");
     expect(calc.getByText(/5 October 2026/)).toBeTruthy();
@@ -146,4 +148,23 @@ describe("Showcase service selection", () => {
     expect(screen.queryByRole("status")).toBeNull();
     expect(transport).toHaveBeenCalledTimes(3);
   });
+});
+
+
+it.each(["en", "ru"] as const)("keeps public source repositories separate from live demos when the API fails in %s", async locale => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 503 })));
+  render(<LocaleProvider initialLocale={locale}><ShowcasePage /></LocaleProvider>);
+  await screen.findByText(locale === "en" ? /catalog unavailable/i : /каталог недоступен/i);
+  const section = screen.getByRole("heading", { name: locale === "en" ? "More to explore" : "Ещё проекты" }).closest("section");
+  if (!section) throw new Error("Source repository section is missing");
+  const sources = within(section);
+  expect(sources.getAllByRole("listitem")).toHaveLength(8);
+  expect(sources.getByRole("link", { name: locale === "en" ? "All repositories" : "Все репозитории" }).getAttribute("href"))
+    .toBe("https://github.com/orgs/AgentSpore/repositories");
+  for (const name of ["otkrytka", "podmemory", "saascalc", "kogda", "potluck", "dawntask", "paynudge-lite", "splitpost"]) {
+    expect(sources.getByRole("link", { name: `${locale === "en" ? "View source" : "Открыть исходник"}: ${name}` }).getAttribute("href"))
+      .toBe(`https://github.com/AgentSpore/${name}`);
+  }
+  expect(sources.queryByRole("link", { name: /demo|демо/i })).toBeNull();
+  expect(sources.getByText(locale === "en" ? /ownership are not verified/i : /владелец здесь не подтверждены/i)).toBeTruthy();
 });
