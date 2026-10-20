@@ -7,6 +7,7 @@ import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
 import { docsMessages } from "@/lib/i18n/docs";
 import { communicationMessages } from "@/lib/i18n/communication";
 import { sharedMessages } from "@/lib/i18n/shared";
+import { API_URL } from "@/lib/api";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/chat", useRouter: () => ({ refresh: vi.fn() }) }));
 
@@ -51,8 +52,9 @@ const LIVE_MESSAGE = { ...MESSAGE, id: "m2", content: "An idea arriving live" };
 
 function pendingRead() {
   let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((complete) => { resolve = complete; });
-  return { promise, resolve };
+  let reject!: (error: Error) => void;
+  const promise = new Promise<Response>((complete, fail) => { resolve = complete; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 function stubInitialRead(read: () => Promise<Response>) {
@@ -173,4 +175,192 @@ it("replaces the cancelled StrictMode read without leaving chat loading", async 
   expect(await screen.findByText(MESSAGE.content)).toBeTruthy();
   expect(screen.queryByText(READ_ERROR.en)).toBeNull();
   unmount();
+});
+
+const COMPOSER_OWNER = {
+  id: "synthetic-owner", name: "Synthetic Person", email: "person@example.invalid",
+  avatar_url: null, token_balance: 0, is_admin: false,
+};
+const OWN_MESSAGES = ["Original first idea", "Original second idea"].map((content, index) => ({
+  ...MESSAGE, id: `own-${index}`, agent_id: null, agent_name: COMPOSER_OWNER.name,
+  specialization: "user", sender_type: "user", is_deleted: false, content,
+}));
+
+async function openComposer(pending: ReturnType<typeof pendingRead>) {
+  localStorage.setItem("access_token", "synthetic-composer-access");
+  const requests: { method: string; path: string; body: unknown }[] = [];
+  const unexpected: string[] = [];
+  stubChat([]);
+  const readRoutes = new Map([
+    ["GET /api/v1/auth/me", () => Response.json(COMPOSER_OWNER)],
+    ["GET /api/v1/chat/messages?limit=50", () => Response.json([...OWN_MESSAGES].reverse())],
+  ]);
+  const writeRoutes = new Set(["POST /api/v1/chat/human-message",
+    ...OWN_MESSAGES.map(message => `PATCH /api/v1/chat/human-messages/${message.id}`)]);
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    const url = new URL(input);
+    const method = init?.method ?? "GET";
+    const route = `${method} ${url.pathname}${url.search}`;
+    if (url.origin !== new URL(API_URL).origin) {
+      unexpected.push("Unexpected composer origin");
+      return Promise.reject(new Error("Unexpected composer origin"));
+    }
+    const read = readRoutes.get(route);
+    if (read) return Promise.resolve(read());
+    if (writeRoutes.has(route)) {
+      requests.push({ method, path: url.pathname, body: JSON.parse(String(init?.body)) });
+      return pending.promise;
+    }
+    unexpected.push(route);
+    return Promise.reject(new Error("Unexpected synthetic composer request"));
+  }));
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox");
+  await screen.findByText(OWN_MESSAGES[0].content);
+  return { input, requests, unexpected };
+}
+
+function compose(input: HTMLTextAreaElement, content: string) {
+  fireEvent.change(input, { target: { value: content } });
+}
+
+function submitComposer(input: HTMLTextAreaElement) {
+  fireEvent.keyDown(input, { key: "Enter" });
+}
+
+it.each(["a newer draft", "submitted text"])("keeps POST draft revision when pending text becomes %s", async (newDraft) => {
+  const pending = pendingRead();
+  const { input, requests, unexpected } = await openComposer(pending);
+  compose(input, "submitted text");
+  await act(async () => { submitComposer(input); submitComposer(input); });
+  compose(input, "an intermediate revision");
+  compose(input, newDraft);
+  expect(input.disabled).toBe(false);
+  expect(requests).toEqual([{ method: "POST", path: "/api/v1/chat/human-message", body: { content: "submitted text" } }]);
+
+  await act(async () => pending.resolve(Response.json({ status: "ok", message_id: "new-message" })));
+  expect(input.value).toBe(newDraft);
+  expect(unexpected).toEqual([]);
+});
+
+it.each(["Escape", "Cancel (Esc)"])("keeps a new draft after %s cancels a pending PATCH", async (cancel) => {
+  const pending = pendingRead();
+  const { input, requests, unexpected } = await openComposer(pending);
+  fireEvent.click(screen.getAllByTitle("Edit")[0]);
+  compose(input, "saved first idea");
+  submitComposer(input);
+  if (cancel === "Escape") fireEvent.keyDown(input, { key: "Escape" });
+  else fireEvent.click(screen.getByRole("button", { name: cancel }));
+  compose(input, "a separate new draft");
+  await act(async () => pending.resolve(Response.json({ status: "ok", message_id: OWN_MESSAGES[0].id })));
+
+  expect(await screen.findByText("saved first idea")).toBeTruthy();
+  expect(input.value).toBe("a separate new draft");
+  expect(input.placeholder).toBe("Message the agents...");
+  expect(requests).toEqual([{ method: "PATCH", path: `/api/v1/chat/human-messages/${OWN_MESSAGES[0].id}`, body: { content: "saved first idea" } }]);
+  expect(unexpected).toEqual([]);
+});
+
+it.each([0, 1])("keeps a fresh edit context for message %i after an earlier PATCH completes", async (nextIndex) => {
+  const pending = pendingRead();
+  const { input, unexpected } = await openComposer(pending);
+  fireEvent.click(screen.getAllByTitle("Edit")[0]);
+  compose(input, "submitted edit");
+  submitComposer(input);
+  fireEvent.keyDown(input, { key: "Escape" });
+  fireEvent.click(screen.getAllByTitle("Edit")[nextIndex]);
+  compose(input, "another revision");
+  compose(input, "submitted edit");
+  await act(async () => pending.resolve(Response.json({ status: "ok", message_id: OWN_MESSAGES[0].id })));
+
+  expect(screen.getByText("submitted edit", { selector: "p" })).toBeTruthy();
+  expect(input.value).toBe("submitted edit");
+  expect(input.placeholder).toBe("Edit your message...");
+  expect(screen.getByText("Editing message")).toBeTruthy();
+  expect(unexpected).toEqual([]);
+});
+
+it.each(["POST", "PATCH"])("clears the unchanged composer after successful %s", async (method) => {
+  const pending = pendingRead();
+  const { input, requests, unexpected } = await openComposer(pending);
+  if (method === "PATCH") fireEvent.click(screen.getAllByTitle("Edit")[0]);
+  compose(input, "ordinary submission");
+  submitComposer(input);
+  const form = input.closest("form");
+  if (!form) throw new Error("Composer form missing");
+  const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (!submit) throw new Error("Composer submit missing");
+  expect(submit.disabled).toBe(true);
+  await act(async () => pending.resolve(Response.json({ status: "ok", message_id: OWN_MESSAGES[0].id })));
+
+  expect(input.value).toBe("");
+  expect(input.placeholder).toBe("Message the agents...");
+  expect(requests[0].method).toBe(method);
+  if (method === "PATCH") expect(screen.getByText("ordinary submission")).toBeTruthy();
+  expect(unexpected).toEqual([]);
+});
+
+it.each([
+  { method: "POST", failure: "http" }, { method: "POST", failure: "network" },
+  { method: "PATCH", failure: "http" }, { method: "PATCH", failure: "network" },
+])("retains the active draft after $method $failure failure", async ({ method, failure }) => {
+  const pending = pendingRead();
+  const { input, unexpected } = await openComposer(pending);
+  if (method === "PATCH") fireEvent.click(screen.getAllByTitle("Edit")[0]);
+  compose(input, "retry this draft");
+  submitComposer(input);
+  await act(async () => {
+    if (failure === "network") pending.reject(new TypeError("Synthetic network failure"));
+    else pending.resolve(Response.json({ detail: "Synthetic write rejected" }, { status: 503 }));
+  });
+
+  expect(input.value).toBe("retry this draft");
+  expect(await screen.findByText(failure === "network" ? "Network error" : "Synthetic write rejected")).toBeTruthy();
+  expect(input.placeholder).toBe(method === "PATCH" ? "Edit your message..." : "Message the agents...");
+  expect(unexpected).toEqual([]);
+});
+
+it.each(["http", "network"])("does not attach stale PATCH %s errors to a new edit", async (failure) => {
+  const pending = pendingRead();
+  const { input, unexpected } = await openComposer(pending);
+  fireEvent.click(screen.getAllByTitle("Edit")[0]);
+  compose(input, "earlier submission");
+  submitComposer(input);
+  fireEvent.keyDown(input, { key: "Escape" });
+  fireEvent.click(screen.getAllByTitle("Edit")[1]);
+  compose(input, "new edit draft");
+  await act(async () => {
+    if (failure === "network") pending.reject(new TypeError("Synthetic network failure"));
+    else pending.resolve(Response.json({ detail: "Stale edit error" }, { status: 503 }));
+  });
+
+  expect(input.value).toBe("new edit draft");
+  expect(screen.queryByText("Network error")).toBeNull();
+  expect(screen.queryByText("Stale edit error")).toBeNull();
+  expect(unexpected).toEqual([]);
+});
+
+it.each([
+  { method: "POST", failure: "http" }, { method: "POST", failure: "network" },
+  { method: "PATCH", failure: "http" }, { method: "PATCH", failure: "network" },
+])("reports $method $failure failure after typing a new draft in the same context", async ({ method, failure }) => {
+  const pending = pendingRead();
+  const { input, unexpected } = await openComposer(pending);
+  if (method === "PATCH") fireEvent.click(screen.getAllByTitle("Edit")[0]);
+  compose(input, "submitted draft");
+  submitComposer(input);
+  compose(input, "a new draft in this context");
+  await act(async () => {
+    if (failure === "network") pending.reject(new TypeError("Synthetic network failure"));
+    else pending.resolve(Response.json({ detail: "The previous write failed" }, { status: 503 }));
+  });
+
+  expect(input.value).toBe("a new draft in this context");
+  expect(await screen.findByText(failure === "network" ? "Network error" : "The previous write failed")).toBeTruthy();
+  const form = input.closest("form");
+  if (!form) throw new Error("Composer form missing");
+  const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (!submit) throw new Error("Composer submit missing");
+  expect(submit.disabled).toBe(false);
+  expect(unexpected).toEqual([]);
 });

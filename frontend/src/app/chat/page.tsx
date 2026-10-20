@@ -188,8 +188,14 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const revisionRef = useRef(0);
+  const contextRef = useRef(0);
+  const sendingRef = useRef(false);
 
   useEffect(() => {
+    revisionRef.current += 1;
+    contextRef.current += 1;
+    setError(null);
     if (editingId) {
       setContent(editingContent);
       textareaRef.current?.focus();
@@ -198,62 +204,57 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
 
   const canSend = content.trim().length > 0 && !sending;
 
+  const cancelEditing = () => {
+    revisionRef.current += 1;
+    contextRef.current += 1;
+    setContent("");
+    setError(null);
+    onCancelEdit();
+  };
+
+  const completeOperation = (operation: { editingId: string | null; content: string; revision: number }) => {
+    if (operation.editingId) onSaveEdit(operation.editingId, operation.content);
+    if (revisionRef.current !== operation.revision) return;
+    setContent("");
+    if (operation.editingId) onCancelEdit();
+    else textareaRef.current?.focus();
+  };
+  const reportOperationError = (operationContext: number, message: string) => {
+    if (contextRef.current === operationContext) setError(message);
+  };
+
   const handleSubmit = async (e?: React.FormEvent<HTMLFormElement>) => {
     e?.preventDefault();
-    if (!canSend) return;
-
+    if (!canSend || sendingRef.current) return;
+    const operation = { editingId, content: content.trim(), revision: revisionRef.current, context: contextRef.current };
+    sendingRef.current = true;
     setSending(true);
     setError(null);
-
     const token = localStorage.getItem("access_token");
-
-    if (editingId) {
-      try {
-        const res = await fetch(`${API_URL}/api/v1/chat/human-messages/${editingId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ content: content.trim() }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          setError(data.detail ?? "Failed to edit");
-          return;
-        }
-        onSaveEdit(editingId, content.trim());
-        setContent("");
-        onCancelEdit();
-      } catch {
-        setError("Network error");
-      } finally {
-        setSending(false);
-      }
-      return;
-    }
-
     try {
-      const res = await fetch(`${API_URL}/api/v1/chat/human-message`, {
-        method: "POST",
+      const path = operation.editingId ? `human-messages/${operation.editingId}` : "human-message";
+      const res = await fetch(`${API_URL}/api/v1/chat/${path}`, {
+        method: operation.editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ content: content.trim() }),
+        body: JSON.stringify({ content: operation.content }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.detail ?? "Failed to send");
+        reportOperationError(operation.context, data.detail ?? (operation.editingId ? "Failed to edit" : "Failed to send"));
         return;
       }
-      setContent("");
-      textareaRef.current?.focus();
+      completeOperation(operation);
     } catch {
-      setError("Network error");
+      reportOperationError(operation.context, "Network error");
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Escape" && editingId) {
-      onCancelEdit();
-      setContent("");
+      cancelEditing();
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
@@ -275,7 +276,7 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
         {editingId && (
           <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-950/20 border border-violet-800/20">
             <span className="text-[11px] text-violet-400 font-mono flex-1">{tr("Editing message")}</span>
-            <button type="button" onClick={() => { onCancelEdit(); setContent(""); }} className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono">
+            <button type="button" onClick={cancelEditing} className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono">
               {" " + tr("Cancel (Esc)") + " "}</button>
           </div>
         )}
@@ -291,7 +292,7 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
           <textarea
             ref={textareaRef}
             value={content}
-            onChange={e => setContent(e.target.value)}
+            onChange={e => { revisionRef.current += 1; setContent(e.target.value); setError(null); }}
             onKeyDown={handleKeyDown}
             placeholder={editingId ? tr("Edit your message...") : tr("Message the agents...")}
             maxLength={2000}
