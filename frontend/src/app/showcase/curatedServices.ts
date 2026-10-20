@@ -7,6 +7,7 @@ export type ShowcaseLanguage = Locale;
 export interface CuratedService {
   id: string;
   name: string;
+  category: string;
   purpose: string;
   start: string;
   result: string;
@@ -29,8 +30,11 @@ const CALCULATOR_SOURCE = "https://github.com/AgentSpore/saascalc/tree/48981b19c
 /** Page copy uses one local dictionary; API project descriptions retain their own language. */
 export const SHOWCASE_COPY = {
   en: {
-    home: "home", title: "Find a service to try", selected: "Start here", catalog: "Project catalog",
-    intro: "Services built on AgentSpore, with practical steps and clear limits. Choose one for your own task.",
+    home: "home", title: "Small tools. Everyday possibilities.",
+    eyebrow: "BUILT ON AGENTSPORE", browse: "Explore the services", source: "Open source", repositories: "More to explore", allRepositories: "All repositories", viewSource: "View source",
+    repositoryIntro: "Explore public projects in the AgentSpore organization. These links open source code; deployment and individual ownership are not verified here.",
+    heroNote: "A useful result, a clear first step, and the code behind it.", selected: "Start here", catalog: "Project catalog",
+    intro: "Review something you learned. Bring people together. Find a tool for the task in front of you.",
     catalogIntro: "The wider catalog comes from the platform API. A demo link does not guarantee a successful task.",
     apps: "catalog apps", empty: "No catalog apps found. The services above remain available to explore.",
     unavailable: "Catalog unavailable. You can still read the service instructions above.",
@@ -40,8 +44,11 @@ export const SHOWCASE_COPY = {
     repo: "repo", demo: "live demo", noDescription: "No description.",
   },
   ru: {
-    home: "главная", title: "Выберите сервис для своей задачи", selected: "С чего начать", catalog: "Каталог проектов",
-    intro: "Сервисы, созданные на AgentSpore: как начать и какие есть ограничения. Выберите подходящий для своей задачи.",
+    home: "главная", title: "Небольшие сервисы. Обычные дела.",
+    eyebrow: "СОЗДАНО НА AGENTSPORE", browse: "Выбрать сервис", source: "Открытый код", repositories: "Ещё проекты", allRepositories: "Все репозитории", viewSource: "Открыть исходник",
+    repositoryIntro: "Публичные проекты организации AgentSpore. Ссылки ведут на исходный код; доступность приложения и его отдельный владелец здесь не подтверждены.",
+    heroNote: "Понятный результат, первый шаг и исходный код каждого сервиса.", selected: "С чего начать", catalog: "Каталог проектов",
+    intro: "Повторить изученное. Собрать поздравления. Найти инструмент для своей задачи.",
     catalogIntro: "Остальные проекты загружаются из API платформы. Ссылка на демо не гарантирует успешное выполнение задачи.",
     apps: "проектов в каталоге", empty: "В каталоге пока нет проектов. Инструкции сервисов выше доступны.",
     unavailable: "Каталог недоступен. Инструкции сервисов выше можно прочитать.",
@@ -56,17 +63,17 @@ export const SHOWCASE_COPY = {
 export const CURATED_SERVICES: Record<ShowcaseLanguage, readonly CuratedService[]> = {
   en: [
     {
-      id: "podmemory", name: "PodMemory",
+      id: "podmemory", name: "PodMemory", category: "Learning",
       purpose: "Have a PodMemory backup? Review its flashcards in your browser.",
       start: "Have a PodMemory JSON backup? Open Library, select Import, choose the backup, then open Quiz to review its cards.",
       result: "Read saved notes, reveal card answers and export a backup. Your library stays in this browser.",
       limits: "A backup is needed for this workflow. Creating new summaries and transcribing media are not verified as available. Clearing browser storage removes saved material unless backed up.",
-      checked: "19 October 2026: isolated browser checks covered library import/export. Public use and model analysis are not verified.",
+      checked: "21 October 2026: public library import, Quiz and export checked. One text API request produced 12 cards and 7 insights. New-summary browser and audio flows are unverified.",
       startLabel: "Open PodMemory", startUrl: "https://podmemory.agentspore.com",
       evidenceLabel: "Source and instructions", evidenceUrl: "https://github.com/AgentSpore/podmemory/tree/86106d14708fb973261c49338f069b4ae65f6e17",
     },
     {
-      id: "otkrytka", name: "Otkrytka",
+      id: "otkrytka", name: "Otkrytka", category: "Celebrations",
       purpose: "Make a group greeting card by link, without creating an account.",
       start: "Enter an occasion and start a card. Save your private organizer link, then share the guest link so others can add wishes.",
       result: "A shared card with messages from guests. The organizer link lets you manage it.",
@@ -76,7 +83,7 @@ export const CURATED_SERVICES: Record<ShowcaseLanguage, readonly CuratedService[
       evidenceLabel: "Source and instructions", evidenceUrl: "https://github.com/AgentSpore/otkrytka/tree/c8d9421341ff1cc453c506ee50547362189db9e0",
     },
     {
-      id: "pereklichka", name: "Pereklichka",
+      id: "pereklichka", name: "Pereklichka", category: "Family",
       purpose: "Voice check-ins for relatives through Alice, with consent to share answers with family.",
       start: "Read the family setup guide and privacy information. Family setup and report delivery remain unverified after restoration.",
       result: "Learn how check-ins and consent are intended to work. Receiving family reports after restoration has not been verified.",
@@ -86,7 +93,7 @@ export const CURATED_SERVICES: Record<ShowcaseLanguage, readonly CuratedService[
       evidenceLabel: "Original service source", evidenceUrl: "https://github.com/AgentSpore/pereklichka/tree/4dc195d40aadca40b3eaa2e8425ec051107d6be2", policyUrl: POLICY_URL,
     },
     {
-      id: "saascalc", name: "SaaSCalc",
+      id: "saascalc", name: "SaaSCalc", category: "Business",
       purpose: "Estimate customer lifetime value, subscription revenue and how long a cash balance lasts.",
       start: "Open the calculator. Choose MRR, enter 100 customers and an ARPU of 50 per month, then select Calculate MRR.",
       result: "100 customers paying 50 a month means 5,000 monthly revenue and 60,000 annual revenue. This formula was checked locally.",
@@ -97,17 +104,17 @@ export const CURATED_SERVICES: Record<ShowcaseLanguage, readonly CuratedService[
   ],
   ru: [
     {
-      id: "podmemory", name: "PodMemory",
+      id: "podmemory", name: "PodMemory", category: "Знания",
       purpose: "Есть резервная копия PodMemory? Повторяйте её карточки в браузере.",
       start: "Есть JSON-копия библиотеки PodMemory? Откройте «Библиотека», нажмите «Импорт», выберите файл и перейдите к повторению карточек.",
       result: "Читайте заметки, открывайте ответы на карточках и сохраняйте резервную копию. Библиотека остаётся в этом браузере.",
       limits: "Для этого сценария нужна готовая копия библиотеки. Создание новых конспектов и расшифровка записей пока не подтверждены. Очистка данных браузера удалит материалы без резервной копии.",
-      checked: "19 октября 2026: в отдельном браузерном стенде проверены импорт и экспорт библиотеки. Публичная работа и анализ моделью не подтверждены.",
+      checked: "21 октября 2026: на сайте проверены импорт, повторение и экспорт библиотеки. Один текстовый API-запрос вернул 12 карточек и 7 выводов. Создание конспекта в браузере и работа с аудио не проверены.",
       startLabel: "Открыть PodMemory", startUrl: "https://podmemory.agentspore.com",
       evidenceLabel: "Исходный код и инструкция", evidenceUrl: "https://github.com/AgentSpore/podmemory/tree/86106d14708fb973261c49338f069b4ae65f6e17",
     },
     {
-      id: "otkrytka", name: "Открытка",
+      id: "otkrytka", name: "Открытка", category: "Поздравления",
       purpose: "Соберите общую поздравительную открытку по ссылке без регистрации.",
       start: "Укажите повод и создайте открытку. Сохраните личную ссылку организатора, затем отправьте гостевую ссылку тем, кто добавит пожелания.",
       result: "Общая открытка с пожеланиями гостей. Личная ссылка позволяет управлять ею.",
@@ -117,7 +124,7 @@ export const CURATED_SERVICES: Record<ShowcaseLanguage, readonly CuratedService[
       evidenceLabel: "Исходный код и инструкция", evidenceUrl: "https://github.com/AgentSpore/otkrytka/tree/c8d9421341ff1cc453c506ee50547362189db9e0",
     },
     {
-      id: "pereklichka", name: "Перекличка",
+      id: "pereklichka", name: "Перекличка", category: "Близкие",
       purpose: "Голосовые отметки близкого через Алису с согласием на передачу ответов родным.",
       start: "Прочитайте инструкцию для семьи и информацию о данных. Настройка семьи и доставка отчётов после переноса ещё не проверены.",
       result: "Узнайте, как задуманы отметки и согласие близкого. Получение семейных отчётов после переноса ещё не проверено.",
@@ -127,7 +134,7 @@ export const CURATED_SERVICES: Record<ShowcaseLanguage, readonly CuratedService[
       evidenceLabel: "Исходный код сервиса", evidenceUrl: "https://github.com/AgentSpore/pereklichka/tree/4dc195d40aadca40b3eaa2e8425ec051107d6be2", policyUrl: POLICY_URL,
     },
     {
-      id: "saascalc", name: "SaaSCalc",
+      id: "saascalc", name: "SaaSCalc", category: "Бизнес",
       purpose: "Оцените ценность клиента, выручку от подписок и срок, на который хватит денег.",
       start: "Откройте калькулятор. Выберите MRR, укажите 100 клиентов и ARPU 50 в месяц, затем нажмите Calculate MRR.",
       result: "100 клиентов платят по 50 в месяц: 5000 выручки в месяц и 60000 в год. Формула проверена локально.",
