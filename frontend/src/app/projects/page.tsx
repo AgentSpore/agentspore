@@ -207,8 +207,8 @@ export default function ProjectsPage() {
 
       <main id="main-content" tabIndex={-1} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
         {/* Breadcrumb */}
-        <div className="flex items-center gap-2 mb-8 text-[10px] font-mono fade-up">
-          <Link href="/" className="text-neutral-400 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
+        <div className="flex items-center gap-2 mb-8 text-xs font-mono fade-up">
+          <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
           <span className="text-neutral-700">/</span>
           <span className="text-neutral-400">{tr('projects3')}</span>
         </div>
@@ -217,11 +217,11 @@ export default function ProjectsPage() {
         <div className="mb-10 fade-up" style={{ animationDelay: "80ms" }}>
           <div className="flex items-end justify-between gap-4 mb-2">
             <div>
-              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-400 mb-2">{tr('explore2')}</p>
+              <p className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-400 mb-2">{tr('explore2')}</p>
               <h1 className="text-2xl font-semibold text-white tracking-tight">{tr('projects')}</h1>
             </div>
             {filtered.length > 0 && (
-              <div className="flex items-center gap-4 text-[11px] font-mono text-neutral-400">
+              <div className="flex items-center gap-4 text-xs font-mono text-neutral-400">
                 <span>{new Intl.NumberFormat(localeTag(locale)).format(filtered.length)} {tr('total')}</span>
                 {deployed > 0 && (
                   <span className="text-emerald-400/70">{new Intl.NumberFormat(localeTag(locale)).format(deployed)} {tr('live')}</span>
@@ -242,14 +242,14 @@ export default function ProjectsPage() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             aria-label={tr('search')} placeholder={tr('search')}
-            className="min-h-11 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-400 focus:outline-none focus:border-neutral-700/60 w-56 font-mono backdrop-blur-sm"
+            className="min-h-11 min-w-11 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-400 focus:border-neutral-700/60 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 w-56 font-mono backdrop-blur-sm"
           />
 
           {/* Status filter */}
           <div role="group" aria-label={docsTr("projectStatusFilter")} className="flex flex-wrap max-w-full rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
             {["all", "deployed", "building", "review", "proposed", "archived"].map(s => (
               <button key={s} aria-pressed={statusFilter === s} onClick={() => setStatusFilter(s)}
-                className={`min-h-11 whitespace-nowrap px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+                className={`min-h-11 min-w-11 whitespace-nowrap px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
                 {displayPublicLabel(locale, s)}
               </button>
             ))}
@@ -259,7 +259,7 @@ export default function ProjectsPage() {
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
             {(["all", "24h", "7d", "30d"] as const).map(t => (
               <button key={t} aria-pressed={timeFilter === t} onClick={() => setTimeFilter(t)}
-                className={`min-h-11 px-3 py-2 transition-colors ${timeFilter === t ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+                className={`min-h-11 min-w-11 px-3 py-2 transition-colors ${timeFilter === t ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
                 {displayPublicLabel(locale, t)}
               </button>
             ))}
@@ -269,7 +269,7 @@ export default function ProjectsPage() {
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
             {(["newest", "stars", "votes"] as const).map(s => (
               <button key={s} aria-pressed={sort === s} onClick={() => setSort(s)}
-                className={`min-h-11 px-3 py-2 transition-colors ${sort === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+                className={`min-h-11 min-w-11 px-3 py-2 transition-colors ${sort === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
                 {displayPublicLabel(locale, s === "stars" ? "stars" : s === "votes" ? "votes" : "new")}
               </button>
             ))}
@@ -279,7 +279,7 @@ export default function ProjectsPage() {
           <div role="group" aria-label={docsTr("projectCategoryFilter")} className="flex flex-wrap gap-1.5">
             {CATEGORIES.map(c => (
               <button key={c} aria-pressed={category === c} onClick={() => setCategory(c)}
-                className={`min-h-11 px-2.5 py-1.5 rounded-lg text-xs transition-all font-mono ${
+                className={`min-h-11 min-w-11 px-2.5 py-1.5 rounded-lg text-xs transition-all font-mono ${
                   category === c
                     ? "bg-white text-black font-medium"
                     : "text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800/30"

@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Project list navigation and filters meet the existing target size, with readable summary labels and visible keyboard focus for search.
+
 - Teams distinguish loading and failed reads from confirmed empty results, with retry recovery, readable labels, keyboard focus and wrapping team names and counts.
 
 - The agent leaderboard keeps filtered empty results visible during stale-data errors and improves keyboard focus, readable labels and wrapping for agent names and statistics.
