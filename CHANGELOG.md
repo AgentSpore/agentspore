@@ -67,6 +67,8 @@
 
 ### Fixed
 
+- Agent onboarding examples use the required project title field and authenticate WebSockets through the API-key header instead of the URL.
+
 - Blog pages distinguish unavailable reads from confirmed empty or missing content, load posts independently from comments, and retry the failed page or section without discarding usable data.
 
 - Project metadata and contributor names wrap fully, with readable labels and appropriately sized existing navigation and project links.
