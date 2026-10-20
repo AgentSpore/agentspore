@@ -26,7 +26,7 @@ const TYPE_PILL: Record<string, { active: string; icon: string }> = {
 };
 
 function AgentAvatar({ name, specialization, size = "md" }: { name: string; specialization: string; size?: "sm" | "md" }) {
-  const sz = size === "sm" ? "w-6 h-6 text-[8px]" : "w-8 h-8 text-[10px]";
+  const sz = size === "sm" ? "w-6 h-6 text-xs" : "w-8 h-8 text-xs";
   if (specialization === "human" || specialization === "user") {
     return (
       <div className={`${sz} rounded-full flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-violet-500/20 to-violet-700/20 border border-violet-500/25 ring-1 ring-violet-500/10`}>
@@ -54,10 +54,11 @@ function MessageActions({ msg, onEdit, onDelete, deleteStatus }: { msg: ChatMess
   const sharedTr = useTranslations(sharedMessages);
 
   return (
-    <><div className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex items-center gap-0.5 ml-1">
+    <><div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 md:pointer-coarse:opacity-100 transition-opacity flex items-center gap-1 ml-1">
       <button
         onClick={() => onEdit(msg.id, msg.content)}
-        className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors"
+        className="min-w-12 min-h-12 rounded flex items-center justify-center text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400"
+        aria-label={tr("Edit")}
         title={tr("Edit")}
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -68,7 +69,8 @@ function MessageActions({ msg, onEdit, onDelete, deleteStatus }: { msg: ChatMess
       <button
         onClick={() => onDelete(msg.id)}
         disabled={deleteStatus === "pending"}
-        className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+        className="min-w-12 min-h-12 rounded flex items-center justify-center text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400"
+        aria-label={tr("Delete")}
         title={tr("Delete")}
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -78,7 +80,7 @@ function MessageActions({ msg, onEdit, onDelete, deleteStatus }: { msg: ChatMess
     </div>
       {deleteStatus === "error" && <div role="alert" className="order-last basis-full min-w-0 text-sm text-neutral-300">
         <p>{tr("Could not delete message.")}</p>
-        <button type="button" onClick={() => onDelete(msg.id)} className="min-h-12 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+        <button type="button" onClick={() => onDelete(msg.id)} className="min-h-12 min-w-12 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
           {sharedTr("retry")}
         </button>
       </div>}
@@ -106,21 +108,21 @@ function MessageGroup({ messages, isHuman, userId, onEdit, onDelete, deleteState
       <AgentAvatar name={first.agent_name} specialization={first.specialization} />
       <div className={`flex-1 min-w-0 max-w-[85%] ${isHuman ? "flex flex-col items-end" : ""}`}>
         {/* Sender line */}
-        <div className={`flex items-center gap-2 mb-1 ${isHuman ? "flex-row-reverse" : ""}`}>
+        <div className={`flex flex-wrap min-w-0 max-w-full items-center gap-2 mb-1 ${isHuman ? "flex-row-reverse" : ""}`}>
           {isHuman ? (
-            <span className="text-[12px] font-semibold font-mono text-neutral-300">{first.agent_name}</span>
+            <span className="min-w-0 max-w-full [overflow-wrap:anywhere] text-xs font-semibold font-mono text-neutral-300">{first.agent_name}</span>
           ) : (
-            <Link href={`/agents/${first.agent_id}`} className="text-[12px] font-semibold font-mono text-white hover:text-violet-300 transition-colors">
+            <Link href={`/agents/${first.agent_id}`} className="inline-flex min-h-12 min-w-12 max-w-full items-center [overflow-wrap:anywhere] text-xs font-semibold font-mono text-white hover:text-violet-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {first.agent_name}
             </Link>
           )}
           {isVerified && (
-            <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/20 font-mono font-bold uppercase tracking-wider">{tr("usr")}</span>
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/20 font-mono font-bold uppercase tracking-wider">{tr("usr")}</span>
           )}
           {!isHuman && (
-            <span className="text-[9px] text-neutral-600 font-mono">{display(first.specialization)}</span>
+            <span className="text-xs text-neutral-600 font-mono">{display(first.specialization)}</span>
           )}
-          <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(first.ts, locale)}</span>
+          <span className="text-xs text-neutral-700 font-mono">{timeAgo(first.ts, locale)}</span>
         </div>
 
         {/* Message bubbles */}
@@ -135,7 +137,7 @@ function MessageGroup({ messages, isHuman, userId, onEdit, onDelete, deleteState
             return (
               <div key={msg.id} data-message-id={msg.id} className="group flex flex-wrap items-center gap-1 min-w-0">
                 {isOwner && !deleted && <MessageActions msg={msg} onEdit={onEdit} onDelete={onDelete} deleteStatus={deleteState[msg.id]} />}
-                <div className={`relative px-3.5 py-2 text-sm leading-relaxed break-words transition-colors ${
+                <div className={`relative min-w-0 max-w-full px-3.5 py-2 text-sm leading-relaxed [overflow-wrap:anywhere] transition-colors ${
                   deleted ? "opacity-40 italic" :
                   isHuman
                     ? `bg-violet-500/10 border border-violet-500/15 text-neutral-200 ${
@@ -152,28 +154,28 @@ function MessageGroup({ messages, isHuman, userId, onEdit, onDelete, deleteState
                       }`
                 }`}>
                   {msg.message_type !== "text" && !deleted && (
-                    <span className={`inline-flex items-center gap-1 text-[9px] font-bold font-mono px-1.5 py-0.5 rounded-md mr-1.5 align-middle ${msgMeta.bg} ${msgMeta.color}`}>
+                    <span className={`inline-flex items-center gap-1 text-xs font-bold font-mono px-1.5 py-0.5 rounded-md mr-1.5 align-middle ${msgMeta.bg} ${msgMeta.color}`}>
                       {msgMeta.icon} {display(msgMeta.label)}
                     </span>
                   )}
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                     p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
                     strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-                    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">{children}</a>,
-                    code: ({ children }) => <code className="bg-white/[0.06] px-1 py-0.5 rounded text-[11px] text-violet-300">{children}</code>,
+                    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 min-w-12 max-w-full items-center [overflow-wrap:anywhere] text-cyan-400 hover:text-cyan-300 underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{children}</a>,
+                    code: ({ children }) => <code className="bg-white/[0.06] px-1 py-0.5 rounded text-xs text-violet-300">{children}</code>,
                     ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1">{children}</ul>,
                     ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1">{children}</ol>,
                     li: ({ children }) => <li className="text-inherit">{children}</li>,
                     h1: ({ children }) => <p className="font-bold text-white mt-2 mb-1">{children}</p>,
                     h2: ({ children }) => <p className="font-bold text-white mt-2 mb-1">{children}</p>,
                     h3: ({ children }) => <p className="font-semibold text-neutral-200 mt-1.5 mb-0.5">{children}</p>,
-                    pre: ({ children }) => <pre className="bg-black/30 rounded-lg p-2 my-1 overflow-x-auto text-[11px]">{children}</pre>,
+                    pre: ({ children }) => <pre className="max-w-full bg-black/30 rounded-lg p-2 my-1 overflow-x-auto text-xs">{children}</pre>,
                   }}>{msg.content}</ReactMarkdown>
                   {msg.edited_at && !deleted && (
-                    <span className="text-[8px] text-neutral-600 ml-1.5">{tr("(edited)")}</span>
+                    <span className="text-xs text-neutral-600 ml-1.5">{tr("(edited)")}</span>
                   )}
                 </div>
-                <span className="text-[9px] text-neutral-800 font-mono opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                <span className="text-xs text-neutral-800 font-mono opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity whitespace-nowrap">
                   {new Date(msg.ts).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
                 </span>
               </div>
@@ -230,6 +232,7 @@ function ChatInput({ identity, editingId, editingContent, onCancelEdit, onSaveEd
     contextRef.current += 1;
     setContent("");
     setError(null);
+    textareaRef.current?.focus();
     onCancelEdit();
   };
 
@@ -294,7 +297,7 @@ function ChatInput({ identity, editingId, editingContent, onCancelEdit, onSaveEd
   if (!confirmed) return (
         <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-4 text-center">
-            <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono">
+            <Link href="/login" className="inline-flex min-h-12 min-w-12 max-w-full items-center justify-center text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {" " + tr("Sign in to join the conversation") + " "}</Link>
           </div>
         </div>
@@ -305,13 +308,13 @@ function ChatInput({ identity, editingId, editingContent, onCancelEdit, onSaveEd
       <div className="max-w-3xl mx-auto px-4 py-3">
         {editingId && (
           <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-950/20 border border-violet-800/20">
-            <span className="text-[11px] text-violet-400 font-mono flex-1">{tr("Editing message")}</span>
-            <button type="button" onClick={cancelEditing} className="text-[10px] text-neutral-500 hover:text-neutral-300 font-mono">
+            <span className="text-xs text-violet-400 font-mono flex-1 min-w-0">{tr("Editing message")}</span>
+            <button type="button" onClick={cancelEditing} className="min-h-12 min-w-12 shrink-0 px-3 text-xs text-neutral-500 hover:text-neutral-300 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {" " + tr("Cancel (Esc)") + " "}</button>
           </div>
         )}
         {error && (
-          <div className="mb-2 px-3 py-1.5 rounded-lg bg-red-950/30 border border-red-800/20 text-[11px] text-red-400 font-mono">
+          <div className="mb-2 px-3 py-1.5 rounded-lg bg-red-950/30 border border-red-800/20 text-xs text-red-400 font-mono">
             {display(error)}
           </div>
         )}
@@ -321,18 +324,20 @@ function ChatInput({ identity, editingId, editingContent, onCancelEdit, onSaveEd
           <AgentAvatar name={identity.name} specialization="user" size="sm" />
           <textarea
             ref={textareaRef}
+            aria-label={tr("Message")}
             value={content}
             onChange={e => { revisionRef.current += 1; setContent(e.target.value); setError(null); }}
             onKeyDown={handleKeyDown}
             placeholder={editingId ? tr("Edit your message...") : tr("Message the agents...")}
             maxLength={2000}
             rows={1}
-            className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 outline-none resize-none font-mono leading-relaxed max-h-[120px]"
+            className="flex-1 min-w-0 min-h-12 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 resize-none font-mono leading-relaxed max-h-[120px] rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400"
           />
           <button
             type="submit"
+            aria-label={editingId ? tr("Save") : tr("Send")}
             disabled={!canSend}
-            className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
+            className={`flex-shrink-0 min-w-12 min-h-12 rounded-full flex items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 transition-all duration-200 ${
               canSend
                 ? editingId ? "bg-violet-500 text-white hover:bg-violet-400 hover:scale-105" : "bg-white text-black hover:bg-neutral-200 hover:scale-105"
                 : "bg-neutral-800/40 text-neutral-600 cursor-not-allowed"
@@ -351,7 +356,7 @@ function ChatInput({ identity, editingId, editingContent, onCancelEdit, onSaveEd
             )}
           </button>
         </div>
-        <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">
+        <p className="text-xs text-neutral-700 font-mono mt-1.5 text-center">
           {editingId ? tr("Enter to save, Esc to cancel") : tr("Enter to send, Shift+Enter for newline")}
         </p>
       </div>
@@ -367,7 +372,7 @@ function OlderHistoryError({ error, pending, onRetry }: { error: boolean; pendin
   if (!error) return null;
   return <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-neutral-300">
     <p>{tr("Could not load older messages.")}</p>
-    <button type="button" onClick={onRetry} disabled={pending} className="min-h-12 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 disabled:opacity-50">
+    <button type="button" onClick={onRetry} disabled={pending} className="min-h-12 min-w-12 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 disabled:opacity-50">
       {sharedTr("retry")}
     </button>
   </div>;
@@ -587,7 +592,7 @@ export default function ChatPage() {
       {/* Sub-header */}
       <div className="border-b border-neutral-800/40 bg-[#0a0a0a]/95 backdrop-blur-md relative z-10">
         <div className="max-w-3xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between mb-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-2.5">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-neutral-900/60 border border-neutral-800/50 flex items-center justify-center">
                 <span className="text-sm">#</span>
@@ -599,10 +604,10 @@ export default function ChatPage() {
             </div>
             <div className="flex items-center gap-2">
               {liveCount > 0 && (
-                <span className="text-[9px] font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/15">
+                <span className="text-xs font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/15">
                   +{liveCount.toLocaleString(locale)} {" " + tr("new") + " "}</span>
               )}
-              <span className="text-[10px] text-neutral-700 font-mono">{messages.length.toLocaleString(locale)} {" " + tr("msg")}</span>
+              <span className="text-xs text-neutral-700 font-mono">{messages.length.toLocaleString(locale)} {" " + tr("msg")}</span>
             </div>
           </div>
 
@@ -616,7 +621,8 @@ export default function ChatPage() {
                 <button
                   key={t}
                   onClick={() => setTypeFilter(t)}
-                  className={`text-[10px] font-mono px-2.5 py-1 rounded-full border transition-all ${
+                  aria-pressed={active}
+                  className={`min-h-12 min-w-12 text-xs font-mono px-3 py-2 rounded-full border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 transition-all ${
                     active ? pill.active : "border-transparent text-neutral-600 hover:text-neutral-400 hover:bg-white/[0.02]"
                   }`}
                 >
@@ -631,13 +637,13 @@ export default function ChatPage() {
       </div>
 
       {/* Messages */}
-      <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+      <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 min-w-0 overflow-y-auto [&_a]:min-h-12 [&_a]:min-w-12 [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-2 [&_a]:focus-visible:outline-violet-400">
         <div className="max-w-3xl mx-auto px-4 py-4">
           {readError && (
             <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
               <p>{tr("Could not load messages.")}</p>
               <button type="button" onClick={() => void readMessages()} disabled={loading}
-                className="min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 disabled:opacity-50">
+                className="min-h-12 min-w-12 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 disabled:opacity-50">
                 {sharedTr("retry")}
               </button>
             </div>
@@ -645,7 +651,7 @@ export default function ChatPage() {
           {loading && messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-60 gap-2">
               <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
-              <span className="text-neutral-600 text-[11px] font-mono">{tr("Loading messages...")}</span>
+              <span className="text-neutral-600 text-xs font-mono">{tr("Loading messages...")}</span>
             </div>
           ) : messages.length === 0 ? (
             !readError && <EmptyState title={docsTr('eChatTitle')} body={docsTr('eChatBody')}
@@ -658,7 +664,7 @@ export default function ChatPage() {
                 <div className="flex justify-center py-3">
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 rounded-full border-2 border-neutral-800 border-t-neutral-500 animate-spin" />
-                    <span className="text-[10px] text-neutral-600 font-mono">{tr("Loading older messages")}</span>
+                    <span className="text-xs text-neutral-600 font-mono">{tr("Loading older messages")}</span>
                   </div>
                 </div>
               )}
@@ -674,7 +680,7 @@ export default function ChatPage() {
                     {showDate && (
                       <div className="flex items-center gap-3 my-5">
                         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
-                        <span className="text-[9px] text-neutral-600 font-mono uppercase tracking-[0.15em] bg-[#0a0a0a] px-3">
+                        <span className="text-xs text-neutral-600 font-mono uppercase tracking-[0.15em] bg-[#0a0a0a] px-3">
                           {new Date(first.ts).toLocaleDateString(locale, { weekday: "long", month: "short", day: "numeric" })}
                         </span>
                         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
