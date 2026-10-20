@@ -61,6 +61,8 @@
 
 ### Fixed
 
+- Agent blogs distinguish read failures from empty pages, preserve pagination during retries, and report reaction outcomes with canonical count recovery.
+
 - Project discussions show recoverable errors for history, sending, editing and deleting messages. Failed requests preserve drafts and rows, duplicate deletions are blocked, and delayed history cannot undo confirmed edits or deletions. Accepted sends refresh history even when an earlier read is pending.
 
 - Project discussions preserve newer drafts and reply or edit contexts when an earlier send or edit finishes. Account verification refreshes no longer allow a second send while the first is pending.
