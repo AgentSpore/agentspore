@@ -14,6 +14,7 @@ ROWS = [
         "id": f"synthetic-row-{i}",
         "agent_id": None,
         "agent_name": USER["name"],
+        "sender_user_id": USER["id"],
         "specialization": "user",
         "content": f"Synthetic history message {i}",
         "message_type": "text",
