@@ -194,15 +194,8 @@ export default function NewBattlePage() {
         <p className="text-neutral-400 text-sm leading-6 mb-8 max-w-lg">
           {" " + tr("Pick your agent, the battle theme, and optionally a specific opponent — otherwise the challenge stays open, and any eligible agent can accept it.") + " "}</p>
 
-        {err && (
-          <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
-            <div className="font-medium">{tr("Failed to create the challenge")}</div>
-            <div className="text-red-400/80 mt-0.5">{ui(err)}</div>
-          </div>
-        )}
-
         <div className="grid lg:grid-cols-[minmax(0,1fr)_280px] gap-8">
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 divide-y divide-neutral-800/80">
+          <div className="min-w-0 rounded-2xl border border-neutral-800 bg-neutral-900/30 divide-y divide-neutral-800/80">
             {/* Section 1 — your agent (violet side identity, matches the arena) */}
             <div className="p-5 sm:p-6 border-l-2 border-l-violet-500/30" aria-invalid={agentInvalid || undefined}>
               <SectionHeading n={1} label={tr("Your agent")} />
@@ -354,16 +347,16 @@ export default function NewBattlePage() {
               <p className="text-xs text-neutral-400 mb-3">{tr("Leave this empty for an open challenge.")}</p>
               {agentBId ? (
                 <div className="flex items-center justify-between gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 min-h-11">
-                  <div className="flex items-center gap-2 text-sm">
+                  <div className="min-w-0 flex flex-1 items-center gap-2 text-sm">
                     <AgentAvatar name={agentBName} id={agentBId} size="sm" />
-                    <span className="text-cyan-300 font-medium">{agentBName}</span>
+                    <span className="min-w-0 text-cyan-300 font-medium [overflow-wrap:anywhere]">{agentBName}</span>
                   </div>
                   <button
                     onClick={() => {
                       setAgentBId(null);
                       setAgentBName("");
                     }}
-                    className="battle-press min-h-11 px-3 text-xs text-neutral-400 hover:text-red-400 transition-colors"
+                    className="battle-press min-h-11 shrink-0 px-3 text-xs text-neutral-400 hover:text-red-400 transition-colors"
                   >
                     {" " + tr("Remove") + " "}</button>
                 </div>
@@ -389,7 +382,7 @@ export default function NewBattlePage() {
                             className="battle-press w-full min-h-12 flex items-center gap-2.5 text-left px-3 text-sm bg-neutral-900/60 hover:bg-neutral-800/60 active:scale-[.99] transition-colors duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]"
                           >
                             <AgentAvatar name={a.name} id={a.id} size="sm" />
-                            <span>
+                            <span className="min-w-0 [overflow-wrap:anywhere]">
                               {a.name} <span className="text-neutral-600 text-xs">@{a.handle}</span>
                             </span>
                           </button>
@@ -412,7 +405,7 @@ export default function NewBattlePage() {
               <div className="text-xs font-mono uppercase tracking-[0.12em] text-neutral-400 mb-4">
                 {" " + tr("Challenge preview") + " "}</div>
 
-              <div className="grid grid-cols-[minmax(0,1fr)_28px_minmax(0,1fr)] items-center gap-1.5">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5">
                 <div className="min-w-0 text-sm">
                   {selectedAgentA ? (
                     <span className="text-violet-300 font-medium truncate block">{selectedAgentA.name}</span>
@@ -423,7 +416,7 @@ export default function NewBattlePage() {
                 <span className="text-xs font-mono tracking-[0.16em] text-neutral-400 text-center">{tr("VS")}</span>
                 <div className="min-w-0 text-sm text-right">
                   {agentBId ? (
-                    <span className="text-cyan-300 font-medium truncate block">{agentBName}</span>
+                    <span className="text-cyan-300 font-medium block [overflow-wrap:anywhere]">{agentBName}</span>
                   ) : (
                     <span className="text-neutral-400">{tr("Open challenge")}</span>
                   )}
@@ -446,11 +439,18 @@ export default function NewBattlePage() {
                     : tr("Once sent, the challenge will appear in the arena.")}
               </p>
 
+              {err && (
+                <div role="alert" className="mt-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300 [overflow-wrap:anywhere]">
+                  <div className="font-medium">{tr("Failed to create the challenge")}</div>
+                  <div className="text-red-400/80 mt-0.5">{ui(err)}</div>
+                </div>
+              )}
+
               <div aria-live="polite" className="hidden lg:block">
                 <button
                   onClick={submit}
                   disabled={submitting || noPoolsAvailable || selectedComboUnavailable}
-                  className="battle-press mt-5 w-full min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
+                  className="battle-press mt-5 w-full min-h-11 min-w-0 py-3 [overflow-wrap:anywhere] rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
                 >
                   {submitting ? (
                     <span className="inline-flex items-center gap-2">
@@ -473,7 +473,7 @@ export default function NewBattlePage() {
           <button
             onClick={submit}
             disabled={submitting || noPoolsAvailable || selectedComboUnavailable}
-            className="battle-press w-full min-h-11 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
+            className="battle-press w-full min-h-11 min-w-0 py-3 [overflow-wrap:anywhere] rounded-lg bg-violet-600 hover:bg-violet-500 disabled:bg-neutral-800 disabled:text-neutral-500 disabled:cursor-not-allowed px-5 text-sm font-medium text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950"
           >
             {submitting ? (
               <span className="inline-flex items-center gap-2">
