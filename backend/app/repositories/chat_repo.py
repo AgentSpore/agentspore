@@ -5,6 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.schemas.chat import HumanAuthor
 
 
 class ChatRepository:
@@ -50,7 +51,7 @@ class ChatRepository:
         result = await self.db.execute(
             text(f"""
                 SELECT m.id, m.agent_id, m.content, m.message_type, m.created_at,
-                       m.sender_type, m.human_name, m.edited_at, m.is_deleted,
+                       m.sender_type, m.human_name, m.sender_user_id, m.edited_at, m.is_deleted,
                        a.name AS agent_name, a.specialization
                 FROM agent_messages m
                 LEFT JOIN agents a ON a.id = m.agent_id
@@ -68,6 +69,7 @@ class ChatRepository:
                 "content": row["content"],
                 "message_type": row["message_type"],
                 "sender_type": sender_type if sender_type != "human" else "user",
+                "sender_user_id": str(row["sender_user_id"]) if row["sender_user_id"] else None,
                 "ts": str(row["created_at"]),
                 "is_deleted": row["is_deleted"],
             }
@@ -98,15 +100,26 @@ class ChatRepository:
         return dict(result.mappings().first())
 
     async def insert_human_message(
-        self, content: str, message_type: str, human_name: str, sender_type: str = "human",
+        self,
+        content: str,
+        message_type: str,
+        author: HumanAuthor,
+        sender_type: str = "human",
     ) -> dict:
         result = await self.db.execute(
             text("""
-                INSERT INTO agent_messages (agent_id, content, message_type, sender_type, human_name)
-                VALUES (NULL, :content, :message_type, :sender_type, :human_name)
+                INSERT INTO agent_messages
+                    (agent_id, content, message_type, sender_type, human_name, sender_user_id)
+                VALUES (NULL, :content, :message_type, :sender_type, :human_name, :sender_user_id)
                 RETURNING id, created_at
             """),
-            {"content": content, "message_type": message_type, "human_name": human_name, "sender_type": sender_type},
+            {
+                "content": content,
+                "message_type": message_type,
+                "human_name": author.name,
+                "sender_user_id": author.id,
+                "sender_type": sender_type,
+            },
         )
         return dict(result.mappings().first())
 
@@ -114,43 +127,114 @@ class ChatRepository:
 
     async def get_message_by_id(self, message_id: str) -> dict | None:
         result = await self.db.execute(
-            text("SELECT id, agent_id, sender_type, human_name, is_deleted FROM agent_messages WHERE id = :id"),
+            text("""
+                SELECT id, agent_id, sender_type, human_name, sender_user_id, is_deleted
+                FROM agent_messages WHERE id = :id
+            """),
             {"id": message_id},
         )
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def update_message_content(self, message_id: str, content: str) -> None:
-        await self.db.execute(
-            text("UPDATE agent_messages SET content = :content, edited_at = NOW() WHERE id = :id"),
-            {"id": message_id, "content": content},
+    # INVARIANT(SEC.CHAT): SQL must recheck identity after any preliminary ownership read.
+    async def update_message_content(
+        self,
+        message_id: str,
+        content: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
+        """Edit only a live message whose persisted author still matches the caller."""
+        result = await self.db.execute(
+            text("""
+                UPDATE agent_messages SET content = :content, edited_at = NOW()
+                WHERE id = :id AND NOT is_deleted AND (
+                    (CAST(:agent_id AS uuid) IS NOT NULL AND sender_type = 'agent'
+                        AND agent_id = CAST(:agent_id AS uuid)) OR
+                    (CAST(:agent_id AS uuid) IS NULL AND sender_type IN ('human', 'user')
+                        AND sender_user_id = CAST(:user_id AS uuid)))
+                RETURNING id
+            """),
+            {"id": message_id, "content": content, "agent_id": agent_id, "user_id": user_id},
         )
+        return result.scalar_one_or_none() is not None
 
-    async def soft_delete_message(self, message_id: str) -> None:
-        await self.db.execute(
-            text("UPDATE agent_messages SET is_deleted = TRUE, content = '[deleted]', edited_at = NOW() WHERE id = :id"),
-            {"id": message_id},
+    async def soft_delete_message(
+        self,
+        message_id: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
+        """Delete only a live message whose persisted author still matches the caller."""
+        result = await self.db.execute(
+            text("""
+                UPDATE agent_messages
+                SET is_deleted = TRUE, content = '[deleted]', edited_at = NOW()
+                WHERE id = :id AND NOT is_deleted AND (
+                    (CAST(:agent_id AS uuid) IS NOT NULL AND sender_type = 'agent'
+                        AND agent_id = CAST(:agent_id AS uuid)) OR
+                    (CAST(:agent_id AS uuid) IS NULL AND sender_type IN ('human', 'user')
+                        AND sender_user_id = CAST(:user_id AS uuid)))
+                RETURNING id
+            """),
+            {"id": message_id, "agent_id": agent_id, "user_id": user_id},
         )
+        return result.scalar_one_or_none() is not None
 
     async def get_project_message_by_id(self, message_id: str) -> dict | None:
         result = await self.db.execute(
-            text("SELECT id, agent_id, sender_type, human_name, is_deleted FROM project_messages WHERE id = :id"),
+            text("""
+                SELECT id, agent_id, sender_type, human_name, sender_user_id, is_deleted
+                FROM project_messages WHERE id = :id
+            """),
             {"id": message_id},
         )
         row = result.mappings().first()
         return dict(row) if row else None
 
-    async def update_project_message_content(self, message_id: str, content: str) -> None:
-        await self.db.execute(
-            text("UPDATE project_messages SET content = :content, edited_at = NOW() WHERE id = :id"),
-            {"id": message_id, "content": content},
+    async def update_project_message_content(
+        self,
+        message_id: str,
+        content: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
+        """Edit only a live project message still owned by the authenticated caller."""
+        result = await self.db.execute(
+            text("""
+                UPDATE project_messages SET content = :content, edited_at = NOW()
+                WHERE id = :id AND NOT is_deleted AND (
+                    (CAST(:agent_id AS uuid) IS NOT NULL AND sender_type = 'agent'
+                        AND agent_id = CAST(:agent_id AS uuid)) OR
+                    (CAST(:agent_id AS uuid) IS NULL AND sender_type IN ('human', 'user')
+                        AND sender_user_id = CAST(:user_id AS uuid)))
+                RETURNING id
+            """),
+            {"id": message_id, "content": content, "agent_id": agent_id, "user_id": user_id},
         )
+        return result.scalar_one_or_none() is not None
 
-    async def soft_delete_project_message(self, message_id: str) -> None:
-        await self.db.execute(
-            text("UPDATE project_messages SET is_deleted = TRUE, content = '[deleted]', edited_at = NOW() WHERE id = :id"),
-            {"id": message_id},
+    async def soft_delete_project_message(
+        self,
+        message_id: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
+        """Delete only a live project message still owned by the authenticated caller."""
+        result = await self.db.execute(
+            text("""
+                UPDATE project_messages
+                SET is_deleted = TRUE, content = '[deleted]', edited_at = NOW()
+                WHERE id = :id AND NOT is_deleted AND (
+                    (CAST(:agent_id AS uuid) IS NOT NULL AND sender_type = 'agent'
+                        AND agent_id = CAST(:agent_id AS uuid)) OR
+                    (CAST(:agent_id AS uuid) IS NULL AND sender_type IN ('human', 'user')
+                        AND sender_user_id = CAST(:user_id AS uuid)))
+                RETURNING id
+            """),
+            {"id": message_id, "agent_id": agent_id, "user_id": user_id},
         )
+        return result.scalar_one_or_none() is not None
 
     # ── DMs ─────────────────────────────────────────────────────────
 
@@ -217,18 +301,31 @@ class ChatRepository:
     # ── Project Chat ───────────────────────────────────────────────
 
     async def insert_project_message(
-        self, project_id, agent_id, content: str, message_type: str,
-        sender_type: str, human_name: str | None = None, reply_to_id: str | None = None,
+        self,
+        project_id,
+        agent_id,
+        content: str,
+        message_type: str,
+        sender_type: str,
+        author: HumanAuthor | None = None,
+        reply_to_id: str | None = None,
     ) -> dict:
         result = await self.db.execute(
             text("""
-                INSERT INTO project_messages (project_id, agent_id, sender_type, human_name, content, message_type, reply_to_id)
-                VALUES (:project_id, :agent_id, :sender_type, :human_name, :content, :message_type, :reply_to_id)
+                INSERT INTO project_messages (project_id, agent_id, sender_type, human_name,
+                    sender_user_id, content, message_type, reply_to_id)
+                VALUES (:project_id, :agent_id, :sender_type, :human_name, :sender_user_id,
+                    :content, :message_type, :reply_to_id)
                 RETURNING id, created_at
             """),
             {
-                "project_id": project_id, "agent_id": agent_id, "sender_type": sender_type,
-                "human_name": human_name, "content": content, "message_type": message_type,
+                "project_id": project_id,
+                "agent_id": agent_id,
+                "sender_type": sender_type,
+                "human_name": author.name if author else None,
+                "sender_user_id": author.id if author else None,
+                "content": content,
+                "message_type": message_type,
                 "reply_to_id": reply_to_id,
             },
         )
@@ -243,6 +340,7 @@ class ChatRepository:
         result = await self.db.execute(
             text(f"""
                 SELECT m.id, m.content, m.message_type, m.sender_type, m.human_name,
+                       m.sender_user_id,
                        m.agent_id, m.created_at, m.reply_to_id, m.edited_at, m.is_deleted,
                        a.name as agent_name, a.handle as agent_handle,
                        r.content as reply_to_content
@@ -262,6 +360,7 @@ class ChatRepository:
                 "sender_name": row["agent_name"] or row["human_name"] or "anonymous",
                 "sender_handle": row["agent_handle"],
                 "sender_type": row["sender_type"],
+                "sender_user_id": str(row["sender_user_id"]) if row["sender_user_id"] else None,
                 "content": row["content"],
                 "message_type": row["message_type"],
                 "created_at": str(row["created_at"]),
