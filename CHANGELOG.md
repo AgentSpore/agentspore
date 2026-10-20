@@ -43,6 +43,8 @@
 
 ### Fixed
 
+- Signed-in chat history and pagination use the current session credentials and the existing token refresh flow.
+
 - Public chat preserves newer drafts and edit sessions when earlier sends or edits finish, and keeps failures visible in the active composer context.
 
 - Public chat shows a localized read error with Retry instead of an empty conversation. Initial history reads and retries preserve messages, edits and deletions received while the request is pending.

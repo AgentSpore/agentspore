@@ -243,6 +243,125 @@ it.each(["a newer draft", "submitted text"])("keeps POST draft revision when pen
   expect(unexpected).toEqual([]);
 });
 
+const HISTORY_PAGE = Array.from({ length: 50 }, (_, index) => ({
+  ...MESSAGE, id: `history-${index}`, content: `History row ${index}`,
+  ts: new Date(Date.UTC(2026, 0, 1, 0, 50 - index)).toISOString(),
+}));
+const OLDER_MESSAGE = { ...MESSAGE, id: "older-message", content: "An older history row" };
+
+function stubAuthorizedHistory(rows = [MESSAGE], refresh = false) {
+  const policy = { token: "synthetic-history-access" };
+  const requests: { before: string | null; authorization: string | null; signal?: AbortSignal | null }[] = [];
+  const unexpected: string[] = [];
+  const refreshRequests: unknown[] = [];
+  stubChat([]);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+  const historyResponse = (init: RequestInit | undefined, before: string | null) => {
+    const authorization = new Headers(init?.headers).get("Authorization");
+    requests.push({ before, authorization, signal: init?.signal });
+    if (authorization !== `Bearer ${policy.token}`)
+      return Response.json({ detail: "Not authenticated" }, { status: 401 });
+    return Response.json(before ? [OLDER_MESSAGE] : rows);
+  };
+  const oldest = rows[rows.length - 1].id;
+  const routes = new Map<string, (init?: RequestInit) => Response>([
+    ["GET /api/v1/auth/me", () => Response.json(COMPOSER_OWNER)],
+    ["GET /api/v1/chat/messages?limit=50", init => historyResponse(init, null)],
+    [`GET /api/v1/chat/messages?limit=50&before=${oldest}`, init => historyResponse(init, oldest)],
+  ]);
+  if (refresh) routes.set("POST /api/v1/auth/refresh", init => {
+    refreshRequests.push(JSON.parse(String(init?.body)));
+    return Response.json({ access_token: policy.token, refresh_token: "synthetic-replacement-refresh" });
+  });
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    const url = new URL(input), method = init?.method ?? "GET";
+    if (url.origin !== new URL(API_URL).origin) {
+      unexpected.push("Unexpected history origin");
+      return Promise.reject(new Error("Unexpected history request"));
+    }
+    const route = `${method} ${url.pathname}${url.search}`, respond = routes.get(route);
+    if (respond) return Promise.resolve(respond(init));
+    unexpected.push(route);
+    return Promise.reject(new Error("Unexpected history route"));
+  }));
+  return { policy, requests, unexpected, refreshRequests };
+}
+
+it("loads authenticated initial history and preserves its AbortSignal", async () => {
+  const history = stubAuthorizedHistory();
+  localStorage.setItem("access_token", history.policy.token);
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+
+  expect(await screen.findByText(MESSAGE.content)).toBeTruthy();
+  expect(history.requests).toHaveLength(1);
+  expect(history.requests[0].authorization).toBe(`Bearer ${history.policy.token}`);
+  expect(history.requests[0].signal).toBeInstanceOf(AbortSignal);
+  expect(history.requests[0].signal?.aborted).toBe(false);
+  expect(history.unexpected).toEqual([]);
+});
+
+it("authenticates cursor history while keeping the loaded fifty messages", async () => {
+  const history = stubAuthorizedHistory(HISTORY_PAGE);
+  localStorage.setItem("access_token", history.policy.token);
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await screen.findByText(HISTORY_PAGE[0].content);
+  history.policy.token = "synthetic-pagination-access";
+  localStorage.setItem("access_token", history.policy.token);
+  fireEvent.scroll(screen.getByRole("main"));
+
+  expect(await screen.findByText(OLDER_MESSAGE.content)).toBeTruthy();
+  expect(screen.getByText(HISTORY_PAGE[0].content)).toBeTruthy();
+  expect(screen.getByText(HISTORY_PAGE[49].content)).toBeTruthy();
+  expect(history.requests[1].before).toBe(HISTORY_PAGE[49].id);
+  expect(history.requests[1].authorization).toBe(`Bearer ${history.policy.token}`);
+  expect(history.unexpected).toEqual([]);
+});
+
+it("reads a replacement token when retrying an unauthorized history request", async () => {
+  const history = stubAuthorizedHistory();
+  localStorage.setItem("access_token", "synthetic-expired-access");
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await screen.findByText(READ_ERROR.en);
+  localStorage.setItem("access_token", history.policy.token);
+  fireEvent.click(screen.getByRole("button", { name: sharedMessages.en.retry }));
+
+  expect(await screen.findByText(MESSAGE.content)).toBeTruthy();
+  expect(history.requests.map(request => request.authorization)).toEqual([
+    "Bearer synthetic-expired-access", `Bearer ${history.policy.token}`,
+  ]);
+  expect(screen.queryByText(READ_ERROR.en)).toBeNull();
+  expect(history.unexpected).toEqual([]);
+});
+
+it("shows the unauthorized read error without sending a malformed Bearer when signed out", async () => {
+  const history = stubAuthorizedHistory();
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+
+  expect(await screen.findByText(READ_ERROR.en)).toBeTruthy();
+  expect(screen.getByRole("button", { name: sharedMessages.en.retry })).toBeTruthy();
+  expect(history.requests[0].authorization).toBeNull();
+  expect(screen.queryByText(docsMessages.en.eChatTitle)).toBeNull();
+  expect(screen.queryByText(MESSAGE.content)).toBeNull();
+  expect(history.unexpected).toEqual([]);
+});
+
+it("refreshes unauthorized history through the real auth helper with the same AbortSignal", async () => {
+  const history = stubAuthorizedHistory([MESSAGE], true);
+  localStorage.setItem("access_token", "synthetic-expired-access");
+  localStorage.setItem("refresh_token", "synthetic-history-refresh");
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+
+  expect(await screen.findByText(MESSAGE.content)).toBeTruthy();
+  expect(history.refreshRequests).toEqual([{ refresh_token: "synthetic-history-refresh" }]);
+  expect(history.requests.map(request => request.authorization)).toEqual([
+    "Bearer synthetic-expired-access", `Bearer ${history.policy.token}`,
+  ]);
+  expect(history.requests[0].signal).toBeInstanceOf(AbortSignal);
+  expect(history.requests[1].signal).toBe(history.requests[0].signal);
+  expect(history.requests[1].signal?.aborted).toBe(false);
+  expect(history.unexpected).toEqual([]);
+});
+
 it.each(["Escape", "Cancel (Esc)"])("keeps a new draft after %s cancels a pending PATCH", async (cancel) => {
   const pending = pendingRead();
   const { input, requests, unexpected } = await openComposer(pending);
