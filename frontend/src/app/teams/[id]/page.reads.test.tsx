@@ -24,12 +24,14 @@ function deferred<T>() {
   let resolve!: (value: T) => void; let reject!: (reason: Error) => void;
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject };
 }
-function teamHTTP() {
+function teamHTTP(authenticated = false) {
   const bodies = new Map<string, unknown>(), plans = new Map<string, Promise<Response>[]>();
   const calls: { path: string; method: string; authorization: string | null }[] = [], unexpected: string[] = [];
   const streams: { url: string; closed: boolean }[] = [];
-  for (const id of ['synthetic-team-a', 'synthetic-team-b']) { bodies.set(path(id), team(id)); bodies.set(`${path(id)}/messages?limit=50`, []); }
-  bodies.set('/api/v1/auth/me', { detail: 'Synthetic anonymous request' });
+  for (const id of ['synthetic-team-a', 'synthetic-team-b']) bodies.set(path(id), team(id));
+  bodies.set('/api/v1/auth/me', authenticated
+    ? { id: 'synthetic-reader', name: 'Synthetic Reader', email: 'reader@example.invalid', avatar_url: null, token_balance: 0, is_admin: false }
+    : { detail: 'Synthetic anonymous request' });
   const hold = (key = path()) => { const pending = deferred<Response>(); plans.set(key, [...(plans.get(key) ?? []), pending.promise]); return pending; };
   const holdBody = () => {
     const pending = deferred<unknown>(), response = Response.json(null); response.json = () => pending.promise;
@@ -39,12 +41,12 @@ function teamHTTP() {
     const url = new URL(input instanceof Request ? input.url : String(input), API_URL), key = url.pathname + url.search, method = init?.method ?? 'GET';
     calls.push({ path: key, method, authorization: new Headers(init?.headers).get('Authorization') });
     if (method !== 'GET' || !bodies.has(key)) { unexpected.push(`${method} ${key}`); throw new Error('Unexpected synthetic team request'); }
-    return plans.get(key)?.shift() ?? Response.json(bodies.get(key), { status: key === '/api/v1/auth/me' ? 401 : 200 });
+    return plans.get(key)?.shift() ?? Response.json(bodies.get(key), { status: key === '/api/v1/auth/me' && !authenticated ? 401 : 200 });
   }));
   vi.stubGlobal('EventSource', class {
     record: { url: string; closed: boolean };
     constructor(url: string) {
-      if (!['synthetic-team-a', 'synthetic-team-b'].some(id => url === `${API_URL}${path(id)}/stream`)) { unexpected.push(`SSE ${url}`); throw new Error('Unexpected synthetic team stream'); }
+      unexpected.push(`SSE ${url}`);
       this.record = { url, closed: false }; streams.push(this.record);
     }
     close() { this.record.closed = true; }
@@ -59,15 +61,11 @@ function openTeam(locale: Locale = 'en') {
   const tree = () => <LocaleProvider initialLocale={locale}><TeamPage /></LocaleProvider>, view = render(tree());
   return { ...view, navigate: async () => { route.id = 'synthetic-team-b'; view.rerender(tree()); await settle(); } };
 }
-let scrollDescriptor: PropertyDescriptor | undefined;
 beforeEach(() => {
   route.id = 'synthetic-team-a'; localStorage.clear(); vi.useFakeTimers(); vi.setSystemTime(new Date(NOW));
-  scrollDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
-  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value: vi.fn() });
 });
 afterEach(() => {
   cleanup(); localStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers();
-  if (scrollDescriptor) Object.defineProperty(Element.prototype, 'scrollIntoView', scrollDescriptor); else Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
 });
 
 it('TD.R1 held anonymous detail distinguishes pending from confirmed data', async () => {
@@ -75,7 +73,7 @@ it('TD.R1 held anonymous detail distinguishes pending from confirmed data', asyn
   expect(main().getByText(publicMessages.en.loadingTeam)).toBeTruthy(); expect(main().queryByText(publicMessages.en.teamNotFound)).toBeNull();
   expect(http.streams).toHaveLength(0); expect(http.calls.some(call => call.path.includes('/messages?'))).toBe(false);
   await finish(pending, Response.json(team())); expect(main().getByRole('heading', { name: team().name })).toBeTruthy();
-  expect(reads(http)).toEqual([{ path: path(), method: 'GET', authorization: null }]); expect(http.streams).toHaveLength(1); expect(http.unexpected).toEqual([]);
+  expect(reads(http)).toEqual([{ path: path(), method: 'GET', authorization: null }]); expect(http.streams).toHaveLength(0); expect(http.unexpected).toEqual([]);
 });
 it('TD.R1 genuine404 keeps the existing not-found route and Back without Retry', async () => {
   const http = teamHTTP(), pending = http.hold(); openTeam('ru'); await settle(); await finish(pending, Response.json({ detail: INTERNAL }, { status: 404 }));
@@ -124,3 +122,24 @@ it('TD.R4 existing member/project links and local sections do not repeat the det
   fireEvent.click(main().getByRole('button', { name: `${publicMessages.en.members} (1)` })); expect(main().getByRole('link', { name: /Synthetic Owner A/ })).toBeTruthy();
   expect(reads(http)).toHaveLength(1); expect(http.calls.every(call => call.method === 'GET')).toBe(true); expect(http.unexpected).toEqual([]);
 });
+
+// Retirement assertions intentionally fail on the pre-retirement UI and resource lifecycle.
+it.each([{ authenticated: false, locale: 'en' }, { authenticated: true, locale: 'ru' }] as const)(
+  'TCR.1–3 $locale authenticated=$authenticated retains exactly Members/Projects without chat resources', async ({ authenticated, locale }) => {
+    if (authenticated) localStorage.setItem('access_token', 'synthetic-retirement-reader');
+    const http = teamHTTP(authenticated); openTeam(locale); await settle();
+    const members = `${publicMessages[locale].members} (1)`, projects = `${publicMessages[locale].projects} (1)`;
+    expect(main().getAllByRole('button').map(button => button.textContent?.trim())).toEqual([members, projects]);
+    expect(main().queryByRole('button', { name: publicMessages[locale].chat })).toBeNull();
+    expect(main().queryByRole('textbox')).toBeNull(); expect(main().queryByRole('button', { name: publicMessages[locale].send })).toBeNull();
+    expect(main().queryByText(publicMessages[locale].teamChat)).toBeNull();
+    expect(main().getByRole('link', { name: /Synthetic Owner A/ }).getAttribute('href')).toBe('/agents/synthetic-agent-A');
+    fireEvent.click(main().getByRole('button', { name: projects }));
+    expect(main().getByRole('link', { name: /Synthetic Project A/ }).getAttribute('href')).toBe('/projects/synthetic-project-A');
+    fireEvent.click(main().getByRole('button', { name: members }));
+    expect(main().getByRole('link', { name: /Synthetic Owner A/ })).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(250); });
+    expect(reads(http)).toHaveLength(1); expect(http.streams).toHaveLength(0);
+    expect(http.calls.filter(call => /\/(messages|stream)(?:\?|$)/.test(call.path))).toEqual([]);
+    expect(http.unexpected).toEqual([]);
+  });

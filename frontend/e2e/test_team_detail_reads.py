@@ -115,10 +115,6 @@ class TeamReadHTTP(AuthHTTP):
             return None
         if key == "/api/v1/auth/me":
             return route.fulfill(status=401, json={"detail": "Synthetic anonymous request"})
-        if key == f"{API}/messages?limit=50":
-            return route.fulfill(json=[])
-        if key == f"{API}/stream":
-            return route.fulfill(content_type="text/event-stream", body=": synthetic public stream\n\n")
         return self.reject(route)
 
     def close(self, context):
@@ -144,6 +140,8 @@ class TeamDetailReadTests(BrowserFixture, unittest.TestCase):
         self.http = TeamReadHTTP(self.options.base_url)
         self.addCleanup(self.http.close, context)
         context.route("**/*", self.http.route)
+        context.add_init_script("""window.__retiredTeamStreams=[];window.EventSource=class {
+            constructor(url){window.__retiredTeamStreams.push(String(url));throw Error('Retired team stream');}};""")
         self.page = context.new_page()
         self.page.set_default_timeout(7000)
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
@@ -197,6 +195,7 @@ class TeamDetailReadTests(BrowserFixture, unittest.TestCase):
             "main_text": self.main.inner_text(),
             "unknown_http": list(self.http.unexpected),
             "page_errors": list(self.errors),
+            "stream_attempts": self.page.evaluate("window.__retiredTeamStreams"),
         }
         self.records.append(record)
         stem = f"team-detail-reads-{self.locale}-{self.width}-{state}"
@@ -204,6 +203,7 @@ class TeamDetailReadTests(BrowserFixture, unittest.TestCase):
         (self.options.screenshots / f"{stem}.json").write_text(json.dumps(record, ensure_ascii=False, indent=2))
         self.assertEqual(self.http.unexpected, [])
         self.assertEqual(self.errors, [])
+        self.assertEqual(record["stream_attempts"], [])
         expect(self.main.get_by_text(SENTINEL, exact=False)).to_have_count(0)
 
     def fail_and_retry(self):
@@ -241,8 +241,11 @@ class TeamDetailReadTests(BrowserFixture, unittest.TestCase):
         self.native(owner)
         self.save("members-restored")
         self.assertEqual(self.http.calls.count(API), 2)
-        self.assertEqual(self.http.calls.count(f"{API}/messages?limit=50"), 1)
-        self.assertEqual(self.http.calls.count(f"{API}/stream"), 1)
+        self.assertEqual(self.http.calls.count(f"{API}/messages?limit=50"), 0)
+        self.assertEqual(self.http.calls.count(f"{API}/stream"), 0)
+        expect(self.main.get_by_role("button")).to_have_count(2)
+        expect(self.main.get_by_role("button", name=re.compile(r"^(Chat|Чат)(?: |$)"))).to_have_count(0)
+        expect(self.main.get_by_role("textbox")).to_have_count(0)
 
     def missing_route(self):
         self.page.goto(self.options.base_url + MISSING, wait_until="domcontentloaded")

@@ -49,6 +49,8 @@
 
 ### Removed
 
+- Removed team chat from the website while preserving the backend API and stored message history.
+
 - Agent battles are removed from OSS: pages, API routes, background jobs and integrations are retired. Historical migrations and stored records remain; this change performs no database cleanup.
 
 - The `/analytics` page and the `/api/v1/analytics/*` endpoints (overview, activity, top agents, top projects, languages) are removed. Platform statistics on the home page and `/api/v1/agents/stats` are unchanged.
