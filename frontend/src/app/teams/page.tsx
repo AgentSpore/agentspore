@@ -10,6 +10,7 @@ import { publicMessages } from '@/lib/i18n/public';
 import Link from "next/link";
 import { API_URL, Team, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { FetchError } from "@/components/FetchError";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { usePolledResource } from "@/hooks/usePolledResource";
 
@@ -72,37 +73,38 @@ export default function TeamsPage() {
         <div className="relative z-10">
           {/* Breadcrumbs */}
           <div className="flex items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
+            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {tr('home2')}</Link>
-            <span className="text-neutral-700 text-[10px]">/</span>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400">{tr('teams')}</span>
+            <span className="text-neutral-700 text-xs">/</span>
+            <span className="text-xs font-mono uppercase tracking-[0.2em] text-violet-400">{tr('teams')}</span>
           </div>
 
           {/* Page header */}
           <div className="mb-10 fade-up fade-up-1">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+              <div className="w-10 h-10 shrink-0 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
                 <span className="text-violet-400 font-mono text-sm">^</span>
               </div>
-              <div>
+              <div className="min-w-0 [overflow-wrap:anywhere]">
                 <h1 className="text-2xl font-bold text-white">{tr('teams')}</h1>
                 <p className="text-neutral-500 text-xs font-mono">{tr('agentAndHumanTeamsCollaboratingOnProjects')}</p>
                 <div className="mt-1">
-                  <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
+                  {data !== null && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />}
                 </div>
               </div>
             </div>
           </div>
 
           {/* Stats bar */}
-          <div className="flex items-center gap-4 mb-8 fade-up fade-up-2">
+          {data !== null && <div className="flex items-center gap-4 mb-8 fade-up fade-up-2">
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2 flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
+              <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
               <span className="text-sm font-mono text-white">{new Intl.NumberFormat(localeTag(locale)).format(teams.length)}</span>
             </div>
-          </div>
+          </div>}
 
+          {error && data === null && <FetchError onRetry={refetch} />}
           {loading && (
             <div className="flex flex-col items-center justify-center py-20 fade-up">
               <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center mb-4 animate-pulse">
@@ -112,29 +114,29 @@ export default function TeamsPage() {
             </div>
           )}
 
-          {!loading && teams.length === 0 && (
+          {data?.length === 0 && !error && (
             <EmptyState title={docsTr('eTeamsTitle')} body={docsTr('eTeamsBody')}
               action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
           )}
 
-          {!loading && teams.length > 0 && (
+          {teams.length > 0 && (
             <div className="grid gap-4 sm:grid-cols-2">
               {teams.map((t, i) => (
                 <Link
                   key={t.id}
                   href={`/teams/${t.id}`}
-                  className="team-card group block bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 hover:border-neutral-700/60 fade-up"
+                  className="team-card group block min-w-0 [overflow-wrap:anywhere] focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 hover:border-neutral-700/60 fade-up"
                   style={{ animationDelay: `${0.1 + 0.05 * i}s` }}
                 >
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="flex-1 min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-start justify-between gap-3 mb-3">
+                    <div className="flex-1 basis-56 min-w-0">
                       <h3 className="font-semibold text-white text-base leading-snug group-hover:text-violet-300 transition-colors">
                         {t.name}
                       </h3>
-                      <p className="text-neutral-600 text-[10px] font-mono mt-1">{tr('by')}{' '}{t.creator_name}</p>
+                      <p className="text-neutral-600 text-xs font-mono mt-1">{tr('by')}{' '}{t.creator_name}</p>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[10px] font-mono px-2.5 py-1 rounded-lg bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-medium">
+                    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+                      <span className="min-w-0 max-w-full text-xs font-mono px-2.5 py-1 rounded-lg bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-medium">
                         {new Intl.NumberFormat(localeTag(locale)).format(t.member_count)} {tr('members')}</span>
                     </div>
                   </div>
@@ -143,10 +145,10 @@ export default function TeamsPage() {
                     <p className="text-neutral-500 text-xs leading-relaxed mb-4 line-clamp-2">{t.description}</p>
                   )}
 
-                  <div className="flex items-center justify-between pt-3 border-t border-neutral-800/30">
-                    <span className="text-[10px] font-mono text-neutral-700">{timeAgo(t.created_at, locale)}</span>
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 pt-3 border-t border-neutral-800/30">
+                    <span className="text-xs font-mono text-neutral-700">{timeAgo(t.created_at, locale)}</span>
                     {t.project_count > 0 && (
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-violet-400/10 text-violet-400 border border-violet-400/20">
+                      <span className="min-w-0 max-w-full text-xs font-mono px-2 py-0.5 rounded-md bg-violet-400/10 text-violet-400 border border-violet-400/20">
                         {new Intl.NumberFormat(localeTag(locale)).format(t.project_count)} {tr('projects3')}</span>
                     )}
                   </div>
