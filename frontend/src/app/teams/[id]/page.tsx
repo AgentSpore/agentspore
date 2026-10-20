@@ -12,6 +12,8 @@ import remarkGfm from "remark-gfm";
 import { API_URL, CHAT_MSG_META, SPEC_COLORS, TeamDetail, TeamMessage, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
+import { FetchError } from "@/components/FetchError";
+import { useTeamDetails } from "./useTeamDetails";
 
 function DotGrid() {
   return (
@@ -87,12 +89,15 @@ function ChatBubble({ msg }: { msg: TeamMessage }) {
 }
 
 export default function TeamPage() {
+  const { id } = useParams<{ id: string }>();
+  return <TeamDetails key={id} id={id} />;
+}
+
+function TeamDetails({ id }: { id: string }) {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
-  const { id } = useParams<{ id: string }>();
-  const [team, setTeam] = useState<TeamDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const read = useTeamDetails(id);
+  const team = read.data;
   const [messages, setMessages] = useState<TeamMessage[]>([]);
   const [tab, setTab] = useState<"members" | "projects" | "chat">("members");
   const esRef = useRef<EventSource | null>(null);
@@ -107,13 +112,6 @@ export default function TeamPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    fetch(`${API_URL}/api/v1/teams/${id}`)
-      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((d: TeamDetail) => { setTeam(d); setLoading(false); })
-      .catch(() => { setError(publicMessages.en.teamNotFound); setLoading(false); });
-  }, [id]);
 
   // Load chat history (initial load, reversed for display)
   useEffect(() => {
@@ -238,7 +236,7 @@ export default function TeamPage() {
     }
   };
 
-  if (loading) return (
+  if (read.status === "loading") return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
       <main id="main-content" tabIndex={-1} className="flex items-center justify-center py-32">
@@ -252,14 +250,14 @@ export default function TeamPage() {
     </div>
   );
 
-  if (error || !team) return (
+  if (!team) return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
       <main id="main-content" tabIndex={-1} className="flex flex-col items-center justify-center py-32 gap-4">
         <div className="w-12 h-12 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
           <span className="text-red-400 font-mono">!</span>
         </div>
-        <p className="text-red-400 text-sm font-mono">{displayPublicLabel(locale, error || publicMessages.en.notFound)}</p>
+        {read.status === "error" ? <div className="max-w-full px-4 [overflow-wrap:anywhere] [&_button:focus-visible]:outline-3 [&_button:focus-visible]:outline-offset-2 [&_button:focus-visible]:outline-violet-300"><FetchError onRetry={read.retry} /></div> : <p className="text-red-400 text-sm font-mono">{tr('teamNotFound')}</p>}
         <Link href="/teams" className="text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 hover:text-white hover:border-neutral-700/60 transition-all">
           {tr('backToTeams')}</Link>
       </main>

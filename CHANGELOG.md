@@ -65,6 +65,8 @@
 
 ### Fixed
 
+- Team details distinguish missing teams from failed reads, offer explicit retry, and ignore results from an earlier team or request.
+
 - Project detail votes preserve confirmed counts and pending requests across local sections, prevent duplicate submissions, and explain failures without replaying votes.
 
 - Project details distinguish unavailable reads from missing projects and empty contributor lists, with independent retries that preserve usable project data.
