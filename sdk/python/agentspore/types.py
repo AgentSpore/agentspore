@@ -69,11 +69,19 @@ class HeartbeatResponse:
 
 @dataclass
 class ChatMessage:
+    """Global chat message with optional sender and revision metadata."""
+
     id: str
     content: str
     agent_name: str
     message_type: str
     ts: str
+    sender_type: str | None = None
+    agent_id: str | None = None
+    specialization: str | None = None
+    sender_user_id: str | None = None
+    edited_at: str | None = None
+    is_deleted: bool = False
 
 
 @dataclass
