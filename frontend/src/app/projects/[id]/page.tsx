@@ -10,28 +10,17 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { useParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { API_URL, ProjectOwnership, timeAgo } from "@/lib/api";
+import { API_URL, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { useChatIdentity } from "@/lib/useChatIdentity";
 import { ChatIdentityNotice } from "@/components/ChatIdentityNotice";
 import { useProjectChatMessages, type ProjectMessage } from "./useProjectChatMessages";
 import { ProjectChatError } from "./ProjectChatError";
+import { useProjectReads } from "./useProjectReads";
+import { FetchError } from "@/components/FetchError";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-interface Project {
-  id: string; title: string; description: string; category: string;
-  status: string; repo_url: string | null; deploy_url: string | null;
-  tech_stack: string[]; agent_name: string; agent_handle: string;
-  creator_agent_id: string;
-  votes_up: number; votes_down: number; created_at: string;
-}
-
-interface HumanContributor {
-  id: string; role: string; contribution_points: number; joined_at: string;
-  user_id: string; user_name: string; user_email: string; wallet_address: string | null;
-}
 
 interface AuthState { token: string; email: string; userId: string }
 
@@ -232,27 +221,12 @@ function useProjectAuth() {
   return { auth, notify, logout, snapshot };
 }
 
-function useProjectData(projectId: string) {
-  const [project, setProject] = useState<Project | null>(null);
-  const [ownership, setOwnership] = useState<ProjectOwnership | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  // Load project info
-  useEffect(() => {
-    if (!projectId) return;
-    const controller = new AbortController();
-    Promise.all([
-      fetch(`${API_URL}/api/v1/projects/${projectId}`, { signal: controller.signal }).then(r => r.ok ? r.json() : null),
-      fetch(`${API_URL}/api/v1/projects/${projectId}/ownership`, { signal: controller.signal }).then(r => r.ok ? r.json() : null),
-    ]).then(([p, o]) => {
-      if (controller.signal.aborted) return;
-      if (!p) { setError(publicMessages.en.projectNotFound); }
-      setProject(p); setOwnership(o); setLoading(false);
-    }).catch(() => { if (!controller.signal.aborted) { setError(publicMessages.en.failedToLoad); setLoading(false); } });
-    return () => controller.abort();
-  }, [projectId]);
-
-  return { project, ownership, loading, error };
+function ProjectReadNotice({ state }: { state: { status: string; retry: () => Promise<void> } }) {
+  const tr = useTranslations(publicMessages);
+  if (state.status === "loading") return <p role="status" className="text-sm text-neutral-300">{tr('loading')}</p>;
+  if (state.status === "error") return <div className="[&_button:focus-visible]:outline-3 [&_button:focus-visible]:outline-offset-2 [&_button:focus-visible]:outline-violet-300"><FetchError onRetry={state.retry} /></div>;
+  if (state.status === "not-found") return <p>{tr('projectNotFound')}</p>;
+  return null;
 }
 
 export default function ProjectPage() {
@@ -271,22 +245,15 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   const [showLogin, setShowLogin] = useState(false);
 
   // Data
-  const { project, ownership, loading, error } = useProjectData(projectId);
-  const [contributors, setContributors] = useState<HumanContributor[]>([]);
   const [joining, setJoining] = useState(false);
   const [joinMsg, setJoinMsg] = useState("");
 
   const [contributorsRevision, setContributorsRevision] = useState(0);
   const authToken = auth?.token;
-  useEffect(() => {
-    if (!projectId) return;
-    const controller = new AbortController();
-    apiFetch(`/projects/${projectId}/contributors`, authToken, { signal: controller.signal })
-      .then(r => r.ok ? r.json() : { contributors: [] })
-      .then(d => { if (!controller.signal.aborted) setContributors(d.contributors ?? []); })
-      .catch(() => { if (!controller.signal.aborted) setContributors([]); });
-    return () => controller.abort();
-  }, [projectId, authToken, contributorsRevision]);
+  const reads = useProjectReads(projectId, authToken, contributorsRevision, apiFetch);
+  const project = reads.project.data;
+  const ownership = reads.ownership.data;
+  const contributors = reads.contributors.data?.contributors ?? [];
 
   const handleLogin = () => { notify(); setShowLogin(false); };
   const handleLogout = () => { logout(); };
@@ -432,13 +399,9 @@ function ProjectDetails({ projectId }: { projectId: string }) {
     finally { finishChatOperation(operation); }
   };
 
-  if (loading) return (
-    <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-600 text-sm font-mono">
-      {tr('loading')}</main>
-  );
-  if (error || !project) return (
+  if (!project) return (
     <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex items-center justify-center text-neutral-500 text-sm font-mono">
-      {displayPublicLabel(locale, error || publicMessages.en.projectNotFound)}
+      <ProjectReadNotice state={reads.project} />
     </main>
   );
 
@@ -553,7 +516,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
           {/* Tabs */}
           <div className="flex min-w-0 flex-wrap gap-1 mt-8 fade-up" style={{ animationDelay: "100ms" }}>
             {TABS.map(t => (
-              <button key={t.key} onClick={() => setTab(t.key)}
+              <button key={t.key} aria-pressed={tab === t.key} onClick={() => setTab(t.key)}
                 className={`px-3.5 py-1.5 text-xs font-mono rounded-lg transition-all min-h-12 min-w-12 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
                   tab === t.key
                     ? "bg-white text-black font-medium"
@@ -598,7 +561,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
               <VoteButtons projectId={project.id} votesUp={project.votes_up} votesDown={project.votes_down} />
               <div className="stat-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
                 <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('contributors')}</div>
-                <div className="text-sm text-neutral-200 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(contributors.length)}</div>
+                <div className="text-sm text-neutral-200 font-mono">{reads.contributors.data ? new Intl.NumberFormat(localeTag(locale)).format(contributors.length) : "—"}</div>
               </div>
             </div>
           </div>
@@ -875,7 +838,8 @@ function ProjectDetails({ projectId }: { projectId: string }) {
               {joinMsg && <p className="text-xs text-emerald-400 font-mono">{displayPublicLabel(locale, joinMsg)}</p>}
             </div>
 
-            {contributors.length === 0 ? (
+            <ProjectReadNotice state={reads.contributors} />
+            {reads.contributors.data && (contributors.length === 0 ? (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-10 text-center text-neutral-600 text-sm font-mono">
                 {tr('noContributorsYet')}{" "}
                 {!auth && (
@@ -905,7 +869,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                   </div>
                 ))}
               </div>
-            )}
+            ))}
           </div>
         )}
 
@@ -944,9 +908,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
             </div>
           </div>
         )}
-        {tab === "ownership" && !ownership && (
-          <p className="text-neutral-600 text-sm font-mono fade-up">{tr('noOwnershipDataAvailable')}</p>
-        )}
+        {tab === "ownership" && <ProjectReadNotice state={reads.ownership} />}
       </main>
     </div>
   );
