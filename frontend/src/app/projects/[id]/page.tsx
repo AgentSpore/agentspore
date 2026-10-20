@@ -17,6 +17,7 @@ import { ChatIdentityNotice } from "@/components/ChatIdentityNotice";
 import { useProjectChatMessages, type ProjectMessage } from "./useProjectChatMessages";
 import { ProjectChatError } from "./ProjectChatError";
 import { useProjectReads } from "./useProjectReads";
+import { useProjectVote } from "./useProjectVote";
 import { FetchError } from "@/components/FetchError";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
@@ -121,52 +122,31 @@ function LoginModal({ onLogin, onClose }: {
 
 // ─── Vote buttons ─────────────────────────────────────────────────────────────
 
-function VoteButtons({ projectId, votesUp, votesDown }: {
-  projectId: string; votesUp: number; votesDown: number;
-}) {
+function VoteButtons({ title, state }: { title: string; state: ReturnType<typeof useProjectVote> }) {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
-  const [up, setUp] = useState(votesUp);
-  const [down, setDown] = useState(votesDown);
-  const [voting, setVoting] = useState(false);
-
-  const vote = async (value: 1 | -1) => {
-    if (voting) return;
-    setVoting(true);
-    try {
-      const r = await fetch(`${API_URL}/api/v1/projects/${projectId}/vote`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vote: value }),
-      });
-      if (r.ok) {
-        const d = await r.json();
-        setUp(d.votes_up);
-        setDown(d.votes_down);
-      }
-    } catch {}
-    setVoting(false);
-  };
-
+  const { up, down, voting, error, vote } = state;
   return (
-    <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
-      <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('votes')}</div>
-      <div className="flex items-center gap-2">
+    <div className="order-first sm:order-none col-span-2 sm:col-span-1 min-w-0 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
+      <div className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('votes')}</div>
+      <div className="flex flex-wrap items-center gap-2">
         <button
-          onClick={() => vote(1)}
+          onClick={() => void vote(1)} aria-label={tr('upvoteProject', { title })}
           disabled={voting}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-emerald-500/10 text-emerald-400 border border-neutral-800/50 hover:border-emerald-500/30 disabled:opacity-50"
+          className="min-h-11 min-w-11 max-w-full [overflow-wrap:anywhere] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-emerald-500/10 text-emerald-400 border border-neutral-800/50 hover:border-emerald-500/30 disabled:opacity-50"
         >
-          <span>↑</span>{new Intl.NumberFormat(localeTag(locale)).format(up)}
+          <span aria-hidden="true">↑</span>{new Intl.NumberFormat(localeTag(locale)).format(up)}
         </button>
         <button
-          onClick={() => vote(-1)}
+          onClick={() => void vote(-1)} aria-label={tr('downvoteProject', { title })}
           disabled={voting}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-red-500/10 text-red-400 border border-neutral-800/50 hover:border-red-500/30 disabled:opacity-50"
+          className="min-h-11 min-w-11 max-w-full [overflow-wrap:anywhere] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono transition-all hover:bg-red-500/10 text-red-400 border border-neutral-800/50 hover:border-red-500/30 disabled:opacity-50"
         >
-          <span>↓</span>{new Intl.NumberFormat(localeTag(locale)).format(down)}
+          <span aria-hidden="true">↓</span>{new Intl.NumberFormat(localeTag(locale)).format(down)}
         </button>
       </div>
+      {voting && <p role="status" className="mt-2 text-sm text-neutral-400">{tr('loading')}</p>}
+      {error && <p role="alert" className="mt-2 text-sm text-red-400 [overflow-wrap:anywhere]">{tr(error === 'wait' ? 'projectVoteWait' : 'projectVoteError')}</p>}
     </div>
   );
 }
@@ -252,6 +232,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   const authToken = auth?.token;
   const reads = useProjectReads(projectId, authToken, contributorsRevision, apiFetch);
   const project = reads.project.data;
+  const voteState = useProjectVote(projectId, project);
   const ownership = reads.ownership.data;
   const contributors = reads.contributors.data?.contributors ?? [];
 
@@ -558,7 +539,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                 <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('created')}</div>
                 <div className="text-sm text-neutral-200 font-mono">{timeAgo(project.created_at, locale)}</div>
               </div>
-              <VoteButtons projectId={project.id} votesUp={project.votes_up} votesDown={project.votes_down} />
+              <VoteButtons title={project.title} state={voteState} />
               <div className="stat-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
                 <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('contributors')}</div>
                 <div className="text-sm text-neutral-200 font-mono">{reads.contributors.data ? new Intl.NumberFormat(localeTag(locale)).format(contributors.length) : "—"}</div>
