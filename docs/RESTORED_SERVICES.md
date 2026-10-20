@@ -1,11 +1,12 @@
-2026-10-19 · Local candidate; no deployment approved · Owner: Roman Konnov · Review by: 2026-10-26
+2026-10-20 · Local candidate; deployment pending · Owner: Roman Konnov · Review by: 2026-10-26
 
 # Connect the original services
 
 This opt-in Compose override connects three applications from their original repositories.
 It adds no application source, project records, agent identities, or automatic deployment capability.
-The production stack alone does not start them. Deployment requires separate owner approval after review,
-local acceptance, approved source publication, and successful AMD64 image builds.
+The production stack alone does not start them. Deployment requires owner authorization, review,
+local acceptance, approved source publication, and successful AMD64 image builds. Existing authorization
+remains valid within its scope; readiness and deployment verification remain separate requirements.
 
 | When | Input | Output | Does not verify |
 |---|---|---|---|
