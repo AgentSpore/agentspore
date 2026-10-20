@@ -6,11 +6,13 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { API_URL, BlogPost, BlogComment, REACTION_META, timeAgo } from "@/lib/api";
+import { API_URL, BlogPost, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
+import { FetchError } from "@/components/FetchError";
+import { useBlogPost, useBlogComments } from "../useBlogReads";
 import { Skeleton, SkeletonAvatar, SkeletonText } from "@/components/Skeleton";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -31,15 +33,32 @@ function DotGrid() {
   );
 }
 
+function BlogPostFailure({ read }: { read: ReturnType<typeof useBlogPost> }) {
+  const tr = useTranslations(publicMessages);
+  return read.status === "not-found" ? <p className="text-neutral-400 text-sm">{tr('postNotFound')}</p>
+    : <FetchError onRetry={() => void read.load()} />;
+}
+function BlogCommentsStatus({ read }: { read: ReturnType<typeof useBlogComments> }) {
+  const tr = useTranslations(publicMessages);
+  return <>
+    {read.status === "loading" && <p role="status" className="text-sm text-neutral-400">{tr('loading')}</p>}
+    {read.status === "error" && <FetchError onRetry={() => void read.load()} />}
+  </>;
+}
+
 export default function BlogPostPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const params = useParams();
   const postId = params.id as string;
 
-  const [post, setPost] = useState<BlogPost | null>(null);
-  const [comments, setComments] = useState<BlogComment[]>([]);
-  const [loading, setLoading] = useState(true);
+  const postRead = useBlogPost(postId);
+  const commentsRead = useBlogComments(postId);
+  const post = postRead.data;
+  const comments = commentsRead.comments;
+  const setPost = postRead.replace;
+  const setComments = commentsRead.update;
+  const loadComments = commentsRead.refresh;
   const [commentText, setCommentText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -47,34 +66,6 @@ export default function BlogPostPage() {
   useEffect(() => {
     setIsLoggedIn(!!localStorage.getItem("access_token"));
   }, []);
-
-  const loadPost = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
-      if (res.ok) {
-        const data: BlogPost = await res.json();
-        setPost(data);
-      }
-    } catch {}
-  }, [postId]);
-
-  const loadComments = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/v1/blog/posts/${postId}/comments`);
-      if (res.ok) {
-        const data: BlogComment[] = await res.json();
-        setComments(data);
-      }
-    } catch {}
-  }, [postId]);
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      await Promise.all([loadPost(), loadComments()]);
-      setLoading(false);
-    })();
-  }, [loadPost, loadComments]);
 
   const toggleReaction = async (reaction: string) => {
     if (!post) return;
@@ -128,7 +119,7 @@ export default function BlogPostPage() {
     }
   };
 
-  if (loading) {
+  if (postRead.initialLoading) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white">
         <Header />
@@ -160,7 +151,7 @@ export default function BlogPostPage() {
               <div className="w-12 h-12 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center mx-auto mb-4">
                 <span className="text-neutral-600 font-mono text-lg">?</span>
               </div>
-              <p className="text-neutral-400 text-sm">{tr('postNotFound')}</p>
+              <BlogPostFailure read={postRead} />
             </div>
           </div>
         </main>
@@ -308,6 +299,7 @@ export default function BlogPostPage() {
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/40 to-transparent" />
             </div>
 
+            <BlogCommentsStatus read={commentsRead} />
             {/* Comment form */}
             {isLoggedIn && (
               <div className="mb-5 fade-up-d3">
@@ -345,7 +337,7 @@ export default function BlogPostPage() {
             )}
 
             {/* Comment list */}
-            {comments.length === 0 ? (
+            {commentsRead.empty ? (
               <div className="py-12 text-center">
                 <p className="text-neutral-600 text-sm">{tr('noCommentsYet')}</p>
                 <p className="text-neutral-700 text-[10px] font-mono mt-1">{tr('beTheFirstToShareYourThoughts')}</p>
