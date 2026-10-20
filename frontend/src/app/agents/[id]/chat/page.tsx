@@ -124,7 +124,7 @@ export default function AgentChatPage() {
     <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
       <div className="flex flex-col items-center gap-3">
         <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
-        <span className="text-neutral-600 text-[11px] font-mono">{tr("Loading chat...")}</span>
+        <span className="text-neutral-600 text-xs font-mono">{tr("Loading chat...")}</span>
       </div>
     </main>
   );
@@ -136,7 +136,7 @@ export default function AgentChatPage() {
       </div>
       {chat.agentState.status === "error" ? <DirectChatError kind="agent" disabled={false} onRetry={() => void chat.retryAgent()} />
         : <div className="text-red-400 text-sm font-mono">{tr("Agent not found")}</div>}
-      <Link href="/" className="text-neutral-500 text-[11px] hover:text-white font-mono transition-colors">{tr("← Back to dashboard")}</Link>
+      <Link href="/" className="inline-flex min-h-12 min-w-12 items-center rounded text-neutral-500 text-xs hover:text-white font-mono transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr("← Back to dashboard")}</Link>
     </main>
   );
 
@@ -157,7 +157,7 @@ export default function AgentChatPage() {
   });
 
   return (
-    <div className="h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="h-dvh min-h-0 bg-[#0a0a0a] text-white flex flex-col">
       <style jsx global>{`
         @keyframes msg-appear {
           from { opacity: 0; transform: translateY(6px); }
@@ -174,13 +174,13 @@ export default function AgentChatPage() {
       <Header />
 
       {/* Agent info bar */}
-      <div className="border-b border-neutral-800/40 bg-[#0a0a0a]/95 backdrop-blur-md relative z-10">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+      <div className="shrink-0 border-b border-neutral-800/40 bg-[#0a0a0a]/95 backdrop-blur-md relative z-10">
+        <div className="max-w-3xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
           {/* Agent avatar + info */}
-          <Link href={`/agents/${id}`} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-            <div className="relative">
+          <Link href={`/agents/${id}`} className="flex min-h-12 min-w-12 flex-1 items-center gap-3 rounded hover:opacity-80 transition-opacity focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+            <div className="relative shrink-0">
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-cyan-500/25 to-cyan-700/25 border border-cyan-500/20 flex items-center justify-center">
-                <span className="text-[11px] font-bold font-mono text-cyan-300 uppercase">{agent.name.slice(0, 2)}</span>
+                <span className="text-xs font-bold font-mono text-cyan-300 uppercase">{agent.name.slice(0, 2)}</span>
               </div>
               {isAgentLive(agent) && (
                 <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#0a0a0a] flex items-center justify-center">
@@ -188,29 +188,27 @@ export default function AgentChatPage() {
                 </div>
               )}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0 [overflow-wrap:anywhere]">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold text-white leading-tight">{agent.name}</span>
-                {agent.handle && <span className="text-[10px] text-neutral-600 font-mono">@{agent.handle}</span>}
+                {agent.handle && <span className="text-xs text-neutral-600 font-mono">@{agent.handle}</span>}
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-neutral-600 font-mono">{display(agent.specialization)}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-neutral-600 font-mono">{display(agent.specialization)}</span>
                 <span className="text-neutral-800">&middot;</span>
-                <span className={`text-[9px] font-mono ${isAgentLive(agent) ? "text-emerald-400" : "text-neutral-600"}`}>
+                <span className={`text-xs font-mono ${isAgentLive(agent) ? "text-emerald-400" : "text-neutral-600"}`}>
                   {isAgentLive(agent) ? tr("online") : tr("offline")}
                 </span>
               </div>
             </div>
           </Link>
 
-          <div className="flex-1" />
-
-          <span className="text-[10px] text-neutral-700 font-mono">{messages.length.toLocaleString(locale)} {" " + tr("messages")}</span>
+          <span className="text-xs text-neutral-700 font-mono">{messages.length.toLocaleString(locale)} {" " + tr("messages")}</span>
         </div>
       </div>
 
       {/* Messages */}
-      <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+      <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 min-h-0 min-w-0 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
           {directReadError(chat.initial.status) && <DirectChatError kind="initial" disabled={directReadPending(chat.initial.status)} onRetry={() => void chat.initial.run()} />}
           {directReadError(chat.older.status) && <DirectChatError kind="older" disabled={loadingMore} onRetry={() => void chat.older.run()} />}
@@ -220,7 +218,7 @@ export default function AgentChatPage() {
             <div className="flex justify-center py-3">
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 rounded-full border-2 border-neutral-800 border-t-neutral-500 animate-spin" />
-                <span className="text-[10px] text-neutral-600 font-mono">{tr("Loading older messages")}</span>
+                <span className="text-xs text-neutral-600 font-mono">{tr("Loading older messages")}</span>
               </div>
             </div>
           )}
@@ -230,7 +228,7 @@ export default function AgentChatPage() {
                 <span className="text-2xl text-neutral-700">&equiv;</span>
               </div>
               <p className="text-neutral-500 text-sm">{tr("No messages yet")}</p>
-              <p className="text-neutral-700 text-[11px] font-mono text-center max-w-xs">
+              <p className="text-neutral-700 text-xs font-mono text-center max-w-full [overflow-wrap:anywhere]">
                 {" " + tr("Send a message to") + " "}{agent.name}{tr(". The agent will receive it at its next heartbeat.") + " "}</p>
             </div>
           ) : grouped.map((group, gi) => {
@@ -243,11 +241,11 @@ export default function AgentChatPage() {
               <div key={first.id} className="msg-appear">
                 {showDate && (
                   <div className="flex items-center gap-3 my-5">
-                    <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
-                    <span className="text-[9px] text-neutral-600 font-mono uppercase tracking-[0.15em] bg-[#0a0a0a] px-3">
+                    <div className="flex-1 min-w-0 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
+                    <span className="text-xs text-neutral-600 font-mono uppercase tracking-[0.15em] bg-[#0a0a0a] px-3 text-center [overflow-wrap:anywhere]">
                       {new Date(first.created_at).toLocaleDateString(locale, { weekday: "long", month: "short", day: "numeric" })}
                     </span>
-                    <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
+                    <div className="flex-1 min-w-0 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                   </div>
                 )}
 
@@ -258,30 +256,30 @@ export default function AgentChatPage() {
                       ? "from-cyan-500/25 to-cyan-700/25 border border-cyan-500/20"
                       : "from-violet-500/25 to-violet-700/25 border border-violet-500/20"
                   }`}>
-                    <span className={`text-[10px] font-bold uppercase font-mono ${isAgent ? "text-cyan-300" : "text-violet-300"}`}>
+                    <span className={`text-xs font-bold uppercase font-mono ${isAgent ? "text-cyan-300" : "text-violet-300"}`}>
                       {(first.from_name || "?").slice(0, 2)}
                     </span>
                   </div>
 
-                  <div className={`flex-1 min-w-0 max-w-[80%] ${isAgent ? "" : "flex flex-col items-end"}`}>
+                  <div className={`flex-1 min-w-0 ${isAgent ? "" : "flex flex-col items-end"}`}>
                     {/* Sender line */}
-                    <div className={`flex items-center gap-2 mb-1 ${isAgent ? "" : "flex-row-reverse"}`}>
+                    <div className={`flex flex-wrap items-center gap-2 mb-1 [overflow-wrap:anywhere] ${isAgent ? "" : "flex-row-reverse"}`}>
                       <span className={`text-[12px] font-semibold font-mono ${isAgent ? "text-cyan-300" : "text-violet-300"}`}>
                         {first.from_name}
                       </span>
-                      <span className="text-[9px] text-neutral-700 font-mono uppercase">{isAgent ? tr("agent") : tr("human")}</span>
-                      <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(first.created_at, locale)}</span>
+                      <span className="text-xs text-neutral-700 font-mono uppercase">{isAgent ? tr("agent") : tr("human")}</span>
+                      <span className="text-xs text-neutral-700 font-mono">{timeAgo(first.created_at, locale)}</span>
                     </div>
 
                     {/* Bubbles */}
-                    <div className={`space-y-0.5 ${isAgent ? "" : "flex flex-col items-end"}`}>
+                    <div className={`min-w-0 max-w-full space-y-0.5 ${isAgent ? "" : "flex flex-col items-end"}`}>
                       {group.map((msg, mi) => {
                         const isFirst = mi === 0;
                         const isLast = mi === group.length - 1;
 
                         return (
-                          <div key={msg.id} id={`dm-${msg.id}`} className="group flex items-end gap-2">
-                            <div className={`relative px-3.5 py-2.5 text-sm leading-relaxed break-words ${
+                          <div key={msg.id} id={`dm-${msg.id}`} tabIndex={-1} className="group flex min-w-0 max-w-full flex-col items-start gap-1 rounded focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+                            <div className={`relative min-w-0 max-w-full px-3.5 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere] ${
                               isAgent
                                 ? `bg-neutral-900/60 border border-neutral-800/40 text-neutral-300 ${
                                     isFirst && isLast ? "rounded-2xl rounded-tl-md" :
@@ -297,31 +295,31 @@ export default function AgentChatPage() {
                                   }`
                             }`}>
                               {msg.reply_to && (
-                                <div
-                                  className="mb-2 pl-3 border-l-2 border-neutral-700/40 cursor-pointer hover:border-violet-400/40 transition-colors"
+                                <button type="button" aria-label={tr("Go to original message")}
+                                  className="mb-2 min-h-12 min-w-12 max-w-full pl-3 text-left border-l-2 border-neutral-700/40 hover:border-violet-400/40 transition-colors rounded focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400"
                                   onClick={() => {
                                     const el = document.getElementById(`dm-${msg.reply_to!.id}`);
                                     if (el) {
-                                      el.scrollIntoView({ behavior: "smooth", block: "center" });
+                                      el.focus({ preventScroll: true }); el.scrollIntoView({ behavior: "smooth", block: "center" });
                                       el.classList.add("ring-1", "ring-violet-400/30");
                                       setTimeout(() => el.classList.remove("ring-1", "ring-violet-400/30"), 1500);
                                     }
                                   }}
                                 >
-                                  <p className="text-[11px] text-neutral-600 leading-snug line-clamp-2">{msg.reply_to.content}</p>
-                                </div>
+                                  <span className="text-xs text-neutral-600 leading-snug line-clamp-2 whitespace-pre-wrap [overflow-wrap:anywhere]">{msg.reply_to.content}</span>
+                                </button>
                               )}
                               <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                                 p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
                                 strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-                                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">{children}</a>,
-                                code: ({ children }) => <code className="bg-white/[0.06] px-1 py-0.5 rounded text-[11px] text-violet-300">{children}</code>,
+                                a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2 rounded [overflow-wrap:anywhere] focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">{children}</a>,
+                                code: ({ children }) => <code className="bg-white/[0.06] px-1 py-0.5 rounded text-xs text-violet-300 whitespace-pre-wrap [overflow-wrap:anywhere]">{children}</code>,
                                 ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1">{children}</ul>,
                                 ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1">{children}</ol>,
-                                pre: ({ children }) => <pre className="bg-black/30 rounded-lg p-2 my-1 overflow-x-auto text-[11px]">{children}</pre>,
+                                pre: ({ children }) => <pre className="bg-black/30 rounded-lg p-2 my-1 max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] text-xs">{children}</pre>,
                               }}>{msg.content}</ReactMarkdown>
                             </div>
-                            <span className="text-[9px] text-neutral-800 font-mono opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap mb-1">
+                            <span className="text-xs text-neutral-800 font-mono mb-1">
                               {new Date(msg.created_at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
                             </span>
                           </div>
@@ -338,29 +336,29 @@ export default function AgentChatPage() {
       </main>
 
       {/* Input */}
-      <p className="max-w-3xl mx-auto px-4 py-2 text-sm text-neutral-400">{tr("Messages in this chat are public.")}</p>
+      <p className="shrink-0 max-w-3xl mx-auto px-4 py-2 text-sm text-neutral-400 [overflow-wrap:anywhere]">{tr("Messages in this chat are public.")}</p>
       {userName ? (
-        <form onSubmit={handleSend} className="border-t border-neutral-800/40 bg-[#0a0a0a]">
+        <form onSubmit={handleSend} className="shrink-0 border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-3">
             {sendError && <DirectChatError kind="send" disabled={sending || !content.trim()} onRetry={() => void handleSend()} />}
-            <div className="flex items-end gap-2 bg-neutral-900/40 border border-neutral-800/50 rounded-2xl px-3 py-2 focus-within:border-neutral-700/60 transition-colors">
+            <div className="flex items-end gap-2 bg-neutral-900/40 border border-neutral-800/50 rounded-2xl px-3 py-2 focus-within:border-violet-400 transition-colors">
               <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-500/25 to-violet-700/25 border border-violet-500/20 flex items-center justify-center shrink-0">
-                <span className="text-[8px] font-bold text-violet-300 uppercase font-mono">{userName.slice(0, 2)}</span>
+                <span className="text-xs font-bold text-violet-300 uppercase font-mono">{userName.slice(0, 2)}</span>
               </div>
               <textarea
-                ref={textareaRef}
+                ref={textareaRef} aria-label={tr("Message")}
                 value={content}
                 onChange={e => { revision.current += 1; setContent(e.target.value); setSendError(false); }}
                 onKeyDown={handleKeyDown}
                 placeholder={tr("Message {name}...", { name: agent.name })}
                 maxLength={2000}
                 rows={1}
-                className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 outline-none resize-none font-mono leading-relaxed max-h-[120px]"
+                className="flex-1 min-h-12 min-w-0 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 resize-none font-mono leading-relaxed max-h-[120px] rounded focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400"
               />
               <button
-                type="submit"
+                type="submit" aria-label={tr("Send")}
                 disabled={!content.trim() || sending}
-                className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${
+                className={`flex-shrink-0 w-12 h-12 rounded-full focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 flex items-center justify-center transition-all duration-200 ${
                   content.trim() && !sending
                     ? "bg-white text-black hover:bg-neutral-200 hover:scale-105"
                     : "bg-neutral-800/40 text-neutral-600 cursor-not-allowed"
@@ -375,14 +373,14 @@ export default function AgentChatPage() {
                 )}
               </button>
             </div>
-            <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">{tr("Enter to send, Shift+Enter for newline")}</p>
+            <p className="text-xs text-neutral-700 font-mono mt-1.5 text-center">{tr("Enter to send, Shift+Enter for newline")}</p>
           </div>
         </form>
       ) : (
-        <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
+        <div className="shrink-0 border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-4 text-center">
             <ChatIdentityNotice state={profile} />
-            {profile.status === "signed-out" && <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono">
+            {profile.status === "signed-out" && <Link href="/login" className="inline-flex min-h-12 min-w-12 items-center rounded text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {" " + tr("Sign in to send messages") + " "}</Link>}
           </div>
         </div>
