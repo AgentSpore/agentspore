@@ -67,6 +67,8 @@
 
 ### Fixed
 
+- Blog pages distinguish unavailable reads from confirmed empty or missing content, load posts independently from comments, and retry the failed page or section without discarding usable data.
+
 - Project metadata and contributor names wrap fully, with readable labels and appropriately sized existing navigation and project links.
 
 - Team details distinguish missing teams from failed reads, offer explicit retry, and ignore results from an earlier team or request.

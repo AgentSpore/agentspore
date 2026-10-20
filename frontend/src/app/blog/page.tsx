@@ -8,10 +8,12 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useBlogFeed } from "./useBlogReads";
+import type { ReactNode } from "react";
+import { FetchError } from "@/components/FetchError";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { API_URL, BlogPost, BlogPostsResponse, REACTION_META, timeAgo } from "@/lib/api";
+import { API_URL, BlogPost, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 
@@ -30,31 +32,31 @@ function DotGrid() {
   );
 }
 
+function BlogFeedContent({ read, children }: { read: ReturnType<typeof useBlogFeed>; children: ReactNode }) {
+  const tr = useTranslations(publicMessages);
+  const docsTr = useTranslations(docsMessages);
+  return <>
+    {read.status === "error" && <FetchError onRetry={() => void read.retry()} />}
+    {read.loading && !read.data ? (
+      <div className="flex flex-col items-center justify-center py-20 fade-up">
+        <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center mb-4 animate-pulse">
+          <span className="text-violet-400 font-mono text-xs">...</span>
+        </div>
+        <p role="status" className="text-neutral-600 text-xs font-mono">{tr('loadingPosts2')}</p>
+      </div>
+    ) : !read.data ? null : read.posts.length === 0 ? (
+      <EmptyState title={docsTr('eBlogTitle')} body={docsTr('eBlogBody')}
+        action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
+    ) : children}
+  </>;
+}
+
 export default function BlogFeedPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
-  const docsTr = useTranslations(docsMessages);
-  const [posts, setPosts] = useState<BlogPost[]>([]);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const read = useBlogFeed();
+  const { posts, total, offset, loading, load: loadPosts, updatePosts: setPosts } = read;
   const LIMIT = 20;
-
-  const loadPosts = async (off = 0) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/api/v1/blog/posts?limit=${LIMIT}&offset=${off}`);
-      if (res.ok) {
-        const data: BlogPostsResponse = await res.json();
-        setPosts(data.posts);
-        setTotal(data.total);
-        setOffset(off);
-      }
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
-  };
-
-  useEffect(() => { loadPosts(); }, []);
 
   const toggleReaction = async (postId: string, reaction: string) => {
     try {
@@ -183,9 +185,9 @@ export default function BlogFeedPage() {
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2 flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
               <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
-              <span className="text-sm font-mono text-white">{new Intl.NumberFormat(localeTag(locale)).format(total)}</span>
+              <span className="text-sm font-mono text-white">{read.data ? new Intl.NumberFormat(localeTag(locale)).format(total) : "—"}</span>
             </div>
-            {total > LIMIT && (
+            {read.hasPages && (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2">
                 <span className="text-[10px] font-mono text-neutral-500">
                   {tr('page')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.floor(offset / LIMIT) + 1)} {tr('of')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.ceil(total / LIMIT))}
@@ -194,17 +196,7 @@ export default function BlogFeedPage() {
             )}
           </div>
 
-          {loading && posts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 fade-up">
-              <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center mb-4 animate-pulse">
-                <span className="text-violet-400 font-mono text-xs">...</span>
-              </div>
-              <p className="text-neutral-600 text-xs font-mono">{tr('loadingPosts2')}</p>
-            </div>
-          ) : posts.length === 0 ? (
-            <EmptyState title={docsTr('eBlogTitle')} body={docsTr('eBlogBody')}
-              action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
-          ) : (
+          <BlogFeedContent read={read}>
             <div className="space-y-4">
               {posts.map((post, i) => (
                 <article
@@ -264,27 +256,27 @@ export default function BlogFeedPage() {
               ))}
 
               {/* Pagination */}
-              {total > LIMIT && (
+              {read.hasPages && (
                 <div className="flex items-center justify-center gap-3 pt-6 fade-up">
                   <button
                     onClick={() => loadPosts(offset - LIMIT)}
-                    disabled={offset === 0}
-                    className="text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
+                    disabled={loading || offset === 0}
+                    className="min-h-11 min-w-11 text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
                   >
                     {tr('prev')}</button>
-                  <span className="text-[10px] text-neutral-600 font-mono tracking-wider">
+                  <span className="text-xs text-neutral-600 font-mono tracking-wider">
                     {new Intl.NumberFormat(localeTag(locale)).format(offset + 1)} - {new Intl.NumberFormat(localeTag(locale)).format(Math.min(offset + LIMIT, total))} {tr('of')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(total)}
                   </span>
                   <button
                     onClick={() => loadPosts(offset + LIMIT)}
-                    disabled={offset + LIMIT >= total}
-                    className="text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
+                    disabled={loading || offset + LIMIT >= total}
+                    className="min-h-11 min-w-11 text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
                   >
                     {tr('next')}</button>
                 </div>
               )}
             </div>
-          )}
+          </BlogFeedContent>
         </div>
       </main>
     </div>
