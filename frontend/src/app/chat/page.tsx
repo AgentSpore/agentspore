@@ -7,7 +7,7 @@ import { communicationMessages } from "@/lib/i18n/communication";
 import { sharedMessages } from "@/lib/i18n/shared";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_URL, CHAT_MSG_META, ChatMessage, timeAgo } from "@/lib/api";
@@ -381,6 +381,26 @@ function OlderHistoryError({ error, pending, onRetry }: { error: boolean; pendin
   </div>;
 }
 
+function messageLayoutTop(element: HTMLElement) {
+  let top = 0;
+  let current: HTMLElement | null = element;
+  while (current) {
+    top += current.offsetTop;
+    current = current.offsetParent instanceof HTMLElement ? current.offsetParent : null;
+  }
+  return top;
+}
+
+function visibleMessageAnchor(container: HTMLElement) {
+  const bounds = container.getBoundingClientRect();
+  const row = [...container.querySelectorAll<HTMLElement>("[data-message-id]")].find(element => {
+    const rect = element.getBoundingClientRect();
+    return rect.bottom > bounds.top && rect.top < bounds.bottom;
+  });
+  const id = row?.dataset.messageId;
+  return row && id ? { id, offset: messageLayoutTop(row) - messageLayoutTop(container) - container.scrollTop } : null;
+}
+
 export default function ChatPage() {
   const tr = useTranslations(communicationMessages);
   const sharedTr = useTranslations(sharedMessages);
@@ -404,11 +424,21 @@ export default function ChatPage() {
   const esRef = useRef<EventSource | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const olderAnchorRef = useRef<{ id: string; offset: number } | null>(null);
   const readRef = useRef<AbortController | null>(null);
   const readChangesRef = useRef(new Map<string, Partial<ChatMessage>>());
   const olderRef = useRef<AbortController | null>(null);
   const olderChangesRef = useRef(new Map<string, Partial<ChatMessage>>());
   const pendingDeletesRef = useRef(new Set<string>());
+
+  useLayoutEffect(() => {
+    const anchor = olderAnchorRef.current;
+    const container = containerRef.current;
+    olderAnchorRef.current = null;
+    if (!anchor || !container) return;
+    const row = [...container.querySelectorAll<HTMLElement>("[data-message-id]")].find(element => element.dataset.messageId === anchor.id);
+    if (row) container.scrollTop = messageLayoutTop(row) - messageLayoutTop(container) - anchor.offset;
+  }, [messages]);
 
   const readMessages = useCallback(async () => {
     if (readRef.current) return;
@@ -489,20 +519,17 @@ export default function ChatPage() {
     setLoadingMore(true);
     const oldestId = messages[0].id;
     const container = containerRef.current;
-    const prevHeight = container?.scrollHeight ?? 0;
     try {
       const res = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldestId}`, { signal: controller.signal });
       if (!res.ok) throw new Error("Older chat history request failed");
       const older: ChatMessage[] = await res.json();
       if (controller.signal.aborted) return;
       const changes = new Map(olderChangesRef.current);
+      olderAnchorRef.current = container ? visibleMessageAnchor(container) : null;
       setMessages(prev => [...new Map([...older].reverse().concat(prev).map(message => [message.id, message])).values()]
         .map(message => ({ ...message, ...changes.get(message.id) })));
       setHasMore(older.length >= PAGE_SIZE);
       setOlderError(false);
-      requestAnimationFrame(() => {
-        if (container) container.scrollTop = container.scrollHeight - prevHeight;
-      });
     } catch {
       if (!controller.signal.aborted) setOlderError(true);
     } finally {
