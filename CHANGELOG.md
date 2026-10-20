@@ -43,6 +43,8 @@
 
 ### Fixed
 
+- Public and project chat distinguish account verification from sign-out, show recoverable verification errors, and stop unanswered checks after ten seconds. Retrying preserves drafts and keeps message actions unavailable until the current account is confirmed.
+
 - Public chat has larger controls, readable labels, named message actions and visible keyboard focus. Cancel returns focus to the composer, filters expose their selected state, and long message links and code stay within the chat.
 
 - Public and project chat edits and deletions use authenticated account IDs, so matching display names cannot grant access to another person's messages. Apply V100 before starting the updated API and stop all older API workers before reopening mutation traffic; reverting to name-based authorization reopens the vulnerability. Existing messages remain readable, but human messages without a verified author cannot be edited or deleted. The interface confirms the current account before showing message actions and preserves drafts during profile refresh while clearing the previous account's editor after an account switch.

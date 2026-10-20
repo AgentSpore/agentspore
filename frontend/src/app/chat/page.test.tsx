@@ -24,7 +24,7 @@ function stubChat(rows: unknown[]) {
 }
 
 beforeEach(() => localStorage.clear());
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it.each(["en", "ru"] as const)("teaches only when no message was loaded in %s", async (locale) => {
   stubChat([]);
@@ -671,10 +671,10 @@ function stubPublicSecurity(profile: (authorization: string | null) => Promise<R
   }));
 }
 
-function publicSecurityControls(id: string, owned: boolean) {
+function publicSecurityControls(id: string, owned: boolean, locale: "en" | "ru" = "en") {
   const row = screen.getByText(id).closest("[data-message-id]");
   if (!(row instanceof HTMLElement)) throw new Error("Security message row missing");
-  for (const title of ["Edit", "Delete"]) expect(within(row).queryAllByTitle(title)).toHaveLength(owned ? 1 : 0);
+  for (const title of locale === "ru" ? ["Изменить", "Удалить"] : ["Edit", "Delete"]) expect(within(row).queryAllByTitle(title)).toHaveLength(owned ? 1 : 0);
 }
 
 it.each(["Shared name", "Renamed account"])("SEC.CHAT public grants only confirmed ID ownership with profile name %s", async name => {
@@ -832,4 +832,135 @@ it.each(["Escape", "Cancel (Esc)"])("CH.3 returns focus to the composer after %s
   expect(input.value).toBe("");
   expect(document.activeElement).toBe(input);
   expect(requests).toEqual([]);
+});
+
+const PROFILE_COPY = {
+  en: { checking: "Checking your account…", error: "Could not verify your account." },
+  ru: { checking: "Проверяем аккаунт…", error: "Не удалось проверить аккаунт." },
+};
+
+async function openProfileState(locale: "en" | "ru" = "en") {
+  const requests = { current: pendingRead() };
+  publicSecuritySession("synthetic-profile-a");
+  const profiles = vi.fn(() => requests.current.promise.then(response => response.clone()));
+  stubPublicSecurity(profiles);
+  const view = render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
+  await act(async () => {});
+  screen.getByText("security-a");
+  return { requests, profiles, view };
+}
+
+it.each(["en", "ru"] as const)("CH.4b public distinguishes checking from signed-out in %s", async locale => {
+  await openProfileState(locale);
+  expect(screen.getByText(PROFILE_COPY[locale].checking).closest('[role="status"]')).toBeTruthy();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  publicSecurityControls("security-a", false, locale);
+  await act(async () => publicSecuritySession(null));
+  expect(screen.queryByText(PROFILE_COPY[locale].checking)).toBeNull();
+  expect(screen.getByRole("link", { name: locale === "en" ? "Sign in to join the conversation" : "Войдите, чтобы участвовать в разговоре" })).toBeTruthy();
+});
+
+it.each([
+  { locale: "en", failure: "http" }, { locale: "ru", failure: "http" },
+  { locale: "en", failure: "network" }, { locale: "ru", failure: "network" },
+  { locale: "en", failure: "json" }, { locale: "ru", failure: "json" },
+  { locale: "en", failure: "schema" }, { locale: "ru", failure: "schema" },
+] as const)("CH.4b public retries $failure profile verification truthfully in $locale", async ({ locale, failure }) => {
+  const chat = await openProfileState(locale);
+  await act(async () => {
+    if (failure === "network") chat.requests.current.reject(new TypeError("Synthetic profile network failure"));
+    else if (failure === "json") chat.requests.current.resolve(new Response("{invalid"));
+    else if (failure === "schema") chat.requests.current.resolve(Response.json({ ...SECURITY_OWNER, id: null }));
+    else chat.requests.current.resolve(Response.json({ detail: "Synthetic unavailable profile" }, { status: 503 }));
+  });
+  const alert = screen.getByText(PROFILE_COPY[locale].error).closest('[role="alert"]');
+  if (!(alert instanceof HTMLElement)) throw new Error("Profile failure alert missing");
+  expect(screen.queryByRole("textbox")).toBeNull();
+  publicSecurityControls("security-a", false, locale);
+  const beforeRetry = chat.profiles.mock.calls.length;
+  chat.requests.current = pendingRead();
+  fireEvent.click(within(alert).getByRole("button", { name: sharedMessages[locale].retry }));
+  await act(async () => {});
+  expect(chat.profiles).toHaveBeenCalledTimes(beforeRetry + 1);
+  expect(screen.getByText(PROFILE_COPY[locale].checking).closest('[role="status"]')).toBeTruthy();
+  expect(screen.queryByText(PROFILE_COPY[locale].error)).toBeNull();
+  await act(async () => chat.requests.current.resolve(Response.json(SECURITY_OWNER)));
+  expect(screen.getByRole("textbox")).toBeTruthy();
+  publicSecurityControls("security-a", true, locale);
+  expect(screen.queryByText(PROFILE_COPY[locale].checking)).toBeNull();
+  expect(screen.queryByText(PROFILE_COPY[locale].error)).toBeNull();
+});
+
+it.each([
+  { locale: "en", late: "success" }, { locale: "ru", late: "success" },
+  { locale: "en", late: "failure" }, { locale: "ru", late: "failure" },
+] as const)("CH.4b public times out then ignores stale $late during retry in $locale", async ({ locale, late }) => {
+  vi.useFakeTimers();
+  const chat = await openProfileState(locale), old = chat.requests.current;
+  await act(async () => vi.advanceTimersByTimeAsync(9_999));
+  expect(screen.getByText(PROFILE_COPY[locale].checking)).toBeTruthy();
+  await act(async () => vi.advanceTimersByTimeAsync(1));
+  const alert = screen.getByText(PROFILE_COPY[locale].error).closest('[role="alert"]');
+  if (!(alert instanceof HTMLElement)) throw new Error("Profile timeout alert missing");
+  const signals = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith("/auth/me")).map(([, init]) => init?.signal);
+  expect(signals.some(signal => signal?.aborted)).toBe(true);
+  chat.requests.current = pendingRead();
+  fireEvent.click(within(alert).getByRole("button", { name: sharedMessages[locale].retry }));
+  await act(async () => {
+    if (late === "success") old.resolve(Response.json(SECURITY_OWNER));
+    else old.reject(new TypeError("Synthetic delayed profile failure"));
+  });
+  expect(screen.getByText(PROFILE_COPY[locale].checking)).toBeTruthy();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  await act(async () => chat.requests.current.resolve(Response.json(SECURITY_OWNER)));
+  publicSecurityControls("security-a", true, locale);
+  await act(async () => vi.advanceTimersByTimeAsync(10_000));
+  expect(screen.queryByText(PROFILE_COPY[locale].error)).toBeNull();
+  expect(screen.getByRole("textbox")).toBeTruthy();
+});
+
+it.each(["success", "failure", "timeout"])("CH.4b public ignores old %s after account replacement", async outcome => {
+  vi.useFakeTimers();
+  const chat = await openProfileState(), old = chat.requests.current;
+  chat.requests.current = pendingRead();
+  await act(async () => publicSecuritySession("synthetic-profile-b"));
+  await act(async () => chat.requests.current.resolve(Response.json(SECURITY_OTHER)));
+  await act(async () => {
+    if (outcome === "success") old.resolve(Response.json(SECURITY_OWNER));
+    else if (outcome === "failure") old.reject(new TypeError("Synthetic previous account failure"));
+    else await vi.advanceTimersByTimeAsync(10_000);
+  });
+  publicSecurityControls("security-a", false); publicSecurityControls("security-b", true);
+  expect(screen.queryByText(PROFILE_COPY.en.error)).toBeNull();
+  expect(screen.getByRole("textbox")).toBeTruthy();
+});
+
+it("CH.4b public aborts verification and its deadline after unmount", async () => {
+  vi.useFakeTimers();
+  const chat = await openProfileState();
+  const signals = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith("/auth/me")).map(([, init]) => init?.signal);
+  expect(signals.length).toBeGreaterThan(0);
+  chat.view.unmount();
+  expect(signals.every(signal => signal?.aborted)).toBe(true);
+  const requests = vi.mocked(fetch).mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(20_000); chat.requests.current.resolve(Response.json(SECURITY_OWNER)); });
+  expect(fetch).toHaveBeenCalledTimes(requests);
+});
+
+it.each(["draft", "edit"])("CH.4b public retains %s through same-account error and retry", async mode => {
+  const chat = await openProfileState();
+  await act(async () => chat.requests.current.resolve(Response.json(SECURITY_OWNER)));
+  const input = screen.getByRole<HTMLTextAreaElement>("textbox");
+  if (mode === "edit") fireEvent.click(screen.getAllByTitle("Edit")[0]);
+  fireEvent.change(input, { target: { value: "A revision retained through profile failure" } });
+  chat.requests.current = pendingRead();
+  await act(async () => publicSecuritySession("synthetic-profile-a-refreshed"));
+  await act(async () => chat.requests.current.resolve(Response.json({}, { status: 503 })));
+  const alert = screen.getByText(PROFILE_COPY.en.error).closest('[role="alert"]');
+  if (!(alert instanceof HTMLElement)) throw new Error("Profile retry alert missing");
+  chat.requests.current = pendingRead();
+  fireEvent.click(within(alert).getByRole("button", { name: sharedMessages.en.retry }));
+  await act(async () => chat.requests.current.resolve(Response.json(SECURITY_OWNER)));
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("A revision retained through profile failure");
+  expect(screen.queryByText("Editing message") !== null).toBe(mode === "edit");
 });

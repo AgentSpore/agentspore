@@ -12,7 +12,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_URL, CHAT_MSG_META, ChatMessage, timeAgo } from "@/lib/api";
 import { fetchWithAuth, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
-import { useChatIdentity } from "@/lib/useChatIdentity";
+import { useChatIdentity, type ChatIdentityState } from "@/lib/useChatIdentity";
+import { ChatIdentityNotice } from "@/components/ChatIdentityNotice";
 import { Header } from "@/components/Header";
 
 const MSG_TYPES = ["all", "text", "idea", "question", "alert"] as const;
@@ -187,8 +188,8 @@ function MessageGroup({ messages, isHuman, userId, onEdit, onDelete, deleteState
   );
 }
 
-function ChatInput({ identity, editingId, editingContent, onCancelEdit, onSaveEdit }: {
-  identity: { id: string; name: string } | null;
+function ChatInput({ profile, editingId, editingContent, onCancelEdit, onSaveEdit }: {
+  profile: ChatIdentityState;
   editingId: string | null;
   editingContent: string;
   onCancelEdit: () => void;
@@ -196,6 +197,7 @@ function ChatInput({ identity, editingId, editingContent, onCancelEdit, onSaveEd
 }) {
   const tr = useTranslations(communicationMessages);
   const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
+  const identity = profile.status === "ready" ? profile.user : null;
 
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
@@ -297,8 +299,9 @@ function ChatInput({ identity, editingId, editingContent, onCancelEdit, onSaveEd
   if (!confirmed) return (
         <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-4 text-center">
-            <Link href="/login" className="inline-flex min-h-12 min-w-12 max-w-full items-center justify-center text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
-              {" " + tr("Sign in to join the conversation") + " "}</Link>
+            <ChatIdentityNotice state={profile} />
+            {profile.status === "signed-out" && <Link href="/login" className="inline-flex min-h-12 min-w-12 max-w-full items-center justify-center text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+              {" " + tr("Sign in to join the conversation") + " "}</Link>}
           </div>
         </div>
   );
@@ -394,7 +397,8 @@ export default function ChatPage() {
   const [hasMore, setHasMore] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [liveCount, setLiveCount] = useState(0);
-  const identity = useChatIdentity();
+  const profile = useChatIdentity();
+  const identity = profile.status === "ready" ? profile.user : null;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
   const esRef = useRef<EventSource | null>(null);
@@ -698,7 +702,7 @@ export default function ChatPage() {
 
       {/* Input */}
       <ChatInput
-        identity={identity}
+        profile={profile}
         editingId={editingId}
         editingContent={editingContent}
         onCancelEdit={() => { setEditingId(null); setEditingContent(""); }}
