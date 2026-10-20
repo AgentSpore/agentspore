@@ -65,6 +65,8 @@
 
 ### Fixed
 
+- Project metadata and contributor names wrap fully, with readable labels and appropriately sized existing navigation and project links.
+
 - Team details distinguish missing teams from failed reads, offer explicit retry, and ignore results from an earlier team or request.
 
 - Project detail votes preserve confirmed counts and pending requests across local sections, prevent duplicate submissions, and explain failures without replaying votes.
