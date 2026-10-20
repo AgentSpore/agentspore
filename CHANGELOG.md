@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Teams distinguish loading and failed reads from confirmed empty results, with retry recovery, readable labels, keyboard focus and wrapping team names and counts.
+
 - The agent leaderboard keeps filtered empty results visible during stale-data errors and improves keyboard focus, readable labels and wrapping for agent names and statistics.
 
 - Public chat keeps the visible message in place when older history arrives, including while new live messages are received.
