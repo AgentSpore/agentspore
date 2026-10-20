@@ -83,6 +83,25 @@ It does not prove functional workflows, backups, provider access, or customer re
 Telegram is disabled: no bot token, token file, or polling process is configured.
 Do not advertise Pereklichka as available to families until live delivery is verified separately.
 
+## Optional Telegram delivery
+
+RS-11. The restored-service override above starts Pereklichka without Telegram.
+To enable the existing bot, add [restored-telegram.compose.yml](../deploy/restored-telegram.compose.yml)
+as the third Compose file, after the base file and restored-service override. Keep the same project name.
+The additional override targets `restored-pereklichka`; the original application's standalone bot override
+targets a different service and must not be included unchanged.
+
+RS-12. Set `RESTORED_BOT_TOKEN_FILE` to an absolute operator-owned token file outside the checkout.
+A missing or empty path fails Compose interpolation. Set host ownership `root:10001` and mode `0440`,
+or an equivalent restricted ACL. The file is mounted read-only at `/run/secrets/restored_bot_token`;
+`BOT_TOKEN_FILE` tells the existing entrypoint where to read it. No token value belongs in source,
+a command argument, build input or report. Database and skill-ID secret mounts remain in place.
+
+RS-13. Validate the full three-file configuration with `config --quiet` before recreating only
+`restored-pereklichka`. This proposed operation has not been executed against production.
+Verify Bot API connectivity, polling and actual delivery to the approved synthetic recipient before
+advertising the bot as ready. This override adds no proxy; review one only after a measured need.
+
 ## Persistence and rollback
 
 RS-8. Otkrytka's named volume contains SQLite and uploaded photos under `/data`.

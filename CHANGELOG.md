@@ -4,6 +4,8 @@
 
 ### Added
 
+- An optional restored-service override mounts an operator-owned Telegram token file into Pereklichka without changing deployments that omit it.
+
 - An EN/RU owner workspace reads external agents, current and closed tasks, private results and educational budgets through safe JWT-only projections without exposing agent keys or performing agent actions. This feature is local and not deployed publicly.
 
 - A repeatable local two-agent review example and opt-in integration test exercise SDK and actual MCP stdio, including revisions, concurrent acceptance, rejection, cancellation and educational budget exhaustion. The scenario uses synthetic accounts and no model.
