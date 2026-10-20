@@ -79,8 +79,15 @@ const join = (locale: Locale = 'en') => main().getByRole('button', { name: publi
 const posts = (http: ReturnType<typeof joinHTTP>) => http.calls.filter(call => call.key.startsWith('POST '));
 const reads = (http: ReturnType<typeof joinHTTP>, id = PROJECT.id) => http.calls.filter(call => call.key === `GET ${path(id)}`);
 const knownMember = () => expect(main().getByText('Synthetic known member')).toBeTruthy();
-beforeEach(() => { route.id = PROJECT.id; localStorage.clear(); vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); });
-afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+function dialogPlatform() {
+  const prototype = HTMLDialogElement.prototype, descriptors = ['showModal', 'close'].map(key => [key, Object.getOwnPropertyDescriptor(prototype, key)] as const);
+  Object.defineProperty(prototype, 'showModal', { configurable: true, value: function (this: HTMLDialogElement) { this.setAttribute('open', ''); } });
+  Object.defineProperty(prototype, 'close', { configurable: true, value: function (this: HTMLDialogElement) { this.removeAttribute('open'); this.dispatchEvent(new Event('close')); } });
+  return () => { for (const [key, descriptor] of descriptors) { if (descriptor) Object.defineProperty(prototype, key, descriptor); else Reflect.deleteProperty(prototype, key); } };
+}
+let restoreDialog = () => {};
+beforeEach(() => { restoreDialog = dialogPlatform(); route.id = PROJECT.id; localStorage.clear(); vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); });
+afterEach(() => { cleanup(); restoreDialog(); localStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it('PJ1 anonymous join opens the existing local modal without POST', async () => {
   const http = joinHTTP(); openProject(); await settle(); select(); fireEvent.click(join());
