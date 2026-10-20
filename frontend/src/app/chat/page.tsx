@@ -4,9 +4,10 @@ import { docsMessages } from "@/lib/i18n/docs";
 import { EmptyState } from "@/components/EmptyState";
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { communicationMessages } from "@/lib/i18n/communication";
+import { sharedMessages } from "@/lib/i18n/shared";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_URL, CHAT_MSG_META, ChatMessage, timeAgo } from "@/lib/api";
@@ -331,12 +332,14 @@ const PAGE_SIZE = 50;
 
 export default function ChatPage() {
   const tr = useTranslations(communicationMessages);
+  const sharedTr = useTranslations(sharedMessages);
   const docsTr = useTranslations(docsMessages);
   const { locale } = useLocale();
   const display = (value: string) => Object.hasOwn(communicationMessages.en, value) ? tr(value) : value;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [readError, setReadError] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
@@ -347,6 +350,8 @@ export default function ChatPage() {
   const esRef = useRef<EventSource | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const readRef = useRef<AbortController | null>(null);
+  const readChangesRef = useRef(new Map<string, Partial<ChatMessage>>());
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
@@ -357,17 +362,42 @@ export default function ChatPage() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`)
-      .then(r => r.ok ? r.json() : [])
-      .then((d: ChatMessage[]) => {
-        setMessages([...d].reverse());
-        setHasMore(d.length >= PAGE_SIZE);
+  const readMessages = useCallback(async () => {
+    if (readRef.current) return;
+    const controller = new AbortController();
+    readRef.current = controller;
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`, { signal: controller.signal });
+      if (!response.ok) throw new Error("Chat history request failed");
+      const history: ChatMessage[] = await response.json();
+      if (controller.signal.aborted) return;
+      const changes = new Map(readChangesRef.current);
+      setMessages(current => [...new Map([...history].reverse().concat(current).map(message => [message.id, message])).values()]
+        .map(message => ({ ...message, ...changes.get(message.id) })));
+      setHasMore(history.length >= PAGE_SIZE);
+      setReadError(false);
+      setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
+    } catch {
+      if (!controller.signal.aborted) setReadError(true);
+    } finally {
+      if (readRef.current === controller) {
+        readChangesRef.current.clear();
+        readRef.current = null;
         setLoading(false);
-        setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
-      })
-      .catch(() => setLoading(false));
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    const changes = readChangesRef.current;
+    void readMessages();
+    return () => {
+      readRef.current?.abort();
+      changes.clear();
+      readRef.current = null;
+    };
+  }, [readMessages]);
 
   useEffect(() => {
     const es = new EventSource(`${API_URL}/api/v1/chat/stream`);
@@ -376,12 +406,14 @@ export default function ChatPage() {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === "ping") return;
-        if (msg.type === "edit") {
-          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: msg.content, edited_at: new Date().toISOString() } : m));
-          return;
-        }
-        if (msg.type === "delete") {
-          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content: "[deleted]", is_deleted: true } : m));
+        if (msg.type === "edit" || msg.type === "delete") {
+          const change: Partial<ChatMessage> = msg.type === "edit"
+            ? { content: msg.content, edited_at: new Date().toISOString() }
+            : { content: "[deleted]", is_deleted: true };
+          if (readRef.current) {
+            readChangesRef.current.set(msg.id, { ...readChangesRef.current.get(msg.id), ...change });
+          }
+          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ...change } : m));
           return;
         }
         setMessages(prev => [...prev, msg as ChatMessage].slice(-500));
@@ -536,13 +568,22 @@ export default function ChatPage() {
       {/* Messages */}
       <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 py-4">
-          {loading ? (
+          {readError && (
+            <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
+              <p>{tr("Could not load messages.")}</p>
+              <button type="button" onClick={() => void readMessages()} disabled={loading}
+                className="min-h-11 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 disabled:opacity-50">
+                {sharedTr("retry")}
+              </button>
+            </div>
+          )}
+          {loading && messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-60 gap-2">
               <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
               <span className="text-neutral-600 text-[11px] font-mono">{tr("Loading messages...")}</span>
             </div>
           ) : messages.length === 0 ? (
-            <EmptyState title={docsTr('eChatTitle')} body={docsTr('eChatBody')}
+            !readError && <EmptyState title={docsTr('eChatTitle')} body={docsTr('eChatBody')}
               action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
           ) : grouped.length === 0 ? (
             <p className="py-10 text-center text-sm text-neutral-500">{docsTr('eChatFiltered')}</p>
