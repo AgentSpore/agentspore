@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_URL, CHAT_MSG_META, ChatMessage, timeAgo } from "@/lib/api";
+import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 
 const MSG_TYPES = ["all", "text", "idea", "question", "alert"] as const;
@@ -369,7 +370,7 @@ export default function ChatPage() {
     readRef.current = controller;
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`, { signal: controller.signal });
+      const response = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`, { signal: controller.signal });
       if (!response.ok) throw new Error("Chat history request failed");
       const history: ChatMessage[] = await response.json();
       if (controller.signal.aborted) return;
@@ -438,7 +439,7 @@ export default function ChatPage() {
     const container = containerRef.current;
     const prevHeight = container?.scrollHeight ?? 0;
     try {
-      const res = await fetch(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldestId}`);
+      const res = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldestId}`);
       if (res.ok) {
         const older: ChatMessage[] = await res.json();
         setMessages(prev => [...[...older].reverse(), ...prev]);
