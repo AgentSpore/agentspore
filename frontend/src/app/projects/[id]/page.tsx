@@ -13,6 +13,8 @@ import { API_URL, ProjectOwnership, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { useChatIdentity } from "@/lib/useChatIdentity";
 import { ChatIdentityNotice } from "@/components/ChatIdentityNotice";
+import { useProjectChatMessages, type ProjectMessage } from "./useProjectChatMessages";
+import { ProjectChatError } from "./ProjectChatError";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -181,19 +183,6 @@ function VoteButtons({ projectId, votesUp, votesDown }: {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-interface ProjectMessage {
-  id: string;
-  sender_user_id?: string | null;
-  sender_name: string;
-  sender_handle: string | null;
-  sender_type: "agent" | "human" | "user";
-  content: string;
-  message_type: string;
-  created_at: string;
-  reply_to?: { id: string; content: string };
-  is_deleted?: boolean;
-  edited_at?: string;
-}
 
 type Tab = "overview" | "contributors" | "ownership" | "chat";
 
@@ -314,29 +303,34 @@ function ProjectDetails({ projectId }: { projectId: string }) {
 
   const isContributor = contributors.some(c => c.user_id === auth?.userId);
 
+  const isCurrentChatSession = useCallback((generation = getAuthSnapshot().generation) =>
+    authSession === readProjectAuth() && generation === getAuthSnapshot().generation, [authSession]);
+
   // ── Chat state (must be before conditional returns) ──
-  const [chatMessages, setChatMessages] = useState<ProjectMessage[]>([]);
   const [chatContent, setChatContent] = useState("");
   const [chatSending, setChatSending] = useState(false);
-  const [chatHasMore, setChatHasMore] = useState(false);
-  const [chatLoadingMore, setChatLoadingMore] = useState(false);
   const [chatEditingId, setChatEditingId] = useState<string | null>(null);
   const [chatReplyTo, setChatReplyTo] = useState<ProjectMessage | null>(null);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const chatRevision = useRef(0);
-  const chatOperation = useRef<{ revision: number; generation: number } | null>(null);
+  const chatContext = useRef(0);
+  const [chatError, setChatError] = useState<"send" | "edit" | null>(null);
+  const chatOperation = useRef<{ revision: number; generation: number; context: number } | null>(null);
   useEffect(() => () => { chatOperation.current = null; }, []);
 
   const chatProfile = useChatIdentity(auth?.token ?? null);
   const chatIdentity = chatProfile.status === "ready" ? chatProfile.user : null;
   const [chatOwner, setChatOwner] = useState<string | null>(null);
   const chatConfirmed = !!chatIdentity && chatIdentity.id === chatOwner;
+  const chatData = useProjectChatMessages(projectId, tab === "chat", authToken, isCurrentChatSession, chatIdentity?.id ?? null);
+  const { messages: chatMessages, bottomRef: chatBottomRef, containerRef: chatContainerRef,
+    loadingMore: chatLoadingMore, loadOlder: loadOlderChat, reload: loadChatMessages, deleteMessage: handleChatDelete } = chatData;
   useEffect(() => {
     if (!chatIdentity) return;
     if (chatIdentity.id === chatOwner) return;
     chatRevision.current += 1;
+    chatContext.current += 1;
+    setChatError(null);
     chatOperation.current = null;
     setChatSending(false);
     setChatOwner(chatIdentity.id); setChatEditingId(null); setChatReplyTo(null); setChatContent("");
@@ -345,6 +339,8 @@ function ProjectDetails({ projectId }: { projectId: string }) {
 
   const handleChatEdit = (id: string, content: string) => {
     chatRevision.current += 1;
+    chatContext.current += 1;
+    setChatError(null);
     setChatEditingId(id);
     setChatReplyTo(null);
     setChatContent(content);
@@ -353,28 +349,19 @@ function ProjectDetails({ projectId }: { projectId: string }) {
 
   const handleChatReply = (msg: ProjectMessage) => {
     chatRevision.current += 1;
+    chatContext.current += 1;
+    setChatError(null);
     setChatReplyTo(msg);
     setChatEditingId(null);
     setChatContent("");
     chatInputRef.current?.focus();
   };
 
-  const handleChatDelete = async (id: string) => {
-    if (!auth) return;
-    const captured = readProjectAuth();
-    try {
-      const res = await apiFetch(`/chat/project/${projectId}/human-messages/${id}`, auth.token, { method: "DELETE" });
-      if (captured !== readProjectAuth()) return;
-      if (res.ok) {
-        setChatMessages(prev => prev.map(m => m.id === id ? { ...m, content: "[deleted]", is_deleted: true } : m));
-      }
-    } catch { /* ignore */ }
-  };
-
-  const isCurrentChatSession = (generation = getAuthSnapshot().generation) =>
-    authSession === readProjectAuth() && generation === getAuthSnapshot().generation;
   const isCurrentChatOperation = (operation: NonNullable<typeof chatOperation.current>) =>
     chatOperation.current === operation && isCurrentChatSession(operation.generation);
+  const reportChatError = (operation: NonNullable<typeof chatOperation.current>, kind: "send" | "edit") => {
+    if (isCurrentChatOperation(operation) && chatContext.current === operation.context) setChatError(kind);
+  };
   const clearSubmittedChatInput = (operation: NonNullable<typeof chatOperation.current>) => {
     if (chatRevision.current !== operation.revision) return;
     setChatContent("");
@@ -389,92 +376,41 @@ function ProjectDetails({ projectId }: { projectId: string }) {
 
   const handleChatSaveEdit = async () => {
     if (!chatEditingId || !chatContent.trim() || !auth || !chatConfirmed || !isCurrentChatSession() || chatOperation.current) return;
-    const operation = { revision: chatRevision.current, generation: getAuthSnapshot().generation,
+    const operation = { revision: chatRevision.current, generation: getAuthSnapshot().generation, context: chatContext.current,
       content: chatContent.trim(), editingId: chatEditingId };
     chatOperation.current = operation;
     setChatSending(true);
+    setChatError(null);
     try {
       const res = await apiFetch(`/chat/project/${projectId}/human-messages/${operation.editingId}`, auth.token, {
         method: "PATCH",
         body: JSON.stringify({ content: operation.content }),
       });
       if (!isCurrentChatOperation(operation)) return;
-      if (res.ok) {
-        setChatMessages(prev => prev.map(m => m.id === operation.editingId ? { ...m, content: operation.content, edited_at: new Date().toISOString() } : m));
-        clearSubmittedChatInput(operation);
-      }
-    } catch { /* ignore */ }
+      if (!res.ok) throw new Error("Project chat edit failed");
+      chatData.patchMessage(operation.editingId, { content: operation.content, edited_at: new Date().toISOString() });
+      clearSubmittedChatInput(operation);
+    } catch { reportChatError(operation, "edit"); }
     finally { finishChatOperation(operation); }
   };
 
   const cancelChatInput = () => {
     chatRevision.current += 1;
+    chatContext.current += 1;
+    setChatError(null);
     setChatEditingId(null);
     setChatReplyTo(null);
     setChatContent("");
   };
 
-  const chatRequest = useRef<AbortController | null>(null);
-  const loadChatMessages = useCallback(async () => {
-    const controller = chatRequest.current;
-    if (!controller || controller.signal.aborted) return;
-    try {
-      const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50`, { signal: controller.signal });
-      if (res.ok) {
-        const data: ProjectMessage[] = await res.json();
-        if (controller.signal.aborted) return;
-        setChatMessages([...data].reverse());
-        setChatHasMore(data.length === 50);
-        setTimeout(() => { if (!controller.signal.aborted) chatBottomRef.current?.scrollIntoView(); }, 100);
-      }
-    } catch { /* ignore */ }
-  }, [projectId]);
-
-  const loadOlderChat = useCallback(async () => {
-    if (!chatHasMore || chatLoadingMore || chatMessages.length === 0) return;
-    const controller = chatRequest.current;
-    if (!controller || controller.signal.aborted) return;
-    setChatLoadingMore(true);
-    const oldestId = chatMessages[0].id;
-    const container = chatContainerRef.current;
-    const prevHeight = container?.scrollHeight ?? 0;
-    try {
-      const res = await fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50&before=${oldestId}`, { signal: controller.signal });
-      if (res.ok) {
-        const data: ProjectMessage[] = await res.json();
-        if (controller.signal.aborted) { setChatLoadingMore(false); return; }
-        setChatMessages(prev => [...[...data].reverse(), ...prev]);
-        setChatHasMore(data.length === 50);
-        requestAnimationFrame(() => {
-          if (container && !controller.signal.aborted) container.scrollTop = container.scrollHeight - prevHeight;
-        });
-      }
-    } catch { /* ignore */ }
-    setChatLoadingMore(false);
-  }, [chatHasMore, chatLoadingMore, chatMessages, projectId]);
-
-  useEffect(() => {
-    if (tab !== "chat") return;
-    const controller = new AbortController();
-    chatRequest.current = controller;
-    fetch(`${API_URL}/api/v1/chat/project/${projectId}/messages?limit=50`, { signal: controller.signal })
-      .then(res => res.ok ? res.json() : null)
-      .then((data: ProjectMessage[] | null) => {
-        if (!data || controller.signal.aborted) return;
-        setChatMessages([...data].reverse());
-        setChatHasMore(data.length === 50);
-        setTimeout(() => { if (!controller.signal.aborted) chatBottomRef.current?.scrollIntoView(); }, 100);
-      }).catch(() => { /* A failed chat request leaves the existing messages available. */ });
-    return () => controller.abort();
-  }, [tab, projectId, authToken]);
-
   const handleChatSend = async () => {
     if (!chatContent.trim() || chatOperation.current || !chatConfirmed || !isCurrentChatSession()) return;
     if (chatEditingId) { await handleChatSaveEdit(); return; }
-    const operation = { revision: chatRevision.current, generation: getAuthSnapshot().generation,
+    const operation = { revision: chatRevision.current, generation: getAuthSnapshot().generation, context: chatContext.current,
       content: chatContent.trim(), replyToId: chatReplyTo?.id };
     chatOperation.current = operation;
     setChatSending(true);
+    setChatError(null);
     try {
       const body: Record<string, string> = { name: chatIdentity.name, content: operation.content, message_type: "text" };
       if (operation.replyToId) body.reply_to_id = operation.replyToId;
@@ -483,11 +419,10 @@ function ProjectDetails({ projectId }: { projectId: string }) {
         body: JSON.stringify(body),
       });
       if (!isCurrentChatOperation(operation)) return;
-      if (res.ok) {
-        clearSubmittedChatInput(operation);
-        await loadChatMessages();
-      }
-    } catch { /* ignore */ }
+      if (!res.ok) throw new Error("Project chat send failed");
+      clearSubmittedChatInput(operation);
+      await chatData.refresh();
+    } catch { reportChatError(operation, "send"); }
     finally { finishChatOperation(operation); }
   };
 
@@ -689,6 +624,9 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                   if ((e.target as HTMLDivElement).scrollTop < 50) loadOlderChat();
                 }}
               >
+                {chatData.readError && <ProjectChatError kind="initial" disabled={chatData.status === "loading"} onRetry={() => void loadChatMessages()} />}
+                {chatData.status === "loading" && chatMessages.length === 0 && <p role="status" className="text-sm text-neutral-300">{tr('loading')}</p>}
+                {chatData.olderError && <ProjectChatError kind="older" disabled={chatLoadingMore} onRetry={() => void chatData.retryOlder()} />}
                 {chatLoadingMore && (
                   <div className="flex justify-center py-3">
                     <div className="flex items-center gap-2">
@@ -697,7 +635,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                     </div>
                   </div>
                 )}
-                {chatMessages.length === 0 ? (
+                {chatMessages.length === 0 && chatData.status === "ready" ? (
                   <div className="flex flex-col items-center justify-center h-full gap-3">
                     <div className="w-12 h-12 rounded-2xl bg-neutral-800/30 border border-neutral-800/40 flex items-center justify-center">
                       <span className="text-xl text-neutral-700">#</span>
@@ -807,7 +745,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                           </svg>
                                         </button>
-                                        <button onClick={() => handleChatDelete(msg.id)} title={tr('delete')}
+                                        <button onClick={() => handleChatDelete(msg.id)} disabled={chatData.deleteState[msg.id] === "pending"} title={tr('delete')}
                                           className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors">
                                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -818,6 +756,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                                   </div>
                                 )}
                               </div>
+                              {isOwner && chatData.deleteState[msg.id] === "error" && <ProjectChatError kind="delete" disabled={false} onRetry={() => void handleChatDelete(msg.id)} />}
                             </div>
                           </div>
                         </div>
@@ -840,6 +779,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                   </div>}</>
                 ) : (
                   <form onSubmit={event => { event.preventDefault(); void handleChatSend(); }} className="space-y-0">
+                    {chatError && <ProjectChatError kind={chatError} disabled={chatSending || !chatContent.trim()} onRetry={() => void handleChatSend()} />}
                     {/* Edit/Reply indicator */}
                     {(chatEditingId || chatReplyTo) && (
                       <div className={`flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg border ${
@@ -875,7 +815,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                       <textarea
                         ref={chatInputRef}
                         value={chatContent}
-                        onChange={e => { chatRevision.current += 1; setChatContent(e.target.value); }}
+                        onChange={e => { chatRevision.current += 1; setChatContent(e.target.value); setChatError(null); }}
                         placeholder={chatEditingId ? tr('editYourMessage') : chatReplyTo ? tr('replyToName', { name: chatReplyTo.sender_name }) : tr('writeAMessage')}
                         rows={1}
                         className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none resize-none max-h-28 overflow-y-auto font-mono leading-relaxed"

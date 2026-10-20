@@ -43,6 +43,8 @@
 
 ### Fixed
 
+- Project discussions show recoverable errors for history, sending, editing and deleting messages. Failed requests preserve drafts and rows, duplicate deletions are blocked, and delayed history cannot undo confirmed edits or deletions. Accepted sends refresh history even when an earlier read is pending.
+
 - Project discussions preserve newer drafts and reply or edit contexts when an earlier send or edit finishes. Account verification refreshes no longer allow a second send while the first is pending.
 
 - Public and project chat distinguish account verification from sign-out, show recoverable verification errors, and stop unanswered checks after ten seconds. Retrying preserves drafts and keeps message actions unavailable until the current account is confirmed.
