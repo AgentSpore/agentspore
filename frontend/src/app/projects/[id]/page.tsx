@@ -41,7 +41,7 @@ function apiFetch(path: string, token?: string, opts: RequestInit = {}) {
 }
 
 function Badge({ children, cls }: { children: React.ReactNode; cls: string }) {
-  return <span className={`text-[10px] font-medium font-mono px-2 py-0.5 rounded-md ${cls}`}>{children}</span>;
+  return <span className={`text-xs max-w-full [overflow-wrap:anywhere] font-medium font-mono px-2 py-0.5 rounded-md ${cls}`}>{children}</span>;
 }
 
 function DotGrid() {
@@ -363,25 +363,25 @@ function ProjectDetails({ projectId }: { projectId: string }) {
 
       {/* Nav bar with auth */}
       <div className="relative z-20 border-b border-neutral-800/50 bg-[#0a0a0a]/80 backdrop-blur-sm px-6 py-3">
-        <div className="max-w-4xl mx-auto flex min-w-0 items-center justify-between gap-3">
+        <div className="max-w-4xl mx-auto flex min-w-0 flex-wrap items-center justify-between gap-3">
           {/* Breadcrumbs */}
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-[10px] font-mono">
-            <Link href="/" className="text-neutral-600 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
+          <div className="flex min-w-0 flex-1 basis-full items-center gap-2 text-xs font-mono sm:basis-0">
+            <Link href="/" className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-neutral-600 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
             <span className="text-neutral-800">/</span>
-            <Link href="/projects" className="text-neutral-600 hover:text-neutral-400 transition-colors">{tr('projects3')}</Link>
+            <Link href="/projects" className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-neutral-600 hover:text-neutral-400 transition-colors">{tr('projects3')}</Link>
             <span className="text-neutral-800">/</span>
             <span className="min-w-0 text-neutral-400 truncate max-w-[200px]">{project.title.toLowerCase()}</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
             {auth ? (
-              <div className="flex items-center gap-3">
-                <span className="max-w-24 truncate text-[10px] font-mono text-neutral-600 sm:max-w-48">{auth.email}</span>
-                <button onClick={handleLogout} className="text-[10px] font-mono text-neutral-700 hover:text-neutral-400 transition-colors">
+              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
+                <span className="min-w-0 max-w-full text-xs font-mono text-neutral-600 [overflow-wrap:anywhere]">{auth.email}</span>
+                <button onClick={handleLogout} className="min-h-11 min-w-11 shrink-0 text-xs font-mono text-neutral-700 hover:text-neutral-400 transition-colors">
                   {tr('signOut')}</button>
               </div>
             ) : (
               <button onClick={() => setShowLogin(true)}
-                className="text-[10px] font-mono text-neutral-400 hover:text-white bg-neutral-800/30 border border-neutral-800/50 px-3 py-1.5 rounded-lg transition-colors">
+                className="min-h-11 min-w-11 max-w-full text-xs font-mono text-neutral-400 hover:text-white bg-neutral-800/30 border border-neutral-800/50 px-3 py-1.5 rounded-lg transition-colors">
                 {tr('signIn2')}</button>
             )}
           </div>
@@ -393,12 +393,12 @@ function ProjectDetails({ projectId }: { projectId: string }) {
         <div className="max-w-4xl mx-auto">
           <div className="fade-up flex min-w-0 flex-col items-start justify-between gap-4 sm:flex-row">
             <div className="min-w-0 w-full sm:flex-1">
-              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('project')}</p>
-              <h1 className="text-2xl font-semibold text-white tracking-tight break-words">{project.title}</h1>
-              <p className="text-neutral-500 text-sm mt-2 font-mono break-words">
+              <p className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('project')}</p>
+              <h1 className="text-2xl font-semibold text-white tracking-tight [overflow-wrap:anywhere]">{project.title}</h1>
+              <p className="text-neutral-500 text-sm mt-2 font-mono [overflow-wrap:anywhere]">
                 {tr('by')}{" "}
                 <Link href={`/agents/${project.creator_agent_id}`}
-                  className="text-violet-400 hover:text-violet-300 transition-colors">
+                  className="text-violet-400 hover:text-violet-300 transition-colors [overflow-wrap:anywhere]">
                   @{project.agent_handle || project.agent_name}
                 </Link>
                 <span className="text-neutral-700 mx-2">|</span>
@@ -410,12 +410,12 @@ function ProjectDetails({ projectId }: { projectId: string }) {
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               {project.status !== "archived" && project.deploy_url && (
                 <a href={project.deploy_url} target="_blank" rel="noopener noreferrer"
-                  className="text-[11px] text-emerald-400 hover:text-emerald-300 bg-emerald-500/5 border border-emerald-500/20 hover:border-emerald-500/40 px-3.5 py-1.5 rounded-lg font-mono transition-all">
+                  className="inline-flex min-h-11 min-w-11 max-w-full items-center justify-center text-xs text-emerald-400 hover:text-emerald-300 bg-emerald-500/5 border border-emerald-500/20 hover:border-emerald-500/40 px-3.5 py-1.5 rounded-lg font-mono transition-all">
                   {tr('demo2')}</a>
               )}
               {project.repo_url && (
                 <a href={project.repo_url} target="_blank" rel="noopener noreferrer"
-                  className="text-[11px] text-neutral-400 hover:text-white bg-neutral-800/30 border border-neutral-800/50 hover:border-neutral-700/60 px-3.5 py-1.5 rounded-lg font-mono transition-all">
+                  className="inline-flex min-h-11 min-w-11 max-w-full items-center justify-center text-xs text-neutral-400 hover:text-white bg-neutral-800/30 border border-neutral-800/50 hover:border-neutral-700/60 px-3.5 py-1.5 rounded-lg font-mono transition-all">
                   GitHub
                 </a>
               )}
@@ -446,16 +446,16 @@ function ProjectDetails({ projectId }: { projectId: string }) {
           <div className="space-y-6 fade-up" style={{ animationDelay: "150ms" }}>
             {project.description && (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5">
-                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('about')}</p>
+                <p className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('about')}</p>
                 <p className="text-neutral-300 leading-relaxed text-sm [overflow-wrap:anywhere]">{project.description}</p>
               </div>
             )}
             {project.tech_stack.length > 0 && (
               <div>
-                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('techStack')}</p>
+                <p className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('techStack')}</p>
                 <div className="flex flex-wrap gap-2">
                   {project.tech_stack.map(t => (
-                    <span key={t} className="text-[11px] bg-neutral-900/30 border border-neutral-800/50 px-3 py-1 rounded-lg text-neutral-400 font-mono backdrop-blur-sm">
+                    <span key={t} className="min-w-0 max-w-full [overflow-wrap:anywhere] text-xs bg-neutral-900/30 border border-neutral-800/50 px-3 py-1 rounded-lg text-neutral-400 font-mono backdrop-blur-sm">
                       {t}
                     </span>
                   ))}
@@ -463,13 +463,13 @@ function ProjectDetails({ projectId }: { projectId: string }) {
               </div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <div className="stat-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
-                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('created')}</div>
+              <div className="stat-card min-w-0 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
+                <div className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('created')}</div>
                 <div className="text-sm text-neutral-200 font-mono">{timeAgo(project.created_at, locale)}</div>
               </div>
               <VoteButtons title={project.title} state={voteState} />
-              <div className="stat-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
-                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('contributors')}</div>
+              <div className="stat-card min-w-0 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
+                <div className="text-xs font-mono uppercase tracking-wide text-neutral-600 mb-2">{tr('contributors')}</div>
                 <div className="text-sm text-neutral-200 font-mono">{reads.contributors.data ? new Intl.NumberFormat(localeTag(locale)).format(contributors.length) : "—"}</div>
               </div>
             </div>
@@ -752,26 +752,26 @@ function ProjectDetails({ projectId }: { projectId: string }) {
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-10 text-center text-neutral-600 text-sm font-mono">
                 {tr('noContributorsYet')}{" "}
                 {!auth && (
-                  <button onClick={() => setShowLogin(true)} className="text-neutral-400 hover:text-violet-400 underline transition-colors">
+                  <button onClick={() => setShowLogin(true)} className="inline-flex min-h-11 min-w-11 items-center justify-center text-neutral-400 hover:text-violet-400 underline transition-colors">
                     {tr('signIn')}</button>
                 )}{" "}{tr('toBeTheFirst')}</div>
             ) : (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm divide-y divide-neutral-800/40 overflow-hidden">
                 {contributors.map(c => (
-                  <div key={c.id} className="flex items-center gap-3 px-5 py-4 hover:bg-neutral-800/20 transition-colors">
-                    <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-xs font-bold text-cyan-400 font-mono">
+                  <div key={c.id} className="flex min-w-0 items-start gap-3 px-5 py-4 hover:bg-neutral-800/20 transition-colors">
+                    <div className="w-8 h-8 shrink-0 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-xs font-bold text-cyan-400 font-mono">
                       {(c.user_name || c.user_email)[0].toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-white">{c.user_name || c.user_email.split("@")[0]}</span>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="min-w-0 max-w-full text-sm text-white [overflow-wrap:anywhere]">{c.user_name || c.user_email.split("@")[0]}</span>
                         <Badge cls={c.role === "admin"
                           ? "bg-violet-500/15 text-violet-400 border border-violet-500/20"
                           : "bg-neutral-800/40 text-neutral-500 border border-neutral-700/30"}>
                           {c.role}
                         </Badge>
                       </div>
-                      <p className="text-[10px] text-neutral-600 mt-0.5 font-mono">
+                      <p className="text-xs text-neutral-600 mt-0.5 font-mono [overflow-wrap:anywhere]">
                         {new Intl.NumberFormat(localeTag(locale)).format(c.contribution_points)} {tr('ptsJoined')}{timeAgo(c.joined_at, locale)}
                       </p>
                     </div>
@@ -786,9 +786,9 @@ function ProjectDetails({ projectId }: { projectId: string }) {
         {tab === "ownership" && ownership && (
           <div className="space-y-6 fade-up" style={{ animationDelay: "150ms" }}>
             <div>
-              <div className="flex items-center justify-between mb-4">
-                <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('agentContributors')}</p>
-                <span className="text-[10px] text-neutral-600 font-mono">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 mb-4">
+                <p className="min-w-0 max-w-full [overflow-wrap:anywhere] text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('agentContributors')}</p>
+                <span className="min-w-0 max-w-full [overflow-wrap:anywhere] text-xs text-neutral-600 font-mono">
                   {new Intl.NumberFormat(localeTag(locale)).format(ownership.contributors.reduce((s, c) => s + c.contribution_points, 0))} {tr('totalPoints')}</span>
               </div>
               {ownership.contributors.length === 0 ? (
@@ -796,18 +796,18 @@ function ProjectDetails({ projectId }: { projectId: string }) {
               ) : (
                 <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm px-5 divide-y divide-neutral-800/40 overflow-hidden">
                   {ownership.contributors.map(c => (
-                    <div key={c.agent_id} className="flex items-center gap-3 py-4 hover:bg-neutral-800/20 transition-colors">
-                      <div className="w-7 h-7 rounded-lg bg-violet-500/15 border border-violet-500/20 flex items-center justify-center text-[10px] font-bold text-violet-400 font-mono">
+                    <div key={c.agent_id} className="flex min-w-0 items-start gap-3 py-4 hover:bg-neutral-800/20 transition-colors">
+                      <div className="w-7 h-7 shrink-0 rounded-lg bg-violet-500/15 border border-violet-500/20 flex items-center justify-center text-xs font-bold text-violet-400 font-mono">
                         {c.agent_name[0].toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm text-white font-medium truncate">{c.agent_name}</div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <div className="flex-1 h-1 rounded-full bg-neutral-800/50 overflow-hidden">
+                        <div className="text-sm text-white font-medium [overflow-wrap:anywhere]">{c.agent_name}</div>
+                        <div className="flex min-w-0 items-center gap-2 mt-1">
+                          <div className="flex-1 min-w-0 h-1 rounded-full bg-neutral-800/50 overflow-hidden">
                             <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-cyan-500"
                               style={{ width: `${Number.isFinite(c.share_pct) ? Math.min(c.share_pct, 100) : 0}%` }} />
                           </div>
-                          <span className="text-[10px] text-neutral-400 tabular-nums font-mono">{Number.isFinite(c.share_pct) ? c.share_pct.toFixed(1) : "0.0"}%</span>
+                          <span className="shrink-0 text-xs text-neutral-400 tabular-nums font-mono">{Number.isFinite(c.share_pct) ? c.share_pct.toFixed(1) : "0.0"}%</span>
                         </div>
                       </div>
                     </div>
