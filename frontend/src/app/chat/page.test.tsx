@@ -186,7 +186,7 @@ const OWN_MESSAGES = ["Original first idea", "Original second idea"].map((conten
   specialization: "user", sender_type: "user", sender_user_id: COMPOSER_OWNER.id, is_deleted: false, content,
 }));
 
-async function openComposer(pending: ReturnType<typeof pendingRead>) {
+async function openComposer(pending: ReturnType<typeof pendingRead>, locale: "en" | "ru" = "en") {
   localStorage.setItem("access_token", "synthetic-composer-access");
   const requests: { method: string; path: string; body: unknown }[] = [];
   const unexpected: string[] = [];
@@ -214,7 +214,7 @@ async function openComposer(pending: ReturnType<typeof pendingRead>) {
     unexpected.push(route);
     return Promise.reject(new Error("Unexpected synthetic composer request"));
   }));
-  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
   const input = await screen.findByRole<HTMLTextAreaElement>("textbox");
   await screen.findByText(OWN_MESSAGES[0].content);
   return { input, requests, unexpected };
@@ -781,4 +781,55 @@ it.each(["draft", "edit"])("SEC.CHAT composer preserves %s across pending same-a
   expect(chat.writes).toEqual([{ method: mode === "edit" ? "PATCH" : "POST",
     path: mode === "edit" ? "/api/v1/chat/human-messages/security-a" : "/api/v1/chat/human-message",
     authorization: "Bearer synthetic-refreshed-security-a", content: "Unsaved same-account revision" }]);
+});
+
+const COMPOSER_LABELS = {
+  en: { message: "Message", send: "Send", save: "Save" },
+  ru: { message: "Сообщение", send: "Отправить", save: "Сохранить" },
+};
+
+it.each(["en", "ru"] as const)("CH.3 names the public composer and send/save actions in %s", async locale => {
+  const { input } = await openComposer(pendingRead(), locale);
+  const labels = COMPOSER_LABELS[locale];
+  expect(screen.getByRole("textbox", { name: labels.message })).toBe(input);
+  expect(screen.getByRole("button", { name: labels.send })).toBeTruthy();
+  fireEvent.click(screen.getAllByTitle(communicationMessages[locale].Edit)[0]);
+  expect(screen.getByRole("textbox", { name: labels.message })).toBe(input);
+  expect(screen.getByRole("button", { name: labels.save })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: labels.send })).toBeNull();
+});
+
+it.each(["en", "ru"] as const)("CH.4 exposes the selected filter and restores loaded chat in %s", async locale => {
+  stubChat([MESSAGE]);
+  render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
+  await screen.findByText(MESSAGE.content);
+  const all = screen.getByRole("button", { name: new RegExp(communicationMessages[locale].All) });
+  const idea = screen.getByRole("button", { name: new RegExp(communicationMessages[locale].Idea) });
+  expect(all.getAttribute("aria-pressed")).toBe("true");
+  expect(idea.getAttribute("aria-pressed")).toBe("false");
+  fireEvent.click(idea);
+  expect(idea.getAttribute("aria-pressed")).toBe("true");
+  expect(all.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.getByText(docsMessages[locale].eChatFiltered)).toBeTruthy();
+  expect(screen.queryByText(docsMessages[locale].eChatTitle)).toBeNull();
+  fireEvent.click(all);
+  expect(screen.getByText(MESSAGE.content)).toBeTruthy();
+  expect(screen.queryByText(docsMessages[locale].eChatFiltered)).toBeNull();
+  expect(all.getAttribute("aria-pressed")).toBe("true");
+});
+
+it.each(["Escape", "Cancel (Esc)"])("CH.3 returns focus to the composer after %s", async action => {
+  const { input, requests } = await openComposer(pendingRead());
+  fireEvent.click(screen.getAllByTitle("Edit")[0]);
+  compose(input, "An amended accessible draft");
+  if (action === "Escape") fireEvent.keyDown(input, { key: "Escape" });
+  else {
+    const cancel = screen.getByRole("button", { name: action });
+    cancel.focus();
+    fireEvent.click(cancel);
+  }
+  expect(screen.queryByText("Editing message")).toBeNull();
+  expect(input.value).toBe("");
+  expect(document.activeElement).toBe(input);
+  expect(requests).toEqual([]);
 });
