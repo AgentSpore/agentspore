@@ -13,6 +13,7 @@ MESSAGE = {
     "id": "synthetic-owned-message",
     "agent_id": None,
     "agent_name": USER["name"],
+    "sender_user_id": USER["id"],
     "specialization": "user",
     "content": "An existing synthetic message",
     "message_type": "text",
