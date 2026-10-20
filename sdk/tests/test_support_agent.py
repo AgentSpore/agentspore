@@ -1,0 +1,140 @@
+"""Exercise real delivery state against mocked external HTTP boundaries."""
+
+import asyncio
+import json
+
+import httpx
+import pytest
+import pytest_asyncio
+from agentspore_sdk import AgentClient
+from agentspore_sdk.support_agent import SupportAgent
+
+DM = "12345678-1234-4234-8234-123456789012"
+EVENT = "12345678-1234-4234-8234-123456789013"
+
+
+@pytest_asyncio.fixture
+async def support(tmp_path):
+    calls = []
+    scenario = {"failure": "", "price": "0"}
+
+    def respond(request):
+        calls.append(request)
+        path = request.url.path
+        public = {
+            "/skill.md": httpx.Response(200, text="Register an external agent; save its key privately."),
+            "/api/v1/agents/stats": httpx.Response(200, json={"total_agents": 1}),
+            "/api/v1/agents/projects": httpx.Response(200, json=[{"id": "public", "title": "Catalog"}]),
+            "/api/v1/agents/me": httpx.Response(200, json={"name": "AdminAgentSpore"}),
+        }
+        if path in public:
+            return public[path]
+        if path.endswith("/models"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [{"id": SupportAgent.MODEL, "pricing": {"prompt": scenario["price"], "completion": "0"}}]
+                },
+            )
+        if path.endswith("/heartbeat"):
+            return httpx.Response(200, json={"direct_messages": [], "agent_events": []})
+        if path.endswith("/completions"):
+            if scenario["failure"] == "provider":
+                raise httpx.ReadTimeout("synthetic", request=request)
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": "Use POST /api/v1/agents/register with owner_email."}}]}
+            )
+        if scenario["failure"] == "delivery":
+            raise httpx.ReadTimeout("synthetic", request=request)
+        return httpx.Response(200, json={"status": "ok"})
+
+    client = AgentClient("af_synthetic", "https://example.test")
+    await client._http.aclose()
+    client._http = httpx.AsyncClient(
+        base_url=client.base_url, headers={"X-API-Key": "af_synthetic"}, transport=httpx.MockTransport(respond)
+    )
+    http = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    application = SupportAgent(client, http, tmp_path / "requests.json", "provider-synthetic")
+    yield application, calls, scenario
+    await client.stop()
+    await http.aclose()
+
+
+async def test_direct_reply_deduplicates_concurrent_delivery_and_restart(support):
+    app, calls, _ = support
+    event = {"id": DM, "from": "human", "content": "How do I register?", "event_id": EVENT}
+    async with asyncio.TaskGroup() as group:
+        for _ in range(3):
+            group.create_task(app.reply(event))
+    restored = SupportAgent(app.client, app.http, app.path, app.provider_key)
+    await restored.reply(event)
+    replies = [r for r in calls if r.url.path.endswith("/dm/reply")]
+    models = [r for r in calls if r.url.path.endswith("/completions")]
+    assert len(replies) == len(models) == 1
+    assert json.loads(replies[0].content)["reply_to_dm_id"] == DM
+    assert "owner_email" in json.loads(replies[0].content)["content"]
+    assert replies[0].headers["X-API-Key"] == "af_synthetic"
+    assert app.requests[DM] == "sent"
+    assert app.provider_key not in app.path.read_text()
+    assert app.path.stat().st_mode & 0o777 == 0o600
+    assert all("authorization" not in r.headers for r in calls if not r.url.path.endswith("/completions"))
+
+
+@pytest.mark.parametrize("failure,status", [("provider", "provider_uncertain"), ("delivery", "delivery_uncertain")])
+async def test_unknown_post_outcome_is_durable_and_never_retried(support, failure, status):
+    app, calls, scenario = support
+    scenario["failure"] = failure
+    event = {"id": DM, "from": "human", "content": "How do I register?"}
+    await app.reply(event)
+    count = len(calls)
+    restored = SupportAgent(app.client, app.http, app.path, app.provider_key)
+    await restored.reply(event)
+    assert len(calls) == count
+    assert restored.requests[DM] == status
+
+
+@pytest.mark.parametrize("price", ["0.001", "-1", "NaN", "invalid"])
+async def test_pricing_guard_blocks_every_post(support, price):
+    app, calls, scenario = support
+    scenario["price"] = price
+    await app.reply({"id": DM, "from": "human", "content": "Help"})
+    assert not [r for r in calls if r.method == "POST"]
+    assert app.requests[DM] == "blocked"
+
+
+async def test_only_explicit_agent_requests_and_separate_ack_namespaces(support):
+    app, calls, _ = support
+    event = {"id": DM, "from": "smoke", "from_id": "agent", "content": "Welcome!"}
+    await app.reply(event)
+    assert not calls
+    await app.reply({**event, "content": "/support How do I register?", "event_id": EVENT})
+    await app.synchronize()
+    body = json.loads(calls[-1].content)
+    assert body["read_dm_ids"] == [DM]
+    assert body["acked_event_ids"] == [EVENT]
+    assert body["current_capacity"] == 0 and body["available_for"] == []
+
+
+async def test_secret_question_never_reaches_network_or_state(support):
+    app, calls, _ = support
+    secret = "af_" + "synthetic" * 4
+    await app.reply({"id": DM, "from": "human", "content": secret})
+    assert not calls and secret not in app.path.read_text()
+
+
+async def test_supervision_cancels_children_and_closes_transports(support, monkeypatch):
+    app, _, _ = support
+    started, hold = asyncio.Event(), asyncio.Event()
+
+    async def pending_socket():
+        started.set()
+        await hold.wait()
+
+    monkeypatch.setattr(app.client, "start", pending_socket)
+    monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda *args: None)
+    task = asyncio.create_task(app.run())
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert app.client._http.is_closed and app.http.is_closed
