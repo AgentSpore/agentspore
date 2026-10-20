@@ -3,6 +3,7 @@
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
+import { communicationMessages } from '@/lib/i18n/communication';
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -263,6 +264,7 @@ export default function ProjectPage() {
 function ProjectDetails({ projectId }: { projectId: string }) {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const chatTr = useTranslations(communicationMessages);
 
   const [tab, setTab] = useState<Tab>("overview");
   const { auth, notify, logout, snapshot: authSession } = useProjectAuth();
@@ -335,7 +337,10 @@ function ProjectDetails({ projectId }: { projectId: string }) {
     setChatSending(false);
     setChatOwner(chatIdentity.id); setChatEditingId(null); setChatReplyTo(null); setChatContent("");
   }, [chatIdentity, chatOwner]);
-  const chatUserName = auth?.email ? auth.email.split("@")[0] : auth ? `user-${auth.userId.slice(0, 6)}` : null;
+  const focusChatInput = () => {
+    chatInputRef.current?.focus();
+    requestAnimationFrame(() => chatInputRef.current?.form?.scrollIntoView({ block: "nearest" }));
+  };
 
   const handleChatEdit = (id: string, content: string) => {
     chatRevision.current += 1;
@@ -344,7 +349,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
     setChatEditingId(id);
     setChatReplyTo(null);
     setChatContent(content);
-    chatInputRef.current?.focus();
+    focusChatInput();
   };
 
   const handleChatReply = (msg: ProjectMessage) => {
@@ -354,7 +359,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
     setChatReplyTo(msg);
     setChatEditingId(null);
     setChatContent("");
-    chatInputRef.current?.focus();
+    focusChatInput();
   };
 
   const isCurrentChatOperation = (operation: NonNullable<typeof chatOperation.current>) =>
@@ -401,6 +406,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
     setChatEditingId(null);
     setChatReplyTo(null);
     setChatContent("");
+    focusChatInput();
   };
 
   const handleChatSend = async () => {
@@ -548,7 +554,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
           <div className="flex min-w-0 flex-wrap gap-1 mt-8 fade-up" style={{ animationDelay: "100ms" }}>
             {TABS.map(t => (
               <button key={t.key} onClick={() => setTab(t.key)}
-                className={`px-3.5 py-1.5 text-xs font-mono rounded-lg transition-all ${
+                className={`px-3.5 py-1.5 text-xs font-mono rounded-lg transition-all min-h-12 min-w-12 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
                   tab === t.key
                     ? "bg-white text-black font-medium"
                     : "text-neutral-600 hover:text-neutral-300 hover:bg-neutral-800/30"
@@ -605,21 +611,16 @@ function ProjectDetails({ projectId }: { projectId: string }) {
             <div className="bg-neutral-900/20 border border-neutral-800/50 rounded-2xl backdrop-blur-sm overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-3 border-b border-neutral-800/40">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center">
-                    <span className="text-[11px] text-neutral-500">#</span>
-                  </div>
-                  <div>
-                    <span className="text-[12px] font-semibold text-neutral-300 font-mono">{tr('discussion')}</span>
-                    <span className="text-[10px] text-neutral-700 font-mono ml-2">{new Intl.NumberFormat(localeTag(locale)).format(chatMessages.length)} {tr('messages')}</span>
-                  </div>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-neutral-300 font-mono">{tr('discussion')}</span>
+                  <span className="text-xs text-neutral-700 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(chatMessages.length)} {tr('messages')}</span>
                 </div>
               </div>
 
               {/* Messages */}
               <div
                 ref={chatContainerRef}
-                className="chat-panel h-[450px] overflow-y-auto px-5 py-4 space-y-1"
+                className="chat-panel h-[min(28rem,50dvh)] overflow-y-auto px-5 py-4 space-y-1"
                 onScroll={(e) => {
                   if ((e.target as HTMLDivElement).scrollTop < 50) loadOlderChat();
                 }}
@@ -631,7 +632,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                   <div className="flex justify-center py-3">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full border border-neutral-700 border-t-neutral-500 animate-spin" />
-                      <span className="text-[10px] text-neutral-600 font-mono">{tr('loadingOlderMessages')}</span>
+                      <span className="text-xs text-neutral-600 font-mono">{tr('loadingOlderMessages')}</span>
                     </div>
                   </div>
                 )}
@@ -641,7 +642,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                       <span className="text-xl text-neutral-700">#</span>
                     </div>
                     <p className="text-neutral-600 text-sm font-mono">{tr('noMessagesYet')}</p>
-                    <p className="text-neutral-700 text-[10px] font-mono">{tr('startADiscussionAboutThisProject')}</p>
+                    <p className="text-neutral-700 text-xs font-mono">{tr('startADiscussionAboutThisProject')}</p>
                   </div>
                 ) : (
                   chatMessages.map((msg, idx) => {
@@ -659,7 +660,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                         {showDate && (
                           <div className="flex items-center gap-3 my-4">
                             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
-                            <span className="text-[9px] text-neutral-600 font-mono uppercase tracking-[0.15em]">
+                            <span className="text-xs text-neutral-600 font-mono uppercase tracking-[0.15em]">
                               {new Date(msg.created_at).toLocaleDateString(localeTag(locale), { weekday: "short", month: "short", day: "numeric" })}
                             </span>
                             <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
@@ -670,7 +671,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                           {msg.reply_to && (
                             <div className="flex items-center gap-2 ml-10 mb-1">
                               <div className="w-0.5 h-3 rounded-full bg-neutral-700/50" />
-                              <span className="text-[10px] text-neutral-600 font-mono truncate max-w-[300px]">{msg.reply_to.content}</span>
+                              <span className="min-w-0 text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">{msg.reply_to.content}</span>
                             </div>
                           )}
                           <div className="flex items-start gap-2.5">
@@ -678,7 +679,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                             {sameAuthor ? (
                               <div className="w-7 shrink-0" />
                             ) : (
-                              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold font-mono shrink-0 ${
+                              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold font-mono shrink-0 ${
                                 isUser
                                   ? "bg-gradient-to-br from-cyan-500/20 to-cyan-700/20 border border-cyan-500/20 ring-1 ring-cyan-500/10"
                                   : "bg-gradient-to-br from-violet-500/20 to-violet-700/20 border border-violet-500/20 ring-1 ring-violet-500/10"
@@ -690,19 +691,19 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                             {/* Content */}
                             <div className="flex-1 min-w-0">
                               {!sameAuthor && (
-                                <div className="flex items-baseline gap-2 mb-0.5">
-                                  <span className={`text-[12px] font-semibold font-mono ${isUser ? "text-cyan-400" : "text-violet-400"}`}>
+                                <div className="flex min-w-0 flex-wrap items-baseline gap-2 mb-0.5">
+                                  <span className={`text-xs min-w-0 max-w-full [overflow-wrap:anywhere] font-semibold font-mono ${isUser ? "text-cyan-400" : "text-violet-400"}`}>
                                     {msg.sender_name}
                                   </span>
                                   {isUser && (
-                                    <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/15 font-mono font-bold uppercase tracking-wider">{tr('usr')}</span>
+                                    <span className="text-xs max-w-full [overflow-wrap:anywhere] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/15 font-mono font-bold uppercase tracking-wider">{tr('usr')}</span>
                                   )}
                                   {!isUser && (
-                                    <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/15 font-mono font-bold uppercase tracking-wider">{tr('agent')}</span>
+                                    <span className="text-xs max-w-full [overflow-wrap:anywhere] px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/15 font-mono font-bold uppercase tracking-wider">{tr('agent')}</span>
                                   )}
-                                  <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(msg.created_at, locale)}</span>
+                                  <span className="text-xs text-neutral-700 font-mono">{timeAgo(msg.created_at, locale)}</span>
                                   {msg.message_type !== "text" && !msg.is_deleted && (
-                                    <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-md ${
+                                    <span className={`text-xs max-w-full [overflow-wrap:anywhere] font-mono font-bold px-1.5 py-0.5 rounded-md ${
                                       msg.message_type === "bug" ? "bg-red-500/10 text-red-400 border border-red-500/20" :
                                       msg.message_type === "idea" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
                                       "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
@@ -712,41 +713,40 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                                   )}
                                 </div>
                               )}
-                              <div className="flex items-start gap-1">
-                                <div className={`text-sm leading-relaxed break-words flex-1 ${
+                                <div className={`text-sm leading-relaxed min-w-0 max-w-full [overflow-wrap:anywhere] ${
                                   msg.is_deleted ? "text-neutral-600 italic" : "text-neutral-300"
                                 }`}>
                                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                                     p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
                                     strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-                                    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">{children}</a>,
-                                    code: ({ children }) => <code className="bg-white/[0.06] px-1 py-0.5 rounded text-[11px] text-violet-300">{children}</code>,
+                                    a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="rounded [overflow-wrap:anywhere] text-cyan-400 hover:text-cyan-300 underline underline-offset-2 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">{children}</a>,
+                                    code: ({ children }) => <code className="bg-white/[0.06] px-1 py-0.5 rounded text-xs text-violet-300">{children}</code>,
                                     ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1">{children}</ul>,
                                     ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1">{children}</ol>,
-                                    pre: ({ children }) => <pre className="bg-black/30 rounded-lg p-2 my-1 overflow-x-auto text-[11px]">{children}</pre>,
+                                    pre: ({ children }) => <pre className="max-w-full whitespace-pre-wrap [overflow-wrap:anywhere] bg-black/30 rounded-lg p-2 my-1 text-xs">{children}</pre>,
                                   }}>{msg.content}</ReactMarkdown>
-                                  {msg.edited_at && !msg.is_deleted && <span className="text-[8px] text-neutral-600 ml-1.5">{tr('edited')}</span>}
+                                  {msg.edited_at && !msg.is_deleted && <span className="text-xs text-neutral-600 ml-1.5">{tr('edited')}</span>}
                                 </div>
                                 {/* Actions */}
                                 {!msg.is_deleted && auth && (
-                                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 shrink-0 mt-0.5">
-                                    <button onClick={() => handleChatReply(msg)} title={tr('reply')}
-                                      className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors">
+                                  <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100 md:pointer-coarse:opacity-100 transition-opacity flex flex-wrap items-center gap-2 mt-1">
+                                    <button onClick={() => handleChatReply(msg)} title={tr('reply')} aria-label={tr('reply')}
+                                      className="min-h-12 min-w-12 shrink-0 rounded flex items-center justify-center focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 text-neutral-600 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors">
                                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                         <polyline points="9 17 4 12 9 7" /><path d="M20 18v-2a4 4 0 0 0-4-4H4" />
                                       </svg>
                                     </button>
                                     {isOwner && (
                                       <>
-                                        <button onClick={() => handleChatEdit(msg.id, msg.content)} title={tr('edit')}
-                                          className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors">
+                                        <button onClick={() => handleChatEdit(msg.id, msg.content)} title={tr('edit')} aria-label={tr('edit')}
+                                          className="min-h-12 min-w-12 shrink-0 rounded flex items-center justify-center focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors">
                                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                           </svg>
                                         </button>
-                                        <button onClick={() => handleChatDelete(msg.id)} disabled={chatData.deleteState[msg.id] === "pending"} title={tr('delete')}
-                                          className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                                        <button onClick={() => handleChatDelete(msg.id)} disabled={chatData.deleteState[msg.id] === "pending"} title={tr('delete')} aria-label={tr('delete')}
+                                          className="min-h-12 min-w-12 shrink-0 rounded flex items-center justify-center focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors">
                                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                                           </svg>
@@ -755,7 +755,6 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                                     )}
                                   </div>
                                 )}
-                              </div>
                               {isOwner && chatData.deleteState[msg.id] === "error" && <ProjectChatError kind="delete" disabled={false} onRetry={() => void handleChatDelete(msg.id)} />}
                             </div>
                           </div>
@@ -782,22 +781,22 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                     {chatError && <ProjectChatError kind={chatError} disabled={chatSending || !chatContent.trim()} onRetry={() => void handleChatSend()} />}
                     {/* Edit/Reply indicator */}
                     {(chatEditingId || chatReplyTo) && (
-                      <div className={`flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg border ${
+                      <div className={`flex min-w-0 flex-wrap items-center gap-2 px-3 py-1.5 mb-2 rounded-lg border ${
                         chatEditingId
                           ? "bg-violet-950/15 border-violet-800/20"
                           : "bg-cyan-950/15 border-cyan-800/20"
                       }`}>
                         <div className={`w-0.5 h-4 rounded-full ${chatEditingId ? "bg-violet-500/50" : "bg-cyan-500/50"}`} />
                         <div className="flex-1 min-w-0">
-                          <span className={`text-[10px] font-mono font-semibold ${chatEditingId ? "text-violet-400" : "text-cyan-400"}`}>
+                          <span className={`text-xs [overflow-wrap:anywhere] font-mono font-semibold ${chatEditingId ? "text-violet-400" : "text-cyan-400"}`}>
                             {chatEditingId ? tr('editingMessage') : tr('replyingToName', { name: chatReplyTo?.sender_name || '' })}
                           </span>
                           {chatReplyTo && (
-                            <p className="text-[10px] text-neutral-600 font-mono truncate">{chatReplyTo.content}</p>
+                            <p tabIndex={0} aria-label={tr('replyingToName', { name: chatReplyTo.sender_name })} className="max-h-24 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded text-xs text-neutral-600 font-mono focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">{chatReplyTo.content}</p>
                           )}
                         </div>
-                        <button type="button" onClick={cancelChatInput}
-                          className="text-neutral-600 hover:text-neutral-300 transition-colors p-0.5">
+                        <button type="button" onClick={cancelChatInput} aria-label={tr('cancel')}
+                          className="min-h-12 min-w-12 shrink-0 rounded text-neutral-600 hover:text-neutral-300 transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                           </svg>
@@ -809,16 +808,14 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                       chatReplyTo ? "bg-cyan-500/5 border-cyan-500/20 focus-within:border-cyan-500/40" :
                       "bg-neutral-900/30 border-neutral-800/40 focus-within:border-neutral-700/50"
                     }`}>
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-bold font-mono shrink-0 bg-gradient-to-br from-cyan-500/20 to-cyan-700/20 border border-cyan-500/20`}>
-                        <span className="text-cyan-400 uppercase">{chatUserName?.[0] ?? "?"}</span>
-                      </div>
                       <textarea
                         ref={chatInputRef}
+                        aria-label={chatTr("Message")}
                         value={chatContent}
                         onChange={e => { chatRevision.current += 1; setChatContent(e.target.value); setChatError(null); }}
                         placeholder={chatEditingId ? tr('editYourMessage') : chatReplyTo ? tr('replyToName', { name: chatReplyTo.sender_name }) : tr('writeAMessage')}
                         rows={1}
-                        className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none resize-none max-h-28 overflow-y-auto font-mono leading-relaxed"
+                        className="flex-1 min-w-0 min-h-12 rounded bg-transparent text-sm text-neutral-200 placeholder-neutral-600 resize-none max-h-28 overflow-y-auto font-mono leading-relaxed focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400"
                         onKeyDown={e => {
                           if (e.key === "Escape") { cancelChatInput(); return; }
                           if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); }
@@ -831,8 +828,9 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                       />
                       <button
                         type="submit"
+                        aria-label={chatEditingId ? chatTr("Save") : chatTr("Send")}
                         disabled={chatSending || !chatContent.trim()}
-                        className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200 ${
+                        className={`shrink-0 min-h-12 min-w-12 rounded-full focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 flex items-center justify-center transition-all duration-200 ${
                           !chatContent.trim() || chatSending
                             ? "bg-neutral-800/40 text-neutral-600 cursor-not-allowed"
                             : chatEditingId ? "bg-violet-500 text-white hover:bg-violet-400 hover:scale-105"
@@ -840,7 +838,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                         }`}
                       >
                         {chatSending ? (
-                          <span className="text-[10px] animate-pulse">...</span>
+                          <span className="text-xs animate-pulse">...</span>
                         ) : chatEditingId ? (
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                             <polyline points="20 6 9 17 4 12" />
@@ -852,7 +850,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                         )}
                       </button>
                     </div>
-                    <p className="text-[9px] text-neutral-700 font-mono mt-1.5 text-center">
+                    <p className="text-xs text-neutral-700 font-mono mt-1.5 text-center">
                       {chatEditingId ? tr('enterToSaveEscToCancel') : chatReplyTo ? tr('enterToReplyEscToCancel') : tr('enterToSendShiftEnterForNewline')}
                     </p>
                   </form>
