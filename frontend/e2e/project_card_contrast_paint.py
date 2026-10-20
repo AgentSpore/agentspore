@@ -335,3 +335,149 @@ class ProjectCardPaint:
         self.images[phase] = image
         return image
 
+    def capture(self, page, root, tag):
+        self.inflight, self.images = {"state": tag, "complete": False}, {}
+        try:
+            self.prepare_capture(page, root)
+            return self.measure(page, root, tag)
+        finally:
+            if not self.inflight["complete"]:
+                self.failed = (self.inflight, self.images)
+
+    def prepare_capture(self, page, root):
+        self.settle(page)
+        root.evaluate("el=>cardContrast.prepare(el)")
+        self.inflight["snapshot"] = self.state(page, root)
+        self.shot(page, "original")
+        self.mask_cycle(page, root)
+        directory = Path(tempfile.mkdtemp(prefix="preparation-", dir=self.options.screenshots))
+        for phase, image in self.images.items():
+            (directory / (phase + ".png")).write_bytes(image)
+        drift = page.evaluate(
+            """async images=>{
+                const decoded=Object.fromEntries(await Promise.all(Object.entries(images)
+                    .map(async([name,image])=>[name,await cardContrast.decode(image)])));
+                return [['original','sham'],['original','restored'],['original','restored-repeat'],
+                    ['masked','masked-repeat']].map(([first,second])=>{
+                    const a=decoded[first],b=decoded[second],pixels=[];
+                    for(let p=0;p<a.length/4;p++)if(cardContrast.delta(a,b,p*4)>0)
+                        pixels.push({point:[p%innerWidth,Math.floor(p/innerWidth)],
+                            first:[...a.slice(p*4,p*4+4)],second:[...b.slice(p*4,p*4+4)]});
+                    return {first,second,changed:pixels.length,pixels};
+                });
+            }""",
+            {phase: base64.b64encode(image).decode() for phase, image in self.images.items()},
+        )
+        preparation = {
+            "directory": str(directory),
+            "state": self.inflight["state"],
+            "drift": drift,
+            "sha256": {phase: hashlib.sha256(image).hexdigest() for phase, image in self.images.items()},
+            "cold_paint_acceptance": False,
+        }
+        (directory / "preparation.json").write_text(
+            json.dumps(
+                {**preparation, "snapshot": self.inflight["snapshot"], "restored": self.state(page, root)}, indent=2
+            )
+        )
+        self.inflight["preparation"] = preparation
+        self.images = {}
+
+    def state(self, page, root):
+        return {
+            "nodes": root.evaluate("el => cardContrast.nodes(el)"),
+            "paint": page.evaluate("cardContrast.paintState()"),
+        }
+
+    def mask_cycle(self, page, root):
+        style = None
+        try:
+            page.evaluate("cardContrast.install()")
+            self.settle(page)
+            self.shot(page, "sham")
+            baseline = self.state(page, root)
+            self.case.assertEqual(self.inflight["snapshot"], baseline)
+            style = page.add_style_tag(content="[data-contrast-text]{-webkit-text-fill-color:transparent!important}")
+            page.evaluate("cardContrast.masked=true")
+            self.settle(page)
+            self.shot(page, "masked")
+            self.shot(page, "masked-repeat")
+            self.case.assertTrue(
+                page.evaluate(
+                    "cardContrast.targets.every(el=>getComputedStyle(el).webkitTextFillColor==='rgba(0, 0, 0, 0)')"
+                )
+            )
+            self.inflight["marker_owners"] = page.evaluate(
+                "cardContrast.markers.map(m=>({...m,maskedFill:getComputedStyle(cardContrast.originals[m.owner]).webkitTextFillColor}))"
+            )
+            after = self.state(page, root)
+            self.case.assertEqual(baseline["paint"], after["paint"])
+            self.case.assertEqual(self.geometry(baseline["nodes"]), self.geometry(after["nodes"]))
+        finally:
+            if style is not None:
+                style.evaluate("el=>el.remove()")
+            page.evaluate("cardContrast.cleanup()")
+            self.settle(page)
+            self.shot(page, "restored")
+            self.shot(page, "restored-repeat")
+            self.case.assertEqual(self.inflight["snapshot"], self.state(page, root))
+
+    def geometry(self, snapshot):
+        return {
+            **snapshot,
+            "nodes": [{key: value for key, value in node.items() if key != "fill"} for node in snapshot["nodes"]],
+        }
+
+    def measure(self, page, root, tag):
+        self.settle(page)
+        root.evaluate("el=>cardContrast.prepare(el)")
+        snapshot = self.state(page, root)
+        self.inflight["snapshot"] = snapshot
+        self.shot(page, "original")
+        self.mask_cycle(page, root)
+        self.inflight["phase"] = "restoration-analysis"
+        images = self.images
+        analysis = page.evaluate(
+            "data=>cardContrast.analyze(data)",
+            {
+                "images": {phase: base64.b64encode(image).decode() for phase, image in images.items()},
+                "snapshot": snapshot["nodes"],
+            },
+        )
+        nodes = analysis["nodes"]
+        self.record(tag, nodes, snapshot["nodes"], (analysis, (images["original"], images["masked"])))
+        minimum = min((n["minimum"] for n in nodes if n["status"] not in ("disabled", "excluded")), default=22)
+        family = tag.split(":")[-1].split("-")[0]
+        if family not in self.pairs or minimum < self.pairs[family][0]:
+            self.pairs[family] = (minimum, images["original"], images["masked"])
+        self.inflight["complete"] = True
+        return nodes
+
+    def record(self, tag, nodes, snapshot, observation):
+        analysis, images = observation
+        self.results.append(
+            dict(
+                state=tag,
+                preparation=self.inflight["preparation"],
+                nodes=nodes,
+                raster=analysis["raster"],
+                marker_owners=self.inflight.get("marker_owners", []),
+                scroll=snapshot["scroll"],
+                sha256={phase: hashlib.sha256(b).hexdigest() for phase, b in self.images.items()},
+            )
+        )
+
+    def save_metrics(self, locale, width):
+        directory = self.options.screenshots / f"{locale}-{width}"
+        directory.mkdir(exist_ok=True)
+        (directory / "metrics.json").write_text(json.dumps(self.results, ensure_ascii=False, indent=2))
+        if self.failed:
+            failure, images = self.failed
+            failure = dict(failure)
+            failure["sha256"] = {key: hashlib.sha256(value).hexdigest() for key, value in images.items()}
+            (directory / "failed-capture.json").write_text(json.dumps(failure, indent=2))
+            for phase, image in images.items():
+                (directory / f"failed-{phase}.png").write_bytes(image)
+        for name, (_, original, masked) in self.pairs.items():
+            (directory / f"{name}-original.png").write_bytes(original)
+            (directory / f"{name}-masked.png").write_bytes(masked)
