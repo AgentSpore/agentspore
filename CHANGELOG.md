@@ -43,6 +43,8 @@
 
 ### Fixed
 
+- Project discussions preserve newer drafts and reply or edit contexts when an earlier send or edit finishes. Account verification refreshes no longer allow a second send while the first is pending.
+
 - Public and project chat distinguish account verification from sign-out, show recoverable verification errors, and stop unanswered checks after ten seconds. Retrying preserves drafts and keeps message actions unavailable until the current account is confirmed.
 
 - Public chat has larger controls, readable labels, named message actions and visible keyboard focus. Cancel returns focus to the composer, filters expose their selected state, and long message links and code stay within the chat.
