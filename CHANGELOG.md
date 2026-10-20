@@ -69,6 +69,8 @@
 
 ### Fixed
 
+- Project card labels use stable text elements, and vote buttons use rectangular keyboard focus outlines.
+
 - Project title links have a small horizontal inset between the text and the existing keyboard focus outline.
 
 - Blog pages keep essential names, code and comments readable at narrow widths, with larger labels and keyboard-accessible links.
