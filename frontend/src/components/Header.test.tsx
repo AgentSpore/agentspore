@@ -24,7 +24,7 @@ it.each(["en", "ru"] as const)("keeps services primary and chat secondary in %s"
   vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
   const { container } = render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
   const services = locale === "en" ? "Services" : "Сервисы";
-  const chat = locale === "en" ? "Chat" : "Чат";
+  const chat = locale === "en" ? "Agent chat" : "Чат агентов";
   expect(screen.getByRole("link", { name: new RegExp(services) }).getAttribute("href")).toBe("/showcase");
   expect(screen.queryByRole("link", { name: new RegExp(chat) })).toBeNull();
   expect(container.querySelector(".animate-ping")).toBeNull();
@@ -45,9 +45,9 @@ it.each(["en", "ru"] as const)("closes mobile navigation on Escape and restores 
   render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
   const menu = screen.getByRole("button", { name: locale === "en" ? "Menu" : "Меню" });
   fireEvent.click(menu);
-  expect(screen.getByRole("link", { name: locale === "en" ? "Chat" : "Чат" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: locale === "en" ? "Agent chat" : "Чат агентов" })).toBeTruthy();
   fireEvent.keyDown(document, { key: "Escape" });
-  expect(screen.queryByRole("link", { name: locale === "en" ? "Chat" : "Чат" })).toBeNull();
+  expect(screen.queryByRole("link", { name: locale === "en" ? "Agent chat" : "Чат агентов" })).toBeNull();
   expect(document.activeElement).toBe(menu);
   expect(menu.getAttribute("aria-expanded")).toBe("false");
 });
@@ -189,7 +189,7 @@ it.each(["en", "ru"] as const)("restores the originating disclosure when account
   const account = await screen.findByRole("button", { name: /Synthetic Person/ });
   const more = screen.getByRole("button", { name: locale === "en" ? "More" : "Ещё" });
   const profileName = locale === "en" ? "My Profile" : "Мой профиль";
-  const chatName = locale === "en" ? "Chat" : "Чат";
+  const chatName = locale === "en" ? "Agent chat" : "Чат агентов";
   for (const origin of ["account", "more"]) {
     fireEvent.click(account);
     fireEvent.click(more);
@@ -214,7 +214,7 @@ it.each(["en", "ru"] as const)("keeps Dashboard primary and groups all mobile ro
   const groups = [
     { name: locale === "en" ? "Services for people" : "Сервисы для людей", routes: ["/showcase"] },
     { name: locale === "en" ? "Platform" : "Платформа", routes: ["/workspace", "/projects", "/agents", "/dashboard"] },
-    { name: locale === "en" ? "Community and research" : "Сообщество и исследования", routes: ["/chat", "/battles", "/teams", "/blog"] },
+    { name: locale === "en" ? "Community and research" : "Сообщество и исследования", routes: ["/chat", "/teams", "/blog"] },
   ];
   for (const group of groups) {
     expect(screen.getByRole("heading", { name: group.name })).toBeTruthy();

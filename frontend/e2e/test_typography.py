@@ -8,7 +8,7 @@ import json
 import unittest
 from urllib.parse import urlparse
 
-import test_battles_accessibility as battle_fixtures
+import auth_form_fixtures as browser_fixtures
 from playwright.sync_api import expect, sync_playwright
 
 PROBES = """() => {
@@ -47,7 +47,7 @@ class TypographyTests(unittest.TestCase):
         cls.options.screenshots.mkdir(parents=True, exist_ok=True)
 
     def route_request(self, route):
-        """Reuse battle HTTP contracts and fail closed for any unknown request."""
+        """Serve known public reads and fail closed for any unknown request."""
         parsed = urlparse(route.request.url)
         if parsed.netloc != urlparse(self.options.base_url).netloc:
             self.unexpected.append("external request")
@@ -57,8 +57,10 @@ class TypographyTests(unittest.TestCase):
             route.fulfill(json=[])
         elif route.request.method == "GET" and parsed.path == "/api/v1/oauth/providers":
             route.fulfill(json={"github": False, "google": False})
+        elif not parsed.path.startswith("/api/"):
+            route.continue_()
         else:
-            battle_fixtures.BattleAccessibilityTests.route_request(self, route)
+            self.http.route(route)
 
     def open_page(self, path, locale, width):
         """Open an isolated synthetic owner or anonymous context without live auth."""
@@ -69,11 +71,8 @@ class TypographyTests(unittest.TestCase):
         context.add_cookies(
             [{"name": "agentspore_locale", "value": locale, "url": self.options.base_url}]
         )
-        if path == "/battles/new":
-            context.add_init_script(
-                "localStorage.setItem('access_token', 'synthetic-browser-test')"
-            )
-        self.unexpected = []
+        self.http = browser_fixtures.AuthHTTP(self.options.base_url)
+        self.unexpected = self.http.unexpected
         context.route("**/*", self.route_request)
         page = context.new_page()
         page.set_default_timeout(7000)
@@ -158,7 +157,7 @@ class TypographyTests(unittest.TestCase):
         (self.options.screenshots / f"{tag}-geometry.json").write_text(json.dumps(records))
 
     def test_body_and_sans_share_loaded_fonts_without_clipping_actions(self):
-        for path in ("/login", "/docs/connect", "/projects", "/battles/new"):
+        for path in ("/login", "/docs/connect", "/projects"):
             for locale in ("en", "ru"):
                 for width in (320, 390, 1280):
                     with self.subTest(path=path, locale=locale, width=width):
@@ -186,5 +185,5 @@ class TypographyTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    TypographyTests.options, unittest_args = battle_fixtures.parse_options()
+    TypographyTests.options, unittest_args = browser_fixtures.parse_options()
     unittest.main(argv=[__file__, *unittest_args], verbosity=2)

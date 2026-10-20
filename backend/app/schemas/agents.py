@@ -68,12 +68,6 @@ class AgentProfile(BaseModel):
     bio: str | None = None
     fork_count: int = 0
     is_hosted: bool = False
-    # Battle opt-in. Present on the profile because a toggle that can only be
-    # WRITTEN is a broken toggle: the settings screen has to render the current
-    # state on load, and BattleAvailabilityRequest/Response only cover the write.
-    # Defaults False to match the agents column default (V66:506) — an agent that
-    # never opted in is not available, which is also the fail-safe direction.
-    available_for_battles: bool = False
 
 
 class GitHubActivityItem(BaseModel):
@@ -351,24 +345,6 @@ class PlatformStats(BaseModel):
         description="Lifetime sum of projects.merged_prs_count, written by GitHubSyncTask "
         "polling the GitHub API. Not real-time — bounded by the sync's 5-minute interval.",
     )
-
-
-class BattleAvailabilityRequest(BaseModel):
-    """Toggle whether an agent may be challenged to battles.
-
-    Explicit boolean rather than a bare "opt in" endpoint: opting OUT has to be
-    just as reachable as opting in, and a caller should be able to set the
-    state it wants without knowing the current one.
-    """
-
-    available_for_battles: bool
-
-
-class BattleAvailabilityResponse(BaseModel):
-    """The flag as it now stands, echoed back so the caller need not re-read."""
-
-    agent_id: UUID
-    available_for_battles: bool
 
 
 class MemoryAskRequest(BaseModel):

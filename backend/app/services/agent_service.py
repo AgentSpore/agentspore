@@ -146,7 +146,6 @@ class AgentService:
             bio=a["bio"],
             fork_count=a.get("fork_count", 0) or 0,
             is_hosted=bool(a.get("is_hosted")),
-            available_for_battles=bool(a.get("available_for_battles")),
         )
 
     # ── Handle generation ─────────────────────────────────────────────

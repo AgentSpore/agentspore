@@ -1,4 +1,4 @@
-"""Battle runner HTTP lifecycle; only sandbox, provider and clock boundaries are replaced."""
+"""Isolated runner HTTP lifecycle; only sandbox, provider and clock boundaries are replaced."""
 
 import asyncio
 import json
@@ -43,7 +43,7 @@ def model_adapter() -> SimpleNamespace:
         tools_seen.extend(tool.name for tool in info.function_tools)
         if mode["value"] == "error":
             raise RuntimeError("provider rejected test request")
-        return ModelResponse(parts=[TextPart(content="Battle answer")])
+        return ModelResponse(parts=[TextPart(content="Session answer")])
 
     async def provider_stream(
         messages: list[ModelMessage],
@@ -52,7 +52,7 @@ def model_adapter() -> SimpleNamespace:
         tools_seen.extend(tool.name for tool in info.function_tools)
         if mode["value"] == "error":
             raise RuntimeError("provider rejected test request")
-        yield "Battle answer"
+        yield "Session answer"
         if mode["value"] == "blocked":
             streaming.set()
             await asyncio.Event().wait()
@@ -117,28 +117,28 @@ async def transient_runtime(
 
 
 @pytest.fixture
-async def started_battle(
+async def started_session(
     transient_runtime: SimpleNamespace,
 ) -> AsyncIterator[SimpleNamespace]:
-    """Match backend agentic_answer._start_sandbox's transient start payload."""
+    """Start a transient session with its platform heartbeat disabled."""
     runtime = transient_runtime
-    battle_id = "battle-00000000-0000-0000-0000-000000000035-left-12345678"
+    session_id = "session-00000000-0000-0000-0000-000000000035-left-12345678"
     response = await runtime.client.post(
-        f"/agents/{battle_id}/start",
+        f"/agents/{session_id}/start",
         json={
-            "agent_id": battle_id,
-            "system_prompt": "Answer the battle question.",
-            "model": "test/battle",
+            "agent_id": session_id,
+            "system_prompt": "Answer the session question.",
+            "model": "test/session",
             "provider_base_url": "https://provider.invalid/v1",
             "provider_api_key": "synthetic-provider-key",
             "heartbeat_seconds": 0,
         },
     )
     assert response.status_code == 200
-    runtime.battle_id = battle_id
-    runtime.session = main.sessions[battle_id]
+    runtime.session_id = session_id
+    runtime.session = main.sessions[session_id]
     yield runtime
-    await runtime.client.post(f"/agents/{battle_id}/stop")
+    await runtime.client.post(f"/agents/{session_id}/stop")
 
 
 async def test_startup_keeps_reaper_without_restoring_hosted(
@@ -150,11 +150,11 @@ async def test_startup_keeps_reaper_without_restoring_hosted(
     assert not main.sessions
 
 
-async def test_battle_http_start_chat_stop_preserves_workspace(
-    started_battle, tmp_path
+async def test_session_http_start_chat_stop_preserves_workspace(
+    started_session, tmp_path
 ):
     """The actual transient API runs a model turn and releases owned resources."""
-    runtime = started_battle
+    runtime = started_session
     session = runtime.session
     eviction = session.worker_pool._eviction_task
     assert session.heartbeat_seconds == 0
@@ -162,16 +162,16 @@ async def test_battle_http_start_chat_stop_preserves_workspace(
     assert session.ws_task is None
     assert eviction is not None
     response = await runtime.client.post(
-        f"/agents/{runtime.battle_id}/chat",
+        f"/agents/{runtime.session_id}/chat",
         json={"content": "Give the result."},
     )
     assert response.status_code == 200
-    assert response.json()["reply"] == "Battle answer"
+    assert response.json()["reply"] == "Session answer"
     assert session.message_history
     assert "search_past_runs" not in runtime.tools
-    stopped = await runtime.client.post(f"/agents/{runtime.battle_id}/stop")
+    stopped = await runtime.client.post(f"/agents/{runtime.session_id}/stop")
     assert stopped.status_code == 200
-    assert runtime.battle_id not in main.sessions
+    assert runtime.session_id not in main.sessions
     assert session.worker_pool._eviction_task is None
     done, pending = await asyncio.wait({eviction}, timeout=1)
     assert done == {eviction}
@@ -179,19 +179,19 @@ async def test_battle_http_start_chat_stop_preserves_workspace(
     assert eviction.cancelling() == 1
     assert eviction.cancelled() or eviction.exception() is None
     runtime.sandbox.stop.assert_called_once()
-    assert (tmp_path / runtime.battle_id / "AGENT.md").is_file()
+    assert (tmp_path / runtime.session_id / "AGENT.md").is_file()
     assert runtime.outbound == ["/skill.md"]
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_failed_battle_turn_releases_lock_and_can_stop(
-    started_battle: SimpleNamespace,
+async def test_failed_session_turn_releases_lock_and_can_stop(
+    started_session: SimpleNamespace,
     stream: bool,
 ) -> None:
     """Provider failure leaves lifecycle cleanup and later requests usable."""
-    runtime = started_battle
+    runtime = started_session
     runtime.mode["value"] = "error"
-    path = f"/agents/{runtime.battle_id}/chat" + ("/stream" if stream else "")
+    path = f"/agents/{runtime.session_id}/chat" + ("/stream" if stream else "")
     response = await runtime.client.post(path, json={"content": "Fail this turn."})
     if stream:
         assert any(
@@ -204,22 +204,22 @@ async def test_failed_battle_turn_releases_lock_and_can_stop(
     runtime.mode["value"] = "success"
     next_turn = await runtime.client.post(path, json={"content": "Try again."})
     assert next_turn.status_code == 200
-    assert "Battle answer" in next_turn.text
-    stopped = await runtime.client.post(f"/agents/{runtime.battle_id}/stop")
+    assert "Session answer" in next_turn.text
+    stopped = await runtime.client.post(f"/agents/{runtime.session_id}/stop")
     assert stopped.status_code == 200
     runtime.sandbox.stop.assert_called_once()
     assert runtime.outbound == ["/skill.md"]
 
 
-async def test_cancelled_battle_stream_releases_lock_before_stop(
-    started_battle: SimpleNamespace,
+async def test_cancelled_session_stream_releases_lock_before_stop(
+    started_session: SimpleNamespace,
 ) -> None:
     """Cancellation reaches the real HTTP stream and its generator's finally."""
-    runtime = started_battle
+    runtime = started_session
     runtime.mode["value"] = "blocked"
     request = asyncio.create_task(
         runtime.client.post(
-            f"/agents/{runtime.battle_id}/chat/stream",
+            f"/agents/{runtime.session_id}/chat/stream",
             json={"content": "Stream the result."},
         )
     )
@@ -235,17 +235,17 @@ async def test_cancelled_battle_stream_releases_lock_before_stop(
                 await request
     assert not runtime.session.chat_lock.locked()
     assert runtime.session.active_session_id is None
-    stopped = await runtime.client.post(f"/agents/{runtime.battle_id}/stop")
+    stopped = await runtime.client.post(f"/agents/{runtime.session_id}/stop")
     assert stopped.status_code == 200
     runtime.sandbox.stop.assert_called_once()
     assert runtime.outbound == ["/skill.md"]
 
 
-async def test_idle_cleanup_stops_battle_without_hosted_callback(
-    started_battle, monkeypatch
+async def test_idle_cleanup_stops_session_without_hosted_callback(
+    started_session, monkeypatch
 ):
     """Expiry retains workspace data and stops the sandbox without hosted writes."""
-    runtime = started_battle
+    runtime = started_session
     runtime.session.last_activity = 0
     ticks = iter([None])
 
@@ -256,7 +256,7 @@ async def test_idle_cleanup_stops_battle_without_hosted_callback(
     monkeypatch.setattr(session_mod.asyncio, "sleep", clock_tick)
     with pytest.raises(asyncio.CancelledError):
         await session_mod.idle_cleanup_loop()
-    assert runtime.battle_id not in main.sessions
+    assert runtime.session_id not in main.sessions
     runtime.sandbox.stop.assert_called_once()
     assert runtime.session.worker_pool._eviction_task is None
     assert runtime.outbound == ["/skill.md"]
@@ -267,14 +267,14 @@ async def test_real_runner_auth_blocks_transient_start(
 ) -> None:
     """Removing hosted management never removes runner authentication."""
     response = await transient_runtime.client.post(
-        "/agents/battle-denied/start",
+        "/agents/session-denied/start",
         headers={"X-Runner-Key": ""},
         json={
-            "agent_id": "battle-denied",
+            "agent_id": "session-denied",
             "system_prompt": "Denied",
             "heartbeat_seconds": 0,
         },
     )
     assert response.status_code == 403
-    assert "battle-denied" not in main.sessions
+    assert "session-denied" not in main.sessions
     assert transient_runtime.outbound == []

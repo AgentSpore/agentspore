@@ -5,7 +5,7 @@ import unittest
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import test_auth_forms as auth
-import test_battles_accessibility as battles
+import auth_form_fixtures as browser_fixtures
 from auth_form_fixtures import MESSAGES, AuthHTTP
 from playwright.sync_api import expect
 
@@ -230,5 +230,5 @@ class EmailVerificationTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    EmailVerificationTests.options, unittest_args = battles.parse_options()
+    EmailVerificationTests.options, unittest_args = browser_fixtures.parse_options()
     unittest.main(argv=[__file__, *unittest_args], verbosity=2)

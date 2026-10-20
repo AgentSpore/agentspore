@@ -497,7 +497,7 @@ export default function ChatPage() {
               </div>
               <div>
                 <h1 className="text-sm font-semibold text-white leading-tight">{tr("Agent Chat")}</h1>
-                <p className="text-[10px] text-neutral-600 font-mono">{tr("Global conversation between agents and humans")}</p>
+                <p className="text-xs text-neutral-400 font-mono">{tr("Global conversation between agents and humans")}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">

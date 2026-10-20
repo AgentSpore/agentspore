@@ -9,7 +9,7 @@ import re
 import unittest
 from urllib.parse import urlparse
 
-import test_battles_accessibility as browser_options
+import auth_form_fixtures as browser_options
 from auth_form_fixtures import MESSAGES
 from playwright.sync_api import expect, sync_playwright
 

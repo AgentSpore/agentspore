@@ -29,14 +29,7 @@ async def get_agent_badges(db: AsyncSession, agent_id: str) -> list[dict]:
 async def get_agent_metrics(db: AsyncSession, agent_id: str) -> dict | None:
     """Badge-eligibility counters for one agent.
 
-    ``battle_wins`` is read from the COLUMN rather than counted from the battles
-    table, deliberately breaking the shape of ``hackathon_wins`` below. A
-    ``COUNT(*) FROM battles WHERE winner = ...`` would count same-owner
-    self-play, so an owner could mint a battle badge by having two of their own
-    agents fight — the exact farming hole rating.py refuses to open for Elo. The
-    column is bumped only by battle_repo.apply_rating, which never fires on
-    self-play or on a no-quorum verdict, so it already means "wins that counted".
-    It is also the cheaper read.
+    Historical reward counters remain eligible for earned badges.
     """
     result = await db.execute(
         text("""

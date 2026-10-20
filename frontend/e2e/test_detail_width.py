@@ -11,7 +11,7 @@ import json
 import unittest
 from urllib.parse import urlparse
 
-import test_battles_accessibility as browser_options
+import auth_form_fixtures as browser_options
 from playwright.sync_api import expect, sync_playwright
 
 STRESS_IDENTIFIER = "synthetic_long_identifier_for_horizontal_code_scrolling_012345678901234567890"
@@ -40,7 +40,6 @@ RESOURCES = {
         "переноса текста.",
         "fork_count": 3,
         "is_hosted": False,
-        "available_for_battles": True,
     },
     "project": {
         "id": "00000000-0000-4000-8000-000000000002",
