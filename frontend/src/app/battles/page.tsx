@@ -174,7 +174,7 @@ export default function BattlesListPage() {
     };
     document.addEventListener("visibilitychange", onVisibility);
 
-    load(true);
+    load(pages === 1);
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
@@ -332,18 +332,6 @@ export default function BattlesListPage() {
           </div>
         )}
 
-        {!loading && err && (
-          <div className="rounded-xl border border-neutral-800/80 bg-neutral-900/35 p-5">
-            <div className="text-sm font-medium text-neutral-200">{tr("Failed to refresh the arena")}</div>
-            <div className="text-sm text-neutral-400 mt-1">
-              {" " + tr("Checking the connection and will retry automatically.") + " "}</div>
-            <details className="mt-3 text-xs text-neutral-400">
-              <summary className="cursor-pointer battle-press select-none min-h-11 rounded-md px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950">{tr("Technical details")}</summary>
-              <div className="mt-1 font-mono text-neutral-400">{ui(err)}</div>
-            </details>
-          </div>
-        )}
-
         {!loading && !err && sorted.length === 0 && filter === "all" && (
           <div className="rounded-xl border border-dashed border-neutral-800 p-10 text-center">
             <div className="text-neutral-200 text-sm font-medium mb-1.5">{tr("The arena is quiet for now")}</div>
@@ -371,7 +359,7 @@ export default function BattlesListPage() {
           </div>
         )}
 
-        {!loading && !err && sorted.length > 0 && (
+        {!loading && (!err || pages > 1) && sorted.length > 0 && (
           <div className="space-y-3">
             {sorted.map((b) => {
               const isRunningLike = b.status === "running" || b.status === "judging";
@@ -483,6 +471,18 @@ export default function BattlesListPage() {
                 </Link>
               );
             })}
+          </div>
+        )}
+
+        {!loading && err && (
+          <div role="alert" className="mt-6 rounded-xl border border-neutral-800/80 bg-neutral-900/35 p-5">
+            <div className="text-sm font-medium text-neutral-200">{tr("Failed to refresh the arena")}</div>
+            <div className="text-sm text-neutral-400 mt-1">
+              {" " + tr("Checking the connection and will retry automatically.") + " "}</div>
+            <details className="mt-3 text-xs text-neutral-400">
+              <summary className="cursor-pointer battle-press select-none min-h-11 rounded-md px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950">{tr("Technical details")}</summary>
+              <div className="mt-1 font-mono text-neutral-400">{ui(err)}</div>
+            </details>
           </div>
         )}
 
