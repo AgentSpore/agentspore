@@ -6,15 +6,15 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { API_URL, REACTION_META, timeAgo } from "@/lib/api";
-import { fetchWithAuth } from "@/lib/auth";
+import { REACTION_META, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FetchError } from "@/components/FetchError";
 import { useBlogPost, useBlogComments } from "../useBlogReads";
 import { useBlogReactions, blogReactionKinds, blogReactionLabels } from "../useBlogReactions";
 import { BlogReactionNotice } from "../BlogReactionNotice";
+import { useBlogCommentActions } from "./useBlogCommentActions";
+import { BlogCommentNotice, BlogCommentDelete, BlogCommentIdentity } from "./BlogCommentNotice";
 import { Skeleton, SkeletonAvatar, SkeletonText } from "@/components/Skeleton";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -59,41 +59,9 @@ export default function BlogPostPage() {
   const post = postRead.data;
   const comments = commentsRead.comments;
   const reactions = useBlogReactions(postId);
-  const setComments = commentsRead.update;
-  const loadComments = commentsRead.refresh;
-  const [commentText, setCommentText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-
-  useEffect(() => {
-    setIsLoggedIn(!!localStorage.getItem("access_token"));
-  }, []);
-
-  const submitComment = async () => {
-    if (!commentText.trim() || submitting) return;
-    setSubmitting(true);
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/comments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: commentText.trim() }),
-      });
-      if (res.ok) {
-        setCommentText("");
-        await loadComments();
-      }
-    } catch {}
-    finally { setSubmitting(false); }
-  };
-
-  const deleteComment = async (commentId: string) => {
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/comments/${commentId}`, { method: "DELETE" });
-      if (res.ok) {
-        setComments(prev => prev.filter(c => c.id !== commentId));
-      }
-    } catch {}
-  };
+  const commentActions = useBlogCommentActions(postId, commentsRead);
+  const { text: commentText, change: setCommentText, submit: submitComment } = commentActions;
+  const submitting = commentActions.outcomes.post === 'pending';
 
   const handleCommentKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -286,29 +254,30 @@ export default function BlogPostPage() {
             </div>
 
             <BlogCommentsStatus read={commentsRead} />
+            <BlogCommentIdentity actions={commentActions} />
             {/* Comment form */}
-            {isLoggedIn && (
-              <div className="mb-5 fade-up-d3">
+              <div className="mb-5 fade-up-d3" hidden={!commentActions.ready}>
                 <div className="flex gap-3">
                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500/20 to-violet-700/20 border border-violet-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                    <span className="text-[10px] font-bold text-violet-300 font-mono">U</span>
+                    <span className="text-xs font-bold text-violet-300 font-mono">U</span>
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <textarea
+                      aria-label={tr('writeAComment')}
                       value={commentText}
                       onChange={e => setCommentText(e.target.value)}
                       onKeyDown={handleCommentKey}
                       placeholder={tr('writeAComment')}
                       maxLength={5000}
                       rows={3}
-                      className="w-full bg-neutral-900/40 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none border border-neutral-800/50 rounded-2xl rounded-tl-md px-4 py-3 focus:border-neutral-700/60 transition-colors font-mono leading-relaxed"
+                      className="w-full bg-neutral-900/40 text-sm text-neutral-200 placeholder-neutral-600 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 border border-neutral-800/50 rounded-2xl rounded-tl-md px-4 py-3 focus:border-neutral-700/60 transition-colors font-mono leading-relaxed"
                     />
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-[9px] text-neutral-700 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(commentText.length)}{tr('5000CmdEnterToPost')}</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
+                      <span className="text-xs text-neutral-500 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(commentText.length)}{tr('5000CmdEnterToPost')}</span>
                       <button
                         onClick={submitComment}
                         disabled={!commentText.trim() || submitting}
-                        className={`text-[11px] font-mono px-4 py-1.5 rounded-full transition-all ${
+                        className={`min-h-11 min-w-11 text-xs font-mono px-4 py-1.5 rounded-full transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
                           commentText.trim() && !submitting
                             ? "bg-white text-black hover:bg-neutral-200"
                             : "bg-neutral-800/30 text-neutral-600 cursor-not-allowed"
@@ -320,7 +289,7 @@ export default function BlogPostPage() {
                   </div>
                 </div>
               </div>
-            )}
+            <BlogCommentNotice outcome={commentActions.outcomes.post} />
 
             {/* Comment list */}
             {commentsRead.empty ? (
@@ -357,15 +326,10 @@ export default function BlogPostPage() {
                             : "bg-neutral-700/30 text-neutral-500 border border-neutral-700/20"
                         }`}>{comment.author_type}</span>
                         <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(comment.created_at, locale)}</span>
-                        <button
-                          onClick={() => deleteComment(comment.id)}
-                          className="ml-auto text-[10px] text-neutral-800 hover:text-red-400 font-mono transition-colors opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full flex items-center justify-center hover:bg-red-400/10"
-                          title={tr('delete')}
-                        >
-                          &times;
-                        </button>
+                        <BlogCommentDelete actions={commentActions} comment={comment} />
                       </div>
                       <p className="text-sm text-neutral-400 leading-relaxed whitespace-pre-wrap">{comment.content}</p>
+                      <BlogCommentNotice outcome={commentActions.outcomes[comment.id]} removal onRetry={() => void commentActions.remove(comment)} />
                     </div>
                   </div>
                 ))}
