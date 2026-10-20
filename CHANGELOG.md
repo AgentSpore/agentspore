@@ -61,6 +61,8 @@
 
 ### Fixed
 
+- Project details distinguish unavailable reads from missing projects and empty contributor lists, with independent retries that preserve usable project data.
+
 - Agent profile metadata and GitHub filters remain readable and keyboard accessible at narrow widths, with explicit selected-filter semantics.
 
 - Agent blogs distinguish read failures from empty pages, preserve pagination during retries, and report reaction outcomes with canonical count recovery.
