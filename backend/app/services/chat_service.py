@@ -3,13 +3,14 @@
 import json
 
 import redis.asyncio as aioredis
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.content_security import is_likely_prompt_injection, score_message_risk
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.repositories.chat_repo import ChatRepository, get_chat_repo
+from app.schemas.chat import HumanAuthor
 from app.services.agent_service import AgentService, get_agent_service
 
 from loguru import logger
@@ -83,23 +84,29 @@ class ChatService:
 
     async def send_user_message(
         self,
-        user_name: str,
+        author: HumanAuthor,
         content: str,
         message_type: str,
     ) -> dict:
         if is_likely_prompt_injection(content):
             logger.warning(
                 "Suspected prompt injection in message from user={}: score={}",
-                user_name,
+                author.name,
                 score_message_risk(content),
             )
-        row = await self.repo.insert_human_message(content, message_type, user_name, sender_type="user")
+        row = await self.repo.insert_human_message(
+            content,
+            message_type,
+            author,
+            sender_type="user",
+        )
         await self.repo.db.commit()
 
         event = {
             "id": str(row["id"]),
             "agent_id": None,
-            "agent_name": user_name,
+            "agent_name": author.name,
+            "sender_user_id": str(author.id),
             "specialization": "user",
             "content": content,
             "message_type": message_type,
@@ -108,9 +115,9 @@ class ChatService:
         }
 
         await self.redis.publish(REDIS_CHANNEL, json.dumps(event))
-        logger.info("Chat message from {} [user]: {:.60}", user_name, content)
+        logger.info("Chat message from {} [user]: {:.60}", author.name, content)
 
-        await self._resolve_mentions(content, str(row["id"]), user_name, None)
+        await self._resolve_mentions(content, str(row["id"]), author.name, None)
 
         return {"status": "ok", "message_id": str(row["id"])}
 
@@ -203,8 +210,12 @@ class ChatService:
     # ── Project Chat ───────────────────────────────────────────────
 
     async def send_project_message(
-        self, project_id: str, content: str, message_type: str,
-        agent: dict | None = None, human_name: str | None = None,
+        self,
+        project_id: str,
+        content: str,
+        message_type: str,
+        agent: dict | None = None,
+        author: HumanAuthor | None = None,
         reply_to_id: str | None = None,
     ) -> dict:
         if agent:
@@ -214,11 +225,18 @@ class ChatService:
         else:
             sender_type = "human"
             agent_id = None
-            sender_name = human_name or "anonymous"
+            if author is None:
+                raise HTTPException(status_code=403, detail="Unauthorized")
+            sender_name = author.name
 
         row = await self.repo.insert_project_message(
-            project_id, agent_id, content, message_type,
-            sender_type, human_name, reply_to_id,
+            project_id,
+            agent_id,
+            content,
+            message_type,
+            sender_type,
+            author if not agent else None,
+            reply_to_id,
         )
         await self.repo.db.commit()
         logger.info("Project {} message from {}: {:.60}", project_id, sender_name, content)
@@ -230,71 +248,95 @@ class ChatService:
     # ── Edit / Delete ────────────────────────────────────────────────
 
     async def edit_message(
-        self, message_id: str, new_content: str,
-        agent_id: str | None = None, user_name: str | None = None,
+        self,
+        message_id: str,
+        new_content: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
     ) -> dict:
         msg = await self.repo.get_message_by_id(message_id)
         if not msg:
             return {"error": "Message not found"}
         if msg["is_deleted"]:
             return {"error": "Message is deleted"}
-        self._check_ownership(msg, agent_id, user_name)
-        await self.repo.update_message_content(message_id, new_content)
+        self._check_ownership(msg, agent_id, user_id)
+        if not await self.repo.update_message_content(message_id, new_content, agent_id, user_id):
+            raise HTTPException(status_code=403, detail="You can only modify your own messages")
         await self.repo.db.commit()
-        await self.redis.publish(REDIS_CHANNEL, json.dumps({"type": "edit", "id": message_id, "content": new_content}))
+        await self.redis.publish(
+            REDIS_CHANNEL, json.dumps({"type": "edit", "id": message_id, "content": new_content})
+        )
         return {"status": "ok", "message_id": message_id}
 
     async def delete_message(
-        self, message_id: str,
-        agent_id: str | None = None, user_name: str | None = None,
+        self,
+        message_id: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
     ) -> dict:
         msg = await self.repo.get_message_by_id(message_id)
         if not msg:
             return {"error": "Message not found"}
         if msg["is_deleted"]:
             return {"error": "Message already deleted"}
-        self._check_ownership(msg, agent_id, user_name)
-        await self.repo.soft_delete_message(message_id)
+        self._check_ownership(msg, agent_id, user_id)
+        if not await self.repo.soft_delete_message(message_id, agent_id, user_id):
+            raise HTTPException(status_code=403, detail="You can only modify your own messages")
         await self.repo.db.commit()
         await self.redis.publish(REDIS_CHANNEL, json.dumps({"type": "delete", "id": message_id}))
         return {"status": "ok", "message_id": message_id}
 
     async def edit_project_message(
-        self, message_id: str, new_content: str,
-        agent_id: str | None = None, user_name: str | None = None,
+        self,
+        message_id: str,
+        new_content: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
     ) -> dict:
         msg = await self.repo.get_project_message_by_id(message_id)
         if not msg:
             return {"error": "Message not found"}
         if msg["is_deleted"]:
             return {"error": "Message is deleted"}
-        self._check_ownership(msg, agent_id, user_name)
-        await self.repo.update_project_message_content(message_id, new_content)
+        self._check_ownership(msg, agent_id, user_id)
+        if not await self.repo.update_project_message_content(
+            message_id,
+            new_content,
+            agent_id,
+            user_id,
+        ):
+            raise HTTPException(status_code=403, detail="You can only modify your own messages")
         await self.repo.db.commit()
         return {"status": "ok", "message_id": message_id}
 
     async def delete_project_message(
-        self, message_id: str,
-        agent_id: str | None = None, user_name: str | None = None,
+        self,
+        message_id: str,
+        agent_id: str | None = None,
+        user_id: str | None = None,
     ) -> dict:
         msg = await self.repo.get_project_message_by_id(message_id)
         if not msg:
             return {"error": "Message not found"}
         if msg["is_deleted"]:
             return {"error": "Message already deleted"}
-        self._check_ownership(msg, agent_id, user_name)
-        await self.repo.soft_delete_project_message(message_id)
+        self._check_ownership(msg, agent_id, user_id)
+        if not await self.repo.soft_delete_project_message(message_id, agent_id, user_id):
+            raise HTTPException(status_code=403, detail="You can only modify your own messages")
         await self.repo.db.commit()
         return {"status": "ok", "message_id": message_id}
 
     @staticmethod
-    def _check_ownership(msg: dict, agent_id: str | None, user_name: str | None) -> None:
-        from fastapi import HTTPException
+    def _check_ownership(msg: dict, agent_id: str | None, user_id: str | None) -> None:
         if agent_id:
-            if str(msg["agent_id"]) != str(agent_id):
+            if msg["sender_type"] != "agent" or str(msg["agent_id"]) != str(agent_id):
                 raise HTTPException(status_code=403, detail="You can only modify your own messages")
-        elif user_name:
-            if msg["sender_type"] not in ("human", "user") or msg["human_name"] != user_name:
+        elif user_id:
+            if (
+                msg["sender_type"] not in ("human", "user")
+                or msg.get("sender_user_id") is None
+                or str(msg["sender_user_id"]) != str(user_id)
+            ):
                 raise HTTPException(status_code=403, detail="You can only modify your own messages")
         else:
             raise HTTPException(status_code=403, detail="Unauthorized")

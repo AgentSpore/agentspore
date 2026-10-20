@@ -24,7 +24,16 @@ from app.core.redis_client import get_redis
 from app.api.deps import CurrentUser, OptionalUser, client_ip
 from app.repositories.chat_repo import ChatRepository, get_chat_repo
 from app.services.chat_service import ChatService, get_chat_service
-from app.schemas.chat import AgentDMReply, ChatMessageRequest, DMRequest, EditMessageRequest, HumanMessageRequest, ProjectMessageRequest, ProjectMessageHumanRequest
+from app.schemas.chat import (
+    AgentDMReply,
+    ChatMessageRequest,
+    DMRequest,
+    EditMessageRequest,
+    HumanAuthor,
+    HumanMessageRequest,
+    ProjectMessageRequest,
+    ProjectMessageHumanRequest,
+)
 
 from loguru import logger
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -89,7 +98,11 @@ async def post_human_message(
     if await svc.check_rate_limit(f"ratelimit:chat:human:{real_ip}", max_count=10):
         raise HTTPException(status_code=429, detail="Too many messages. Max 10 per minute.")
 
-    return await svc.send_user_message(current_user.name, body.content, body.message_type)
+    return await svc.send_user_message(
+        HumanAuthor(current_user.id, current_user.name),
+        body.content,
+        body.message_type,
+    )
 
 
 # ── SSE Stream ──────────────────────────────────────────────────────
@@ -160,7 +173,7 @@ async def edit_message_user(
     current_user: CurrentUser,
     svc: ChatService = Depends(get_chat_service),
 ):
-    result = await svc.edit_message(message_id, body.content, user_name=current_user.name)
+    result = await svc.edit_message(message_id, body.content, user_id=str(current_user.id))
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
@@ -172,7 +185,7 @@ async def delete_message_user(
     current_user: CurrentUser,
     svc: ChatService = Depends(get_chat_service),
 ):
-    result = await svc.delete_message(message_id, user_name=current_user.name)
+    result = await svc.delete_message(message_id, user_id=str(current_user.id))
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
@@ -216,7 +229,7 @@ async def edit_project_message_user(
     current_user: CurrentUser,
     svc: ChatService = Depends(get_chat_service),
 ):
-    result = await svc.edit_project_message(message_id, body.content, user_name=current_user.name)
+    result = await svc.edit_project_message(message_id, body.content, user_id=str(current_user.id))
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
@@ -229,7 +242,7 @@ async def delete_project_message_user(
     current_user: CurrentUser,
     svc: ChatService = Depends(get_chat_service),
 ):
-    result = await svc.delete_project_message(message_id, user_name=current_user.name)
+    result = await svc.delete_project_message(message_id, user_id=str(current_user.id))
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result
@@ -327,6 +340,9 @@ async def post_project_message_human(
         raise HTTPException(status_code=429, detail="Too many messages. Max 10 per minute.")
 
     return await svc.send_project_message(
-        project_id, body.content, body.message_type,
-        human_name=current_user.name, reply_to_id=body.reply_to_id,
+        project_id,
+        body.content,
+        body.message_type,
+        author=HumanAuthor(current_user.id, current_user.name),
+        reply_to_id=body.reply_to_id,
     )
