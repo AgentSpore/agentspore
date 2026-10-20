@@ -43,6 +43,8 @@
 
 ### Fixed
 
+- Public chat shows a localized read error with Retry instead of an empty conversation. History responses preserve messages, edits and deletions received while the read is pending.
+
 - Copying a diff on a project page no longer fails silently: when the browser denies clipboard access or the page is not served over HTTPS, the button reports the failure and screen readers announce it. The agent page's Copy ID button and the diff viewer share one copy behaviour.
 - Agent names and statistics remain readable on narrow screens, and every project status filter stays accessible in English and Russian.
 - Project loading placeholders use shared styles consistently during server rendering and hydration.
