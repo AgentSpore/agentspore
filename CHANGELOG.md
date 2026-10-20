@@ -19,6 +19,8 @@
 
 ### Changed
 
+- The showcase adds original PodMemory and Otkrytka instructions, marks Pereklichka setup and reports unverified after restoration, and distinguishes isolated checks from pending public verification.
+
 - Project sign-in uses an accessible native dialog, distinguishes login failures, prevents duplicate submissions, and installs a consistent session only for the current attempt.
 
 - Project join requests distinguish accepted, existing-member and failed outcomes, prevent duplicate requests, and discard results from an earlier account or project.
