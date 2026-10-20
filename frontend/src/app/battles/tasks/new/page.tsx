@@ -3,7 +3,7 @@
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { battlesMessages } from "@/lib/i18n/battles";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   API_URL,
@@ -60,6 +60,13 @@ export default function SubmitBattleTaskPage() {
   const titleId = useId();
   const promptId = useId();
   const categoryId = useId();
+  const rubricId = useId();
+  const difficultyId = useId();
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (err) errorRef.current?.focus();
+  }, [err]);
 
   useEffect(() => {
     if (typeof window !== "undefined" && !localStorage.getItem("access_token")) {
@@ -142,6 +149,7 @@ export default function SubmitBattleTaskPage() {
 
   if (outcome) {
     const rejected = outcome.status === "rejected";
+    const pending = outcome.status === "pending_validation";
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <Header />
@@ -152,14 +160,16 @@ export default function SubmitBattleTaskPage() {
             }`}
           >
             <div className={`text-lg font-semibold mb-2 ${rejected ? "text-red-300" : "text-emerald-300"}`}>
-              {rejected ? tr("Task rejected") : tr("Task accepted into quarantine")}
+              {rejected ? tr("Task rejected") : pending ? tr("Under review") : tr("Task accepted into quarantine")}
             </div>
             <p className="text-sm text-neutral-400 mb-4">
               {rejected
                 ? outcome.reason
                   ? ui(TASK_REJECTION_REASON[outcome.reason] ?? outcome.reason)
                   : tr("No reason given.")
-                : tr("The task can already be used in unrated battles and is awaiting moderator review before it joins the rated pool.")}
+                : pending
+                  ? tr("The task was saved and is waiting for automatic review. It cannot be used in battles yet.")
+                  : tr("The task can already be used in unrated battles and is awaiting moderator review before it joins the rated pool.")}
             </p>
             <div className="flex items-center justify-center gap-3">
               <button
@@ -202,7 +212,7 @@ export default function SubmitBattleTaskPage() {
           <div className="text-xs font-medium text-neutral-300 mb-3">{tr("What you need to know before submitting")}</div>
           <ul className="space-y-2 text-xs leading-5 text-neutral-400">
             <li>
-              {" " + tr("A submitted task runs immediately in") + " "}<span className="text-neutral-200">{tr("unrated")}</span> {" " + tr("battles — no Elo is affected by it until a moderator approves it.") + " "}</li>
+              {" " + tr("After automatic review, a task can run in") + " "}<span className="text-neutral-200">{tr("unrated")}</span> {" " + tr("battles — no Elo is affected by it until a moderator approves it.") + " "}</li>
             <li>
               <span className="text-neutral-200">{tr("You will never face your own task")}</span>{tr(": the system excludes it from matchmaking for any agent you own. For you, it is \"spent\" the moment you submit it.") + " "}</li>
             <li>
@@ -212,13 +222,6 @@ export default function SubmitBattleTaskPage() {
               {" " + tr("Tasks are reviewed") + " "}<span className="text-neutral-200">{tr("automatically")}</span> {" " + tr("(an LLM filter, no human and no guaranteed turnaround); a rejection appears immediately with a reason in your submissions list.") + " "}</li>
           </ul>
         </div>
-
-        {err && (
-          <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
-            <div className="font-medium">{tr("Failed to submit the task")}</div>
-            <div className="text-red-400/80 mt-0.5">{err === `Daily submission limit reached (max ${DAILY_TASK_SUBMISSION_LIMIT} per day) — try again tomorrow.` ? tr("Daily submission limit reached (max {limit} per day) — try again tomorrow.", { limit: DAILY_TASK_SUBMISSION_LIMIT.toLocaleString(locale) }) : ui(err)}</div>
-          </div>
-        )}
 
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900/30 divide-y divide-neutral-800/80">
           <div className="p-5 sm:p-6">
@@ -282,6 +285,8 @@ export default function SubmitBattleTaskPage() {
                         onChange={(e) => updateCriterion(i, "key", e.target.value)}
                         placeholder={tr("Criterion, e.g. \"edge-cases\"")}
                         aria-label={tr("Criterion {number}: key", { number: i + 1 })}
+                        aria-invalid={(touched && !criterion.key.trim()) || undefined}
+                        aria-describedby={touched && !criterion.key.trim() ? `${rubricId}-error` : undefined}
                         className={`${inputClasses} flex-1`}
                       />
                       <button
@@ -298,6 +303,8 @@ export default function SubmitBattleTaskPage() {
                       onChange={(e) => updateCriterion(i, "description", e.target.value)}
                       placeholder={tr("What exactly the answer must contain for this criterion to pass")}
                       aria-label={tr("Criterion {number}: description", { number: i + 1 })}
+                      aria-invalid={(touched && !criterion.description.trim()) || undefined}
+                      aria-describedby={touched && !criterion.description.trim() ? `${rubricId}-error` : undefined}
                       className={`${inputClasses} min-h-16 py-2 resize-y leading-5`}
                     />
                   </div>
@@ -311,7 +318,7 @@ export default function SubmitBattleTaskPage() {
               className="battle-press mt-3 min-h-11 min-w-11 rounded-lg border border-neutral-700 px-3 text-xs font-medium text-neutral-300 hover:bg-white/[0.03] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
               {" " + tr("+ Add criterion") + " "}</button>
-            <div className="min-h-5 mt-1.5 text-xs text-red-400">
+            <div id={`${rubricId}-error`} className="min-h-5 mt-1.5 text-xs text-red-400">
               {rubricInvalid && tr("Every criterion needs both a key and a description")}
             </div>
           </div>
@@ -334,9 +341,11 @@ export default function SubmitBattleTaskPage() {
             </div>
           </div>
 
-          <div className="p-5 sm:p-6" aria-invalid={difficultyInvalid || undefined}>
+          <div className="p-5 sm:p-6">
             <div className="mb-1.5 text-sm font-medium text-neutral-200">{tr("Difficulty")}</div>
-            <div role="radiogroup" aria-label={tr("Difficulty")} className="flex flex-wrap gap-2">
+            <div role="radiogroup" aria-label={tr("Difficulty")} className="flex flex-wrap gap-2"
+              aria-invalid={difficultyInvalid || undefined}
+              aria-describedby={difficultyInvalid ? `${difficultyId}-error` : undefined}>
               {DIFFICULTIES.map((d) => (
                 <button
                   key={d}
@@ -354,11 +363,18 @@ export default function SubmitBattleTaskPage() {
                 </button>
               ))}
             </div>
-            <div className="min-h-5 mt-1.5 text-xs text-red-400">
+            <div id={`${difficultyId}-error`} className="min-h-5 mt-1.5 text-xs text-red-400">
               {difficultyInvalid && tr("Select a difficulty")}
             </div>
           </div>
         </div>
+
+        {err && (
+          <div ref={errorRef} tabIndex={-1} role="alert" className="mt-6 scroll-mt-24 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-300">
+            <div className="font-medium">{tr("Failed to submit the task")}</div>
+            <div className="text-red-400/80 mt-0.5">{err === `Daily submission limit reached (max ${DAILY_TASK_SUBMISSION_LIMIT} per day) — try again tomorrow.` ? tr("Daily submission limit reached (max {limit} per day) — try again tomorrow.", { limit: DAILY_TASK_SUBMISSION_LIMIT.toLocaleString(locale) }) : ui(err)}</div>
+          </div>
+        )}
 
         <div className="mt-6 flex justify-end">
           <button
