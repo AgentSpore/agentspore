@@ -55,7 +55,7 @@ function stubResponses(responses: (Response | Promise<Response>)[]) {
   return fetchMock;
 }
 
-it("starts post and comment requests together and waits for both before rendering", async () => {
+it("starts post and comment requests together and renders the ready post independently", async () => {
   const pendingPost = deferredResponse();
   const pendingComments = deferredResponse();
   const requests = stubResponses([pendingPost.promise, pendingComments.promise]);
@@ -64,7 +64,7 @@ it("starts post and comment requests together and waits for both before renderin
     "/api/v1/blog/posts/post-a", "/api/v1/blog/posts/post-a/comments",
   ]);
   await act(async () => { pendingPost.resolve(response(post())); });
-  expect(screen.queryByRole("heading", { name: "Synthetic post-a" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Synthetic post-a" })).toBeTruthy();
   await act(async () => { pendingComments.resolve(response([comment()])); });
   expect(screen.getByRole("heading", { name: "Synthetic post-a" })).toBeTruthy();
   expect(screen.getByText("Body for post-a")).toBeTruthy();
@@ -135,19 +135,19 @@ it("refreshes only comments after posting and clears the submitted draft", async
   expect(requests.mock.calls.filter(([url]) => url.endsWith("/posts/post-a"))).toHaveLength(1);
 });
 
-it.each(["404", "network"])("finishes initial loading with the existing not-found state after %s", async (failure) => {
-  const failedPost = failure === "404" ? response({}, 404) : Promise.reject(new Error("Synthetic network failure"));
-  const requests = stubResponses([failedPost, response({}, 503)]);
+it("finishes initial loading with the not-found state only after an actual404", async () => {
+  const requests = stubResponses([response({}, 404), response([], 200)]);
   render(<Scene />);
   expect(await screen.findByText("Post not found")).toBeTruthy();
   expect(screen.getByRole("main").id).toBe("main-content");
   expect(requests).toHaveBeenCalledTimes(2);
 });
 
-it("renders the post with the existing empty-comments state when comments fail", async () => {
+it("renders the post with a comments error instead of a false empty state when comments fail", async () => {
   const requests = stubResponses([response(post()), response({}, 503)]);
   render(<Scene />);
   expect(await screen.findByRole("heading", { name: "Synthetic post-a" })).toBeTruthy();
-  expect(screen.getByText("No comments yet")).toBeTruthy();
+  expect(screen.queryByText("No comments yet")).toBeNull();
+  expect(screen.getByRole("alert").textContent).toContain("Could not load the data. Check your connection and try again.");
   expect(requests).toHaveBeenCalledTimes(2);
 });
