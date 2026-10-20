@@ -59,7 +59,7 @@ Redis outage behaviour is a per-task choice (`fail_closed`):
   run converges to the same state.
 - `fail_closed = True` — nobody runs. Required for anything that spends
   someone's budget or moves a rating, where a duplicate run is not
-  recoverable (two workers starting the same battle, double Elo).
+  recoverable.
 """
 
 from __future__ import annotations
@@ -75,7 +75,6 @@ from uuid import uuid4
 from loguru import logger
 from sqlalchemy import text
 
-from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
 from app.repositories.webhook_repo import WebhookRepository
@@ -486,8 +485,7 @@ class GitHubSyncTask(ScheduledTask):
     ) -> None:
         """Write each PR-authoring agent's own outcome into its private memory.
 
-        Best-effort, same contract as battle_runner._record_battle_lessons: a
-        failed or disabled OpenViking must never look like it worked, and one
+        Best-effort: a failed or disabled OpenViking must never look like it worked, and one
         agent's write failing must not stop the next agent's write. Author
         attribution reuses the commit-author match already used for the
         commit counter (`agent_map`, keyed by git commit author name) — GitHub
@@ -677,222 +675,10 @@ class UsagePurgeTask(ScheduledTask):
                 logger.info("Service usage cleanup: removed {} expired visits", usage_count)
 
 
-class BattleRunTask(ScheduledTask):
-    """Drives running battles to a verdict: deadline -> judging -> completed.
-
-    ``fail_closed=True`` — unlike every other task here. This one spends the
-    platform's z.ai budget on judge calls, so if Redis is unreachable it must
-    NOT run: without Redis there is no llm_gate, and without the gate an
-    unbounded number of workers would hammer a 3-concurrency account.
-
-    That flag is admission control, NOT a correctness fence, and the distinction
-    is the whole design of battle_runner. Losing the leader lease mid-pass does
-    not stop ``run_once()`` — ``_renew_lease`` only logs and returns while the
-    loop keeps going. So a former leader and its replacement can execute battle
-    work at the same instant. Correctness therefore lives in the per-row
-    PostgreSQL claims and their tokens, never in this lease.
-
-    ``interval_s`` is short because ``reconcile_once`` is a SHORT reconciler: it
-    claims a bounded batch, takes one step each, and returns. It must never hold
-    a battle for the length of the task's life.
-    """
-
-    name = "battle_run"
-    interval_s = 30
-    # 60 already exceeds lock_ttl_with_headroom(30)=40: kept as an explicit
-    # constant since this is the most user-visible task on the platform and
-    # deserves the wider, hand-picked margin rather than the formula default.
-    lock_ttl_s = 60
-    initial_delay_s = 20
-    fail_closed = True
-
-    async def run_once(self) -> None:
-        # Deferred, like every task in this module: background.py loads at
-        # startup and must not drag the whole battle stack in with it. Not a
-        # cycle — no service or repository imports this module at top level.
-        from app.services.battle_judges import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
-            JUDGE_MODEL,
-        )
-        from app.services.battle_runner import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
-            reconcile_once,
-        )
-        from app.services.llm_gate import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
-            LLMGate,
-        )
-        from app.services.openrouter_service import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
-            OpenRouterService,
-        )
-        from app.services.provider_health import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
-            pick_live_model,
-        )
-
-        # The primary seat is whichever configured judge model actually answers
-        # THIS pass (pick_live_model probes/caches — see that module), not a
-        # hardcoded JUDGE_MODEL: a dead-but-keyed primary (mistral 402) used to
-        # resolve credentials fine and then fail every judge call, so "has a
-        # key" was never the right gate — "answers" is.
-        candidates = get_settings().battle_judge_models or [JUDGE_MODEL]
-        primary_model_id = await pick_live_model(candidates)
-        # resolve_provider() reads the key itself and returns None when it is
-        # unset, so this covers both "no credentials" and "unknown provider" —
-        # no separate settings lookup needed. A None provider does NOT skip the
-        # pass: only the paid judge panel needs it. reconcile_once still runs the
-        # free DB-only lifecycle (arm/admit/start/close_deadline) and the reaper
-        # every pass, so a provider outage never freezes battles or cleanup — it
-        # only defers scoring. Passing provider (possibly None) lets reconcile
-        # gate just the judging phase.
-        creds = OpenRouterService().resolve_provider(primary_model_id)
-        provider = (
-            {
-                "api_key": creds["api_key"],
-                "base_url": creds["base_url"],
-                "model_id": primary_model_id,
-            }
-            if creds is not None
-            else None
-        )
-        # Circuit breaker (V68 B5): while open, treat the provider as absent so
-        # the paid judge phases are skipped this pass, exactly like a missing
-        # provider — the free lifecycle transitions and the reaper still run, and
-        # the stranded-judging escape hatch stays off (it is provider-gated). A
-        # Redis outage fails the breaker CLOSED, so judging is never frozen by the
-        # breaker itself.
-        from app.services.battle_budget import breaker_is_open  # noqa: PLC0415
-
-        if provider is not None and await breaker_is_open():
-            logger.warning("Battle run: judge breaker open — skipping judging this pass")
-            provider = None
-        counts = await reconcile_once(
-            session_factory=async_session_maker,
-            gate=LLMGate(await get_redis()),
-            provider=provider,
-        )
-        if provider is None:
-            # Logged every pass (not gated on counts) so a stuck provider is
-            # observable even when no free phase advanced this pass.
-            logger.warning(
-                "Battle run (lifecycle ran, judging skipped: no usable provider for {}): {}",
-                primary_model_id,
-                counts,
-            )
-        elif any(counts.values()):
-            logger.info("Battle run: {}", counts)
-
-
-class BattleMatchmakerTask(ScheduledTask):
-    """Creates the auto-battles that keep /battles alive without a human.
-
-    ``fail_closed=True`` for the same reason BattleRunTask is: every battle this
-    creates commits the platform to two answer calls and a judge panel against a
-    provider whose free tier tops out around three concurrent requests. Without
-    Redis there is no leader lock, so four workers would each create a battle per
-    tick — four times the intended rate, at the exact moment the gate that would
-    have throttled the calls is also gone.
-
-    The cadence is a setting rather than a constant: it is the rate limit, and an
-    operator hitting 429s must be able to slow it down. ``interval_s`` is a
-    PROPERTY, not a class attribute, because the base loop re-reads it every
-    cycle — read once at class-definition time it would have needed a restart,
-    while ``battle_auto_enabled`` right beside it took effect live, and the two
-    halves of one switch must behave the same way.
-    """
-
-    name = "battle_matchmaker"
-    initial_delay_s = 60
-    fail_closed = True
-
-    @property
-    def interval_s(self) -> int:  # type: ignore[override]  # base declares a plain int
-        return get_settings().battle_auto_interval_seconds
-
-    @property
-    def lock_ttl_s(self) -> int:  # type: ignore[override]  # base declares a plain int | None
-        # A property, not a fixed constant: interval_s is itself a live
-        # setting, so a fixed lock_ttl_s could fall below it (and lose its
-        # headroom) the moment an operator lowers the interval.
-        return lock_ttl_with_headroom(self.interval_s)
-
-    async def run_once(self) -> None:
-        settings = get_settings()
-        if not settings.battle_auto_enabled:
-            return
-        from app.services.battle_service import (  # noqa: PLC0415 - deferred like every task here: this module loads at startup
-            BattleMatchmaker,
-        )
-
-        await BattleMatchmaker(async_session_maker).tick()
-
-
-class BattleHarvesterTask(ScheduledTask):
-    """Refills the generated task pool from open sources (GitHub/SO/HN).
-
-    ``fail_closed=True`` for the same reason ``BattleMatchmakerTask`` is: each
-    drafting call spends the judge panel's shared provider budget, so without
-    Redis every worker running the pass at once would multiply that spend by
-    the worker count at the exact moment nothing is left to throttle it.
-    """
-
-    name = "battle_harvester"
-    initial_delay_s = 90
-    fail_closed = True
-
-    @property
-    def interval_s(self) -> int:  # type: ignore[override]  # base declares a plain int
-        return get_settings().battle_harvester_interval_seconds
-
-    @property
-    def lock_ttl_s(self) -> int:  # type: ignore[override]  # base declares a plain int | None
-        # See BattleMatchmakerTask.lock_ttl_s for why this is a property.
-        return lock_ttl_with_headroom(self.interval_s)
-
-    async def run_once(self) -> None:
-        settings = get_settings()
-        if not settings.battle_harvester_enabled:
-            return
-        from app.repositories.battle_repo import (
-            # Deferred like every other task here: this module loads at
-            # startup and must not drag the battle stack in with it.
-            BattleRepository,  # noqa: PLC0415
-        )
-        from app.services.battle_task_harvester import (
-            TaskHarvesterService,  # noqa: PLC0415
-        )
-        from app.services.battle_task_sources import (
-            default_sources,  # noqa: PLC0415
-        )
-
-        async with async_session_maker() as db:
-            harvester = TaskHarvesterService(
-                repo=BattleRepository(db),
-                sources=default_sources(),
-                session_factory=async_session_maker,
-            )
-            result = await harvester.harvest(
-                pool_target=settings.battle_harvester_pool_target,
-                max_per_pass=settings.battle_harvester_max_per_pass,
-            )
-            # BattleRepository.create_task does not commit (see its docstring);
-            # the submission path in api/v1/battles.py commits after it, and so
-            # must this one. Without it the session rolls back on close, every
-            # harvested task is discarded, and the pass still reports created=N
-            # while spending the provider budget again on the next cycle.
-            await db.commit()
-        if result.created or result.source_failures:
-            logger.info(
-                "Battle harvester: created={} dropped={} source_failures={}",
-                result.created, result.dropped, result.source_failures,
-            )
-
-
-
-
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
     GovernanceExpireTask,
     GitHubSyncTask,
     UsagePurgeTask,
-    BattleRunTask,
-    BattleMatchmakerTask,
-    BattleHarvesterTask,
 )
 
 
@@ -907,9 +693,8 @@ _PR_LESSON_REASON_MAX_CHARS = 400
 def _pr_lesson(repo_name: str, pr: dict, event: str, reason: str) -> str:
     """A short, first-person memory entry for one agent's own PR outcome.
 
-    ``reason`` is the closing comment's free text (unbounded), truncated for
-    the same reason battle_runner._battle_lesson truncates a judge's verdict:
-    this is a memory entry re-read on a future heartbeat, not a transcript.
+    ``reason`` is the closing comment's free text (unbounded), truncated because
+    this memory entry is re-read on a future heartbeat.
     """
     title = pr.get("title", f"PR #{pr['number']}")
     if event == "merged":

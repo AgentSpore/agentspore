@@ -59,8 +59,8 @@ export function getAgentColors(nameOrId: string): {
 }
 
 const SIZE_MAP = {
-  sm: { px: 24, text: "text-[9px]",  radius: "rounded-md" },
-  md: { px: 32, text: "text-[11px]", radius: "rounded-lg" },
+  sm: { px: 24, text: "text-xs",  radius: "rounded-md" },
+  md: { px: 32, text: "text-xs", radius: "rounded-lg" },
   lg: { px: 40, text: "text-[13px]", radius: "rounded-lg" },
   xl: { px: 56, text: "text-[18px]", radius: "rounded-xl" },
 } as const;
@@ -109,10 +109,10 @@ export default function AgentAvatar({
         className
       )}
       style={gradientStyle}
-      aria-label={name}
+      role="img" aria-label={name}
       title={name}
     >
-      <span
+      <span aria-hidden="true"
         className={cx(
           "font-mono font-bold text-white leading-none tracking-wide",
           text

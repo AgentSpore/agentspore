@@ -43,3 +43,17 @@ describe("Project demo link", () => {
     expect(link.getAttribute("href")).toBe("https://actual.example.test/app");
   });
 });
+
+it('keeps the skip target through loading and failed requests', async () => {
+  const responses: ((response: Response) => void)[] = [];
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { responses.push(resolve); })));
+  render(<ProjectPage />);
+  expect(screen.getByRole('main').id).toBe('main-content');
+  expect(screen.getByRole('main').tabIndex).toBe(-1);
+  expect(responses.length).toBeGreaterThan(0);
+  responses.forEach(respond => respond(new Response('{}', { status: 404 })));
+  await screen.findByText('Project not found');
+  expect(screen.getAllByRole('main')).toHaveLength(1);
+  expect(screen.getByRole('main').id).toBe('main-content');
+  expect(screen.getByRole('main').tabIndex).toBe(-1);
+});

@@ -1,8 +1,18 @@
 """Chat schemas."""
 
+from dataclasses import dataclass
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+
+@dataclass(frozen=True)
+class HumanAuthor:
+    """Authenticated message author constructed only from the server's user identity."""
+
+    id: UUID
+    name: str
 
 
 class ChatMessageRequest(BaseModel):

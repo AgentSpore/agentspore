@@ -174,7 +174,7 @@ class TestRunWithModelFallback:
 class TestPinnedModel:
     @pytest.mark.asyncio
     async def test_pinned_model_is_tried_first_not_the_agent_default(self, monkeypatch):
-        """Reproduces the battle scenario: model fails, fallback succeeds on
+        """Reproduces session model fallback: model fails, fallback succeeds on
         model B, and the next call (deferred-tool approval loop) must go
         straight to model B instead of re-trying the agent's own dead model."""
         monkeypatch.setattr("routes.chat.asyncio.sleep", lambda *_: _noop())
@@ -239,7 +239,7 @@ def _fake_result(output="ok"):
 class TestNonstreamApprovalLoopModelPin:
     @pytest.mark.asyncio
     async def test_approval_loop_stays_on_the_model_that_just_won(self, monkeypatch):
-        """Reproduces the battle scenario: the agent's own model dies, fallback
+        """Reproduces session model fallback: the agent's own model dies, fallback
         succeeds on model B, and the deferred-tool auto-approval re-run must go
         to model B — not back to the agent's dead default model."""
         monkeypatch.setattr("routes.chat.asyncio.sleep", lambda *_: _noop())

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Header } from "@/components/Header";
 import { SkeletonText } from "@/components/Skeleton";
-import { subscribeAuthChanges } from "@/lib/auth";
+import { getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 import { APIError } from "@/lib/api-client";
 import { decodeTaskDetail, decodeTasks, decodeWorkspace, formatWorkspaceDate, readWorkspace, type AgentWorkspace, type TaskPage, type WorkspaceTask } from "@/lib/agent-workspace";
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
@@ -17,7 +17,7 @@ type ReadState<T> = { kind: "loading" | "auth" | "error" | "missing" } | { kind:
 type Filter = "all" | "waiting" | "accepted" | "revisions" | "closed";
 const CONTROL = "inline-flex min-h-11 items-center justify-center rounded-lg border border-neutral-600 px-4 text-sm text-neutral-200 hover:bg-neutral-800 active:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300 disabled:cursor-not-allowed disabled:opacity-50";
 
-const readAuth = () => localStorage.getItem("access_token");
+const readAuth = () => getAuthSnapshot().accessToken;
 const serverAuth = () => null;
 
 function useOwnerRead<T>(path: string | null, decode: (value: unknown) => T, revision: number, token: string | null, rejectAuth: (token: string) => void): ReadState<T> {
@@ -88,25 +88,29 @@ function TaskRow({ task, selected, select }: { task: WorkspaceTask; selected: bo
   </button>;
 }
 
-function TaskPagination({ page, changePage }: { page: TaskPage; changePage: (offset: number) => void }) {
+function TaskPagination({ page, changePage, loading }: { page: TaskPage; changePage: (offset: number) => void; loading: boolean }) {
   const t = useTranslations(WORKSPACE_MESSAGES);
   return <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-neutral-400">{t("page", { start: page.total === 0 ? 0 : page.offset + 1, end: page.offset + page.items.length, total: page.total })}</p>
-    {page.total > page.limit && <div className="flex flex-wrap gap-2"><button className={CONTROL} disabled={page.offset === 0} onClick={() => changePage(Math.max(0, page.offset - page.limit))}>{t("previous")}</button><button className={CONTROL} disabled={page.offset + page.limit >= page.total || page.offset + page.limit > 10000} onClick={() => changePage(page.offset + page.limit)}>{t("next")}</button></div>}
+    {page.total > page.limit && <div className="flex flex-wrap gap-2"><button className={CONTROL} disabled={page.offset === 0} aria-disabled={loading || undefined} onClick={() => { if (!loading) changePage(Math.max(0, page.offset - page.limit)); }}>{t("previous")}</button><button className={CONTROL} disabled={page.offset + page.limit >= page.total || page.offset + page.limit > 10000} aria-disabled={loading || undefined} onClick={() => { if (!loading) changePage(page.offset + page.limit); }}>{t("next")}</button></div>}
   </div>;
 }
 
-function TaskInbox({ page, selected, select, changePage, clearSelection }: { page: TaskPage; selected: string | null; select: (id: string) => void; changePage: (offset: number) => void; clearSelection: () => void }) {
+function TaskInbox({ state, visible, retry, selected, select, changePage, clearSelection }: { state: ReadState<TaskPage>; visible: boolean; retry: () => void; selected: string | null; select: (id: string) => void; changePage: (offset: number) => void; clearSelection: () => void }) {
   const t = useTranslations(WORKSPACE_MESSAGES);
   const [filter, setFilter] = useState<Filter>("all");
-  const items = page.items.filter(task => matchesFilter(task, filter));
+  const [lastPage, setLastPage] = useState<TaskPage | null>(null);
+  if (state.kind === "success" && state.data !== lastPage) setLastPage(state.data);
+  if (!visible) return null;
+  const page = state.kind === "success" ? state.data : lastPage;
+  const items = state.kind === "success" ? state.data.items.filter(task => matchesFilter(task, filter)) : [];
   return <section id="workspace-tasks" aria-labelledby="tasks-heading" className="min-w-0 scroll-mt-32">
-    <h2 id="tasks-heading" className="text-xl font-semibold">{t("tasks")}</h2>
+    <h2 id="tasks-heading" tabIndex={-1} className="scroll-mt-32 text-xl font-semibold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{t("tasks")}</h2>
     <div className="my-5 flex flex-wrap gap-2" aria-label={t("tasks")}>{(["all", "waiting", "accepted", "revisions", "closed"] as const).map(value =>
       <button key={value} aria-pressed={filter === value} onClick={() => { setFilter(value); clearSelection(); }} className={`${CONTROL} ${filter === value ? "bg-violet-950 text-violet-200 border-violet-400" : "bg-neutral-950"}`}>{t(value)}</button>)}</div>
-    {page.total > page.limit && <p className="mb-4 text-sm text-neutral-400">{t("pageFilter")}</p>}
-    {items.length === 0 ? <p className="py-6 text-neutral-400">{t(page.total === 0 ? "noTasks" : "noMatches")}</p> :
+    {page && page.total > page.limit && <p className="mb-4 text-sm text-neutral-400">{t("pageFilter")}</p>}
+    {state.kind !== "success" ? <ReadFeedback state={state} retry={retry} /> : items.length === 0 ? <p className="py-6 text-neutral-400">{t(state.data.total === 0 ? "noTasks" : "noMatches")}</p> :
       <ul className="divide-y divide-neutral-800 border-y border-neutral-800">{items.map(task => <li key={task.id}><TaskRow task={task} selected={selected === task.id} select={select} /></li>)}</ul>}
-    <TaskPagination page={page} changePage={changePage} />
+    {page && <TaskPagination page={page} changePage={changePage} loading={state.kind !== "success"} />}
   </section>;
 }
 
@@ -139,34 +143,48 @@ function BudgetLedger({ agents }: { agents: AgentWorkspace["agents"] }) {
   const { locale } = useLocale(), t = useTranslations(WORKSPACE_MESSAGES);
   return <section aria-labelledby="budget-heading" className="min-w-0"><h2 id="budget-heading" className="text-xl font-semibold">{t("budget")}</h2><p className="mt-3 max-w-[65ch] text-sm leading-relaxed text-neutral-400">{t("budgetInfo")}</p>
     <ul className="mt-5 divide-y divide-neutral-800 border-y border-neutral-800">{agents.map(agent => <li key={agent.id} className="py-4"><h3 className="font-medium wrap-anywhere">{agent.name}</h3>
-      <dl className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-5">{(["available", "reserved", "transferred", "received", "refunded"] as const).map(key => <div key={key}><dt className="text-sm text-neutral-400">{t(key)}</dt><dd className="mt-1 tabular-nums text-neutral-200">{new Intl.NumberFormat(localeTag(locale)).format(agent.budget[key])}</dd></div>)}</dl>
+      <dl className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-5">{(["available", "reserved", "transferred", "received", "refunded"] as const).map(key => <div key={key}><dt className="text-sm text-neutral-400">{t(key)}</dt><dd className="mt-1 tabular-nums wrap-anywhere text-neutral-200">{new Intl.NumberFormat(localeTag(locale)).format(agent.budget[key])}</dd></div>)}</dl>
       <p className="mt-3 text-sm text-neutral-400">{t(agent.budget.initial_grant_applied ? "grantApplied" : "grantPending")}</p>
     </li>)}</ul>
   </section>;
 }
 
-/** Read-only owner workspace for external-agent tasks, results and educational balances. */
-export function Workspace() {
+function OwnerWorkspace({ token, rejectedToken, rejectAuth }: { token: string | null; rejectedToken: string | null; rejectAuth: (token: string) => void }) {
   const t = useTranslations(WORKSPACE_MESSAGES);
   const [revision, setRevision] = useState(0), [offset, setOffset] = useState(0), [selected, setSelected] = useState<string | null>(null);
-  const token = useSyncExternalStore(subscribeAuthChanges, readAuth, serverAuth);
-  const [rejectedToken, rejectAuth] = useState<string | null>(null);
   const workspace = useOwnerRead("agent-workspace", decodeWorkspace, revision, token, rejectAuth);
   const tasks = useOwnerRead(`agent-tasks?limit=50&offset=${offset}`, decodeTasks, revision, token, rejectAuth);
+  if (tasks.kind === "success" && tasks.data.items.length === 0 && tasks.data.offset >= tasks.data.total && tasks.data.offset > 0) {
+    setOffset(Math.max(0, Math.floor((tasks.data.total - 1) / tasks.data.limit) * tasks.data.limit));
+  }
+  const visible = workspace.kind === "success" && workspace.data.agents.length > 0 && rejectedToken !== token;
   const select = (id: string) => { setSelected(id); document.getElementById("task-detail")?.focus(); };
   const refresh = () => setRevision(value => value + 1);
-  const changePage = (value: number) => { setOffset(value); setSelected(null); };
+  const changePage = (value: number) => {
+    setOffset(value);
+    setSelected(null);
+    document.getElementById("tasks-heading")?.focus();
+  };
+  return <main id="main-content" tabIndex={-1} style={{ animation: "none" }} className="mx-auto max-w-7xl space-y-10 px-4 py-8 sm:px-6 motion-reduce:animate-none">
+      <div className="flex flex-wrap items-start justify-between gap-5"><div><h1 className="text-3xl font-semibold tracking-tight">{t("title")}</h1><p className="mt-3 max-w-[65ch] text-neutral-300">{t("intro")}</p><p className="mt-2 max-w-[65ch] text-sm text-neutral-400">{t("readonly")}</p></div>
+        <div className="flex flex-wrap gap-3"><button onClick={refresh} className={`${CONTROL} scroll-mt-32`}>{t("refresh")}</button></div>
+      </div>
+      {rejectedToken !== null && rejectedToken === token ? <ReadFeedback state={{ kind: "auth" }} retry={refresh} /> : workspace.kind !== "success" ? <ReadFeedback state={workspace} retry={refresh} reveal /> : workspace.data.agents.length === 0 ? <section><h2 className="text-xl font-semibold">{t("connection")}</h2><p className="mt-3 text-neutral-300">{t("noAgents")}</p></section> : null}
+      <div className={visible ? "grid items-start gap-6 lg:grid-cols-2" : "hidden"}>
+        <TaskInbox state={tasks} visible={visible} retry={refresh} selected={selected} select={select} changePage={changePage} clearSelection={() => setSelected(null)} />
+        {visible && <SelectedTask id={selected} revision={revision} token={token} rejectAuth={rejectAuth} />}
+      </div>
+      {visible && workspace.kind === "success" && <div className="grid items-start gap-10 lg:grid-cols-2"><AgentRoster agents={workspace.data.agents} /><BudgetLedger agents={workspace.data.agents} /></div>}
+      <AgentConnection />
+    </main>;
+}
+
+/** Read-only owner workspace for external-agent tasks, results and educational balances. */
+export function Workspace() {
+  const token = useSyncExternalStore(subscribeAuthChanges, readAuth, serverAuth);
+  const [rejectedToken, rejectAuth] = useState<string | null>(null);
   return <div className="min-h-screen bg-neutral-950 font-sans text-neutral-100">
     <Header />
-    <main style={{ animation: "none" }} className="mx-auto max-w-7xl space-y-10 px-4 py-8 sm:px-6 motion-reduce:animate-none">
-      <div className="flex flex-wrap items-start justify-between gap-5"><div><h1 className="text-3xl font-semibold tracking-tight">{t("title")}</h1><p className="mt-3 max-w-[65ch] text-neutral-300">{t("intro")}</p><p className="mt-2 max-w-[65ch] text-sm text-neutral-400">{t("readonly")}</p></div>
-        <div className="flex flex-wrap gap-3"><button onClick={refresh} className={CONTROL}>{t("refresh")}</button><a href="#connect-agent" className="inline-flex min-h-11 items-center rounded-lg bg-violet-400 px-4 text-sm font-medium text-neutral-950 hover:bg-violet-300 active:bg-violet-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{t("connect")}</a></div>
-      </div>
-      {rejectedToken !== null && rejectedToken === token ? <ReadFeedback state={{ kind: "auth" }} retry={refresh} /> : workspace.kind !== "success" ? <ReadFeedback state={workspace} retry={refresh} reveal /> : workspace.data.agents.length === 0 ? <section><h2 className="text-xl font-semibold">{t("connection")}</h2><p className="mt-3 text-neutral-300">{t("noAgents")}</p></section> : <>
-        <div className="grid items-start gap-6 lg:grid-cols-2">{tasks.kind === "success" ? <TaskInbox page={tasks.data} selected={selected} select={select} changePage={changePage} clearSelection={() => setSelected(null)} /> : <ReadFeedback state={tasks} retry={refresh} />}<SelectedTask id={selected} revision={revision} token={token} rejectAuth={rejectAuth} /></div>
-        <div className="grid items-start gap-10 lg:grid-cols-2"><AgentRoster agents={workspace.data.agents} /><BudgetLedger agents={workspace.data.agents} /></div>
-      </>}
-      <AgentConnection />
-    </main>
+    <OwnerWorkspace key={token} token={token} rejectedToken={rejectedToken} rejectAuth={rejectAuth} />
   </div>;
 }

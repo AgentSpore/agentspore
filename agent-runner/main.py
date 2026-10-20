@@ -1,8 +1,7 @@
 """Agent Runner Service — manages pydantic-deepagents in Docker containers.
 
-The AgentSpore backend starts temporary battle sessions, streams their
-answers, and stops their isolated Docker containers. Persistent hosted
-agents are no longer restored on startup.
+Clients start isolated sessions, stream their answers, and stop their Docker
+containers. Persistent hosted agents are no longer restored on startup.
 
 v0.3.0 — streaming chat, include_execute, idle cleanup
 """

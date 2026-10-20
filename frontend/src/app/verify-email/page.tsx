@@ -8,7 +8,7 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
 
 import Link from "next/link";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 
@@ -37,14 +37,16 @@ function DotGrid() {
 export default function VerifyEmailPage() {
   const tr = useTranslations(accountMessages);
   return (
-    <Suspense fallback={
-      <div className="relative min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
-        <div className="absolute right-4 top-4"><LanguageSelector /></div>
-        <div className="text-neutral-500 text-sm font-mono animate-pulse">{tr('initializing')}</div>
-      </div>
-    }>
-      <VerifyEmailInner />
-    </Suspense>
+    <main id="main-content" tabIndex={-1}>
+      <Suspense fallback={
+        <div className="relative min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center">
+          <div className="absolute right-4 top-4"><LanguageSelector /></div>
+          <div className="text-neutral-500 text-sm font-mono animate-pulse">{tr('initializing')}</div>
+        </div>
+      }>
+        <VerifyEmailInner />
+      </Suspense>
+    </main>
   );
 }
 
@@ -116,7 +118,8 @@ function VerifyEmailInner() {
     return () => clearTimeout(t);
   }, [state.status, redirectCountdown]);
 
-  const handleResend = async () => {
+  const handleResend = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (!resendEmail.trim()) return;
     setResendLoading(true);
     try {
@@ -125,6 +128,8 @@ function VerifyEmailInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: resendEmail.trim().toLowerCase() }),
       });
+    } catch {
+      // Keep the response account-neutral even when the request cannot reach the server.
     } finally {
       setResendLoading(false);
       setState({ status: "resent" });
@@ -139,7 +144,7 @@ function VerifyEmailInner() {
         <div className="mb-4 flex justify-end"><LanguageSelector /></div>
         {/* Logo */}
         <div className="text-center mb-10 animate-fadeUp">
-          <Link href="/" className="inline-flex items-center gap-3">
+          <Link href="/" className="inline-flex min-h-11 min-w-11 items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm flex items-center justify-center text-lg text-cyan-400">
               &gt;_
             </div>
@@ -168,10 +173,9 @@ function VerifyEmailInner() {
               <div className="text-3xl mb-4 text-emerald-400 font-mono">{tr('oK')}</div>
               <h2 className="text-white font-mono font-semibold text-lg mb-2">{tr('emailVerified')}</h2>
               <p className="text-neutral-400 text-sm font-mono mb-6">
-                {tr('youReSignedInRedirectingToYourProfile')}{new Intl.NumberFormat(localeTag(locale)).format(redirectCountdown)}{tr('s')}</p>
-              <Link
-                href="/profile"
-                className="inline-block px-6 py-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-mono hover:bg-emerald-500/20 transition-colors"
+                {tr('youReSignedInRedirectingToYourProfile')}{" "}{new Intl.NumberFormat(localeTag(locale)).format(redirectCountdown)}{" "}{tr('s')}</p>
+              <Link href="/profile"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center px-6 py-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-mono hover:bg-emerald-500/20 transition-colors"
               >
                 {tr('goToProfile')}</Link>
             </div>
@@ -179,15 +183,14 @@ function VerifyEmailInner() {
 
           {state.status === "error" && (
             <div data-testid="state-error">
-              <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3 mb-6">
+              <div role="alert" className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3 mb-6">
                 <p className="text-red-400 text-xs font-mono" data-testid="error-message">
                   {displayAccountLabel(locale, state.message)}
                 </p>
               </div>
 
               {state.expired && (
-                <ResendForm
-                  email={resendEmail}
+                <ResendForm email={resendEmail}
                   onEmailChange={setResendEmail}
                   loading={resendLoading}
                   onSubmit={handleResend}
@@ -195,7 +198,7 @@ function VerifyEmailInner() {
               )}
 
               <p className="text-center mt-4">
-                <Link href="/login" className="text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
+                <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
                   {tr('backToLogin')}</Link>
               </p>
             </div>
@@ -208,15 +211,14 @@ function VerifyEmailInner() {
                   {tr('invalidLinkNoVerificationTokenFound')}</p>
               </div>
 
-              <ResendForm
-                email={resendEmail}
+              <ResendForm email={resendEmail}
                 onEmailChange={setResendEmail}
                 loading={resendLoading}
                 onSubmit={handleResend}
               />
 
               <p className="text-center mt-4">
-                <Link href="/login" className="text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
+                <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
                   {tr('backToLogin')}</Link>
               </p>
             </div>
@@ -228,14 +230,14 @@ function VerifyEmailInner() {
               <h2 className="text-white font-mono font-semibold text-lg mb-2">{tr('checkYourInbox')}</h2>
               <p className="text-neutral-400 text-sm font-mono mb-6">
                 {tr('ifTheAccountExistsAndIsUnverifiedA')}</p>
-              <Link href="/login" className="text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
+              <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-500 hover:text-cyan-400 transition-colors font-mono">
                 {tr('backToLogin')}</Link>
             </div>
           )}
         </div>
 
         <p className="text-center text-xs text-neutral-600 mt-6 font-mono animate-fadeUp animation-delay-200">
-          <Link href="/" className="hover:text-cyan-400 transition-colors">{tr('cdHome')}</Link>
+          <Link href="/" className="inline-flex min-h-11 min-w-11 items-center justify-center hover:text-cyan-400 transition-colors">{tr('cdHome')}</Link>
         </p>
       </div>
 
@@ -255,39 +257,35 @@ function VerifyEmailInner() {
   );
 }
 
-function ResendForm({
-  email,
-  onEmailChange,
-  loading,
-  onSubmit,
-}: {
+function ResendForm({ email, onEmailChange, loading, onSubmit }: {
   email: string;
   onEmailChange: (v: string) => void;
   loading: boolean;
-  onSubmit: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const tr = useTranslations(accountMessages);
   return (
-    <div>
+    <form onSubmit={onSubmit}>
       <p className="text-neutral-500 text-xs font-mono mb-3">{tr('requestANewVerificationLink')}</p>
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
         <input
           type="email"
+          autoComplete="email"
+          required
           value={email}
           onChange={e => onEmailChange(e.target.value)}
           placeholder="you@example.com"
           aria-label={tr('emailAddress')}
-          className="min-w-0 w-full flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-cyan-500/50 focus:outline-none font-mono px-3 py-2.5 text-sm transition-colors"
+          className="min-h-11 min-w-0 w-full flex-1 bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-cyan-500/50 focus:outline-none font-mono px-3 py-2.5 text-sm transition-colors"
         />
         <button
-          type="button"
-          onClick={onSubmit}
+          type="submit"
           disabled={loading || !email.trim()}
-          className="px-4 py-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-sm font-mono hover:bg-cyan-500/20 transition-colors disabled:opacity-50 whitespace-nowrap"
+          className="min-h-11 px-4 py-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-sm font-mono hover:bg-cyan-500/20 transition-colors disabled:opacity-50 whitespace-nowrap"
         >
           {loading ? "…" : tr('resend')}
         </button>
       </div>
-    </div>
+    </form>
   );
 }

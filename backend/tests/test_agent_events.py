@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS agents (
 """
 
 
+@pytest.fixture(autouse=True)
+def durable_test_events(monkeypatch):
+    """Exercise generic outbox delivery with synthetic opt-in event types."""
+    monkeypatch.setattr(
+        cm, "DURABLE_EVENTS", frozenset({"test_durable_event", "test_durable_check"})
+    )
+
+
 @pytest.fixture(scope="module")
 def pg_container():
     with PostgresContainer("postgres:16-alpine") as pg:
@@ -110,7 +118,7 @@ async def other_agent_id(db_session) -> str:
 async def test_double_ack_is_idempotent_and_leaves_one_row(db_session, agent_id):
     """Insert → deliver → ACK twice → exactly one row, acked_at unchanged."""
     repo = AgentEventRepository(db_session)
-    event_id = await repo.create(agent_id, "battle_turn", {"round": 1}, ttl_seconds=600)
+    event_id = await repo.create(agent_id, "test_durable_event", {"round": 1}, ttl_seconds=600)
     await repo.mark_dispatched(event_id, "delivered")
     await db_session.commit()
 
@@ -149,7 +157,7 @@ async def test_ack_without_dispatch_cannot_exist(db_session, agent_id):
             text("""
                 INSERT INTO agent_events
                     (target_agent_id, type, payload, status, acked_at, expires_at)
-                VALUES (CAST(:a AS UUID), 'battle_turn', '{}'::jsonb, 'acked',
+                VALUES (CAST(:a AS UUID), 'test_durable_event', '{}'::jsonb, 'acked',
                         NOW(), NOW() + INTERVAL '10 minutes')
             """),
             {"a": agent_id},
@@ -166,7 +174,7 @@ async def test_pending_event_survives_session_restart(session_maker, agent_id):
     """Recreate the repository/session and fetch the same pending event."""
     async with session_maker() as s1:
         event_id = await AgentEventRepository(s1).create(
-            agent_id, "battle_turn", {"task": "build a thing"}, ttl_seconds=600
+            agent_id, "test_durable_event", {"task": "build a thing"}, ttl_seconds=600
         )
         await s1.commit()
 
@@ -183,8 +191,8 @@ async def test_pending_event_survives_session_restart(session_maker, agent_id):
 async def test_events_are_scoped_to_target_agent(db_session, agent_id, other_agent_id):
     """One agent never sees another agent's pending events."""
     repo = AgentEventRepository(db_session)
-    mine = await repo.create(agent_id, "battle_turn", {"n": 1}, ttl_seconds=600)
-    await repo.create(other_agent_id, "battle_turn", {"n": 2}, ttl_seconds=600)
+    mine = await repo.create(agent_id, "test_durable_event", {"n": 1}, ttl_seconds=600)
+    await repo.create(other_agent_id, "test_durable_event", {"n": 2}, ttl_seconds=600)
     await db_session.commit()
 
     rows = await repo.list_unacked(agent_id)
@@ -202,7 +210,7 @@ async def test_publish_with_zero_subscribers_is_not_delivery():
     redis.publish.return_value = 0  # nobody subscribed
     manager._redis = redis
 
-    assert await manager.send("agent-1", {"type": "battle_turn"}) is False
+    assert await manager.send("agent-1", {"type": "test_durable_event"}) is False
 
 
 @pytest.mark.asyncio
@@ -213,7 +221,7 @@ async def test_publish_with_a_subscriber_is_delivery():
     redis.publish.return_value = 1
     manager._redis = redis
 
-    assert await manager.send("agent-1", {"type": "battle_turn"}) is True
+    assert await manager.send("agent-1", {"type": "test_durable_event"}) is True
 
 
 @pytest.mark.asyncio
@@ -226,7 +234,7 @@ async def test_deliver_event_returns_queued_when_no_subscribers():
         patch.object(cm, "get_connection_manager") as get_mgr,
     ):
         get_mgr.return_value.send = AsyncMock(return_value=False)
-        result = await cm.deliver_event("agent-1", {"type": "battle_turn"})
+        result = await cm.deliver_event("agent-1", {"type": "test_durable_event"})
 
     assert result == DeliveryResult.QUEUED
     assert result != DeliveryResult.DELIVERED
@@ -261,7 +269,7 @@ async def test_persist_failure_aborts_before_transport():
     ):
         send = AsyncMock(return_value=True)  # transport WOULD have succeeded
         get_mgr.return_value.send = send
-        result = await cm.deliver_event("agent-1", {"type": "battle_turn"})
+        result = await cm.deliver_event("agent-1", {"type": "test_durable_event"})
 
     assert result == DeliveryResult.FAILED
     send.assert_not_awaited()  # never dispatched without a durable row
@@ -279,7 +287,7 @@ async def test_default_ttl_outlives_the_documented_heartbeat_interval():
 
 @pytest.mark.asyncio
 async def test_caller_can_shorten_ttl_for_a_deadline_bound_event():
-    """A battle turn is worthless after its round — callers pass their own TTL."""
+    """A deadline-bound event uses the TTL supplied by its caller."""
     persist = AsyncMock(return_value="evt-1")
     with (
         patch.object(cm, "_persist_durable_event", persist),
@@ -288,7 +296,7 @@ async def test_caller_can_shorten_ttl_for_a_deadline_bound_event():
         patch.object(cm, "get_connection_manager") as get_mgr,
     ):
         get_mgr.return_value.send = AsyncMock(return_value=False)
-        await cm.deliver_event("agent-1", {"type": "battle_turn"}, ttl_seconds=600)
+        await cm.deliver_event("agent-1", {"type": "test_durable_event"}, ttl_seconds=600)
 
     assert persist.await_args.args[2] == 600
 
@@ -305,8 +313,8 @@ async def test_dispatch_existing_never_inserts_a_second_row():
     that persisted two ready-checks and dispatched them through deliver_event
     got four rows and two useless duplicates.
     """
-    live = [{"event_id": "evt-1", "type": "battle_ready_check",
-             "payload": {"type": "battle_ready_check", "battle_id": "b1", "side": "a"}}]
+    live = [{"event_id": "evt-1", "type": "test_durable_check",
+             "payload": {"type": "test_durable_check", "request_id": "b1", "side": "a"}}]
     with (
         patch.object(cm, "async_session_maker"),
         patch.object(cm.AgentEventRepository, "list_unacked", AsyncMock(return_value=live)),
@@ -326,8 +334,8 @@ async def test_dispatch_existing_never_inserts_a_second_row():
 @pytest.mark.asyncio
 async def test_dispatch_existing_sends_the_stored_payload_with_its_own_id():
     """The wire event is rebuilt from the row, not from the caller's memory."""
-    live = [{"event_id": "evt-9", "type": "battle_ready_check",
-             "payload": {"type": "battle_ready_check", "battle_id": "b1", "side": "b"}}]
+    live = [{"event_id": "evt-9", "type": "test_durable_check",
+             "payload": {"type": "test_durable_check", "request_id": "b1", "side": "b"}}]
     with (
         patch.object(cm, "async_session_maker"),
         patch.object(cm.AgentEventRepository, "list_unacked", AsyncMock(return_value=live)),
@@ -341,7 +349,7 @@ async def test_dispatch_existing_sends_the_stored_payload_with_its_own_id():
 
     sent = send.await_args.args[1]
     assert sent["event_id"] == "evt-9"
-    assert sent["type"] == "battle_ready_check"
+    assert sent["type"] == "test_durable_check"
     assert sent["side"] == "b"
 
 
@@ -375,8 +383,8 @@ async def test_dispatch_existing_refuses_a_truly_expired_row(db_session, agent_i
     repo = AgentEventRepository(db_session)
     event_id = await repo.create(
         target_agent_id=agent_id,
-        event_type="battle_ready_check",
-        payload={"type": "battle_ready_check", "battle_id": "b1", "side": "a"},
+        event_type="test_durable_check",
+        payload={"type": "test_durable_check", "request_id": "b1", "side": "a"},
         ttl_seconds=60,
     )
     await db_session.commit()
@@ -407,7 +415,7 @@ async def test_dispatch_existing_refuses_a_truly_expired_row(db_session, agent_i
 async def test_ack_from_wrong_agent_leaves_row_untouched(db_session, agent_id, other_agent_id):
     """A wrong agent's ACK leaves the row unchanged."""
     repo = AgentEventRepository(db_session)
-    event_id = await repo.create(agent_id, "battle_turn", {"round": 1}, ttl_seconds=600)
+    event_id = await repo.create(agent_id, "test_durable_event", {"round": 1}, ttl_seconds=600)
     await repo.mark_dispatched(event_id, "delivered")
     await db_session.commit()
 
@@ -435,7 +443,7 @@ async def test_heartbeat_drain_returns_unacked_event_after_failed_delivery(
     """Queue an event (delivery failed), drain it, assert identical id + payload."""
     repo = AgentEventRepository(db_session)
     payload = {"task": "duel", "deadline_seconds": 600}
-    event_id = await repo.create(agent_id, "battle_turn", payload, ttl_seconds=600)
+    event_id = await repo.create(agent_id, "test_durable_event", payload, ttl_seconds=600)
     await repo.mark_dispatched(event_id, "queued")  # WS/webhook found nobody
     await db_session.commit()
 
@@ -467,7 +475,7 @@ async def test_heartbeat_ack_stops_redelivery_for_an_agent_without_ws(
     which is still a live status, so the row comes back every single time.
     """
     repo = AgentEventRepository(db_session)
-    event_id = await repo.create(agent_id, "battle_turn", {"n": 1}, ttl_seconds=600)
+    event_id = await repo.create(agent_id, "test_durable_event", {"n": 1}, ttl_seconds=600)
     await repo.mark_dispatched(event_id, "queued")  # no WS, nobody home
     await db_session.commit()
 
@@ -495,7 +503,7 @@ async def test_expired_event_cannot_be_acked(db_session, agent_id):
         text("""
             INSERT INTO agent_events
                 (event_id, target_agent_id, type, payload, status, dispatched_at, expires_at)
-            VALUES (CAST(:e AS UUID), CAST(:a AS UUID), 'battle_turn', '{}'::jsonb,
+            VALUES (CAST(:e AS UUID), CAST(:a AS UUID), 'test_durable_event', '{}'::jsonb,
                     'delivered', NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 minute')
         """),
         {"e": (expired_id := str(uuid.uuid4())), "a": agent_id},
@@ -522,7 +530,7 @@ async def test_expired_events_are_not_drained(db_session, agent_id):
     await db_session.execute(
         text("""
             INSERT INTO agent_events (target_agent_id, type, payload, status, expires_at)
-            VALUES (CAST(:a AS UUID), 'battle_turn', '{}'::jsonb, 'queued',
+            VALUES (CAST(:a AS UUID), 'test_durable_event', '{}'::jsonb, 'queued',
                     NOW() - INTERVAL '1 minute')
         """),
         {"a": agent_id},
@@ -562,7 +570,7 @@ def test_heartbeat_request_schema_accepts_acked_event_ids():
 
 
 class _FailClosedTask(ScheduledTask):
-    """Stands in for a battle round runner: spends budget, must not double-run."""
+    """Exercise the generic fail-closed scheduler contract."""
 
     name = "test_fail_closed"
     interval_s = 1
@@ -609,25 +617,10 @@ async def test_redis_outage_still_permits_a_fail_open_task():
 async def test_only_declared_tasks_are_fail_closed():
     """Guard: nothing in ALL_TASKS silently flipped semantics.
 
-    Was ``== [False] * len(ALL_TASKS)``. That shape asserted "no task has ever
-    opted in", which stopped being true the moment the flag was used for the
-    thing step 6 added it for: ``_FailClosedTask`` above is documented as a
-    stand-in for "a battle round runner: spends budget, must not double-run",
-    and BattleRunTask is now exactly that — it pays for judge calls and moves
-    Elo, so a duplicate run is unrecoverable. BattleMatchmakerTask (V72) opts in
-    for the same reason one level up: each battle it creates commits the platform
-    to two answer calls plus a judge panel, so four workers each creating one per
-    tick would quadruple the intended spend. BattleHarvesterTask opts in for the
-    same shared-budget reason: each drafting call spends the judge panel's daily
-    provider cap.
-
-    A named allowlist keeps the original intent and sharpens it. The guard was
-    against a SILENT flip, and it still fires on one: any task that sets
-    fail_closed without being declared here fails this test, and so does
-    BattleRunTask quietly losing it. Only the deliberate, declared opt-in passes.
+    Remaining platform tasks keep their declared fail-open semantics.
     """
     opted_in = {t.__name__ for t in ALL_TASKS if t.fail_closed}
-    assert opted_in == {"BattleRunTask", "BattleMatchmakerTask", "BattleHarvesterTask"}
+    assert opted_in == set()
     # Every other task keeps the long-standing fail-open default.
     assert [t.fail_closed for t in ALL_TASKS if t.__name__ not in opted_in] == [False] * (
         len(ALL_TASKS) - len(opted_in)

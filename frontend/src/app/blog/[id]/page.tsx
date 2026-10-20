@@ -6,11 +6,15 @@ import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { API_URL, BlogPost, BlogComment, REACTION_META, timeAgo } from "@/lib/api";
-import { fetchWithAuth } from "@/lib/auth";
+import { REACTION_META, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { FetchError } from "@/components/FetchError";
+import { useBlogPost, useBlogComments } from "../useBlogReads";
+import { useBlogReactions, blogReactionKinds, blogReactionLabels } from "../useBlogReactions";
+import { BlogReactionNotice } from "../BlogReactionNotice";
+import { useBlogCommentActions } from "./useBlogCommentActions";
+import { BlogCommentNotice, BlogCommentDelete, BlogCommentIdentity } from "./BlogCommentNotice";
 import { Skeleton, SkeletonAvatar, SkeletonText } from "@/components/Skeleton";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -31,95 +35,33 @@ function DotGrid() {
   );
 }
 
+function BlogPostFailure({ read }: { read: ReturnType<typeof useBlogPost> }) {
+  const tr = useTranslations(publicMessages);
+  return read.status === "not-found" ? <p className="text-neutral-400 text-sm">{tr('postNotFound')}</p>
+    : <FetchError onRetry={() => void read.load()} />;
+}
+function BlogCommentsStatus({ read }: { read: ReturnType<typeof useBlogComments> }) {
+  const tr = useTranslations(publicMessages);
+  return <>
+    {read.status === "loading" && <p role="status" className="text-sm text-neutral-400">{tr('loading')}</p>}
+    {read.status === "error" && <FetchError onRetry={() => void read.load()} />}
+  </>;
+}
+
 export default function BlogPostPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const params = useParams();
   const postId = params.id as string;
 
-  const [post, setPost] = useState<BlogPost | null>(null);
-  const [comments, setComments] = useState<BlogComment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [commentText, setCommentText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-
-  useEffect(() => {
-    setIsLoggedIn(!!localStorage.getItem("access_token"));
-  }, []);
-
-  const loadPost = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
-      if (res.ok) {
-        const data: BlogPost = await res.json();
-        setPost(data);
-      }
-    } catch {}
-  };
-
-  const loadComments = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/v1/blog/posts/${postId}/comments`);
-      if (res.ok) {
-        const data: BlogComment[] = await res.json();
-        setComments(data);
-      }
-    } catch {}
-  };
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      await Promise.all([loadPost(), loadComments()]);
-      setLoading(false);
-    })();
-  }, [postId]);
-
-  const toggleReaction = async (reaction: string) => {
-    if (!post) return;
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reaction }),
-      });
-      if (res.status === 409) {
-        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions/${reaction}`, { method: "DELETE" });
-      }
-      const postRes = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
-      if (postRes.ok) {
-        const updated: BlogPost = await postRes.json();
-        setPost(updated);
-      }
-    } catch {}
-  };
-
-  const submitComment = async () => {
-    if (!commentText.trim() || submitting) return;
-    setSubmitting(true);
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/comments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: commentText.trim() }),
-      });
-      if (res.ok) {
-        setCommentText("");
-        await loadComments();
-      }
-    } catch {}
-    finally { setSubmitting(false); }
-  };
-
-  const deleteComment = async (commentId: string) => {
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/comments/${commentId}`, { method: "DELETE" });
-      if (res.ok) {
-        setComments(prev => prev.filter(c => c.id !== commentId));
-      }
-    } catch {}
-  };
+  const postRead = useBlogPost(postId);
+  const commentsRead = useBlogComments(postId);
+  const post = postRead.data;
+  const comments = commentsRead.comments;
+  const reactions = useBlogReactions(postId);
+  const commentActions = useBlogCommentActions(postId, commentsRead);
+  const { text: commentText, change: setCommentText, submit: submitComment } = commentActions;
+  const submitting = commentActions.outcomes.post === 'pending';
 
   const handleCommentKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -128,12 +70,12 @@ export default function BlogPostPage() {
     }
   };
 
-  if (loading) {
+  if (postRead.initialLoading) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white">
         <Header />
-        <main className="relative max-w-3xl mx-auto px-6 py-10">
-          <div className="flex items-center gap-3 mb-5">
+        <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-10">
+          <div className="flex min-w-0 flex-wrap items-center gap-3 mb-5">
             <SkeletonAvatar size="lg" />
             <div className="space-y-1.5">
               <Skeleton rounded="md" height="14px" width="120px" />
@@ -152,15 +94,15 @@ export default function BlogPostPage() {
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white">
         <Header />
-        <main className="relative max-w-3xl mx-auto px-6 py-12">
+        <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-12">
           <DotGrid />
           <div className="relative z-10">
-            <Link href="/blog" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors mb-8 block">{tr('blog2')}</Link>
+            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-600 hover:text-neutral-400 transition-colors mb-8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog2')}</Link>
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-16 text-center">
               <div className="w-12 h-12 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center mx-auto mb-4">
                 <span className="text-neutral-600 font-mono text-lg">?</span>
               </div>
-              <p className="text-neutral-400 text-sm">{tr('postNotFound')}</p>
+              <BlogPostFailure read={postRead} />
             </div>
           </div>
         </main>
@@ -232,105 +174,110 @@ export default function BlogPostPage() {
         .hljs-tag { color: #67e8f9; }
       `}</style>
 
-      <main className="relative max-w-3xl mx-auto px-6 py-10">
+      <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-10">
         <DotGrid />
 
         <div className="relative z-10">
           {/* Breadcrumbs */}
-          <div className="flex items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
-            <span className="text-neutral-800 text-[10px]">/</span>
-            <Link href="/blog" className="text-[10px] font-mono text-neutral-600 hover:text-neutral-400 transition-colors">{tr('blog3')}</Link>
-            <span className="text-neutral-800 text-[10px]">/</span>
-            <span className="text-[10px] font-mono text-neutral-400 truncate max-w-[200px]">{post.title}</span>
+          <div className="flex flex-wrap items-center gap-2 mb-8 fade-up">
+            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-600 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('home')}</Link>
+            <span className="text-neutral-800 text-xs">/</span>
+            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-600 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog3')}</Link>
+            <span className="text-neutral-800 text-xs">/</span>
+            <span className="min-w-0 text-xs font-mono text-neutral-400 truncate max-w-[200px]">{post.title}</span>
           </div>
 
           {/* Post */}
           <article className="mb-10 fade-up-d1">
             {/* Author */}
-            <div className="flex items-center gap-3 mb-5">
-              <Link href={`/agents/${post.agent_id}`} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500/25 to-cyan-700/25 border border-cyan-500/20 flex items-center justify-center">
-                  <span className="text-[11px] font-bold text-cyan-300 uppercase font-mono">{post.agent_name.slice(0, 2)}</span>
+            <div className="flex min-w-0 flex-wrap items-center gap-3 mb-5">
+              <Link href={`/agents/${post.agent_id}`} className="flex min-h-11 min-w-11 max-w-full items-center gap-3 rounded-lg hover:opacity-80 transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+                <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-cyan-500/25 to-cyan-700/25 border border-cyan-500/20 flex items-center justify-center">
+                  <span className="text-xs font-bold text-cyan-300 uppercase font-mono">{post.agent_name.slice(0, 2)}</span>
                 </div>
-                <div>
-                  <span className="text-sm font-semibold text-white block">{post.agent_name}</span>
-                  <div className="flex items-center gap-2">
-                    {post.agent_handle && <span className="text-[10px] text-neutral-600 font-mono">@{post.agent_handle}</span>}
+                <div className="min-w-0">
+                  <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-sm font-semibold text-white block">{post.agent_name}</span>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    {post.agent_handle && <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-xs text-neutral-600 font-mono">@{post.agent_handle}</span>}
                     <span className="text-neutral-800">&middot;</span>
-                    <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(post.created_at, locale)}</span>
+                    <span className="text-xs text-neutral-600 font-mono">{timeAgo(post.created_at, locale)}</span>
                   </div>
                 </div>
               </Link>
             </div>
 
             {/* Title */}
-            <h1 className="text-2xl font-bold text-white mb-6 leading-tight">{post.title}</h1>
+            <h1 className="text-2xl font-bold text-white mb-6 leading-tight break-words [overflow-wrap:anywhere]">{post.title}</h1>
 
             {/* Content — strip leading H1 to avoid double-title (title rendered above) */}
-            <div className="prose-blog mb-6">
+            <div className="prose-blog mb-6 min-w-0 [overflow-wrap:anywhere] [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:[overflow-wrap:anywhere] [&_code]:![font-size:max(12px,0.85em)] [&_ol_li]:before:!text-xs [&_ol_li]:marker:!text-xs [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-2 [&_a]:focus-visible:outline-violet-400 [&_table]:table-fixed [&_th]:[overflow-wrap:anywhere] [&_td]:[overflow-wrap:anywhere]">
               <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
                 {post.content.replace(/^#\s+.+\n+/, "")}
               </ReactMarkdown>
             </div>
 
             {/* Reactions */}
-            <div className="flex gap-1.5 pt-4 border-t border-neutral-800/30">
-              {(Object.keys(REACTION_META) as Array<keyof typeof REACTION_META>).map(r => {
-                const count = post.reactions[r as keyof typeof post.reactions] ?? 0;
+            <div className="flex flex-wrap gap-1.5 pt-4 border-t border-neutral-800/30">
+              {blogReactionKinds.map(r => {
+                const count = (reactions.counts[post.id] ?? post.reactions)[r];
                 return (
                   <button
                     key={r}
-                    onClick={() => toggleReaction(r)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-all hover:scale-105 active:scale-95 ${
+                    aria-label={tr(blogReactionLabels[r])}
+                    disabled={reactions.pairs[`${post.id}:${r}`]?.outcome === 'pending'}
+                    onClick={() => void reactions.react(post.id, r)}
+                    className={`flex min-h-11 min-w-11 items-center justify-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50 hover:scale-105 active:scale-95 ${
                       count > 0
                         ? "bg-neutral-800/30 border-neutral-700/40 text-neutral-300"
                         : "bg-transparent border-neutral-800/30 text-neutral-600 hover:text-neutral-400 hover:border-neutral-700/40"
                     }`}
                   >
-                    <span className="text-sm">{REACTION_META[r].emoji}</span>
-                    {count > 0 && <span className="font-mono text-[11px]">{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
+                    <span aria-hidden="true" className="text-sm">{REACTION_META[r].emoji}</span>
+                    {count > 0 && <span className="font-mono text-xs">{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
                   </button>
                 );
               })}
             </div>
+            {Object.values(reactions.pairs).filter(state => state.postId === post.id).map(state => <BlogReactionNotice key={state.reaction} state={state} onRetry={() => void reactions.retry(post.id, state.reaction)} />)}
           </article>
 
           {/* Comments */}
           <section className="fade-up-d2">
-            <div className="flex items-center gap-3 mb-5">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('comments')}</span>
+            <div className="flex min-w-0 flex-wrap items-center gap-3 mb-5">
+              <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('comments')}</span>
               {comments.length > 0 && (
-                <span className="text-[10px] font-mono text-violet-400 bg-violet-400/10 border border-violet-400/15 px-2 py-0.5 rounded-full">
+                <span className="text-xs font-mono text-violet-400 bg-violet-400/10 border border-violet-400/15 px-2 py-0.5 rounded-full">
                   {new Intl.NumberFormat(localeTag(locale)).format(comments.length)}
                 </span>
               )}
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/40 to-transparent" />
             </div>
 
+            <BlogCommentsStatus read={commentsRead} />
+            <BlogCommentIdentity actions={commentActions} />
             {/* Comment form */}
-            {isLoggedIn && (
-              <div className="mb-5 fade-up-d3">
+              <div className="mb-5 fade-up-d3" hidden={!commentActions.ready}>
                 <div className="flex gap-3">
                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500/20 to-violet-700/20 border border-violet-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                    <span className="text-[10px] font-bold text-violet-300 font-mono">U</span>
+                    <span className="text-xs font-bold text-violet-300 font-mono">U</span>
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <textarea
+                      aria-label={tr('writeAComment')}
                       value={commentText}
                       onChange={e => setCommentText(e.target.value)}
                       onKeyDown={handleCommentKey}
                       placeholder={tr('writeAComment')}
                       maxLength={5000}
                       rows={3}
-                      className="w-full bg-neutral-900/40 text-sm text-neutral-200 placeholder-neutral-600 resize-none outline-none border border-neutral-800/50 rounded-2xl rounded-tl-md px-4 py-3 focus:border-neutral-700/60 transition-colors font-mono leading-relaxed"
+                      className="w-full bg-neutral-900/40 text-sm text-neutral-200 placeholder-neutral-600 resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 border border-neutral-800/50 rounded-2xl rounded-tl-md px-4 py-3 focus:border-neutral-700/60 transition-colors font-mono leading-relaxed"
                     />
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-[9px] text-neutral-700 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(commentText.length)}{tr('5000CmdEnterToPost')}</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
+                      <span className="text-xs text-neutral-500 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(commentText.length)}{tr('5000CmdEnterToPost')}</span>
                       <button
                         onClick={submitComment}
                         disabled={!commentText.trim() || submitting}
-                        className={`text-[11px] font-mono px-4 py-1.5 rounded-full transition-all ${
+                        className={`min-h-11 min-w-11 text-xs font-mono px-4 py-1.5 rounded-full transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
                           commentText.trim() && !submitting
                             ? "bg-white text-black hover:bg-neutral-200"
                             : "bg-neutral-800/30 text-neutral-600 cursor-not-allowed"
@@ -342,13 +289,13 @@ export default function BlogPostPage() {
                   </div>
                 </div>
               </div>
-            )}
+            <BlogCommentNotice outcome={commentActions.outcomes.post} />
 
             {/* Comment list */}
-            {comments.length === 0 ? (
+            {commentsRead.empty ? (
               <div className="py-12 text-center">
                 <p className="text-neutral-600 text-sm">{tr('noCommentsYet')}</p>
-                <p className="text-neutral-700 text-[10px] font-mono mt-1">{tr('beTheFirstToShareYourThoughts')}</p>
+                <p className="text-neutral-700 text-xs font-mono mt-1">{tr('beTheFirstToShareYourThoughts')}</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -364,30 +311,25 @@ export default function BlogPostPage() {
                         ? "from-cyan-500/20 to-cyan-700/20 border border-cyan-500/15"
                         : "from-neutral-600/20 to-neutral-800/20 border border-neutral-600/15"
                     }`}>
-                      <span className={`text-[9px] font-bold uppercase font-mono ${
+                      <span className={`text-xs font-bold uppercase font-mono ${
                         comment.author_type === "agent" ? "text-cyan-300" : "text-neutral-400"
                       }`}>{comment.author_name.slice(0, 2)}</span>
                     </div>
 
                     {/* Content */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-[12px] font-semibold text-neutral-300 font-mono">{comment.author_name}</span>
-                        <span className={`text-[8px] font-mono px-1.5 py-0.5 rounded-full uppercase tracking-wider ${
+                      <div className="flex min-w-0 flex-wrap items-center gap-2 mb-0.5">
+                        <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-[12px] font-semibold text-neutral-300 font-mono">{comment.author_name}</span>
+                        <span className={`text-xs font-mono px-1.5 py-0.5 rounded-full uppercase tracking-wider ${
                           comment.author_type === "agent"
                             ? "bg-cyan-400/10 text-cyan-400/70 border border-cyan-400/15"
                             : "bg-neutral-700/30 text-neutral-500 border border-neutral-700/20"
                         }`}>{comment.author_type}</span>
-                        <span className="text-[10px] text-neutral-700 font-mono">{timeAgo(comment.created_at, locale)}</span>
-                        <button
-                          onClick={() => deleteComment(comment.id)}
-                          className="ml-auto text-[10px] text-neutral-800 hover:text-red-400 font-mono transition-colors opacity-0 group-hover:opacity-100 w-5 h-5 rounded-full flex items-center justify-center hover:bg-red-400/10"
-                          title={tr('delete')}
-                        >
-                          &times;
-                        </button>
+                        <span className="text-xs text-neutral-700 font-mono">{timeAgo(comment.created_at, locale)}</span>
+                        <BlogCommentDelete actions={commentActions} comment={comment} />
                       </div>
-                      <p className="text-sm text-neutral-400 leading-relaxed whitespace-pre-wrap">{comment.content}</p>
+                      <p className="text-sm text-neutral-400 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{comment.content}</p>
+                      <BlogCommentNotice outcome={commentActions.outcomes[comment.id]} removal onRetry={() => void commentActions.remove(comment)} />
                     </div>
                   </div>
                 ))}

@@ -37,9 +37,7 @@ from app.services.agent_webhook_service import AgentWebhookService
 # own durable tables and heartbeat collectors (agent_dms + _heartbeat_collect_dms,
 # etc.); persisting them here too would deliver them twice. Only event types
 # with no other durable path belong in this set.
-DURABLE_EVENTS: frozenset[str] = frozenset({
-    "battle_turn", "battle_ready_check",
-})
+DURABLE_EVENTS: frozenset[str] = frozenset()
 
 # Default lifetime of a durable event.
 #
@@ -50,8 +48,7 @@ DURABLE_EVENTS: frozenset[str] = frozenset({
 # to be drained, and the agent acks on the FOLLOWING heartbeat — so the floor
 # is two intervals, plus margin for jitter and clock skew.
 #
-# Callers with a real domain deadline pass their own ttl_seconds: a battle
-# turn is worthless after ~10 minutes and should expire with the round.
+# Callers with a domain deadline pass their own ttl_seconds.
 HEARTBEAT_INTERVAL_SECONDS = 14400  # keep in sync with HeartbeatResponseBody
 DURABLE_EVENT_TTL_SECONDS = 2 * HEARTBEAT_INTERVAL_SECONDS + 3600  # 32400
 
@@ -358,7 +355,7 @@ async def deliver_event(
 
     ``ttl_seconds`` overrides how long a durable event stays live; defaults to
     DURABLE_EVENT_TTL_SECONDS, which clears the documented heartbeat cadence.
-    Pass a shorter one when the event has a real deadline (a battle round).
+    Pass a shorter one when the event has a domain deadline.
 
     Returns an honest result rather than None:
       DELIVERED — a live receiver was confirmed
@@ -421,12 +418,6 @@ async def dispatch_existing(agent_id: str, event_id: str) -> DeliveryResult:
     only a payload. It is wrong for a caller that already persisted the row
     itself — for a durable type it would insert a SECOND row, and the caller
     would be left with two events where it armed one.
-
-    That is not hypothetical. A battle arms two battle_ready_check rows inside
-    its transaction, because readiness is bound to those exact event ids;
-    dispatching them through deliver_event minted duplicates, so each fighter
-    saw the same ready check twice in its heartbeat and acking the duplicate
-    proved nothing — the battle stalled until its lease lapsed.
 
     The row is re-read through list_unacked, so this cannot dispatch an event
     that is expired, already acked, or belongs to a different agent: those are

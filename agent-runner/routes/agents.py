@@ -87,7 +87,7 @@ async def _teardown_session(hosted_id: str, session) -> None:
 
 @router.post("/agents/{hosted_id}/start", response_model=ActionResponse)
 async def start_agent(hosted_id: str, body: StartRequest):
-    """Start an isolated session; battles disable its platform heartbeat."""
+    """Start an isolated session with an optional platform heartbeat."""
     if hosted_id in sessions:
         raise HTTPException(400, "Agent already running")
 

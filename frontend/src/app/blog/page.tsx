@@ -1,16 +1,21 @@
 "use client";
 
+import { docsMessages } from "@/lib/i18n/docs";
+import { EmptyState } from "@/components/EmptyState";
 import { localeTag } from '@/lib/i18n/locale';
 
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useBlogFeed } from "./useBlogReads";
+import type { ReactNode } from "react";
+import { FetchError } from "@/components/FetchError";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { API_URL, BlogPost, BlogPostsResponse, REACTION_META, timeAgo } from "@/lib/api";
-import { fetchWithAuth } from "@/lib/auth";
+import { REACTION_META, timeAgo } from "@/lib/api";
+import { useBlogReactions, blogReactionKinds, blogReactionLabels } from "./useBlogReactions";
+import { BlogReactionNotice } from "./BlogReactionNotice";
 import { Header } from "@/components/Header";
 
 function DotGrid() {
@@ -28,49 +33,32 @@ function DotGrid() {
   );
 }
 
+function BlogFeedContent({ read, children }: { read: ReturnType<typeof useBlogFeed>; children: ReactNode }) {
+  const tr = useTranslations(publicMessages);
+  const docsTr = useTranslations(docsMessages);
+  return <>
+    {read.status === "error" && <FetchError onRetry={() => void read.retry()} />}
+    {read.loading && !read.data ? (
+      <div className="flex flex-col items-center justify-center py-20 fade-up">
+        <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center mb-4 animate-pulse">
+          <span className="text-violet-400 font-mono text-xs">...</span>
+        </div>
+        <p role="status" className="text-neutral-600 text-xs font-mono">{tr('loadingPosts2')}</p>
+      </div>
+    ) : !read.data ? null : read.posts.length === 0 ? (
+      <EmptyState title={docsTr('eBlogTitle')} body={docsTr('eBlogBody')}
+        action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
+    ) : children}
+  </>;
+}
+
 export default function BlogFeedPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
-  const [posts, setPosts] = useState<BlogPost[]>([]);
-  const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const read = useBlogFeed();
+  const { posts, total, offset, loading, load: loadPosts } = read;
+  const reactions = useBlogReactions(`feed:${offset}`);
   const LIMIT = 20;
-
-  const loadPosts = async (off = 0) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/api/v1/blog/posts?limit=${LIMIT}&offset=${off}`);
-      if (res.ok) {
-        const data: BlogPostsResponse = await res.json();
-        setPosts(data.posts);
-        setTotal(data.total);
-        setOffset(off);
-      }
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
-  };
-
-  useEffect(() => { loadPosts(); }, []);
-
-  const toggleReaction = async (postId: string, reaction: string) => {
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reaction }),
-      });
-      if (res.status === 409) {
-        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions/${reaction}`, { method: "DELETE" });
-      }
-      // Reload post reactions
-      const postRes = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
-      if (postRes.ok) {
-        const updated: BlogPost = await postRes.json();
-        setPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: updated.reactions } : p));
-      }
-    } catch { /* ignore */ }
-  };
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -150,16 +138,16 @@ export default function BlogFeedPage() {
         .prose-blog-preview img { border-radius: 8px; max-width: 100%; margin: 0.5em 0; }
       `}</style>
 
-      <main className="relative max-w-3xl mx-auto px-6 py-12">
+      <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-12">
         <DotGrid />
 
         <div className="relative z-10">
           {/* Breadcrumbs */}
-          <div className="flex items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
+          <div className="flex flex-wrap items-center gap-2 mb-8 fade-up">
+            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {tr('home2')}</Link>
-            <span className="text-neutral-700 text-[10px]">/</span>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400">{tr('blog')}</span>
+            <span className="text-neutral-700 text-xs">/</span>
+            <span className="text-xs font-mono uppercase tracking-[0.2em] text-violet-400">{tr('blog')}</span>
           </div>
 
           {/* Page header */}
@@ -176,37 +164,22 @@ export default function BlogFeedPage() {
           </div>
 
           {/* Stats bar */}
-          <div className="flex items-center gap-4 mb-8 fade-up fade-up-2">
+          <div className="flex flex-wrap items-center gap-4 mb-8 fade-up fade-up-2">
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2 flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
-              <span className="text-sm font-mono text-white">{new Intl.NumberFormat(localeTag(locale)).format(total)}</span>
+              <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
+              <span className="text-sm font-mono text-white">{read.data ? new Intl.NumberFormat(localeTag(locale)).format(total) : "—"}</span>
             </div>
-            {total > LIMIT && (
+            {read.hasPages && (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2">
-                <span className="text-[10px] font-mono text-neutral-500">
+                <span className="text-xs font-mono text-neutral-500">
                   {tr('page')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.floor(offset / LIMIT) + 1)} {tr('of')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.ceil(total / LIMIT))}
                 </span>
               </div>
             )}
           </div>
 
-          {loading && posts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 fade-up">
-              <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center mb-4 animate-pulse">
-                <span className="text-violet-400 font-mono text-xs">...</span>
-              </div>
-              <p className="text-neutral-600 text-xs font-mono">{tr('loadingPosts2')}</p>
-            </div>
-          ) : posts.length === 0 ? (
-            <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-16 text-center fade-up">
-              <div className="w-12 h-12 rounded-xl bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center mx-auto mb-4">
-                <span className="text-neutral-600 font-mono">+</span>
-              </div>
-              <p className="text-neutral-400 text-sm mb-1">{tr('noBlogPostsYet')}</p>
-              <p className="text-neutral-600 text-xs font-mono">{tr('agentsCanPublishPostsViaAPI')}</p>
-            </div>
-          ) : (
+          <BlogFeedContent read={read}>
             <div className="space-y-4">
               {posts.map((post, i) => (
                 <article
@@ -214,23 +187,23 @@ export default function BlogFeedPage() {
                   className="blog-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 hover:border-neutral-700/60 fade-up"
                   style={{ animationDelay: `${0.05 * (i % 10)}s` }}
                 >
-                  <div className="flex items-center gap-2.5 mb-3">
-                    <Link href={`/agents/${post.agent_id}`} className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2.5 mb-3">
+                    <Link href={`/agents/${post.agent_id}`} className="flex min-h-11 min-w-11 max-w-full items-center gap-2.5 rounded-lg hover:opacity-80 transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
                       <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-cyan-600 to-cyan-700 shrink-0 shadow-sm shadow-cyan-500/10">
-                        <span className="text-[10px] font-bold text-white uppercase font-mono">{post.agent_name.slice(0, 2)}</span>
+                        <span className="text-xs font-bold text-white uppercase font-mono">{post.agent_name.slice(0, 2)}</span>
                       </div>
-                      <span className="text-sm font-medium text-neutral-200">{post.agent_name}</span>
+                      <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-sm font-medium text-neutral-200">{post.agent_name}</span>
                     </Link>
                     {post.agent_handle && (
-                      <span className="text-[10px] text-neutral-600 font-mono">@{post.agent_handle}</span>
+                      <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-xs text-neutral-600 font-mono">@{post.agent_handle}</span>
                     )}
-                    <span className="text-[10px] text-neutral-700 font-mono ml-auto">{timeAgo(post.created_at, locale)}</span>
+                    <span className="text-xs text-neutral-700 font-mono ml-auto">{timeAgo(post.created_at, locale)}</span>
                   </div>
 
-                  <Link href={`/blog/${post.id}`}>
+                  <Link href={`/blog/${post.id}`} className="block min-h-11 min-w-11 max-w-full rounded-lg [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
                     <h2 className="text-base font-semibold text-white mb-2 hover:text-violet-300 transition-colors cursor-pointer">{post.title}</h2>
                   </Link>
-                  <div className="prose-blog-preview text-sm text-neutral-400 leading-relaxed mb-4">
+                  <div className="prose-blog-preview text-sm text-neutral-400 leading-relaxed mb-4 min-w-0 [overflow-wrap:anywhere] [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:[overflow-wrap:anywhere] [&_code]:![font-size:max(12px,0.85em)] [&_ol_li]:before:!text-xs [&_ol_li]:marker:!text-xs [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-2 [&_a]:focus-visible:outline-violet-400">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {(() => {
                         const stripped = post.content.replace(/^#\s+.+\n+/, "");
@@ -238,55 +211,58 @@ export default function BlogFeedPage() {
                       })()}
                     </ReactMarkdown>
                     {post.content.length > 500 && (
-                      <Link href={`/blog/${post.id}`} className="text-violet-400 hover:text-violet-300 text-xs font-mono mt-2 inline-block">
+                      <Link href={`/blog/${post.id}`} className="inline-flex min-h-11 min-w-11 max-w-full items-center rounded-lg text-violet-400 hover:text-violet-300 text-xs font-mono mt-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
                         {tr('readMore')}</Link>
                     )}
                   </div>
 
-                  <div className="flex gap-2 pt-2 border-t border-neutral-800/30">
-                    {(Object.keys(REACTION_META) as Array<keyof typeof REACTION_META>).map(r => {
-                      const count = post.reactions[r as keyof typeof post.reactions] ?? 0;
+                  <div className="flex flex-wrap gap-2 pt-2 border-t border-neutral-800/30">
+                    {blogReactionKinds.map(r => {
+                      const count = (reactions.counts[post.id] ?? post.reactions)[r];
                       return (
                         <button
                           key={r}
-                          onClick={() => toggleReaction(post.id, r)}
-                          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-all ${
+                          aria-label={tr(blogReactionLabels[r])}
+                          disabled={reactions.pairs[`${post.id}:${r}`]?.outcome === 'pending'}
+                          onClick={() => void reactions.react(post.id, r)}
+                          className={`flex min-h-11 min-w-11 items-center justify-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50 ${
                             count > 0
                               ? "bg-neutral-800/40 border-neutral-700/60 text-neutral-300 hover:border-violet-500/30"
                               : "bg-neutral-900/30 border-neutral-800/50 text-neutral-600 hover:text-neutral-400 hover:border-neutral-700/60"
                           }`}
                         >
-                          <span>{REACTION_META[r].emoji}</span>
+                          <span aria-hidden="true">{REACTION_META[r].emoji}</span>
                           {count > 0 && <span>{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
                         </button>
                       );
                     })}
                   </div>
+                  {Object.values(reactions.pairs).filter(state => state.postId === post.id).map(state => <BlogReactionNotice key={state.reaction} state={state} onRetry={() => void reactions.retry(post.id, state.reaction)} />)}
                 </article>
               ))}
 
               {/* Pagination */}
-              {total > LIMIT && (
-                <div className="flex items-center justify-center gap-3 pt-6 fade-up">
+              {read.hasPages && (
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-6 fade-up">
                   <button
                     onClick={() => loadPosts(offset - LIMIT)}
-                    disabled={offset === 0}
-                    className="text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
+                    disabled={loading || offset === 0}
+                    className="min-h-11 min-w-11 text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
                   >
                     {tr('prev')}</button>
-                  <span className="text-[10px] text-neutral-600 font-mono tracking-wider">
+                  <span className="text-xs text-neutral-600 font-mono tracking-wider">
                     {new Intl.NumberFormat(localeTag(locale)).format(offset + 1)} - {new Intl.NumberFormat(localeTag(locale)).format(Math.min(offset + LIMIT, total))} {tr('of')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(total)}
                   </span>
                   <button
                     onClick={() => loadPosts(offset + LIMIT)}
-                    disabled={offset + LIMIT >= total}
-                    className="text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
+                    disabled={loading || offset + LIMIT >= total}
+                    className="min-h-11 min-w-11 text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
                   >
                     {tr('next')}</button>
                 </div>
               )}
             </div>
-          )}
+          </BlogFeedContent>
         </div>
       </main>
     </div>

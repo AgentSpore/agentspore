@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useLocale } from "@/lib/i18n/LocaleProvider";
 import { API_URL, type Project } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { VisitorHint } from "@/components/VisitorHint";
 import { SkeletonList } from "@/components/Skeleton";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { usePolledResource } from "@/hooks/usePolledResource";
@@ -62,9 +63,9 @@ function ShowcaseCard({ project: p, index, language }: { project: Project; index
       style={{ animationDelay: `${index * 60}ms` }}>
 
       <div className="min-w-0">
-        <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors truncate">{p.title}</h3>
+        <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors whitespace-normal [overflow-wrap:anywhere]">{p.title}</h3>
         {repoPath && (
-          <span className="text-[10px] font-mono text-neutral-600 tracking-wide truncate block mt-1">{repoPath}</span>
+          <span className="text-xs font-mono text-neutral-600 tracking-wide whitespace-normal [overflow-wrap:anywhere] block mt-1">{repoPath}</span>
         )}
       </div>
 
@@ -73,24 +74,24 @@ function ShowcaseCard({ project: p, index, language }: { project: Project; index
       {p.tech_stack.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {p.tech_stack.slice(0, 4).map(t => (
-            <span key={t} className="text-[10px] px-2 py-0.5 rounded-md bg-neutral-800/40 text-neutral-500 font-mono border border-neutral-800/30">{t}</span>
+            <span key={t} className="min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere] text-xs px-2 py-0.5 rounded-md bg-neutral-800/40 text-neutral-500 font-mono border border-neutral-800/30">{t}</span>
           ))}
           {p.tech_stack.length > 4 && (
-            <span className="text-[10px] text-neutral-700 font-mono">+{p.tech_stack.length - 4}</span>
+            <span className="text-xs text-neutral-700 font-mono">+{p.tech_stack.length - 4}</span>
           )}
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-2 pt-3 border-t border-neutral-800/40 overflow-hidden">
-        <span className="text-[11px] text-neutral-400 font-mono truncate">{p.agent_handle}</span>
-        <div className="flex items-center gap-2.5 shrink-0">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 pt-3 border-t border-neutral-800/40">
+        <span className="text-xs text-neutral-400 font-mono min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere]">{p.agent_handle}</span>
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2.5">
           {p.repo_url && (
             <a href={p.repo_url} target="_blank" rel="noopener noreferrer"
-              className="text-neutral-600 hover:text-neutral-300 transition-colors text-[11px] font-mono">{copy.repo}</a>
+              className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-600 hover:text-neutral-300 transition-colors text-xs font-mono focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-300">{copy.repo}</a>
           )}
           {p.status !== "archived" && p.deploy_url && (
             <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
-              className="text-neutral-500 hover:text-white transition-colors text-[11px] font-mono">{copy.demo}</a>
+              className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-500 hover:text-white transition-colors text-xs font-mono focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-300">{copy.demo}</a>
           )}
         </div>
       </div>
@@ -169,9 +170,9 @@ export default function ShowcasePage() {
     <div className="min-h-screen bg-[#0a0a0a] text-white relative">
       <DotGrid />
       <Header />
-      <main lang={language} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
+      <main id="main-content" tabIndex={-1} lang={language} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
         <div className="flex items-center gap-2 mb-8 text-xs font-mono">
-          <Link href="/" className="text-neutral-400 hover:text-white">{copy.home}</Link>
+          <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 hover:text-white focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300">{copy.home}</Link>
           <span aria-hidden="true" className="text-neutral-500">/</span><span className="text-neutral-300">showcase</span>
         </div>
         <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
@@ -189,11 +190,12 @@ export default function ShowcasePage() {
           <h2 id="project-catalog" className="text-lg font-medium">{copy.catalog}</h2>
           <p className="text-neutral-300 text-sm mt-2 mb-3">{copy.catalogIntro}</p>
           <div className="flex flex-wrap items-center gap-4 mb-5">
-            <span className="text-sm text-neutral-400">{showcased.length} {copy.apps}</span>
+            {data !== null && <span className="text-sm text-neutral-400">{showcased.length} {copy.apps}</span>}
             <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
           </div>
           <ProjectCatalog projects={showcased} loading={loading} error={error} language={language} />
         </section>
+        <VisitorHint />
       </main>
     </div>
   );

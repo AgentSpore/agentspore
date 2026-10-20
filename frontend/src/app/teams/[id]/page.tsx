@@ -6,12 +6,11 @@ import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { API_URL, CHAT_MSG_META, SPEC_COLORS, TeamDetail, TeamMessage, timeAgo } from "@/lib/api";
-import { fetchWithAuth } from "@/lib/auth";
+import { useState } from "react";
+import { TeamDetail, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { FetchError } from "@/components/FetchError";
+import { useTeamDetails } from "./useTeamDetails";
 
 function DotGrid() {
   return (
@@ -34,235 +33,48 @@ function MemberAvatar({ name, type }: { name: string; type: "agent" | "user" }) 
     : "bg-gradient-to-br from-violet-600 to-violet-700 shadow-sm shadow-violet-500/10";
   return (
     <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
-      <span className="text-[10px] font-bold text-white uppercase font-mono">{name.slice(0, 2)}</span>
-    </div>
-  );
-}
-
-function ChatBubble({ msg }: { msg: TeamMessage }) {
-  const { locale } = useLocale();
-  const meta = CHAT_MSG_META[msg.message_type] ?? CHAT_MSG_META.text;
-  const isUser = msg.sender_type === "user";
-  const color = isUser
-    ? "bg-gradient-to-br from-violet-600 to-violet-700"
-    : (SPEC_COLORS[msg.specialization] ?? "bg-neutral-600");
-
-  return (
-    <div className="flex items-start gap-3 group">
-      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
-        <span className="text-[10px] font-bold text-white uppercase font-mono">{msg.sender_name.slice(0, 2)}</span>
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 mb-0.5">
-          {msg.sender_agent_id ? (
-            <Link href={`/agents/${msg.sender_agent_id}`}
-              className="text-xs font-semibold text-neutral-200 hover:text-violet-300 transition-colors">
-              {msg.sender_name}
-            </Link>
-          ) : (
-            <span className="text-xs font-semibold text-violet-300">{msg.sender_name}</span>
-          )}
-          <span className="text-[10px] font-mono text-neutral-700">{displayPublicLabel(locale, isUser ? 'human' : msg.specialization)}</span>
-          {msg.message_type !== "text" && (
-            <span className={`text-[9px] font-bold font-mono px-1.5 py-0.5 rounded ${meta.bg} ${meta.color}`}>
-              {meta.icon} {displayPublicLabel(locale, meta.label)}
-            </span>
-          )}
-          <span className="text-[10px] font-mono text-neutral-700 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
-            {timeAgo(msg.ts, locale)}
-          </span>
-        </div>
-        <div className={`text-sm leading-relaxed break-words ${meta.color}`}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-            p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
-            strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-            a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">{children}</a>,
-            code: ({ children }) => <code className="bg-white/[0.06] px-1 py-0.5 rounded text-[11px] text-violet-300">{children}</code>,
-            pre: ({ children }) => <pre className="bg-black/30 rounded-lg p-2 my-1 overflow-x-auto text-[11px]">{children}</pre>,
-          }}>{msg.content}</ReactMarkdown>
-        </div>
-      </div>
+      <span className="text-xs font-bold text-white uppercase font-mono">{name.slice(0, 2)}</span>
     </div>
   );
 }
 
 export default function TeamPage() {
+  const { id } = useParams<{ id: string }>();
+  return <TeamDetails key={id} id={id} />;
+}
+
+function TeamDetails({ id }: { id: string }) {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
-  const { id } = useParams<{ id: string }>();
-  const [team, setTeam] = useState<TeamDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<TeamMessage[]>([]);
-  const [tab, setTab] = useState<"members" | "projects" | "chat">("members");
-  const esRef = useRef<EventSource | null>(null);
+  const read = useTeamDetails(id);
+  const team = read.data;
+  const [tab, setTab] = useState<"members" | "projects">("members");
 
-  // Chat input state
-  const [userName, setUserName] = useState<string | null>(null);
-  const [content, setContent] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    fetch(`${API_URL}/api/v1/teams/${id}`)
-      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((d: TeamDetail) => { setTeam(d); setLoading(false); })
-      .catch(() => { setError(publicMessages.en.teamNotFound); setLoading(false); });
-  }, [id]);
-
-  // Load chat history (initial load, reversed for display)
-  useEffect(() => {
-    if (!team) return;
-    fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=50`)
-      .then(r => r.ok ? r.json() : [])
-      .then((msgs: TeamMessage[]) => {
-        setMessages(msgs.reverse());
-        setHasMore(msgs.length === 50);
-        setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
-      })
-      .catch(() => {});
-  }, [team, id]);
-
-  // Check auth
-  useEffect(() => {
-    fetchWithAuth(`${API_URL}/api/v1/auth/me`)
-      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-      .then(u => setUserName(u.name))
-      .catch(() => setUserName(null));
-  }, []);
-
-  // SSE for new messages (public read)
-  useEffect(() => {
-    if (!team) return;
-    const es = new EventSource(`${API_URL}/api/v1/teams/${id}/stream`);
-    esRef.current = es;
-    es.onmessage = (e) => {
-      try {
-        const msg: TeamMessage = JSON.parse(e.data);
-        if (msg.type === "ping") return;
-        setMessages(prev => {
-          if (prev.some(m => m.id === msg.id)) return prev;
-          return [...prev, msg].slice(-500);
-        });
-        // Auto-scroll if near bottom
-        const container = containerRef.current;
-        if (container) {
-          const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-          if (isNearBottom) {
-            setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
-          }
-        }
-      } catch {}
-    };
-    es.onerror = () => { es.close(); };
-    return () => es.close();
-  }, [team, id]);
-
-  // Load older messages on scroll up
-  const loadOlder = useCallback(async () => {
-    if (!hasMore || loadingMore || messages.length === 0) return;
-    setLoadingMore(true);
-    const oldestId = messages[0].id;
-    const container = containerRef.current;
-    const prevHeight = container?.scrollHeight ?? 0;
-
-    try {
-      const res = await fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=50&before=${oldestId}`);
-      if (res.ok) {
-        const older: TeamMessage[] = await res.json();
-        setMessages(prev => [...older.reverse(), ...prev]);
-        setHasMore(older.length === 50);
-        requestAnimationFrame(() => {
-          if (container) container.scrollTop = container.scrollHeight - prevHeight;
-        });
-      }
-    } catch { /* ignore */ }
-    setLoadingMore(false);
-  }, [hasMore, loadingMore, messages, id]);
-
-  const handleChatScroll = () => {
-    const container = containerRef.current;
-    if (container && container.scrollTop < 50) loadOlder();
-  };
-
-  const loadMessages = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/v1/teams/${id}/messages?limit=10`);
-      if (res.ok) {
-        const msgs: TeamMessage[] = await res.json();
-        const newMsgs = msgs.reverse();
-        setMessages(prev => {
-          const toAppend = newMsgs.filter(m => !prev.some(p => p.id === m.id));
-          return toAppend.length > 0 ? [...prev, ...toAppend] : prev;
-        });
-      }
-    } catch { /* ignore */ }
-  }, [id]);
-
-  const handleSend = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!userName || !content.trim() || sending) return;
-    setSending(true);
-    setSendError(null);
-
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/teams/${id}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: content.trim(), message_type: "text" }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setSendError(data.detail ?? publicMessages.en.failedToSend);
-        return;
-      }
-      setContent("");
-      textareaRef.current?.focus();
-      await loadMessages();
-    } catch {
-      setSendError(publicMessages.en.networkError);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  if (loading) return (
+  if (read.status === "loading") return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
-      <div className="flex items-center justify-center py-32">
+      <main id="main-content" tabIndex={-1} className="flex items-center justify-center py-32">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center animate-pulse">
             <span className="text-violet-400 font-mono text-xs">...</span>
           </div>
           <p className="text-neutral-600 text-xs font-mono">{tr('loadingTeam')}</p>
         </div>
-      </div>
+      </main>
     </div>
   );
 
-  if (error || !team) return (
+  if (!team) return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
-      <div className="flex flex-col items-center justify-center py-32 gap-4">
+      <main id="main-content" tabIndex={-1} className="flex flex-col items-center justify-center py-32 gap-4">
         <div className="w-12 h-12 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
           <span className="text-red-400 font-mono">!</span>
         </div>
-        <p className="text-red-400 text-sm font-mono">{displayPublicLabel(locale, error || publicMessages.en.notFound)}</p>
-        <Link href="/teams" className="text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 hover:text-white hover:border-neutral-700/60 transition-all">
+        {read.status === "error" ? <div className="max-w-full px-4 [overflow-wrap:anywhere] [&_button:focus-visible]:outline-3 [&_button:focus-visible]:outline-offset-2 [&_button:focus-visible]:outline-violet-300"><FetchError onRetry={read.retry} /></div> : <p className="text-red-400 text-sm font-mono">{tr('teamNotFound')}</p>}
+        <Link href="/teams" className="text-xs font-mono px-4 py-2 min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 hover:text-white hover:border-neutral-700/60 transition-all">
           {tr('backToTeams')}</Link>
-      </div>
+      </main>
     </div>
   );
 
@@ -291,28 +103,28 @@ export default function TeamPage() {
         }
       `}</style>
 
-      <main className="relative max-w-5xl mx-auto px-6 py-12">
+      <main id="main-content" tabIndex={-1} className="relative max-w-5xl mx-auto px-6 py-12">
         <DotGrid />
 
         <div className="relative z-10">
           {/* Breadcrumbs */}
-          <div className="flex items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
+          <div className="flex flex-wrap items-center gap-2 mb-8 fade-up">
+            <Link href="/" className="text-xs font-mono uppercase tracking-wide text-neutral-600 hover:text-neutral-400 transition-colors inline-flex items-center min-h-11 min-w-11">
               {tr('home2')}</Link>
-            <span className="text-neutral-700 text-[10px]">/</span>
-            <Link href="/teams" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
+            <span className="text-neutral-700 text-xs">/</span>
+            <Link href="/teams" className="text-xs font-mono uppercase tracking-wide text-neutral-600 hover:text-neutral-400 transition-colors inline-flex items-center min-h-11 min-w-11">
               {tr('teams')}</Link>
-            <span className="text-neutral-700 text-[10px]">/</span>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400 truncate max-w-[200px]">{team.name}</span>
+            <span className="text-neutral-700 text-xs">/</span>
+            <span className="text-xs font-mono uppercase tracking-wide text-violet-400 truncate max-w-[200px] min-w-0">{team.name}</span>
           </div>
 
           {/* Hero */}
           <div className="mb-10 fade-up fade-up-1">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+            <div className="flex items-start gap-4 mb-4 min-w-0">
+              <div className="w-12 h-12 shrink-0 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
                 <span className="text-violet-400 font-mono text-lg font-bold">{team.name.slice(0, 1)}</span>
               </div>
-              <div>
+              <div className="min-w-0 [overflow-wrap:anywhere]">
                 <h1 className="text-2xl font-bold text-white">{team.name}</h1>
                 {team.description && (
                   <p className="text-neutral-500 text-sm mt-1 max-w-2xl">{team.description}</p>
@@ -322,38 +134,37 @@ export default function TeamPage() {
 
             {/* Stats row */}
             <div className="flex flex-wrap items-center gap-3 mt-4">
-              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-3 py-1.5 flex items-center gap-2">
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('creator')}</span>
+              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-3 py-1.5 flex flex-wrap items-center gap-2 min-w-0 max-w-full [overflow-wrap:anywhere]">
+                <span className="text-xs font-mono uppercase tracking-wide text-neutral-600">{tr('creator')}</span>
                 <span className="text-xs font-mono text-neutral-300">{team.creator_name}</span>
               </div>
-              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-3 py-1.5 flex items-center gap-2">
+              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-3 py-1.5 flex flex-wrap items-center gap-2 min-w-0 max-w-full [overflow-wrap:anywhere]">
                 <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('members2')}</span>
+                <span className="text-xs font-mono uppercase tracking-wide text-neutral-600">{tr('members2')}</span>
                 <span className="text-xs font-mono text-white">{new Intl.NumberFormat(localeTag(locale)).format(team.members.length)}</span>
               </div>
-              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-3 py-1.5 flex items-center gap-2">
+              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-3 py-1.5 flex flex-wrap items-center gap-2 min-w-0 max-w-full [overflow-wrap:anywhere]">
                 <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('projects')}</span>
+                <span className="text-xs font-mono uppercase tracking-wide text-neutral-600">{tr('projects')}</span>
                 <span className="text-xs font-mono text-white">{new Intl.NumberFormat(localeTag(locale)).format(team.projects.length)}</span>
               </div>
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-3 py-1.5">
-                <span className="text-[10px] font-mono text-neutral-600">{timeAgo(team.created_at, locale)}</span>
+                <span className="text-xs font-mono text-neutral-600">{timeAgo(team.created_at, locale)}</span>
               </div>
             </div>
           </div>
 
           {/* Tabs */}
-          <div className="flex items-center gap-1 mb-8 fade-up fade-up-2">
-            {(["members", "projects", "chat"] as const).map(t => (
+          <div className="flex flex-wrap items-center gap-1 mb-8 fade-up fade-up-2">
+            {(["members", "projects"] as const).map(t => (
               <button key={t} onClick={() => setTab(t)}
-                className={`px-4 py-2.5 text-xs font-mono rounded-lg transition-all ${
+                className={`px-4 py-2.5 min-h-11 min-w-11 text-xs font-mono rounded-lg transition-all ${
                   tab === t
                     ? "text-white bg-white/[0.06] border border-neutral-700/60"
                     : "text-neutral-500 hover:text-neutral-300 border border-transparent hover:bg-white/[0.03]"
                 }`}>
                 {t === "members" ? `${tr('members')} (${team.members.length.toLocaleString(localeTag(locale))})` :
-                 t === "projects" ? `${tr('projects')} (${team.projects.length.toLocaleString(localeTag(locale))})` :
-                 `${displayPublicLabel(locale, 'Chat')} ${messages.length > 0 ? `(${messages.length.toLocaleString(localeTag(locale))})` : ''}`}
+                 `${tr('projects')} (${team.projects.length.toLocaleString(localeTag(locale))})`}
               </button>
             ))}
           </div>
@@ -364,8 +175,8 @@ export default function TeamPage() {
               {owners.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-4">
-                    <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('owners')}</span>
-                    <span className="text-[10px] font-mono text-orange-400 bg-orange-400/10 border border-orange-400/20 px-2 py-0.5 rounded-md">
+                    <span className="text-xs font-mono uppercase tracking-wide text-neutral-600">{tr('owners')}</span>
+                    <span className="text-xs font-mono text-orange-400 bg-orange-400/10 border border-orange-400/20 px-2 py-0.5 rounded-md">
                       {new Intl.NumberFormat(localeTag(locale)).format(owners.length)}
                     </span>
                   </div>
@@ -379,8 +190,8 @@ export default function TeamPage() {
               {members.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-4">
-                    <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('members2')}</span>
-                    <span className="text-[10px] font-mono text-cyan-400 bg-cyan-400/10 border border-cyan-400/20 px-2 py-0.5 rounded-md">
+                    <span className="text-xs font-mono uppercase tracking-wide text-neutral-600">{tr('members2')}</span>
+                    <span className="text-xs font-mono text-cyan-400 bg-cyan-400/10 border border-cyan-400/20 px-2 py-0.5 rounded-md">
                       {new Intl.NumberFormat(localeTag(locale)).format(members.length)}
                     </span>
                   </div>
@@ -398,7 +209,7 @@ export default function TeamPage() {
           {tab === "projects" && (
             <div className="fade-up fade-up-3">
               {team.projects.length === 0 ? (
-                <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-16 text-center">
+                <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-6 sm:p-16 text-center">
                   <div className="w-12 h-12 rounded-xl bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center mx-auto mb-4">
                     <span className="text-neutral-600 font-mono">/</span>
                   </div>
@@ -409,19 +220,19 @@ export default function TeamPage() {
                 <div className="space-y-2">
                   {team.projects.map((p, i) => (
                     <Link key={p.id} href={`/projects/${p.id}`}
-                      className="member-card flex items-center gap-4 p-4 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm hover:border-neutral-700/60 transition-all block fade-up"
+                      className="member-card flex flex-wrap items-start gap-4 p-4 min-h-11 min-w-11 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm hover:border-neutral-700/60 transition-all fade-up"
                       style={{ animationDelay: `${0.15 + 0.04 * i}s` }}
                     >
                       <div className="w-9 h-9 rounded-lg bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center shrink-0">
                         <span className="text-neutral-400 font-mono text-xs">/</span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-medium text-white text-sm">{p.title}</h4>
+                        <h4 className="font-medium text-white text-sm [overflow-wrap:anywhere]">{p.title}</h4>
                         <p className="text-neutral-600 text-xs mt-0.5 line-clamp-1 font-mono">{p.description}</p>
                       </div>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <span className="text-[10px] text-neutral-600 font-mono">{tr('by')}{' '}{p.agent_name}</span>
-                        <span className={`text-[10px] font-mono px-2.5 py-1 rounded-lg border font-medium ${
+                      <div className="flex flex-wrap items-center gap-3 min-w-0 max-w-full w-full [overflow-wrap:anywhere]">
+                        <span className="text-xs text-neutral-600 font-mono">{tr('by')}{' '}{p.agent_name}</span>
+                        <span className={`text-xs font-mono px-2.5 py-1 rounded-lg border font-medium ${
                           p.status === "deployed"
                             ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20"
                             : "bg-neutral-800/40 text-neutral-500 border-neutral-700/30"
@@ -434,91 +245,6 @@ export default function TeamPage() {
             </div>
           )}
 
-          {/* Chat tab */}
-          {tab === "chat" && (
-            <div className="fade-up fade-up-3">
-              {/* Terminal-style chat panel */}
-              <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm overflow-hidden flex flex-col">
-                {/* Terminal header */}
-                <div className="flex items-center gap-1.5 px-4 py-3 border-b border-neutral-800/50">
-                  <div className="w-2 h-2 rounded-full bg-red-500/60" />
-                  <div className="w-2 h-2 rounded-full bg-yellow-500/60" />
-                  <div className="w-2 h-2 rounded-full bg-green-500/60" />
-                  <span className="text-[10px] font-mono text-neutral-700 ml-2">{tr('teamChat')}</span>
-                  <span className="text-[10px] font-mono text-neutral-800 ml-auto">{new Intl.NumberFormat(localeTag(locale)).format(messages.length)} {tr('messages')}</span>
-                </div>
-
-                {messages.length === 0 ? (
-                  <div className="p-16 text-center flex-1">
-                    <div className="w-12 h-12 rounded-xl bg-neutral-800/50 border border-neutral-700/30 flex items-center justify-center mx-auto mb-4">
-                      <span className="text-neutral-600 font-mono">$</span>
-                    </div>
-                    <p className="text-neutral-400 text-sm mb-1">{tr('noMessagesYet')}</p>
-                    <p className="text-neutral-600 text-xs font-mono">{tr('sendAMessageToStartTheConversation')}</p>
-                  </div>
-                ) : (
-                  <div
-                    ref={containerRef}
-                    onScroll={handleChatScroll}
-                    className="p-4 space-y-4 max-h-[500px] overflow-y-auto"
-                  >
-                    {loadingMore && (
-                      <div className="flex justify-center py-2">
-                        <span className="text-xs text-neutral-600 font-mono animate-pulse">{tr('loadingOlder')}</span>
-                      </div>
-                    )}
-                    {messages.map(msg => (
-                      <ChatBubble key={msg.id} msg={msg} />
-                    ))}
-                    <div ref={bottomRef} />
-                  </div>
-                )}
-
-                {/* Chat input */}
-                {userName ? (
-                  <form onSubmit={handleSend} className="border-t border-neutral-800/50 p-4 space-y-2">
-                    {sendError && (
-                      <p className="text-[11px] text-red-400 font-mono bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-1.5">
-                        {displayPublicLabel(locale, sendError)}
-                      </p>
-                    )}
-                    <div className="flex items-end gap-3">
-                      <div className="flex flex-col gap-1.5 flex-1">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-md flex items-center justify-center bg-gradient-to-br from-violet-600 to-violet-700 shrink-0">
-                            <span className="text-[9px] font-bold text-white uppercase font-mono">{userName.slice(0, 2)}</span>
-                          </div>
-                          <span className="text-[10px] text-neutral-500 font-mono">{userName}</span>
-                        </div>
-                        <textarea
-                          ref={textareaRef}
-                          value={content}
-                          onChange={e => setContent(e.target.value)}
-                          onKeyDown={handleKeyDown}
-                          placeholder={tr('writeAMessageEnterToSend')}
-                          maxLength={2000}
-                          rows={2}
-                          className="w-full bg-neutral-950/50 border border-neutral-800/50 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-700 outline-none focus:border-violet-500/30 resize-none transition-colors font-mono"
-                        />
-                      </div>
-                      <button
-                        type="submit"
-                        disabled={!content.trim() || sending}
-                        className="flex-shrink-0 bg-white text-black font-medium font-mono text-xs px-5 py-2 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-all hover:bg-neutral-100"
-                      >
-                        {sending ? "..." : tr('send')}
-                      </button>
-                    </div>
-                  </form>
-                ) : (
-                  <div className="border-t border-neutral-800/50 p-5 text-center">
-                    <Link href="/login" className="text-xs font-mono text-violet-400 hover:text-violet-300 transition-colors bg-violet-400/10 border border-violet-400/20 px-4 py-2 rounded-lg inline-block">
-                      {tr('signInToSendMessages')}</Link>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </main>
     </div>
@@ -529,7 +255,7 @@ function MemberRow({ member, index }: { member: TeamDetail["members"][number]; i
   const { locale } = useLocale();
   const inner = (
     <div
-      className="member-card flex items-center gap-3 p-4 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm hover:border-neutral-700/60 transition-all fade-up"
+      className="member-card flex flex-wrap items-center gap-3 p-4 min-w-0 [overflow-wrap:anywhere] bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm hover:border-neutral-700/60 transition-all fade-up"
       style={{ animationDelay: `${0.15 + 0.04 * index}s` }}
     >
       <MemberAvatar name={member.name} type={member.member_type} />
@@ -537,26 +263,26 @@ function MemberRow({ member, index }: { member: TeamDetail["members"][number]; i
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-white text-sm">{member.name}</span>
           {member.handle && (
-            <span className="text-[10px] text-neutral-600 font-mono">@{member.handle}</span>
+            <span className="text-xs text-neutral-600 font-mono">@{member.handle}</span>
           )}
-          <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md font-medium ${
+          <span className={`text-xs font-mono px-2 py-0.5 rounded-md font-medium ${
             member.role === "owner"
               ? "bg-orange-400/10 text-orange-400 border border-orange-400/20"
               : "bg-neutral-800/40 text-neutral-500 border border-neutral-700/30"
           }`}>{displayPublicLabel(locale, member.role)}</span>
-          <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md ${
+          <span className={`text-xs font-mono px-2 py-0.5 rounded-md ${
             member.member_type === "agent"
               ? "bg-cyan-400/10 text-cyan-400 border border-cyan-400/20"
               : "bg-violet-400/10 text-violet-400 border border-violet-400/20"
           }`}>{displayPublicLabel(locale, member.member_type)}</span>
         </div>
       </div>
-      <span className="text-[10px] font-mono text-neutral-700">{timeAgo(member.joined_at, locale)}</span>
+      <span className="text-xs font-mono text-neutral-700">{timeAgo(member.joined_at, locale)}</span>
     </div>
   );
 
   if (member.member_type === "agent" && member.agent_id) {
-    return <Link href={`/agents/${member.agent_id}`}>{inner}</Link>;
+    return <Link className="block min-h-11 min-w-11" href={`/agents/${member.agent_id}`}>{inner}</Link>;
   }
   return inner;
 }

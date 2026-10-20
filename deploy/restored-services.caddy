@@ -1,0 +1,13 @@
+otkrytka.agentspore.com, otkrytka.agentspore.ru {
+	reverse_proxy restored-otkrytka:8000
+}
+
+podmemory.agentspore.com, podmemory.agentspore.ru {
+	reverse_proxy restored-podmemory:8000 {
+		flush_interval -1
+	}
+}
+
+pereklichka.agentspore.com, pereklichka.agentspore.ru {
+	reverse_proxy restored-pereklichka:8000
+}

@@ -7,10 +7,12 @@ import { sharedMessages } from '@/lib/i18n/shared';
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState, useRef } from "react";
-import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, GitHubActivityItem, isAgentLive, ModelUsageStats, REACTION_META, timeAgo } from "@/lib/api";
-import { fetchWithAuth } from "@/lib/auth";
+import { useEffect, useState, useRef } from "react";
+import { ACTION_META, Agent, BADGE_RARITY_COLOR, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { FetchError } from "@/components/FetchError";
+import { useAgentDetails } from "./useAgentDetails";
+import { AgentBlog } from "./AgentBlog";
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
@@ -40,7 +42,7 @@ function CopyIdButton({ id }: { id: string }) {
       <button
         type="button"
         onClick={() => { void copy(id); }}
-        className="w-full flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-sm px-5 py-2.5 rounded-lg transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
+        className="min-h-11 min-w-11 w-full flex items-center justify-center gap-2 bg-white/[0.04] border border-white/[0.08] text-neutral-400 hover:text-white hover:border-neutral-700/60 font-mono text-sm px-5 py-2.5 rounded-lg transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
       >
         <svg className="w-[15px] h-[15px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
           <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -74,9 +76,9 @@ function StatCard({ label, value }: { label: string; value: number }) {
   const { locale } = useLocale();
   const count = useCounter(value);
   return (
-    <div className="text-center px-4 py-3 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm stat-card">
+    <div className="min-w-0 max-w-full [overflow-wrap:anywhere] text-center px-4 py-3 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm stat-card">
       <div className="text-xl font-bold text-white font-mono">{count.toLocaleString(localeTag(locale))}</div>
-      <div className="text-[10px] text-neutral-500 mt-0.5 font-mono uppercase tracking-[0.15em]">{label}</div>
+      <div className="text-xs text-neutral-500 mt-0.5 font-mono uppercase tracking-[0.15em]">{label}</div>
     </div>
   );
 }
@@ -94,6 +96,7 @@ const DNA_COLOR = (v: number) => {
 export default function AgentPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const trShared = useTranslations(sharedMessages);
 const GH_ACTION_META: Record<string, { icon: string; label: string; color: string; bg: string }> = {
   code_commit:           { icon: "\u2191", label: tr('commit'),     color: "text-emerald-400", bg: "bg-emerald-400/10" },
   code_review:           { icon: "\u2318", label: tr('review'),     color: "text-amber-400",   bg: "bg-amber-400/10"   },
@@ -109,90 +112,15 @@ const DNA_TRAITS = [
   { key: "dna_creativity", label: tr('creativity'), icon: "\u2738", lo: tr('conventional'), hi: tr('experimental') },
 ] as const;
   const { id } = useParams<{ id: string }>();
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [activities, setActivities] = useState<ActivityEvent[]>([]);
-  const [githubActivity, setGithubActivity] = useState<GitHubActivityItem[]>([]);
-  const [modelUsage, setModelUsage] = useState<ModelUsageStats | null>(null);
-  const [badges, setBadges] = useState<AgentBadge[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const details = useAgentDetails(id);
+  const { agent, activities, githubActivity, modelUsage, badges, failures } = details;
+  const loading = details.status === "loading";
   const [ghFilter, setGhFilter] = useState<string>("all");
-
-  // Blog state
-  const [blogPosts, setBlogPosts] = useState<BlogPost[]>([]);
-  const [blogTotal, setBlogTotal] = useState(0);
-  const [blogOffset, setBlogOffset] = useState(0);
-  const [blogLoading, setBlogLoading] = useState(false);
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [aRes, evRes, muRes, ghRes, bdRes] = await Promise.all([
-          fetch(`${API_URL}/api/v1/agents/${id}`),
-          fetch(`${API_URL}/api/v1/activity?agent_id=${id}&limit=50`),
-          fetch(`${API_URL}/api/v1/agents/${id}/model-usage`),
-          fetch(`${API_URL}/api/v1/agents/${id}/github-activity?limit=50`),
-          fetch(`${API_URL}/api/v1/agents/${id}/badges`),
-        ]);
-        if (!aRes.ok) { setError(publicMessages.en.agentNotFound); return; }
-        setAgent(await aRes.json());
-        if (evRes.ok) setActivities(await evRes.json());
-        if (muRes.ok) setModelUsage(await muRes.json());
-        if (ghRes.ok) {
-          const ghData = await ghRes.json();
-          setGithubActivity(ghData.activities ?? []);
-        }
-        if (bdRes.ok) setBadges(await bdRes.json());
-      } catch {
-        setError(publicMessages.en.failedToConnectToAPI);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [id]);
-
-  // Load blog posts
-  const loadBlog = async (offset = 0) => {
-    setBlogLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/api/v1/blog/agents/${id}/posts?limit=10&offset=${offset}`);
-      if (res.ok) {
-        const data: BlogPostsResponse = await res.json();
-        setBlogPosts(data.posts);
-        setBlogTotal(data.total);
-        setBlogOffset(offset);
-      }
-    } catch { /* ignore */ }
-    finally { setBlogLoading(false); }
-  };
-
-  useEffect(() => { if (agent) loadBlog(); }, [agent]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const toggleReaction = async (postId: string, reaction: string, hasIt: boolean) => {
-    try {
-      if (hasIt) {
-        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions/${reaction}`, { method: "DELETE" });
-      } else {
-        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reaction }),
-        });
-      }
-      // Reload post reactions
-      const res = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
-      if (res.ok) {
-        const updated: BlogPost = await res.json();
-        setBlogPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: updated.reactions } : p));
-      }
-    } catch { /* ignore */ }
-  };
 
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
-      <main className="max-w-5xl mx-auto px-6 py-10">
+      <main id="main-content" tabIndex={-1} className="max-w-5xl mx-auto px-6 py-10">
         <div className="flex items-center gap-4 mb-8">
           <Skeleton rounded="xl" className="w-16 h-16" />
           <div className="flex-1 space-y-2">
@@ -208,11 +136,11 @@ const DNA_TRAITS = [
     </div>
   );
 
-  if (error || !agent) return (
-    <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
-      <div className="text-red-400 text-sm font-mono">{displayPublicLabel(locale, error || publicMessages.en.agentNotFound)}</div>
-      <Link href="/" className="text-neutral-400 text-sm hover:text-white font-mono">{"\u2190"} {tr('backToDashboard')}</Link>
-    </div>
+  if (!agent) return (
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
+      {details.status === "error" ? <FetchError onRetry={details.retry} /> : <div className="text-red-400 text-sm font-mono">{tr('agentNotFound')}</div>}
+      <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 text-sm hover:text-white font-mono focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300">{"\u2190"} {tr('backToDashboard')}</Link>
+    </main>
   );
 
   const statCols = [
@@ -226,25 +154,30 @@ const DNA_TRAITS = [
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
 
-      <main className="max-w-5xl mx-auto px-6 py-10 relative">
+      <main id="main-content" tabIndex={-1} className="max-w-5xl mx-auto px-6 py-10 relative">
         <DotGrid />
+        {failures.length > 0 && <div role="alert" className="relative mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
+          <p>{tr('agentDetailsUnavailable')}</p>
+          <ul className="flex flex-wrap gap-3 text-xs [overflow-wrap:anywhere]">{failures.map(section => <li key={section}>{tr(({ activity: 'activityTimeline', model: 'modelUsage', github: 'gitHubActivity', badges: 'badges' } as const)[section])}</li>)}</ul>
+          <button type="button" onClick={details.retry} disabled={details.pending} className="min-h-11 min-w-11 rounded px-3 text-sm focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50">{trShared('retry')}</button>
+        </div>}
 
         {/* Breadcrumbs */}
-        <div className="relative flex items-center gap-2 mb-8 fade-up">
-          <Link href="/" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
+        <div className="relative flex flex-wrap min-w-0 items-center gap-2 mb-8 fade-up">
+          <Link href="/" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
             {tr('dashboard')}</Link>
-          <span className="text-neutral-700 text-[10px]">/</span>
-          <Link href="/agents" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
+          <span className="text-neutral-700 text-xs">/</span>
+          <Link href="/agents" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
             {tr('agents')}</Link>
-          <span className="text-neutral-700 text-[10px]">/</span>
-          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-400 truncate">{agent.name}</span>
+          <span className="text-neutral-700 text-xs">/</span>
+          <span className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400">{agent.name}</span>
           {agent.handle && (
-            <span className="text-neutral-600 text-[10px] font-mono">@{agent.handle}</span>
+            <span className="text-neutral-600 text-xs font-mono [overflow-wrap:anywhere]">@{agent.handle}</span>
           )}
         </div>
 
         {/* Hero */}
-        <div className="relative flex flex-col sm:flex-row gap-6 items-start mb-10 fade-up-d1">
+        <div className="relative flex flex-col sm:flex-row sm:flex-wrap gap-6 items-start mb-10 fade-up-d1">
           {/* Avatar */}
           <div className="w-20 h-20 rounded-xl flex items-center justify-center shrink-0 bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm relative">
             <div className={`w-4 h-4 rounded-full ${isAgentLive(agent) ? "bg-emerald-400" : "bg-neutral-600"}`} />
@@ -255,28 +188,28 @@ const DNA_TRAITS = [
             )}
           </div>
 
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 max-w-full basis-full sm:basis-64">
             <div className="flex flex-wrap items-center gap-3 mb-1">
-              <h1 className="text-2xl font-bold text-white font-mono">{agent.name}</h1>
+              <h1 className="min-w-0 max-w-full text-2xl font-bold text-white font-mono [overflow-wrap:anywhere]">{agent.name}</h1>
               {agent.handle && (
-                <span className="text-sm text-neutral-500 font-mono">@{agent.handle}</span>
+                <span className="text-sm text-neutral-500 font-mono [overflow-wrap:anywhere]">@{agent.handle}</span>
               )}
-              <span className={`text-[10px] px-2.5 py-1 rounded-full border font-mono uppercase tracking-[0.15em] ${isAgentLive(agent) ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/30 text-neutral-400 border-neutral-600/30"}`}>
+              <span className={`min-h-11 min-w-11 max-w-full focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs px-2.5 py-1 rounded-full border font-mono [overflow-wrap:anywhere] uppercase tracking-[0.15em] ${isAgentLive(agent) ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/30 text-neutral-400 border-neutral-600/30"}`}>
                 {isAgentLive(agent) ? tr('online') : tr('offline')}
               </span>
-              <span className="text-[10px] px-2.5 py-1 rounded-full bg-neutral-900/30 text-neutral-400 border border-neutral-800/50 font-mono uppercase tracking-[0.1em]">
+              <span className="text-xs px-2.5 py-1 rounded-full bg-neutral-900/30 text-neutral-400 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] uppercase tracking-[0.1em]">
                 {displayPublicLabel(locale, agent.specialization)}
               </span>
             </div>
-            <p className="text-neutral-500 text-sm mb-2 font-mono">{agent.model_provider} / {agent.model_name}</p>
-            {agent.bio && <p className="text-neutral-300 text-sm leading-relaxed max-w-xl">{agent.bio}</p>}
-            {!agent.bio && <p className="text-neutral-600 text-sm italic font-mono">{tr('noBioYet')}</p>}
+            <p className="text-neutral-500 text-sm mb-2 font-mono [overflow-wrap:anywhere]">{agent.model_provider} / {agent.model_name}</p>
+            {agent.bio && <p className="text-neutral-300 text-sm leading-relaxed max-w-xl [overflow-wrap:anywhere]">{agent.bio}</p>}
+            {!agent.bio && <p className="text-neutral-600 text-sm italic font-mono [overflow-wrap:anywhere]">{tr('noBioYet')}</p>}
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-2 gap-3 shrink-0">
+          <div className="grid w-full sm:w-auto min-w-0 max-w-full grid-cols-1 sm:grid-cols-2 gap-3">
             {statCols.map(s => (
-              <StatCard key={s.label} label={s.label} value={s.value} />
+              <StatCard key={`${s.label}:${s.value}`} label={s.label} value={s.value} />
             ))}
           </div>
 
@@ -284,7 +217,7 @@ const DNA_TRAITS = [
           <div className="flex flex-col gap-2 w-full sm:w-[180px] shrink-0">
             <Link
               href={`/agents/${id}/chat`}
-              className="w-full text-center bg-white text-black font-medium font-mono text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 w-full text-center bg-white text-black font-medium font-mono [overflow-wrap:anywhere] text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
             >
               {tr('message')}</Link>
             <CopyIdButton id={id || ""} />
@@ -292,47 +225,47 @@ const DNA_TRAITS = [
         </div>
 
         {/* Meta info */}
-        <div className="relative flex flex-wrap gap-2 mb-10 text-[10px] text-neutral-500 fade-up-d2">
+        <div className="relative flex flex-wrap min-w-0 gap-2 mb-10 text-xs text-neutral-500 fade-up-d2">
           {agent.handle && (
-            <span className="px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono backdrop-blur-sm">
+            <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
               {tr('handle')}<span className="text-neutral-400">@{agent.handle}</span>
             </span>
           )}
-          <span className="px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono backdrop-blur-sm">
+          <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
             {tr('iD')}<span className="text-neutral-400">{agent.id.slice(0, 8)}...</span>
           </span>
-          <span className="px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono backdrop-blur-sm">
+          <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
             {tr('joined')}<span className="text-neutral-400">{timeAgo(agent.created_at, locale)}</span>
           </span>
           {agent.last_heartbeat && (
-            <span className="px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono backdrop-blur-sm">
+            <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
               {tr('lastSeen')}<span className="text-neutral-400">{timeAgo(agent.last_heartbeat, locale)}</span>
             </span>
           )}
           {agent.skills?.length > 0 && agent.skills.map(s => (
-            <span key={s} className="px-3 py-1 rounded-full bg-cyan-400/5 border border-cyan-400/15 text-cyan-400/80 font-mono">{s}</span>
+            <span key={s} className="max-w-full px-3 py-1 rounded-full bg-cyan-400/5 border border-cyan-400/15 text-cyan-400/80 font-mono [overflow-wrap:anywhere]">{s}</span>
           ))}
         </div>
 
-        <div className="relative grid grid-cols-1 lg:grid-cols-5 gap-8">
+        <div className="relative min-w-0 grid grid-cols-1 lg:grid-cols-5 gap-8">
           {/* Badges */}
           {badges.length > 0 && (
-            <div className="lg:col-span-5 fade-up-d3">
-              <div className="flex items-center gap-3 mb-4">
-                <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('badges')}</span>
+            <div className="min-w-0 lg:col-span-5 fade-up-d3">
+              <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
+                <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('badges')}</h2>
                 <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
               </div>
               <div className="flex flex-wrap gap-2">
                 {badges.map(badge => (
                   <div key={badge.badge_id} title={`${badge.name} \u2014 ${badge.description}`}
-                    className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-neutral-900/30 hover:bg-neutral-800/40 transition-all duration-300 cursor-default backdrop-blur-sm badge-card ${BADGE_RARITY_COLOR[badge.rarity] ?? "text-neutral-400 border-neutral-600/40"}`}>
+                    className={`group relative flex min-w-0 max-w-full items-center gap-2 px-3 py-1.5 rounded-xl border bg-neutral-900/30 hover:bg-neutral-800/40 transition-all duration-300 cursor-default backdrop-blur-sm badge-card ${BADGE_RARITY_COLOR[badge.rarity] ?? "text-neutral-400 border-neutral-600/40"}`}>
                     <span className="text-base">{badge.icon}</span>
-                    <div>
-                      <div className="text-xs font-medium leading-none">{badge.name}</div>
-                      <div className="text-[10px] text-neutral-600 mt-0.5 capitalize font-mono">{badge.rarity}</div>
+                    <div className="min-w-0 [overflow-wrap:anywhere]">
+                      <div className="text-xs font-medium leading-normal">{badge.name}</div>
+                      <div className="text-xs text-neutral-600 mt-0.5 capitalize font-mono [overflow-wrap:anywhere]">{badge.rarity}</div>
                     </div>
                     {/* Tooltip */}
-                    <div className="absolute bottom-full left-0 mb-2 px-2 py-1.5 bg-[#0a0a0a] border border-neutral-800/50 rounded-lg text-xs text-neutral-300 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 backdrop-blur-sm">
+                    <div className="absolute bottom-full left-0 mb-2 px-2 py-1.5 bg-[#0a0a0a] border border-neutral-800/50 rounded-lg text-xs text-neutral-300 w-max max-w-full whitespace-normal [overflow-wrap:anywhere] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 backdrop-blur-sm">
                       {badge.description}
                     </div>
                   </div>
@@ -342,9 +275,9 @@ const DNA_TRAITS = [
           )}
 
           {/* DNA */}
-          <div className="lg:col-span-2 fade-up-d4">
-            <div className="flex items-center gap-3 mb-4">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('agentDNA')}</span>
+          <div className="min-w-0 lg:col-span-2 fade-up-d4">
+            <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
+              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('agentDNA')}</h2>
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-6 space-y-5">
@@ -354,17 +287,17 @@ const DNA_TRAITS = [
                 return (
                   <div key={key}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-neutral-300 flex items-center gap-1.5 font-mono">
+                      <span className="text-sm text-neutral-300 flex items-center gap-1.5 font-mono [overflow-wrap:anywhere]">
                         <span>{icon}</span> {label}
                       </span>
-                      <span className="text-sm font-bold font-mono" style={{ color }}>{new Intl.NumberFormat(localeTag(locale)).format(val)}<span className="text-neutral-600 font-normal">/10</span></span>
+                      <span className="text-sm font-bold font-mono [overflow-wrap:anywhere]" style={{ color }}>{new Intl.NumberFormat(localeTag(locale)).format(val)}<span className="text-neutral-600 font-normal">/10</span></span>
                     </div>
                     <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
                       <div className="h-full rounded-full transition-all duration-700 dna-bar"
                         style={{ width: `${(val / 10) * 100}%`, background: color, boxShadow: `0 0 8px ${color}60` }} />
                     </div>
-                    <div className="flex justify-between mt-1 text-[10px] text-neutral-600 font-mono">
-                      <span>{lo}</span><span>{hi}</span>
+                    <div className="flex gap-3 justify-between mt-1 text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">
+                      <span className="min-w-0 max-w-[48%]">{lo}</span><span className="min-w-0 max-w-[48%] text-right">{hi}</span>
                     </div>
                   </div>
                 );
@@ -373,35 +306,35 @@ const DNA_TRAITS = [
           </div>
 
           {/* Activity Timeline */}
-          <div className="lg:col-span-3 fade-up-d4">
-            <div className="flex items-center gap-3 mb-4">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('activityTimeline')}</span>
+          <div className="min-w-0 lg:col-span-3 fade-up-d4">
+            <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
+              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('activityTimeline')}</h2>
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             {activities.length === 0 ? (
-              <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
+              !failures.includes("activity") && <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono [overflow-wrap:anywhere]">
                 {tr('noActivityRecordedYet')}</div>
             ) : (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">
                 {activities.map((ev, i) => {
                   const meta = ACTION_META[ev.action_type] ?? { icon: "\u25CC", color: "text-neutral-400", label: ev.action_type, bg: "bg-neutral-700/20" };
                   return (
-                    <div key={ev.id ?? i} className="flex items-start gap-3 px-5 py-3.5 hover:bg-neutral-800/20 transition-all duration-200">
+                    <div key={ev.id ?? i} className="flex flex-wrap items-start gap-3 px-5 py-3.5 hover:bg-neutral-800/20 transition-all duration-200">
                       <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0 mt-0.5 ${meta.bg}`}>
                         <span className={meta.color}>{meta.icon}</span>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${meta.bg} ${meta.color} font-medium font-mono`}>
+                      <div className="flex-1 min-w-0 basis-40">
+                        <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${meta.bg} ${meta.color} font-medium font-mono [overflow-wrap:anywhere]`}>
                             {displayPublicLabel(locale, meta.label)}
                           </span>
                           {ev.project_id && (
-                            <span className="text-[10px] text-neutral-600 font-mono">{ev.project_id.slice(0, 8)}</span>
+                            <span className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">{ev.project_id.slice(0, 8)}</span>
                           )}
                         </div>
-                        <p className="text-sm text-neutral-300 leading-snug">{ev.description}</p>
+                        <p className="text-sm text-neutral-300 leading-snug [overflow-wrap:anywhere]">{ev.description}</p>
                       </div>
-                      <time className="text-[10px] text-neutral-600 shrink-0 mt-0.5 whitespace-nowrap font-mono">{timeAgo(ev.ts, locale)}</time>
+                      <time className="text-xs text-neutral-600 shrink-0 mt-0.5 font-mono [overflow-wrap:anywhere]">{timeAgo(ev.ts, locale)}</time>
                     </div>
                   );
                 })}
@@ -428,17 +361,17 @@ const DNA_TRAITS = [
             <div className="relative mt-10 fade-up-d5">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('gitHubActivity')}</span>
+                  <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('gitHubActivity')}</h2>
                   <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
-                  <span className="text-[10px] font-mono text-neutral-600">
+                  <span className="text-xs font-mono [overflow-wrap:anywhere] text-neutral-600">
                     {new Intl.NumberFormat(localeTag(locale)).format(githubActivity.length)} {tr('events')}</span>
                 </div>
                 <div className="flex gap-1.5 flex-wrap">
                   {GH_FILTERS.map(f => (
                     <button
-                      key={f.id}
+                      key={f.id} aria-pressed={ghFilter === f.id}
                       onClick={() => setGhFilter(f.id)}
-                      className={`text-[10px] px-2.5 py-1 rounded-full border transition-all duration-200 font-mono ${
+                      className={`min-h-11 min-w-11 max-w-full focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs px-2.5 py-1 rounded-full border transition-all duration-200 font-mono [overflow-wrap:anywhere] ${
                         ghFilter === f.id
                           ? "bg-neutral-800/50 border-neutral-700/60 text-white"
                           : "bg-neutral-900/30 border-neutral-800/50 text-neutral-500 hover:text-neutral-300 hover:border-neutral-700/60"
@@ -452,57 +385,57 @@ const DNA_TRAITS = [
 
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">
                 {filtered.length === 0 ? (
-                  <div className="p-8 text-center text-neutral-600 text-sm font-mono">{tr('noEventsForThisFilter')}</div>
+                  <div className="p-8 text-center text-neutral-600 text-sm font-mono [overflow-wrap:anywhere]">{tr('noEventsForThisFilter')}</div>
                 ) : filtered.map((item, i) => {
                   const meta = GH_ACTION_META[item.action_type] ?? { icon: "\u25CC", label: item.action_type, color: "text-neutral-400", bg: "bg-neutral-700/20" };
                   const ghLink = item.github_url || item.pr_url;
 
                   return (
-                    <div key={item.id ?? i} className="flex items-start gap-3 px-5 py-3.5 hover:bg-neutral-800/20 transition-all duration-200">
+                    <div key={item.id ?? i} className="flex flex-wrap items-start gap-3 px-5 py-3.5 hover:bg-neutral-800/20 transition-all duration-200">
                       {/* Icon */}
                       <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0 mt-0.5 ${meta.bg}`}>
                         <span className={meta.color}>{meta.icon}</span>
                       </div>
 
                       {/* Content */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium font-mono ${meta.bg} ${meta.color}`}>
+                      <div className="flex-1 min-w-0 basis-40">
+                        <div className="flex flex-wrap items-center gap-2 mb-0.5 flex-wrap">
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-medium font-mono [overflow-wrap:anywhere] ${meta.bg} ${meta.color}`}>
                             {displayPublicLabel(locale, meta.label)}
                           </span>
                           {item.project_title && (
-                            <span className="text-[10px] text-neutral-500 font-mono">{item.project_title}</span>
+                            <span className="text-xs text-neutral-500 font-mono [overflow-wrap:anywhere]">{item.project_title}</span>
                           )}
                           {item.issue_number && (
-                            <span className="text-[10px] text-neutral-600 font-mono">#{new Intl.NumberFormat(localeTag(locale)).format(item.issue_number)}</span>
+                            <span className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">#{new Intl.NumberFormat(localeTag(locale)).format(item.issue_number)}</span>
                           )}
                           {item.branch && item.action_type === "code_commit" && (
-                            <span className="text-[10px] text-neutral-600 font-mono">{item.branch}</span>
+                            <span className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">{item.branch}</span>
                           )}
                         </div>
 
-                        <p className="text-sm text-neutral-300 leading-snug truncate">
+                        <p className="text-sm text-neutral-300 leading-snug [overflow-wrap:anywhere]">
                           {item.commit_message || item.issue_title || item.description}
                         </p>
 
                         {/* Extra details */}
                         {item.fix_description && item.action_type === "issue_closed" && (
-                          <p className="text-[11px] text-neutral-500 mt-0.5 line-clamp-1">{item.fix_description}</p>
+                          <p className="text-xs text-neutral-500 mt-0.5 line-clamp-1">{item.fix_description}</p>
                         )}
                         {item.issues_created != null && item.issues_created > 0 && (
-                          <p className="text-[11px] text-amber-500/70 mt-0.5 font-mono">{"\u2192"} {tr('opened')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(item.issues_created)} {tr('issue')}{locale === "en" && (item.issues_created !== 1) ? "s" : ""}</p>
+                          <p className="text-xs text-amber-500/70 mt-0.5 font-mono [overflow-wrap:anywhere]">{"\u2192"} {tr('opened')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(item.issues_created)} {tr('issue')}{locale === "en" && (item.issues_created !== 1) ? "s" : ""}</p>
                         )}
                       </div>
 
                       {/* Right side */}
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        <time className="text-[10px] text-neutral-600 whitespace-nowrap font-mono">{timeAgo(item.created_at, locale)}</time>
+                      <div className="flex w-full sm:w-auto max-w-full flex-col items-end gap-1">
+                        <time className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">{timeAgo(item.created_at, locale)}</time>
                         {ghLink && (
                           <a
                             href={ghLink}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] text-neutral-600 hover:text-violet-400 transition-colors flex items-center gap-0.5 font-mono"
+                            className="min-h-11 min-w-11 max-w-full focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs text-neutral-600 hover:text-violet-400 transition-colors flex items-center gap-0.5 font-mono [overflow-wrap:anywhere]"
                           >
                             GitHub {"\u2197"}
                           </a>
@@ -519,10 +452,10 @@ const DNA_TRAITS = [
         {/* Model Usage */}
         {modelUsage && modelUsage.total_calls > 0 && (
           <div className="relative mt-10 fade-up-d5">
-            <div className="flex items-center gap-3 mb-4">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('modelUsage')}</span>
+            <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
+              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('modelUsage')}</h2>
               <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
-              <span className="text-[10px] font-mono text-neutral-600">
+              <span className="text-xs font-mono [overflow-wrap:anywhere] text-neutral-600">
                 {new Intl.NumberFormat(localeTag(locale)).format(modelUsage.total_calls)} {tr('calls')}{' '}{"\u00B7"} {new Intl.NumberFormat(localeTag(locale)).format(modelUsage.unique_models)} {tr('model')}{locale === "en" && (modelUsage.unique_models !== 1) ? "s" : ""}
               </span>
             </div>
@@ -535,19 +468,19 @@ const DNA_TRAITS = [
                     <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
                     <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
                   </div>
-                  <span className="text-[10px] text-neutral-600 font-mono ml-2">models://usage</span>
+                  <span className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere] ml-2">models://usage</span>
                 </div>
                 <div className="p-5 space-y-3">
                   {modelUsage.by_model.map((entry) => {
-                    const pct = modelUsage.total_calls > 0 ? Math.round((entry.call_count / modelUsage.total_calls) * 100) : 0;
+                    const pct = modelUsage.total_calls > 0 ? Math.round((entry.total_calls / modelUsage.total_calls) * 100) : 0;
                     const shortName = entry.model.split("/").pop() ?? entry.model;
                     return (
                       <div key={entry.model}>
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-xs text-neutral-300 font-mono truncate max-w-[70%]" title={entry.model}>
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                          <span className="text-xs text-neutral-300 font-mono [overflow-wrap:anywhere] min-w-0 max-w-full flex-1 basis-40" title={entry.model}>
                             {shortName}
                           </span>
-                          <span className="text-xs text-neutral-500 shrink-0 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(entry.call_count)} {"\u00B7"} {new Intl.NumberFormat(localeTag(locale)).format(pct)}%</span>
+                          <span className="text-xs text-neutral-500 shrink-0 font-mono [overflow-wrap:anywhere]">{new Intl.NumberFormat(localeTag(locale)).format(entry.total_calls)} {"\u00B7"} {new Intl.NumberFormat(localeTag(locale)).format(pct)}%</span>
                         </div>
                         <div className="h-1 rounded-full bg-white/5 overflow-hidden">
                           <div className="h-full rounded-full bg-violet-400/60 transition-all duration-500" style={{ width: `${pct}%` }} />
@@ -566,7 +499,7 @@ const DNA_TRAITS = [
                     <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
                     <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
                   </div>
-                  <span className="text-[10px] text-neutral-600 font-mono ml-2">tasks://breakdown</span>
+                  <span className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere] ml-2">tasks://breakdown</span>
                 </div>
                 <div className="p-5 space-y-2">
                   {modelUsage.by_task.map((entry) => {
@@ -582,14 +515,14 @@ const DNA_TRAITS = [
                     const cls = TASK_COLORS[entry.task_type] ?? "text-neutral-400 bg-neutral-700/30";
                     return (
                       <div key={`${entry.task_type}-${entry.model}`}
-                        className="flex items-center gap-3 px-3 py-2 rounded-lg bg-neutral-900/50 border border-neutral-800/40 hover:border-neutral-700/60 transition-all duration-200">
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium font-mono uppercase tracking-wide shrink-0 ${cls}`}>
+                        className="flex flex-wrap min-w-0 items-center gap-3 px-3 py-2 rounded-lg bg-neutral-900/50 border border-neutral-800/40 hover:border-neutral-700/60 transition-all duration-200">
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium font-mono [overflow-wrap:anywhere] uppercase tracking-wide shrink-0 ${cls}`}>
                           {entry.task_type}
                         </span>
-                        <span className="text-xs text-neutral-400 font-mono truncate flex-1" title={entry.model}>
+                        <span className="text-xs text-neutral-400 font-mono [overflow-wrap:anywhere] min-w-0 flex-1 basis-32" title={entry.model}>
                           {shortName}
                         </span>
-                        <span className="text-xs text-neutral-600 shrink-0 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(entry.call_count)}{"\u00D7"}</span>
+                        <span className="text-xs text-neutral-600 shrink-0 font-mono [overflow-wrap:anywhere]">{new Intl.NumberFormat(localeTag(locale)).format(entry.call_count)}{"\u00D7"}</span>
                       </div>
                     );
                   })}
@@ -600,73 +533,7 @@ const DNA_TRAITS = [
         )}
 
         {/* Blog */}
-        <div className="relative mt-10 fade-up-d5">
-          <div className="flex items-center gap-3 mb-4">
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('blog')}</span>
-            <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
-            {blogTotal > 0 && <span className="text-[10px] font-mono text-neutral-600">{new Intl.NumberFormat(localeTag(locale)).format(blogTotal)} {tr('post')}{locale === "en" && (blogTotal !== 1) ? "s" : ""}</span>}
-          </div>
-          {blogLoading && blogPosts.length === 0 ? (
-            <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm animate-pulse font-mono">
-              {tr('loadingPosts')}</div>
-          ) : blogPosts.length === 0 ? (
-            <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
-              {tr('noBlogPostsYet')}</div>
-          ) : (
-            <div className="space-y-4">
-              {blogPosts.map(post => (
-                <div key={post.id} className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 hover:border-neutral-700/60 transition-all duration-300 blog-card">
-                  <h3 className="text-base font-medium text-white mb-2 font-mono">{post.title}</h3>
-                  <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap mb-4">{post.content}</p>
-                  <div className="flex items-center justify-between">
-                    <div className="flex gap-2">
-                      {(Object.keys(REACTION_META) as Array<keyof typeof REACTION_META>).map(r => {
-                        const count = post.reactions[r as keyof typeof post.reactions] ?? 0;
-                        return (
-                          <button
-                            key={r}
-                            onClick={() => toggleReaction(post.id, r, false)}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-mono transition-all duration-200 ${
-                              count > 0
-                                ? "bg-neutral-800/40 border-neutral-700/60 text-neutral-300"
-                                : "bg-neutral-900/30 border-neutral-800/50 text-neutral-600 hover:text-neutral-400 hover:border-neutral-700/60"
-                            }`}
-                          >
-                            <span>{REACTION_META[r].emoji}</span>
-                            {count > 0 && <span>{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(post.created_at, locale)}</span>
-                  </div>
-                </div>
-              ))}
-
-              {/* Pagination */}
-              {blogTotal > 10 && (
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  <button
-                    onClick={() => loadBlog(blogOffset - 10)}
-                    disabled={blogOffset === 0}
-                    className="text-xs font-mono px-3 py-1.5 rounded-lg border border-neutral-800/50 bg-neutral-900/30 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:text-white hover:border-neutral-700/60 transition-all duration-200 backdrop-blur-sm"
-                  >
-                    {"\u2190"} {tr('prev')}</button>
-                  <span className="text-[10px] text-neutral-600 font-mono">
-                    {new Intl.NumberFormat(localeTag(locale)).format(blogOffset + 1)}{"\u2013"}{new Intl.NumberFormat(localeTag(locale)).format(Math.min(blogOffset + 10, blogTotal))} {tr('of')}{new Intl.NumberFormat(localeTag(locale)).format(blogTotal)}
-                  </span>
-                  <button
-                    onClick={() => loadBlog(blogOffset + 10)}
-                    disabled={blogOffset + 10 >= blogTotal}
-                    className="text-xs font-mono px-3 py-1.5 rounded-lg border border-neutral-800/50 bg-neutral-900/30 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:text-white hover:border-neutral-700/60 transition-all duration-200 backdrop-blur-sm"
-                  >
-                    {tr('next')}{"\u2192"}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <AgentBlog agentId={agent.id} />
       </main>
 
       <style jsx global>{`

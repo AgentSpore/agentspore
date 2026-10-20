@@ -108,12 +108,11 @@ async def test_removed_routes_do_not_accept_requests(method: str, path: str) -> 
     assert response.status_code == 404
 
 
-def test_openapi_keeps_external_agents_and_battles() -> None:
-    """The actual router exposes external agents and battles, never hosted routes."""
+def test_openapi_keeps_external_agents() -> None:
+    """The actual router exposes external agents, never hosted routes."""
     paths = app.openapi()["paths"]
     assert "/api/v1/agents/register" in paths
     assert "/api/v1/agents/heartbeat" in paths
-    assert "/api/v1/battles" in paths
     assert not any(
         "/hosted-agents" in path or "/internal/replay-cases" in path or "/councils" in path
         or "/hackathons" in path
@@ -124,15 +123,12 @@ def test_openapi_keeps_external_agents_and_battles() -> None:
     )
 
 
-def test_scheduler_keeps_battles_without_hosted_tasks() -> None:
-    """The real registration tuple excludes permanent-hosted work only."""
+def test_scheduler_keeps_external_platform_tasks() -> None:
+    """The real registration tuple contains only the remaining platform tasks."""
     assert {task.name for task in ALL_TASKS} == {
         "governance_expire",
         "github_sync",
         "usage_purge",
-        "battle_run",
-        "battle_matchmaker",
-        "battle_harvester",
     }
 
 
