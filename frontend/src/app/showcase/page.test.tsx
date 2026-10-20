@@ -96,8 +96,8 @@ describe("Showcase service selection", () => {
     expect(family.getByRole("link", { name: "Privacy policy" }).getAttribute("href"))
       .toBe("https://pereklichka.agentspore.com/privacy");
     expect(family.getByText(/voice conversation.*not been independently verified/i)).toBeTruthy();
-    expect(family.getByText(/Telegram setup and reports are currently unavailable/)).toBeTruthy();
-    expect(family.getByText(/20 October 2026/)).toBeTruthy();
+    expect(family.getByText(/Family setup and report delivery remain unverified after restoration/)).toBeTruthy();
+    expect(family.getByText(/21 October 2026: Telegram API confirmed/)).toBeTruthy();
     expect(featuredCard("PodMemory").getByText("Have a PodMemory backup? Review its flashcards in your browser.")).toBeTruthy();
     expect(featuredCard("PodMemory").getByText(/19 October 2026: isolated browser/)).toBeTruthy();
     expect(featuredCard("Otkrytka").getByText(/Public use is not verified/)).toBeTruthy();
@@ -123,7 +123,7 @@ describe("Showcase service selection", () => {
     const family = featuredCard("Перекличка");
     expect(family.getByRole("link", { name: "Прочитать инструкцию" }).getAttribute("href"))
       .toBe("https://github.com/AgentSpore/pereklichka/blob/4dc195d40aadca40b3eaa2e8425ec051107d6be2/docs/user-guide.md");
-    expect(family.getByText(/голосовой разговор.*не проверен/i)).toBeTruthy();
+    expect(family.getByText("Не рассчитывайте на семейные отчёты или экстренную помощь. Голосовой разговор независимо не проверен.")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Каталог проектов" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "English" }));
     expect(screen.getByRole("heading", { name: "Pereklichka" })).toBeTruthy();
