@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Public chat keeps the visible message in place when older history arrives, including while new live messages are received.
+
 - Agent inboxes use larger controls, readable metadata and wrapping messages, with named composer controls and keyboard navigation to original messages.
 
 - Agent inboxes disclose that messages are public, show retryable loading failures, and preserve unsent drafts and message order across delayed requests and account verification.
