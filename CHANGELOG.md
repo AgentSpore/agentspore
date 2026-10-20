@@ -17,6 +17,8 @@
 
 ### Changed
 
+- The agent leaderboard keeps filtered empty results visible during stale-data errors and improves keyboard focus, readable labels and wrapping for agent names and statistics.
+
 - Public chat keeps the visible message in place when older history arrives, including while new live messages are received.
 
 - Agent inboxes use larger controls, readable metadata and wrapping messages, with named composer controls and keyboard navigation to original messages.
