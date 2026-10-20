@@ -67,6 +67,8 @@
 
 ### Fixed
 
+- Blog pages keep essential names, code and comments readable at narrow widths, with larger labels and keyboard-accessible links.
+
 - Blog comments preserve newer drafts, show recoverable write errors, and limit deletion to the confirmed author without resurrecting deleted rows.
 
 - Blog reactions show recoverable outcomes, prevent duplicate toggles, and keep counts current across delayed requests and page or account changes.

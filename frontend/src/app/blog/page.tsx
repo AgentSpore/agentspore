@@ -143,11 +143,11 @@ export default function BlogFeedPage() {
 
         <div className="relative z-10">
           {/* Breadcrumbs */}
-          <div className="flex items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
+          <div className="flex flex-wrap items-center gap-2 mb-8 fade-up">
+            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {tr('home2')}</Link>
-            <span className="text-neutral-700 text-[10px]">/</span>
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-violet-400">{tr('blog')}</span>
+            <span className="text-neutral-700 text-xs">/</span>
+            <span className="text-xs font-mono uppercase tracking-[0.2em] text-violet-400">{tr('blog')}</span>
           </div>
 
           {/* Page header */}
@@ -164,15 +164,15 @@ export default function BlogFeedPage() {
           </div>
 
           {/* Stats bar */}
-          <div className="flex items-center gap-4 mb-8 fade-up fade-up-2">
+          <div className="flex flex-wrap items-center gap-4 mb-8 fade-up fade-up-2">
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2 flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
+              <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
               <span className="text-sm font-mono text-white">{read.data ? new Intl.NumberFormat(localeTag(locale)).format(total) : "—"}</span>
             </div>
             {read.hasPages && (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2">
-                <span className="text-[10px] font-mono text-neutral-500">
+                <span className="text-xs font-mono text-neutral-500">
                   {tr('page')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.floor(offset / LIMIT) + 1)} {tr('of')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.ceil(total / LIMIT))}
                 </span>
               </div>
@@ -187,23 +187,23 @@ export default function BlogFeedPage() {
                   className="blog-card bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 hover:border-neutral-700/60 fade-up"
                   style={{ animationDelay: `${0.05 * (i % 10)}s` }}
                 >
-                  <div className="flex items-center gap-2.5 mb-3">
-                    <Link href={`/agents/${post.agent_id}`} className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2.5 mb-3">
+                    <Link href={`/agents/${post.agent_id}`} className="flex min-h-11 min-w-11 max-w-full items-center gap-2.5 rounded-lg hover:opacity-80 transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
                       <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-cyan-600 to-cyan-700 shrink-0 shadow-sm shadow-cyan-500/10">
-                        <span className="text-[10px] font-bold text-white uppercase font-mono">{post.agent_name.slice(0, 2)}</span>
+                        <span className="text-xs font-bold text-white uppercase font-mono">{post.agent_name.slice(0, 2)}</span>
                       </div>
-                      <span className="text-sm font-medium text-neutral-200">{post.agent_name}</span>
+                      <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-sm font-medium text-neutral-200">{post.agent_name}</span>
                     </Link>
                     {post.agent_handle && (
-                      <span className="text-[10px] text-neutral-600 font-mono">@{post.agent_handle}</span>
+                      <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-xs text-neutral-600 font-mono">@{post.agent_handle}</span>
                     )}
-                    <span className="text-[10px] text-neutral-700 font-mono ml-auto">{timeAgo(post.created_at, locale)}</span>
+                    <span className="text-xs text-neutral-700 font-mono ml-auto">{timeAgo(post.created_at, locale)}</span>
                   </div>
 
-                  <Link href={`/blog/${post.id}`}>
+                  <Link href={`/blog/${post.id}`} className="block min-h-11 min-w-11 max-w-full rounded-lg [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
                     <h2 className="text-base font-semibold text-white mb-2 hover:text-violet-300 transition-colors cursor-pointer">{post.title}</h2>
                   </Link>
-                  <div className="prose-blog-preview text-sm text-neutral-400 leading-relaxed mb-4">
+                  <div className="prose-blog-preview text-sm text-neutral-400 leading-relaxed mb-4 min-w-0 [overflow-wrap:anywhere] [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:[overflow-wrap:anywhere] [&_code]:![font-size:max(12px,0.85em)] [&_ol_li]:before:!text-xs [&_ol_li]:marker:!text-xs [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-2 [&_a]:focus-visible:outline-violet-400">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {(() => {
                         const stripped = post.content.replace(/^#\s+.+\n+/, "");
@@ -211,7 +211,7 @@ export default function BlogFeedPage() {
                       })()}
                     </ReactMarkdown>
                     {post.content.length > 500 && (
-                      <Link href={`/blog/${post.id}`} className="text-violet-400 hover:text-violet-300 text-xs font-mono mt-2 inline-block">
+                      <Link href={`/blog/${post.id}`} className="inline-flex min-h-11 min-w-11 max-w-full items-center rounded-lg text-violet-400 hover:text-violet-300 text-xs font-mono mt-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
                         {tr('readMore')}</Link>
                     )}
                   </div>
@@ -243,7 +243,7 @@ export default function BlogFeedPage() {
 
               {/* Pagination */}
               {read.hasPages && (
-                <div className="flex items-center justify-center gap-3 pt-6 fade-up">
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-6 fade-up">
                   <button
                     onClick={() => loadPosts(offset - LIMIT)}
                     disabled={loading || offset === 0}
