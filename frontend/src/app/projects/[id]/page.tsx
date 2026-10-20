@@ -18,6 +18,7 @@ import { useProjectChatMessages, type ProjectMessage } from "./useProjectChatMes
 import { ProjectChatError } from "./ProjectChatError";
 import { useProjectReads } from "./useProjectReads";
 import { useProjectVote } from "./useProjectVote";
+import { useProjectJoin } from "./useProjectJoin";
 import { FetchError } from "@/components/FetchError";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
@@ -225,9 +226,6 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   const [showLogin, setShowLogin] = useState(false);
 
   // Data
-  const [joining, setJoining] = useState(false);
-  const [joinMsg, setJoinMsg] = useState("");
-
   const [contributorsRevision, setContributorsRevision] = useState(0);
   const authToken = auth?.token;
   const reads = useProjectReads(projectId, authToken, contributorsRevision, apiFetch);
@@ -239,22 +237,12 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   const handleLogin = () => { notify(); setShowLogin(false); };
   const handleLogout = () => { logout(); };
 
-  const handleJoin = async () => {
-    if (!auth) { setShowLogin(true); return; }
-    setJoining(true);
-    const r = await apiFetch(`/projects/${projectId}/contributors/join`, auth.token, {
-      method: "POST", body: JSON.stringify({ message: publicMessages.en.iDLikeToContributeToThisProject }),
-    });
-    const d = await r.json();
-    setJoinMsg(d.status === "auto_approved" ? publicMessages.en.youAreNowAContributor : publicMessages.en.yourRequestIsPendingApproval);
-    setJoining(false);
-    setContributorsRevision(value => value + 1);
-  };
-
   const isContributor = contributors.some(c => c.user_id === auth?.userId);
 
   const isCurrentChatSession = useCallback((generation = getAuthSnapshot().generation) =>
     authSession === readProjectAuth() && generation === getAuthSnapshot().generation, [authSession]);
+  const joinState = useProjectJoin(projectId, authToken, isCurrentChatSession, apiFetch, () => setContributorsRevision(value => value + 1));
+  const handleJoin = () => { if (!auth || joinState.signInAgain) setShowLogin(true); else void joinState.join(); };
 
   // ── Chat state (must be before conditional returns) ──
   const [chatContent, setChatContent] = useState("");
@@ -807,16 +795,16 @@ function ProjectDetails({ projectId }: { projectId: string }) {
         {/* ── Contributors ── */}
         {tab === "contributors" && (
           <div className="space-y-4 fade-up" style={{ animationDelay: "150ms" }}>
-            <div className="flex items-center justify-between">
-              <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="min-w-0 text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 break-words [overflow-wrap:anywhere]">
                 {tr('humanContributors')}</p>
-              {!isContributor && !joinMsg && (
-                <button onClick={handleJoin} disabled={joining}
-                  className="text-xs bg-white text-black font-medium font-mono disabled:opacity-50 px-3.5 py-1.5 rounded-lg transition-all hover:opacity-90">
-                  {joining ? tr('requesting') : tr('requestToJoin')}
+              {!isContributor && joinState.showAction && (
+                <button onClick={handleJoin} disabled={joinState.pending}
+                  className="min-h-11 min-w-11 max-w-full break-words text-xs bg-white text-black font-medium font-mono disabled:opacity-50 px-3.5 py-1.5 rounded-lg transition-all hover:opacity-90 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
+                  {tr(joinState.label)}
                 </button>
               )}
-              {joinMsg && <p className="text-xs text-emerald-400 font-mono">{displayPublicLabel(locale, joinMsg)}</p>}
+              {joinState.message && <p role={joinState.role} className="basis-full min-w-0 text-xs text-neutral-300 font-mono break-words [overflow-wrap:anywhere]">{tr(joinState.message)}</p>}
             </div>
 
             <ProjectReadNotice state={reads.contributors} />
