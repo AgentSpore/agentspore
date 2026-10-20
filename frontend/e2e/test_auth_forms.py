@@ -4,7 +4,7 @@ import json
 import unittest
 from urllib.parse import urlparse
 
-import test_battles_accessibility as battles
+import auth_form_fixtures as browser_fixtures
 from auth_form_fixtures import EMAIL, ERROR, MESSAGES, PASSWORD, TOKEN, AuthHTTP
 from playwright.sync_api import expect
 from test_project_cards import ACTION, TEXT
@@ -16,8 +16,8 @@ SURFACE_TEXT = "els => els.flatMap(" + TEXT + ")"
 class AuthFormTests(unittest.TestCase):
     """Keep real submits, labels, redirects and independent actions measurable."""
 
-    setUpClass = classmethod(battles.BattleAccessibilityTests.setUpClass.__func__)
-    tearDownClass = classmethod(battles.BattleAccessibilityTests.tearDownClass.__func__)
+    setUpClass = classmethod(browser_fixtures.BrowserFixture.setUpClass.__func__)
+    tearDownClass = classmethod(browser_fixtures.BrowserFixture.tearDownClass.__func__)
 
     def open_form(self, path, locale, width):
         """Use a fresh anonymous context for every flow and locale/width combination."""
@@ -298,5 +298,5 @@ class AuthFormTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    AuthFormTests.options, unittest_args = battles.parse_options()
+    AuthFormTests.options, unittest_args = browser_fixtures.parse_options()
     unittest.main(argv=[__file__, *unittest_args], verbosity=2)

@@ -47,19 +47,19 @@ describe("CopyPromptButton", () => {
 
 describe("TermHint", () => {
   it("opens by click, links to the glossary anchor and closes on Escape", () => {
-    render(<TermHint term="elo" />);
-    const button = screen.getByRole("button", { name: /Elo/ });
+    render(<TermHint term="karma" />);
+    const button = screen.getByRole("button", { name: /Karma/ });
     expect(button.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(button);
     expect(button.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByRole("note").textContent).toContain(docsMessages.en.d_elo);
-    expect(screen.getByRole("link", { name: docsMessages.en.hintMore }).getAttribute("href")).toBe("/docs/glossary#elo");
+    expect(screen.getByRole("note").textContent).toContain(docsMessages.en.d_karma);
+    expect(screen.getByRole("link", { name: docsMessages.en.hintMore }).getAttribute("href")).toBe("/docs/glossary#karma");
     fireEvent.keyDown(button, { key: "Escape" });
     expect(screen.queryByRole("note")).toBeNull();
   });
   it("returns focus to the trigger when Escape or Close dismisses a focused panel", () => {
-    render(<TermHint term="elo" />);
-    const button = screen.getByRole("button", { name: /Elo/ });
+    render(<TermHint term="karma" />);
+    const button = screen.getByRole("button", { name: /Karma/ });
     fireEvent.click(button);
     const more = screen.getByRole("link", { name: docsMessages.en.hintMore });
     expect(document.activeElement).toBe(more);
@@ -73,8 +73,8 @@ describe("TermHint", () => {
     expect(document.activeElement).toBe(button);
   });
   it("closes on a pointer press outside and stays open on a press inside", () => {
-    const { container } = render(<div><TermHint term="elo" /><button>outside</button></div>);
-    fireEvent.click(screen.getByRole("button", { name: /Elo/ }));
+    const { container } = render(<div><TermHint term="karma" /><button>outside</button></div>);
+    fireEvent.click(screen.getByRole("button", { name: /Karma/ }));
     const note = screen.getByRole("note");
     expect(container.contains(note)).toBe(false);
     fireEvent.pointerDown(screen.getByRole("link", { name: docsMessages.en.hintMore }));
@@ -86,7 +86,7 @@ describe("TermHint", () => {
     expect(document.activeElement).toBe(outside);
   });
   it("associates each trigger with its own definition when multiple hints are open", () => {
-    render(<><TermHint term="elo" /><TermHint term="units" /></>);
+    render(<><TermHint term="karma" /><TermHint term="units" /></>);
     const triggers = screen.getAllByRole("button");
     for (const trigger of triggers) fireEvent.click(trigger);
     const panels = triggers.map(trigger => document.getElementById(trigger.getAttribute("aria-controls") ?? ""));

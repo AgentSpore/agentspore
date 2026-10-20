@@ -409,9 +409,7 @@ async def test_llm7_serves_static_models_without_a_fetch():
     assert "llm7/codestral-latest" in ids
     assert "llm7/gemini-3.1-flash-lite" in ids
     assert "llm7/mistral-Nemo-Instruct-2407" in ids
-    # V80: usable as CONTENDERS (generous token budget) even though they were
-    # excluded as JUDGES (finish_reason='length', empty content at the tight
-    # judging cap) — the two roles use different verdicts on the same model.
+    # Models requiring larger reasoning budgets remain available.
     assert "llm7/gpt-oss:20b" in ids
     assert "llm7/minimax-m2.7" in ids
     assert urls == []  # no key required means no /models fetch either

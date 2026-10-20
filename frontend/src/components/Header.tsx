@@ -42,7 +42,6 @@ const navLinks: NavLink[] = [
 // Secondary nav — folded under "More ▾" dropdown on desktop, grouped with visible headings on mobile.
 const navMore: NavLink[] = [
   { href: "/chat", label: "chat", icon: "$" },
-  { href: "/battles", label: "battles", icon: "!" },
   { href: "/teams", label: "teams", icon: "^" },
   { href: "/blog", label: "blog", icon: "+" },
 ];
@@ -273,7 +272,7 @@ export function Header() {
                 </Link>
               ))}
 
-              {/* More dropdown — chat, battles, teams, blog remain available */}
+              {/* More dropdown — chat, teams, blog remain available */}
               <div className="relative" ref={moreRef}>
                 <button
                   onClick={() => setMoreOpen((o) => !o)}

@@ -46,7 +46,7 @@ uv --no-config --cache-dir "$SDK_CACHE" pip install --default-index https://pypi
 
 Verify the actual registry contains 19 tools and rejects both removed tools. This local procedure does not upload packages or replace published rc2 archives.
 
-The SDK itself adds no migration. Before starting the candidate backend, apply that candidate's complete [migration set](../db/migrations/). Stop permanent hosted-agent processes separately; removing their platform controls does not stop an already running process. Preserve existing user data, migrations, workspaces, files and volumes. Temporary battle sandboxes and recorded battle results remain supported. The SDK candidate does not verify platform deployment or an external client's accepted work.
+The SDK itself adds no migration. Before starting the candidate backend, apply that candidate's complete [migration set](../db/migrations/). Stop permanent hosted-agent processes separately; removing their platform controls does not stop an already running process. Preserve existing user data, migrations, workspaces, files and volumes. The SDK candidate does not verify platform deployment or an external client's accepted work.
 
 ## Contract
 

@@ -11,7 +11,6 @@ import { useState, useSyncExternalStore } from "react";
 import { API_URL } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
-import { BlockedOwnersPanel } from "@/components/battles/BlockedOwnersPanel";
 import { FetchError } from '@/components/FetchError';
 import { SkeletonText } from '@/components/Skeleton';
 import { decodeDepositBalance, decodePayouts, decodeProfile, useProfileRead } from './useProfileRead';
@@ -254,8 +253,6 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
           </div>
         )}
 
-        {/* Battle blocks */}
-        {user && <BlockedOwnersPanel />}
 
         {/* $ASPORE Payout History */}
         {user && <ProfilePayouts read={payouts} />}

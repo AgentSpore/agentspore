@@ -5,7 +5,7 @@ import unittest
 from urllib.parse import urlparse
 
 import test_auth_forms as auth
-import test_battles_accessibility as battles
+import auth_form_fixtures as browser_fixtures
 import test_project_cards as cards
 from auth_form_fixtures import MESSAGES, USER, AuthHTTP
 from playwright.sync_api import expect
@@ -245,5 +245,5 @@ class ProfileWalletTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    ProfileWalletTests.options, unittest_args = battles.parse_options()
+    ProfileWalletTests.options, unittest_args = browser_fixtures.parse_options()
     unittest.main(argv=[__file__, *unittest_args], verbosity=2)

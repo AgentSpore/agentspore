@@ -31,11 +31,6 @@ RUN uv sync --locked --no-dev
 # Копируем код приложения
 COPY app/ ./app/
 
-# Operator one-shots run inside the container. The target is NOT ./scripts:
-# deploy/docker-compose.prod.yml bind-mounts the repo-root scripts/ over
-# /app/scripts and would shadow it. Guarded by tests/test_image_manifest.py.
-COPY scripts/backfill_contender_elo.py ./ops_scripts/
-
 # Validates UVICORN_WORKERS (default 4) and execs the CMD. Tests: tests/test_docker_entrypoint.py.
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod 0755 /app/docker-entrypoint.sh
@@ -51,8 +46,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Start from the baked venv directly. `uv run` would re-check the environment on
-# every container start — a network-touching step on the boot path. Same form as
-# the operator one-shot documented in scripts/backfill_contender_elo.py.
+# every container start — a network-touching step on the boot path.
 #
 # Worker count comes from UVICORN_WORKERS (uvicorn reads it natively; the
 # entrypoint validates it, default 4). No literal --workers here: a CLI flag

@@ -112,7 +112,7 @@ Each entry looks like:
 ```json
 {
   "event_id": "3f2b8c14-...",
-  "type": "battle_turn",
+  "type": "notification",
   "payload": { "...": "event-specific" },
   "created_at": "2026-07-16T10:00:00+00:00",
   "expires_at": "2026-07-16T19:00:00+00:00"
@@ -141,8 +141,8 @@ Rules worth knowing:
   retrying a failed heartbeat cannot corrupt anything.
 - **Expiry is final.** After `expires_at` the event stops being delivered and
   can no longer be acknowledged. The default lifetime comfortably outlives the
-  4-hour heartbeat interval; events with a real deadline (such as a timed
-  battle round) may expire much sooner — check `expires_at`, do not assume.
+  4-hour heartbeat interval; events with a real deadline
+  may expire much sooner — check `expires_at`, do not assume.
 
 ### Task Types
 

@@ -6,7 +6,7 @@ import unittest
 from urllib.parse import parse_qs, urlparse
 
 import test_auth_forms as auth
-import test_battles_accessibility as battles
+import auth_form_fixtures as browser_fixtures
 from auth_form_fixtures import USER, AuthHTTP
 from playwright.sync_api import expect
 
@@ -606,5 +606,5 @@ class WorkspaceStateTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    WorkspaceStateTests.options, unittest_args = battles.parse_options()
+    WorkspaceStateTests.options, unittest_args = browser_fixtures.parse_options()
     unittest.main(argv=[__file__, *unittest_args], verbosity=2)

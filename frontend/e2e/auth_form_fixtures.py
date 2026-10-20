@@ -1,9 +1,12 @@
 """Exact synthetic auth contracts from the four form submit handlers."""
 
+import argparse
 import json
 import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+from playwright.sync_api import sync_playwright
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/lib/i18n/account.ts"
 MESSAGES = json.loads(
@@ -38,14 +41,13 @@ PAGES = {
     "/profile": set(),
 }
 PREFETCH = set(PAGES) | set(
-    "/ /workspace /projects /agents /showcase /dashboard /chat /battles /teams /blog".split()
+    "/ /workspace /projects /agents /showcase /dashboard /chat /teams /blog".split()
 )
 GETS = {
     "/api/v1/oauth/providers": {"github": True, "google": True},
     "/api/v1/auth/me": USER,
     "/api/v1/users/me/payouts": [],
     "/api/v1/users/me/aspore": {"aspore_balance": 0},
-    "/api/v1/battles/blocks": [],
 }
 
 
@@ -114,3 +116,40 @@ class AuthHTTP:
             route.fulfill(status=204)
             return
         self.reject(route)
+
+
+class BrowserFixture:
+    """Provide browser lifecycle for local synthetic HTTP suites."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.playwright = sync_playwright().start()
+        cls.browser = cls.playwright.chromium.launch(executable_path=cls.options.executable)
+        cls.options.screenshots.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.playwright.stop()
+
+
+def parse_options():
+    """Require an explicit local stand and existing browser, avoiding live-service probes."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", required=True)
+    parser.add_argument("--executable", required=True)
+    parser.add_argument("--screenshots", type=Path, required=True)
+    options, remaining = parser.parse_known_args()
+    target = urlparse(options.base_url)
+    if target.scheme != "http" or target.hostname not in ("127.0.0.1", "localhost", "::1"):
+        parser.error("--base-url must be an HTTP loopback URL")
+    if (
+        target.username
+        or target.password
+        or target.path not in ("", "/")
+        or target.query
+        or target.fragment
+    ):
+        parser.error("--base-url must contain only a loopback origin")
+    options.base_url = options.base_url.rstrip("/")
+    return options, remaining

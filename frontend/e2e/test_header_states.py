@@ -8,9 +8,21 @@ import unittest
 from urllib.parse import urlparse
 
 import auth_form_fixtures as auth
-import test_battles_accessibility as browser
-import test_battles_data_accessibility as metrics
+import auth_form_fixtures as browser
 from playwright.sync_api import expect
+
+TEXT = """root => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), records = [];
+    while (walker.nextNode()) {
+        const node = walker.currentNode, el = node.parentElement, text = node.textContent.trim();
+        if (!text || el.closest('svg, [aria-hidden="true"]') || !el.checkVisibility()) continue;
+        const closed = el.closest('details:not([open])');
+        if (closed && !closed.querySelector('summary').contains(el)) continue;
+        records.push({text, size: parseFloat(getComputedStyle(el).fontSize),
+            kind: ['?', '⚙'].includes(text) ? 'exposed state marker' : 'substantive text'});
+    }
+    return records;
+}"""
 
 LAYOUTS = [(locale, width) for locale in ("en", "ru") for width in (320, 390, 1024, 1280)]
 PROFILE = dict(
@@ -89,11 +101,11 @@ class HeaderStateTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        browser.BattleAccessibilityTests.setUpClass.__func__(cls)
+        browser.BrowserFixture.setUpClass.__func__(cls)
 
     @classmethod
     def tearDownClass(cls):
-        browser.BattleAccessibilityTests.tearDownClass.__func__(cls)
+        browser.BrowserFixture.tearDownClass.__func__(cls)
 
     def open_header(self, layout, session=False):
         self.locale, self.width = layout
@@ -160,7 +172,7 @@ class HeaderStateTests(unittest.TestCase):
             "locale": self.locale,
             "width": self.width,
             "actions": root.evaluate(STATE),
-            "text": root.evaluate(metrics.TEXT),
+            "text": root.evaluate(TEXT),
             "keyboard": self.trace,
             "unexpected": self.http.unexpected,
             "page_errors": self.errors,

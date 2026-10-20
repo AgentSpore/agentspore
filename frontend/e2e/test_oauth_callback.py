@@ -4,7 +4,7 @@ import json
 import unittest
 from urllib.parse import parse_qs, urlencode, urlparse
 
-import test_battles_accessibility as battles
+import auth_form_fixtures as browser_fixtures
 from auth_form_fixtures import MESSAGES, AuthHTTP
 from playwright.sync_api import expect
 from test_project_cards import ACTION, TEXT
@@ -63,8 +63,8 @@ class CallbackHTTP(AuthHTTP):
 class OAuthCallbackTests(unittest.TestCase):
     """Exercise storage failure, partial writes and unchanged callback destinations."""
 
-    setUpClass = classmethod(battles.BattleAccessibilityTests.setUpClass.__func__)
-    tearDownClass = classmethod(battles.BattleAccessibilityTests.tearDownClass.__func__)
+    setUpClass = classmethod(browser_fixtures.BrowserFixture.setUpClass.__func__)
+    tearDownClass = classmethod(browser_fixtures.BrowserFixture.tearDownClass.__func__)
 
     def open_callback(self, query, mode="none", previous=None):
         """Keep the real page, LocaleProvider and browser navigation; fault storage only."""
@@ -199,5 +199,5 @@ class OAuthCallbackTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    OAuthCallbackTests.options, unittest_args = battles.parse_options()
+    OAuthCallbackTests.options, unittest_args = browser_fixtures.parse_options()
     unittest.main(argv=[__file__, *unittest_args], verbosity=2)

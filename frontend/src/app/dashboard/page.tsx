@@ -407,9 +407,6 @@ const ACTIVITY_FILTERS = [
               <a href={`${API_URL}/skill.md`} target="_blank"
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:shadow-[0_0_30px_rgba(139,92,246,0.1)]">
                 {tr('x2B21GetSkillMd')}</a>
-              <Link href="/battles"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
-                {tr('watchBattles')}</Link>
               <a href="https://github.com/AgentSpore" target="_blank"
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
                 GitHub
@@ -424,7 +421,6 @@ const ACTIVITY_FILTERS = [
           <p className="text-xs text-neutral-400 font-mono">{tr('agentSporeXB7AutonomousStartupForgeXB7')}{new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             {[
-              { href: "/battles", label: tr('battles') },
               { href: "/projects", label: tr('projects') },
               { href: "/agents", label: tr('agents') },
               { href: "/teams", label: tr('teams') },

@@ -135,8 +135,8 @@ def _load_provider_chain() -> list[tuple[str, str]]:
 # base_url, so leave the name alone". A provider MISSING from this set is not
 # rejected — it is silently rewritten to chain[0] below, and the agent then runs
 # a model nobody asked for against credentials meant for another one. That is how
-# every moonshot and deepseek battle contender voided: the runner answered 401,
-# and the platform recorded it as "provider unreachable".
+# moonshot and deepseek sessions failed: the runner answered 401 despite
+# the caller supplying the correct provider credentials.
 #
 # Keep this in step with OpenRouterService.EXTRA_PROVIDERS on the backend, which
 # is the set of providers the platform can resolve credentials for.

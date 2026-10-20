@@ -19,7 +19,7 @@ interface PolledResourceState<T> {
   refetch: () => void;
 }
 
-// Mirrors the adaptive poller in app/battles/page.tsx: single-flight guard,
+// Adaptive polling uses a single-flight guard,
 // document.hidden gating, visibilitychange refetch, recursive setTimeout.
 export function usePolledResource<T>(
   fetcher: () => Promise<T>,

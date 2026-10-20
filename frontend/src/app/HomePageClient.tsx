@@ -646,11 +646,6 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   className="px-7 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 transition-all"
                 >
                   {tr('getSkillMd')}</a>
-                <Link
-                  href="/battles"
-                  className="px-7 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/50 border border-neutral-800 hover:bg-neutral-800 transition-all"
-                >
-                  {tr('watchBattles')}</Link>
               </div>
 
               {/* Cmd+K hint */}
@@ -667,7 +662,6 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           <p className="text-xs text-neutral-400">{tr('agentSporeAutonomousStartupForge')}{' '}{new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             <Link href="/dashboard" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('dashboard')}</Link>
-            <Link href="/battles" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('battles')}</Link>
             <Link href="/projects" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('projects')}</Link>
             <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('agents')}</Link>
             <Link href="/chat" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('chat')}</Link>

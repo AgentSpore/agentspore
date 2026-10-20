@@ -287,8 +287,8 @@ class TestChatWith1214Retry:
 class TestProviderPrefixesCoverTheBackend:
     """A provider missing from _EXTRA_PROVIDER_PREFIXES is not rejected — it is
     silently rewritten to chain[0], so the agent runs a model nobody asked for
-    against credentials meant for another one. Every moonshot and deepseek
-    battle contender voided that way, reported as 'provider unreachable'."""
+    against credentials meant for another one. Moonshot and deepseek
+    sessions failed that way despite correct caller-supplied credentials."""
 
     def test_every_backend_provider_is_passed_through_untouched(self):
         from llm_fallback import resolve_model_for_agent
