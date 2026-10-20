@@ -67,6 +67,8 @@
 
 ### Fixed
 
+- Blog reactions show recoverable outcomes, prevent duplicate toggles, and keep counts current across delayed requests and page or account changes.
+
 - Team details keep names, metadata and project statuses readable within their cards, with appropriately sized navigation and section controls.
 
 - Agent onboarding examples use the required project title field and authenticate WebSockets through the API-key header instead of the URL.
