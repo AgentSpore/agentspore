@@ -183,7 +183,7 @@ const COMPOSER_OWNER = {
 };
 const OWN_MESSAGES = ["Original first idea", "Original second idea"].map((content, index) => ({
   ...MESSAGE, id: `own-${index}`, agent_id: null, agent_name: COMPOSER_OWNER.name,
-  specialization: "user", sender_type: "user", is_deleted: false, content,
+  specialization: "user", sender_type: "user", sender_user_id: COMPOSER_OWNER.id, is_deleted: false, content,
 }));
 
 async function openComposer(pending: ReturnType<typeof pendingRead>) {
@@ -642,4 +642,143 @@ it.each(["pending", "failed"])("keeps a %s deletion identity when older messages
   await act(async () => chat.deletes[chat.deletes.length - 1].pending.resolve(Response.json({ status: "ok" })));
   expect(await screen.findByText("[deleted]")).toBeTruthy();
   expect(chat.unexpected).toEqual([]);
+});
+
+const SECURITY_OWNER = { ...COMPOSER_OWNER, id: "account-a", name: "Shared name" };
+const SECURITY_OTHER = { ...SECURITY_OWNER, id: "account-b" };
+const SECURITY_ROWS = [
+  { id: "security-a", sender_user_id: SECURITY_OWNER.id },
+  { id: "security-b", sender_user_id: SECURITY_OTHER.id },
+  { id: "security-null", sender_user_id: null },
+  { id: "security-missing" },
+].map(author => ({ ...MESSAGE, ...author, agent_id: null, content: author.id,
+  agent_name: SECURITY_OWNER.name, specialization: "user", sender_type: "user", is_deleted: false }));
+
+function publicSecuritySession(token: string | null) {
+  if (token) localStorage.setItem("access_token", token);
+  else localStorage.removeItem("access_token");
+  window.dispatchEvent(new Event("storage"));
+}
+
+function stubPublicSecurity(profile: (authorization: string | null) => Promise<Response>) {
+  stubChat([]);
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    const url = new URL(input);
+    if (url.origin !== new URL(API_URL).origin) throw new Error("Unexpected security origin");
+    if (url.pathname === "/api/v1/auth/me") return profile(new Headers(init?.headers).get("Authorization"));
+    if (url.pathname === "/api/v1/chat/messages") return Promise.resolve(Response.json([...SECURITY_ROWS].reverse()));
+    throw new Error(`Unexpected security request: ${url.pathname}`);
+  }));
+}
+
+function publicSecurityControls(id: string, owned: boolean) {
+  const row = screen.getByText(id).closest("[data-message-id]");
+  if (!(row instanceof HTMLElement)) throw new Error("Security message row missing");
+  for (const title of ["Edit", "Delete"]) expect(within(row).queryAllByTitle(title)).toHaveLength(owned ? 1 : 0);
+}
+
+it.each(["Shared name", "Renamed account"])("SEC.CHAT public grants only confirmed ID ownership with profile name %s", async name => {
+  const payload = btoa(JSON.stringify({ sub: SECURITY_OTHER.id, email: "Shared name@example.invalid" }));
+  publicSecuritySession(`synthetic.${payload}.fixture`);
+  stubPublicSecurity(async () => Response.json({ ...SECURITY_OWNER, name }));
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await screen.findByText("security-a");
+  await waitFor(() => publicSecurityControls("security-a", true));
+  for (const id of ["security-b", "security-null", "security-missing"]) publicSecurityControls(id, false);
+  expect(within(screen.getByRole("main")).getAllByText(SECURITY_OWNER.name)).toHaveLength(4);
+});
+
+it("SEC.CHAT public removes old privileges while replacement profile is pending", async () => {
+  const replacement = pendingRead();
+  publicSecuritySession("synthetic-security-a");
+  stubPublicSecurity(authorization => authorization === "Bearer synthetic-security-a"
+    ? Promise.resolve(Response.json(SECURITY_OWNER)) : replacement.promise.then(response => response.clone()));
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await screen.findByText("security-a");
+  await waitFor(() => publicSecurityControls("security-a", true));
+  await act(async () => publicSecuritySession("synthetic-security-b"));
+  publicSecurityControls("security-a", false);
+  publicSecurityControls("security-b", false);
+  await act(async () => replacement.resolve(Response.json(SECURITY_OTHER)));
+  await waitFor(() => publicSecurityControls("security-b", true));
+  publicSecurityControls("security-a", false);
+  await act(async () => publicSecuritySession(null));
+  publicSecurityControls("security-b", false);
+});
+
+it.each(["switch", "logout"])("SEC.CHAT public ignores delayed old profile after %s", async transition => {
+  const stale = pendingRead();
+  publicSecuritySession("synthetic-security-a");
+  const profiles = vi.fn((authorization: string | null) => authorization === "Bearer synthetic-security-a"
+    ? stale.promise.then(response => response.clone()) : Promise.resolve(Response.json(SECURITY_OTHER)));
+  stubPublicSecurity(profiles);
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await screen.findByText("security-a");
+  await waitFor(() => expect(profiles).toHaveBeenCalled());
+  publicSecurityControls("security-a", false);
+  await act(async () => publicSecuritySession(transition === "switch" ? "synthetic-security-b" : null));
+  if (transition === "switch") await waitFor(() => publicSecurityControls("security-b", true));
+  await act(async () => stale.resolve(Response.json(SECURITY_OWNER)));
+  publicSecurityControls("security-a", false);
+  publicSecurityControls("security-b", transition === "switch");
+});
+
+async function openIdentityComposer() {
+  const pending = pendingRead();
+  const writes: { method: string; path: string; authorization: string | null; content: string }[] = [];
+  publicSecuritySession("synthetic-security-a");
+  stubPublicSecurity(authorization => authorization === "Bearer synthetic-security-a"
+    ? Promise.resolve(Response.json(SECURITY_OWNER)) : pending.promise.then(response => response.clone()));
+  const read = fetch;
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    if (init?.method === "POST" || init?.method === "PATCH") {
+      writes.push({ method: init.method, path: new URL(input).pathname,
+        authorization: new Headers(init.headers).get("Authorization"), content: JSON.parse(String(init.body)).content });
+      return Promise.resolve(Response.json({ status: "ok", message_id: "synthetic-composer-result" }));
+    }
+    return read(input, init);
+  }));
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox");
+  await waitFor(() => publicSecurityControls("security-a", true));
+  return { input, pending, writes };
+}
+
+it("SEC.CHAT composer clears A editor and draft only after B profile confirms", async () => {
+  const chat = await openIdentityComposer();
+  fireEvent.click(screen.getByTitle("Edit"));
+  compose(chat.input, "A amended draft");
+  await act(async () => publicSecuritySession("synthetic-security-b"));
+  expect(screen.queryByText("Editing message")).toBeNull();
+  submitComposer(chat.input);
+  expect(chat.writes).toEqual([]);
+  await act(async () => chat.pending.resolve(Response.json(SECURITY_OTHER)));
+  const nextInput = await screen.findByRole<HTMLTextAreaElement>("textbox");
+  expect(screen.queryByText("Editing message")).toBeNull();
+  expect(nextInput.value).toBe("");
+  expect(nextInput.placeholder).toBe("Message the agents...");
+  compose(nextInput, "B new draft");
+  await act(async () => submitComposer(nextInput));
+  expect(chat.writes).toEqual([{ method: "POST", path: "/api/v1/chat/human-message",
+    authorization: "Bearer synthetic-security-b", content: "B new draft" }]);
+});
+
+it.each(["draft", "edit"])("SEC.CHAT composer preserves %s across pending same-account profile refresh", async mode => {
+  const chat = await openIdentityComposer();
+  if (mode === "edit") fireEvent.click(screen.getByTitle("Edit"));
+  compose(chat.input, "Unsaved same-account revision");
+  await act(async () => publicSecuritySession("synthetic-refreshed-security-a"));
+  expect(screen.queryByText("Editing message")).toBeNull();
+  const visibleInput = screen.queryByRole<HTMLTextAreaElement>("textbox");
+  expect(visibleInput === null || visibleInput.disabled).toBe(true);
+  submitComposer(chat.input);
+  expect(chat.writes).toEqual([]);
+  await act(async () => chat.pending.resolve(Response.json(SECURITY_OWNER)));
+  const restored = await screen.findByRole<HTMLTextAreaElement>("textbox");
+  expect(restored.value).toBe("Unsaved same-account revision");
+  expect(restored.placeholder).toBe(mode === "edit" ? "Edit your message..." : "Message the agents...");
+  await act(async () => submitComposer(restored));
+  expect(chat.writes).toEqual([{ method: mode === "edit" ? "PATCH" : "POST",
+    path: mode === "edit" ? "/api/v1/chat/human-messages/security-a" : "/api/v1/chat/human-message",
+    authorization: "Bearer synthetic-refreshed-security-a", content: "Unsaved same-account revision" }]);
 });

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import ProjectPage from './page';
@@ -173,4 +173,158 @@ it('ignores a late project response after navigation', async () => {
   await act(async () => { finish(new Response(JSON.stringify({ ...project, id: 'demo-project', title: 'Stale project' }))); });
   expect(screen.getByRole('heading', { name: 'Next project' })).toBeTruthy();
   expect(screen.queryByText('Stale project')).toBeNull();
+});
+
+const PROJECT_SECURITY_OWNER = {
+  id: "account-a", name: "Shared name", email: "owner@example.invalid",
+  avatar_url: null, token_balance: 0, is_admin: false,
+};
+const PROJECT_SECURITY_OTHER = { ...PROJECT_SECURITY_OWNER, id: "account-b" };
+const PROJECT_SECURITY_ROWS = [
+  { id: "project-security-a", sender_user_id: PROJECT_SECURITY_OWNER.id },
+  { id: "project-security-b", sender_user_id: PROJECT_SECURITY_OTHER.id },
+  { id: "project-security-null", sender_user_id: null },
+  { id: "project-security-missing" },
+].map(author => ({ ...author, sender_name: PROJECT_SECURITY_OWNER.name, sender_handle: null,
+  sender_type: "human", content: author.id, message_type: "text", created_at: "2026-10-19T00:00:00Z" }));
+
+function projectSecuritySession(token: string | null) {
+  if (token) {
+    localStorage.setItem("access_token", token);
+    localStorage.setItem("auth", JSON.stringify({ token, email: "Shared name@example.invalid", userId: "account-b" }));
+  } else {
+    localStorage.removeItem("auth");
+    localStorage.removeItem("access_token");
+  }
+  window.dispatchEvent(new Event("storage"));
+}
+
+function pendingSecurityProfile() {
+  let resolve: (response: Response) => void = () => { throw new Error("Profile promise not initialized"); };
+  const promise = new Promise<Response>(complete => { resolve = complete; });
+  return { promise, resolve };
+}
+
+function stubProjectSecurity(profile: (authorization: string | null) => Promise<Response>) {
+  mockProject("active", null);
+  const projectFetch = fetch;
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    if (input.endsWith("/auth/me")) return profile(new Headers(init?.headers).get("Authorization"));
+    if (input.includes("/chat/project/demo-project/messages")) return Promise.resolve(Response.json([...PROJECT_SECURITY_ROWS].reverse()));
+    return projectFetch(input, init);
+  }));
+}
+
+async function openProjectSecurity() {
+  render(<ProjectPage />);
+  await screen.findByRole("heading", { name: "Example Project" });
+  fireEvent.click(screen.getByRole("button", { name: /discussion/i }));
+  await screen.findByText("project-security-a");
+}
+
+function projectSecurityControls(id: string, owned: boolean) {
+  const row = screen.getByText(id).closest(".group");
+  if (!(row instanceof HTMLElement)) throw new Error("Project security message row missing");
+  for (const title of ["Edit", "Delete"]) expect(within(row).queryAllByTitle(title)).toHaveLength(owned ? 1 : 0);
+}
+
+it.each(["Shared name", "Renamed account"])("SEC.CHAT project grants only confirmed profile ID with name %s", async name => {
+  projectSecuritySession("synthetic-security-a");
+  stubProjectSecurity(async () => Response.json({ ...PROJECT_SECURITY_OWNER, name }));
+  await openProjectSecurity();
+  await waitFor(() => projectSecurityControls("project-security-a", true));
+  for (const id of ["project-security-b", "project-security-null", "project-security-missing"]) projectSecurityControls(id, false);
+  const panel = screen.getByText("project-security-a").closest(".chat-panel");
+  if (!(panel instanceof HTMLElement)) throw new Error("Project chat panel missing");
+  expect(within(panel).getAllByText(PROJECT_SECURITY_OWNER.name)).toHaveLength(4);
+});
+
+it("SEC.CHAT project removes privileges until replacement profile confirms its ID", async () => {
+  const replacement = pendingSecurityProfile();
+  projectSecuritySession("synthetic-security-a");
+  stubProjectSecurity(authorization => authorization === "Bearer synthetic-security-a"
+    ? Promise.resolve(Response.json(PROJECT_SECURITY_OWNER)) : replacement.promise.then(response => response.clone()));
+  await openProjectSecurity();
+  await waitFor(() => projectSecurityControls("project-security-a", true));
+  await act(async () => projectSecuritySession("synthetic-security-b"));
+  projectSecurityControls("project-security-a", false);
+  projectSecurityControls("project-security-b", false);
+  await act(async () => replacement.resolve(Response.json(PROJECT_SECURITY_OTHER)));
+  await waitFor(() => projectSecurityControls("project-security-b", true));
+  projectSecurityControls("project-security-a", false);
+  await act(async () => projectSecuritySession(null));
+  projectSecurityControls("project-security-b", false);
+});
+
+it.each(["switch", "logout"])("SEC.CHAT project rejects stale profile and locally claimed ID after %s", async transition => {
+  const stale = pendingSecurityProfile();
+  projectSecuritySession("synthetic-security-a");
+  const profiles = vi.fn((authorization: string | null) => authorization === "Bearer synthetic-security-a"
+    ? stale.promise.then(response => response.clone()) : Promise.resolve(Response.json(PROJECT_SECURITY_OTHER)));
+  stubProjectSecurity(profiles);
+  await openProjectSecurity();
+  await waitFor(() => expect(profiles).toHaveBeenCalled());
+  projectSecurityControls("project-security-a", false);
+  projectSecurityControls("project-security-b", false);
+  await act(async () => projectSecuritySession(transition === "switch" ? "synthetic-security-b" : null));
+  if (transition === "switch") await waitFor(() => projectSecurityControls("project-security-b", true));
+  await act(async () => stale.resolve(Response.json(PROJECT_SECURITY_OWNER)));
+  projectSecurityControls("project-security-a", false);
+  projectSecurityControls("project-security-b", transition === "switch");
+});
+
+async function openProjectIdentityComposer() {
+  const pending = pendingSecurityProfile();
+  const writes: { method: string; path: string; authorization: string | null; content: string }[] = [];
+  projectSecuritySession("synthetic-security-a");
+  stubProjectSecurity(authorization => authorization === "Bearer synthetic-security-a"
+    ? Promise.resolve(Response.json(PROJECT_SECURITY_OWNER)) : pending.promise.then(response => response.clone()));
+  const read = fetch;
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    if (init?.method === "POST" || init?.method === "PATCH") {
+      writes.push({ method: init.method, path: new URL(input).pathname,
+        authorization: new Headers(init.headers).get("Authorization"), content: JSON.parse(String(init.body)).content });
+      return Promise.resolve(Response.json({ status: "ok" }));
+    }
+    return read(input, init);
+  }));
+  await openProjectSecurity();
+  await waitFor(() => projectSecurityControls("project-security-a", true));
+  return { pending, writes, input: screen.getByRole<HTMLTextAreaElement>("textbox") };
+}
+
+it("SEC.CHAT project composer clears A editor after confirmed B without foreign PATCH", async () => {
+  const chat = await openProjectIdentityComposer();
+  fireEvent.click(screen.getByTitle("Edit"));
+  fireEvent.change(chat.input, { target: { value: "A amended project draft" } });
+  await act(async () => projectSecuritySession("synthetic-security-b"));
+  await act(async () => chat.pending.resolve(Response.json(PROJECT_SECURITY_OTHER)));
+  await waitFor(() => projectSecurityControls("project-security-b", true));
+  const next = screen.getByRole<HTMLTextAreaElement>("textbox");
+  expect(screen.queryByText("Editing message")).toBeNull();
+  expect(next.value).toBe("");
+  fireEvent.change(next, { target: { value: "B new project draft" } });
+  await act(async () => fireEvent.keyDown(next, { key: "Enter" }));
+  expect(chat.writes).toEqual([{ method: "POST", path: "/api/v1/chat/project/demo-project/human-messages",
+    authorization: "Bearer synthetic-security-b", content: "B new project draft" }]);
+});
+
+it.each(["draft", "edit"])("SEC.CHAT project composer preserves %s while same-account profile reconfirms", async mode => {
+  const chat = await openProjectIdentityComposer();
+  if (mode === "edit") fireEvent.click(screen.getByTitle("Edit"));
+  fireEvent.change(chat.input, { target: { value: "Unsaved project revision" } });
+  await act(async () => projectSecuritySession("synthetic-refreshed-security-a"));
+  expect(screen.queryByText("Editing message")).toBeNull();
+  const visible = screen.queryByRole<HTMLTextAreaElement>("textbox");
+  expect(visible === null || visible.disabled).toBe(true);
+  await act(async () => fireEvent.keyDown(chat.input, { key: "Enter" }));
+  expect(chat.writes).toEqual([]);
+  await act(async () => chat.pending.resolve(Response.json(PROJECT_SECURITY_OWNER)));
+  const restored = await screen.findByRole<HTMLTextAreaElement>("textbox");
+  expect(restored.value).toBe("Unsaved project revision");
+  await act(async () => fireEvent.keyDown(restored, { key: "Enter" }));
+  expect(chat.writes).toEqual([{ method: mode === "edit" ? "PATCH" : "POST",
+    path: mode === "edit" ? "/api/v1/chat/project/demo-project/human-messages/project-security-a" : "/api/v1/chat/project/demo-project/human-messages",
+    authorization: "Bearer synthetic-refreshed-security-a", content: "Unsaved project revision" }]);
 });
