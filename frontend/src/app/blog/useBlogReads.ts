@@ -100,11 +100,11 @@ export function useBlogPost(postId: string) {
 /** Keep comment read errors distinct from a confirmed empty list. */
 export function useBlogComments(postId: string) {
   const [state, setState] = useState(() => initial<BlogComment[]>(postId));
-  const pending = useRef<Attempt | null>(null);
+  const pending = useRef<(Attempt & { removed: Set<string> }) | null>(null);
   const activeId = useRef<string | null>(null);
   const load = useCallback(async () => {
     if (activeId.current !== postId || pending.current) return;
-    const operation = { controller: new AbortController() }; pending.current = operation;
+    const operation = { controller: new AbortController(), removed: new Set<string>() }; pending.current = operation;
     setState(previous => ({ id: postId, status: "loading", data: previous.id === postId ? previous.data : null }));
     try {
       const response = await fetch(`${API_URL}/api/v1/blog/posts/${postId}/comments`, { signal: operation.controller.signal });
@@ -113,7 +113,7 @@ export function useBlogComments(postId: string) {
       const value: unknown = await response.json();
       if (pending.current !== operation) return;
       if (!isComments(value, postId)) throw new Error("Invalid blog comments response");
-      setState({ id: postId, status: "ready", data: value });
+      setState({ id: postId, status: "ready", data: value.filter(comment => !operation.removed.has(comment.id)) });
     } catch { if (pending.current === operation) setState(previous => ({ ...previous, status: "error" })); }
     finally { if (pending.current === operation) pending.current = null; }
   }, [postId]);
@@ -129,6 +129,12 @@ export function useBlogComments(postId: string) {
   };
   const update = (change: (comments: BlogComment[]) => BlogComment[]) => setState(previous =>
     previous.id === postId && previous.data ? { ...previous, data: change(previous.data) } : previous);
+  const remove = (commentId: string) => {
+    if (activeId.current !== postId) return;
+    // An accepted removal masks only the read already in flight.
+    pending.current?.removed.add(commentId);
+    update(comments => comments.filter(comment => comment.id !== commentId));
+  };
   const current = state.id === postId ? state : initial<BlogComment[]>(postId);
-  return { ...current, comments: current.data ?? [], empty: !!current.data && current.data.length === 0, load, refresh, update };
+  return { ...current, comments: current.data ?? [], empty: !!current.data && current.data.length === 0, load, refresh, update, remove };
 }

@@ -111,7 +111,7 @@ it("refreshes only comments after posting and clears the submitted draft", async
   let calls = 0;
   const stalled = deferredResponse();
   const requests = vi.fn(async (url: string, init?: RequestInit) => {
-    if (++calls > 5) return stalled.promise;
+    if (++calls > 6) return stalled.promise;
     if (url.endsWith("/api/v1/auth/me")) return response({ id: "synthetic-author", name: "Synthetic Author",
       email: "synthetic@example.invalid", avatar_url: null, token_balance: 0, is_admin: false });
     if (url.endsWith("/comments") && init?.method === "POST") {
@@ -130,7 +130,9 @@ it("refreshes only comments after posting and clears the submitted draft", async
   fireEvent.click(screen.getByRole("button", { name: /^Post$/ }));
   await screen.findByText("New comment");
   expect(draft).toHaveProperty("value", "");
-  expect(requests).toHaveBeenCalledTimes(5);
+  expect(requests).toHaveBeenCalledTimes(6);
+  expect(requests.mock.calls.filter(([url]) => url.endsWith("/api/v1/auth/me"))).toHaveLength(2);
+  expect(requests.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   expect(requests.mock.calls.filter(([url, init]) => url.endsWith("/comments") && !init?.method)).toHaveLength(2);
   expect(requests.mock.calls.filter(([url]) => url.endsWith("/posts/post-a"))).toHaveLength(1);
 });

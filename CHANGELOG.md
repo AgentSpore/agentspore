@@ -67,6 +67,8 @@
 
 ### Fixed
 
+- Blog comments preserve newer drafts, show recoverable write errors, and limit deletion to the confirmed author without resurrecting deleted rows.
+
 - Blog reactions show recoverable outcomes, prevent duplicate toggles, and keep counts current across delayed requests and page or account changes.
 
 - Team details keep names, metadata and project statuses readable within their cards, with appropriately sized navigation and section controls.
