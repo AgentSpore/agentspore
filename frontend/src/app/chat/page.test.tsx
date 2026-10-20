@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
 import ChatPage from "./page";
@@ -482,4 +482,164 @@ it.each([
   if (!submit) throw new Error("Composer submit missing");
   expect(submit.disabled).toBe(false);
   expect(unexpected).toEqual([]);
+});
+
+const OPERATION_ERROR = {
+  en: { older: "Could not load older messages.", remove: "Could not delete message." },
+  ru: { older: "Не удалось загрузить предыдущие сообщения.", remove: "Не удалось удалить сообщение." },
+};
+const OPERATION_ROWS = [...HISTORY_PAGE.slice(0, 48), ...[...OWN_MESSAGES].reverse()];
+
+async function openOperationChat(locale: "en" | "ru") {
+  localStorage.setItem("access_token", "synthetic-operation-access");
+  const stream = stubInitialRead(async () => Response.json([]));
+  const older: ReturnType<typeof pendingRead>[] = [];
+  const deletes: { id: string; pending: ReturnType<typeof pendingRead> }[] = [];
+  const unexpected: string[] = [];
+  const routes = new Map<string, () => Promise<Response>>([
+    ["GET /api/v1/auth/me", async () => Response.json(COMPOSER_OWNER)],
+    ["GET /api/v1/chat/messages?limit=50", async () => Response.json(OPERATION_ROWS)],
+    [`GET /api/v1/chat/messages?limit=50&before=${OWN_MESSAGES[0].id}`, () => {
+      const pending = pendingRead(); older.push(pending); return pending.promise;
+    }],
+  ]);
+  for (const message of OWN_MESSAGES) routes.set(`DELETE /api/v1/chat/human-messages/${message.id}`, () => {
+    const pending = pendingRead(); deletes.push({ id: message.id, pending }); return pending.promise;
+  });
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    const url = new URL(input), key = `${init?.method ?? "GET"} ${url.pathname}${url.search}`;
+    const respond = routes.get(key);
+    if (url.origin === new URL(API_URL).origin && respond
+      && new Headers(init?.headers).get("Authorization") === "Bearer synthetic-operation-access") return respond();
+    unexpected.push(key);
+    return Promise.reject(new Error("Unexpected operation request"));
+  }));
+  render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
+  const input = await screen.findByRole<HTMLTextAreaElement>("textbox");
+  await screen.findByText(OWN_MESSAGES[0].content);
+  compose(input, "an unrelated draft");
+  return { input, older, deletes, unexpected, stream };
+}
+
+async function rejectOperation(pending: ReturnType<typeof pendingRead>, failure: string) {
+  await act(async () => {
+    if (failure === "network") pending.reject(new TypeError("Synthetic operation failure"));
+    else pending.resolve(Response.json({ detail: "Synthetic operation failure" }, { status: 503 }));
+  });
+}
+
+it.each([
+  { locale: "en", failure: "http" }, { locale: "en", failure: "network" },
+  { locale: "ru", failure: "http" }, { locale: "ru", failure: "network" },
+] as const)("retains history and draft with retry after older $failure failure in $locale", async ({ locale, failure }) => {
+  const chat = await openOperationChat(locale);
+  fireEvent.scroll(screen.getByRole("main"));
+  expect(chat.older).toHaveLength(1);
+  await rejectOperation(chat.older[0], failure);
+  expect(await screen.findByText(OPERATION_ERROR[locale].older)).toBeTruthy();
+  expect(screen.getByText(OWN_MESSAGES[0].content)).toBeTruthy();
+  expect(chat.input.value).toBe("an unrelated draft");
+  const retry = screen.getByRole("button", { name: sharedMessages[locale].retry });
+  await act(async () => { fireEvent.click(retry); fireEvent.click(retry); fireEvent.scroll(screen.getByRole("main")); });
+  expect(chat.older).toHaveLength(2);
+  await act(async () => chat.older[1].resolve(Response.json([OLDER_MESSAGE])));
+  expect(await screen.findByText(OLDER_MESSAGE.content)).toBeTruthy();
+  expect(screen.queryByText(OPERATION_ERROR[locale].older)).toBeNull();
+  expect(chat.input.value).toBe("an unrelated draft");
+  expect(chat.unexpected).toEqual([]);
+});
+
+it.each(["edit", "delete"] as const)("preserves unseen older SSE %s, new messages and known rows once", async (mutation) => {
+  const chat = await openOperationChat("en");
+  fireEvent.scroll(screen.getByRole("main"));
+  await act(async () => {
+    chat.stream.emit(LIVE_MESSAGE);
+    chat.stream.emit(mutation === "edit" ? { type: "edit", id: OLDER_MESSAGE.id, content: "Updated older idea" }
+      : { type: "delete", id: OLDER_MESSAGE.id });
+    chat.older[0].resolve(Response.json([OWN_MESSAGES[0], OLDER_MESSAGE]));
+  });
+  expect(await screen.findByText(mutation === "edit" ? "Updated older idea" : "[deleted]")).toBeTruthy();
+  expect(screen.queryByText(OLDER_MESSAGE.content)).toBeNull();
+  expect(screen.getAllByText(OWN_MESSAGES[0].content)).toHaveLength(1);
+  expect(screen.getByText(LIVE_MESSAGE.content)).toBeTruthy();
+  expect(chat.input.value).toBe("an unrelated draft");
+  expect(chat.unexpected).toEqual([]);
+});
+
+it.each([
+  { locale: "en", failure: "http" }, { locale: "en", failure: "network" },
+  { locale: "ru", failure: "http" }, { locale: "ru", failure: "network" },
+] as const)("retains message and draft with retry after DELETE $failure in $locale", async ({ locale, failure }) => {
+  const chat = await openOperationChat(locale);
+  const remove = screen.getAllByTitle(locale === "en" ? "Delete" : "Удалить")[0];
+  fireEvent.click(remove);
+  expect(chat.deletes).toHaveLength(1);
+  expect(screen.getByText(OWN_MESSAGES[0].content)).toBeTruthy();
+  await rejectOperation(chat.deletes[0].pending, failure);
+  expect(await screen.findByText(OPERATION_ERROR[locale].remove)).toBeTruthy();
+  expect(chat.input.value).toBe("an unrelated draft");
+  const retry = screen.getByRole("button", { name: sharedMessages[locale].retry });
+  await act(async () => { fireEvent.click(retry); fireEvent.click(retry); });
+  expect(chat.deletes).toHaveLength(2);
+  await act(async () => chat.deletes[1].pending.resolve(Response.json({ status: "ok" })));
+  expect(await screen.findByText("[deleted]")).toBeTruthy();
+  expect(screen.queryByText(OWN_MESSAGES[0].content)).toBeNull();
+  expect(screen.queryByText(OPERATION_ERROR[locale].remove)).toBeNull();
+  expect(chat.input.value).toBe("an unrelated draft");
+  expect(chat.unexpected).toEqual([]);
+});
+
+it("keeps another message deletion error when the first retry succeeds", async () => {
+  const chat = await openOperationChat("en");
+  const remove = screen.getAllByTitle("Delete");
+  fireEvent.click(remove[0]); fireEvent.click(remove[1]);
+  expect(chat.deletes.map(request => request.id)).toEqual(OWN_MESSAGES.map(message => message.id));
+  await rejectOperation(chat.deletes[0].pending, "http");
+  await rejectOperation(chat.deletes[1].pending, "network");
+  expect(await screen.findAllByText(OPERATION_ERROR.en.remove)).toHaveLength(2);
+  const alerts = screen.getAllByRole("alert");
+  fireEvent.click(within(alerts[0]).getByRole("button", { name: sharedMessages.en.retry }));
+  await act(async () => chat.deletes[2].pending.resolve(Response.json({ status: "ok" })));
+  expect(screen.getAllByText(OPERATION_ERROR.en.remove)).toHaveLength(1);
+  expect(screen.getByText(OWN_MESSAGES[1].content)).toBeTruthy();
+  expect(screen.getByText("[deleted]")).toBeTruthy();
+  expect(chat.input.value).toBe("an unrelated draft");
+  expect(chat.unexpected).toEqual([]);
+});
+
+it.each(["older", "delete"])("suppresses same-tick duplicate %s requests", async (operation) => {
+  const chat = await openOperationChat("en");
+  await act(async () => {
+    if (operation === "older") {
+      fireEvent.scroll(screen.getByRole("main")); fireEvent.scroll(screen.getByRole("main"));
+    } else {
+      const remove = screen.getAllByTitle("Delete")[0];
+      fireEvent.click(remove); fireEvent.click(remove);
+    }
+  });
+  expect(operation === "older" ? chat.older : chat.deletes).toHaveLength(1);
+  const pending = operation === "older" ? chat.older[0] : chat.deletes[0].pending;
+  await act(async () => pending.resolve(Response.json(operation === "older" ? [] : { status: "ok" })));
+  expect(chat.unexpected).toEqual([]);
+});
+
+it.each(["pending", "failed"])("keeps a %s deletion identity when older messages change the owning group key", async (status) => {
+  const chat = await openOperationChat("en");
+  fireEvent.click(screen.getAllByTitle("Delete")[0]);
+  if (status === "failed") await rejectOperation(chat.deletes[0].pending, "http");
+  fireEvent.scroll(screen.getByRole("main"));
+  const prepend = { ...OWN_MESSAGES[0], id: "earlier-own", content: "Earlier owned idea", ts: "2025-12-31T23:59:00Z" };
+  await act(async () => chat.older[0].resolve(Response.json([prepend])));
+  await screen.findByText(prepend.content);
+  const row = screen.getByText(OWN_MESSAGES[0].content).closest(".group");
+  if (!(row instanceof HTMLElement)) throw new Error("Owning message row missing");
+  if (status === "failed") {
+    expect(within(row).getByText(OPERATION_ERROR.en.remove)).toBeTruthy();
+    fireEvent.click(within(row).getByRole("button", { name: sharedMessages.en.retry }));
+  } else fireEvent.click(within(row).getByTitle("Delete"));
+  expect(chat.deletes).toHaveLength(status === "failed" ? 2 : 1);
+  await act(async () => chat.deletes[chat.deletes.length - 1].pending.resolve(Response.json({ status: "ok" })));
+  expect(await screen.findByText("[deleted]")).toBeTruthy();
+  expect(chat.unexpected).toEqual([]);
 });

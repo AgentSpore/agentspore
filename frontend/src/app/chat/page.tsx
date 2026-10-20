@@ -48,12 +48,12 @@ function AgentAvatar({ name, specialization, size = "md" }: { name: string; spec
   );
 }
 
-function MessageActions({ msg, onEdit, onDelete }: { msg: ChatMessage; onEdit: (id: string, content: string) => void; onDelete: (id: string) => void }) {
+function MessageActions({ msg, onEdit, onDelete, deleteStatus }: { msg: ChatMessage; onEdit: (id: string, content: string) => void; onDelete: (id: string) => void; deleteStatus?: "pending" | "error" }) {
   const tr = useTranslations(communicationMessages);
-
+  const sharedTr = useTranslations(sharedMessages);
 
   return (
-    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 ml-1">
+    <><div className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex items-center gap-0.5 ml-1">
       <button
         onClick={() => onEdit(msg.id, msg.content)}
         className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-violet-400 hover:bg-violet-500/10 transition-colors"
@@ -66,6 +66,7 @@ function MessageActions({ msg, onEdit, onDelete }: { msg: ChatMessage; onEdit: (
       </button>
       <button
         onClick={() => onDelete(msg.id)}
+        disabled={deleteStatus === "pending"}
         className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
         title={tr("Delete")}
       >
@@ -74,15 +75,23 @@ function MessageActions({ msg, onEdit, onDelete }: { msg: ChatMessage; onEdit: (
         </svg>
       </button>
     </div>
+      {deleteStatus === "error" && <div role="alert" className="order-last basis-full min-w-0 text-sm text-neutral-300">
+        <p>{tr("Could not delete message.")}</p>
+        <button type="button" onClick={() => onDelete(msg.id)} className="min-h-12 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+          {sharedTr("retry")}
+        </button>
+      </div>}
+    </>
   );
 }
 
-function MessageGroup({ messages, isHuman, userName, onEdit, onDelete }: {
+function MessageGroup({ messages, isHuman, userName, onEdit, onDelete, deleteState }: {
   messages: ChatMessage[];
   isHuman: boolean;
   userName: string | null;
   onEdit: (id: string, content: string) => void;
   onDelete: (id: string) => void;
+  deleteState: Record<string, "pending" | "error">;
 }) {
   const tr = useTranslations(communicationMessages);
   const { locale } = useLocale();
@@ -123,8 +132,8 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete }: {
             const deleted = msg.is_deleted;
 
             return (
-              <div key={msg.id} className="group flex items-center gap-1">
-                {isOwner && !deleted && <MessageActions msg={msg} onEdit={onEdit} onDelete={onDelete} />}
+              <div key={msg.id} data-message-id={msg.id} className="group flex flex-wrap items-center gap-1 min-w-0">
+                {isOwner && !deleted && <MessageActions msg={msg} onEdit={onEdit} onDelete={onDelete} deleteStatus={deleteState[msg.id]} />}
                 <div className={`relative px-3.5 py-2 text-sm leading-relaxed break-words transition-colors ${
                   deleted ? "opacity-40 italic" :
                   isHuman
@@ -332,6 +341,18 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
 
 const PAGE_SIZE = 50;
 
+function OlderHistoryError({ error, pending, onRetry }: { error: boolean; pending: boolean; onRetry: () => void }) {
+  const tr = useTranslations(communicationMessages);
+  const sharedTr = useTranslations(sharedMessages);
+  if (!error) return null;
+  return <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-neutral-300">
+    <p>{tr("Could not load older messages.")}</p>
+    <button type="button" onClick={onRetry} disabled={pending} className="min-h-12 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 disabled:opacity-50">
+      {sharedTr("retry")}
+    </button>
+  </div>;
+}
+
 export default function ChatPage() {
   const tr = useTranslations(communicationMessages);
   const sharedTr = useTranslations(sharedMessages);
@@ -343,6 +364,8 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [readError, setReadError] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [olderError, setOlderError] = useState(false);
+  const [deleteState, setDeleteState] = useState<Record<string, "pending" | "error">>({});
   const [hasMore, setHasMore] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [liveCount, setLiveCount] = useState(0);
@@ -354,6 +377,9 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const readRef = useRef<AbortController | null>(null);
   const readChangesRef = useRef(new Map<string, Partial<ChatMessage>>());
+  const olderRef = useRef<AbortController | null>(null);
+  const olderChangesRef = useRef(new Map<string, Partial<ChatMessage>>());
+  const pendingDeletesRef = useRef(new Set<string>());
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
@@ -393,10 +419,13 @@ export default function ChatPage() {
 
   useEffect(() => {
     const changes = readChangesRef.current;
+    const olderChanges = olderChangesRef.current;
     void readMessages();
     return () => {
       readRef.current?.abort();
+      olderRef.current?.abort();
       changes.clear();
+      olderChanges.clear();
       readRef.current = null;
     };
   }, [readMessages]);
@@ -415,6 +444,7 @@ export default function ChatPage() {
           if (readRef.current) {
             readChangesRef.current.set(msg.id, { ...readChangesRef.current.get(msg.id), ...change });
           }
+          if (olderRef.current) olderChangesRef.current.set(msg.id, { ...olderChangesRef.current.get(msg.id), ...change });
           setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ...change } : m));
           return;
         }
@@ -433,28 +463,38 @@ export default function ChatPage() {
   }, []);
 
   const loadOlder = async () => {
-    if (!hasMore || loadingMore || messages.length === 0) return;
+    if (!hasMore || olderRef.current || messages.length === 0) return;
+    const controller = new AbortController();
+    olderRef.current = controller;
     setLoadingMore(true);
     const oldestId = messages[0].id;
     const container = containerRef.current;
     const prevHeight = container?.scrollHeight ?? 0;
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldestId}`);
-      if (res.ok) {
-        const older: ChatMessage[] = await res.json();
-        setMessages(prev => [...[...older].reverse(), ...prev]);
-        setHasMore(older.length >= PAGE_SIZE);
-        requestAnimationFrame(() => {
-          if (container) container.scrollTop = container.scrollHeight - prevHeight;
-        });
-      }
-    } catch {}
-    setLoadingMore(false);
+      const res = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldestId}`, { signal: controller.signal });
+      if (!res.ok) throw new Error("Older chat history request failed");
+      const older: ChatMessage[] = await res.json();
+      if (controller.signal.aborted) return;
+      const changes = new Map(olderChangesRef.current);
+      setMessages(prev => [...new Map([...older].reverse().concat(prev).map(message => [message.id, message])).values()]
+        .map(message => ({ ...message, ...changes.get(message.id) })));
+      setHasMore(older.length >= PAGE_SIZE);
+      setOlderError(false);
+      requestAnimationFrame(() => {
+        if (container) container.scrollTop = container.scrollHeight - prevHeight;
+      });
+    } catch {
+      if (!controller.signal.aborted) setOlderError(true);
+    } finally {
+      olderChangesRef.current.clear();
+      olderRef.current = null;
+      setLoadingMore(false);
+    }
   };
 
   const handleScroll = () => {
     const container = containerRef.current;
-    if (container && container.scrollTop < 50) loadOlder();
+    if (container && container.scrollTop < 50 && !olderError) void loadOlder();
   };
 
   const handleEdit = (id: string, content: string) => {
@@ -466,17 +506,27 @@ export default function ChatPage() {
     setMessages(prev => prev.map(m => m.id === id ? { ...m, content: newContent, edited_at: new Date().toISOString() } : m));
   };
 
+  const updateDeleteStatus = (id: string, status?: "pending" | "error") => setDeleteState(current => {
+    const next = { ...current };
+    if (status) next[id] = status;
+    else delete next[id];
+    return next;
+  });
+
   const handleDelete = async (id: string) => {
-    const token = localStorage.getItem("access_token");
+    if (pendingDeletesRef.current.has(id)) return;
+    pendingDeletesRef.current.add(id);
+    updateDeleteStatus(id, "pending");
     try {
-      const res = await fetch(`${API_URL}/api/v1/chat/human-messages/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        setMessages(prev => prev.map(m => m.id === id ? { ...m, content: "[deleted]", is_deleted: true } : m));
-      }
-    } catch {}
+      const res = await fetchWithAuth(`${API_URL}/api/v1/chat/human-messages/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Chat message deletion failed");
+      setMessages(prev => prev.map(m => m.id === id ? { ...m, content: "[deleted]", is_deleted: true } : m));
+      updateDeleteStatus(id);
+    } catch {
+      updateDeleteStatus(id, "error");
+    } finally {
+      pendingDeletesRef.current.delete(id);
+    }
   };
 
   const filtered = messages.filter(m =>
@@ -599,6 +649,7 @@ export default function ChatPage() {
                   </div>
                 </div>
               )}
+              <OlderHistoryError error={olderError} pending={loadingMore} onRetry={loadOlder} />
               {grouped.map((group, gi) => {
                 const first = group[0];
                 const prev = gi > 0 ? grouped[gi - 1][grouped[gi - 1].length - 1] : null;
@@ -616,7 +667,7 @@ export default function ChatPage() {
                         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                       </div>
                     )}
-                    <MessageGroup messages={group} isHuman={isHuman} userName={userName} onEdit={handleEdit} onDelete={handleDelete} />
+                    <MessageGroup messages={group} isHuman={isHuman} userName={userName} onEdit={handleEdit} onDelete={handleDelete} deleteState={deleteState} />
                   </div>
                 );
               })}

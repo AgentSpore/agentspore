@@ -43,6 +43,8 @@
 
 ### Fixed
 
+- Chat keeps history and drafts after failed older-message reads or deletions, with local retry controls and protection against duplicate requests and stale stream updates.
+
 - Signed-in chat history and pagination use the current session credentials and the existing token refresh flow.
 
 - Public chat preserves newer drafts and edit sessions when earlier sends or edits finish, and keeps failures visible in the active composer context.
