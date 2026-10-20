@@ -325,6 +325,9 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const chatRevision = useRef(0);
+  const chatOperation = useRef<{ revision: number; generation: number } | null>(null);
+  useEffect(() => () => { chatOperation.current = null; }, []);
 
   const chatProfile = useChatIdentity(auth?.token ?? null);
   const chatIdentity = chatProfile.status === "ready" ? chatProfile.user : null;
@@ -332,13 +335,16 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   const chatConfirmed = !!chatIdentity && chatIdentity.id === chatOwner;
   useEffect(() => {
     if (!chatIdentity) return;
-    setChatSending(false);
     if (chatIdentity.id === chatOwner) return;
+    chatRevision.current += 1;
+    chatOperation.current = null;
+    setChatSending(false);
     setChatOwner(chatIdentity.id); setChatEditingId(null); setChatReplyTo(null); setChatContent("");
   }, [chatIdentity, chatOwner]);
   const chatUserName = auth?.email ? auth.email.split("@")[0] : auth ? `user-${auth.userId.slice(0, 6)}` : null;
 
   const handleChatEdit = (id: string, content: string) => {
+    chatRevision.current += 1;
     setChatEditingId(id);
     setChatReplyTo(null);
     setChatContent(content);
@@ -346,6 +352,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   };
 
   const handleChatReply = (msg: ProjectMessage) => {
+    chatRevision.current += 1;
     setChatReplyTo(msg);
     setChatEditingId(null);
     setChatContent("");
@@ -366,30 +373,42 @@ function ProjectDetails({ projectId }: { projectId: string }) {
 
   const isCurrentChatSession = (generation = getAuthSnapshot().generation) =>
     authSession === readProjectAuth() && generation === getAuthSnapshot().generation;
-  const finishChatOperation = (generation: number) => {
-    if (isCurrentChatSession(generation)) setChatSending(false);
+  const isCurrentChatOperation = (operation: NonNullable<typeof chatOperation.current>) =>
+    chatOperation.current === operation && isCurrentChatSession(operation.generation);
+  const clearSubmittedChatInput = (operation: NonNullable<typeof chatOperation.current>) => {
+    if (chatRevision.current !== operation.revision) return;
+    setChatContent("");
+    setChatEditingId(null);
+    setChatReplyTo(null);
+  };
+  const finishChatOperation = (operation: NonNullable<typeof chatOperation.current>) => {
+    if (chatOperation.current !== operation) return;
+    chatOperation.current = null;
+    setChatSending(false);
   };
 
   const handleChatSaveEdit = async () => {
-    if (!chatEditingId || !chatContent.trim() || !auth || !chatConfirmed || !isCurrentChatSession()) return;
-    const generation = getAuthSnapshot().generation;
+    if (!chatEditingId || !chatContent.trim() || !auth || !chatConfirmed || !isCurrentChatSession() || chatOperation.current) return;
+    const operation = { revision: chatRevision.current, generation: getAuthSnapshot().generation,
+      content: chatContent.trim(), editingId: chatEditingId };
+    chatOperation.current = operation;
     setChatSending(true);
     try {
-      const res = await apiFetch(`/chat/project/${projectId}/human-messages/${chatEditingId}`, auth.token, {
+      const res = await apiFetch(`/chat/project/${projectId}/human-messages/${operation.editingId}`, auth.token, {
         method: "PATCH",
-        body: JSON.stringify({ content: chatContent.trim() }),
+        body: JSON.stringify({ content: operation.content }),
       });
-      if (!isCurrentChatSession(generation)) return;
+      if (!isCurrentChatOperation(operation)) return;
       if (res.ok) {
-        setChatMessages(prev => prev.map(m => m.id === chatEditingId ? { ...m, content: chatContent.trim(), edited_at: new Date().toISOString() } : m));
-        setChatContent("");
-        setChatEditingId(null);
+        setChatMessages(prev => prev.map(m => m.id === operation.editingId ? { ...m, content: operation.content, edited_at: new Date().toISOString() } : m));
+        clearSubmittedChatInput(operation);
       }
     } catch { /* ignore */ }
-    finishChatOperation(generation);
+    finally { finishChatOperation(operation); }
   };
 
   const cancelChatInput = () => {
+    chatRevision.current += 1;
     setChatEditingId(null);
     setChatReplyTo(null);
     setChatContent("");
@@ -450,25 +469,26 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   }, [tab, projectId, authToken]);
 
   const handleChatSend = async () => {
-    const generation = getAuthSnapshot().generation;
-    if (!chatContent.trim() || chatSending || !chatConfirmed || !isCurrentChatSession()) return;
+    if (!chatContent.trim() || chatOperation.current || !chatConfirmed || !isCurrentChatSession()) return;
     if (chatEditingId) { await handleChatSaveEdit(); return; }
+    const operation = { revision: chatRevision.current, generation: getAuthSnapshot().generation,
+      content: chatContent.trim(), replyToId: chatReplyTo?.id };
+    chatOperation.current = operation;
     setChatSending(true);
     try {
-      const body: Record<string, string> = { name: chatIdentity.name, content: chatContent.trim(), message_type: "text" };
-      if (chatReplyTo) body.reply_to_id = chatReplyTo.id;
+      const body: Record<string, string> = { name: chatIdentity.name, content: operation.content, message_type: "text" };
+      if (operation.replyToId) body.reply_to_id = operation.replyToId;
       const res = await apiFetch(`/chat/project/${projectId}/human-messages`, authToken, {
         method: "POST",
         body: JSON.stringify(body),
       });
-      if (!isCurrentChatSession(generation)) return;
+      if (!isCurrentChatOperation(operation)) return;
       if (res.ok) {
-        setChatContent("");
-        setChatReplyTo(null);
+        clearSubmittedChatInput(operation);
         await loadChatMessages();
       }
     } catch { /* ignore */ }
-    finishChatOperation(generation);
+    finally { finishChatOperation(operation); }
   };
 
   if (loading) return (
@@ -855,7 +875,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                       <textarea
                         ref={chatInputRef}
                         value={chatContent}
-                        onChange={e => setChatContent(e.target.value)}
+                        onChange={e => { chatRevision.current += 1; setChatContent(e.target.value); }}
                         placeholder={chatEditingId ? tr('editYourMessage') : chatReplyTo ? tr('replyToName', { name: chatReplyTo.sender_name }) : tr('writeAMessage')}
                         rows={1}
                         className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none resize-none max-h-28 overflow-y-auto font-mono leading-relaxed"

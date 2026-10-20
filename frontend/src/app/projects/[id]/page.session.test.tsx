@@ -463,3 +463,264 @@ it.each(["draft", "edit"])("CH.4b project retains %s through same-account error 
   expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("A revision retained through profile failure");
   expect(screen.queryByText("Editing message") !== null).toBe(mode === "edit");
 });
+
+const PROJECT_DRAFT_SECOND = {
+  ...PROJECT_SECURITY_ROWS[0], id: "project-owned-second", content: "Second owned message",
+  sender_name: "Second owned sender", sender_user_id: PROJECT_SECURITY_OWNER.id,
+};
+
+async function openPendingProjectDraft() {
+  const mutation = pendingSecurityProfile(), profile = pendingSecurityProfile();
+  const writes: { method: string; path: string; authorization: string | null; body: unknown }[] = [];
+  projectSecuritySession("synthetic-security-a");
+  stubProjectSecurity(authorization => authorization === "Bearer synthetic-security-a"
+    ? Promise.resolve(Response.json(PROJECT_SECURITY_OWNER)) : profile.promise.then(response => response.clone()));
+  const read = fetch;
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    if (init?.method === "POST" || init?.method === "PATCH") {
+      writes.push({ method: init.method, path: new URL(input).pathname,
+        authorization: new Headers(init.headers).get("Authorization"), body: JSON.parse(String(init.body)) });
+      return mutation.promise.then(response => response.clone());
+    }
+    if (input.includes("/chat/project/demo-project/messages")) {
+      return Promise.resolve(Response.json([...PROJECT_SECURITY_ROWS, PROJECT_DRAFT_SECOND].reverse()));
+    }
+    return read(input, init);
+  }));
+  await openProjectSecurity();
+  await waitFor(() => expect(screen.getAllByTitle("Edit")).toHaveLength(2));
+  return { mutation, profile, writes };
+}
+
+function projectDraftAction(content: string, title: "Edit" | "Reply") {
+  const row = screen.getByText(content).closest(".group");
+  if (!(row instanceof HTMLElement)) throw new Error("Project draft message row missing");
+  fireEvent.click(within(row).getByTitle(title));
+}
+
+function changeProjectDraft(content: string) {
+  const input = screen.getByRole<HTMLTextAreaElement>("textbox");
+  fireEvent.change(input, { target: { value: content } });
+  return input;
+}
+
+async function submitProjectDraft() {
+  await act(async () => fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" }));
+}
+
+function expectProjectWrite(writes: { method: string; path: string; authorization: string | null; body: unknown }[], method: "POST" | "PATCH", reply = false) {
+  expect(writes).toEqual([{
+    method, path: "/api/v1/chat/project/demo-project/human-messages" + (method === "PATCH" ? "/project-security-a" : ""),
+    authorization: "Bearer synthetic-security-a",
+    body: method === "PATCH" ? { content: "Submitted project text" }
+      : { name: PROJECT_SECURITY_OWNER.name, content: "Submitted project text", message_type: "text",
+        ...(reply ? { reply_to_id: "project-security-a" } : {}) },
+  }]);
+}
+
+it.each([false, true])("CH.2p P1 POST success clears only unchanged draft; ABA=%s", async revised => {
+  const chat = await openPendingProjectDraft();
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  if (revised) {
+    changeProjectDraft("Intermediate project text");
+    changeProjectDraft("Submitted project text");
+  }
+  expectProjectWrite(chat.writes, "POST");
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe(revised ? "Submitted project text" : "");
+  expect(screen.queryByText("Editing message")).toBeNull();
+});
+
+it.each([false, true])("CH.2p P2 PATCH updates submitted row and clears only unchanged editor; ABA=%s", async revised => {
+  const chat = await openPendingProjectDraft();
+  projectDraftAction("project-security-a", "Edit");
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  if (revised) {
+    changeProjectDraft("Intermediate project text");
+    changeProjectDraft("Submitted project text");
+  }
+  expectProjectWrite(chat.writes, "PATCH");
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expect(screen.getByText("Submitted project text", { selector: ".group p" }).closest(".group")).toBeTruthy();
+  expect(screen.queryByText("project-security-a")).toBeNull();
+  expect(screen.getByText("Second owned message")).toBeTruthy();
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe(revised ? "Submitted project text" : "");
+  expect(screen.queryByText("Editing message") !== null).toBe(revised);
+});
+
+it("CH.2p P3 late PATCH preserves normal draft after Escape", async () => {
+  const chat = await openPendingProjectDraft();
+  projectDraftAction("project-security-a", "Edit");
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+  changeProjectDraft("A newer normal project draft");
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expectProjectWrite(chat.writes, "PATCH");
+  expect(screen.getByText("Submitted project text")).toBeTruthy();
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("A newer normal project draft");
+  expect(screen.queryByText("Editing message")).toBeNull();
+});
+
+it("CH.2p P4 late PATCH preserves normal draft after Cancel button", async () => {
+  const chat = await openPendingProjectDraft();
+  projectDraftAction("project-security-a", "Edit");
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  const form = screen.getByRole("textbox").closest("form");
+  if (!form) throw new Error("Project draft form missing");
+  const cancel = form.querySelector('button[type="button"]');
+  if (!(cancel instanceof HTMLButtonElement)) throw new Error("Project cancel control missing");
+  fireEvent.click(cancel);
+  changeProjectDraft("A newer cancelled project draft");
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expectProjectWrite(chat.writes, "PATCH");
+  expect(screen.getByText("Submitted project text")).toBeTruthy();
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("A newer cancelled project draft");
+  expect(screen.queryByText("Editing message")).toBeNull();
+});
+
+it("CH.2p P5 late PATCH A preserves a newer editor B and its row", async () => {
+  const chat = await openPendingProjectDraft();
+  projectDraftAction("project-security-a", "Edit");
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  projectDraftAction("Second owned message", "Edit");
+  changeProjectDraft("B new editor draft");
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expectProjectWrite(chat.writes, "PATCH");
+  expect(screen.getByText("Submitted project text")).toBeTruthy();
+  expect(screen.getByText("Second owned message")).toBeTruthy();
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("B new editor draft");
+  expect(screen.getByText("Editing message")).toBeTruthy();
+  await submitProjectDraft();
+  expect(chat.writes[1]).toEqual({ method: "PATCH",
+    path: "/api/v1/chat/project/demo-project/human-messages/project-owned-second",
+    authorization: "Bearer synthetic-security-a", body: { content: "B new editor draft" } });
+});
+
+it("CH.2p P6 late PATCH preserves a fresh same-row same-text editor", async () => {
+  const chat = await openPendingProjectDraft();
+  projectDraftAction("project-security-a", "Edit");
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+  projectDraftAction("project-security-a", "Edit");
+  changeProjectDraft("Submitted project text");
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expectProjectWrite(chat.writes, "PATCH");
+  expect(screen.getByText("Submitted project text", { selector: ".group p" })).toBeTruthy();
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("Submitted project text");
+  expect(screen.getByText("Editing message")).toBeTruthy();
+});
+
+it("CH.2p P7 late reply POST keeps submitted target A and current reply B", async () => {
+  const chat = await openPendingProjectDraft();
+  projectDraftAction("project-security-a", "Reply");
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  projectDraftAction("Second owned message", "Reply");
+  changeProjectDraft("B next reply draft");
+  expectProjectWrite(chat.writes, "POST", true);
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("B next reply draft");
+  expect(screen.getByText("Replying to Second owned sender")).toBeTruthy();
+  expect(screen.getByRole("textbox").getAttribute("placeholder")).toBe("Reply to Second owned sender...");
+});
+
+it("CH.2p P8 same-owner reconfirmation cannot duplicate an owned pending POST", async () => {
+  const chat = await openPendingProjectDraft();
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  changeProjectDraft("Current generation draft");
+  await act(async () => projectSecuritySession("synthetic-reconfirmed-a"));
+  expect(screen.queryByRole("textbox")).toBeNull();
+  await act(async () => chat.profile.resolve(Response.json(PROJECT_SECURITY_OWNER)));
+  const input = screen.getByRole<HTMLTextAreaElement>("textbox");
+  expect(input.value).toBe("Current generation draft");
+  await act(async () => fireEvent.keyDown(input, { key: "Enter" }));
+  expectProjectWrite(chat.writes, "POST");
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expect(input.value).toBe("Current generation draft");
+  await act(async () => fireEvent.keyDown(input, { key: "Enter" }));
+  expect(chat.writes).toHaveLength(2);
+  expect(chat.writes[1]).toEqual({ method: "POST", path: "/api/v1/chat/project/demo-project/human-messages",
+    authorization: "Bearer synthetic-reconfirmed-a",
+    body: { name: PROJECT_SECURITY_OWNER.name, content: "Current generation draft", message_type: "text" } });
+});
+
+it.each(["http", "network"])("CH.2p P9 failed POST %s retains newer draft and releases retry", async failure => {
+  const chat = await openPendingProjectDraft();
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  changeProjectDraft("A newer retry draft");
+  await act(async () => {
+    if (failure === "http") chat.mutation.resolve(Response.json({ detail: "Synthetic unavailable" }, { status: 503 }));
+    else chat.mutation.reject(new TypeError("Synthetic write network failure"));
+  });
+  expectProjectWrite(chat.writes, "POST");
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("A newer retry draft");
+  const read = fetch;
+  const retry = vi.fn((input: string, init?: RequestInit) => {
+    expect(new URL(input).pathname).toBe("/api/v1/chat/project/demo-project/human-messages");
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer synthetic-security-a");
+    expect(JSON.parse(String(init?.body))).toEqual({ name: PROJECT_SECURITY_OWNER.name,
+      content: "A newer retry draft", message_type: "text" });
+    return Promise.resolve(Response.json({ status: "ok" }));
+  });
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => init?.method === "POST" ? retry(input, init) : read(input, init)));
+  await submitProjectDraft();
+  expect(retry).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("");
+});
+
+it("CH.2p P10 old A completion cannot unlock or clear B pending POST", async () => {
+  const chat = await openPendingProjectDraft(), bPending = pendingSecurityProfile();
+  const bWrites: typeof chat.writes = [];
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  const read = fetch;
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get("Authorization");
+    if (input.endsWith("/auth/me") && authorization === "Bearer synthetic-owner-b") return Promise.resolve(Response.json(PROJECT_SECURITY_OTHER));
+    if (init?.method === "POST" && authorization === "Bearer synthetic-owner-b") {
+      bWrites.push({ method: init.method, path: new URL(input).pathname, authorization, body: JSON.parse(String(init.body)) });
+      return bPending.promise.then(response => response.clone());
+    }
+    return read(input, init);
+  }));
+  await act(async () => projectSecuritySession("synthetic-owner-b"));
+  await waitFor(() => projectSecurityControls("project-security-b", true));
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("");
+  changeProjectDraft("B current submitted draft");
+  await submitProjectDraft();
+  expect(bWrites).toEqual([{ method: "POST", path: "/api/v1/chat/project/demo-project/human-messages",
+    authorization: "Bearer synthetic-owner-b", body: { name: PROJECT_SECURITY_OTHER.name,
+      content: "B current submitted draft", message_type: "text" } }]);
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expectProjectWrite(chat.writes, "POST");
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("B current submitted draft");
+  expect(screen.getByText("project-security-a")).toBeTruthy();
+  expect(screen.getByText("project-security-b")).toBeTruthy();
+  await submitProjectDraft();
+  expect(bWrites).toHaveLength(1);
+  await act(async () => bPending.resolve(Response.json({ status: "ok" })));
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("");
+});
+
+it("CH.2p P10 unmounted POST completion cannot reload project history", async () => {
+  const chat = await openPendingProjectDraft();
+  changeProjectDraft("Submitted project text");
+  await submitProjectDraft();
+  expectProjectWrite(chat.writes, "POST");
+  const requests = vi.mocked(fetch);
+  cleanup();
+  const historyReads = () => requests.mock.calls.filter(([input, init]) => String(input).includes("/chat/project/demo-project/messages") && (!init?.method || init.method === "GET")).length;
+  const before = historyReads(), allBefore = requests.mock.calls.length;
+  expect(before).toBeGreaterThan(0);
+  await act(async () => chat.mutation.resolve(Response.json({ status: "ok" })));
+  expect(historyReads()).toBe(before);
+  expect(requests).toHaveBeenCalledTimes(allBefore);
+});
