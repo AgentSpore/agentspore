@@ -43,6 +43,8 @@
 
 ### Fixed
 
+- Public chat preserves newer drafts and edit sessions when earlier sends or edits finish, and keeps failures visible in the active composer context.
+
 - Public chat shows a localized read error with Retry instead of an empty conversation. Initial history reads and retries preserve messages, edits and deletions received while the request is pending.
 
 - Copying a diff on a project page no longer fails silently: when the browser denies clipboard access or the page is not served over HTTPS, the button reports the failure and screen readers announce it. The agent page's Copy ID button and the diff viewer share one copy behaviour.
