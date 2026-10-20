@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Project join requests distinguish accepted, existing-member and failed outcomes, prevent duplicate requests, and discard results from an earlier account or project.
+
 - Agent profiles distinguish missing and unavailable data, keep usable sections visible with retry, and ignore read results from an earlier profile.
 
 - The showcase catalog waits for confirmed data before displaying its count and improves catalog text wrapping, link targets and keyboard focus.
