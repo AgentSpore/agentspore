@@ -8,9 +8,11 @@ import { sharedMessages } from '@/lib/i18n/shared';
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { ACTION_META, Agent, AgentBadge, ActivityEvent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, GitHubActivityItem, isAgentLive, ModelUsageStats, REACTION_META, timeAgo } from "@/lib/api";
+import { ACTION_META, Agent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, isAgentLive, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
+import { FetchError } from "@/components/FetchError";
+import { useAgentDetails } from "./useAgentDetails";
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
@@ -94,6 +96,7 @@ const DNA_COLOR = (v: number) => {
 export default function AgentPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const trShared = useTranslations(sharedMessages);
 const GH_ACTION_META: Record<string, { icon: string; label: string; color: string; bg: string }> = {
   code_commit:           { icon: "\u2191", label: tr('commit'),     color: "text-emerald-400", bg: "bg-emerald-400/10" },
   code_review:           { icon: "\u2318", label: tr('review'),     color: "text-amber-400",   bg: "bg-amber-400/10"   },
@@ -109,13 +112,9 @@ const DNA_TRAITS = [
   { key: "dna_creativity", label: tr('creativity'), icon: "\u2738", lo: tr('conventional'), hi: tr('experimental') },
 ] as const;
   const { id } = useParams<{ id: string }>();
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [activities, setActivities] = useState<ActivityEvent[]>([]);
-  const [githubActivity, setGithubActivity] = useState<GitHubActivityItem[]>([]);
-  const [modelUsage, setModelUsage] = useState<ModelUsageStats | null>(null);
-  const [badges, setBadges] = useState<AgentBadge[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const details = useAgentDetails(id);
+  const { agent, activities, githubActivity, modelUsage, badges, failures } = details;
+  const loading = details.status === "loading";
   const [ghFilter, setGhFilter] = useState<string>("all");
 
   // Blog state
@@ -124,50 +123,32 @@ const DNA_TRAITS = [
   const [blogOffset, setBlogOffset] = useState(0);
   const [blogLoading, setBlogLoading] = useState(false);
 
+  const blogEpochRef = useRef(0);
+  const blogRequestRef = useRef<AbortController | null>(null);
   useEffect(() => {
-    const load = async () => {
-      try {
-        const [aRes, evRes, muRes, ghRes, bdRes] = await Promise.all([
-          fetch(`${API_URL}/api/v1/agents/${id}`),
-          fetch(`${API_URL}/api/v1/activity?agent_id=${id}&limit=50`),
-          fetch(`${API_URL}/api/v1/agents/${id}/model-usage`),
-          fetch(`${API_URL}/api/v1/agents/${id}/github-activity?limit=50`),
-          fetch(`${API_URL}/api/v1/agents/${id}/badges`),
-        ]);
-        if (!aRes.ok) { setError(publicMessages.en.agentNotFound); return; }
-        setAgent(await aRes.json());
-        if (evRes.ok) setActivities(await evRes.json());
-        if (muRes.ok) setModelUsage(await muRes.json());
-        if (ghRes.ok) {
-          const ghData = await ghRes.json();
-          setGithubActivity(ghData.activities ?? []);
-        }
-        if (bdRes.ok) setBadges(await bdRes.json());
-      } catch {
-        setError(publicMessages.en.failedToConnectToAPI);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+    blogEpochRef.current += 1; blogRequestRef.current?.abort();
+    setBlogPosts([]); setBlogTotal(0); setBlogOffset(0); setBlogLoading(false);
+    return () => { blogEpochRef.current += 1; blogRequestRef.current?.abort(); };
   }, [id]);
 
   // Load blog posts
   const loadBlog = async (offset = 0) => {
-    setBlogLoading(true);
+    const epoch = blogEpochRef.current, controller = new AbortController();
+    blogRequestRef.current = controller; setBlogLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/v1/blog/agents/${id}/posts?limit=10&offset=${offset}`);
+      const res = await fetch(`${API_URL}/api/v1/blog/agents/${id}/posts?limit=10&offset=${offset}`, { signal: controller.signal });
       if (res.ok) {
         const data: BlogPostsResponse = await res.json();
+        if (controller.signal.aborted || blogEpochRef.current !== epoch) return;
         setBlogPosts(data.posts);
         setBlogTotal(data.total);
         setBlogOffset(offset);
       }
     } catch { /* ignore */ }
-    finally { setBlogLoading(false); }
+    finally { if (blogEpochRef.current === epoch) setBlogLoading(false); }
   };
 
-  useEffect(() => { if (agent) loadBlog(); }, [agent]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (agent) loadBlog(); }, [agent?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleReaction = async (postId: string, reaction: string, hasIt: boolean) => {
     try {
@@ -208,10 +189,10 @@ const DNA_TRAITS = [
     </div>
   );
 
-  if (error || !agent) return (
+  if (!agent) return (
     <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center gap-4">
-      <div className="text-red-400 text-sm font-mono">{displayPublicLabel(locale, error || publicMessages.en.agentNotFound)}</div>
-      <Link href="/" className="text-neutral-400 text-sm hover:text-white font-mono">{"\u2190"} {tr('backToDashboard')}</Link>
+      {details.status === "error" ? <FetchError onRetry={details.retry} /> : <div className="text-red-400 text-sm font-mono">{tr('agentNotFound')}</div>}
+      <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 text-sm hover:text-white font-mono focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300">{"\u2190"} {tr('backToDashboard')}</Link>
     </main>
   );
 
@@ -228,6 +209,11 @@ const DNA_TRAITS = [
 
       <main id="main-content" tabIndex={-1} className="max-w-5xl mx-auto px-6 py-10 relative">
         <DotGrid />
+        {failures.length > 0 && <div role="alert" className="relative mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
+          <p>{tr('agentDetailsUnavailable')}</p>
+          <ul className="flex flex-wrap gap-3 text-xs [overflow-wrap:anywhere]">{failures.map(section => <li key={section}>{tr(({ activity: 'activityTimeline', model: 'modelUsage', github: 'gitHubActivity', badges: 'badges' } as const)[section])}</li>)}</ul>
+          <button type="button" onClick={details.retry} disabled={details.pending} className="min-h-11 min-w-11 rounded px-3 text-sm focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50">{trShared('retry')}</button>
+        </div>}
 
         {/* Breadcrumbs */}
         <div className="relative flex items-center gap-2 mb-8 fade-up">
@@ -276,7 +262,7 @@ const DNA_TRAITS = [
           {/* Stats */}
           <div className="grid grid-cols-2 gap-3 shrink-0">
             {statCols.map(s => (
-              <StatCard key={s.label} label={s.label} value={s.value} />
+              <StatCard key={`${s.label}:${s.value}`} label={s.label} value={s.value} />
             ))}
           </div>
 
@@ -379,7 +365,7 @@ const DNA_TRAITS = [
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             {activities.length === 0 ? (
-              <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
+              !failures.includes("activity") && <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
                 {tr('noActivityRecordedYet')}</div>
             ) : (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">

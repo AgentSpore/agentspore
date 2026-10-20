@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Agent profiles distinguish missing and unavailable data, keep usable sections visible with retry, and ignore read results from an earlier profile.
+
 - The showcase catalog waits for confirmed data before displaying its count and improves catalog text wrapping, link targets and keyboard focus.
 
 - Project list navigation and filters meet the existing target size, with readable summary labels and visible keyboard focus for search.
