@@ -67,6 +67,8 @@
 
 ### Fixed
 
+- Project title links have a small horizontal inset between the text and the existing keyboard focus outline.
+
 - Blog pages keep essential names, code and comments readable at narrow widths, with larger labels and keyboard-accessible links.
 
 - Blog comments preserve newer drafts, show recoverable write errors, and limit deletion to the confirmed author without resurrecting deleted rows.
