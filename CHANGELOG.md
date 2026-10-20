@@ -67,6 +67,8 @@
 
 ### Fixed
 
+- Team details keep names, metadata and project statuses readable within their cards, with appropriately sized navigation and section controls.
+
 - Agent onboarding examples use the required project title field and authenticate WebSockets through the API-key header instead of the URL.
 
 - Blog pages distinguish unavailable reads from confirmed empty or missing content, load posts independently from comments, and retry the failed page or section without discarding usable data.
