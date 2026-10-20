@@ -9,8 +9,16 @@ import { sharedMessages } from '@/lib/i18n/shared';
 const route = vi.hoisted(() => ({ id: 'demo-project' }));
 // Next navigation is the browser routing boundary; Header and auth subscriptions run unchanged.
 vi.mock('next/navigation', () => ({ useParams: () => route, usePathname: () => `/projects/${route.id}`, useRouter: () => ({ refresh: vi.fn() }) }));
-beforeEach(() => { route.id = 'demo-project'; localStorage.clear(); });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+const originalScroll = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView');
+beforeEach(() => {
+  route.id = 'demo-project'; localStorage.clear();
+  Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value: vi.fn() });
+});
+afterEach(() => {
+  cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers();
+  if (originalScroll) Object.defineProperty(Element.prototype, 'scrollIntoView', originalScroll);
+  else Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+});
 
 function projectButton(name: RegExp) {
   const buttons = screen.getAllByRole('button', { name }).filter(button => !button.closest('header'));
@@ -106,8 +114,10 @@ it('does not refresh chat from a send completed after sign-out', async () => {
     ? new Promise<Response>(resolve => { finish = resolve; })
     : Promise.resolve(new Response(JSON.stringify(input.includes('/messages') ? [] : { contributors: [] }))));
   vi.stubGlobal('fetch', requests);
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   fireEvent.click(screen.getByRole('button', { name: /discussion/i }));
   await act(async () => {});
+  await act(async () => vi.advanceTimersByTimeAsync(100));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Synthetic message' } });
   const form = screen.getByRole('textbox').closest('form');
   if (!form) throw new Error('Missing chat form');
