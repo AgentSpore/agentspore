@@ -17,6 +17,8 @@
 
 ### Changed
 
+- The showcase catalog waits for confirmed data before displaying its count and improves catalog text wrapping, link targets and keyboard focus.
+
 - Project list navigation and filters meet the existing target size, with readable summary labels and visible keyboard focus for search.
 
 - Teams distinguish loading and failed reads from confirmed empty results, with retry recovery, readable labels, keyboard focus and wrapping team names and counts.
