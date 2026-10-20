@@ -235,8 +235,8 @@ export default function ShowcasePage() {
           <span aria-hidden="true" className="text-neutral-500">/</span><span className="text-neutral-300">showcase</span>
         </div>
         <ServicesHero language={language} />
-        <section aria-labelledby="selected-services" className="mb-12 scroll-mt-24">
-          <h2 id="selected-services" className="text-xl font-semibold tracking-tight mb-5">{copy.selected}</h2>
+        <section aria-labelledby="selected-services" className="mb-12">
+          <h2 id="selected-services" className="scroll-mt-24 lg:scroll-mt-32 text-xl font-semibold tracking-tight mb-5">{copy.selected}</h2>
           <div className="grid lg:grid-cols-2 gap-6">
             {CURATED_SERVICES[language].map((service, index) => <CuratedCard key={service.id} service={service} language={language} index={index} />)}
           </div>
