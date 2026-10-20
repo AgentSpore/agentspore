@@ -12,6 +12,7 @@ import remarkGfm from "remark-gfm";
 import { API_URL, ProjectOwnership, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { useChatIdentity } from "@/lib/useChatIdentity";
+import { ChatIdentityNotice } from "@/components/ChatIdentityNotice";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -325,7 +326,8 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
-  const chatIdentity = useChatIdentity(auth?.token ?? null);
+  const chatProfile = useChatIdentity(auth?.token ?? null);
+  const chatIdentity = chatProfile.status === "ready" ? chatProfile.user : null;
   const [chatOwner, setChatOwner] = useState<string | null>(null);
   const chatConfirmed = !!chatIdentity && chatIdentity.id === chatOwner;
   useEffect(() => {
@@ -809,12 +811,13 @@ function ProjectDetails({ projectId }: { projectId: string }) {
               {/* Input area */}
               <div className="border-t border-neutral-800/40 px-5 py-3">
                 {!auth || !chatConfirmed ? (
-                  <div className="flex items-center justify-center gap-2 py-2">
+                  <><ChatIdentityNotice state={chatProfile} />
+                  {chatProfile.status === "signed-out" && <div className="flex items-center justify-center gap-2 py-2">
                     <span className="text-[12px] text-neutral-600 font-mono">{tr('wantToJoinTheDiscussion')}</span>
                     <button onClick={() => setShowLogin(true)}
                       className="text-[12px] text-violet-400 hover:text-violet-300 font-medium font-mono transition-colors">
                       {tr('signIn')}</button>
-                  </div>
+                  </div>}</>
                 ) : (
                   <form onSubmit={event => { event.preventDefault(); void handleChatSend(); }} className="space-y-0">
                     {/* Edit/Reply indicator */}

@@ -3,12 +3,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import ProjectPage from './page';
+import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
+import { sharedMessages } from '@/lib/i18n/shared';
 
 const route = vi.hoisted(() => ({ id: 'demo-project' }));
 // Next navigation is the browser routing boundary; Header and auth subscriptions run unchanged.
-vi.mock('next/navigation', () => ({ useParams: () => route, usePathname: () => `/projects/${route.id}` }));
+vi.mock('next/navigation', () => ({ useParams: () => route, usePathname: () => `/projects/${route.id}`, useRouter: () => ({ refresh: vi.fn() }) }));
 beforeEach(() => { route.id = 'demo-project'; localStorage.clear(); });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 function projectButton(name: RegExp) {
   const buttons = screen.getAllByRole('button', { name }).filter(button => !button.closest('header'));
@@ -201,8 +203,9 @@ function projectSecuritySession(token: string | null) {
 
 function pendingSecurityProfile() {
   let resolve: (response: Response) => void = () => { throw new Error("Profile promise not initialized"); };
-  const promise = new Promise<Response>(complete => { resolve = complete; });
-  return { promise, resolve };
+  let reject: (error: Error) => void = () => { throw new Error("Profile promise not initialized"); };
+  const promise = new Promise<Response>((complete, fail) => { resolve = complete; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 function stubProjectSecurity(profile: (authorization: string | null) => Promise<Response>) {
@@ -223,10 +226,10 @@ async function openProjectSecurity() {
   await screen.findByText("project-security-a");
 }
 
-function projectSecurityControls(id: string, owned: boolean) {
+function projectSecurityControls(id: string, owned: boolean, locale: "en" | "ru" = "en") {
   const row = screen.getByText(id).closest(".group");
   if (!(row instanceof HTMLElement)) throw new Error("Project security message row missing");
-  for (const title of ["Edit", "Delete"]) expect(within(row).queryAllByTitle(title)).toHaveLength(owned ? 1 : 0);
+  for (const title of locale === "ru" ? ["Изменить", "Удалить"] : ["Edit", "Delete"]) expect(within(row).queryAllByTitle(title)).toHaveLength(owned ? 1 : 0);
 }
 
 it.each(["Shared name", "Renamed account"])("SEC.CHAT project grants only confirmed profile ID with name %s", async name => {
@@ -327,4 +330,136 @@ it.each(["draft", "edit"])("SEC.CHAT project composer preserves %s while same-ac
   expect(chat.writes).toEqual([{ method: mode === "edit" ? "PATCH" : "POST",
     path: mode === "edit" ? "/api/v1/chat/project/demo-project/human-messages/project-security-a" : "/api/v1/chat/project/demo-project/human-messages",
     authorization: "Bearer synthetic-refreshed-security-a", content: "Unsaved project revision" }]);
+});
+
+const PROFILE_COPY = {
+  en: { checking: "Checking your account…", error: "Could not verify your account." },
+  ru: { checking: "Проверяем аккаунт…", error: "Не удалось проверить аккаунт." },
+};
+
+async function openProfileState(locale: "en" | "ru" = "en") {
+  const requests = { current: pendingSecurityProfile() };
+  projectSecuritySession("synthetic-profile-a");
+  const profiles = vi.fn(() => requests.current.promise.then(response => response.clone()));
+  stubProjectSecurity(profiles);
+  const view = render(<LocaleProvider initialLocale={locale}><ProjectPage /></LocaleProvider>);
+  await act(async () => {});
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: /discussion|обсуждение/i })));
+  screen.getByText("project-security-a");
+  return { requests, profiles, view };
+}
+
+it.each(["en", "ru"] as const)("CH.4b project distinguishes checking from signed-out in %s", async locale => {
+  await openProfileState(locale);
+  expect(screen.getByText(PROFILE_COPY[locale].checking).closest('[role="status"]')).toBeTruthy();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  projectSecurityControls("project-security-a", false, locale);
+  await act(async () => projectSecuritySession(null));
+  expect(screen.queryByText(PROFILE_COPY[locale].checking)).toBeNull();
+  expect(screen.getByText(locale === "en" ? "Want to join the discussion?" : "Хотите участвовать в обсуждении?")).toBeTruthy();
+});
+
+it.each([
+  { locale: "en", failure: "http" }, { locale: "ru", failure: "http" },
+  { locale: "en", failure: "network" }, { locale: "ru", failure: "network" },
+  { locale: "en", failure: "json" }, { locale: "ru", failure: "json" },
+  { locale: "en", failure: "schema" }, { locale: "ru", failure: "schema" },
+] as const)("CH.4b project retries $failure profile verification truthfully in $locale", async ({ locale, failure }) => {
+  const chat = await openProfileState(locale);
+  await act(async () => {
+    if (failure === "network") chat.requests.current.reject(new TypeError("Synthetic profile network failure"));
+    else if (failure === "json") chat.requests.current.resolve(new Response("{invalid"));
+    else if (failure === "schema") chat.requests.current.resolve(Response.json({ ...PROJECT_SECURITY_OWNER, id: null }));
+    else chat.requests.current.resolve(Response.json({ detail: "Synthetic unavailable profile" }, { status: 503 }));
+  });
+  const alert = screen.getByText(PROFILE_COPY[locale].error).closest('[role="alert"]');
+  if (!(alert instanceof HTMLElement)) throw new Error("Profile failure alert missing");
+  expect(screen.queryByRole("textbox")).toBeNull();
+  projectSecurityControls("project-security-a", false, locale);
+  const beforeRetry = chat.profiles.mock.calls.length;
+  chat.requests.current = pendingSecurityProfile();
+  fireEvent.click(within(alert).getByRole("button", { name: sharedMessages[locale].retry }));
+  await act(async () => {});
+  expect(chat.profiles).toHaveBeenCalledTimes(beforeRetry + 1);
+  expect(screen.getByText(PROFILE_COPY[locale].checking).closest('[role="status"]')).toBeTruthy();
+  expect(screen.queryByText(PROFILE_COPY[locale].error)).toBeNull();
+  await act(async () => chat.requests.current.resolve(Response.json(PROJECT_SECURITY_OWNER)));
+  expect(screen.getByRole("textbox")).toBeTruthy();
+  projectSecurityControls("project-security-a", true, locale);
+  expect(screen.queryByText(PROFILE_COPY[locale].checking)).toBeNull();
+  expect(screen.queryByText(PROFILE_COPY[locale].error)).toBeNull();
+});
+
+it.each([
+  { locale: "en", late: "success" }, { locale: "ru", late: "success" },
+  { locale: "en", late: "failure" }, { locale: "ru", late: "failure" },
+] as const)("CH.4b project times out then ignores stale $late during retry in $locale", async ({ locale, late }) => {
+  vi.useFakeTimers();
+  const chat = await openProfileState(locale), old = chat.requests.current;
+  await act(async () => vi.advanceTimersByTimeAsync(9_999));
+  expect(screen.getByText(PROFILE_COPY[locale].checking)).toBeTruthy();
+  await act(async () => vi.advanceTimersByTimeAsync(1));
+  const alert = screen.getByText(PROFILE_COPY[locale].error).closest('[role="alert"]');
+  if (!(alert instanceof HTMLElement)) throw new Error("Profile timeout alert missing");
+  const signals = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith("/auth/me")).map(([, init]) => init?.signal);
+  expect(signals.some(signal => signal?.aborted)).toBe(true);
+  chat.requests.current = pendingSecurityProfile();
+  fireEvent.click(within(alert).getByRole("button", { name: sharedMessages[locale].retry }));
+  await act(async () => {
+    if (late === "success") old.resolve(Response.json(PROJECT_SECURITY_OWNER));
+    else old.reject(new TypeError("Synthetic delayed profile failure"));
+  });
+  expect(screen.getByText(PROFILE_COPY[locale].checking)).toBeTruthy();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  await act(async () => chat.requests.current.resolve(Response.json(PROJECT_SECURITY_OWNER)));
+  projectSecurityControls("project-security-a", true, locale);
+  await act(async () => vi.advanceTimersByTimeAsync(10_000));
+  expect(screen.queryByText(PROFILE_COPY[locale].error)).toBeNull();
+  expect(screen.getByRole("textbox")).toBeTruthy();
+});
+
+it.each(["success", "failure", "timeout"])("CH.4b project ignores old %s after account replacement", async outcome => {
+  vi.useFakeTimers();
+  const chat = await openProfileState(), old = chat.requests.current;
+  chat.requests.current = pendingSecurityProfile();
+  await act(async () => projectSecuritySession("synthetic-profile-b"));
+  await act(async () => chat.requests.current.resolve(Response.json(PROJECT_SECURITY_OTHER)));
+  await act(async () => {
+    if (outcome === "success") old.resolve(Response.json(PROJECT_SECURITY_OWNER));
+    else if (outcome === "failure") old.reject(new TypeError("Synthetic previous account failure"));
+    else await vi.advanceTimersByTimeAsync(10_000);
+  });
+  projectSecurityControls("project-security-a", false); projectSecurityControls("project-security-b", true);
+  expect(screen.queryByText(PROFILE_COPY.en.error)).toBeNull();
+  expect(screen.getByRole("textbox")).toBeTruthy();
+});
+
+it("CH.4b project aborts verification and its deadline after unmount", async () => {
+  vi.useFakeTimers();
+  const chat = await openProfileState();
+  const signals = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith("/auth/me")).map(([, init]) => init?.signal);
+  expect(signals.length).toBeGreaterThan(0);
+  chat.view.unmount();
+  expect(signals.every(signal => signal?.aborted)).toBe(true);
+  const requests = vi.mocked(fetch).mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(20_000); chat.requests.current.resolve(Response.json(PROJECT_SECURITY_OWNER)); });
+  expect(fetch).toHaveBeenCalledTimes(requests);
+});
+
+it.each(["draft", "edit"])("CH.4b project retains %s through same-account error and retry", async mode => {
+  const chat = await openProfileState();
+  await act(async () => chat.requests.current.resolve(Response.json(PROJECT_SECURITY_OWNER)));
+  const input = screen.getByRole<HTMLTextAreaElement>("textbox");
+  if (mode === "edit") fireEvent.click(screen.getAllByTitle("Edit")[0]);
+  fireEvent.change(input, { target: { value: "A revision retained through profile failure" } });
+  chat.requests.current = pendingSecurityProfile();
+  await act(async () => projectSecuritySession("synthetic-profile-a-refreshed"));
+  await act(async () => chat.requests.current.resolve(Response.json({}, { status: 503 })));
+  const alert = screen.getByText(PROFILE_COPY.en.error).closest('[role="alert"]');
+  if (!(alert instanceof HTMLElement)) throw new Error("Profile retry alert missing");
+  chat.requests.current = pendingSecurityProfile();
+  fireEvent.click(within(alert).getByRole("button", { name: sharedMessages.en.retry }));
+  await act(async () => chat.requests.current.resolve(Response.json(PROJECT_SECURITY_OWNER)));
+  expect(screen.getByRole<HTMLTextAreaElement>("textbox").value).toBe("A revision retained through profile failure");
+  expect(screen.queryByText("Editing message") !== null).toBe(mode === "edit");
 });
