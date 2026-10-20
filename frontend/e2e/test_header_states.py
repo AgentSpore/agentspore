@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import auth_form_fixtures as auth
 import auth_form_fixtures as browser
-from playwright.sync_api import expect
+from playwright.sync_api import Error as PlaywrightError, expect
 
 TEXT = """root => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), records = [];
@@ -24,7 +24,9 @@ TEXT = """root => {
     return records;
 }"""
 
-LAYOUTS = [(locale, width) for locale in ("en", "ru") for width in (320, 390, 1024, 1280)]
+LAYOUTS = [
+    (locale, width) for locale in ("en", "ru") for width in (320, 390, 1024, 1280)
+]
 PROFILE = dict(
     auth.USER,
     name="Synthetic Long Header Owner " * 4,
@@ -114,11 +116,19 @@ class HeaderStateTests(unittest.TestCase):
             service_workers="block",
         )
         context.add_cookies(
-            [{"name": "agentspore_locale", "value": self.locale, "url": self.options.base_url}]
+            [
+                {
+                    "name": "agentspore_locale",
+                    "value": self.locale,
+                    "url": self.options.base_url,
+                }
+            ]
         )
         context.add_init_script(DENIAL)
         if session:
-            context.add_init_script("localStorage.setItem('access_token', 'synthetic-header')")
+            context.add_init_script(
+                "localStorage.setItem('access_token', 'synthetic-header')"
+            )
         self.http = HeaderHTTP(self.options.base_url)
         self.addCleanup(self.http.close, context)
         context.route("**/*", self.http.route)
@@ -147,7 +157,9 @@ class HeaderStateTests(unittest.TestCase):
         )
 
     def tab_to(self, page, target):
-        for _ in range(page.locator("a[href], button, input, select, textarea").count() * 2 + 4):
+        for _ in range(
+            page.locator("a[href], button, input, select, textarea").count() * 2 + 4
+        ):
             page.keyboard.press("Tab")
             if target.evaluate("el => el === document.activeElement"):
                 return
@@ -180,7 +192,9 @@ class HeaderStateTests(unittest.TestCase):
             "contrast": "not measured; RR.4",
         }
         target = self.options.screenshots / f"header-{tag}-{self.locale}-{self.width}"
-        target.with_suffix(".json").write_text(json.dumps(records, ensure_ascii=False, indent=2))
+        target.with_suffix(".json").write_text(
+            json.dumps(records, ensure_ascii=False, indent=2)
+        )
         page.screenshot(path=str(target.with_suffix(".png")), full_page=False)
         return records
 
@@ -190,7 +204,9 @@ class HeaderStateTests(unittest.TestCase):
         self.assertEqual(records["page_errors"], [])
         self.assertLessEqual(records["document_width"], self.width)
         self.assertEqual(self.menu(page).is_visible(), self.width < 1024)
-        self.assertEqual(page.locator(f"{HEADER} .xl\\:inline").is_visible(), self.width >= 1280)
+        self.assertEqual(
+            page.locator(f"{HEADER} .xl\\:inline").is_visible(), self.width >= 1280
+        )
         for record in records["text"]:
             with self.subTest(state=tag, text=record["text"]):
                 self.assertGreaterEqual(record["size"], 12, record)
@@ -210,7 +226,9 @@ class HeaderStateTests(unittest.TestCase):
         root, self.trace = page.locator(HEADER), []
         expected = {r["index"] for r in root.evaluate(STATE) if r["visible"]}
         reached = set()
-        for _ in range(page.locator("a[href], button, input, select, textarea").count() * 2 + 4):
+        for _ in range(
+            page.locator("a[href], button, input, select, textarea").count() * 2 + 4
+        ):
             page.keyboard.press(key)
             focused = [r for r in root.evaluate(STATE) if r["focused"]]
             if focused:
@@ -223,7 +241,8 @@ class HeaderStateTests(unittest.TestCase):
         for record in self.trace:
             with self.subTest(state=tag, focus=record["label"]):
                 self.assertTrue(
-                    record["visible"] and record["focusVisible"] and record["hit"], record
+                    record["visible"] and record["focusVisible"] and record["hit"],
+                    record,
                 )
                 self.assertTrue(
                     (record["outline"] != "none" and record["outlineWidth"] > 0)
@@ -238,7 +257,29 @@ class HeaderStateTests(unittest.TestCase):
             "localStorage.setItem('access_token', 'synthetic-header'); "
             "window.dispatchEvent(new Event('storage'))"
         )
-        page.wait_for_function("async () => await window.__headerPending() > 0")
+        self.wait_for_profile(page)
+
+    def wait_for_profile(self, page, timeout_ms=7000):
+        page.evaluate(
+            """async timeout => {
+                const deadline = performance.now() + timeout;
+                while (await window.__headerPending() <= 0) {
+                    if (performance.now() >= deadline) throw Error('Expected a held Header profile read');
+                    await new Promise(requestAnimationFrame);
+                }
+            }""",
+            timeout_ms,
+        )
+
+    def test_pending_wait_rejects_empty_queue(self):
+        with self.browser.new_context() as context:
+            context.route("**/*", lambda route: route.abort())
+            page = context.new_page()
+            page.expose_function("__headerPending", lambda: 0)
+            with self.assertRaisesRegex(
+                PlaywrightError, "Expected a held Header profile read"
+            ):
+                self.wait_for_profile(page, timeout_ms=100)
 
     def resolve(self, page, payload):
         self.http.settle(payload)
@@ -292,12 +333,16 @@ class HeaderStateTests(unittest.TestCase):
                 page = self.open_header(layout)
                 self.audit(page, "H02-mobile-shell")
                 self.activate(page, self.menu(page))
-                expect(page.locator(f"{HEADER} a[href='/login']:visible")).to_be_visible()
+                expect(
+                    page.locator(f"{HEADER} a[href='/login']:visible")
+                ).to_be_visible()
                 self.audit(page, "H10-anonymous-menu")
                 self.traverse(page, "H10-native")
                 self.authenticate(page)
                 self.audit(page, "H11-pending-menu")
-                self.assertEqual(page.locator(f"{HEADER} a[href='/login']:visible").count(), 0)
+                self.assertEqual(
+                    page.locator(f"{HEADER} a[href='/login']:visible").count(), 0
+                )
                 self.resolve(page, PROFILE)
                 self.audit(page, "H09-authenticated-menu")
                 self.traverse(page, "H09-native")
@@ -309,7 +354,7 @@ class HeaderStateTests(unittest.TestCase):
         for layout in (("en", 1024), ("ru", 320)):
             with self.subTest(layout=layout):
                 page = self.open_header(layout, session=True)
-                page.wait_for_function("async () => await window.__headerPending() > 0")
+                self.wait_for_profile(page)
                 if self.width < 1024:
                     self.activate(page, self.menu(page))
                 self.resolve(page, None)
@@ -318,9 +363,11 @@ class HeaderStateTests(unittest.TestCase):
                     "localStorage.setItem('access_token', 'synthetic-header-next'); "
                     "window.dispatchEvent(new Event('storage'))"
                 )
-                page.wait_for_function("async () => await window.__headerPending() > 0")
+                self.wait_for_profile(page)
                 self.http.settle(dict(PROFILE, name="", token_balance=0))
-                avatar = page.locator(f"{HEADER} .rounded-full:visible").filter(has_text="?")
+                avatar = page.locator(f"{HEADER} .rounded-full:visible").filter(
+                    has_text="?"
+                )
                 avatar.first.wait_for()
                 if self.width >= 1024:
                     self.activate(page, avatar.locator(".."))
@@ -333,7 +380,7 @@ class HeaderStateTests(unittest.TestCase):
 
     def test_storage_loss_and_restoration(self):
         page = self.open_header(("en", 320), session=True)
-        page.wait_for_function("async () => await window.__headerPending() > 0")
+        self.wait_for_profile(page)
         page.evaluate(
             "window.__syntheticHeaderStorageDenied = true; "
             "window.dispatchEvent(new Event('storage'))"
@@ -343,12 +390,14 @@ class HeaderStateTests(unittest.TestCase):
         self.audit(page, "storage-denied-pending")
         self.http.settle(PROFILE)
         self.save(page, "storage-denied-late")
-        expect(page.locator(HEADER).get_by_text(PROFILE["email"], exact=True)).to_have_count(0)
+        expect(
+            page.locator(HEADER).get_by_text(PROFILE["email"], exact=True)
+        ).to_have_count(0)
         page.evaluate(
             "window.__syntheticHeaderStorageDenied = false; "
             "window.dispatchEvent(new Event('storage'))"
         )
-        page.wait_for_function("async () => await window.__headerPending() > 0")
+        self.wait_for_profile(page)
         self.resolve(page, PROFILE)
         self.audit(page, "storage-restored-H09")
         page.evaluate(
@@ -357,7 +406,9 @@ class HeaderStateTests(unittest.TestCase):
         )
         page.locator(f"{HEADER} a[href='/login']:visible").wait_for()
         self.audit(page, "storage-lost-authenticated")
-        expect(page.locator(HEADER).get_by_text(PROFILE["email"], exact=True)).to_have_count(0)
+        expect(
+            page.locator(HEADER).get_by_text(PROFILE["email"], exact=True)
+        ).to_have_count(0)
         page.context.add_init_script("window.__syntheticHeaderStorageDenied = true")
         page.reload()
         self.activate(page, self.menu(page))
@@ -366,7 +417,7 @@ class HeaderStateTests(unittest.TestCase):
 
     def test_breakpoint_hidden_controls_and_reduced_motion(self):
         page = self.open_header(("en", 1280), session=True)
-        page.wait_for_function("async () => await window.__headerPending() > 0")
+        self.wait_for_profile(page)
         self.resolve(page, PROFILE)
         self.activate(page, self.account(page))
         self.activate(page, self.button(page, "More", "Ещё"))
@@ -380,7 +431,10 @@ class HeaderStateTests(unittest.TestCase):
         page.emulate_media(reduced_motion="reduce")
         self.save(page, "reduced-motion")
         self.assertEqual(
-            page.locator(HEADER).evaluate("el => getComputedStyle(el).transitionDuration"), "0s"
+            page.locator(HEADER).evaluate(
+                "el => getComputedStyle(el).transitionDuration"
+            ),
+            "0s",
         )
 
     def test_scrolled_mobile_focus(self):
