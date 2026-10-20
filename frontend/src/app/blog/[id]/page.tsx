@@ -8,11 +8,13 @@ import { publicMessages } from '@/lib/i18n/public';
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { API_URL, BlogPost, REACTION_META, timeAgo } from "@/lib/api";
+import { API_URL, REACTION_META, timeAgo } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/auth";
 import { Header } from "@/components/Header";
 import { FetchError } from "@/components/FetchError";
 import { useBlogPost, useBlogComments } from "../useBlogReads";
+import { useBlogReactions, blogReactionKinds, blogReactionLabels } from "../useBlogReactions";
+import { BlogReactionNotice } from "../BlogReactionNotice";
 import { Skeleton, SkeletonAvatar, SkeletonText } from "@/components/Skeleton";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -56,7 +58,7 @@ export default function BlogPostPage() {
   const commentsRead = useBlogComments(postId);
   const post = postRead.data;
   const comments = commentsRead.comments;
-  const setPost = postRead.replace;
+  const reactions = useBlogReactions(postId);
   const setComments = commentsRead.update;
   const loadComments = commentsRead.refresh;
   const [commentText, setCommentText] = useState("");
@@ -66,25 +68,6 @@ export default function BlogPostPage() {
   useEffect(() => {
     setIsLoggedIn(!!localStorage.getItem("access_token"));
   }, []);
-
-  const toggleReaction = async (reaction: string) => {
-    if (!post) return;
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reaction }),
-      });
-      if (res.status === 409) {
-        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions/${reaction}`, { method: "DELETE" });
-      }
-      const postRes = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
-      if (postRes.ok) {
-        const updated: BlogPost = await postRes.json();
-        setPost(updated);
-      }
-    } catch {}
-  };
 
   const submitComment = async () => {
     if (!commentText.trim() || submitting) return;
@@ -266,25 +249,28 @@ export default function BlogPostPage() {
             </div>
 
             {/* Reactions */}
-            <div className="flex gap-1.5 pt-4 border-t border-neutral-800/30">
-              {(Object.keys(REACTION_META) as Array<keyof typeof REACTION_META>).map(r => {
-                const count = post.reactions[r as keyof typeof post.reactions] ?? 0;
+            <div className="flex flex-wrap gap-1.5 pt-4 border-t border-neutral-800/30">
+              {blogReactionKinds.map(r => {
+                const count = (reactions.counts[post.id] ?? post.reactions)[r];
                 return (
                   <button
                     key={r}
-                    onClick={() => toggleReaction(r)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-all hover:scale-105 active:scale-95 ${
+                    aria-label={tr(blogReactionLabels[r])}
+                    disabled={reactions.pairs[`${post.id}:${r}`]?.outcome === 'pending'}
+                    onClick={() => void reactions.react(post.id, r)}
+                    className={`flex min-h-11 min-w-11 items-center justify-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50 hover:scale-105 active:scale-95 ${
                       count > 0
                         ? "bg-neutral-800/30 border-neutral-700/40 text-neutral-300"
                         : "bg-transparent border-neutral-800/30 text-neutral-600 hover:text-neutral-400 hover:border-neutral-700/40"
                     }`}
                   >
-                    <span className="text-sm">{REACTION_META[r].emoji}</span>
-                    {count > 0 && <span className="font-mono text-[11px]">{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
+                    <span aria-hidden="true" className="text-sm">{REACTION_META[r].emoji}</span>
+                    {count > 0 && <span className="font-mono text-xs">{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
                   </button>
                 );
               })}
             </div>
+            {Object.values(reactions.pairs).filter(state => state.postId === post.id).map(state => <BlogReactionNotice key={state.reaction} state={state} onRetry={() => void reactions.retry(post.id, state.reaction)} />)}
           </article>
 
           {/* Comments */}

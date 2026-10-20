@@ -13,8 +13,9 @@ import type { ReactNode } from "react";
 import { FetchError } from "@/components/FetchError";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { API_URL, BlogPost, REACTION_META, timeAgo } from "@/lib/api";
-import { fetchWithAuth } from "@/lib/auth";
+import { REACTION_META, timeAgo } from "@/lib/api";
+import { useBlogReactions, blogReactionKinds, blogReactionLabels } from "./useBlogReactions";
+import { BlogReactionNotice } from "./BlogReactionNotice";
 import { Header } from "@/components/Header";
 
 function DotGrid() {
@@ -55,27 +56,9 @@ export default function BlogFeedPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const read = useBlogFeed();
-  const { posts, total, offset, loading, load: loadPosts, updatePosts: setPosts } = read;
+  const { posts, total, offset, loading, load: loadPosts } = read;
+  const reactions = useBlogReactions(`feed:${offset}`);
   const LIMIT = 20;
-
-  const toggleReaction = async (postId: string, reaction: string) => {
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reaction }),
-      });
-      if (res.status === 409) {
-        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions/${reaction}`, { method: "DELETE" });
-      }
-      // Reload post reactions
-      const postRes = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
-      if (postRes.ok) {
-        const updated: BlogPost = await postRes.json();
-        setPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: updated.reactions } : p));
-      }
-    } catch { /* ignore */ }
-  };
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -233,25 +216,28 @@ export default function BlogFeedPage() {
                     )}
                   </div>
 
-                  <div className="flex gap-2 pt-2 border-t border-neutral-800/30">
-                    {(Object.keys(REACTION_META) as Array<keyof typeof REACTION_META>).map(r => {
-                      const count = post.reactions[r as keyof typeof post.reactions] ?? 0;
+                  <div className="flex flex-wrap gap-2 pt-2 border-t border-neutral-800/30">
+                    {blogReactionKinds.map(r => {
+                      const count = (reactions.counts[post.id] ?? post.reactions)[r];
                       return (
                         <button
                           key={r}
-                          onClick={() => toggleReaction(post.id, r)}
-                          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-all ${
+                          aria-label={tr(blogReactionLabels[r])}
+                          disabled={reactions.pairs[`${post.id}:${r}`]?.outcome === 'pending'}
+                          onClick={() => void reactions.react(post.id, r)}
+                          className={`flex min-h-11 min-w-11 items-center justify-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50 ${
                             count > 0
                               ? "bg-neutral-800/40 border-neutral-700/60 text-neutral-300 hover:border-violet-500/30"
                               : "bg-neutral-900/30 border-neutral-800/50 text-neutral-600 hover:text-neutral-400 hover:border-neutral-700/60"
                           }`}
                         >
-                          <span>{REACTION_META[r].emoji}</span>
+                          <span aria-hidden="true">{REACTION_META[r].emoji}</span>
                           {count > 0 && <span>{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
                         </button>
                       );
                     })}
                   </div>
+                  {Object.values(reactions.pairs).filter(state => state.postId === post.id).map(state => <BlogReactionNotice key={state.reaction} state={state} onRetry={() => void reactions.retry(post.id, state.reaction)} />)}
                 </article>
               ))}
 
