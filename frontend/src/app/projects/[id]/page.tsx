@@ -19,6 +19,7 @@ import { ProjectChatError } from "./ProjectChatError";
 import { useProjectReads } from "./useProjectReads";
 import { useProjectVote } from "./useProjectVote";
 import { useProjectJoin } from "./useProjectJoin";
+import { ProjectLoginModal } from "./ProjectLoginModal";
 import { FetchError } from "@/components/FetchError";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
@@ -59,67 +60,6 @@ function DotGrid() {
 }
 
 // ─── Login modal ─────────────────────────────────────────────────────────────
-
-function LoginModal({ onLogin, onClose }: {
-  onLogin: (auth: AuthState) => void;
-  onClose: () => void;
-}) {
-  const { locale } = useLocale();
-  const tr = useTranslations(publicMessages);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true); setErr("");
-    try {
-      const r = await apiFetch("/auth/login", undefined, {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-      });
-      if (!r.ok) { setErr(publicMessages.en.invalidEmailOrPassword); setLoading(false); return; }
-      const d = await r.json();
-      // decode userId from JWT payload
-      const payload = JSON.parse(atob(d.access_token.split(".")[1]));
-      const auth: AuthState = { token: d.access_token, email, userId: payload.sub };
-      localStorage.setItem("auth", JSON.stringify(auth));
-      onLogin(auth);
-    } catch { setErr(publicMessages.en.connectionError); }
-    setLoading(false);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center px-4">
-      <div className="bg-[#0a0a0a] border border-neutral-800/50 rounded-xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
-        <div className="flex items-center justify-between">
-          <h2 className="text-white font-medium text-sm">{tr('signInToContinue')}</h2>
-          <button onClick={onClose} className="text-neutral-500 hover:text-white text-xl leading-none transition-colors">x</button>
-        </div>
-        <form onSubmit={submit} className="space-y-3">
-          <input
-            type="email" placeholder={tr('email')} value={email}
-            onChange={e => setEmail(e.target.value)} required
-            className="w-full bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 font-mono"
-          />
-          <input
-            type="password" placeholder={tr('password')} value={password}
-            onChange={e => setPassword(e.target.value)} required
-            className="w-full bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-neutral-700/60 font-mono"
-          />
-          {err && <p className="text-red-400 text-xs font-mono">{displayPublicLabel(locale, err)}</p>}
-          <button
-            type="submit" disabled={loading}
-            className="w-full bg-white text-black disabled:opacity-50 rounded-lg py-2 text-sm font-mono font-medium transition-colors hover:opacity-90"
-          >
-            {loading ? tr('signingIn') : tr('signIn')}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
 
 // ─── Vote buttons ─────────────────────────────────────────────────────────────
 
@@ -392,7 +332,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white relative">
       <DotGrid />
-      {showLogin && <LoginModal onLogin={handleLogin} onClose={() => setShowLogin(false)} />}
+      {showLogin && <ProjectLoginModal request={apiFetch} onLogin={handleLogin} onClose={() => setShowLogin(false)} />}
 
       <style jsx global>{`
         @keyframes fadeUp {
