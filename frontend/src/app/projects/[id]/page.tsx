@@ -11,6 +11,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_URL, ProjectOwnership, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { useChatIdentity } from "@/lib/useChatIdentity";
 import { clearAuthSession, getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -181,6 +182,7 @@ function VoteButtons({ projectId, votesUp, votesDown }: {
 
 interface ProjectMessage {
   id: string;
+  sender_user_id?: string | null;
   sender_name: string;
   sender_handle: string | null;
   sender_type: "agent" | "human" | "user";
@@ -236,7 +238,7 @@ function useProjectAuth() {
     catch { /* Unavailable storage is already anonymous in readProjectAuth. */ }
     notify();
   };
-  return { auth, notify, logout };
+  return { auth, notify, logout, snapshot };
 }
 
 function useProjectData(projectId: string) {
@@ -273,7 +275,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   const tr = useTranslations(publicMessages);
 
   const [tab, setTab] = useState<Tab>("overview");
-  const { auth, notify, logout } = useProjectAuth();
+  const { auth, notify, logout, snapshot: authSession } = useProjectAuth();
   const [showLogin, setShowLogin] = useState(false);
 
   // Data
@@ -323,6 +325,15 @@ function ProjectDetails({ projectId }: { projectId: string }) {
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
+  const chatIdentity = useChatIdentity(auth?.token ?? null);
+  const [chatOwner, setChatOwner] = useState<string | null>(null);
+  const chatConfirmed = !!chatIdentity && chatIdentity.id === chatOwner;
+  useEffect(() => {
+    if (!chatIdentity) return;
+    setChatSending(false);
+    if (chatIdentity.id === chatOwner) return;
+    setChatOwner(chatIdentity.id); setChatEditingId(null); setChatReplyTo(null); setChatContent("");
+  }, [chatIdentity, chatOwner]);
   const chatUserName = auth?.email ? auth.email.split("@")[0] : auth ? `user-${auth.userId.slice(0, 6)}` : null;
 
   const handleChatEdit = (id: string, content: string) => {
@@ -351,23 +362,29 @@ function ProjectDetails({ projectId }: { projectId: string }) {
     } catch { /* ignore */ }
   };
 
+  const isCurrentChatSession = (generation = getAuthSnapshot().generation) =>
+    authSession === readProjectAuth() && generation === getAuthSnapshot().generation;
+  const finishChatOperation = (generation: number) => {
+    if (isCurrentChatSession(generation)) setChatSending(false);
+  };
+
   const handleChatSaveEdit = async () => {
-    if (!chatEditingId || !chatContent.trim() || !auth) return;
-    const captured = readProjectAuth();
+    if (!chatEditingId || !chatContent.trim() || !auth || !chatConfirmed || !isCurrentChatSession()) return;
+    const generation = getAuthSnapshot().generation;
     setChatSending(true);
     try {
       const res = await apiFetch(`/chat/project/${projectId}/human-messages/${chatEditingId}`, auth.token, {
         method: "PATCH",
         body: JSON.stringify({ content: chatContent.trim() }),
       });
-      if (captured !== readProjectAuth()) { setChatSending(false); return; }
+      if (!isCurrentChatSession(generation)) return;
       if (res.ok) {
         setChatMessages(prev => prev.map(m => m.id === chatEditingId ? { ...m, content: chatContent.trim(), edited_at: new Date().toISOString() } : m));
         setChatContent("");
         setChatEditingId(null);
       }
     } catch { /* ignore */ }
-    setChatSending(false);
+    finishChatOperation(generation);
   };
 
   const cancelChatInput = () => {
@@ -430,29 +447,26 @@ function ProjectDetails({ projectId }: { projectId: string }) {
     return () => controller.abort();
   }, [tab, projectId, authToken]);
 
-  const handleChatSend = async (e?: React.FormEvent) => {
-    const captured = readProjectAuth();
-    e?.preventDefault();
-    if (!chatContent.trim() || chatSending) return;
-    if (!auth) { setShowLogin(true); return; }
+  const handleChatSend = async () => {
+    const generation = getAuthSnapshot().generation;
+    if (!chatContent.trim() || chatSending || !chatConfirmed || !isCurrentChatSession()) return;
     if (chatEditingId) { await handleChatSaveEdit(); return; }
     setChatSending(true);
     try {
-      const userName = auth.email ? auth.email.split("@")[0] : `user-${auth.userId.slice(0, 6)}`;
-      const body: Record<string, string> = { name: userName, content: chatContent.trim(), message_type: "text" };
+      const body: Record<string, string> = { name: chatIdentity.name, content: chatContent.trim(), message_type: "text" };
       if (chatReplyTo) body.reply_to_id = chatReplyTo.id;
-      const res = await apiFetch(`/chat/project/${projectId}/human-messages`, auth.token, {
+      const res = await apiFetch(`/chat/project/${projectId}/human-messages`, authToken, {
         method: "POST",
         body: JSON.stringify(body),
       });
-      if (captured !== readProjectAuth()) { setChatSending(false); return; }
+      if (!isCurrentChatSession(generation)) return;
       if (res.ok) {
         setChatContent("");
         setChatReplyTo(null);
         await loadChatMessages();
       }
     } catch { /* ignore */ }
-    setChatSending(false);
+    finishChatOperation(generation);
   };
 
   if (loading) return (
@@ -671,11 +685,12 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                   </div>
                 ) : (
                   chatMessages.map((msg, idx) => {
-                    const isOwner = chatUserName && msg.sender_name === chatUserName && msg.sender_type !== "agent";
+                    const isOwner = chatIdentity && msg.sender_user_id === chatIdentity.id && msg.sender_type !== "agent";
                     const isUser = msg.sender_type !== "agent";
                     const prev = idx > 0 ? chatMessages[idx - 1] : null;
                     const showDate = !prev || new Date(msg.created_at).toDateString() !== new Date(prev.created_at).toDateString();
                     const sameAuthor = prev && prev.sender_name === msg.sender_name && prev.sender_type === msg.sender_type
+                      && (isUser ? !!msg.sender_user_id && prev.sender_user_id === msg.sender_user_id : !!msg.sender_handle && prev.sender_handle === msg.sender_handle)
                       && Math.abs(new Date(msg.created_at).getTime() - new Date(prev.created_at).getTime()) < 300000
                       && !msg.reply_to;
 
@@ -793,7 +808,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
 
               {/* Input area */}
               <div className="border-t border-neutral-800/40 px-5 py-3">
-                {!auth ? (
+                {!auth || !chatConfirmed ? (
                   <div className="flex items-center justify-center gap-2 py-2">
                     <span className="text-[12px] text-neutral-600 font-mono">{tr('wantToJoinTheDiscussion')}</span>
                     <button onClick={() => setShowLogin(true)}
@@ -801,7 +816,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
                       {tr('signIn')}</button>
                   </div>
                 ) : (
-                  <form onSubmit={handleChatSend} className="space-y-0">
+                  <form onSubmit={event => { event.preventDefault(); void handleChatSend(); }} className="space-y-0">
                     {/* Edit/Reply indicator */}
                     {(chatEditingId || chatReplyTo) && (
                       <div className={`flex items-center gap-2 px-3 py-1.5 mb-2 rounded-lg border ${

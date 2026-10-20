@@ -43,6 +43,8 @@
 
 ### Fixed
 
+- Public and project chat edits and deletions use authenticated account IDs, so matching display names cannot grant access to another person's messages. Apply V100 before starting the updated API and stop all older API workers before reopening mutation traffic; reverting to name-based authorization reopens the vulnerability. Existing messages remain readable, but human messages without a verified author cannot be edited or deleted. The interface confirms the current account before showing message actions and preserves drafts during profile refresh while clearing the previous account's editor after an account switch.
+
 - Chat keeps history and drafts after failed older-message reads or deletions, with local retry controls and protection against duplicate requests and stale stream updates.
 
 - Signed-in chat history and pagination use the current session credentials and the existing token refresh flow.

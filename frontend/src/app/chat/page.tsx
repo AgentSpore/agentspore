@@ -7,11 +7,12 @@ import { communicationMessages } from "@/lib/i18n/communication";
 import { sharedMessages } from "@/lib/i18n/shared";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_URL, CHAT_MSG_META, ChatMessage, timeAgo } from "@/lib/api";
-import { fetchWithAuth } from "@/lib/auth";
+import { fetchWithAuth, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
+import { useChatIdentity } from "@/lib/useChatIdentity";
 import { Header } from "@/components/Header";
 
 const MSG_TYPES = ["all", "text", "idea", "question", "alert"] as const;
@@ -85,10 +86,10 @@ function MessageActions({ msg, onEdit, onDelete, deleteStatus }: { msg: ChatMess
   );
 }
 
-function MessageGroup({ messages, isHuman, userName, onEdit, onDelete, deleteState }: {
+function MessageGroup({ messages, isHuman, userId, onEdit, onDelete, deleteState }: {
   messages: ChatMessage[];
   isHuman: boolean;
-  userName: string | null;
+  userId: string | null;
   onEdit: (id: string, content: string) => void;
   onDelete: (id: string) => void;
   deleteState: Record<string, "pending" | "error">;
@@ -99,7 +100,6 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete, deleteSta
 
   const first = messages[0];
   const isVerified = first.sender_type === "user" || first.specialization === "user";
-  const isOwner = isHuman && userName && first.agent_name === userName;
 
   return (
     <div className={`flex gap-3 msg-appear ${isHuman ? "flex-row-reverse" : ""}`}>
@@ -130,6 +130,7 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete, deleteSta
             const isFirst = i === 0;
             const isLast = i === messages.length - 1;
             const deleted = msg.is_deleted;
+            const isOwner = isHuman && userId && msg.sender_user_id === userId;
 
             return (
               <div key={msg.id} data-message-id={msg.id} className="group flex flex-wrap items-center gap-1 min-w-0">
@@ -184,8 +185,8 @@ function MessageGroup({ messages, isHuman, userName, onEdit, onDelete, deleteSta
   );
 }
 
-function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEdit }: {
-  userName: string;
+function ChatInput({ identity, editingId, editingContent, onCancelEdit, onSaveEdit }: {
+  identity: { id: string; name: string } | null;
   editingId: string | null;
   editingContent: string;
   onCancelEdit: () => void;
@@ -200,7 +201,10 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const revisionRef = useRef(0);
   const contextRef = useRef(0);
-  const sendingRef = useRef(false);
+  const sendingRef = useRef<object | null>(null);
+  const [owner, setOwner] = useState(identity?.id ?? null);
+  const confirmed = !!identity && identity.id === owner;
+  const session = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
 
   useEffect(() => {
     revisionRef.current += 1;
@@ -212,7 +216,14 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
     }
   }, [editingId, editingContent]);
 
-  const canSend = content.trim().length > 0 && !sending;
+  useEffect(() => {
+    if (!identity || identity.id === owner) return;
+    setOwner(identity.id); revisionRef.current += 1; contextRef.current += 1;
+    setContent(""); setError(null); onCancelEdit();
+    sendingRef.current = null; setSending(false);
+  }, [identity, owner, onCancelEdit]);
+
+  const canSend = confirmed && content.trim().length > 0 && !sending;
 
   const cancelEditing = () => {
     revisionRef.current += 1;
@@ -222,22 +233,23 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
     onCancelEdit();
   };
 
-  const completeOperation = (operation: { editingId: string | null; content: string; revision: number }) => {
+  const completeOperation = (operation: { editingId: string | null; content: string; revision: number; generation: number }) => {
+    if (getAuthSnapshot().generation !== operation.generation) return;
     if (operation.editingId) onSaveEdit(operation.editingId, operation.content);
     if (revisionRef.current !== operation.revision) return;
     setContent("");
     if (operation.editingId) onCancelEdit();
     else textareaRef.current?.focus();
   };
-  const reportOperationError = (operationContext: number, message: string) => {
-    if (contextRef.current === operationContext) setError(message);
+  const reportOperationError = (operation: { context: number; generation: number }, message: string) => {
+    if (contextRef.current === operation.context && getAuthSnapshot().generation === operation.generation) setError(message);
   };
 
   const handleSubmit = async (e?: React.FormEvent<HTMLFormElement>) => {
     e?.preventDefault();
-    if (!canSend || sendingRef.current) return;
-    const operation = { editingId, content: content.trim(), revision: revisionRef.current, context: contextRef.current };
-    sendingRef.current = true;
+    if (!canSend || sendingRef.current || getAuthSnapshot().generation !== session.generation) return;
+    const operation = { editingId, content: content.trim(), revision: revisionRef.current, context: contextRef.current, generation: getAuthSnapshot().generation };
+    sendingRef.current = operation;
     setSending(true);
     setError(null);
     const token = localStorage.getItem("access_token");
@@ -250,15 +262,14 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        reportOperationError(operation.context, data.detail ?? (operation.editingId ? "Failed to edit" : "Failed to send"));
+        reportOperationError(operation, data.detail ?? (operation.editingId ? "Failed to edit" : "Failed to send"));
         return;
       }
       completeOperation(operation);
     } catch {
-      reportOperationError(operation.context, "Network error");
+      reportOperationError(operation, "Network error");
     } finally {
-      sendingRef.current = false;
-      setSending(false);
+      if (sendingRef.current === operation) { sendingRef.current = null; setSending(false); }
     }
   };
 
@@ -280,6 +291,15 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
   }, [content]);
 
+  if (!confirmed) return (
+        <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
+          <div className="max-w-3xl mx-auto px-4 py-4 text-center">
+            <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono">
+              {" " + tr("Sign in to join the conversation") + " "}</Link>
+          </div>
+        </div>
+  );
+
   return (
     <form onSubmit={handleSubmit} className="border-t border-neutral-800/40 bg-[#0a0a0a]">
       <div className="max-w-3xl mx-auto px-4 py-3">
@@ -298,7 +318,7 @@ function ChatInput({ userName, editingId, editingContent, onCancelEdit, onSaveEd
         <div className={`flex items-end gap-2 bg-neutral-900/40 border rounded-2xl px-3 py-2 transition-colors ${
           editingId ? "border-violet-500/30 focus-within:border-violet-500/50" : "border-neutral-800/50 focus-within:border-neutral-700/60"
         }`}>
-          <AgentAvatar name={userName} specialization="user" size="sm" />
+          <AgentAvatar name={identity.name} specialization="user" size="sm" />
           <textarea
             ref={textareaRef}
             value={content}
@@ -369,7 +389,7 @@ export default function ChatPage() {
   const [hasMore, setHasMore] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [liveCount, setLiveCount] = useState(0);
-  const [userName, setUserName] = useState<string | null>(null);
+  const identity = useChatIdentity();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
   const esRef = useRef<EventSource | null>(null);
@@ -380,15 +400,6 @@ export default function ChatPage() {
   const olderRef = useRef<AbortController | null>(null);
   const olderChangesRef = useRef(new Map<string, Partial<ChatMessage>>());
   const pendingDeletesRef = useRef(new Set<string>());
-
-  useEffect(() => {
-    const token = localStorage.getItem("access_token");
-    if (!token) return;
-    fetch(`${API_URL}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.name) setUserName(data.name); })
-      .catch(() => {});
-  }, []);
 
   const readMessages = useCallback(async () => {
     if (readRef.current) return;
@@ -539,7 +550,9 @@ export default function ChatPage() {
     const last = grouped[grouped.length - 1];
     if (
       last &&
-      last[0].agent_name === msg.agent_name &&
+      (msg.sender_type === "human" || msg.sender_type === "user"
+        ? !!msg.sender_user_id && last[0].sender_user_id === msg.sender_user_id
+        : !!msg.agent_id && last[0].agent_id === msg.agent_id) &&
       last[0].sender_type === msg.sender_type &&
       Math.abs(new Date(msg.ts).getTime() - new Date(last[last.length - 1].ts).getTime()) < 300000
     ) {
@@ -667,7 +680,7 @@ export default function ChatPage() {
                         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-neutral-800/50 to-transparent" />
                       </div>
                     )}
-                    <MessageGroup messages={group} isHuman={isHuman} userName={userName} onEdit={handleEdit} onDelete={handleDelete} deleteState={deleteState} />
+                    <MessageGroup messages={group} isHuman={isHuman} userId={identity?.id ?? null} onEdit={handleEdit} onDelete={handleDelete} deleteState={deleteState} />
                   </div>
                 );
               })}
@@ -678,22 +691,13 @@ export default function ChatPage() {
       </main>
 
       {/* Input */}
-      {userName ? (
-        <ChatInput
-          userName={userName}
-          editingId={editingId}
-          editingContent={editingContent}
-          onCancelEdit={() => { setEditingId(null); setEditingContent(""); }}
-          onSaveEdit={handleSaveEdit}
-        />
-      ) : (
-        <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
-          <div className="max-w-3xl mx-auto px-4 py-4 text-center">
-            <Link href="/login" className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono">
-              {" " + tr("Sign in to join the conversation") + " "}</Link>
-          </div>
-        </div>
-      )}
+      <ChatInput
+        identity={identity}
+        editingId={editingId}
+        editingContent={editingContent}
+        onCancelEdit={() => { setEditingId(null); setEditingContent(""); }}
+        onSaveEdit={handleSaveEdit}
+      />
     </div>
   );
 }
