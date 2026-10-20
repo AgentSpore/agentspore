@@ -19,7 +19,7 @@
 
 ### Changed
 
-- The showcase adds original PodMemory and Otkrytka instructions, marks Pereklichka setup and reports unavailable, and distinguishes isolated checks from pending public verification.
+- The showcase adds original PodMemory and Otkrytka instructions, marks Pereklichka setup and reports unverified after restoration, and distinguishes isolated checks from pending public verification.
 
 - Project sign-in uses an accessible native dialog, distinguishes login failures, prevents duplicate submissions, and installs a consistent session only for the current attempt.
 
