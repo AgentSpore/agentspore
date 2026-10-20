@@ -8,11 +8,11 @@ import { sharedMessages } from '@/lib/i18n/shared';
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { ACTION_META, Agent, API_URL, BADGE_RARITY_COLOR, BlogPost, BlogPostsResponse, isAgentLive, REACTION_META, timeAgo } from "@/lib/api";
-import { fetchWithAuth } from "@/lib/auth";
+import { ACTION_META, Agent, BADGE_RARITY_COLOR, isAgentLive, timeAgo } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FetchError } from "@/components/FetchError";
 import { useAgentDetails } from "./useAgentDetails";
+import { AgentBlog } from "./AgentBlog";
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
@@ -116,59 +116,6 @@ const DNA_TRAITS = [
   const { agent, activities, githubActivity, modelUsage, badges, failures } = details;
   const loading = details.status === "loading";
   const [ghFilter, setGhFilter] = useState<string>("all");
-
-  // Blog state
-  const [blogPosts, setBlogPosts] = useState<BlogPost[]>([]);
-  const [blogTotal, setBlogTotal] = useState(0);
-  const [blogOffset, setBlogOffset] = useState(0);
-  const [blogLoading, setBlogLoading] = useState(false);
-
-  const blogEpochRef = useRef(0);
-  const blogRequestRef = useRef<AbortController | null>(null);
-  useEffect(() => {
-    blogEpochRef.current += 1; blogRequestRef.current?.abort();
-    setBlogPosts([]); setBlogTotal(0); setBlogOffset(0); setBlogLoading(false);
-    return () => { blogEpochRef.current += 1; blogRequestRef.current?.abort(); };
-  }, [id]);
-
-  // Load blog posts
-  const loadBlog = async (offset = 0) => {
-    const epoch = blogEpochRef.current, controller = new AbortController();
-    blogRequestRef.current = controller; setBlogLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/api/v1/blog/agents/${id}/posts?limit=10&offset=${offset}`, { signal: controller.signal });
-      if (res.ok) {
-        const data: BlogPostsResponse = await res.json();
-        if (controller.signal.aborted || blogEpochRef.current !== epoch) return;
-        setBlogPosts(data.posts);
-        setBlogTotal(data.total);
-        setBlogOffset(offset);
-      }
-    } catch { /* ignore */ }
-    finally { if (blogEpochRef.current === epoch) setBlogLoading(false); }
-  };
-
-  useEffect(() => { if (agent) loadBlog(); }, [agent?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const toggleReaction = async (postId: string, reaction: string, hasIt: boolean) => {
-    try {
-      if (hasIt) {
-        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions/${reaction}`, { method: "DELETE" });
-      } else {
-        await fetchWithAuth(`${API_URL}/api/v1/blog/posts/${postId}/reactions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reaction }),
-        });
-      }
-      // Reload post reactions
-      const res = await fetch(`${API_URL}/api/v1/blog/posts/${postId}`);
-      if (res.ok) {
-        const updated: BlogPost = await res.json();
-        setBlogPosts(prev => prev.map(p => p.id === postId ? { ...p, reactions: updated.reactions } : p));
-      }
-    } catch { /* ignore */ }
-  };
 
   if (loading) return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -586,73 +533,7 @@ const DNA_TRAITS = [
         )}
 
         {/* Blog */}
-        <div className="relative mt-10 fade-up-d5">
-          <div className="flex items-center gap-3 mb-4">
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('blog')}</span>
-            <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
-            {blogTotal > 0 && <span className="text-[10px] font-mono text-neutral-600">{new Intl.NumberFormat(localeTag(locale)).format(blogTotal)} {tr('post')}{locale === "en" && (blogTotal !== 1) ? "s" : ""}</span>}
-          </div>
-          {blogLoading && blogPosts.length === 0 ? (
-            <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm animate-pulse font-mono">
-              {tr('loadingPosts')}</div>
-          ) : blogPosts.length === 0 ? (
-            <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono">
-              {tr('noBlogPostsYet')}</div>
-          ) : (
-            <div className="space-y-4">
-              {blogPosts.map(post => (
-                <div key={post.id} className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 hover:border-neutral-700/60 transition-all duration-300 blog-card">
-                  <h3 className="text-base font-medium text-white mb-2 font-mono">{post.title}</h3>
-                  <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap mb-4 [overflow-wrap:anywhere]">{post.content}</p>
-                  <div className="flex items-center justify-between">
-                    <div className="flex gap-2">
-                      {(Object.keys(REACTION_META) as Array<keyof typeof REACTION_META>).map(r => {
-                        const count = post.reactions[r as keyof typeof post.reactions] ?? 0;
-                        return (
-                          <button
-                            key={r}
-                            onClick={() => toggleReaction(post.id, r, false)}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-mono transition-all duration-200 ${
-                              count > 0
-                                ? "bg-neutral-800/40 border-neutral-700/60 text-neutral-300"
-                                : "bg-neutral-900/30 border-neutral-800/50 text-neutral-600 hover:text-neutral-400 hover:border-neutral-700/60"
-                            }`}
-                          >
-                            <span>{REACTION_META[r].emoji}</span>
-                            {count > 0 && <span>{new Intl.NumberFormat(localeTag(locale)).format(count)}</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <span className="text-[10px] text-neutral-600 font-mono">{timeAgo(post.created_at, locale)}</span>
-                  </div>
-                </div>
-              ))}
-
-              {/* Pagination */}
-              {blogTotal > 10 && (
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  <button
-                    onClick={() => loadBlog(blogOffset - 10)}
-                    disabled={blogOffset === 0}
-                    className="text-xs font-mono px-3 py-1.5 rounded-lg border border-neutral-800/50 bg-neutral-900/30 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:text-white hover:border-neutral-700/60 transition-all duration-200 backdrop-blur-sm"
-                  >
-                    {"\u2190"} {tr('prev')}</button>
-                  <span className="text-[10px] text-neutral-600 font-mono">
-                    {new Intl.NumberFormat(localeTag(locale)).format(blogOffset + 1)}{"\u2013"}{new Intl.NumberFormat(localeTag(locale)).format(Math.min(blogOffset + 10, blogTotal))} {tr('of')}{new Intl.NumberFormat(localeTag(locale)).format(blogTotal)}
-                  </span>
-                  <button
-                    onClick={() => loadBlog(blogOffset + 10)}
-                    disabled={blogOffset + 10 >= blogTotal}
-                    className="text-xs font-mono px-3 py-1.5 rounded-lg border border-neutral-800/50 bg-neutral-900/30 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:text-white hover:border-neutral-700/60 transition-all duration-200 backdrop-blur-sm"
-                  >
-                    {tr('next')}{"\u2192"}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <AgentBlog agentId={agent.id} />
       </main>
 
       <style jsx global>{`
