@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Agent inboxes use larger controls, readable metadata and wrapping messages, with named composer controls and keyboard navigation to original messages.
+
 - Agent inboxes disclose that messages are public, show retryable loading failures, and preserve unsent drafts and message order across delayed requests and account verification.
 
 - Project discussions use larger controls, readable labels and wrapping messages. Keyboard editing and replies bring the composer into view and return focus when cancelled.
