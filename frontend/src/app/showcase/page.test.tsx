@@ -73,7 +73,7 @@ describe("Showcase service selection", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
     expect(screen.queryByText(/running service today/i)).toBeNull();
-    expect(screen.getAllByRole("article")).toHaveLength(2);
+    expect(screen.getAllByRole("article")).toHaveLength(4);
   });
 
   it.each([200, 503])("keeps actionable cards with an empty or failed catalog (%s)", async (status) => {
@@ -81,24 +81,28 @@ describe("Showcase service selection", () => {
     render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
     await screen.findByText(status === 200 ? /no catalog apps found/i : /catalog unavailable/i);
     const family = featuredCard("Pereklichka");
-    for (const name of ["Pereklichka", "SaaSCalc"]) {
+    for (const name of ["PodMemory", "Otkrytka", "Pereklichka", "SaaSCalc"]) {
       const card = screen.getByRole("heading", { name }).closest("article");
       expect(card?.querySelectorAll("dt")).toHaveLength(5);
       expect(card?.querySelectorAll("dd")).toHaveLength(5);
       expect(Array.from(card?.querySelectorAll("dd") ?? []).every(field => field.textContent?.trim())).toBe(true);
       if (!(card instanceof HTMLElement)) throw new Error("Service card is missing");
-      expect(within(card).getByText(/5 October 2026/)).toBeTruthy();
     }
 
-    expect(family.getByRole("link", { name: "Open Telegram bot" }).getAttribute("href"))
-      .toBe("https://t.me/PereklichkaAppBot");
-    expect(family.getByRole("link", { name: "Guide and evidence" }).getAttribute("href"))
-      .toBe("https://github.com/AgentSpore/pereklichka/blob/main/docs/user-guide.md");
+    expect(family.getByRole("link", { name: "Read setup guide" }).getAttribute("href"))
+      .toBe("https://github.com/AgentSpore/pereklichka/blob/4dc195d40aadca40b3eaa2e8425ec051107d6be2/docs/user-guide.md");
+    expect(family.getByRole("link", { name: "Original service source" }).getAttribute("href"))
+      .toBe("https://github.com/AgentSpore/pereklichka/tree/4dc195d40aadca40b3eaa2e8425ec051107d6be2");
     expect(family.getByRole("link", { name: "Privacy policy" }).getAttribute("href"))
       .toBe("https://pereklichka.agentspore.com/privacy");
-    expect(family.getByText(/voice conversation.*not independently verified/i)).toBeTruthy();
-    expect(family.getByText(/telegram delivery.*not rechecked/i)).toBeTruthy();
+    expect(family.getByText(/voice conversation.*not been independently verified/i)).toBeTruthy();
+    expect(family.getByText(/Family setup and report delivery remain unverified after restoration/)).toBeTruthy();
+    expect(family.getByText(/21 October 2026: Telegram API confirmed/)).toBeTruthy();
+    expect(featuredCard("PodMemory").getByText("Have a PodMemory backup? Review its flashcards in your browser.")).toBeTruthy();
+    expect(featuredCard("PodMemory").getByText(/19 October 2026: isolated browser/)).toBeTruthy();
+    expect(featuredCard("Otkrytka").getByText(/Public use is not verified/)).toBeTruthy();
     const calc = featuredCard("SaaSCalc");
+    expect(calc.getByText(/5 October 2026/)).toBeTruthy();
     expect(calc.getByRole("link", { name: "Open calculator" }).getAttribute("href"))
       .toBe("https://saascalc.agentspore.com");
     expect(calc.getByRole("link", { name: "Source of local checks" }).getAttribute("href"))
@@ -117,9 +121,9 @@ describe("Showcase service selection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Русский" }));
     expect(screen.getByRole("button", { name: "Русский" }).getAttribute("aria-pressed")).toBe("true");
     const family = featuredCard("Перекличка");
-    expect(family.getByRole("link", { name: "Открыть Telegram-бота" }).getAttribute("href"))
-      .toBe("https://t.me/PereklichkaAppBot");
-    expect(family.getByText(/голосовой разговор.*не проверен/i)).toBeTruthy();
+    expect(family.getByRole("link", { name: "Прочитать инструкцию" }).getAttribute("href"))
+      .toBe("https://github.com/AgentSpore/pereklichka/blob/4dc195d40aadca40b3eaa2e8425ec051107d6be2/docs/user-guide.md");
+    expect(family.getByText("Не рассчитывайте на семейные отчёты или экстренную помощь. Голосовой разговор независимо не проверен.")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Каталог проектов" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "English" }));
     expect(screen.getByRole("heading", { name: "Pereklichka" })).toBeTruthy();
@@ -136,7 +140,7 @@ describe("Showcase service selection", () => {
     await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
     expect(await screen.findByRole("status")).toHaveProperty("textContent", expect.stringContaining("Stale"));
     expect(screen.getByRole("heading", { name: "Live Verdict" })).toBeTruthy();
-    expect(featuredCard("Pereklichka").getByRole("link", { name: "Open Telegram bot" })).toBeTruthy();
+    expect(featuredCard("Pereklichka").getByRole("link", { name: "Read setup guide" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await act(async () => {});
     expect(screen.queryByRole("status")).toBeNull();
