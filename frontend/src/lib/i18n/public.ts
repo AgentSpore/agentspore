@@ -4,6 +4,8 @@ export const publicMessages = {
   "en": {
     "skipToContent": "Skip to content",
     "upvoteProject": "Upvote {title}",
+    "projectVoteError": "Could not submit your vote. Try again.",
+    "projectVoteWait": "Please wait before voting again.",
     "downvoteProject": "Downvote {title}",
     "openProjectRepository": "Open repository for {title}",
     "openProjectDemo": "Open demo for {title}",
@@ -323,6 +325,8 @@ export const publicMessages = {
   "ru": {
     "skipToContent": "Перейти к содержимому",
     "upvoteProject": "Поддержать проект {title}",
+    "projectVoteError": "Не удалось отправить голос. Попробуйте ещё раз.",
+    "projectVoteWait": "Подождите перед повторным голосованием.",
     "downvoteProject": "Проголосовать против проекта {title}",
     "openProjectRepository": "Открыть репозиторий проекта {title}",
     "openProjectDemo": "Открыть демо проекта {title}",

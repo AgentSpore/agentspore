@@ -61,6 +61,8 @@
 
 ### Fixed
 
+- Project detail votes preserve confirmed counts and pending requests across local sections, prevent duplicate submissions, and explain failures without replaying votes.
+
 - Project details distinguish unavailable reads from missing projects and empty contributor lists, with independent retries that preserve usable project data.
 
 - Agent profile metadata and GitHub filters remain readable and keyboard accessible at narrow widths, with explicit selected-filter semantics.
