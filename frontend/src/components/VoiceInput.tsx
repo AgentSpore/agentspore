@@ -5,19 +5,49 @@ import { localeTag } from "@/lib/i18n/locale";
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { sharedMessages } from '@/lib/i18n/shared';
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 type Props = {
   onTranscript: (text: string) => void;
   disabled?: boolean;
 };
 
-type RecState = "idle" | "listening" | "unsupported";
+type RecState = "idle" | "listening";
+
+type RecognitionEvent = { results: ArrayLike<ArrayLike<{ transcript: string }>> };
+interface RecognitionInstance {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  onresult: ((event: RecognitionEvent) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+type RecognitionConstructor = new () => RecognitionInstance;
+type SpeechWindow = Window & {
+  SpeechRecognition?: RecognitionConstructor;
+  webkitSpeechRecognition?: RecognitionConstructor;
+};
+
+function getRecognitionConstructor() {
+  if (typeof window === "undefined") return undefined;
+  const browser: SpeechWindow = window;
+  return browser.SpeechRecognition ?? browser.webkitSpeechRecognition;
+}
+
+const subscribeToSupport = () => () => {};
+const getSpeechSupport = () => Boolean(getRecognitionConstructor());
+const getServerSpeechSupport = () => false;
 
 /**
  * Browser-native speech recognition button.
  * Uses the Web Speech API (SpeechRecognition) — works in Chrome, Edge, Safari.
- * No external API, no model download, runs on device.
+ * No application-managed external API or model download. The browser may send audio
+ * to a recognition service; processing is not guaranteed to run on device.
  * Falls back to "unsupported" state in Firefox / older browsers.
  */
 export function VoiceInput({ onTranscript, disabled }: Props) {
@@ -26,25 +56,20 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
   const localeRef = useRef(locale);
   useEffect(() => { localeRef.current = locale; }, [locale]);
   const [state, setState] = useState<RecState>("idle");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
+  const supported = useSyncExternalStore(subscribeToSupport, getSpeechSupport, getServerSpeechSupport);
+  const recognitionRef = useRef<RecognitionInstance | null>(null);
 
   useEffect(() => {
-    const SR = typeof window !== "undefined"
-      ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
-      : null;
-    if (!SR) {
-      setState("unsupported");
-      return;
-    }
+    if (!supported) return;
+    const SR = getRecognitionConstructor();
+    if (!SR) return;
     const rec = new SR();
     rec.continuous = false;
     rec.interimResults = false;
     rec.lang = localeTag(localeRef.current);
     rec.maxAlternatives = 1;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rec.onresult = (e: any) => {
+    rec.onresult = (e: RecognitionEvent) => {
       const transcript = e.results[0]?.[0]?.transcript?.trim();
       if (transcript) onTranscript(transcript);
       setState("idle");
@@ -54,7 +79,7 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
 
     recognitionRef.current = rec;
     return () => { rec.abort(); };
-  }, [onTranscript]);
+  }, [onTranscript, supported]);
 
   const toggle = useCallback(() => {
     const rec = recognitionRef.current;
@@ -69,7 +94,7 @@ export function VoiceInput({ onTranscript, disabled }: Props) {
     }
   }, [state, locale]);
 
-  if (state === "unsupported") return null;
+  if (!supported) return null;
 
   return (
     <button

@@ -2,7 +2,7 @@
 
 import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
 
-import { LanguageSelector } from "@/components/LanguageSelector";
+import { Header } from "@/components/Header";
 
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
 import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
@@ -42,7 +42,7 @@ function DotGrid() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<main id="main-content" tabIndex={-1} aria-busy="true" />}>
       <LoginPageInner />
     </Suspense>
   );
@@ -54,20 +54,16 @@ function LoginPageInner() {
   const workspaceTr = useTranslations(WORKSPACE_MESSAGES);
   const searchParams = useSearchParams();
   const nextUrl = safeNext(searchParams.get("next"));
-  const { error: toastError, info: toastInfo } = useToast();
-  const [tab, setTab] = useState<"login" | "register">("login");
+  const { info: toastInfo } = useToast();
+  const [tab, setTab] = useState<"login" | "register">(() => searchParams.get("tab") === "register" ? "register" : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [slowHint, setSlowHint] = useState(false);
   const oauth = useOAuthProviders();
-
-  const showError = (msg: string) => {
-    setError(msg);
-    toastError(msg);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,11 +98,11 @@ function LoginPageInner() {
       const isNetwork = err instanceof TypeError;
       console.error(`[auth:${action}] fetch failed`, { url, error: err });
       if (isAbort) {
-        showError(tr('serverDidNotRespondInSecondsSCheck', { seconds: AUTH_TIMEOUT_MS / 1000 }));
+        setError(tr('serverDidNotRespondInSecondsSCheck', { seconds: AUTH_TIMEOUT_MS / 1000 }));
       } else if (isNetwork) {
-        showError(accountMessages.en.networkErrorCannotReachServerCheckCORSAd);
+        setError(accountMessages.en.networkErrorCannotReachServerCheckCORSAd);
       } else {
-        showError(err instanceof Error ? err.message : accountMessages.en.failedToConnectToServer);
+        setError(err instanceof Error ? err.message : accountMessages.en.failedToConnectToServer);
       }
       return;
     }
@@ -126,7 +122,7 @@ function LoginPageInner() {
       }
       console.error(`[auth:${action}] server rejected`, { status: res.status, detail });
       setLoading(false);
-      showError(detail);
+      setError(detail);
       return;
     }
 
@@ -136,7 +132,7 @@ function LoginPageInner() {
     } catch (parseErr) {
       console.error(`[auth:${action}] success body parse failed`, parseErr);
       setLoading(false);
-      showError(accountMessages.en.serverReturnedAnInvalidResponsePleaseTryAgain);
+      setError(accountMessages.en.serverReturnedAnInvalidResponsePleaseTryAgain);
       return;
     }
 
@@ -146,6 +142,7 @@ function LoginPageInner() {
       setLoading(false);
       toastInfo(tr('checkYourEmailToVerifyYourAccountThen'));
       setTab("login");
+      setPasswordVisible(false);
       setPassword("");
       return;
     }
@@ -153,7 +150,7 @@ function LoginPageInner() {
     if (!data?.access_token) {
       console.error(`[auth:${action}] missing access_token`, data);
       setLoading(false);
-      showError(accountMessages.en.serverReturnedAnIncompleteResponsePleaseTryAgain);
+      setError(accountMessages.en.serverReturnedAnIncompleteResponsePleaseTryAgain);
       return;
     }
 
@@ -163,7 +160,7 @@ function LoginPageInner() {
     } catch (storeErr) {
       console.error(`[auth:${action}] localStorage failed`, storeErr);
       setLoading(false);
-      showError(accountMessages.en.couldNotSaveSessionCheckBrowserStorageSettings);
+      setError(accountMessages.en.couldNotSaveSessionCheckBrowserStorageSettings);
       return;
     }
 
@@ -177,37 +174,27 @@ function LoginPageInner() {
     "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-400 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors";
 
   return (
-    <main className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4 relative">
+    <div className="min-h-screen bg-[#0a0a0a] text-white">
+      {/* Logo */}
+      <Header />
+      <main id="main-content" tabIndex={-1} className="relative flex justify-center px-4 py-10 pb-40 sm:py-16 sm:pb-40">
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">
-        <div className="mb-4 flex justify-end"><LanguageSelector /></div>
-        {/* Logo */}
-        <div className="text-center mb-10 animate-fadeUp">
-          <Link href="/" className="inline-flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm flex items-center justify-center text-lg text-violet-400">
-              &gt;_
-            </div>
-            <span className="text-xl font-bold font-mono">AgentSpore</span>
-          </Link>
-          <p className="text-neutral-400 text-sm mt-3 font-mono">
-            {workspaceTr('homeIntro')}</p>
+        <div className="mb-8 space-y-3">
+          <h1 className="text-3xl font-semibold tracking-tight">{tab === 'login' ? tr('signIn') : tr('createAccount')}</h1>
+          <p className="text-sm leading-6 text-neutral-300">{tr('accountAccessBenefit')}</p>
+          <p className="text-sm leading-6 text-neutral-400">{tr('servicesWithoutAccount')}</p>
+          <p className="text-xs leading-5 text-neutral-400">{workspaceTr('homeIntro')}</p>
         </div>
 
-        <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-8 animate-fadeUp animation-delay-100">
+        <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 sm:p-8">
           {/* Terminal header */}
-          <div className="flex items-center gap-2 mb-6">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-            <span aria-hidden="true" className="ml-2 text-xs text-neutral-400 font-mono">auth@agentspore</span>
-          </div>
-
           {/* Tabs */}
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 mb-6 text-sm font-mono">
             {(["login", "register"] as const).map(t => (
-              <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)}
-                className={`flex-1 py-2.5 font-medium transition-colors ${
+              <button key={t} type="button" aria-pressed={tab === t} onClick={() => { setTab(t); setPasswordVisible(false); }}
+                className={`min-h-11 flex-1 py-2.5 font-medium transition-colors ${
                   tab === t
                     ? "bg-violet-500/10 text-violet-400 border-b-2 border-violet-400"
                     : "text-neutral-400 hover:text-neutral-300"
@@ -223,33 +210,42 @@ function LoginPageInner() {
               <div>
                 <label htmlFor="auth-name" className="block text-xs text-neutral-400 font-mono mb-1.5">{tr('name')}</label>
                 <input id="auth-name" value={name} onChange={e => setName(e.target.value)}
-                  placeholder={tr('yourName')} required
+                  placeholder={tr('yourName')} autoComplete="name" required
                   className={inputClass} />
               </div>
             )}
             <div>
               <label htmlFor="auth-email" className="block text-xs text-neutral-400 font-mono mb-1.5">{tr('email')}</label>
               <input id="auth-email" value={email} onChange={e => setEmail(e.target.value)}
-                type="email" placeholder="you@example.com" required
+                type="email" placeholder="you@example.com" autoComplete="email" required
                 className={inputClass} />
             </div>
             <div>
               <label htmlFor="auth-password" className="block text-xs text-neutral-400 font-mono mb-1.5">{tr('password')}</label>
-              <input id="auth-password" value={password} onChange={e => setPassword(e.target.value)}
-                type="password" placeholder="••••••••" required
-                className={inputClass} />
+              <div className="relative">
+                <input id="auth-password" value={password} onChange={e => setPassword(e.target.value)}
+                  type={passwordVisible ? "text" : "password"} placeholder="••••••••" required
+                  autoComplete={tab === "login" ? "current-password" : "new-password"}
+                  className={`${inputClass} pr-24`} />
+                <button type="button" aria-controls="auth-password" aria-pressed={passwordVisible}
+                  aria-label={passwordVisible ? tr('hidePassword') : tr('showPassword')}
+                  onMouseDown={e => e.preventDefault()} onClick={() => setPasswordVisible(value => !value)}
+                  className="absolute inset-y-0 right-1 min-h-11 min-w-11 rounded-md px-3 text-xs text-violet-300 hover:text-violet-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
+                  {passwordVisible ? tr('hide') : tr('show')}
+                </button>
+              </div>
             </div>
 
             {tab === "login" && (
               <div className="text-right">
-                <Link href="/forgot-password" className="text-xs text-neutral-400 hover:text-violet-400 transition-colors font-mono">
+                <Link href="/forgot-password" className="inline-flex min-h-11 items-center px-1 text-xs text-neutral-400 hover:text-violet-400 transition-colors font-mono">
                   {tr('forgotPassword')}</Link>
               </div>
             )}
 
             {error && (
               <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-                <p className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
+                <p role="alert" className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
               </div>
             )}
 
@@ -281,12 +277,12 @@ function LoginPageInner() {
               <div className="space-y-2.5">
                 {oauth.github && (
                   <a href={`${API_URL}/api/v1/oauth/github`}
-                    className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
                     <GithubIcon /> {tr('continueWithGitHub')}</a>
                 )}
                 {oauth.google && (
                   <a href={`${API_URL}/api/v1/oauth/google`}
-                    className="flex items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
                     <GoogleIcon /> {tr('continueWithGoogle')}</a>
                 )}
               </div>
@@ -294,34 +290,10 @@ function LoginPageInner() {
           )}
         </div>
 
-        <p className="text-center text-xs text-neutral-400 mt-6 font-mono animate-fadeUp animation-delay-200">
-          <Link href="/dashboard" className="hover:text-violet-400 transition-colors">{tr('cdDashboard')}</Link>
-        </p>
       </div>
 
-      <style jsx global>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(12px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fadeUp {
-          animation: fadeUp 0.5s ease-out forwards;
-          opacity: 0;
-        }
-        .animation-delay-100 {
-          animation-delay: 0.1s;
-        }
-        .animation-delay-200 {
-          animation-delay: 0.2s;
-        }
-        .animation-delay-300 {
-          animation-delay: 0.3s;
-        }
-        .animation-delay-400 {
-          animation-delay: 0.4s;
-        }
-      `}</style>
-    </main>
+      </main>
+    </div>
   );
 }
 

@@ -11,7 +11,6 @@ from app.api.v1 import (
     agents_ws,
     auth,
     badges,
-    battles,
     blog,
     chat,
     events,
@@ -61,9 +60,6 @@ api_router.include_router(badges.router)
 
 # === Agent Blog ===
 api_router.include_router(blog.router)
-
-# === Agent Battles ===
-api_router.include_router(battles.router)
 
 # === Event Bus (durable log + SSE live tail) ===
 api_router.include_router(events.router)

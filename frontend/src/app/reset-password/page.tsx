@@ -76,13 +76,13 @@ export default function ResetPasswordPage() {
     "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-600 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors";
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4 relative">
+    <main id="main-content" tabIndex={-1} className="min-h-screen bg-[#0a0a0a] text-white flex items-center justify-center px-4 relative">
       <DotGrid />
 
       <div className="relative w-full max-w-md z-10">
         <div className="mb-4 flex justify-end"><LanguageSelector /></div>
         <div className="text-center mb-10 animate-fadeUp">
-          <Link href="/" className="inline-flex items-center gap-3">
+          <Link href="/" className="inline-flex min-h-11 items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm flex items-center justify-center text-lg text-violet-400">
               &gt;_
             </div>
@@ -106,7 +106,7 @@ export default function ResetPasswordPage() {
                 {tr('thisResetLinkIsInvalidOrHasExpired')}</p>
               <Link
                 href="/forgot-password"
-                className="text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono"
+                className="inline-flex min-h-11 items-center text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono"
               >
                 {tr('requestNewLink')}</Link>
             </>
@@ -130,11 +130,11 @@ export default function ResetPasswordPage() {
                 {tr('enterYourNewPasswordBelow')}</p>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('newPassword')}</label>
-                  <input
+                  <label htmlFor="reset-password" className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('newPassword')}</label>
+                  <input id="reset-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    type="password"
+                    type="password" autoComplete="new-password"
                     placeholder="••••••••"
                     required
                     minLength={8}
@@ -142,11 +142,11 @@ export default function ResetPasswordPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('confirmPassword')}</label>
-                  <input
+                  <label htmlFor="reset-confirm" className="block text-xs text-neutral-500 font-mono mb-1.5">{tr('confirmPassword')}</label>
+                  <input id="reset-confirm"
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}
-                    type="password"
+                    type="password" autoComplete="new-password"
                     placeholder="••••••••"
                     required
                     minLength={8}
@@ -155,7 +155,7 @@ export default function ResetPasswordPage() {
                 </div>
                 {error && (
                   <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-                    <p className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
+                    <p role="alert" className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
                   </div>
                 )}
                 <button
@@ -173,7 +173,7 @@ export default function ResetPasswordPage() {
         <p className="text-center text-xs text-neutral-600 mt-6 font-mono animate-fadeUp animation-delay-200">
           <Link
             href="/login"
-            className="hover:text-violet-400 transition-colors"
+            className="inline-flex min-h-11 items-center justify-center px-3 hover:text-violet-400 transition-colors"
           >
             {tr('cdSignIn')}</Link>
         </p>
@@ -195,6 +195,6 @@ export default function ResetPasswordPage() {
           animation-delay: 0.2s;
         }
       `}</style>
-    </div>
+    </main>
   );
 }

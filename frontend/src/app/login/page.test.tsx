@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import LoginPage from './page';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { publicMessages, publicLabels, displayPublicLabel } from '@/lib/i18n/public';
@@ -8,7 +8,7 @@ import { accountMessages, displayAccountLabel } from '@/lib/i18n/account';
 import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
 const navigation = vi.hoisted(() => ({ query: '' }));
-vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(navigation.query), useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(navigation.query), useRouter: () => ({ refresh: vi.fn() }), usePathname: () => '/login' }));
 vi.mock('@/components/Toast', () => ({ useToast: () => ({ error: vi.fn(), info: vi.fn() }) }));
 
 
@@ -19,7 +19,25 @@ const authCalls = (mock: { mock: { calls: unknown[][] } }) =>
 const providersFetch = (flags: { github: boolean; google: boolean }) =>
   vi.fn<typeof fetch>(async () => ({ ok: true, status: 200, json: async () => flags }) as Response);
 
+beforeEach(() => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+  });
+});
+
 afterEach(() => { cleanup(); navigation.query = ''; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it.each(['en', 'ru'] as const)('opens registration from its incoming link in %s', locale => {
+  navigation.query = 'tab=register&next=%2Fworkspace';
+  vi.stubGlobal('fetch', providersFetch({ github: false, google: false }));
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages[locale].createAccount);
+  expect(screen.getByLabelText(accountMessages[locale].name)).toHaveProperty('required', true);
+  expect(screen.getByLabelText(accountMessages[locale].password).getAttribute('autocomplete')).toBe('new-password');
+});
 
 it.each([
   ['/workspace', '/workspace'],
@@ -38,7 +56,7 @@ it.each([
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
     ok: true, status: 200, json: async () => ({ access_token: 'synthetic-test-session' }),
   }));
-  vi.stubGlobal('localStorage', { setItem: vi.fn() });
+  vi.stubGlobal('localStorage', { setItem: vi.fn(), getItem: vi.fn(() => null) });
   render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
   fireEvent.change(screen.getByPlaceholderText('you@example.com'), { target: { value: 'synthetic@example.invalid' } });
   fireEvent.change(screen.getByPlaceholderText('••••••••'), { target: { value: 'synthetic-password' } });
@@ -70,7 +88,7 @@ it.each(['en', 'ru'] as const)('describes the external agent workspace inside th
     const password = screen.getByPlaceholderText('••••••••');
     fireEvent.change(email, { target: { value: 'synthetic@example.invalid' } });
     fireEvent.change(password, { target: { value: 'synthetic-password' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Русский' })[0]);
     expect(await screen.findByText('Продолжить с GitHub')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Войти' })).toBeTruthy();
     expect((email as HTMLInputElement).value).toBe('synthetic@example.invalid');
@@ -86,7 +104,7 @@ it.each(['en', 'ru'] as const)('describes the external agent workspace inside th
     render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
     fireEvent.submit(screen.getByRole('button', { name: 'Sign In' }).closest('form')!);
     await waitFor(() => expect(screen.getByText(accountMessages.en.networkErrorCannotReachServerCheckCORSAd)).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Русский' })[0]);
     expect(screen.getByText(accountMessages.ru.networkErrorCannotReachServerCheckCORSAd)).toBeTruthy();
     expect(authCalls(fetchMock)).toHaveLength(1);
   });
@@ -99,7 +117,7 @@ it.each(['en', 'ru'] as const)('describes the external agent workspace inside th
     render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
     fireEvent.submit(screen.getByRole('button', { name: 'Sign In' }).closest('form')!);
     await waitFor(() => expect(screen.getByText('Authentication failed (HTTP 503)')).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'Русский' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Русский' })[0]);
     expect(screen.getByText('Не удалось войти (HTTP 503)')).toBeTruthy();
     expect(authCalls(fetchMock)).toHaveLength(1);
   });
@@ -146,7 +164,7 @@ it.each(['en', 'ru'] as const)('exposes authentication mode without submitting o
   expect(register.getAttribute('aria-pressed')).toBe('true');
   expect(signIn.getAttribute('aria-pressed')).toBe('false');
   expect(screen.getByLabelText(accountMessages[locale].name)).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: locale === 'en' ? 'Русский' : 'English' }));
+  fireEvent.click(screen.getAllByRole('button', { name: locale === 'en' ? 'Русский' : 'English' })[0]);
   const switched = locale === 'en' ? 'ru' : 'en';
   expect(screen.getByRole('button', { name: accountMessages[switched].register }).getAttribute('aria-pressed')).toBe('true');
   fireEvent.click(screen.getByRole('button', { name: accountMessages[switched].signIn2 }));
@@ -174,4 +192,96 @@ it.each(['en', 'ru'] as const)('hides the OAuth block and the divider when no pr
   expect(document.querySelector('a[href$="/oauth/github"], a[href$="/oauth/google"]')).toBeNull();
   expect(screen.queryByText(accountMessages[locale].orSignInWith)).toBeNull();
   expect(screen.getByLabelText(accountMessages[locale].email)).toBeTruthy();
+});
+
+
+it.each(['en', 'ru'] as const)('explains account access with shared navigation and a mode heading in %s', locale => {
+  vi.stubGlobal('fetch', providersFetch({ github: false, google: false }));
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  const main = screen.getByRole('main');
+  const header = screen.getByRole('banner');
+  expect(main.contains(header)).toBe(false);
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages[locale].signIn);
+  expect(screen.getByText(locale === 'en'
+    ? 'Sign in to see your connected agents, their tasks and results.'
+    : 'Войдите, чтобы видеть подключённых агентов, их задачи и результаты.')).toBeTruthy();
+  expect(screen.getByText(locale === 'en'
+    ? 'You can use the services without an AgentSpore account.'
+    : 'Сервисами можно пользоваться без аккаунта AgentSpore.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: accountMessages[locale].register }));
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages[locale].createAccount);
+});
+
+it.each(['en', 'ru'] as const)('supports password managers for each authentication mode in %s', locale => {
+  vi.stubGlobal('fetch', providersFetch({ github: false, google: false }));
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  const email = screen.getByLabelText(accountMessages[locale].email);
+  const password = screen.getByLabelText(accountMessages[locale].password);
+  expect(email.getAttribute('autocomplete')).toBe('email');
+  expect(password.getAttribute('autocomplete')).toBe('current-password');
+  fireEvent.click(screen.getByRole('button', { name: accountMessages[locale].register }));
+  expect(screen.getByLabelText(accountMessages[locale].name).getAttribute('autocomplete')).toBe('name');
+  expect(password.getAttribute('autocomplete')).toBe('new-password');
+});
+
+it.each(['en', 'ru'] as const)('toggles password visibility without losing drafts, focus or submitting in %s', locale => {
+  const fetchMock = providersFetch({ github: false, google: false });
+  vi.stubGlobal('fetch', fetchMock);
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  const password = screen.getByLabelText(accountMessages[locale].password);
+  fireEvent.change(password, { target: { value: 'synthetic-password' } });
+  password.focus();
+  const toggle = screen.getByRole('button', { name: locale === 'en' ? 'Show password' : 'Показать пароль' });
+  expect(toggle.getAttribute('type')).toBe('button');
+  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  fireEvent.mouseDown(toggle);
+  fireEvent.click(toggle);
+  expect(password).toHaveProperty('type', 'text');
+  expect(password).toHaveProperty('value', 'synthetic-password');
+  expect(document.activeElement).toBe(password);
+  expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(screen.getByRole('button', { name: locale === 'en' ? 'Hide password' : 'Скрыть пароль' }));
+  expect(password).toHaveProperty('type', 'password');
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole('button', { name: accountMessages[locale].register }));
+  expect(password).toHaveProperty('type', 'password');
+  expect(password).toHaveProperty('value', 'synthetic-password');
+  expect(authCalls(fetchMock)).toHaveLength(0);
+});
+
+
+it.each(['en', 'ru'] as const)('keeps login usable without storage and does not fetch a private profile in %s', locale => {
+  const fetchMock = providersFetch({ github: false, google: false });
+  vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('localStorage', { getItem: () => { throw new DOMException('Synthetic storage denied', 'SecurityError'); } });
+  render(<LocaleProvider initialLocale={locale}><LoginPage /></LocaleProvider>);
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(accountMessages[locale].signIn);
+  expect(screen.getByLabelText(accountMessages[locale].email)).toBeTruthy();
+  expect(screen.getByLabelText(accountMessages[locale].password)).toHaveProperty('type', 'password');
+  expect(authCalls(fetchMock)).toHaveLength(0);
+  expect(fetchMock.mock.calls.every(([, options]) => !new Headers(options?.headers).has('Authorization'))).toBe(true);
+});
+
+it('hides the next login password after registration requests email verification', async () => {
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  const fetchMock = vi.fn<typeof fetch>(async url => String(url).endsWith('/oauth/providers')
+    ? new Response(JSON.stringify({ github: false, google: false }))
+    : new Response(JSON.stringify({ requires_verification: true }), { status: 202 }));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
+  fireEvent.click(screen.getByRole('button', { name: accountMessages.en.register }));
+  fireEvent.change(screen.getByLabelText(accountMessages.en.name), { target: { value: 'Synthetic name' } });
+  fireEvent.change(screen.getByLabelText(accountMessages.en.email), { target: { value: 'synthetic@example.invalid' } });
+  const password = screen.getByLabelText(accountMessages.en.password);
+  fireEvent.change(password, { target: { value: 'synthetic-password' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
+  expect(password).toHaveProperty('type', 'text');
+  fireEvent.submit(screen.getByRole('button', { name: 'Create Account' }).closest('form')!);
+  await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Sign In'));
+  expect(password).toHaveProperty('type', 'password');
+  expect(password).toHaveProperty('value', '');
+  expect(screen.getByLabelText(accountMessages.en.email)).toHaveProperty('value', 'synthetic@example.invalid');
+  fireEvent.change(password, { target: { value: 'synthetic-next-password' } });
+  expect(password).toHaveProperty('type', 'password');
+  expect(authCalls(fetchMock)).toHaveLength(1);
 });

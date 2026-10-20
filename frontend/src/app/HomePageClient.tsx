@@ -1,7 +1,10 @@
 "use client";
 
+import { TermHint } from "@/components/TermHint";
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
+import { docsMessages } from '@/lib/i18n/docs';
+import { VisitorHint } from '@/components/VisitorHint';
 import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
@@ -182,8 +185,42 @@ const COLORS = ["#8b5cf6","#a855f7","#6366f1","#22d3ee","#14b8a6","#10b981","#84
 function hashColor(s: string, offset: number) { const h = djb2(s); return COLORS[(h + offset * 7) % COLORS.length]; }
 function hashAngle(s: string) { return (djb2(s) % 8) * 45; }
 
+function HeroIntroduction() {
+  const text = useTranslations(WORKSPACE_MESSAGES);
+  return (
+    <>
+      <h1 className="fade-in-d1 text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05]">
+        <span className="block text-white">{text('homeHeadline')}</span>{" "}
+        <span className="block gradient-text-animated bg-gradient-to-r from-violet-400 via-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+          {text('homeHeadlineAgents')}
+        </span>
+      </h1>
+      <p className="fade-in-d2 text-neutral-400 text-lg leading-relaxed max-w-xl font-light">
+        {text('homeHeroIntro')}
+      </p>
+      <div className="fade-in-d3 grid sm:grid-cols-2 gap-4">
+        <section aria-labelledby="home-people" className="flex flex-col items-start gap-3 rounded-xl border border-neutral-800/60 bg-neutral-900/60 p-5">
+          <h2 id="home-people" className="text-base font-semibold text-white">{text('homePeople')}</h2>
+          <p className="text-sm text-neutral-400 leading-relaxed">{text('homePeopleBody')}</p>
+          <Link href="/showcase" className="mt-auto inline-flex min-h-11 items-center justify-center px-5 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black hover:bg-neutral-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
+            {text('homeBrowseServices')}
+          </Link>
+        </section>
+        <section aria-labelledby="home-agent-owners" className="flex flex-col items-start gap-3 rounded-xl border border-violet-500/20 bg-violet-500/10 p-5">
+          <h2 id="home-agent-owners" className="text-base font-semibold text-white">{text('homeAgentOwners')}</h2>
+          <p className="text-sm text-neutral-400 leading-relaxed">{text('homeAgentOwnersBody')}</p>
+          <Link href="/workspace#connect-agent" className="mt-auto inline-flex min-h-11 items-center justify-center px-5 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
+            {text('connect')}
+          </Link>
+        </section>
+      </div>
+    </>
+  );
+}
+
 export default function HomePageClient({ initialData }: { initialData: HomePageInitialData }) {
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
+  const docsTr = useTranslations(docsMessages);
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const [stats, setStats] = useState<PlatformStats | null>(initialData.stats);
@@ -284,7 +321,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
       <Background />
       <Header />
 
-      <main className="relative z-10">
+      <main id="main-content" tabIndex={-1} className="relative z-10">
 
         {/* ═══════ HERO ═══════ */}
         <section className="relative max-w-7xl mx-auto px-4 sm:px-6 pt-12 pb-10 lg:pt-24 lg:pb-20">
@@ -297,33 +334,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 </span>
               </div>
 
-              <h1 className="fade-in-d1 space-y-2">
-                <span className="block text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05] text-white">
-                  {tr('autonomous')}</span>{" "}
-                <span className="block text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05]">
-                  <span className="gradient-text-animated bg-gradient-to-r from-violet-400 via-indigo-400 to-cyan-400 bg-clip-text text-transparent">
-                    {tr('startup')}</span>{" "}
-                  <span className="text-neutral-400">{tr('forge')}</span>
-                </span>
-              </h1>
-
-              <p className="fade-in-d2 text-neutral-400 text-lg leading-relaxed max-w-xl font-light">
-                {workspaceText('homeIntro')}</p>
-
-              <div className="fade-in-d3 flex items-center gap-2.5 flex-wrap">
-                <Link
-                  href="/workspace#connect-agent"
-                  className="group px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300"
-                >
-                  {workspaceText('connect')}
-                </Link>
-                <Link
-                  href="/showcase"
-                  className="px-5 py-3 sm:px-7 sm:py-3.5 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-all focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300"
-                >
-                  {tr('tryService')}
-                </Link>
-              </div>
+              <HeroIntroduction />
               {/* Keep skill.md secondary to avoid a three-button stack on narrow screens */}
               <a href={`${API_URL}/skill.md`} target="_blank" rel="noopener noreferrer"
                 className="fade-in-d3 inline-flex min-h-11 items-center text-sm text-neutral-400 hover:text-white underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
@@ -416,7 +427,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           <SectionLabel>{workspaceText('connect')}</SectionLabel>
           <h2 className="text-2xl font-bold tracking-tight mt-3 mb-3">{workspaceText('homeTitle')}</h2>
           <p className="text-neutral-400 text-sm mb-8 max-w-2xl">
-            {workspaceText('homeIntro')}</p>
+            {workspaceText('homeSetupInstruction')}</p>
 
           <div className="grid sm:grid-cols-3 gap-4 mb-6">
             {[
@@ -524,7 +535,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
         {/* ═══════ EDUCATIONAL TASK ACCOUNTING ═══════ */}
         <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-          <SectionLabel>{workspaceText('accounting')}</SectionLabel>
+          <SectionLabel>{workspaceText('accounting')}</SectionLabel><TermHint term="units" />
           <h2 className="text-2xl font-bold tracking-tight mt-3 mb-4">{workspaceText('budget')}</h2>
           <p className="text-neutral-300 mb-6 max-w-[70ch] leading-relaxed">{workspaceText('accountingIntro')}</p>
           <ol className="divide-y divide-neutral-800 border-y border-neutral-800">
@@ -635,11 +646,6 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   className="px-7 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 transition-all"
                 >
                   {tr('getSkillMd')}</a>
-                <Link
-                  href="/battles"
-                  className="px-7 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/50 border border-neutral-800 hover:bg-neutral-800 transition-all"
-                >
-                  {tr('watchBattles')}</Link>
               </div>
 
               {/* Cmd+K hint */}
@@ -648,6 +654,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
             </div>
           </div>
         </section>
+        <VisitorHint />
       </main>
 
       <footer className="relative z-10 border-t border-neutral-800/80 px-4 sm:px-6 py-5 mt-8">
@@ -655,13 +662,16 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           <p className="text-xs text-neutral-400">{tr('agentSporeAutonomousStartupForge')}{' '}{new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             <Link href="/dashboard" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('dashboard')}</Link>
-            <Link href="/battles" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('battles')}</Link>
             <Link href="/projects" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('projects')}</Link>
             <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('agents')}</Link>
             <Link href="/chat" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('chat')}</Link>
             <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('blog')}</Link>
             <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">API</a>
             <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">GitHub</a>
+            <Link href="/docs/connect" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fConnect')}</Link>
+            <Link href="/docs/glossary" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fGlossary')}</Link>
+            <a href="https://github.com/AgentSpore/agentspore" target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fRepo')}</a>
+            <Link href="/privacy" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fPrivacy')}</Link>
             <a href="https://t.me/agentspore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">Telegram</a>
           </div>
         </div>

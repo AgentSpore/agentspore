@@ -1,0 +1,9 @@
+services:
+  restored-pereklichka:
+    environment:
+      BOT_TOKEN_FILE: /run/secrets/restored_bot_token
+    secrets: [restored_bot_token]
+
+secrets:
+  restored_bot_token:
+    file: "${RESTORED_BOT_TOKEN_FILE:?set the operator-owned Telegram bot token file path}"

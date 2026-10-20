@@ -7,10 +7,9 @@ all day, 2026-08-17). Each fix swapped one dead constant for the next, and
 `test_fallback_model_is_one_measured_answering` pinned the new id — so the
 test that was meant to force a re-measurement instead froze the next corpse.
 
-The fix is the shape the battle paths already use: a CANDIDATE LIST spanning
+The fallback uses a CANDIDATE LIST spanning
 more than one provider/account, resolved at call time. What differs here is
-WHICH resolver runs. `pick_live_model` sends a real `chat/completions` probe,
-and `llm_gate.py:35` records a verified invariant that `openrouter_service`
+WHICH resolver runs. A network probe sends real inference, while `openrouter_service`
 never sends inference — plus `resolve_model` sits on the per-message chat path
 (hosted_agent_service._start_agent_internal -> ensure_running), where an 8s
 cold probe would be user-visible latency. So this path resolves by CONFIGURED
@@ -132,7 +131,7 @@ class TestResolveModelSkipsUnavailableCandidates:
 
     @pytest.mark.asyncio
     async def test_nothing_available_still_returns_a_model_id(self) -> None:
-        """Degrade like pick_live_model does: return the first candidate so the
+        """Return the first candidate so the
         caller makes a real request and produces a real upstream error, rather
         than returning None and failing in some unrelated place later.
         """
@@ -153,7 +152,7 @@ class TestResolveModelSkipsUnavailableCandidates:
 
 
 class TestResolveModelSendsNoInference:
-    """llm_gate.py:35 records a VERIFIED invariant: openrouter_service resolves
+    """The provider resolver preserves this invariant: openrouter_service resolves
     config and never sends inference. A liveness probe here would be an ungated
     chat/completions POST on the per-message chat path.
     """
@@ -170,7 +169,7 @@ class TestResolveModelSendsNoInference:
         with patch("httpx.AsyncClient.post") as post, patch("httpx.AsyncClient.get") as get:
             await svc.resolve_model(blocked)
 
-        assert not post.called, "resolve_model sent inference — llm_gate invariant broken"
+        assert not post.called, "resolve_model sent inference — provider resolver invariant broken"
         assert not get.called, "resolve_model made a network call on the chat path"
 
 

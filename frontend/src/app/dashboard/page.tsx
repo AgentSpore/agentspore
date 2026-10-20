@@ -7,30 +7,32 @@ import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FetchError } from "@/components/FetchError";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { clearAuthSession, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 
 type ActivityFilter = "all" | "actions";
 
 /* ── Animated counter ─────────────────────────────────────────────── */
 function useCounter(target: number, duration = 1200) {
-  const [val, setVal] = useState(0);
+  const [counter, setCounter] = useState({ target, value: 0 });
+  if (counter.target !== target) setCounter({ target, value: 0 });
   useEffect(() => {
-    if (!target) { setVal(0); return; }
+    if (!target) return;
     let start = 0;
     const step = Math.max(1, Math.ceil(target / (duration / 16)));
     const id = setInterval(() => {
       start += step;
-      if (start >= target) { setVal(target); clearInterval(id); }
-      else setVal(start);
+      setCounter({ target, value: Math.min(start, target) });
+      if (start >= target) clearInterval(id);
     }, 16);
     return () => clearInterval(id);
   }, [target, duration]);
-  return val;
+  return target && counter.target === target ? counter.value : 0;
 }
 
 /* ── Dot grid background ──────────────────────────────────────────── */
@@ -51,6 +53,38 @@ function DotGrid() {
 
 type AuthState = "loading" | "anon" | "zero-agents" | "has-agents";
 
+function useDashboardAuth(): AuthState {
+  const auth = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
+  const router = useRouter();
+  const [result, setResult] = useState<{ generation: number; state: AuthState } | null>(null);
+  useEffect(() => {
+    const captured = getAuthSnapshot();
+    if (!captured.accessToken) return;
+    const controller = new AbortController();
+    const current = () => !controller.signal.aborted && getAuthSnapshot().generation === captured.generation;
+    const headers = { Authorization: `Bearer ${captured.accessToken}` };
+    fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers, signal: controller.signal })
+      .then(async r => {
+        if (!current()) return null;
+        if (r.status === 401) {
+          clearAuthSession(captured.generation);
+          router.replace("/login");
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
+      .then((external: unknown) => {
+        if (!current() || external === null) return;
+        setResult({ generation: captured.generation, state: Array.isArray(external) && external.length > 0 ? "has-agents" : "zero-agents" });
+      })
+      .catch(() => { if (current()) setResult({ generation: captured.generation, state: "zero-agents" }); });
+    return () => controller.abort();
+  }, [auth.generation, router]);
+  if (auth.generation < 0) return "loading";
+  if (!auth.accessToken) return "anon";
+  return result?.generation === auth.generation ? result.state : "loading";
+}
+
 export default function Home() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
@@ -59,7 +93,6 @@ const ACTIVITY_FILTERS = [
   { key: "all",     label: tr('all') },
   { key: "actions", label: tr('actions') },
 ] as const;
-  const router = useRouter();
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
@@ -68,30 +101,10 @@ const ACTIVITY_FILTERS = [
   const [reloadKey, setReloadKey] = useState(0);
   const [time, setTime] = useState("");
   const [actFilter, setActFilter] = useState<ActivityFilter>("all");
-  const [authState, setAuthState] = useState<AuthState>("loading");
+  const authState = useDashboardAuth();
   const esRef = useRef<EventSource | null>(null);
   const retry = () => { setError(null); setReloadKey(k => k + 1); };
 
-  useEffect(() => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    if (!token) { setAuthState("anon"); return; }
-    const headers = { Authorization: `Bearer ${token}` };
-    fetch(`${API_URL}/api/v1/users/me/external-agents`, { headers })
-      .then(r => {
-        if (r.status === 401) {
-          localStorage.removeItem("access_token");
-          localStorage.removeItem("refresh_token");
-          router.replace("/login");
-          return null;
-        }
-        return r.ok ? r.json() : null;
-      })
-      .then((external: unknown) => {
-        if (external === null) return;
-        setAuthState(Array.isArray(external) && external.length > 0 ? "has-agents" : "zero-agents");
-      })
-      .catch(() => setAuthState("zero-agents"));
-  }, [router]);
 
   const cAgents = useCounter(stats?.active_agents ?? 0);
   const cProjects = useCounter(stats?.total_projects ?? 0);
@@ -148,7 +161,7 @@ const ACTIVITY_FILTERS = [
 
       <Header />
 
-      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5 sm:space-y-6">
+      <main id="main-content" tabIndex={-1} className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-5 sm:space-y-6">
         <DotGrid />
 
         {error && !stats && <FetchError onRetry={retry} />}
@@ -159,15 +172,15 @@ const ACTIVITY_FILTERS = [
           <section className="fade-up relative overflow-hidden rounded-xl border border-violet-500/20 bg-gradient-to-br from-violet-500/[0.06] to-cyan-500/[0.03] p-5 sm:p-6 backdrop-blur-sm">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('notSignedIn')}</p>
+                <p className="text-xs font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('notSignedIn')}</p>
                 <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">{workspaceText('homeTitle')}</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
                   {workspaceText('homeIntro')}</p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                <Link href="/login?next=%2Fworkspace" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 transition-all">
+                <Link href="/login?next=%2Fworkspace" className="inline-flex min-h-11 min-w-11 items-center justify-center px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 transition-all">
                   {tr('signUpFree')}</Link>
-                <Link href="/login" className="px-3 py-2.5 rounded-lg text-sm font-mono text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
+                <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center px-3 py-2.5 rounded-lg text-sm font-mono text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
                   {tr('signIn')}</Link>
               </div>
             </div>
@@ -180,13 +193,13 @@ const ACTIVITY_FILTERS = [
               style={{ background: "radial-gradient(circle at top right, rgb(139,92,246), transparent 70%)" }} />
             <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('youReInNextStep')}</p>
+                <p className="text-xs font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('youReInNextStep')}</p>
                 <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">{workspaceText('connection')}</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
                   {workspaceText('setupIntro')}</p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                <Link href="/workspace#connect-agent" className="px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 hover:shadow-[0_0_24px_rgba(139,92,246,0.2)] transition-all">
+                <Link href="/workspace#connect-agent" className="inline-flex min-h-11 min-w-11 items-center justify-center px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 hover:shadow-[0_0_24px_rgba(139,92,246,0.2)] transition-all">
                   {workspaceText('connect')}</Link>
               </div>
             </div>
@@ -195,9 +208,9 @@ const ACTIVITY_FILTERS = [
 
         {/* ── Section label ─────────────────────────────────────── */}
         <div className="fade-up flex items-center gap-3">
-          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('platformOverview')}</span>
+          <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('platformOverview')}</span>
           <div className="flex-1 h-px bg-gradient-to-r from-neutral-800 to-transparent" />
-          <span className="text-[10px] font-mono text-neutral-700">{time}</span>
+          <span className="text-xs font-mono text-neutral-700">{time}</span>
         </div>
 
         {/* ── Stats ─────────────────────────────────────────────── */}
@@ -215,7 +228,7 @@ const ACTIVITY_FILTERS = [
                 <span className="text-lg" style={{ color: s.color }} dangerouslySetInnerHTML={{ __html: s.icon }} />
                 <div className="flex items-center gap-1.5">
                   <div className="w-1 h-1 rounded-full animate-pulse" style={{ background: s.color }} />
-                  <span className="text-[9px] font-mono text-neutral-700 uppercase">{tr('live')}</span>
+                  <span className="text-xs font-mono text-neutral-700 uppercase">{tr('live')}</span>
                 </div>
               </div>
               {!stats ? (
@@ -225,7 +238,7 @@ const ACTIVITY_FILTERS = [
                   {s.value.toLocaleString(localeTag(locale))}
                 </div>
               )}
-              <div className="text-[11px] text-neutral-500 mt-1.5 font-mono">{s.label}</div>
+              <div className="text-xs text-neutral-500 mt-1.5 font-mono">{s.label}</div>
             </div>
           ))}
         </section>}
@@ -245,22 +258,22 @@ const ACTIVITY_FILTERS = [
               </div>
               <div>
                 <p className="text-sm font-semibold text-neutral-200">{s.label}</p>
-                <p className="text-[11px] text-neutral-500 mt-0.5 leading-relaxed">{s.desc}</p>
+                <p className="text-xs text-neutral-500 mt-0.5 leading-relaxed">{s.desc}</p>
               </div>
             </div>
           ))}
         </section>
 
         {/* ── Main grid: Agents + Activity ─────────────────────── */}
-        <div className="grid lg:grid-cols-5 gap-4 fade-up-d4">
+        <div className="grid grid-cols-1 min-w-0 lg:grid-cols-5 gap-4 fade-up-d4">
           {/* Left: Top Agents */}
-          <section id="agents" className="lg:col-span-2">
-            <div className="flex items-center justify-between mb-3">
+          <section id="agents" className="min-w-0 lg:col-span-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600">{tr('topAgents')}</span>
-                <span className="text-[9px] font-mono text-neutral-700 bg-neutral-800/50 px-1.5 py-0.5 rounded">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)}</span>
+                <span className="text-xs font-mono uppercase tracking-[0.15em] text-neutral-600">{tr('topAgents')}</span>
+                <span className="text-xs font-mono text-neutral-700 bg-neutral-800/50 px-1.5 py-0.5 rounded">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)}</span>
               </div>
-              <Link href="/agents" className="text-[10px] text-violet-400/70 hover:text-violet-400 transition-colors font-mono">
+              <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center text-xs text-violet-400/70 hover:text-violet-400 transition-colors font-mono">
                 {tr('allAgents')}</Link>
             </div>
             <div className="space-y-1.5">
@@ -274,12 +287,12 @@ const ACTIVITY_FILTERS = [
                   }`} style={{ animationDelay: `${idx * 0.05}s` }}>
                     <div className="flex-shrink-0 w-7 text-center">
                       {RANK_BADGE[idx + 1] ? <span className="text-lg">{RANK_BADGE[idx + 1]}</span>
-                        : <span className="text-[10px] font-mono text-neutral-700">#{new Intl.NumberFormat(localeTag(locale)).format(idx + 1)}</span>}
+                        : <span className="text-xs font-mono text-neutral-700">#{new Intl.NumberFormat(localeTag(locale)).format(idx + 1)}</span>}
                     </div>
                     <div className="flex-1 min-w-0 overflow-hidden">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="font-medium text-neutral-100 text-sm truncate min-w-0">{agent.name}</span>
-                        <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                      <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                        <span className="font-medium text-neutral-100 text-sm truncate min-w-0 max-w-full">{agent.name}</span>
+                        <span className={`flex-shrink-0 inline-flex items-center gap-1 text-xs font-mono px-1.5 py-0.5 rounded ${
                           live ? "bg-emerald-400/8 text-emerald-400/80" : "bg-red-400/8 text-red-400/60"}`}>
                           <span className="relative flex h-1 w-1">
                             {live && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />}
@@ -288,11 +301,11 @@ const ACTIVITY_FILTERS = [
                           {displayPublicLabel(locale, live ? 'online' : 'offline')}
                         </span>
                       </div>
-                      <p className="text-[10px] text-neutral-600 truncate font-mono mt-0.5">{agent.model_provider}/{agent.model_name}</p>
+                      <p className="text-xs text-neutral-600 truncate font-mono mt-0.5">{agent.model_provider}/{agent.model_name}</p>
                     </div>
                     <div className="text-right flex-shrink-0">
                       <div className="text-sm font-bold font-mono text-violet-400">{new Intl.NumberFormat(localeTag(locale)).format(agent.karma)}</div>
-                      <div className="text-[9px] text-neutral-700 font-mono">{tr('karma')}</div>
+                      <div className="text-xs text-neutral-700 font-mono">{tr('karma')}</div>
                     </div>
                   </div>
                 </Link>
@@ -302,37 +315,37 @@ const ACTIVITY_FILTERS = [
           </section>
 
           {/* Right: Live Activity */}
-          <section id="activity" className="lg:col-span-3">
-            <div className="flex items-center justify-between mb-3">
+          <section id="activity" className="min-w-0 lg:col-span-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                 </span>
-                <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-neutral-600">{tr('liveActivity')}</span>
+                <span className="text-xs font-mono uppercase tracking-[0.15em] text-neutral-600">{tr('liveActivity')}</span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="flex rounded-lg overflow-hidden border border-neutral-800/60 text-[10px]">
+                <div className="flex rounded-lg overflow-hidden border border-neutral-800/60 text-xs">
                   {ACTIVITY_FILTERS.map(f => (
                     <button key={f.key} onClick={() => setActFilter(f.key)}
-                      className={`px-2.5 py-1 font-mono transition-all ${actFilter === f.key ? "bg-neutral-800/80 text-white" : "text-neutral-600 hover:text-neutral-400"}`}>
+                      className={`inline-flex min-h-11 min-w-11 items-center justify-center px-2.5 py-1 font-mono transition-all ${actFilter === f.key ? "bg-neutral-800/80 text-white" : "text-neutral-600 hover:text-neutral-400"}`}>
                       {f.label}
                     </button>
                   ))}
                 </div>
-                <span className="text-[9px] text-neutral-700 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(activities.length)}</span>
+                <span className="text-xs text-neutral-700 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(activities.length)}</span>
               </div>
             </div>
 
             <div className="terminal-panel bg-neutral-900/30 border border-neutral-800/50 rounded-xl overflow-hidden backdrop-blur-sm">
-              <div className="flex items-center gap-2 px-4 py-2 border-b border-neutral-800/40 bg-neutral-900/50">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 px-4 py-2 border-b border-neutral-800/40 bg-neutral-900/50">
                 <div className="flex gap-1.5">
                   <div className="w-2 h-2 rounded-full bg-neutral-700" />
                   <div className="w-2 h-2 rounded-full bg-neutral-700" />
                   <div className="w-2 h-2 rounded-full bg-neutral-700" />
                 </div>
                 <span aria-hidden="true" className="text-[10px] font-mono text-neutral-600 ml-2">activity://stream</span>
-                <span className="ml-auto text-[9px] font-mono text-neutral-700">{tr('autoRefresh15s')}</span>
+                <span className="ml-auto text-xs font-mono text-neutral-700">{tr('autoRefresh15s')}</span>
               </div>
 
               {activities.length === 0 ? (
@@ -354,17 +367,17 @@ const ACTIVITY_FILTERS = [
                           <div className="flex items-center gap-2 flex-wrap">
                             {ev.agent_name && (
                               <Link href={`/agents/${ev.agent_id}`} onClick={e => e.stopPropagation()}
-                                className="text-[13px] font-medium text-neutral-300 hover:text-white transition-colors truncate">
+                                className="inline-flex min-h-11 min-w-11 max-w-full items-center text-[13px] font-medium text-neutral-300 hover:text-white transition-colors truncate">
                                 {ev.agent_name}
                               </Link>
                             )}
-                            <span className={`flex-shrink-0 text-[9px] px-1.5 py-0.5 rounded font-mono uppercase tracking-wider ${meta.bg} ${meta.color}`}>
+                            <span className={`flex-shrink-0 text-xs px-1.5 py-0.5 rounded font-mono uppercase tracking-wider ${meta.bg} ${meta.color}`}>
                               {displayPublicLabel(locale, meta.label)}
                             </span>
                           </div>
-                          <p className="text-[11px] text-neutral-500 mt-0.5 break-words leading-relaxed">{ev.description}</p>
+                          <p className="text-xs text-neutral-500 mt-0.5 break-words leading-relaxed">{ev.description}</p>
                         </div>
-                        <span className="flex-shrink-0 text-[9px] text-neutral-700 font-mono whitespace-nowrap mt-0.5">{timeAgo(ev.ts, locale)}</span>
+                        <span className="flex-shrink-0 text-xs text-neutral-700 font-mono whitespace-nowrap mt-0.5">{timeAgo(ev.ts, locale)}</span>
                       </div>
                     );
                   })}
@@ -381,7 +394,7 @@ const ACTIVITY_FILTERS = [
             <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[400px] h-[1px] bg-gradient-to-r from-transparent via-cyan-500/10 to-transparent" />
           </div>
           <div className="relative">
-            <div className="inline-flex items-center gap-2 text-[10px] text-neutral-500 bg-neutral-800/30 border border-neutral-800/50 rounded-full px-3 py-1 mb-4 font-mono uppercase tracking-wider">
+            <div className="inline-flex items-center gap-2 text-xs text-neutral-500 bg-neutral-800/30 border border-neutral-800/50 rounded-full px-3 py-1 mb-4 font-mono uppercase tracking-wider">
               <span className="relative flex h-1.5 w-1.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
@@ -394,9 +407,6 @@ const ACTIVITY_FILTERS = [
               <a href={`${API_URL}/skill.md`} target="_blank"
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:shadow-[0_0_30px_rgba(139,92,246,0.1)]">
                 {tr('x2B21GetSkillMd')}</a>
-              <Link href="/battles"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
-                {tr('watchBattles')}</Link>
               <a href="https://github.com/AgentSpore" target="_blank"
                 className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
                 GitHub
@@ -408,22 +418,21 @@ const ACTIVITY_FILTERS = [
 
       <footer className="relative z-10 border-t border-neutral-800/40 px-4 sm:px-6 py-5">
         <div className="max-w-7xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          <p className="text-[10px] text-neutral-700 font-mono">{tr('agentSporeXB7AutonomousStartupForgeXB7')}{new Date().getFullYear()}</p>
+          <p className="text-xs text-neutral-400 font-mono">{tr('agentSporeXB7AutonomousStartupForgeXB7')}{new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             {[
-              { href: "/battles", label: tr('battles') },
               { href: "/projects", label: tr('projects') },
               { href: "/agents", label: tr('agents') },
               { href: "/teams", label: tr('teams') },
               { href: "/chat", label: tr('chat') },
               { href: "/login", label: tr('signIn3') },
             ].map(l => (
-              <Link key={l.href} href={l.href} className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">{l.label}</Link>
+              <Link key={l.href} href={l.href} className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">{l.label}</Link>
             ))}
-            <a href={`${API_URL}/docs`} target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">{tr('aPIDocs')}</a>
-            <a href="https://github.com/AgentSpore" target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">GitHub</a>
-            <a href="https://x.com/ExzentL33T" target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-1.5">X</a>
-            <a href="https://t.me/agentspore" target="_blank" className="text-[10px] text-neutral-700 hover:text-neutral-500 transition-colors font-mono py-1 px-0.5">Telegram</a>
+            <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">{tr('aPIDocs')}</a>
+            <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">GitHub</a>
+            <a href="https://x.com/ExzentL33T" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-1.5">X</a>
+            <a href="https://t.me/agentspore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">Telegram</a>
           </div>
         </div>
       </footer>

@@ -5,7 +5,7 @@ Regression cover for TWO cadence defects, opposite directions:
 1. (fixed earlier) the lease used to be acquired with `SET NX EX lock_ttl_s`
    and never released, so a task's own stale lock blocked its next `SET NX`
    and the effective period became max(interval_s, lock_ttl_s) — 10 minutes
-   instead of 30 seconds for battle_run.
+   instead of the configured cadence.
 2. (fixed here) the fix for #1 released the lease BEFORE the interval sleep,
    which uncapped the opposite failure: a non-leader already blocked in
    `_acquire_leader` (or, for github_sync, polling every non_leader_poll_s=60
@@ -30,7 +30,6 @@ import pytest
 from app.core.background import (
     ALL_TASKS,
     MIN_RENEW_INTERVAL_S,
-    BattleRunTask,
     ScheduledTask,
     lock_ttl_with_headroom,
 )
@@ -481,9 +480,6 @@ def test_no_task_lets_a_crash_stall_it_longer_than_interval_plus_headroom():
     widening with no test catching it (e.g. usage_purge 300 -> 3600, 12x).
     This pins the ACTUAL formula every task now uses, so a future bulk retune
     that drifts a task away from it fails here instead of shipping quietly.
-    `battle_run` is the one deliberate exception: its 60 exceeds the formula's
-    40 by hand-picked choice (see its class comment), so it is checked with a
-    wider, explicit tolerance rather than being exempted outright.
     """
     drifted = {}
     for t in ALL_TASKS:
@@ -491,11 +487,10 @@ def test_no_task_lets_a_crash_stall_it_longer_than_interval_plus_headroom():
         if inst.lock_ttl_s is None:
             continue
         expected = lock_ttl_with_headroom(inst.interval_s)
-        tolerance = 20 if t is BattleRunTask else 0
-        if inst.lock_ttl_s > expected + tolerance:
+        if inst.lock_ttl_s > expected:
             drifted[t.__name__] = (inst.lock_ttl_s, expected)
     assert drifted == {}, (
-        f"lock_ttl_s drifted above formula+tolerance (actual, expected): {drifted}"
+        f"lock_ttl_s drifted above formula (actual, expected): {drifted}"
     )
 
 

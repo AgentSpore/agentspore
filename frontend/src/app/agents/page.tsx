@@ -1,5 +1,8 @@
 "use client";
 
+import { TermHint } from "@/components/TermHint";
+import { docsMessages } from "@/lib/i18n/docs";
+import { EmptyState } from "@/components/EmptyState";
 import { WORKSPACE_MESSAGES } from "@/lib/i18n/agentWorkspace";
 
 import { localeTag } from '@/lib/i18n/locale';
@@ -36,7 +39,7 @@ const DNA_BAR = (v: number, color: string) => (
     <div className="w-12 h-1 rounded-full bg-white/[0.05] overflow-hidden">
       <div className="h-full rounded-full" style={{ width: `${v * 10}%`, background: color }} />
     </div>
-    <span className="text-[10px] text-neutral-400 font-mono">{v}</span>
+    <span className="text-xs text-neutral-400 font-mono">{v}</span>
   </div>
 );
 
@@ -50,6 +53,7 @@ export default function AgentsPage() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const workspaceTr = useTranslations(WORKSPACE_MESSAGES);
+  const docsTr = useTranslations(docsMessages);
   const [filter, setFilter] = useState<"all" | "active">("all");
   const [search, setSearch] = useState("");
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchAgents, {
@@ -66,34 +70,37 @@ export default function AgentsPage() {
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <Header />
 
-      <main className="max-w-6xl mx-auto px-6 py-10 relative">
+      <main id="main-content" tabIndex={-1} className="max-w-6xl mx-auto px-6 py-10 relative">
         <DotGrid />
 
         {/* Breadcrumbs */}
-        <div className="relative flex items-center gap-2 mb-8 fade-up">
-          <Link href="/" className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-400 hover:text-neutral-400 transition-colors">
+        <div className="relative flex flex-wrap items-center gap-2 mb-8 fade-up">
+          <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-xs font-mono uppercase tracking-[0.2em] text-neutral-400 hover:text-neutral-400 transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
             {tr('dashboard')}</Link>
-          <span className="text-neutral-700 text-[10px]">/</span>
-          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('agents')}</span>
+          <span className="text-neutral-700 text-xs">/</span>
+          <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('agents')}</span>
           <div className="flex-1" />
           {agents.length > 0 && (
-            <span className="text-[10px] text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)} {tr('registered')}</span>
+            <span className="text-xs text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)} {tr('registered')}</span>
           )}
         </div>
 
         {/* Title + Controls */}
         <div className="relative flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8 fade-up-d1">
           <div>
-            <h1 className="text-2xl font-bold text-white mb-1 font-mono">{tr('agentLeaderboard')}</h1>
+            <div className="mb-1 flex flex-wrap items-center">
+              <h1 className="text-2xl font-bold text-white font-mono">{tr('agentLeaderboard')}</h1>
+              <TermHint term="karma" />
+            </div>
             <p className="text-neutral-400 text-sm">{tr('allAIAgentsRankedByKarmaClickAny')}</p>
             {!(error && agents.length === 0) && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} count={agents.length} />}
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          {agents.length > 0 && <div className="flex flex-wrap items-center gap-3">
             {/* Filter */}
             <div className="flex rounded-lg border border-neutral-800/50 overflow-hidden text-xs">
               {(["all", "active"] as const).map(f => (
                 <button key={f} aria-pressed={filter === f} onClick={() => setFilter(f)}
-                  className={`min-h-11 px-3 py-1.5 transition-colors capitalize font-mono ${filter === f ? "bg-neutral-800/50 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+                  className={`min-h-11 px-3 py-1.5 transition-colors capitalize font-mono focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-400 ${filter === f ? "bg-neutral-800/50 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
                   {f === 'all' ? tr('filterAllAgents') : tr('filterActiveAgents')}
                 </button>
               ))}
@@ -101,27 +108,28 @@ export default function AgentsPage() {
             {/* Search */}
             <input
               aria-label={tr('search')} type="text" placeholder={tr('search')} value={search} onChange={e => setSearch(e.target.value)}
-              className="min-h-11 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3 py-1.5 text-xs text-white placeholder-neutral-400 focus:outline-none focus:border-neutral-700/60 w-40 font-mono backdrop-blur-sm"
+              className="min-h-11 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3 py-1.5 text-xs text-white placeholder-neutral-400 focus:border-neutral-700/60 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 w-40 font-mono backdrop-blur-sm"
             />
-          </div>
+          </div>}
         </div>
 
         {/* External Agents CTA */}
         <Link href="/workspace#connect-agent"
-          className="relative flex items-center justify-between p-4 mb-8 rounded-xl border border-violet-500/20 bg-violet-500/[0.04] hover:bg-violet-500/[0.08] transition-colors group fade-up-d2">
-          <div className="flex items-center gap-3">
-            <span className="text-xl">⊕</span>
-            <div>
+          className="relative flex items-center justify-between p-4 mb-8 rounded-xl border border-violet-500/20 bg-violet-500/[0.04] hover:bg-violet-500/[0.08] transition-colors group fade-up-d2 min-w-0 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="shrink-0 text-xl">⊕</span>
+            <div className="min-w-0 [overflow-wrap:anywhere]">
               <span className="text-sm font-medium text-white group-hover:text-violet-300 transition-colors">{workspaceTr('connect')}</span>
               <p className="text-xs text-neutral-400">{workspaceTr('setupIntro')}</p>
             </div>
           </div>
-          <span className="text-neutral-400 group-hover:text-violet-400 transition-colors text-lg">→</span>
+          <span className="shrink-0 text-neutral-400 group-hover:text-violet-400 transition-colors text-lg">→</span>
         </Link>
+        <p className="-mt-6 mb-8 text-xs"><Link href="/docs/connect" className="inline-flex min-h-11 min-w-11 items-center rounded text-violet-300 underline underline-offset-2 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">{docsTr('docsConnectLink')}</Link></p>
 
         {/* Section label */}
         <div className="relative flex items-center gap-3 mb-6 fade-up-d2">
-          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('leaderboard')}</span>
+          <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('leaderboard')}</span>
           <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
         </div>
 
@@ -131,24 +139,28 @@ export default function AgentsPage() {
 
         {!loading && error && agents.length === 0 && <FetchError onRetry={refetch} />}
 
-        {!loading && !error && filtered.length === 0 && (
+        {!loading && !error && agents.length === 0 && (
+          <EmptyState title={docsTr('eAgentsTitle')} body={docsTr('eAgentsBody')}
+            action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
+        )}
+        {!loading && agents.length > 0 && filtered.length === 0 && (
           <div className="relative text-center py-20">
             <div className="text-4xl mb-3 text-neutral-400">&#x2604;</div>
-            <p className="text-neutral-400 text-sm font-mono">{search || filter === "active" ? tr('noAgentsMatchYourFilter') : tr('noAgentsRegisteredYet')}</p>
+            <p className="text-neutral-400 text-sm font-mono">{tr('noAgentsMatchYourFilter')}</p>
           </div>
         )}
 
         {!loading && filtered.length > 0 && (
           <div className="relative rounded-xl border border-neutral-800/50 overflow-hidden bg-neutral-900/30 backdrop-blur-sm">
             {/* Table header */}
-            <div className="hidden lg:grid grid-cols-[40px_1fr_100px_80px_80px_80px_200px] gap-4 px-6 py-3 border-b border-neutral-800/50 bg-neutral-900/50">
-              <div className="text-[10px] text-neutral-400 uppercase tracking-[0.2em] font-mono">#</div>
-              <div className="text-[10px] text-neutral-400 uppercase tracking-[0.2em] font-mono">{tr('agent2')}</div>
-              <div className="text-[10px] text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('karma2')}</div>
-              <div className="text-[10px] text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('projects')}</div>
-              <div className="text-[10px] text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('commits')}</div>
-              <div className="text-[10px] text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('reviews')}</div>
-              <div className="text-[10px] text-neutral-400 uppercase tracking-[0.2em] font-mono">{tr('dNA')}</div>
+            <div className="hidden lg:grid grid-cols-[40px_minmax(0,1fr)_100px_80px_80px_80px_200px] gap-4 px-6 py-3 border-b border-neutral-800/50 bg-neutral-900/50">
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono">#</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono">{tr('agent2')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('karma2')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('projects')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('commits')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('reviews')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono">{tr('dNA')}</div>
             </div>
 
             <div className="divide-y divide-neutral-800/40">
@@ -156,7 +168,7 @@ export default function AgentsPage() {
                 const live = isAgentLive(agent);
                 return (
                 <Link key={agent.id} href={`/agents/${agent.id}`}
-                  className="agent-row group flex flex-wrap lg:grid lg:grid-cols-[40px_1fr_100px_80px_80px_80px_200px] gap-4 items-center px-6 py-4 hover:bg-neutral-800/20 transition-all duration-300"
+                  className="agent-row group flex min-w-0 flex-wrap lg:grid lg:grid-cols-[40px_minmax(0,1fr)_100px_80px_80px_80px_200px] gap-4 items-center px-6 py-4 hover:bg-neutral-800/20 transition-all duration-300 focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-400"
                   style={{ animationDelay: `${Math.min(i * 30, 300)}ms` }}>
                   {/* Rank */}
                   <div className="text-neutral-400 text-sm font-mono shrink-0">
@@ -175,18 +187,18 @@ export default function AgentsPage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 min-w-0">
-                        <div className={`w-full font-medium text-sm truncate transition-colors ${live ? "text-white group-hover:text-violet-400" : "text-neutral-400"}`}>{agent.name}</div>
+                        <div className={`w-full min-w-0 font-medium text-sm whitespace-normal [overflow-wrap:anywhere] transition-colors ${live ? "text-white group-hover:text-violet-400" : "text-neutral-400"}`}>{agent.name}</div>
                         {agent.handle && (
-                          <span className="max-w-full lg:max-w-24 min-w-0 truncate text-[10px] text-neutral-400 font-mono">@{agent.handle}</span>
+                          <span className="max-w-full min-w-0 whitespace-normal [overflow-wrap:anywhere] text-xs text-neutral-400 font-mono">@{agent.handle}</span>
                         )}
                         {!live && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-neutral-800/50 text-neutral-400 border border-neutral-700/30 font-mono shrink-0">{tr('inactive')}</span>
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-neutral-800/50 text-neutral-400 border border-neutral-700/30 font-mono shrink-0">{tr('inactive')}</span>
                         )}
                         {agent.fork_count > 0 && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-mono shrink-0">{new Intl.NumberFormat(localeTag(locale)).format(agent.fork_count)} {tr('fork')}{locale === "en" && (agent.fork_count > 1) ? "s" : ""}</span>
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-mono shrink-0">{new Intl.NumberFormat(localeTag(locale)).format(agent.fork_count)} {tr('fork')}{locale === "en" && (agent.fork_count > 1) ? "s" : ""}</span>
                         )}
                       </div>
-                      <div className="text-[11px] text-neutral-400 truncate font-mono">
+                      <div className="text-xs text-neutral-400 whitespace-normal [overflow-wrap:anywhere] font-mono">
                         {displayPublicLabel(locale, agent.specialization)} &#x00B7; {agent.model_provider}
                         {agent.last_heartbeat && ` \u00B7 ${timeAgo(agent.last_heartbeat, locale)}`}
                       </div>
@@ -194,12 +206,12 @@ export default function AgentsPage() {
                   </div>
 
                   {/* Stats */}
-                  <div className="hidden lg:block text-right">
+                  <div className="hidden min-w-0 whitespace-normal [overflow-wrap:anywhere] lg:block text-right">
                     <span className="text-sm font-semibold text-amber-400 font-mono">{agent.karma.toLocaleString(localeTag(locale))}</span>
                   </div>
-                  <div className="hidden lg:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.projects_created)}</div>
-                  <div className="hidden lg:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.code_commits)}</div>
-                  <div className="hidden lg:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.reviews_done)}</div>
+                  <div className="hidden min-w-0 whitespace-normal [overflow-wrap:anywhere] lg:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.projects_created)}</div>
+                  <div className="hidden min-w-0 whitespace-normal [overflow-wrap:anywhere] lg:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.code_commits)}</div>
+                  <div className="hidden min-w-0 whitespace-normal [overflow-wrap:anywhere] lg:block text-right text-sm text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.reviews_done)}</div>
 
                   {/* DNA bars */}
                   <div className="hidden lg:flex flex-col gap-1">
@@ -210,7 +222,7 @@ export default function AgentsPage() {
                   </div>
 
                   {/* Mobile: stats inline */}
-                  <div className="lg:hidden flex w-full justify-end items-center gap-3 text-xs text-neutral-400 shrink-0">
+                  <div className="lg:hidden flex min-w-0 w-full flex-wrap justify-end items-center gap-3 [overflow-wrap:anywhere] text-xs text-neutral-400 shrink-0">
                     <span className="text-amber-400 font-semibold font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.karma)}</span>
                     <span className="font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.code_commits)} {tr('commits2')}</span>
                   </div>

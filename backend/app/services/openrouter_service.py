@@ -138,13 +138,11 @@ class OpenRouterService:
     # 2026-08-17: mistral-small answers 402, dying exactly as its two
     # predecessors did. A third constant would only queue up a fourth outage,
     # so this is a candidate list spanning more than one account, resolved at
-    # call time — the shape the battle paths use. It ends on llm7, which is
-    # keyless and so still resolves when no provider keys are configured.
+    # call time. It ends on keyless llm7, which resolves without provider keys.
     #
     # INVARIANT(fallback-liveness): resolve by CONFIGURED CREDENTIALS, never a
-    # network probe. pick_live_model sends real inference, which llm_gate.py:35
-    # forbids in this module, and resolve_model sits on the per-message chat
-    # path where an 8s cold probe would be user-visible latency.
+    # network probe. This module never sends inference, and resolve_model sits
+    # on the per-message chat path where an 8s cold probe would be user-visible latency.
     FALLBACK_MODEL_CANDIDATES: tuple[str, ...] = (
         "zai/glm-4.5-flash",
         "llm7/DeepSeek-V4-Flash-0731",
@@ -169,13 +167,6 @@ class OpenRouterService:
         "mistral": {
             "base_url": "https://api.mistral.ai/v1",
             "api_key_field": "mistral_api_key",
-            # Mistral calls the sampling seed 'random_seed' and REJECTS the
-            # OpenAI name: an unknown body field is not ignored, it is a 422
-            # (`extra_forbidden` on `body.seed`) that kills the whole request.
-            # Every Mistral answer in production was lost to this. Absent, the
-            # key defaults to 'seed'; None would mean "this provider takes no
-            # seed at all" and the field is then omitted.
-            "seed_field": "random_seed",
         },
         "nebius": {
             "base_url": "https://api.studio.nebius.ai/v1",
@@ -240,12 +231,8 @@ class OpenRouterService:
             "key_optional": True,
             # llm7's catalogue is large and mixes free/paid/broken models; these
             # six were verified live to return finish_reason='stop' with real
-            # content. gpt-oss:20b and minimax-m2.7 were re-probed at a 700-token
-            # CONTENDER-style cap (V80) after failing at the tighter JUDGE cap
-            # (finish='length', empty/truncated content) — they answer fine here
-            # but must NEVER be added to settings.battle_judge_models: the judge
-            # token budget is too tight for them and they spend it on reasoning
-            # instead of the verdict.
+            # content. gpt-oss:20b and minimax-m2.7 require enough output tokens
+            # to complete their reasoning before returning visible content.
             "static_models": [
                 "DeepSeek-V4-Flash-0731",
                 "codestral-latest",
@@ -254,11 +241,6 @@ class OpenRouterService:
                 "gpt-oss:20b",
                 "minimax-m2.7",
             ],
-            # 2026-08-31: paired probe (same body, one field differs) showed
-            # codestral-latest 200 without 'seed', 422 upstream_unprocessable_request
-            # with it — llm7 does not accept the OpenAI-standard seed field.
-            # None omits it entirely (see seed_field_for in battle_judges.py).
-            "seed_field": None,
         },
     }
 
@@ -540,8 +522,7 @@ class OpenRouterService:
         return 128_000
 
 
-# Module-level handle on the candidate list, mirroring how the battle paths
-# expose theirs (DEMO_ANSWER_MODEL_CANDIDATES / VALIDATION_MODEL_CANDIDATES).
+# Module-level handle on the configured fallback candidate list.
 FALLBACK_MODEL_CANDIDATES = OpenRouterService.FALLBACK_MODEL_CANDIDATES
 
 # Singleton

@@ -1,44 +1,18 @@
-"""Guards the operator scripts that must exist inside the production image.
-
-`backfill_contender_elo.py` was documented as runnable in the container and was
-not in the image at all: `backend/Dockerfile` copied only `app/`, and
-`deploy/docker-compose.prod.yml` bind-mounts the repo-root `scripts/` over
-`/app/scripts`, so a naive copy would have been shadowed at runtime anyway.
-Both failure modes are silent until an operator needs the script on a bad day,
-so they are asserted here instead of in a Docker-dependent tier.
-
-The manifest pins the EXACT in-image path rather than "some COPY mentions it".
-Three shapes defeated the weaker form: a copy into a build stage the final stage
-never re-copies (the EE line builds this backend multi-stage), a backslash
-continuation that made the destination parse as `\\`, and a retarget to another
-directory that leaves the documented module name unimportable.
-"""
+"""Keep development scripts out of the production backend image."""
 
 from __future__ import annotations
 
-import ast
-import fnmatch
 import json
 import posixpath
 import re
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = BACKEND_DIR.parent
 DOCKERFILE = BACKEND_DIR / "Dockerfile"
-DOCKERIGNORE = BACKEND_DIR / ".dockerignore"
-COMPOSE = REPO_ROOT / "deploy" / "docker-compose.prod.yml"
-
-# Repo-relative script -> the absolute path it must occupy in the FINAL image.
-# Dev-time tools (probe_openrouter_models.py, redteam/) are deliberately absent:
-# they need no production database and have no business in a shipped image.
-MANIFEST = {"scripts/backfill_contender_elo.py": "/app/ops_scripts/backfill_contender_elo.py"}
 
 _COPY_VERBS = {"COPY", "ADD"}
 # A source normalizing to one of these copies the whole build context.
 _CONTEXT_ROOTS = {".", "/", ""}
-
-_MOUNT = re.compile(r"^\s*-\s+[^\s:]+:(?P<target>/[^\s:]+)(?::[a-z,]+)?\s*$", re.MULTILINE)
 
 
 def _instructions() -> list[tuple[str, str]]:
@@ -163,79 +137,20 @@ def _in_final_image(script: str) -> list[str]:
 
 
 def _unlisted_scripts() -> list[str]:
-    """Everything under backend/scripts/ that the manifest does not require, derived.
-
-    A deny-list would go stale the day someone adds a script; this subtracts the
-    required set from what is actually on disk, so tomorrow's file is covered
-    without anyone remembering it.
-    """
+    """Derive every development script from disk so new scripts stay protected."""
     found = (BACKEND_DIR / "scripts").rglob("*")
-    on_disk = {
+    return sorted(
         p.relative_to(BACKEND_DIR).as_posix()
         for p in found
         if p.is_file() and "__pycache__" not in p.parts
-    }
-    return sorted(on_disk - set(MANIFEST))
+    )
 
 
-def test_operator_scripts_land_at_their_manifest_path_in_the_final_image() -> None:
-    for script, expected in MANIFEST.items():
-        landings = _in_final_image(script)
-        assert expected in landings, (
-            f"{script} must reach the LAST build stage at {expected}, found {landings or 'nothing'}"
-        )
-
-
-def test_scripts_outside_the_manifest_never_reach_the_final_image() -> None:
-    """The obvious `COPY scripts/ ...` also ships the red-team injection corpus."""
+def test_development_scripts_never_reach_the_final_image() -> None:
+    """Reject broad copies that accidentally ship development-only scripts."""
     for script in _unlisted_scripts():
         landings = _in_final_image(script)
         assert not landings, (
-            f"{script} is not an operator one-shot yet would ship at {landings}. "
-            f"Narrow the COPY in backend/Dockerfile, or add {script} to MANIFEST "
-            f"with its in-image path if shipping it is deliberate."
-        )
-
-
-def test_operator_scripts_exist_on_disk() -> None:
-    for script in MANIFEST:
-        assert (BACKEND_DIR / script).is_file(), f"{script} is declared shipped but absent"
-
-
-def test_operator_scripts_are_not_shadowed_by_a_bind_mount() -> None:
-    mounts = _MOUNT.findall(COMPOSE.read_text())
-    for script, image_path in MANIFEST.items():
-        for mount in mounts:
-            assert not image_path.startswith(f"{mount.rstrip('/')}/"), (
-                f"{script} lands on {image_path}, which the compose mount {mount} hides"
-            )
-
-
-def test_operator_scripts_survive_dockerignore() -> None:
-    patterns = [
-        line.strip()
-        for line in DOCKERIGNORE.read_text().splitlines()
-        if line.strip() and not line.startswith(("#", "!"))
-    ]
-    for script in MANIFEST:
-        parts = Path(script).parts
-        candidates = ["/".join(parts[: i + 1]) for i in range(len(parts))]
-        for pattern in patterns:
-            bare = pattern.strip("/")
-            # Docker lets a leading `**/` match zero directories, so `**/scripts`
-            # excludes a top-level scripts/ that plain fnmatch would never match.
-            forms = {bare, bare.removeprefix("**/")}
-            assert not any(fnmatch.fnmatch(c, f) for c in candidates for f in forms), (
-                f".dockerignore pattern {pattern!r} excludes {script}"
-            )
-
-
-def test_docstrings_document_the_module_name_the_image_actually_provides() -> None:
-    """A correct path is worthless if the command the operator is told to type misses it."""
-    for script, image_path in MANIFEST.items():
-        package = posixpath.dirname(image_path).removeprefix("/app/").replace("/", ".")
-        docstring = ast.get_docstring(ast.parse((BACKEND_DIR / script).read_text())) or ""
-        wanted = f"-m {package}.{Path(script).stem}"
-        assert wanted in " ".join(docstring.split()), (
-            f"{script} ships at {image_path} but its docstring never documents {wanted!r}"
+            f"{script} is a development script yet would ship at {landings}. "
+            f"Narrow the COPY in backend/Dockerfile."
         )
