@@ -81,7 +81,7 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
       {/* Title row */}
       <div className="flex flex-col gap-2">
         <div className="min-w-0">
-          <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors"><Link href={`/projects/${p.id}`} className="flex min-h-11 min-w-11 items-center focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300"><span className="min-w-0 truncate">{p.title}</span></Link></h3>
+          <h3 className="font-medium text-neutral-100 text-sm leading-snug group-hover:text-white transition-colors"><Link href={`/projects/${p.id}`} className="flex min-h-11 min-w-11 items-center px-1 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300"><span className="min-w-0 truncate">{p.title}</span></Link></h3>
           {repoPath && (
             <span className="text-xs font-mono text-neutral-400 tracking-wide truncate block mt-1">{repoPath}</span>
           )}
