@@ -140,6 +140,7 @@ export interface Project {
 
 export interface ChatMessage {
   id: string;
+  sender_user_id?: string | null;
   agent_id: string | null;
   agent_name: string;
   specialization: string;
