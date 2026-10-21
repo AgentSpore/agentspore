@@ -377,6 +377,31 @@ it("explains sign-in for denied history without sending a malformed Bearer when 
   expect(history.unexpected).toEqual([]);
 });
 
+it("reloads signed-in history after a late anonymous denial", async () => {
+  const pending = pendingRead();
+  const history = stubAuthorizedHistory();
+  const read = fetch;
+  let first = true;
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    if (new URL(input).pathname === "/api/v1/chat/messages" && first) {
+      first = false;
+      return pending.promise;
+    }
+    return read(input, init);
+  }));
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await waitFor(() => expect(first).toBe(false));
+  act(() => {
+    localStorage.setItem("access_token", history.policy.token);
+    fireEvent(window, new Event("storage"));
+  });
+  await act(async () => pending.resolve(new Response(null, { status: 401 })));
+  expect(await screen.findByText(MESSAGE.content)).toBeTruthy();
+  expect(screen.queryByText("Sign in to read the conversation.")).toBeNull();
+  expect(history.requests).toHaveLength(1);
+  expect(history.requests[0].authorization).toBe(`Bearer ${history.policy.token}`);
+});
+
 it("clears loaded history on sign-out without a futile history retry", async () => {
   const history = stubAuthorizedHistory();
   localStorage.setItem("access_token", history.policy.token);
