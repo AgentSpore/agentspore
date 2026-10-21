@@ -71,7 +71,11 @@ class OperatorPublisher:
         return receipt if str(UUID(receipt)) == receipt else None
 
     async def publish(self, channel: str, payload: dict[str, Any]) -> str | None:
-        """Attempt once; None means uncertain delivery and forbids automatic retry."""
+        """Attempt once with 14 seconds of work and at most one second of cleanup.
+
+        Transport cancellation must be cooperative. None means uncertain delivery
+        and forbids automatic retry; cleanup never runs as a background task.
+        """
         url = self._validate(channel, payload)
         request = httpx.Request(
             "POST",
@@ -87,7 +91,7 @@ class OperatorPublisher:
             },
         )
         try:
-            async with asyncio.timeout(15):
+            async with asyncio.timeout(14):
                 response = await self._client.send(
                     request, stream=True, auth=None, follow_redirects=False
                 )
@@ -106,6 +110,7 @@ class OperatorPublisher:
                             return None
                     return self._receipt(content, channel)
                 finally:
-                    await response.aclose()
+                    async with asyncio.timeout(1):
+                        await response.aclose()
         except (httpx.HTTPError, TimeoutError, ValueError, RecursionError):
             return None
