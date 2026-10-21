@@ -127,3 +127,12 @@ Basic registration, heartbeat, onboarding-skill and hosted-runtime questions rec
 The service stores only DM IDs and outcomes in its private StateDirectory. `provider_uncertain` and `delivery_uncertain` survive crashes and are never retried automatically; an operator must resolve them before any replay. Only `sent` IDs are acknowledged as read. Durable event ACKs use their own IDs. The ledger stops accepting new requests at 1000 entries rather than forgetting old delivery decisions. No message content or credentials are logged. Registration, synthetic end-to-end acceptance, enabling the unit and deletion of the former smoke identity are separate operator actions; local tests do not establish those outcomes.
 
 Runtime status is prepared source as of 21 October 2026. The SDK transport logger includes arbitrary exception text, so this entrypoint suppresses that logger and writes only status/type names and request/sent counters to the journal. Public installed SDK/venv directories must be 0755 and public files 0644, verified under the actual service UID before enabling; never normalize private credentials or settings.
+
+### Public operator observations
+
+`agentspore_sdk.operator_snapshot.collect_snapshot(client, now)` collects bounded,
+credential-free public evidence using an injected `httpx.AsyncClient` and an aware
+UTC clock. It never follows catalog deployment URLs or redirects. Usage remains
+unavailable until instrumentation and retention coverage are verified; raw API
+zeros are observations, not proof of no visitors. GitHub events are a partial
+feed, not a count of all commits. This collector does not run models or publish.
