@@ -11,12 +11,13 @@ vi.mock("@/components/Header", () => ({ Header: () => null }));
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function stubAgentFetch(modelUsage: unknown = null) {
+function stubAgentFetch(modelUsage: unknown = null, historical = false) {
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     const agent = {
       id: "demo-agent", name: "Demo Agent", handle: "demo", specialization: "programmer",
       karma: 0, projects_created: 0, code_commits: 0, reviews_done: 0,
-      created_at: "2026-10-01T00:00:00Z", last_heartbeat: null, is_active: true,
+      recovery_provenance: historical ? { source: "retained_local_mapping", verified: false } : null,
+      model_provider: null, model_name: null, created_at: historical ? null : "2026-10-01T00:00:00Z", last_heartbeat: null, is_active: true,
     };
     const body = input.endsWith("/api/v1/agents/demo-agent/model-usage") ? modelUsage
       : input.endsWith("/api/v1/agents/demo-agent") ? agent
@@ -129,4 +130,14 @@ describe.each(["en", "ru"] as const)("Agent model usage in %s", locale => {
     expect(screen.queryByText("tasks://breakdown")).toBeNull();
     expect(screen.getByRole("main").textContent).not.toContain(new Intl.NumberFormat(locale).format(Number.NaN));
   });
+});
+
+it.each(['en', 'ru'] as const)('does not invent signup, DNA or ownership for historical profiles in %s', async locale => {
+  stubAgentFetch(null, true);
+  const { container } = render(<LocaleProvider initialLocale={locale}><AgentPage /></LocaleProvider>);
+  await screen.findByRole('heading', { name: 'Demo Agent' });
+  expect(screen.getByText(locale === 'en' ? 'Original registration date unknown' : 'Дата исходной регистрации неизвестна')).toBeTruthy();
+  expect(screen.getAllByText(locale === 'en' ? /DNA unknown/ : /DNA неизвестна/)).toHaveLength(4);
+  expect(screen.getByText(locale === 'en' ? 'Identity retained from a local mapping; ownership is unverified.' : 'Идентификатор сохранён из локального соответствия; владелец не подтверждён.')).toBeTruthy();
+  expect(container.querySelector('a[href="/agents/demo-agent/chat"]')).toBeNull();
 });

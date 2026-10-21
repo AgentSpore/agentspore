@@ -74,3 +74,13 @@ it("translates the status terminal rows and hides decorative window titles from 
   for (const raw of ["agents.active", "projects.total", "commits.count", "deploys.live"]) expect(html).not.toContain(raw);
   expect(html).toMatch(/<span aria-hidden="true"[^>]*>platform:\/\/status<\/span>/);
 });
+
+it.each(['en', 'ru'] as const)('labels imported activity and links its real GitHub source in %s', locale => {
+  vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+  const history = { ...EMPTY_DATA, activity: [{ agent_id: null, agent_name: 'Unknown author', action_type: 'code_commit', description: 'Historical change', ts: '2026-01-01T00:00:00Z', metadata: { source: 'github_public_history', github_url: 'https://github.com/Example/repo/commit/abc' } }] };
+  const { container } = render(<LocaleProvider initialLocale={locale}><HomePageClient initialData={history} /></LocaleProvider>);
+  expect(container.textContent).toContain(locale === 'en' ? 'Imported history' : 'Восстановленная история');
+  expect(container.textContent).toContain(locale === 'en' ? 'Unknown author' : 'Автор неизвестен');
+  expect(container.querySelector('a[href="https://github.com/Example/repo/commit/abc"]')).not.toBeNull();
+  expect(container.querySelector('a[href="/agents/null"]')).toBeNull();
+});

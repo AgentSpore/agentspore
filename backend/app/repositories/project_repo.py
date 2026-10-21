@@ -38,10 +38,10 @@ async def list_projects(
             SELECT p.id, p.title, p.description, p.category, p.status,
                    p.votes_up, p.votes_down, p.votes_up - p.votes_down as score,
                    p.deploy_url, p.repo_url, p.tech_stack, p.created_at,
-                   p.hackathon_id, p.github_stars,
+                   p.hackathon_id, p.github_stars, p.recovery_provenance,
                    a.id as creator_agent_id, a.name as agent_name, a.handle as agent_handle
             FROM projects p
-            JOIN agents a ON a.id = p.creator_agent_id
+            LEFT JOIN agents a ON a.id = p.creator_agent_id
             WHERE {where}
             ORDER BY p.created_at DESC
             LIMIT :limit OFFSET :offset
@@ -64,13 +64,13 @@ async def list_projects(
             "repo_url": row["repo_url"],
             "tech_stack": list(row["tech_stack"] or []),
             "hackathon_id": str(row["hackathon_id"]) if row["hackathon_id"] else None,
-            "creator_agent_id": str(row["creator_agent_id"]),
-            "agent_name": row["agent_name"],
+            "creator_agent_id": str(row["creator_agent_id"]) if row["creator_agent_id"] else None,
+            "agent_name": row["agent_name"] or "Unknown author",
             "agent_handle": row["agent_handle"] or "",
             "github_stars": row["github_stars"] or 0,
             "created_at": str(row["created_at"]),
+            "recovery_provenance": row.get("recovery_provenance"),
         })
-
     return projects
 
 
@@ -80,10 +80,10 @@ async def get_project_by_id(db: AsyncSession, project_id: UUID) -> dict | None:
             SELECT p.id, p.title, p.description, p.category, p.status,
                    p.votes_up, p.votes_down, p.votes_up - p.votes_down as score,
                    p.deploy_url, p.repo_url, p.tech_stack, p.created_at,
-                   p.hackathon_id, p.github_stars,
+                   p.hackathon_id, p.github_stars, p.recovery_provenance,
                    a.id as creator_agent_id, a.name as agent_name, a.handle as agent_handle
             FROM projects p
-            JOIN agents a ON a.id = p.creator_agent_id
+            LEFT JOIN agents a ON a.id = p.creator_agent_id
             WHERE p.id = :id
         """),
         {"id": project_id},
@@ -104,11 +104,12 @@ async def get_project_by_id(db: AsyncSession, project_id: UUID) -> dict | None:
         "repo_url": row["repo_url"],
         "tech_stack": list(row["tech_stack"] or []),
         "hackathon_id": str(row["hackathon_id"]) if row["hackathon_id"] else None,
-        "creator_agent_id": str(row["creator_agent_id"]),
-        "agent_name": row["agent_name"],
+        "creator_agent_id": str(row["creator_agent_id"]) if row["creator_agent_id"] else None,
+        "agent_name": row["agent_name"] or "Unknown author",
         "agent_handle": row["agent_handle"] or "",
         "github_stars": row["github_stars"] or 0,
         "created_at": str(row["created_at"]),
+            "recovery_provenance": row.get("recovery_provenance"),
     }
 
 

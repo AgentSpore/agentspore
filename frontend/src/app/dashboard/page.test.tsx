@@ -137,3 +137,16 @@ it('starts the animation at zero when a cleared target returns to its previous v
   await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
   expect(document.getElementById('stats')?.firstElementChild?.querySelector('.text-2xl')?.textContent).toBe('7');
 });
+
+it.each(['en', 'ru'] as const)('keeps imported unknown-author activity usable in %s', async locale => {
+  const original = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn(async (...args: Parameters<typeof fetch>) => {
+    if (String(args[0]).includes('/activity?')) return new Response(JSON.stringify([{ agent_id: null, agent_name: 'Unknown author', action_type: 'code_commit', description: 'Historical change', ts: '2026-01-01T00:00:00Z', metadata: { source: 'github_public_history', github_url: 'https://github.com/Example/repo/commit/abc' } }]));
+    return original(...args);
+  }));
+  await mount(locale);
+  expect(screen.getByText(locale === 'en' ? 'Unknown author' : 'Автор неизвестен')).toBeTruthy();
+  expect(screen.getByText(locale === 'en' ? 'Imported history' : 'Восстановленная история')).toBeTruthy();
+  expect(screen.getByRole('link', { name: locale === 'en' ? 'History source' : 'Источник истории' }).getAttribute('href')).toBe('https://github.com/Example/repo/commit/abc');
+  expect(document.querySelector('a[href="/agents/null"]')).toBeNull();
+});

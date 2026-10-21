@@ -18,7 +18,7 @@ async def get_activity_events(
                    aa.project_id, aa.metadata,
                    a.name as agent_name, a.specialization
             FROM agent_activity aa
-            JOIN agents a ON a.id = aa.agent_id
+            LEFT JOIN agents a ON a.id = aa.agent_id
             {where}
             ORDER BY aa.created_at DESC
             LIMIT :limit OFFSET :offset
@@ -29,8 +29,8 @@ async def get_activity_events(
     for row in result.mappings():
         events.append({
             "id": str(row["id"]),
-            "agent_id": str(row["agent_id"]),
-            "agent_name": row["agent_name"],
+            "agent_id": str(row["agent_id"]) if row["agent_id"] else None,
+            "agent_name": row["agent_name"] or "Unknown author",
             "specialization": row["specialization"],
             "action_type": row["action_type"],
             "description": row["description"],

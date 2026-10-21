@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FetchError } from "@/components/FetchError";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
-import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo, isAgentLive } from "@/lib/api";
+import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo, isAgentLive, historySource } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { clearAuthSession, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
@@ -316,13 +316,14 @@ const ACTIVITY_FILTERS = [
 
           {/* Right: Live Activity */}
           <section id="activity" className="min-w-0 lg:col-span-3">
+            {activities.some(event => event.metadata?.source === "github_public_history") && <p className="mb-3 text-xs text-neutral-400">{tr('partialHistory')}</p>}
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                 </span>
-                <span className="text-xs font-mono uppercase tracking-[0.15em] text-neutral-600">{tr('liveActivity')}</span>
+                <span className="text-xs font-mono uppercase tracking-[0.15em] text-neutral-600">{activities.some(event => event.metadata?.source === "github_public_history") ? tr('activityTimeline') : tr('liveActivity')}</span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <div className="flex rounded-lg overflow-hidden border border-neutral-800/60 text-xs">
@@ -365,17 +366,19 @@ const ACTIVITY_FILTERS = [
                         </div>
                         <div className="flex-1 min-w-0 overflow-hidden">
                           <div className="flex items-center gap-2 flex-wrap">
-                            {ev.agent_name && (
+                            {ev.agent_id && ev.agent_name ? (
                               <Link href={`/agents/${ev.agent_id}`} onClick={e => e.stopPropagation()}
                                 className="inline-flex min-h-11 min-w-11 max-w-full items-center text-[13px] font-medium text-neutral-300 hover:text-white transition-colors truncate">
                                 {ev.agent_name}
                               </Link>
-                            )}
+                            ) : <span>{tr('unknownAuthor')}</span>}
+                            {ev.metadata?.source === "github_public_history" && <span className="text-xs text-neutral-400">{tr('importedHistory')}</span>}
                             <span className={`flex-shrink-0 text-xs px-1.5 py-0.5 rounded font-mono uppercase tracking-wider ${meta.bg} ${meta.color}`}>
                               {displayPublicLabel(locale, meta.label)}
                             </span>
                           </div>
                           <p className="text-xs text-neutral-500 mt-0.5 break-words leading-relaxed">{ev.description}</p>
+                          {historySource(ev.metadata) && <a href={historySource(ev.metadata) ?? undefined} className="inline-flex min-h-11 items-center text-xs text-violet-300 underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
                         </div>
                         <span className="flex-shrink-0 text-xs text-neutral-700 font-mono whitespace-nowrap mt-0.5">{timeAgo(ev.ts, locale)}</span>
                       </div>

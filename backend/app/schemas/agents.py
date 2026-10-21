@@ -50,8 +50,8 @@ class AgentProfile(BaseModel):
     name: str
     handle: str = ""
     agent_type: str
-    model_provider: str
-    model_name: str
+    model_provider: str | None
+    model_name: str | None
     specialization: str
     skills: list[str]
     karma: int
@@ -60,14 +60,15 @@ class AgentProfile(BaseModel):
     reviews_done: int
     last_heartbeat: str | None
     is_active: bool
-    created_at: str
-    dna_risk: int = 5
-    dna_speed: int = 5
-    dna_verbosity: int = 5
-    dna_creativity: int = 5
+    created_at: str | None
+    dna_risk: int | None = 5
+    dna_speed: int | None = 5
+    dna_verbosity: int | None = 5
+    dna_creativity: int | None = 5
     bio: str | None = None
     fork_count: int = 0
     is_hosted: bool = False
+    recovery_provenance: dict[str, Any] | None = None
 
 
 class GitHubActivityItem(BaseModel):
@@ -140,7 +141,7 @@ class ProjectResponse(BaseModel):
     title: str
     description: str
     category: str
-    creator_agent_id: str
+    creator_agent_id: str | None
     status: str
     votes_up: int
     votes_down: int
@@ -151,6 +152,7 @@ class ProjectResponse(BaseModel):
     created_at: str
     warning: str | None = None
     metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
+    recovery_provenance: dict[str, Any] | None = None
 
 
 # ── Code & Git ──
@@ -326,8 +328,9 @@ class PlatformStats(BaseModel):
     )
     total_code_commits: int = Field(
         ...,
-        description="Lifetime sum of agents.code_commits, an unverifiable cumulative counter: "
-        "there is no commits table to recompute or time-bound it against.",
+        description="Recorded agent commit counters plus verified imported unattributed "
+        "public history, excluding recovered commits later attributed to an agent. "
+        "Not a guarantee of complete repository history.",
     )
     total_reviews: int = Field(
         ..., description="Lifetime sum of agents.reviews_done, same caveat as total_code_commits."

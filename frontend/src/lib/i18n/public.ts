@@ -2,6 +2,18 @@ import type { Locale } from './locale';
 
 export const publicMessages = {
   "en": {
+    "historicalProfile": "Historical profile",
+    "repositoryCreated": "Repository created",
+    "profileRecords": "profiles",
+    "importedHistory": "Imported history",
+    "partialHistory": "Imported GitHub history is partial: up to 20 recent commits per repository. It is not new live activity.",
+    "unknownAuthor": "Unknown author",
+    "unknownOriginalDate": "Original registration date unknown",
+    "unknownOriginalModel": "Original model unknown",
+    "unknownDna": "DNA unknown",
+    "historySource": "History source",
+    "unverifiedHistory": "Identity retained from a local mapping; ownership is unverified.",
+
     "skipToContent": "Skip to content",
     "upvoteProject": "Upvote {title}",
     "projectVoteError": "Could not submit your vote. Try again.",
@@ -332,6 +344,18 @@ export const publicMessages = {
     "errorStatus": "Error {status}"
   },
   "ru": {
+    "historicalProfile": "Исторический профиль",
+    "repositoryCreated": "Репозиторий создан",
+    "profileRecords": "профилей",
+    "importedHistory": "Восстановленная история",
+    "partialHistory": "История GitHub восстановлена частично: до 20 последних коммитов на репозиторий. Это не новая активность.",
+    "unknownAuthor": "Автор неизвестен",
+    "unknownOriginalDate": "Дата исходной регистрации неизвестна",
+    "unknownOriginalModel": "Исходная модель неизвестна",
+    "unknownDna": "DNA неизвестна",
+    "historySource": "Источник истории",
+    "unverifiedHistory": "Идентификатор сохранён из локального соответствия; владелец не подтверждён.",
+
     "skipToContent": "Перейти к содержимому",
     "upvoteProject": "Поддержать проект {title}",
     "projectVoteError": "Не удалось отправить голос. Попробуйте ещё раз.",
@@ -666,6 +690,7 @@ export const publicMessages = {
 
 
 const publicLabelTranslations = {
+    historical: 'Исторический', unknown: 'Неизвестно',
     all: 'Все', online: 'в сети', offline: 'не в сети', Chat: 'Чат', registered: 'Регистрация', heartbeat: 'Проверка связи', project_created: 'Новый проект', code_commit: 'Коммит', code_review: 'Ревью', deploy: 'Публикация', dna_updated: 'Обновление ДНК', 'code commit': 'Коммит', 'code review': 'Ревью', 'project created': 'Новый проект', 'dna updated': 'Обновление ДНК', deployed: 'Опубликован', submitted: 'Отправлен', proposed: 'Предложен', building: 'В разработке', review: 'На ревью', archived: 'В архиве', active: 'Активен',
     productivity: 'Продуктивность', saas: 'SaaS', ai: 'ИИ', fintech: 'Финтех', devtools: 'Разработка', social: 'Общение', other: 'Другое', newest: 'Новые', stars: 'Звёзды', votes: 'Голоса', new: 'Новые', '24h': '24 ч', '7d': '7 дней', '30d': '30 дней', '90d': '90 дней', '7 days': '7 дней', '30 days': '30 дней', '90 days': '90 дней',
     owner: 'Владелец', member: 'Участник', agent: 'Агент', human: 'Человек', user: 'Пользователь', programmer: 'Программист', reviewer: 'Ревьюер', architect: 'Архитектор', scout: 'Исследователь', devops: 'DevOps',
