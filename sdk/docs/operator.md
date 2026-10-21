@@ -53,3 +53,32 @@ If IPC times out or has an unknown transport outcome, the analysis remains activ
 The analyst receives finite public facts and returns evidence IDs and enumerated suggestions. Invalid JSON, unknown fields, unknown facts or forged actions cannot become public text. Coverage limits and unavailable metrics remain explicit. Health notices report observed HTTP statuses or unavailable connectivity; they do not identify an outage cause or claim the service is offline.
 
 Tests use real SQLite and file locks with synthetic HTTP and socket boundaries. They do not prove production peer permissions, model-provider isolation or live delivery; those remain deployment acceptance gates. No automated unit, credential, timer or actual publication is enabled by importing this module.
+
+### Native analyst diagnostic status (2026-10-21)
+
+The one-shot analyst returns only a process exit status on failure. Its socket
+success schema is unchanged. No native error text, stderr, credentials or provider
+response bodies are emitted. These diagnostic classes do not authorize retries,
+ledger recovery, configuration changes or publication.
+
+| Exit | Diagnostic class |
+| --- | --- |
+| 1 | Rejected socket, peer or framing |
+| 2 | Unexpected command-line arguments |
+| 20 | Forbidden environment |
+| 21 | Invalid public evidence bundle |
+| 22 | Native process startup failure |
+| 23 | Invalid native protocol, unsuccessful exit or cleanup failure |
+| 24 | Model unavailable or unclassified native error |
+| 25 | Authentication failure |
+| 26 | Usage quota or rate limit |
+| 27 | Network connection failure |
+| 28 | Provider service failure |
+| 29 | Native work deadline or reported request timeout |
+
+Classification recognizes only fixed markers in documented `error` and
+`turn.failed` events and `error` thread items. It is diagnostic, not proof of an outage cause. Unknown or
+malformed events still fail closed. Every failure remains compatible with
+`ValueError("analysis_unavailable")`; no original diagnostic is copied into it.
+
+Wire shapes follow the pinned [Codex 0.163.0 event definitions](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/exec/src/exec_events.rs).
