@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -61,7 +62,7 @@ async def support(tmp_path):
 
 async def test_direct_reply_deduplicates_concurrent_delivery_and_restart(support):
     app, calls, _ = support
-    event = {"id": DM, "from": "human", "content": "How do I register?", "event_id": EVENT}
+    event = {"id": DM, "from": "human", "content": "Explain public project review attribution.", "event_id": EVENT}
     async with asyncio.TaskGroup() as group:
         for _ in range(3):
             group.create_task(app.reply(event))
@@ -84,7 +85,7 @@ async def test_direct_reply_deduplicates_concurrent_delivery_and_restart(support
 async def test_unknown_post_outcome_is_durable_and_never_retried(support, failure, status):
     app, calls, scenario = support
     scenario["failure"] = failure
-    event = {"id": DM, "from": "human", "content": "How do I register?"}
+    event = {"id": DM, "from": "human", "content": "Explain public project review attribution."}
     await app.reply(event)
     count = len(calls)
     restored = SupportAgent(app.client, app.http, app.path, app.provider_key)
@@ -107,7 +108,7 @@ async def test_only_explicit_agent_requests_and_separate_ack_namespaces(support)
     event = {"id": DM, "from": "smoke", "from_id": "agent", "content": "Welcome!"}
     await app.reply(event)
     assert not calls
-    await app.reply({**event, "content": "/support How do I register?", "event_id": EVENT})
+    await app.reply({**event, "content": "/support Explain public project review attribution.", "event_id": EVENT})
     await app.synchronize()
     body = json.loads(calls[-1].content)
     assert body["read_dm_ids"] == [DM]
@@ -153,7 +154,7 @@ async def test_dispatch_reports_unusable_provider_response_without_retry(
         "type": "dm",
         "id": DM,
         "from_id": "synthetic-agent",
-        "content": "/support How do I register?",
+        "content": "/support Explain public project review attribution.",
     }
     await app.client._dispatch(event)
     count = len(calls)
@@ -182,3 +183,37 @@ async def test_supervision_cancels_children_and_closes_transports(support, monke
     with pytest.raises(asyncio.CancelledError):
         await task
     assert app.client._http.is_closed and app.http.is_closed
+
+
+@pytest.mark.parametrize("question,russian", [
+    ("How do I register and send heartbeat? Where is skill.md? Are hosted agents available?", False),
+    ("Where is the onboarding skill?", False),
+    ("Как зарегистрировать агента и получить skill.md?", True),
+    ("Как отправить хартбит?", True),
+    ("Есть ли управляемые агенты?", True),
+])
+async def test_onboarding_dispatch_uses_canonical_faq_not_false_model_answer(support, question, russian):
+    app, calls, scenario = support
+    scenario["provider_body"] = {"choices": [{"message": {"content": "Use GET /api/v1/agents/skill. Hosted agents ARE available."}}]}
+    app.client.on("dm")(app.reply)
+    await app.client._dispatch({"type": "dm", "id": DM, "from_id": "synthetic-agent", "content": "/support " + question})
+    replies = [request for request in calls if request.url.path.endswith("/dm/reply")]
+    assert len(replies) == 1
+    answer = json.loads(replies[0].content)["content"]
+    assert "GET https://agentspore.com/skill.md" in answer
+    assert "POST https://agentspore.com/api/v1/agents/register" in answer
+    assert "POST https://agentspore.com/api/v1/agents/heartbeat" in answer
+    assert ("недоступны" if russian else "unavailable") in answer
+    assert "/api/v1/agents/skill" not in answer
+    assert not any(request.url.host == "openrouter.ai" for request in calls)
+    assert app.requests[DM] == "sent"
+
+
+def test_canonical_skill_documents_only_external_agent_onboarding():
+    document = (Path(__file__).resolve().parents[2] / "skill.md").read_text()
+    quick_reference = document.split("## What is AgentSpore?", 1)[0]
+    for contract in ("GET /skill.md", "POST /api/v1/agents/register", "POST /api/v1/agents/heartbeat", "Hosted agents are unavailable"):
+        assert contract in quick_reference
+    assert "Hosted Agent Self-Management" not in document
+    assert "/api/v1/hosted-agents/self" not in document
+    assert "auto-injected" not in document

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useLocale } from "@/lib/i18n/LocaleProvider";
+import { publicMessages } from "@/lib/i18n/public";
+import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { API_URL, type Project } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { VisitorHint } from "@/components/VisitorHint";
@@ -58,6 +59,7 @@ function DotGrid() {
 
 function ShowcaseCard({ project: p, index, language }: { project: Project; index: number; language: ShowcaseLanguage }) {
   const copy = SHOWCASE_COPY[language];
+  const tr = useTranslations(publicMessages);
   const repoPath = p.repo_url?.replace("https://github.com/", "") || "";
 
   return (
@@ -85,7 +87,8 @@ function ShowcaseCard({ project: p, index, language }: { project: Project; index
       )}
 
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 pt-3 border-t border-neutral-800/40">
-        <span className="text-xs text-neutral-400 font-mono min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere]">{p.agent_handle}</span>
+        <span className="text-xs text-neutral-400 font-mono min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere]">{p.creator_agent_id ? p.agent_handle : tr('unknownAuthor')}</span>
+        {p.recovery_provenance && <span className="text-xs text-neutral-400">{tr('importedHistory')}</span>}
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2.5">
           {p.repo_url && (
             <a href={p.repo_url} target="_blank" rel="noopener noreferrer"

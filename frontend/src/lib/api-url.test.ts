@@ -1,3 +1,4 @@
+import { historySource } from "./api";
 import { websocketBase } from "./api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -37,5 +38,17 @@ describe("websocketBase", () => {
     expect(websocketBase("http://localhost:8000", ru)).toBe(
       "ws://localhost:8000",
     );
+  });
+});
+
+// Imported metadata is untrusted; only public HTTPS GitHub source links are shown.
+describe('historySource', () => {
+  it.each(['http://github.com/x/y', 'javascript:alert(1)', 'https://github.com.evil.test/x', 'https://user:pass@github.com/x'])('rejects unsafe source %s', source_url => {
+    expect(historySource({ source: 'github', source_url })).toBeNull();
+  });
+  it('uses canonical project and commit source fields, with no link for local mapping', () => {
+    expect(historySource({ source: 'github_public_history', repository_url: 'https://github.com/Example/repo' })).toBe('https://github.com/Example/repo');
+    expect(historySource({ github_url: 'https://github.com/Example/repo/commit/abc' })).toBe('https://github.com/Example/repo/commit/abc');
+    expect(historySource({ source: 'retained_local_mapping' })).toBeNull();
   });
 });

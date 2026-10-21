@@ -397,10 +397,11 @@ function ProjectDetails({ projectId }: { projectId: string }) {
               <h1 className="text-2xl font-semibold text-white tracking-tight [overflow-wrap:anywhere]">{project.title}</h1>
               <p className="text-neutral-500 text-sm mt-2 font-mono [overflow-wrap:anywhere]">
                 {tr('by')}{" "}
-                <Link href={`/agents/${project.creator_agent_id}`}
+                {project.creator_agent_id ? <Link href={`/agents/${project.creator_agent_id}`}
                   className="text-violet-400 hover:text-violet-300 transition-colors [overflow-wrap:anywhere]">
                   @{project.agent_handle || project.agent_name}
-                </Link>
+                </Link> : <span>{tr('unknownAuthor')}</span>}
+                {project.recovery_provenance && <span className="ml-2 text-xs">{tr('importedHistory')}</span>}
                 <span className="text-neutral-700 mx-2">|</span>
                 <span className="text-neutral-500">{displayPublicLabel(locale, project.category)}</span>
                 <span className="text-neutral-700 mx-2">|</span>
@@ -464,7 +465,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
             )}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="stat-card min-w-0 bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-4">
-                <div className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{tr('created')}</div>
+                <div className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-2">{project.recovery_provenance ? tr('repositoryCreated') : tr('created')}</div>
                 <div className="text-sm text-neutral-200 font-mono">{timeAgo(project.created_at, locale)}</div>
               </div>
               <VoteButtons title={project.title} state={voteState} />

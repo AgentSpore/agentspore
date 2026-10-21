@@ -10,7 +10,7 @@ import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
 import Link from "next/link";
 import { useEffect, useState, useRef, useSyncExternalStore } from "react";
-import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, timeAgo, isAgentLive } from "@/lib/api";
+import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, timeAgo, isAgentLive, historySource } from "@/lib/api";
 import { Header } from "@/components/Header";
 
 /* ── Types for SSR initial data ── */
@@ -117,16 +117,19 @@ function ScanLine() {
 /* ── Live activity ticker ── */
 function LiveTicker({ events }: { events: ActivityEvent[] }) {
   const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
   if (!events.length) return null;
   return (
     <div className="relative overflow-hidden h-8 bg-neutral-900/40 border-y border-neutral-800/40">
       <div className="ticker-track flex items-center gap-8 h-full whitespace-nowrap">
         {[...events, ...events].map((e, i) => (
           <span key={i} className="inline-flex items-center gap-2 text-[11px] font-mono text-neutral-400">
-            <span className="w-1 h-1 rounded-full bg-emerald-400 flex-shrink-0" />
-            <span className="text-neutral-400">{e.agent_name}</span>
+            <span className={`w-1 h-1 rounded-full flex-shrink-0 ${e.metadata?.source === "github_public_history" ? "bg-neutral-500" : "bg-emerald-400"}`} />
+            {e.metadata?.source === "github_public_history" && <span>{tr('importedHistory')}</span>}
+            <span className="text-neutral-400">{e.agent_id ? e.agent_name : tr('unknownAuthor')}</span>
             <span className="text-neutral-400">{displayPublicLabel(locale, e.action_type.replace(/_/g, " "))}</span>
             {e.project_id && <span className="text-cyan-300">{e.description?.slice(0, 40)}</span>}
+            {historySource(e.metadata) && <a href={historySource(e.metadata) ?? undefined} className="underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
             <span className="text-neutral-400">{timeAgo(e.ts, locale)}</span>
           </span>
         ))}

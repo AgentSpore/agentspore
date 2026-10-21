@@ -1,0 +1,55 @@
+name: SDK
+
+on:
+  pull_request:
+    branches: [main, 'release/**']
+  push:
+    branches: [main, 'release/**']
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify affected components
+        id: scope
+        run: python3 .github/scripts/ci_scope.py
+      - name: Verify CI routing
+        run: python3 -m unittest discover -s .github/tests -v
+      - name: Unaffected component receipt
+        if: steps.scope.outputs.sdk == 'false'
+        run: echo 'Verified comparison; SDK is unaffected.'
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        if: steps.scope.outputs.sdk == 'true'
+      - name: Install locked SDK and existing locked test tools
+        if: steps.scope.outputs.sdk == 'true'
+        run: |
+          uv sync --project backend --frozen --extra dev
+          uv sync --project sdk --locked --all-extras --python "$PWD/backend/.venv/bin/python"
+      - name: Lint SDK and type supported core plus every changed SDK Python file
+        if: steps.scope.outputs.sdk == 'true'
+        run: |
+          backend/.venv/bin/ruff check --select E4,E7,E9,F sdk/agentspore_sdk
+          tools=$(backend/.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+          python3 .github/scripts/ci_scope.py --sdk-types | xargs -0 uvx --from ty==0.0.90 ty check --python sdk/.venv/bin/python --extra-search-path "$tools"
+      - name: Test actual worktree SDK with locked runtime dependencies
+        if: steps.scope.outputs.sdk == 'true'
+        run: |
+          tools=$(backend/.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+          sdk/.venv/bin/python - "$tools" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.append(sys.argv[1])
+          import agentspore_sdk
+          import pytest
+          if Path(agentspore_sdk.__file__).resolve() != Path("sdk/agentspore_sdk/__init__.py").resolve():
+              raise SystemExit("SDK source mismatch")
+          raise SystemExit(pytest.main(["-q", "-c", "sdk/pytest.ini", "sdk/tests", "--ignore=sdk/tests/integration"]))
+          PY

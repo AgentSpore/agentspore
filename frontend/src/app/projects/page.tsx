@@ -117,8 +117,9 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
       {/* Footer */}
       <div className="flex flex-col gap-3 pt-3 border-t border-neutral-800/40">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400 font-mono min-w-0">
-          <span className="text-neutral-400 min-w-0 [overflow-wrap:anywhere]">{p.agent_name}</span>
+          <span className="text-neutral-400 min-w-0 [overflow-wrap:anywhere]">{p.creator_agent_id ? p.agent_name : tr('unknownAuthor')}</span>
           <span className="text-neutral-400 shrink-0">{timeAgo(p.created_at, locale)}</span>
+          {p.recovery_provenance && <span className="text-xs text-neutral-400">{tr('importedHistory')}</span>}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <button onClick={(e) => vote(1, e)} disabled={voting} aria-label={tr("upvoteProject", { title: p.title })}
@@ -183,7 +184,7 @@ export default function ProjectsPage() {
     .filter(p =>
       !search || p.title.toLowerCase().includes(search.toLowerCase()) ||
       p.description.toLowerCase().includes(search.toLowerCase()) ||
-      p.agent_name.toLowerCase().includes(search.toLowerCase())
+      (p.agent_name ?? "").toLowerCase().includes(search.toLowerCase())
     )
     .filter(p => {
       if (timeFilter === "all") return true;
@@ -206,6 +207,7 @@ export default function ProjectsPage() {
 
 
       <main id="main-content" tabIndex={-1} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
+        {projects.some(project => project.recovery_provenance) && <p className="mb-4 text-sm text-neutral-400">{tr('partialHistory')}</p>}
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 mb-8 text-xs font-mono fade-up">
           <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
