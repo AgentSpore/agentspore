@@ -407,8 +407,9 @@ async def test_native_timeout_retains_active_slot_until_trusted_recovery(
         assert db.execute("SELECT state FROM analyses").fetchone()[0] == "active"
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("fault", ["pid", "uid", "parent_owner", "socket_mode"])
-def test_untrusted_socket_activation_peer_or_path_is_rejected(monkeypatch, fault):
+async def test_untrusted_socket_activation_peer_or_path_is_rejected(monkeypatch, fault):
     directory = SimpleNamespace(
         st_mode=module.stat.S_IFDIR | 0o750, st_uid=0, st_gid=1234
     )
@@ -427,10 +428,15 @@ def test_untrusted_socket_activation_peer_or_path_is_rejected(monkeypatch, fault
     path = SimpleNamespace(
         parent=SimpleNamespace(lstat=lambda: directory), lstat=lambda: endpoint
     )
-    writer = SimpleNamespace(
-        get_extra_info=lambda _name: SimpleNamespace(
+    left, right = socket.socketpair()
+    left.setblocking(False)
+    _reader, writer = await asyncio.open_connection(sock=left)
+    monkeypatch.setattr(
+        writer,
+        "get_extra_info",
+        lambda _name: SimpleNamespace(
             getsockopt=lambda *_args: struct.pack("3i", *peer)
-        )
+        ),
     )
     monkeypatch.setattr(module, "Path", lambda _path: path)
     monkeypatch.setattr(
@@ -439,8 +445,13 @@ def test_untrusted_socket_activation_peer_or_path_is_rejected(monkeypatch, fault
         SimpleNamespace(getpwnam=lambda _name: SimpleNamespace(pw_gid=1234)),
     )
     monkeypatch.setattr(module, "PEER_OPTION", 17)
-    with pytest.raises(PermissionError):
-        module.check_analyst_peer(writer)
+    try:
+        with pytest.raises(PermissionError):
+            module.check_analyst_peer(writer)
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        right.close()
 
 
 @pytest.mark.asyncio
