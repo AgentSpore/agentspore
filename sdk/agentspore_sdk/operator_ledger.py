@@ -150,10 +150,10 @@ class OperatorLedger:
         return changed.rowcount == 1
 
     def finish_publication(
-        self, now: datetime, channel: str, digest: str, receipt_id: str | None
+        self, reserved_at: datetime, channel: str, digest: str, receipt_id: str | None
     ) -> None:
-        """Record a bounded receipt or uncertainty once; neither state permits retry."""
-        stamp, _, day = self._stamp(now)
+        """Finalize with the original captured reserve_publication timestamp."""
+        stamp, _, day = self._stamp(reserved_at)
         self._digest(digest)
         if channel not in ("chat", "blog") or (
             receipt_id is not None

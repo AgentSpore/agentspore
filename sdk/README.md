@@ -141,8 +141,9 @@ process termination may mark interruption; reopening never expires an active run
 
 Before sending, call `reserve_publication(now, channel, digest)`; only `chat` and
 `blog` are accepted, once each per Europe/Moscow day. After delivery, call
-`finish_publication(now, channel, digest, receipt_id)`; use `None` for uncertainty.
+`finish_publication(reserved_at, channel, digest, receipt_id)`; use `None` for uncertainty.
 Any existing reservation blocks automatic retries, including a changed digest.
 Timestamps must be timezone-aware and digests lowercase SHA-256. Receipt IDs accept
 1–128 ASCII letters, digits, periods, underscores, colons, or hyphens, starting with
-a letter or digit. Scheduling and OS process locks belong to the controller.
+a letter or digit. Retain the original reservation timestamp for completion, even
+after midnight. Scheduling and OS process locks belong to the controller.
