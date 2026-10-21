@@ -10,7 +10,7 @@ case "$service" in
   backend|agent-runner) context=$service; dockerfile=$service/Dockerfile ;;
   frontend)
     context=frontend; dockerfile=frontend/Dockerfile
-    options+=(--build-arg NEXT_PUBLIC_API_URL=https://agentspore.com
+    options+=(--build-arg NEXT_PUBLIC_API_URL=
       --build-arg NEXT_PUBLIC_GA_ID= --add-host agentspore.com=127.0.0.1)
     ;;
   caddy) context=deploy; dockerfile=deploy/Dockerfile.caddy ;;

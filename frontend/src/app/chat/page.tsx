@@ -411,6 +411,9 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [readError, setReadError] = useState(false);
+  const [accessError, setAccessError] = useState<{ status: 401 | 403; generation: number } | null>(null);
+  const session = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
+  const historySessionRef = useRef(session);
   const [loadingMore, setLoadingMore] = useState(false);
   const [olderError, setOlderError] = useState(false);
   const [deleteState, setDeleteState] = useState<Record<string, "pending" | "error">>({});
@@ -440,13 +443,30 @@ export default function ChatPage() {
     if (row) container.scrollTop = messageLayoutTop(row) - messageLayoutTop(container) - anchor.offset;
   }, [messages]);
 
+  const denyHistory = useCallback((status: 401 | 403, generation = getAuthSnapshot().generation) => {
+    readRef.current?.abort();
+    readRef.current = null;
+    setLoading(false);
+    olderRef.current?.abort();
+    olderRef.current = null;
+    setLoadingMore(false);
+    setMessages([]);
+    setAccessError({ status, generation });
+    setReadError(false);
+    setOlderError(false);
+    setHasMore(false);
+  }, []);
+
   const readMessages = useCallback(async () => {
     if (readRef.current) return;
     const controller = new AbortController();
     readRef.current = controller;
+    const generation = getAuthSnapshot().generation;
     setLoading(true);
     try {
       const response = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (response.status === 401 || response.status === 403) { denyHistory(response.status, generation); return; }
       if (!response.ok) throw new Error("Chat history request failed");
       const history: ChatMessage[] = await response.json();
       if (controller.signal.aborted) return;
@@ -455,6 +475,7 @@ export default function ChatPage() {
         .map(message => ({ ...message, ...changes.get(message.id) })));
       setHasMore(history.length >= PAGE_SIZE);
       setReadError(false);
+      setAccessError(null);
       setTimeout(() => bottomRef.current?.scrollIntoView(), 100);
     } catch {
       if (!controller.signal.aborted) setReadError(true);
@@ -465,7 +486,7 @@ export default function ChatPage() {
         setLoading(false);
       }
     }
-  }, []);
+  }, [denyHistory]);
 
   useEffect(() => {
     const changes = readChangesRef.current;
@@ -481,6 +502,21 @@ export default function ChatPage() {
   }, [readMessages]);
 
   useEffect(() => {
+    const previous = historySessionRef.current;
+    historySessionRef.current = session;
+    if (previous.generation !== session.generation && previous.accessToken && !session.accessToken) {
+      readRef.current?.abort();
+      readRef.current = null;
+      setLoading(false);
+      denyHistory(401);
+    } else if (session.accessToken && accessError && accessError.generation !== session.generation) {
+      setAccessError(null);
+      void readMessages();
+    }
+  }, [session, accessError, denyHistory, readMessages]);
+
+  useEffect(() => {
+    if (accessError) return;
     const es = new EventSource(`${API_URL}/api/v1/chat/stream`);
     esRef.current = es;
     es.onmessage = (e) => {
@@ -510,17 +546,20 @@ export default function ChatPage() {
       } catch {}
     };
     return () => es.close();
-  }, []);
+  }, [accessError]);
 
   const loadOlder = async () => {
-    if (!hasMore || olderRef.current || messages.length === 0) return;
+    if (accessError || !hasMore || olderRef.current || messages.length === 0) return;
     const controller = new AbortController();
     olderRef.current = controller;
+    const generation = getAuthSnapshot().generation;
     setLoadingMore(true);
     const oldestId = messages[0].id;
     const container = containerRef.current;
     try {
       const res = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldestId}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (res.status === 401 || res.status === 403) { denyHistory(res.status, generation); return; }
       if (!res.ok) throw new Error("Older chat history request failed");
       const older: ChatMessage[] = await res.json();
       if (controller.signal.aborted) return;
@@ -533,9 +572,11 @@ export default function ChatPage() {
     } catch {
       if (!controller.signal.aborted) setOlderError(true);
     } finally {
-      olderChangesRef.current.clear();
-      olderRef.current = null;
-      setLoadingMore(false);
+      if (olderRef.current === controller) {
+        olderChangesRef.current.clear();
+        olderRef.current = null;
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -670,6 +711,12 @@ export default function ChatPage() {
       {/* Messages */}
       <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 min-w-0 overflow-y-auto [&_a]:min-h-12 [&_a]:min-w-12 [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-2 [&_a]:focus-visible:outline-violet-400">
         <div className="max-w-3xl mx-auto px-4 py-4">
+          {accessError && <div role="status" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
+            <p>{tr(accessError.status === 401 ? "Sign in to read the conversation." : "You do not have access to this conversation.")}</p>
+            {accessError.status === 401 && <Link href="/login" className="inline-flex min-h-12 items-center text-violet-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+              {tr("Sign in")}
+            </Link>}
+          </div>}
           {readError && (
             <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
               <p>{tr("Could not load messages.")}</p>
@@ -684,8 +731,8 @@ export default function ChatPage() {
               <div className="w-6 h-6 rounded-full border-2 border-neutral-800 border-t-violet-400 animate-spin" />
               <span className="text-neutral-600 text-xs font-mono">{tr("Loading messages...")}</span>
             </div>
-          ) : messages.length === 0 ? (
-            !readError && <EmptyState title={docsTr('eChatTitle')} body={docsTr('eChatBody')}
+          ) : messages.length === 0 || accessError ? (
+            !readError && !accessError && <EmptyState title={docsTr('eChatTitle')} body={docsTr('eChatBody')}
               action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
           ) : grouped.length === 0 ? (
             <p className="py-10 text-center text-sm text-neutral-500">{docsTr('eChatFiltered')}</p>
