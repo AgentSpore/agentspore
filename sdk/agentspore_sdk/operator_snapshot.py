@@ -218,43 +218,14 @@ async def collect_snapshot(client: httpx.AsyncClient, now: datetime) -> PublicSn
     since = until - timedelta(days=1)
     collector = PublicCollector(client)
     counters = await collector.read("/api/v1/agents/stats")
-    counters = (
-        {
-            k: v
-            for k, v in counters.items()
-            if k in COUNTERS and type(v) is int and v >= 0
-        }
-        if isinstance(counters, dict)
-        else None
-    )
     projects = await collector.projects()
     repos = await collector.read("/orgs/AgentSpore/repos?per_page=100", True)
-    names = (
-        [
-            "AgentSpore/" + r["name"]
-            for r in repos[:100]
-            if isinstance(r, dict)
-            and r.get("private") is False
-            and valid_repo("AgentSpore/" + str(r.get("name", "")))
-        ]
-        if isinstance(repos, list)
-        else None
-    )
     return {
         "window": {"since": since.isoformat(), "until": until.isoformat()},
         "health": await collector.health(),
-        "counters": observation(
-            counters, None if counters is not None else "source_unreachable"
-        ),
+        "counters": counter_observation(counters),
         "projects": projects,
-        "github_repos": observation(
-            names,
-            "source_unreachable"
-            if names is None
-            else "pagination_incomplete"
-            if len(repos) >= 100
-            else None,
-        ),
+        "github_repos": repository_observation(repos),
         "github_events": await collector.events(since, until),
         "github_ci": await collector.ci(projects, since, until),
     }
@@ -302,21 +273,74 @@ def timed_rows(rows: list, since: datetime, until: datetime):
 def ci_runs(data, since: datetime, until: datetime) -> Observation:
     """Project bounded workflow outcomes without actor or log content."""
     rows = data.get("workflow_runs") if isinstance(data, dict) else None
+    valid = (
+        [row for row in rows[:20] if valid_ci_row(row)]
+        if isinstance(rows, list)
+        else []
+    )
     runs = [
         {
             "id": row.get("id") if type(row.get("id")) is int else None,
             "status": bounded_text(row.get("status"), 40),
             "conclusion": bounded_text(row.get("conclusion"), 40),
         }
-        for row, _stamp in timed_rows(
-            rows[:20] if isinstance(rows, list) else [], since, until
-        )
+        for row, _stamp in timed_rows(valid, since, until)
     ]
     reason = (
         "source_unreachable"
         if not isinstance(rows, list)
+        else "source_shape_invalid"
+        if len(valid) != min(len(rows), 20)
         else "pagination_incomplete"
         if len(rows) >= 20
         else None
     )
     return observation(runs if isinstance(rows, list) else None, reason)
+
+
+def counter_observation(rows) -> Observation:
+    """Require every known counter before claiming complete coverage."""
+    if not isinstance(rows, dict):
+        return observation(None, "source_unreachable")
+    values = {
+        k: v for k, v in rows.items() if k in COUNTERS and type(v) is int and v >= 0
+    }
+    return observation(
+        values or None, "source_shape_invalid" if len(values) != len(COUNTERS) else None
+    )
+
+
+def repository_observation(rows) -> Observation:
+    """Distinguish a valid empty public feed from rejected repository records."""
+    if not isinstance(rows, list):
+        return observation(None, "source_unreachable")
+    names = [
+        "AgentSpore/" + row["name"]
+        for row in rows[:100]
+        if isinstance(row, dict)
+        and row.get("private") is False
+        and isinstance(row.get("name"), str)
+        and valid_repo("AgentSpore/" + row["name"])
+    ]
+    reason = (
+        "source_shape_invalid"
+        if len(names) != min(len(rows), 100)
+        else "pagination_incomplete"
+        if len(rows) >= 100
+        else None
+    )
+    return observation(names, reason)
+
+
+def valid_ci_row(row) -> bool:
+    """Reject malformed CI rows rather than classifying them as absent events."""
+    return (
+        isinstance(row, dict)
+        and type(row.get("id")) is int
+        and row["id"] > 0
+        and isinstance(row.get("status"), str)
+        and bool(row["status"])
+        and "conclusion" in row
+        and (row["conclusion"] is None or isinstance(row["conclusion"], str))
+        and parse_time(row.get("created_at")) is not None
+    )

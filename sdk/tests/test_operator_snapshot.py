@@ -190,3 +190,80 @@ async def test_health_reads_status_only():
     assert set(result["health"].values()) == {503}
     assert result["counters"]["value"] is None
     assert "PRIVATE" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "payload", [{}, {"total_agents": True, "active_agents": -1}, {"total_agents": 1}]
+)
+@pytest.mark.asyncio
+async def test_incomplete_counters_never_complete(public_transport, payload):
+    transport, _requests = public_transport
+
+    async def respond(request):
+        if request.url.path.endswith("/stats"):
+            return httpx.Response(200, json=payload)
+        return await transport.handle_async_request(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await collect_snapshot(client, NOW)
+    assert result["counters"]["status"] != "complete"
+    assert result["counters"]["reason"] == "source_shape_invalid"
+
+
+@pytest.mark.parametrize(
+    "source,payload",
+    [
+        ("repos", [{"name": 123, "private": False}]),
+        ("repos", [{"name": "../bad", "private": False}]),
+        (
+            "runs",
+            {
+                "workflow_runs": [
+                    {"id": 7, "status": "completed", "created_at": "invalid"}
+                ]
+            },
+        ),
+        ("runs", {"workflow_runs": ["invalid"]}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_malformed_feeds_report_missing_coverage(
+    public_transport, source, payload
+):
+    transport, _requests = public_transport
+
+    async def respond(request):
+        if request.url.path.endswith("/" + source):
+            return httpx.Response(200, json=payload)
+        return await transport.handle_async_request(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await collect_snapshot(client, NOW)
+    evidence = (
+        result["github_repos"] if source == "repos" else result["github_ci"]["value"][0]
+    )
+    assert evidence["status"] != "complete"
+    assert evidence["reason"] == "source_shape_invalid"
+    if source == "runs":
+        assert result["github_ci"]["status"] != "complete"
+
+
+@pytest.mark.parametrize(
+    "source,payload", [("repos", []), ("runs", {"workflow_runs": []})]
+)
+@pytest.mark.asyncio
+async def test_valid_empty_feeds_remain_complete(public_transport, source, payload):
+    transport, _requests = public_transport
+
+    async def respond(request):
+        if request.url.path.endswith("/" + source):
+            return httpx.Response(200, json=payload)
+        return await transport.handle_async_request(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        result = await collect_snapshot(client, NOW)
+    evidence = (
+        result["github_repos"] if source == "repos" else result["github_ci"]["value"][0]
+    )
+    assert evidence["status"] == "complete"
+    assert evidence["value"] == []
