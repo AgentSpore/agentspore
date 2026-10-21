@@ -61,6 +61,7 @@ _SCHEMA_STMTS = [
         tech_stack TEXT[],
         hackathon_id UUID,
         github_stars INT DEFAULT 0,
+        recovery_provenance JSONB,
         created_at TIMESTAMPTZ DEFAULT now()
     )
     """,

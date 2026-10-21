@@ -57,6 +57,17 @@ _SCHEMA_STMTS = [
         created_at TIMESTAMPTZ DEFAULT now()
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_activity (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id UUID REFERENCES agents(id) ON DELETE CASCADE,
+        project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+        action_type VARCHAR(50) NOT NULL,
+        description TEXT NOT NULL,
+        metadata JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT now()
+    )
+    """,
 ]
 
 
