@@ -411,7 +411,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [readError, setReadError] = useState(false);
-  const [accessError, setAccessError] = useState<401 | 403 | null>(null);
+  const [accessError, setAccessError] = useState<{ status: 401 | 403; generation: number } | null>(null);
   const session = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
   const historySessionRef = useRef(session);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -443,7 +443,7 @@ export default function ChatPage() {
     if (row) container.scrollTop = messageLayoutTop(row) - messageLayoutTop(container) - anchor.offset;
   }, [messages]);
 
-  const denyHistory = useCallback((status: 401 | 403) => {
+  const denyHistory = useCallback((status: 401 | 403, generation = getAuthSnapshot().generation) => {
     readRef.current?.abort();
     readRef.current = null;
     setLoading(false);
@@ -451,7 +451,7 @@ export default function ChatPage() {
     olderRef.current = null;
     setLoadingMore(false);
     setMessages([]);
-    setAccessError(status);
+    setAccessError({ status, generation });
     setReadError(false);
     setOlderError(false);
     setHasMore(false);
@@ -461,11 +461,12 @@ export default function ChatPage() {
     if (readRef.current) return;
     const controller = new AbortController();
     readRef.current = controller;
+    const generation = getAuthSnapshot().generation;
     setLoading(true);
     try {
       const response = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      if (response.status === 401 || response.status === 403) { denyHistory(response.status); return; }
+      if (response.status === 401 || response.status === 403) { denyHistory(response.status, generation); return; }
       if (!response.ok) throw new Error("Chat history request failed");
       const history: ChatMessage[] = await response.json();
       if (controller.signal.aborted) return;
@@ -503,13 +504,12 @@ export default function ChatPage() {
   useEffect(() => {
     const previous = historySessionRef.current;
     historySessionRef.current = session;
-    if (previous.generation === session.generation) return;
-    if (previous.accessToken && !session.accessToken) {
+    if (previous.generation !== session.generation && previous.accessToken && !session.accessToken) {
       readRef.current?.abort();
       readRef.current = null;
       setLoading(false);
       denyHistory(401);
-    } else if (session.accessToken && accessError) {
+    } else if (session.accessToken && accessError && accessError.generation !== session.generation) {
       setAccessError(null);
       void readMessages();
     }
@@ -552,13 +552,14 @@ export default function ChatPage() {
     if (accessError || !hasMore || olderRef.current || messages.length === 0) return;
     const controller = new AbortController();
     olderRef.current = controller;
+    const generation = getAuthSnapshot().generation;
     setLoadingMore(true);
     const oldestId = messages[0].id;
     const container = containerRef.current;
     try {
       const res = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}&before=${oldestId}`, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      if (res.status === 401 || res.status === 403) { denyHistory(res.status); return; }
+      if (res.status === 401 || res.status === 403) { denyHistory(res.status, generation); return; }
       if (!res.ok) throw new Error("Older chat history request failed");
       const older: ChatMessage[] = await res.json();
       if (controller.signal.aborted) return;
@@ -711,8 +712,8 @@ export default function ChatPage() {
       <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 min-w-0 overflow-y-auto [&_a]:min-h-12 [&_a]:min-w-12 [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-2 [&_a]:focus-visible:outline-violet-400">
         <div className="max-w-3xl mx-auto px-4 py-4">
           {accessError && <div role="status" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
-            <p>{tr(accessError === 401 ? "Sign in to read the conversation." : "You do not have access to this conversation.")}</p>
-            {accessError === 401 && <Link href="/login" className="inline-flex min-h-12 items-center text-violet-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+            <p>{tr(accessError.status === 401 ? "Sign in to read the conversation." : "You do not have access to this conversation.")}</p>
+            {accessError.status === 401 && <Link href="/login" className="inline-flex min-h-12 items-center text-violet-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {tr("Sign in")}
             </Link>}
           </div>}
