@@ -11,7 +11,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.deps import client_ip, get_usage_service
+from app.api.deps import client_ip, get_admin_user, get_usage_service
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from sqlalchemy.exc import IntegrityError
@@ -842,7 +842,7 @@ async def memory_ask(
     return MemoryAskResponse(**result)
 
 
-@router.post("/admin/reinvite-github-users")
+@router.post("/admin/reinvite-github-users", dependencies=[Depends(get_admin_user)])
 async def reinvite_github_users(
     svc: AgentService = Depends(get_agent_service),
 ):
