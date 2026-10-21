@@ -233,3 +233,46 @@ async def test_stream_limit_stops_reading_and_closes_response():
         )
     assert stream.chunks == 2
     assert stream.closed
+
+
+async def test_body_timeout_also_bounds_stalled_close_without_background_tasks(
+    monkeypatch,
+):
+    timeout = asyncio.timeout
+    monkeypatch.setattr(operator_publisher.asyncio, "timeout", lambda _: timeout(0))
+    entered = asyncio.Event()
+    finished = asyncio.Event()
+    attempts = []
+
+    class StalledStream(httpx.AsyncByteStream):
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            return await asyncio.Future()
+
+        async def aclose(self):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                finished.set()
+
+    def respond(request):
+        attempts.append(request)
+        return httpx.Response(200, stream=StalledStream())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        task = asyncio.create_task(
+            OperatorPublisher(client, "af_synthetic").publish("chat", PAYLOAD)
+        )
+        try:
+            done, _ = await asyncio.wait({task}, timeout=0.1)
+            assert task in done
+            assert await task is None
+            assert entered.is_set() and finished.is_set()
+            assert len(attempts) == 1
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
