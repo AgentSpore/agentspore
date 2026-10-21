@@ -50,6 +50,38 @@ const READ_ERROR = {
 };
 const LIVE_MESSAGE = { ...MESSAGE, id: "m2", content: "An idea arriving live" };
 
+it.each([401, 403])("explains access instead of retry for denied history %i", async status => {
+  stubInitialRead(async () => new Response(null, { status }));
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  expect(await screen.findByText(status === 401 ? "Sign in to read the conversation." : "You do not have access to this conversation.")).toBeTruthy();
+  expect(screen.queryByText(READ_ERROR.en)).toBeNull();
+  expect(screen.queryByRole("button", { name: sharedMessages.en.retry })).toBeNull();
+  expect(screen.queryByText(docsMessages.en.eChatTitle)).toBeNull();
+  if (status === 401) expect(within(screen.getByRole("main")).getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe("/login");
+});
+
+it("explains denied history in Russian", async () => {
+  stubInitialRead(async () => new Response(null, { status: 401 }));
+  render(<LocaleProvider initialLocale="ru"><ChatPage /></LocaleProvider>);
+  expect(await screen.findByText("Войдите, чтобы читать беседу.")).toBeTruthy();
+  expect(screen.queryByText(READ_ERROR.ru)).toBeNull();
+});
+
+it("clears live history when its retry is denied", async () => {
+  const read = vi.fn<() => Promise<Response>>()
+    .mockResolvedValueOnce(new Response(null, { status: 503 }))
+    .mockResolvedValueOnce(new Response(null, { status: 401 }));
+  const stream = stubInitialRead(read);
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await screen.findByText(READ_ERROR.en);
+  await act(async () => stream.emit(LIVE_MESSAGE));
+  expect(screen.getByText(LIVE_MESSAGE.content)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: sharedMessages.en.retry }));
+  await screen.findByText("Sign in to read the conversation.");
+  expect(screen.queryByText(LIVE_MESSAGE.content)).toBeNull();
+});
+
+
 function pendingRead() {
   let resolve!: (response: Response) => void;
   let reject!: (error: Error) => void;
@@ -317,13 +349,13 @@ it("authenticates cursor history while keeping the loaded fifty messages", async
   expect(history.unexpected).toEqual([]);
 });
 
-it("reads a replacement token when retrying an unauthorized history request", async () => {
+it("reads a replacement token after sign-in recovers denied history", async () => {
   const history = stubAuthorizedHistory();
   localStorage.setItem("access_token", "synthetic-expired-access");
   render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
-  await screen.findByText(READ_ERROR.en);
+  await screen.findByText("Sign in to read the conversation.");
   localStorage.setItem("access_token", history.policy.token);
-  fireEvent.click(screen.getByRole("button", { name: sharedMessages.en.retry }));
+  fireEvent(window, new Event("storage"));
 
   expect(await screen.findByText(MESSAGE.content)).toBeTruthy();
   expect(history.requests.map(request => request.authorization)).toEqual([
@@ -333,16 +365,75 @@ it("reads a replacement token when retrying an unauthorized history request", as
   expect(history.unexpected).toEqual([]);
 });
 
-it("shows the unauthorized read error without sending a malformed Bearer when signed out", async () => {
+it("explains sign-in for denied history without sending a malformed Bearer when signed out", async () => {
   const history = stubAuthorizedHistory();
   render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
 
-  expect(await screen.findByText(READ_ERROR.en)).toBeTruthy();
-  expect(screen.getByRole("button", { name: sharedMessages.en.retry })).toBeTruthy();
+  expect(await screen.findByText("Sign in to read the conversation.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: sharedMessages.en.retry })).toBeNull();
   expect(history.requests[0].authorization).toBeNull();
   expect(screen.queryByText(docsMessages.en.eChatTitle)).toBeNull();
   expect(screen.queryByText(MESSAGE.content)).toBeNull();
   expect(history.unexpected).toEqual([]);
+});
+
+it("reloads signed-in history after a late anonymous denial", async () => {
+  const pending = pendingRead();
+  const history = stubAuthorizedHistory();
+  const read = fetch;
+  let first = true;
+  vi.stubGlobal("fetch", vi.fn((input: string, init?: RequestInit) => {
+    if (new URL(input).pathname === "/api/v1/chat/messages" && first) {
+      first = false;
+      return pending.promise;
+    }
+    return read(input, init);
+  }));
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await waitFor(() => expect(first).toBe(false));
+  act(() => {
+    localStorage.setItem("access_token", history.policy.token);
+    fireEvent(window, new Event("storage"));
+  });
+  await act(async () => pending.resolve(new Response(null, { status: 401 })));
+  expect(await screen.findByText(MESSAGE.content)).toBeTruthy();
+  expect(screen.queryByText("Sign in to read the conversation.")).toBeNull();
+  expect(history.requests).toHaveLength(1);
+  expect(history.requests[0].authorization).toBe(`Bearer ${history.policy.token}`);
+});
+
+it("clears loaded history on sign-out without a futile history retry", async () => {
+  const history = stubAuthorizedHistory();
+  localStorage.setItem("access_token", history.policy.token);
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await screen.findByText(MESSAGE.content);
+  act(() => { localStorage.removeItem("access_token"); fireEvent(window, new Event("storage")); });
+  await screen.findByText("Sign in to read the conversation.");
+  expect(screen.queryByText(MESSAGE.content)).toBeNull();
+  expect(history.requests).toHaveLength(1);
+});
+
+it("discards an initial response that resolves after sign-out", async () => {
+  const pending = pendingRead();
+  stubInitialRead(() => pending.promise);
+  localStorage.setItem("access_token", "synthetic-pending-history");
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  act(() => { localStorage.removeItem("access_token"); fireEvent(window, new Event("storage")); });
+  await screen.findByText("Sign in to read the conversation.");
+  await act(async () => pending.resolve(Response.json([MESSAGE])));
+  expect(screen.queryByText(MESSAGE.content)).toBeNull();
+});
+
+it("clears loaded history when cursor access is denied", async () => {
+  const history = stubAuthorizedHistory(HISTORY_PAGE);
+  localStorage.setItem("access_token", history.policy.token);
+  render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
+  await screen.findByText(HISTORY_PAGE[0].content);
+  history.policy.token = "synthetic-revoked-access";
+  fireEvent.scroll(screen.getByRole("main"));
+  await screen.findByText("Sign in to read the conversation.");
+  expect(screen.queryByText(HISTORY_PAGE[0].content)).toBeNull();
+  expect(screen.queryByText(HISTORY_PAGE[49].content)).toBeNull();
 });
 
 it("refreshes unauthorized history through the real auth helper with the same AbortSignal", async () => {
@@ -703,7 +794,8 @@ it("SEC.CHAT public removes old privileges while replacement profile is pending"
   await waitFor(() => publicSecurityControls("security-b", true));
   publicSecurityControls("security-a", false);
   await act(async () => publicSecuritySession(null));
-  publicSecurityControls("security-b", false);
+  expect(screen.queryByText("security-a")).toBeNull();
+  expect(screen.queryByText("security-b")).toBeNull();
 });
 
 it.each(["switch", "logout"])("SEC.CHAT public ignores delayed old profile after %s", async transition => {
@@ -719,8 +811,13 @@ it.each(["switch", "logout"])("SEC.CHAT public ignores delayed old profile after
   await act(async () => publicSecuritySession(transition === "switch" ? "synthetic-security-b" : null));
   if (transition === "switch") await waitFor(() => publicSecurityControls("security-b", true));
   await act(async () => stale.resolve(Response.json(SECURITY_OWNER)));
-  publicSecurityControls("security-a", false);
-  publicSecurityControls("security-b", transition === "switch");
+  if (transition === "switch") {
+    publicSecurityControls("security-a", false);
+    publicSecurityControls("security-b", true);
+  } else {
+    expect(screen.queryByText("security-a")).toBeNull();
+    expect(screen.queryByText("security-b")).toBeNull();
+  }
 });
 
 async function openIdentityComposer() {
