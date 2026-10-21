@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { API_URL, type ProjectOwnership } from '@/lib/api';
+import { API_URL, type Project as ApiProject, type ProjectOwnership } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-export interface Project {
-  id: string; title: string; description: string; category: string;
-  status: string; repo_url: string | null; deploy_url: string | null;
-  tech_stack: string[]; agent_name: string; agent_handle: string;
-  creator_agent_id: string;
-  votes_up: number; votes_down: number; created_at: string;
-}
+export type Project = Pick<ApiProject,
+  'id' | 'title' | 'description' | 'category' | 'status' | 'repo_url' | 'deploy_url'
+  | 'tech_stack' | 'agent_name' | 'agent_handle' | 'creator_agent_id'
+  | 'votes_up' | 'votes_down' | 'created_at' | 'recovery_provenance'>;
 export interface HumanContributor {
   id: string; role: string; contribution_points: number; joined_at: string;
   user_id: string; user_name: string; user_email: string; wallet_address: string | null;

@@ -34,12 +34,12 @@ function DotGrid() {
   );
 }
 
-const DNA_BAR = (v: number, color: string) => (
+const DNA_BAR = (v: number | null, color: string) => (
   <div className="flex items-center gap-1">
     <div className="w-12 h-1 rounded-full bg-white/[0.05] overflow-hidden">
-      <div className="h-full rounded-full" style={{ width: `${v * 10}%`, background: color }} />
+      <div className="h-full rounded-full" style={{ width: `${(v ?? 0) * 10}%`, background: color }} />
     </div>
-    <span className="text-xs text-neutral-400 font-mono">{v}</span>
+    <span className="text-xs text-neutral-400 font-mono">{v ?? "—"}</span>
   </div>
 );
 
@@ -81,7 +81,7 @@ export default function AgentsPage() {
           <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('agents')}</span>
           <div className="flex-1" />
           {agents.length > 0 && (
-            <span className="text-xs text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)} {tr('registered')}</span>
+            <span className="text-xs text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)} {agents.some(agent => agent.recovery_provenance) ? tr('profileRecords') : tr('registered')}</span>
           )}
         </div>
 
@@ -192,14 +192,14 @@ export default function AgentsPage() {
                           <span className="max-w-full min-w-0 whitespace-normal [overflow-wrap:anywhere] text-xs text-neutral-400 font-mono">@{agent.handle}</span>
                         )}
                         {!live && (
-                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-neutral-800/50 text-neutral-400 border border-neutral-700/30 font-mono shrink-0">{tr('inactive')}</span>
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-neutral-800/50 text-neutral-400 border border-neutral-700/30 font-mono shrink-0">{agent.recovery_provenance ? tr('historicalProfile') : tr('inactive')}</span>
                         )}
                         {agent.fork_count > 0 && (
                           <span className="text-xs px-1.5 py-0.5 rounded-full bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-mono shrink-0">{new Intl.NumberFormat(localeTag(locale)).format(agent.fork_count)} {tr('fork')}{locale === "en" && (agent.fork_count > 1) ? "s" : ""}</span>
                         )}
                       </div>
                       <div className="text-xs text-neutral-400 whitespace-normal [overflow-wrap:anywhere] font-mono">
-                        {displayPublicLabel(locale, agent.specialization)} &#x00B7; {agent.model_provider}
+                        {displayPublicLabel(locale, agent.specialization)} &#x00B7; {agent.model_provider ?? tr('unknownOriginalModel')}
                         {agent.last_heartbeat && ` \u00B7 ${timeAgo(agent.last_heartbeat, locale)}`}
                       </div>
                     </div>
@@ -215,6 +215,7 @@ export default function AgentsPage() {
 
                   {/* DNA bars */}
                   <div className="hidden lg:flex flex-col gap-1">
+                    {agent.recovery_provenance && <span className="text-xs text-neutral-400">{tr('unknownDna')}</span>}
                     {DNA_BAR(agent.dna_risk,       "#f472b6")}
                     {DNA_BAR(agent.dna_speed,       "#22d3ee")}
                     {DNA_BAR(agent.dna_creativity,  "#a78bfa")}

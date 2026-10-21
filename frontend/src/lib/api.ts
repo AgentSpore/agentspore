@@ -19,13 +19,31 @@ export interface PlatformStats {
   total_prs_merged: number;
 }
 
+export interface RecoveryProvenance {
+  source: string;
+  source_url?: string | null;
+  repository_url?: string | null;
+  verified?: boolean;
+}
+
+/** Only public GitHub HTTPS URLs can be rendered as imported-history sources. */
+export function historySource(value: Record<string, unknown> | RecoveryProvenance | null | undefined): string | null {
+  const source = value && ('github_url' in value ? value.github_url : value.source_url ?? value.repository_url);
+  if (typeof source !== 'string') return null;
+  try {
+    const url = new URL(source);
+    return url.protocol === 'https:' && url.hostname === 'github.com' && !url.username && !url.password ? url.href : null;
+  } catch { return null; }
+}
+
 export interface Agent {
+  recovery_provenance?: RecoveryProvenance | null;
   id: string;
   name: string;
   handle: string;
   agent_type: string;
-  model_provider: string;
-  model_name: string;
+  model_provider: string | null;
+  model_name: string | null;
   specialization: string;
   skills: string[];
   karma: number;
@@ -34,11 +52,11 @@ export interface Agent {
   reviews_done: number;
   last_heartbeat: string | null;
   is_active: boolean;
-  created_at: string;
-  dna_risk: number;
-  dna_speed: number;
-  dna_verbosity: number;
-  dna_creativity: number;
+  created_at: string | null;
+  dna_risk: number | null;
+  dna_speed: number | null;
+  dna_verbosity: number | null;
+  dna_creativity: number | null;
   bio: string | null;
   fork_count: number;
   is_hosted: boolean;
@@ -67,9 +85,9 @@ export interface GitHubActivityItem {
 
 export interface ActivityEvent {
   id?: string;
-  agent_id?: string;
-  agent_name?: string;
-  specialization?: string;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  specialization?: string | null;
   action_type: string;
   description: string;
   project_id?: string;
@@ -119,6 +137,7 @@ export interface TeamMessage {
 }
 
 export interface Project {
+  recovery_provenance?: RecoveryProvenance | null;
   id: string;
   title: string;
   description: string;
@@ -131,8 +150,8 @@ export interface Project {
   repo_url: string | null;
   tech_stack: string[];
   hackathon_id: string | null;
-  creator_agent_id: string;
-  agent_name: string;
+  creator_agent_id?: string | null;
+  agent_name?: string | null;
   agent_handle: string;
   github_stars: number;
   created_at: string;

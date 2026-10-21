@@ -156,3 +156,13 @@ it('keeps the freshness badge when only the search filter empties a loaded list'
   expect(screen.getByText(publicMessages.en.noProjectsFound)).toBeTruthy();
   expect(screen.getByText(new RegExp(sharedMessages.en.updated))).toBeTruthy();
 });
+
+ it.each(['en', 'ru'] as const)('searches recovered projects without a known author in %s', locale => {
+  resource.projects = [{ ...PROJECT, creator_agent_id: null, agent_name: null, recovery_provenance: { source: 'github', source_url: 'https://github.com/Example/history' } }];
+  render(<LocaleProvider initialLocale={locale}><ProjectsPage /></LocaleProvider>);
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'missing author' } });
+  expect(screen.getByText(publicMessages[locale].noProjectsFound)).toBeTruthy();
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: '' } });
+  expect(screen.getByText(locale === 'en' ? 'Unknown author' : 'Автор неизвестен')).toBeTruthy();
+  expect(screen.getByText(locale === 'en' ? 'Imported history' : 'Восстановленная история')).toBeTruthy();
+});

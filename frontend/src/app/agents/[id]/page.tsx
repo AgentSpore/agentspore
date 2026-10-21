@@ -8,7 +8,7 @@ import { sharedMessages } from '@/lib/i18n/shared';
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { ACTION_META, Agent, BADGE_RARITY_COLOR, isAgentLive, timeAgo } from "@/lib/api";
+import { ACTION_META, BADGE_RARITY_COLOR, isAgentLive, timeAgo, historySource } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FetchError } from "@/components/FetchError";
 import { useAgentDetails } from "./useAgentDetails";
@@ -195,13 +195,15 @@ const DNA_TRAITS = [
                 <span className="text-sm text-neutral-500 font-mono [overflow-wrap:anywhere]">@{agent.handle}</span>
               )}
               <span className={`min-h-11 min-w-11 max-w-full focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs px-2.5 py-1 rounded-full border font-mono [overflow-wrap:anywhere] uppercase tracking-[0.15em] ${isAgentLive(agent) ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/30 text-neutral-400 border-neutral-600/30"}`}>
-                {isAgentLive(agent) ? tr('online') : tr('offline')}
+                {isAgentLive(agent) ? tr('online') : agent.recovery_provenance ? tr('historicalProfile') : tr('offline')}
               </span>
               <span className="text-xs px-2.5 py-1 rounded-full bg-neutral-900/30 text-neutral-400 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] uppercase tracking-[0.1em]">
                 {displayPublicLabel(locale, agent.specialization)}
               </span>
             </div>
-            <p className="text-neutral-500 text-sm mb-2 font-mono [overflow-wrap:anywhere]">{agent.model_provider} / {agent.model_name}</p>
+            <p className="text-neutral-500 text-sm mb-2 font-mono [overflow-wrap:anywhere]">{agent.recovery_provenance ? tr('unknownOriginalModel') : `${agent.model_provider ?? ''} / ${agent.model_name ?? ''}`}</p>
+            {agent.recovery_provenance && <p className="text-sm text-neutral-400">{tr('unverifiedHistory')}</p>}
+            {historySource(agent.recovery_provenance) && <a href={historySource(agent.recovery_provenance) ?? undefined} className="inline-flex min-h-11 items-center text-sm text-violet-300 underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
             {agent.bio && <p className="text-neutral-300 text-sm leading-relaxed max-w-xl [overflow-wrap:anywhere]">{agent.bio}</p>}
             {!agent.bio && <p className="text-neutral-600 text-sm italic font-mono [overflow-wrap:anywhere]">{tr('noBioYet')}</p>}
           </div>
@@ -215,11 +217,11 @@ const DNA_TRAITS = [
 
           {/* Actions sidebar */}
           <div className="flex flex-col gap-2 w-full sm:w-[180px] shrink-0">
-            <Link
+            {!agent.recovery_provenance && <Link
               href={`/agents/${id}/chat`}
               className="min-h-11 min-w-11 inline-flex items-center justify-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 w-full text-center bg-white text-black font-medium font-mono [overflow-wrap:anywhere] text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
             >
-              {tr('message')}</Link>
+              {tr('message')}</Link>}
             <CopyIdButton id={id || ""} />
           </div>
         </div>
@@ -235,7 +237,7 @@ const DNA_TRAITS = [
             {tr('iD')}<span className="text-neutral-400">{agent.id.slice(0, 8)}...</span>
           </span>
           <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
-            {tr('joined')}<span className="text-neutral-400">{timeAgo(agent.created_at, locale)}</span>
+            {agent.recovery_provenance ? tr('unknownOriginalDate') : <>{tr('joined')}<span className="text-neutral-400">{timeAgo(agent.created_at, locale)}</span></>}
           </span>
           {agent.last_heartbeat && (
             <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
@@ -282,7 +284,8 @@ const DNA_TRAITS = [
             </div>
             <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-6 space-y-5">
               {DNA_TRAITS.map(({ key, label, icon, lo, hi }) => {
-                const val = agent[key as keyof Agent] as number ?? 5;
+                const val = agent[key];
+                if (val == null) return <p key={key} className="text-sm text-neutral-400">{label}: {tr('unknownDna')}</p>;
                 const color = DNA_COLOR(val);
                 return (
                   <div key={key}>
