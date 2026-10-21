@@ -175,8 +175,10 @@ def test_invalid_bundle_never_starts_cli(executable, bundle, field):
         bundle["argv"] = ["delete"]
     else:
         bundle["snapshot_digest"] = "invalid"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as error:
         analyst.run_analysis(bundle)
+    assert isinstance(error.value, analyst._AnalysisError)
+    assert error.value.exit_code == 21
     assert not (directory / "started").exists()
 
 
@@ -205,8 +207,10 @@ def test_timeout_kills_and_reaps_own_process(executable, bundle, monkeypatch):
         lambda: start + 119 if (directory / "pid").exists() else start,
     )
     monkeypatch.setattr(analyst, "TERM_SECONDS", 0.02)
-    with pytest.raises(ValueError, match="analysis_unavailable"):
+    with pytest.raises(ValueError, match="analysis_unavailable") as error:
         analyst.run_analysis(bundle)
+    assert isinstance(error.value, analyst._AnalysisError)
+    assert error.value.exit_code == 29
     pid = int((directory / "pid").read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
@@ -290,3 +294,115 @@ def test_whole_reply_limit_rejects_without_clipping(connection, executable, even
     with pytest.raises(ValueError, match="response_frame_too_large"):
         analyst.serve_connection(connection)
     connection.sendall.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["error", "turn.failed", "item.completed"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ("model_not_found synthetic-private-detail", 24),
+        ("Authentication failed synthetic-private-detail", 25),
+        ("Usage limit exceeded synthetic-private-detail", 26),
+        ("Network connection failed synthetic-private-detail", 27),
+        ("Internal server error synthetic-private-detail", 28),
+        ("Request timed out synthetic-private-detail", 29),
+        ("unrecognized synthetic-private-detail", 24),
+    ],
+)
+def test_native_errors_exit_with_finite_status_without_disclosure(
+    executable, bundle, capfd, kind, failure
+):
+    message, code = failure
+    event = {"type": kind}
+    event["message" if kind == "error" else "error"] = (
+        message if kind == "error" else {"message": message}
+    )
+    prefix = "sys.stdin.read()\n"
+    if kind == "item.completed":
+        prefix += (
+            "print('"
+            + json.dumps({"type": "thread.started", "thread_id": "synthetic"})
+            + '\')\nprint(\'{"type":"turn.started"}\')\n'
+        )
+        event = {
+            "type": kind,
+            "item": {"id": "error_0", "type": "error", "message": message},
+        }
+    executable(prefix + "print(" + repr(json.dumps(event)) + ")")
+    with pytest.raises(ValueError, match="^analysis_unavailable$") as error:
+        analyst.run_analysis(bundle)
+    assert isinstance(error.value, analyst._AnalysisError)
+    assert error.value.exit_code == code
+    assert capfd.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    "failure", [("environment", 20), ("startup", 22), ("auth", 25), ("native", 23)]
+)
+def test_entrypoint_reports_fixed_status_without_raw_errors(
+    connection, executable, monkeypatch, capfd, failure
+):
+    failure, code = failure
+    body = "raise RuntimeError('synthetic-private-detail')"
+    if failure == "auth":
+        body = (
+            "print('"
+            + json.dumps(
+                {
+                    "type": "error",
+                    "message": "Authentication failed synthetic-private-detail",
+                }
+            )
+            + "')"
+        )
+    directory = executable("sys.stdin.read()\n" + body)
+    if failure == "environment":
+        monkeypatch.setenv("OPENAI_API_KEY", "synthetic-private-detail")
+    elif failure == "startup":
+        monkeypatch.setattr(analyst, "ARGV", (str(directory / "absent-cli"),))
+    connection.__enter__.return_value = connection
+    monkeypatch.setattr(analyst.socket, "socket", lambda **kwargs: connection)
+    monkeypatch.setattr(sys, "argv", ["operator_analyst"])
+    with pytest.raises(SystemExit) as error:
+        analyst.main()
+    assert error.value.code == code
+    connection.sendall.assert_not_called()
+    assert capfd.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("failure", [("peer", 1), ("arguments", 2)])
+def test_entrypoint_preserves_peer_and_argument_rejection(
+    connection, monkeypatch, failure
+):
+    kind, code = failure
+    connection.getsockopt.return_value = struct.pack("3i", 321, 999, 12345)
+    connection.__enter__.return_value = connection
+    monkeypatch.setattr(analyst.socket, "socket", lambda **kwargs: connection)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["operator_analyst"] + (["unexpected"] if kind == "arguments" else []),
+    )
+    with pytest.raises(SystemExit) as error:
+        analyst.main()
+    assert error.value.code == code
+    connection.recv.assert_not_called()
+    connection.sendall.assert_not_called()
+
+
+def test_malformed_error_event_remains_protocol_failure(executable, bundle):
+    executable(
+        "sys.stdin.read()\nprint('"
+        + json.dumps(
+            {
+                "type": "error",
+                "message": "Authentication failed",
+                "command": "do-not-run",
+            }
+        )
+        + "')"
+    )
+    with pytest.raises(ValueError) as error:
+        analyst.run_analysis(bundle)
+    assert isinstance(error.value, analyst._AnalysisError)
+    assert error.value.exit_code == 23
