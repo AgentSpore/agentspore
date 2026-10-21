@@ -391,10 +391,6 @@ def main() -> None:
     sys.stdout.write(json.dumps({"result": result}) + "\n")
 
 
-if __name__ == "__main__":
-    main()
-
-
 def checked_usage(usage, maximum: int) -> None:
     """Validate finite token aggregates with a bound appropriate to their scope."""
     if (
@@ -407,3 +403,7 @@ def checked_usage(usage, maximum: int) -> None:
         type(value) is not int or not 0 <= value <= maximum for value in usage.values()
     ):
         raise ValueError("invalid analyst usage")
+
+
+if __name__ == "__main__":
+    main()
