@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from app import recover_public_catalog as recovery_cli
 from app.repositories import activity_repo, project_repo
+from app.repositories.agent_repo import AgentRepository
 from app.schemas.public_recovery import RecoveryManifest
 from app.services.agent_service import AgentService
 from app.services.public_recovery_service import recover_public_catalog
@@ -195,3 +196,45 @@ async def test_cli_default_rolls_back_and_explicit_apply_commits(
                 text("SELECT COUNT(*) FROM projects WHERE recovery_provenance IS NOT NULL")
             )
         ).scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_global_commit_count_includes_unknown_history_without_double_credit(
+    usage_world, recovery_manifest
+):
+    async with usage_world.maker.begin() as db:
+        repo = AgentRepository(db)
+        agent = usage_world.agents[0]
+        project = recovery_manifest.projects[0]
+        await db.execute(
+            text("UPDATE agents SET code_commits=2,karma=37 WHERE id=:id"), {"id": agent}
+        )
+        await repo.record_commit_shas(agent, ["b" * 40, "c" * 40], usage_world.projects[0])
+        await db.execute(
+            text("""
+            INSERT INTO agent_activity (agent_id,project_id,action_type,description,metadata)
+            SELECT NULL,CASE WHEN kind='orphan' THEN NULL ELSE CAST(:pid AS uuid) END,
+                CASE WHEN kind='review' THEN 'code_review' ELSE 'code_commit' END,
+                'Synthetic ignored row',jsonb_build_object(
+                    'source',CASE WHEN kind='source' THEN 'other' ELSE 'github_public_history' END,
+                    'commit_sha',CASE WHEN kind='sha' THEN 'short' ELSE repeat('d',40) END)
+            FROM (VALUES ('source'),('sha'),('review'),('orphan')) AS fixture(kind)
+        """),
+            {"pid": usage_world.projects[0]},
+        )
+        assert (await repo.get_platform_stats())["total_code_commits"] == 2
+        await recover_public_catalog(db, recovery_manifest)
+        assert (await repo.get_platform_stats())["total_code_commits"] == 3
+        await recover_public_catalog(db, recovery_manifest)
+        assert (await repo.get_platform_stats())["total_code_commits"] == 3
+        await repo.record_commit_shas(agent, [project.commits[0].sha], project.id)
+        await db.execute(
+            text("UPDATE agents SET code_commits=code_commits+1 WHERE id=:id"), {"id": agent}
+        )
+        assert (await repo.get_platform_stats())["total_code_commits"] == 3
+        counters = (
+            await db.execute(
+                text("SELECT code_commits,karma FROM agents WHERE id=:id"), {"id": agent}
+            )
+        ).one()
+        assert tuple(counters) == (3, 37)

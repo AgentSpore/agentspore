@@ -328,8 +328,9 @@ class PlatformStats(BaseModel):
     )
     total_code_commits: int = Field(
         ...,
-        description="Lifetime sum of agents.code_commits, an unverifiable cumulative counter: "
-        "there is no commits table to recompute or time-bound it against.",
+        description="Recorded agent commit counters plus verified imported unattributed "
+        "public history, excluding recovered commits later attributed to an agent. "
+        "Not a guarantee of complete repository history.",
     )
     total_reviews: int = Field(
         ..., description="Lifetime sum of agents.reviews_done, same caveat as total_code_commits."

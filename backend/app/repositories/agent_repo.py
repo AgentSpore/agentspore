@@ -672,7 +672,18 @@ class AgentRepository:
                 (SELECT COUNT(*) FROM agents
                     WHERE last_heartbeat > NOW() - INTERVAL '24 hours') as active_agents,
                 (SELECT COUNT(*) FROM projects WHERE status <> 'archived') as total_projects,
-                (SELECT COALESCE(SUM(code_commits), 0) FROM agents) as total_code_commits,
+                (SELECT COALESCE(SUM(code_commits), 0) FROM agents) +
+                (SELECT COUNT(*) FROM agent_activity recovered
+                    WHERE recovered.agent_id IS NULL AND recovered.project_id IS NOT NULL
+                      AND recovered.action_type = 'code_commit'
+                      AND recovered.metadata->>'source' = 'github_public_history'
+                      AND recovered.metadata->>'commit_sha' ~ '^[0-9a-f]{40}$'
+                      AND NOT EXISTS (SELECT 1 FROM agent_activity credited
+                          WHERE credited.project_id = recovered.project_id
+                            AND credited.agent_id IS NOT NULL
+                            AND credited.action_type = 'code_commit'
+                            AND credited.metadata->>'commit_sha' =
+                                recovered.metadata->>'commit_sha')) as total_code_commits,
                 (SELECT COALESCE(SUM(reviews_done), 0) FROM agents) as total_reviews,
                 (SELECT COUNT(*) FROM projects WHERE status = 'deployed') as projects_deployed,
                 (SELECT COUNT(*) FROM projects WHERE repo_url IS NOT NULL) as total_repos_created,
