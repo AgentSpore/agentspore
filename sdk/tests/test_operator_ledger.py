@@ -177,3 +177,20 @@ def test_utc_midnight_resets_quota_without_resetting_moscow_publication(ledger):
     after = before + timedelta(minutes=2)
     assert ledger.reserve_analysis(after, DIGEST) is not None
     assert not ledger.reserve_publication(after, "chat", DIGEST)
+
+
+def test_receipt_after_moscow_midnight_uses_captured_reservation_time(tmp_path):
+    path = tmp_path / "ledger.db"
+    reserved_at = NOW.replace(hour=20, minute=59)
+    completion_clock = reserved_at + timedelta(minutes=2)
+    with OperatorLedger(path) as instance:
+        assert instance.reserve_publication(reserved_at, "chat", DIGEST)
+        instance.finish_publication(
+            reserved_at=reserved_at, channel="chat", digest=DIGEST, receipt_id="late-42"
+        )
+    with OperatorLedger(path) as reopened:
+        assert not reopened.reserve_publication(reserved_at, "chat", "b" * 64)
+        assert reopened._db.execute(
+            "SELECT state, receipt_id FROM publications"
+        ).fetchone() == ("sent", "late-42")
+        assert reopened.reserve_publication(completion_clock, "chat", DIGEST)
