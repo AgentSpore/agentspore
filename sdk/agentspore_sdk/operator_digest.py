@@ -28,6 +28,14 @@ RECOMMENDATIONS = {
     "review_project_activity": "Review project activity in the bounded feed.",
     "request_feedback": "Ask users which improvements would help them.",
 }
+REASONS = {
+    "source_unreachable": "source unreachable",
+    "pagination_incomplete": "pagination incomplete",
+    "source_shape_invalid": "source shape invalid",
+    "source_window_not_verified": "source time window not verified",
+    "instrumentation_not_verified": "instrumentation not verified",
+    "cohort_coverage_not_verified": "cohort coverage not verified",
+}
 LIMITATIONS = (
     "Usage and retention are unavailable until measurement coverage is verified. "
     "Raw zero is not proof of no users. Cookie IDs are not verified humans. "
@@ -57,15 +65,10 @@ def checked_observation(name: str, item) -> dict:
     """Reject impossible completeness and resource shapes at the IPC boundary."""
     if not isinstance(item, dict) or set(item) != {"value", "status", "reason"}:
         raise ValueError("invalid observation")
-    if item["status"] not in ("complete", "partial", "unavailable"):
-        raise ValueError("invalid coverage status")
+    checked_coverage(item)
     expected = dict if name == "counters" else list
     if item["value"] is not None and not isinstance(item["value"], expected):
         raise ValueError("invalid observation value")
-    if item["reason"] is not None and not isinstance(item["reason"], str):
-        raise ValueError("invalid coverage reason")
-    if item["status"] == "complete" and item["value"] is None:
-        raise ValueError("complete source needs data")
     limits = {
         "projects": 200,
         "github_repos": 100,
@@ -74,8 +77,6 @@ def checked_observation(name: str, item) -> dict:
     }
     if isinstance(item["value"], list) and len(item["value"]) > limits[name]:
         raise ValueError("source limit exceeded")
-    if (item["status"] == "unavailable") != (item["value"] is None):
-        raise ValueError("inconsistent coverage")
     checked_values(name, item)
     return item
 
@@ -122,8 +123,8 @@ def evidence_bundle(snapshot: dict) -> dict:
     if any(s.tzinfo is None for s in stamps) or stamps[0] >= stamps[1]:
         raise ValueError("invalid window")
     facts = snapshot_facts(snapshot, sources)
-    facts["feed.ci_outcomes"] = ci_outcomes(sources["github_ci"]["value"])
-    coverage = {name: item["status"] for name, item in sources.items()}
+    facts["feed.ci_outcomes"] = ci_outcomes(sources["github_ci"])
+    coverage = coverage_summary(sources)
     return {
         "snapshot_digest": hashlib.sha256(raw).hexdigest(),
         "window": {
@@ -181,7 +182,15 @@ def render_digest(snapshot: dict, analysis: dict) -> dict:
     heading = f"AgentSpore review: {window['since']} to {window['until']} (UTC)."
     coverage = (
         "Coverage: "
-        + "; ".join(f"{k}={v}" for k, v in bundle["coverage"].items())
+        + "; ".join(
+            f"{k}={v['status']}"
+            + (
+                " (" + ", ".join(REASONS[r] for r in v["reasons"]) + ")"
+                if v["reasons"]
+                else ""
+            )
+            for k, v in bundle["coverage"].items()
+        )
         + "."
     )
     links = (
@@ -208,7 +217,7 @@ def render_digest(snapshot: dict, analysis: dict) -> dict:
             + "."
         )
     return {
-        "chat": {"type": "text", "content": chat + suffix},
+        "chat": {"message_type": "text", "content": chat + suffix},
         "blog": {
             "title": "AgentSpore daily review: " + window["until"][:10],
             "content": blog + suffix,
@@ -258,24 +267,35 @@ def checked_recommendations(recommendations, facts: dict) -> None:
             raise ValueError("recommendation needs evidence")
 
 
-def ci_outcomes(entries) -> str:
-    """Summarize available bounded CI outcomes, never repository text or logs."""
-    runs = []
-    for entry in entries or []:
-        if not isinstance(entry, dict):
-            raise TypeError("invalid CI entry")
-        if entry.get("status") not in ("complete", "partial", "unavailable"):
-            raise ValueError("invalid CI coverage")
-        rows = entry.get("value")
-        if rows is None:
-            continue
-        if not isinstance(rows, list) or len(rows) > 20:
-            raise ValueError("invalid CI rows")
-        runs.extend(checked_outcome(row) for row in rows)
+def ci_outcomes(source: dict) -> str:
+    """Distinguish successful empty CI feeds from entirely unavailable outcomes."""
+    entries = source["value"]
+    if entries is None:
+        return "Observed CI outcomes: unavailable."
+    feeds = [checked_ci_feed(entry) for entry in entries]
+    if source["status"] == "complete" and any(
+        entry["status"] != "complete" for entry in entries
+    ):
+        raise ValueError("inconsistent CI parent coverage")
+    available = [rows for rows in feeds if rows is not None]
+    if not available and (source["status"] != "complete" or feeds):
+        return "Observed CI outcomes: unavailable."
+    runs = [checked_outcome(row) for rows in available for row in rows]
     failures = sum(
         r.get("conclusion") in ("failure", "timed_out", "startup_failure") for r in runs
     )
     return f"Observed CI runs from available feed entries: {len(runs)}; failures: {failures}."
+
+
+def checked_ci_feed(entry) -> list | None:
+    """Validate nested observations before interpreting missing or empty runs."""
+    if not isinstance(entry, dict):
+        raise TypeError("invalid CI entry")
+    checked_coverage(entry)
+    rows = entry["value"]
+    if rows is not None and (not isinstance(rows, list) or len(rows) > 20):
+        raise ValueError("invalid CI rows")
+    return rows
 
 
 def checked_outcome(row) -> dict:
@@ -299,3 +319,33 @@ def checked_counters(value: dict, complete: bool) -> None:
         raise ValueError("invalid counter")
     if complete and set(value) != set(COUNTERS):
         raise ValueError("missing required counters")
+
+
+def checked_coverage(item: dict) -> None:
+    """Accept only congruent observation states and controlled finite reasons."""
+    if not {"status", "reason", "value"}.issubset(item):
+        raise ValueError("missing observation fields")
+    if item["status"] not in ("complete", "partial", "unavailable"):
+        raise ValueError("invalid coverage status")
+    reason = item["reason"]
+    if reason is not None and (not isinstance(reason, str) or reason not in REASONS):
+        raise ValueError("invalid coverage reason")
+    if (item["status"] == "complete") != (reason is None):
+        raise ValueError("inconsistent coverage reason")
+    if (item["status"] == "unavailable") != (item["value"] is None):
+        raise ValueError("inconsistent coverage value")
+
+
+def coverage_summary(sources: dict) -> dict:
+    """Retain source reasons without copying arbitrary source prose."""
+    result = {}
+    for name, item in sources.items():
+        reasons = {item["reason"]} - {None}
+        if name == "github_ci":
+            reasons.update(
+                entry["reason"]
+                for entry in item["value"] or []
+                if entry["reason"] is not None
+            )
+        result[name] = {"status": item["status"], "reasons": sorted(reasons)}
+    return result
