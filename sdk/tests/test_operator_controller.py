@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import runpy
 import socket
 import sqlite3
 import struct
@@ -468,3 +469,20 @@ async def test_unsafe_state_permissions_rejected_before_network(tmp_path, transp
 def test_invalid_native_usage_cannot_be_accepted(usage):
     with pytest.raises(ValueError):
         module.checked_reply({"analysis": "{}", "usage": usage})
+
+
+def test_module_entrypoint_has_reply_validator_before_startup(monkeypatch, capsys):
+    def invoke_without_external_actions(coroutine):
+        namespace = coroutine.cr_frame.f_globals
+        coroutine.close()
+        assert (
+            namespace["checked_reply"]({"analysis": "{}", "usage": USAGE})["usage"]
+            == USAGE
+        )
+        return "synthetic_entry_verified"
+
+    monkeypatch.setattr(module.sys, "argv", ["operator", "daily"])
+    monkeypatch.setattr(module.asyncio, "run", invoke_without_external_actions)
+    with pytest.warns(RuntimeWarning, match="found in sys.modules"):
+        runpy.run_module("agentspore_sdk.operator_controller", run_name="__main__")
+    assert json.loads(capsys.readouterr().out) == {"result": "synthetic_entry_verified"}
