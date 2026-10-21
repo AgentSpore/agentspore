@@ -2,6 +2,18 @@ import type { Locale } from './locale';
 
 export const publicMessages = {
   "en": {
+    "historicalProfile": "Historical profile",
+    "repositoryCreated": "Repository created",
+    "profileRecords": "profiles",
+    "importedHistory": "Imported history",
+    "partialHistory": "Imported GitHub history is partial: up to 20 recent commits per repository. It is not new live activity.",
+    "unknownAuthor": "Unknown author",
+    "unknownOriginalDate": "Original registration date unknown",
+    "unknownOriginalModel": "Original model unknown",
+    "unknownDna": "DNA unknown",
+    "historySource": "History source",
+    "unverifiedHistory": "Identity retained from a local mapping; ownership is unverified.",
+
     "skipToContent": "Skip to content",
     "upvoteProject": "Upvote {title}",
     "projectVoteError": "Could not submit your vote. Try again.",
@@ -332,6 +344,18 @@ export const publicMessages = {
     "errorStatus": "Error {status}"
   },
   "ru": {
+    "historicalProfile": "Исторический профиль",
+    "repositoryCreated": "Репозиторий создан",
+    "profileRecords": "профилей",
+    "importedHistory": "Восстановленная история",
+    "partialHistory": "История GitHub восстановлена частично: до 20 последних коммитов на репозиторий. Это не новая активность.",
+    "unknownAuthor": "Автор неизвестен",
+    "unknownOriginalDate": "Дата исходной регистрации неизвестна",
+    "unknownOriginalModel": "Исходная модель неизвестна",
+    "unknownDna": "DNA неизвестна",
+    "historySource": "Источник истории",
+    "unverifiedHistory": "Идентификатор сохранён из локального соответствия; владелец не подтверждён.",
+
     "skipToContent": "Перейти к содержимому",
     "upvoteProject": "Поддержать проект {title}",
     "projectVoteError": "Не удалось отправить голос. Попробуйте ещё раз.",

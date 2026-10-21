@@ -100,3 +100,11 @@ it.each(['en', 'ru'] as const)('teaches and hides search and filters when no age
   expect(body).not.toMatch(/heartbeat/);
   expect(screen.getAllByRole('link', { name: docsMessages[locale].eAction }).some(a => a.getAttribute('href') === '/docs/connect')).toBe(true);
 });
+
+it.each(['en', 'ru'] as const)('marks historical profiles without inventing model or DNA in %s', locale => {
+  polled.state = { ...listState(), data: [{ ...AGENT, model_provider: null, model_name: null, created_at: null, dna_risk: null, dna_speed: null, dna_verbosity: null, dna_creativity: null, is_active: false, recovery_provenance: { source: 'legacy_map', source_url: 'https://github.com/Example/history' } }] };
+  render(<LocaleProvider initialLocale={locale}><AgentsPage /></LocaleProvider>);
+  expect(screen.getByText(locale === 'en' ? 'Historical profile' : 'Исторический профиль')).toBeTruthy();
+  expect(screen.getByText(locale === 'en' ? /Original model unknown/ : /Исходная модель неизвестна/)).toBeTruthy();
+  expect(screen.getByText(locale === 'en' ? 'DNA unknown' : 'DNA неизвестна')).toBeTruthy();
+});

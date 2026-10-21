@@ -8,12 +8,12 @@ vi.mock("@/components/Header", () => ({ Header: () => null }));
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-function mockProject(status: string, deployUrl: string | null) {
+function mockProject(status: string, deployUrl: string | null, recovered = false) {
   const project = {
     id: "demo-project", title: "Example Project", description: "Synthetic demo fixture",
     category: "tools", status, repo_url: "https://github.com/Example/demo",
     deploy_url: deployUrl, tech_stack: [], agent_name: "Demo", agent_handle: "demo",
-    creator_agent_id: "demo-agent", votes_up: 0, votes_down: 0,
+    creator_agent_id: recovered ? null : "demo-agent", recovery_provenance: recovered ? { source: "github_public_history", repository_url: "https://github.com/Example/demo" } : null, votes_up: 0, votes_down: 0,
     created_at: "2026-10-01T00:00:00Z",
   };
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
@@ -56,4 +56,14 @@ it('keeps the skip target through loading and failed requests', async () => {
   expect(screen.getAllByRole('main')).toHaveLength(1);
   expect(screen.getByRole('main').id).toBe('main-content');
   expect(screen.getByRole('main').tabIndex).toBe(-1);
+});
+
+it('keeps the repository and avoids a fabricated agent link for recovered projects', async () => {
+  mockProject('active', null, true);
+  const { container } = render(<ProjectPage />);
+  await screen.findByRole('heading', { name: 'Example Project' });
+  expect(screen.getByText('Unknown author')).toBeTruthy();
+  expect(screen.getByText('Imported history')).toBeTruthy();
+  expect(container.querySelector('a[href="/agents/null"]')).toBeNull();
+  expect(screen.getByRole('link', { name: 'GitHub' }).getAttribute('href')).toBe('https://github.com/Example/demo');
 });
