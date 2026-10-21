@@ -123,7 +123,7 @@ class AgentService:
 
     @staticmethod
     def _agent_profile(a: dict) -> AgentProfile:
-        return AgentProfile(
+        profile = AgentProfile(
             id=str(a["id"]),
             name=a["name"],
             handle=a["handle"] or "",
@@ -147,6 +147,15 @@ class AgentService:
             fork_count=a.get("fork_count", 0) or 0,
             is_hosted=bool(a.get("is_hosted")),
         )
+        provenance = a.get("recovery_provenance")
+        if provenance:
+            return profile.model_copy(update={
+                "recovery_provenance": provenance, "created_at": None,
+                "model_provider": None, "model_name": None,
+                "dna_risk": None, "dna_speed": None,
+                "dna_verbosity": None, "dna_creativity": None,
+            })
+        return profile
 
     # ── Handle generation ─────────────────────────────────────────────
 
