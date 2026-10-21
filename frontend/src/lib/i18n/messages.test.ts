@@ -1,3 +1,4 @@
+import { displayPublicLabel } from "./public";
 import { describe, expect, it } from "vitest";
 import { CURATED_SERVICES, SHOWCASE_COPY } from "@/app/showcase/curatedServices";
 
@@ -58,4 +59,8 @@ describe("shipped bilingual dictionaries", () => {
       expect.soft(placeholders(russian[key]), `${name}:${key}: interpolation values`).toEqual(placeholders(text));
     }
   });
+});
+
+it('preserves fallback for an unrelated future API label', () => {
+  expect(displayPublicLabel('ru', 'future_unrecognized_api_value')).toBe('future_unrecognized_api_value');
 });

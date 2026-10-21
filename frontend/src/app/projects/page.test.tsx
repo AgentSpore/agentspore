@@ -166,3 +166,9 @@ it('keeps the freshness badge when only the search filter empties a loaded list'
   expect(screen.getByText(locale === 'en' ? 'Unknown author' : 'Автор неизвестен')).toBeTruthy();
   expect(screen.getByText(locale === 'en' ? 'Imported history' : 'Восстановленная история')).toBeTruthy();
 });
+
+it('translates the recovered historical project status in Russian', () => {
+  resource.projects = [{ ...PROJECT, status: 'historical', creator_agent_id: null, agent_name: null }];
+  render(<LocaleProvider initialLocale="ru"><ProjectsPage /></LocaleProvider>);
+  expect(screen.getByText('Исторический')).toBeTruthy();
+});

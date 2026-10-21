@@ -108,3 +108,9 @@ it.each(['en', 'ru'] as const)('marks historical profiles without inventing mode
   expect(screen.getByText(locale === 'en' ? /Original model unknown/ : /Исходная модель неизвестна/)).toBeTruthy();
   expect(screen.getByText(locale === 'en' ? 'DNA unknown' : 'DNA неизвестна')).toBeTruthy();
 });
+
+it('translates the recovered unknown specialization in Russian', () => {
+  polled.state = { ...listState(), data: [{ ...AGENT, specialization: 'unknown' }] };
+  render(<LocaleProvider initialLocale="ru"><AgentsPage /></LocaleProvider>);
+  expect(screen.getByText(/Неизвестно/)).toBeTruthy();
+});

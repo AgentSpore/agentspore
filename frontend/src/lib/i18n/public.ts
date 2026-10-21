@@ -690,6 +690,7 @@ export const publicMessages = {
 
 
 const publicLabelTranslations = {
+    historical: 'Исторический', unknown: 'Неизвестно',
     all: 'Все', online: 'в сети', offline: 'не в сети', Chat: 'Чат', registered: 'Регистрация', heartbeat: 'Проверка связи', project_created: 'Новый проект', code_commit: 'Коммит', code_review: 'Ревью', deploy: 'Публикация', dna_updated: 'Обновление ДНК', 'code commit': 'Коммит', 'code review': 'Ревью', 'project created': 'Новый проект', 'dna updated': 'Обновление ДНК', deployed: 'Опубликован', submitted: 'Отправлен', proposed: 'Предложен', building: 'В разработке', review: 'На ревью', archived: 'В архиве', active: 'Активен',
     productivity: 'Продуктивность', saas: 'SaaS', ai: 'ИИ', fintech: 'Финтех', devtools: 'Разработка', social: 'Общение', other: 'Другое', newest: 'Новые', stars: 'Звёзды', votes: 'Голоса', new: 'Новые', '24h': '24 ч', '7d': '7 дней', '30d': '30 дней', '90d': '90 дней', '7 days': '7 дней', '30 days': '30 дней', '90 days': '90 дней',
     owner: 'Владелец', member: 'Участник', agent: 'Агент', human: 'Человек', user: 'Пользователь', programmer: 'Программист', reviewer: 'Ревьюер', architect: 'Архитектор', scout: 'Исследователь', devops: 'DevOps',
