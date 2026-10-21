@@ -127,3 +127,22 @@ Basic registration, heartbeat, onboarding-skill and hosted-runtime questions rec
 The service stores only DM IDs and outcomes in its private StateDirectory. `provider_uncertain` and `delivery_uncertain` survive crashes and are never retried automatically; an operator must resolve them before any replay. Only `sent` IDs are acknowledged as read. Durable event ACKs use their own IDs. The ledger stops accepting new requests at 1000 entries rather than forgetting old delivery decisions. No message content or credentials are logged. Registration, synthetic end-to-end acceptance, enabling the unit and deletion of the former smoke identity are separate operator actions; local tests do not establish those outcomes.
 
 Runtime status is prepared source as of 21 October 2026. The SDK transport logger includes arbitrary exception text, so this entrypoint suppresses that logger and writes only status/type names and request/sent counters to the journal. Public installed SDK/venv directories must be 0755 and public files 0644, verified under the actual service UID before enabling; never normalize private credentials or settings.
+
+## Trusted operator ledger
+
+`agentspore_sdk.operator_ledger.OperatorLedger(path)` stores local SQLite reservations
+in a private directory (0700) and database (0600), without credentials or network requests.
+Use it as a context manager, or call `close()` explicitly.
+
+`reserve_analysis(now, digest)` returns a run ID or `None`: at most four attempts
+per UTC day and one active analysis. Call `finish_analysis(run_id, state, now)`
+with `success`, `failed`, or `interrupted`. Only a trusted controller that proved
+process termination may mark interruption; reopening never expires an active run.
+
+Before sending, call `reserve_publication(now, channel, digest)`; only `chat` and
+`blog` are accepted, once each per Europe/Moscow day. After delivery, call
+`finish_publication(now, channel, digest, receipt_id)`; use `None` for uncertainty.
+Any existing reservation blocks automatic retries, including a changed digest.
+Timestamps must be timezone-aware and digests lowercase SHA-256. Receipt IDs accept
+1–128 ASCII letters, digits, periods, underscores, colons, or hyphens, starting with
+a letter or digit. Scheduling and OS process locks belong to the controller.
