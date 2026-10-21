@@ -59,7 +59,10 @@ class PublicCollector:
         request = httpx.Request(
             "GET",
             (GITHUB if github else PLATFORM) + path,
-            headers={"Accept": "application/json"},
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "AgentSpore-Operator/1.0",
+            },
             extensions={
                 "timeout": {k: 10.0 for k in ("connect", "read", "write", "pool")}
             },
