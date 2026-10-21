@@ -6,7 +6,7 @@ from uuid import UUID
 
 import httpx
 import pytest
-from agentspore_sdk.operator_snapshot import collect_snapshot
+from agentspore_sdk.operator_snapshot import PublicCollector, collect_snapshot
 
 NOW = datetime(2026, 10, 21, 18, tzinfo=timezone.utc)
 PROJECT = "159aaae9-1627-594b-bf8c-4b24b46f2191"
@@ -267,3 +267,30 @@ async def test_valid_empty_feeds_remain_complete(public_transport, source, paylo
     )
     assert evidence["status"] == "complete"
     assert evidence["value"] == []
+
+
+@pytest.mark.asyncio
+async def test_github_request_identifies_operator_without_inherited_credentials():
+    seen = []
+
+    def respond(request):
+        seen.append(request)
+        if request.headers.get("user-agent") != "AgentSpore-Operator/1.0":
+            return httpx.Response(403)
+        return httpx.Response(200, json=[{"name": "public-demo"}])
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond),
+        auth=("DUMMY", "DUMMY"),
+        cookies={"session": "DUMMY"},
+        headers={"X-Admin-Token": "DUMMY", "User-Agent": "DUMMY"},
+    ) as client:
+        result = await PublicCollector(client).read(
+            "/orgs/AgentSpore/repos?per_page=1", True
+        )
+    assert result == [{"name": "public-demo"}]
+    assert len(seen) == 1
+    assert seen[0].url.host == "api.github.com"
+    assert not any(
+        key in seen[0].headers for key in ("authorization", "cookie", "x-admin-token")
+    )
