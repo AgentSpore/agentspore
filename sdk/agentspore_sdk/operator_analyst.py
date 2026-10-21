@@ -70,6 +70,38 @@ Never supply prose, URLs, commands or invented facts in the response.
 """
 
 
+class _AnalysisError(ValueError):
+    """Expose only a finite process status, never native diagnostic text."""
+
+    def __init__(self, exit_code: int) -> None:
+        super().__init__("analysis_unavailable")
+        self.exit_code = exit_code
+
+
+def _native_failure(event: dict[str, Any]) -> _AnalysisError:
+    detail = event if event["type"] == "error" else event.get("error")
+    allowed = {"type", "message"} if event["type"] == "error" else {"message"}
+    if (
+        not isinstance(detail, dict)
+        or set(detail) != allowed
+        or not isinstance(detail.get("message"), str)
+        or (event["type"] == "turn.failed" and set(event) != {"type", "error"})
+    ):
+        return _AnalysisError(23)
+    message = detail["message"].casefold()
+    categories = (
+        (25, ("authentication", "unauthorized", "invalid api key", "401")),
+        (26, ("usage limit", "quota", "rate limit", "429")),
+        (29, ("timed out", "timeout")),
+        (27, ("network", "connection", "dns")),
+        (28, ("internal server error", "service unavailable", "bad gateway")),
+    )
+    for code, markers in categories:
+        if any(marker in message for marker in markers):
+            return _AnalysisError(code)
+    return _AnalysisError(24)
+
+
 def _object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result = dict(pairs)
     if len(result) != len(pairs):
@@ -152,7 +184,13 @@ class _Events:
             self.buffer = bytearray(remaining)
             if len(line) > 65536:
                 raise ValueError("event_too_large")
-            self.event(json.loads(line, object_pairs_hook=_object))
+            event = json.loads(line, object_pairs_hook=_object)
+            if isinstance(event, dict) and event.get("type") in (
+                "error",
+                "turn.failed",
+            ):
+                raise _native_failure(event) from None
+            self.event(event)
         if len(self.buffer) > 65536:
             raise ValueError("event_too_large")
 
@@ -184,6 +222,15 @@ class _Events:
             raise ValueError("unexpected_action_or_event")
 
     def item(self, item: dict[str, Any], completed: bool) -> None:
+        if (
+            isinstance(item, dict)
+            and set(item) == {"id", "type", "message"}
+            and isinstance(item["id"], str)
+            and item["type"] == "error"
+        ):
+            raise _native_failure(
+                {"type": "error", "message": item["message"]}
+            ) from None
         if not isinstance(item, dict) or set(item) != {"id", "type", "text"}:
             raise ValueError("unexpected_action_or_item")
         if (
@@ -276,8 +323,14 @@ def run_analysis(bundle: dict[str, Any]) -> dict[str, Any]:
     The accepted native quarantine permits scratch writes, not unrestricted tools.
     Semantic evidence selection is independently checked by the controller.
     """
-    _check_environment()
-    prompt = _prompt(bundle)
+    try:
+        _check_environment()
+    except ValueError:
+        raise _AnalysisError(20) from None
+    try:
+        prompt = _prompt(bundle)
+    except (ValueError, TypeError, RecursionError):
+        raise _AnalysisError(21) from None
     deadline = time.monotonic() + WORK_SECONDS
     process = None
     try:
@@ -295,11 +348,18 @@ def run_analysis(bundle: dict[str, Any]) -> dict[str, Any]:
         if process.wait(timeout=max(0, deadline - time.monotonic())) != 0:
             raise ValueError("analysis_process_failed")
         return result
-    except (OSError, ValueError, TypeError, RecursionError, subprocess.TimeoutExpired):
-        raise ValueError("analysis_unavailable") from None
+    except _AnalysisError:
+        raise
+    except (TimeoutError, subprocess.TimeoutExpired):
+        raise _AnalysisError(29) from None
+    except (OSError, ValueError, TypeError, RecursionError):
+        raise _AnalysisError(22 if process is None else 23) from None
     finally:
         if process is not None:
-            _terminate(process)
+            try:
+                _terminate(process)
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                raise _AnalysisError(23) from None
 
 
 def _receive(connection: Any, count: int, deadline: float) -> bytes:
@@ -347,6 +407,8 @@ def main() -> None:
     try:
         with socket.socket(fileno=0) as connection:
             serve_connection(connection)
+    except _AnalysisError as error:
+        raise SystemExit(error.exit_code) from None
     except (OSError, ValueError, KeyError, struct.error):
         raise SystemExit(1) from None
 
