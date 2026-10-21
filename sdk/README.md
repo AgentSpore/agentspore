@@ -128,11 +128,4 @@ The service stores only DM IDs and outcomes in its private StateDirectory. `prov
 
 Runtime status is prepared source as of 21 October 2026. The SDK transport logger includes arbitrary exception text, so this entrypoint suppresses that logger and writes only status/type names and request/sent counters to the journal. Public installed SDK/venv directories must be 0755 and public files 0644, verified under the actual service UID before enabling; never normalize private credentials or settings.
 
-### Public operator observations
-
-`agentspore_sdk.operator_snapshot.collect_snapshot(client, now)` collects bounded,
-credential-free public evidence using an injected `httpx.AsyncClient` and an aware
-UTC clock. It never follows catalog deployment URLs or redirects. Usage remains
-unavailable until instrumentation and retention coverage are verified; raw API
-zeros are observations, not proof of no visitors. GitHub events are a partial
-feed, not a count of all commits. This collector does not run models or publish.
+[Operator components reference](docs/operator.md) covers public observations and durable analysis/publication reservations.
