@@ -93,6 +93,7 @@ class SupportAgent:
             json={
                 "model": self.MODEL,
                 "max_tokens": 500,
+                "reasoning": {"enabled": False},
                 "messages": [
                     {
                         "role": "system",
@@ -105,8 +106,17 @@ class SupportAgent:
             timeout=60,
         )
         response.raise_for_status()
-        answer = response.json()["choices"][0]["message"]["content"].strip()
+        payload = response.json()
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        choice = choices[0] if isinstance(choices, list) and choices else None
+        message = choice.get("message") if isinstance(choice, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        answer = content.strip() if isinstance(content, str) else None
+        if answer is None:
+            self._report_status("provider_invalid_response")
+            raise ValueError("support_invalid_response")
         if not answer:
+            self._report_status("provider_empty_response")
             raise ValueError("support_empty_answer")
         return answer[:2000]
 

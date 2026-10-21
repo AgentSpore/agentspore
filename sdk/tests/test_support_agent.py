@@ -41,9 +41,8 @@ async def support(tmp_path):
         if path.endswith("/completions"):
             if scenario["failure"] == "provider":
                 raise httpx.ReadTimeout("synthetic", request=request)
-            return httpx.Response(
-                200, json={"choices": [{"message": {"content": "Use POST /api/v1/agents/register with owner_email."}}]}
-            )
+            body = {"choices": [{"message": {"content": "Use POST /api/v1/agents/register with owner_email."}}]}
+            return httpx.Response(200, content=json.dumps(scenario.get("provider_body", body)))
         if scenario["failure"] == "delivery":
             raise httpx.ReadTimeout("synthetic", request=request)
         return httpx.Response(200, json={"status": "ok"})
@@ -71,6 +70,7 @@ async def test_direct_reply_deduplicates_concurrent_delivery_and_restart(support
     replies = [r for r in calls if r.url.path.endswith("/dm/reply")]
     models = [r for r in calls if r.url.path.endswith("/completions")]
     assert len(replies) == len(models) == 1
+    assert json.loads(models[0].content)["reasoning"] == {"enabled": False}
     assert json.loads(replies[0].content)["reply_to_dm_id"] == DM
     assert "owner_email" in json.loads(replies[0].content)["content"]
     assert replies[0].headers["X-API-Key"] == "af_synthetic"
@@ -120,6 +120,50 @@ async def test_secret_question_never_reaches_network_or_state(support):
     secret = "af_" + "synthetic" * 4
     await app.reply({"id": DM, "from": "human", "content": secret})
     assert not calls and secret not in app.path.read_text()
+
+
+@pytest.mark.parametrize(
+    "body,status",
+    [
+        (None, "provider_invalid_response"),
+        ([], "provider_invalid_response"),
+        ({"choices": []}, "provider_invalid_response"),
+        ({"choices": None}, "provider_invalid_response"),
+        ({"choices": [None]}, "provider_invalid_response"),
+        ({"choices": [{"message": None}]}, "provider_invalid_response"),
+        ({"choices": [{"message": {"content": None}}]}, "provider_invalid_response"),
+        (
+            {"choices": [{"message": {"content": ["synthetic-provider-body"]}}]},
+            "provider_invalid_response",
+        ),
+        ({"choices": [{"message": {"content": ""}}]}, "provider_empty_response"),
+        ({"choices": [{"message": {"content": " \n "}}]}, "provider_empty_response"),
+    ],
+)
+async def test_dispatch_reports_unusable_provider_response_without_retry(
+    support, monkeypatch, body, status
+):
+    app, calls, scenario = support
+    scenario["provider_body"] = body
+    events = []
+    monkeypatch.setattr(app, "_report_status", events.append)
+    monkeypatch.setattr("agentspore_sdk.support_agent.transport_logger.disabled", True)
+    app.client.on("dm")(app.reply)
+    event = {
+        "type": "dm",
+        "id": DM,
+        "from_id": "synthetic-agent",
+        "content": "/support How do I register?",
+    }
+    await app.client._dispatch(event)
+    count = len(calls)
+    restored = SupportAgent(app.client, app.http, app.path, app.provider_key)
+    await restored.reply(event)
+    assert len(calls) == count
+    assert sum(request.url.path.endswith("/completions") for request in calls) == 1
+    assert not any(request.url.path.endswith("/dm/reply") for request in calls)
+    assert events == ["provider_uncertain", status, "ValueError"]
+    assert restored.requests[DM] == "provider_uncertain"
 
 
 async def test_supervision_cancels_children_and_closes_transports(support, monkeypatch):
