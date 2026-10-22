@@ -7,6 +7,8 @@ its www/API redirects, wildcard services, and the three restored applications.
 Both .com and .ru hosts use the same `service_access_log` snippet.
 Restored applications use fixed service names; platform entries use fixed
 configured host names. Wildcard routes use their configured wildcard label.
+Plain HTTP redirects use the fixed `http_redirect` service label and the same
+logger; explicit routes avoid bypassing field appenders during automatic HTTPS.
 
 The six fields are `ts` (Unix seconds), `service`, `method`, `status`,
 `duration` (seconds), and `size` (response bytes). Methods outside the
