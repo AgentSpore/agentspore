@@ -100,7 +100,7 @@ def test_native_full_config_host_coverage() -> None:
             assert writer["roll_keep_days"] == 7
 
 
-def wait_ready(port: int) -> None:
+def wait_ready(port: int, expected_status: int = 200) -> None:
     """Require a completed HTTP exchange across the real Docker port forward."""
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
@@ -108,18 +108,32 @@ def wait_ready(port: int) -> None:
         try:
             connection.request("HEAD", "/ready", headers={"Host": HOSTS[0]})
             response = connection.getresponse()
-            assert response.status == 200
+            assert response.status == expected_status
             response.read()
             return
         except (OSError, http.client.HTTPException):
             time.sleep(0.1)
         finally:
             connection.close()
-    pytest.fail("native Caddy HTTP readiness deadline exceeded")
+    raise TimeoutError
+
+
+def redirect_configuration() -> str:
+    """Keep automatic HTTPS enabled, without acquiring any certificates."""
+    config = "{\n admin off\n auto_https disable_certs\n http_port 8080\n https_port 8443\n}\n"
+    config += logging_snippet()
+    for host in HOSTS:
+        config += f"\nhttps://{host}:8443 {{\n import service_access_log {host}\n respond 200\n}}\n"
+    source = (DEPLOY / "Caddyfile").read_text()
+    if "# Begin explicit HTTP redirects" in source:
+        config += source.split("# Begin explicit HTTP redirects", 1)[1].split(
+            "# End explicit HTTP redirects", 1
+        )[0]
+    return config
 
 
 @pytest.fixture
-def native_logger(tmp_path: Path):
+def native_logger(tmp_path: Path, request: pytest.FixtureRequest):
     """Own one bounded native Caddy process and remove it after the fixture."""
     name = "service-log-test-" + uuid.uuid4().hex
     config = "{\n admin off\n auto_https off\n}\n" + logging_snippet()
@@ -128,6 +142,9 @@ def native_logger(tmp_path: Path):
         config += " header X-Synthetic SYNTHETIC_PRIVATE_MARKER\n"
         config += " handle /failure/* {\n reverse_proxy 127.0.0.1:1\n }\n"
         config += " handle /reject/* {\n respond 403\n }\n respond 200\n}\n"
+    redirect = getattr(request, "param", "normal") == "redirect"
+    if redirect:
+        config = redirect_configuration()
     (tmp_path / "Caddyfile").write_text(config)
     docker(
         "run",
@@ -156,7 +173,7 @@ def native_logger(tmp_path: Path):
     )
     try:
         port = int(docker("port", name, "8080/tcp").strip().rsplit(":", 1)[1])
-        wait_ready(port)
+        wait_ready(port, 308 if redirect else 200)
         yield port, tmp_path / "services.jsonl"
     finally:
         docker("rm", "-f", name)
@@ -212,3 +229,29 @@ def test_persistent_mount_and_runbook() -> None:
     runbook = (DEPLOY.parent / "docs/ACCESS_LOGS.md").read_text()
     for contract in ["2.11.2", "0600", "25 MiB", "168h", "active file", "archive"]:
         assert contract in runbook
+
+
+@pytest.mark.parametrize("native_logger", ["redirect"], indirect=True)
+def test_native_automatic_https_redirect_privacy(native_logger) -> None:
+    """Assert explicit HTTP logging closes the automatic HTTPS appender gap."""
+    port, output = native_logger
+    for host in HOSTS:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        connection.request(
+            "POST",
+            f"/{MARKER}?token={MARKER}",
+            MARKER,
+            {"Host": host, "Authorization": MARKER},
+        )
+        response = connection.getresponse()
+        assert response.status == 308
+        response.read()
+        connection.close()
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert len(rows) == len(HOSTS) + 1
+    for row in rows:
+        assert set(row) == FIELDS
+        assert row["service"] == "http_redirect"
+        assert row["status"] == 308
+    assert [row["method"] for row in rows] == ["HEAD"] + ["POST"] * len(HOSTS)
+    assert MARKER not in output.read_text()

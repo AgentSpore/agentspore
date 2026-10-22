@@ -40,6 +40,13 @@
 }
 # End service access logging
 
+# Begin explicit HTTP redirects
+http://agentspore.com, http://agentspore.ru, http://www.agentspore.com, http://www.agentspore.ru, http://api.agentspore.com, http://api.agentspore.ru, http://podmemory.agentspore.com, http://podmemory.agentspore.ru, http://otkrytka.agentspore.com, http://otkrytka.agentspore.ru, http://pereklichka.agentspore.com, http://pereklichka.agentspore.ru, http://*.agentspore.com, http://*.agentspore.ru {
+	import service_access_log http_redirect
+	redir https://{host}{uri} 308
+}
+# End explicit HTTP redirects
+
 # AgentSpore is served from two mirror domains (same site, same database).
 # Everything shared lives in snippets; each domain only imports them. Keep the
 # domain list in step with DOMAINS in docker-compose.prod.yml.
