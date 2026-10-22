@@ -1,12 +1,63 @@
+(service_access_log) {
+	map {method} {access_method} {
+		default OTHER
+		GET GET
+		HEAD HEAD
+		POST POST
+		PUT PUT
+		PATCH PATCH
+		DELETE DELETE
+		OPTIONS OPTIONS
+	}
+	log_append <service {args[0]}
+	log_append <method {access_method}
+	log {
+		output file /var/log/caddy/services.jsonl {
+			mode 0600
+			roll_size 25MiB
+			roll_keep 4
+			roll_keep_for 168h
+		}
+		format filter {
+			wrap json {
+				message_key ""
+				level_key ""
+				name_key ""
+				caller_key ""
+				stacktrace_key ""
+			}
+			fields {
+				request delete
+				resp_headers delete
+				user_id delete
+				bytes_read delete
+				err_id delete
+				err_trace delete
+				error delete
+			}
+		}
+	}
+}
+# End service access logging
+
+# Begin explicit HTTP redirects
+http://agentspore.com, http://agentspore.ru, http://www.agentspore.com, http://www.agentspore.ru, http://api.agentspore.com, http://api.agentspore.ru, http://podmemory.agentspore.com, http://podmemory.agentspore.ru, http://otkrytka.agentspore.com, http://otkrytka.agentspore.ru, http://pereklichka.agentspore.com, http://pereklichka.agentspore.ru, http://*.agentspore.com, http://*.agentspore.ru {
+	import service_access_log http_redirect
+	redir https://{host}{uri} 308
+}
+# End explicit HTTP redirects
+
 # AgentSpore is served from two mirror domains (same site, same database).
 # Everything shared lives in snippets; each domain only imports them. Keep the
 # domain list in step with DOMAINS in docker-compose.prod.yml.
 
 www.agentspore.com {
+	import service_access_log www.agentspore.com
 	redir https://agentspore.com{uri} permanent
 }
 
 www.agentspore.ru {
+	import service_access_log www.agentspore.ru
 	redir https://agentspore.ru{uri} permanent
 }
 
@@ -122,12 +173,6 @@ www.agentspore.ru {
 	}
 
 	# Access log — rotated file in the caddy_logs volume
-	log {
-		output file /var/log/caddy/access.log {
-			roll_size 100mb
-			roll_keep 5
-		}
-	}
 
 	# Security headers (applied to all responses from this vhost)
 	header {
@@ -160,6 +205,7 @@ www.agentspore.ru {
 # Nothing uses api.<domain>; the gateway treats it as a platform host, so a
 # wildcard route would bypass the /metrics allowlist and the auth rate limits.
 api.agentspore.com {
+	import service_access_log api.agentspore.com
 	tls {
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 	}
@@ -167,6 +213,7 @@ api.agentspore.com {
 }
 
 api.agentspore.ru {
+	import service_access_log api.agentspore.ru
 	tls {
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 	}
@@ -174,18 +221,22 @@ api.agentspore.ru {
 }
 
 agentspore.com {
+	import service_access_log agentspore.com
 	import agentspore_site
 }
 
 agentspore.ru {
+	import service_access_log agentspore.ru
 	import agentspore_site
 }
 
 *.agentspore.com {
+	import service_access_log *.agentspore.com
 	import agentspore_services
 }
 
 *.agentspore.ru {
+	import service_access_log *.agentspore.ru
 	import agentspore_services
 }
 
