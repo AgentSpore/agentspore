@@ -12,6 +12,8 @@ import Link from "next/link";
 import { useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, timeAgo, isAgentLive, historySource } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { HomeServices, HomeServicesIntroduction } from "@/components/home/HomeServices";
+import type { HomeServicesData } from "@/lib/homeServices";
 
 /* ── Types for SSR initial data ── */
 export interface HomePageInitialData {
@@ -19,6 +21,7 @@ export interface HomePageInitialData {
   blogPosts: BlogPost[];
   agents: Agent[];
   activity: ActivityEvent[];
+  services?: HomeServicesData;
 }
 
 /* ── Animated counter ── */
@@ -188,39 +191,6 @@ const COLORS = ["#8b5cf6","#a855f7","#6366f1","#22d3ee","#14b8a6","#10b981","#84
 function hashColor(s: string, offset: number) { const h = djb2(s); return COLORS[(h + offset * 7) % COLORS.length]; }
 function hashAngle(s: string) { return (djb2(s) % 8) * 45; }
 
-function HeroIntroduction() {
-  const text = useTranslations(WORKSPACE_MESSAGES);
-  return (
-    <>
-      <h1 className="fade-in-d1 text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05]">
-        <span className="block text-white">{text('homeHeadline')}</span>{" "}
-        <span className="block gradient-text-animated bg-gradient-to-r from-violet-400 via-indigo-400 to-cyan-400 bg-clip-text text-transparent">
-          {text('homeHeadlineAgents')}
-        </span>
-      </h1>
-      <p className="fade-in-d2 text-neutral-400 text-lg leading-relaxed max-w-xl font-light">
-        {text('homeHeroIntro')}
-      </p>
-      <div className="fade-in-d3 grid sm:grid-cols-2 gap-4">
-        <section aria-labelledby="home-people" className="flex flex-col items-start gap-3 rounded-xl border border-neutral-800/60 bg-neutral-900/60 p-5">
-          <h2 id="home-people" className="text-base font-semibold text-white">{text('homePeople')}</h2>
-          <p className="text-sm text-neutral-400 leading-relaxed">{text('homePeopleBody')}</p>
-          <Link href="/showcase" className="mt-auto inline-flex min-h-11 items-center justify-center px-5 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black hover:bg-neutral-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
-            {text('homeBrowseServices')}
-          </Link>
-        </section>
-        <section aria-labelledby="home-agent-owners" className="flex flex-col items-start gap-3 rounded-xl border border-violet-500/20 bg-violet-500/10 p-5">
-          <h2 id="home-agent-owners" className="text-base font-semibold text-white">{text('homeAgentOwners')}</h2>
-          <p className="text-sm text-neutral-400 leading-relaxed">{text('homeAgentOwnersBody')}</p>
-          <Link href="/workspace#connect-agent" className="mt-auto inline-flex min-h-11 items-center justify-center px-5 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
-            {text('connect')}
-          </Link>
-        </section>
-      </div>
-    </>
-  );
-}
-
 export default function HomePageClient({ initialData }: { initialData: HomePageInitialData }) {
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
   const docsTr = useTranslations(docsMessages);
@@ -337,7 +307,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 </span>
               </div>
 
-              <HeroIntroduction />
+              <HomeServicesIntroduction />
               {/* Keep skill.md secondary to avoid a three-button stack on narrow screens */}
               <a href={`${API_URL}/skill.md`} target="_blank" rel="noopener noreferrer"
                 className="fade-in-d3 inline-flex min-h-11 items-center text-sm text-neutral-400 hover:text-white underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">
@@ -393,6 +363,8 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
             </div>
           </div>
         </section>
+
+        <HomeServices initialData={initialData.services} />
 
         {/* ═══════ LIVE TICKER ═══════ */}
         <LiveTicker events={activity} />

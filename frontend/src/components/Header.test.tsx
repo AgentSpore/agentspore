@@ -40,6 +40,23 @@ it.each(["en", "ru"] as const)("keeps services primary and chat secondary in %s"
   expect(screen.queryByRole("link", { name: new RegExp(chat) })).toBeNull();
 });
 
+it.each(["en", "ru"] as const)("puts Services first in desktop and mobile main navigation in %s", locale => {
+  render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);
+  const services = locale === "en" ? "Services" : "Сервисы";
+  const desktop = screen.getByRole("navigation");
+  const firstDesktopLink = within(desktop).getAllByRole("link")[0];
+  expect(firstDesktopLink.getAttribute("href")).toBe("/showcase");
+  expect(firstDesktopLink.textContent).toContain(services);
+
+  fireEvent.click(screen.getByRole("button", { name: locale === "en" ? "Menu" : "Меню" }));
+  const people = screen.getByRole("navigation", { name: locale === "en" ? "Services for people" : "Сервисы для людей" });
+  const firstMobileLink = within(people).getAllByRole("link")[0];
+  expect(firstMobileLink.getAttribute("href")).toBe("/showcase");
+  expect(firstMobileLink.textContent).toBe(services);
+  const platform = screen.getByRole("navigation", { name: locale === "en" ? "Platform" : "Платформа" });
+  expect(within(platform).getByRole("link", { name: locale === "en" ? "Workspace" : "Рабочая область" }).getAttribute("href")).toBe("/workspace");
+});
+
 it.each(["en", "ru"] as const)("closes mobile navigation on Escape and restores focus in %s", locale => {
   vi.stubGlobal("localStorage", { getItem: vi.fn(() => null) });
   render(<LocaleProvider initialLocale={locale}><Header /></LocaleProvider>);

@@ -1,4 +1,5 @@
 import type { HomePageInitialData } from "./HomePageClient";
+import { parseHomeProjects, type HomeServicesData } from "@/lib/homeServices";
 import { API_URL, Agent, PlatformStats, BlogPost, ActivityEvent, isAgentLive } from "@/lib/api";
 
 /* Server-side API URL: use INTERNAL_API_URL for Docker-internal calls, fallback to public */
@@ -9,17 +10,18 @@ export async function fetchHomeData(): Promise<HomePageInitialData> {
   /* No absolute base (e.g. image build, where INTERNAL_API_URL is unset and the public URL is
      same-origin ""): skip the fetch, the page revalidates at runtime. */
   if (!/^https?:\/\//.test(SERVER_API_URL)) {
-    return { stats: null, blogPosts: [], agents: [], activity: [] };
+    return { stats: null, blogPosts: [], agents: [], activity: [], services: { status: "loading", projects: [] } };
   }
 
   /* Bounded timeout: an unreachable API must never stall prerender or SSR. */
   const opts = () => ({ next: { revalidate: 300 }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }) as RequestInit;
 
-  const [statsRes, blogRes, agentsRes, activityRes] = await Promise.allSettled([
+  const [statsRes, blogRes, agentsRes, activityRes, servicesRes] = await Promise.allSettled([
     fetch(`${SERVER_API_URL}/api/v1/agents/stats`, opts()),
     fetch(`${SERVER_API_URL}/api/v1/blog/posts?limit=3`, opts()),
     fetch(`${SERVER_API_URL}/api/v1/agents/leaderboard?limit=100`, opts()),
     fetch(`${SERVER_API_URL}/api/v1/activity?limit=20`, opts()),
+    fetch(`${SERVER_API_URL}/api/v1/projects?limit=200`, opts()),
   ]);
 
   let stats: PlatformStats | null = null;
@@ -51,5 +53,10 @@ export async function fetchHomeData(): Promise<HomePageInitialData> {
     } catch {}
   }
 
-  return { stats, blogPosts, agents, activity };
+  let services: HomeServicesData = { status: "error", projects: [] };
+  if (servicesRes.status === "fulfilled" && servicesRes.value.ok) {
+    try { services = { status: "ready", projects: parseHomeProjects(await servicesRes.value.json()) }; } catch {}
+  }
+
+  return { stats, blogPosts, agents, activity, services };
 }
