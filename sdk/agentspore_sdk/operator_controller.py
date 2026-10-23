@@ -80,10 +80,12 @@ def controller_lock(state: Path) -> Generator[bool]:
         os.close(descriptor)
 
 
-def write_state(path: Path, value: dict) -> None:
+def write_state(path: Path, value: dict, *, max_bytes: int = 4096) -> None:
     """Durably replace bounded non-secret JSON without following a destination link."""
+    if type(max_bytes) is not int or not 1 <= max_bytes <= 65536:
+        raise ValueError("operator_state_bound_invalid")
     content = json.dumps(value, sort_keys=True, allow_nan=False).encode()
-    if len(content) > 4096:
+    if len(content) > max_bytes:
         raise ValueError("operator state too large")
     descriptor, temporary = tempfile.mkstemp(dir=path.parent)
     try:
@@ -301,14 +303,18 @@ def record_usage(state: Path, now: datetime, usage: dict) -> None:
         saved = json.loads(raw, object_pairs_hook=unique_object)
         if not isinstance(saved, dict) or set(saved) != set(previous):
             raise ValueError("invalid usage state")
-        checked_usage(saved["usage"], 4 * 10**12)
-        if type(saved["runs"]) is not int or not 0 <= saved["runs"] <= 4:
+        checked_usage(saved["usage"], 10**24)
+        if type(saved["runs"]) is not int or not 0 <= saved["runs"] <= 10**12:
             raise ValueError("invalid usage count")
         if saved["utc_day"] == previous["utc_day"]:
             previous = saved
+    checked_usage(usage, 10**12)
+    if previous["runs"] >= 10**12:
+        raise ValueError("invalid usage count")
     previous["runs"] += 1
     for name, count in usage.items():
         previous["usage"][name] = previous["usage"].get(name, 0) + count
+    checked_usage(previous["usage"], 10**24)
     write_state(path, previous)
 
 

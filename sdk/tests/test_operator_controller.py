@@ -200,12 +200,12 @@ async def test_outside_schedule_does_not_collect_or_call_model(
 
 
 @pytest.mark.asyncio
-async def test_analysis_quota_blocks_fifth_ipc_and_survives_restart(
+async def test_sequential_analysis_beyond_four_survives_restart(
     tmp_path, daily_transport, analyst
 ):
     mock, _seen = daily_transport
     async with httpx.AsyncClient(transport=mock) as client:
-        for _ in range(4):
+        for _ in range(7):
             operator = OperatorController(
                 tmp_path / "state",
                 client,
@@ -213,8 +213,8 @@ async def test_analysis_quota_blocks_fifth_ipc_and_survives_restart(
                 lambda: NOW,
             )
             await operator.run("daily")
-        assert await operator.run("daily") == "analysis_quota"
-    assert len(analyst) == 4
+        assert await operator.run("daily") != "analysis_quota"
+    assert len(analyst) == 8
 
 
 @pytest.mark.asyncio
@@ -497,3 +497,23 @@ def test_module_entrypoint_has_reply_validator_before_startup(monkeypatch, capsy
     with pytest.warns(RuntimeWarning, match="found in sys.modules"):
         runpy.run_module("agentspore_sdk.operator_controller", run_name="__main__")
     assert json.loads(capsys.readouterr().out) == {"result": "synthetic_entry_verified"}
+
+
+def test_usage_aggregate_accepts_more_than_four_runs(tmp_path):
+    tmp_path.chmod(0o700)
+    for _ in range(8):
+        module.record_usage(tmp_path, NOW, USAGE)
+    saved = json.loads((tmp_path / "model-usage.json").read_text())
+    assert saved["runs"] == 8
+    assert saved["usage"]["output_tokens"] == 24
+
+
+@pytest.mark.parametrize("runs", [True, -1, 10**12 + 1])
+def test_invalid_usage_run_counts_fail_closed(tmp_path, runs):
+    tmp_path.chmod(0o700)
+    module.write_state(
+        tmp_path / "model-usage.json",
+        {"utc_day": NOW.date().isoformat(), "runs": runs, "usage": USAGE},
+    )
+    with pytest.raises(ValueError, match="invalid usage count"):
+        module.record_usage(tmp_path, NOW, USAGE)
