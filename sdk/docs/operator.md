@@ -73,6 +73,18 @@ A rejected executable event does not prove that its side effect was prevented.
 No warning is suppressed or treated as an accepted result by this permission
 change. Unknown events and error items still fail closed.
 
+### Native host provider (2026-10-23)
+
+The analyst no longer disables `code_mode_host`. Codex 0.163.0 enables this stable
+provider by default; its thread manager selects a disabled provider when the
+feature is explicitly disabled. The installed official host helper remains the
+native provider. The separate experimental `code_mode` feature stays disabled,
+as do the other existing tool features. Full Access and strict result validation
+are unchanged; warning events are neither suppressed nor accepted as success.
+
+This restores the supported native provider selection. It does not prove that
+all startup warnings are absent; that requires one reserved native acceptance.
+
 ### Native analyst diagnostic status (2026-10-21)
 
 The one-shot analyst returns only a process exit status on failure. Its socket
