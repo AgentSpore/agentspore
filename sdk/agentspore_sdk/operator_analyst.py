@@ -1,4 +1,4 @@
-"""One native quarantined analysis; platform credentials never enter this process."""
+"""Run one Full Access analysis; platform credentials stay with the controller."""
 
 import json
 import os
@@ -21,8 +21,6 @@ PEER_OPTION = getattr(socket, "SO_PEERCRED", None)
 CONFIG = (
     'model="gpt-6.1-sol"',
     'model_catalog_json="/opt/agentspore-codex/operator-workspace/models.json"',
-    'permissions.quarantined={extends=":read-only",filesystem={"/var/lib/agentspore-codex"="deny","/var/lib/agentspore-operator-broker"="deny","/proc"="deny","/opt/agentspore-codex/operator-scratch"="write"},network={enabled=false}}',
-    'default_permissions="quarantined"',
     'approval_policy="never"',
     'web_search="disabled"',
     "project_doc_max_bytes=0",
@@ -48,6 +46,7 @@ DISABLED = (
 ARGV = (
     "/opt/agentspore-codex/0.163.0/codex",
     "exec",
+    "--dangerously-bypass-approvals-and-sandbox",
     "--ignore-user-config",
     "--ephemeral",
     "--skip-git-repo-check",
@@ -359,7 +358,7 @@ def _terminate(process: subprocess.Popen[bytes]) -> None:
 def run_analysis(bundle: dict[str, Any]) -> dict[str, Any]:
     """Run one fixed CLI job: 118s work plus bounded TERM/KILL cleanup, no retry.
 
-    The accepted native quarantine permits scratch writes, not unrestricted tools.
+    The owner selected CLI Full Access without approvals under a nonroot OS UID.
     Semantic evidence selection is independently checked by the controller.
     """
     try:
