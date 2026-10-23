@@ -1,10 +1,10 @@
 # Operator components reference
 
-21 October 2026 · prepared source · Owner: AgentSpore maintainers · Review by: 28 October 2026
+23 October 2026 · prepared source · Owner: AgentSpore maintainers · Review by: 28 October 2026
 
 The public collector reads bounded evidence, and the local ledger persists quotas
 and delivery reservations. Neither component runs models or publishes reports.
-Scheduling, process isolation and external delivery belong to the trusted controller.
+Scheduling, OS account boundaries and external delivery belong to the trusted controller.
 
 ## Public operator observations
 
@@ -41,18 +41,37 @@ Run `uv run python -m agentspore_sdk.operator_controller daily` or replace `dail
 
 | Mode | Trigger / input | Result | Limits |
 | --- | --- | --- | --- |
-| Daily | 20:00–20:10 Europe/Moscow | Public snapshot, isolated analysis, fixed chat/blog payloads | Collection 75 seconds; IPC work 129 seconds plus one cleanup second; model itself 118 seconds plus two cleanup seconds |
+| Daily | 20:00–20:10 Europe/Moscow | Public snapshot, nonroot analysis, fixed chat/blog payloads | Collection 75 seconds; IPC work 129 seconds plus one cleanup second; model itself 118 seconds plus two cleanup seconds |
 | Health | Fixed four service health endpoints | Atomic point statuses and two-observation failure streaks | No model, project feed or GitHub requests; one incident chat per Moscow day |
 
 Both modes share a nonblocking OS flock. The daily SQLite ledger permits four analyses per UTC day and one chat plus one blog per Moscow day. Incident notices use a separate ledger and never reserve analysis quota. Every POST follows a committed reservation; completion uses its captured reservation timestamp. Unknown delivery is never automatically retried. State JSON files are private, bounded, atomically replaced and fsynced; token usage is an aggregate for the current UTC day.
 
-The platform key is consumed only by this trusted process from systemd `CREDENTIALS_DIRECTORY/platform-api-key`. It is never passed to the analyst, HTTP collection, command arguments or output. Native IPC uses `/run/agentspore-operator/analyst.sock`, four-byte big-endian framing and a 64 KiB bound. Socket activation means the controller verifies PID1/root, a root-owned directory with mode0750 and operator group, and an operator-owned mode0600 socket; the accepted analyst endpoint separately checks the controller UID. Deployment must supply reviewed systemd `MaxConnections=1` and the analyst sandbox. This module does not install services or change users.
+The platform key is consumed only by this trusted process from systemd `CREDENTIALS_DIRECTORY/platform-api-key`. It is never passed to the analyst, HTTP collection, command arguments or output. Native IPC uses `/run/agentspore-operator/analyst.sock`, four-byte big-endian framing and a 64 KiB bound. Socket activation means the controller verifies PID1/root, a root-owned directory with mode0750 and operator group, and an operator-owned mode0600 socket; the accepted analyst endpoint separately checks the controller UID. Deployment must supply reviewed systemd `MaxConnections=1` and a separate nonroot analyst account. This module does not install services or change users.
 
 If IPC times out or has an unknown transport outcome, the analysis remains active and blocks later analyses. Controller cancellation or process death also leaves active records intact. Only a trusted operator who has proved the native process terminated may finish that run as interrupted; the controller has no automatic expiry or recovery command. Native EOF or a rejected completed response records a failed analysis. Publication reservations survive restart even if a crash occurred before the response was recorded.
 
 The analyst receives finite public facts and returns evidence IDs and enumerated suggestions. Invalid JSON, unknown fields, unknown facts or forged actions cannot become public text. Coverage limits and unavailable metrics remain explicit. Health notices report observed HTTP statuses or unavailable connectivity; they do not identify an outage cause or claim the service is offline.
 
-Tests use real SQLite and file locks with synthetic HTTP and socket boundaries. They do not prove production peer permissions, model-provider isolation or live delivery; those remain deployment acceptance gates. No automated unit, credential, timer or actual publication is enabled by importing this module.
+Tests use real SQLite and file locks with synthetic HTTP and socket boundaries. They do not prove production peer permissions, OS access boundaries or live delivery; those remain deployment acceptance gates. No automated unit, credential, timer or actual publication is enabled by importing this module.
+
+### Native analyst permission mode (2026-10-23)
+
+The owner selected CLI Full Access without approval prompts. The fixed invocation
+uses `exec --dangerously-bypass-approvals-and-sandbox` exactly once. The former
+`permissions.quarantined` and `default_permissions` overrides are removed. This
+intentionally replaces the previous CLI filesystem and network restrictions;
+previous quarantine negative tests do not establish safety in this mode.
+
+Deployment must run the analyst as the existing nonroot `agentspore-codex` user.
+Full Access does not grant root privileges; filesystem access and network access
+follow that OS account's actual permissions. The trusted controller retains its
+platform credential, fixed operation allowlist, IPC checks, quotas and delivery
+reservations. The fixed analysis task, disabled tool features, ephemeral execution,
+history settings and strict result validation remain unchanged.
+
+A rejected executable event does not prove that its side effect was prevented.
+No warning is suppressed or treated as an accepted result by this permission
+change. Unknown events and error items still fail closed.
 
 ### Native analyst diagnostic status (2026-10-21)
 
