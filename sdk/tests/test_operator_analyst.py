@@ -110,7 +110,13 @@ def test_real_subprocess_fixed_argv_prompt_and_usage(executable, bundle, events)
         'model_catalog_json="/opt/agentspore-codex/operator-workspace/models.json"'
         in capture["argv"]
     )
-    assert "network={enabled=false}" in " ".join(capture["argv"])
+    assert capture["argv"].count("--dangerously-bypass-approvals-and-sandbox") == 1
+    assert all(
+        not option.startswith(("permissions.", "default_permissions="))
+        for option in capture["argv"]
+    )
+    assert "--sandbox" not in capture["argv"]
+    assert "--ask-for-approval" not in capture["argv"]
     assert capture["argv"][-1] == "-"
     assert "health.platform" in capture["stdin"]
 
