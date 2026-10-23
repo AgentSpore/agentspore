@@ -87,7 +87,7 @@ def _native_failure(event: dict[str, Any]) -> _AnalysisError:
         or not isinstance(detail.get("message"), str)
         or (event["type"] == "turn.failed" and set(event) != {"type", "error"})
     ):
-        return _AnalysisError(23)
+        return _AnalysisError(40)
     message = detail["message"].casefold()
     categories = (
         (25, ("authentication", "unauthorized", "invalid api key", "401")),
@@ -177,14 +177,17 @@ class _Events:
     def feed(self, chunk: bytes) -> None:
         self.total += len(chunk)
         if self.total > 1048576:
-            raise ValueError("output_too_large")
+            raise _AnalysisError(31)
         self.buffer.extend(chunk)
         while b"\n" in self.buffer:
             line, _, remaining = self.buffer.partition(b"\n")
             self.buffer = bytearray(remaining)
             if len(line) > 65536:
-                raise ValueError("event_too_large")
-            event = json.loads(line, object_pairs_hook=_object)
+                raise _AnalysisError(31)
+            try:
+                event = json.loads(line, object_pairs_hook=_object)
+            except (ValueError, TypeError, RecursionError):
+                raise _AnalysisError(30) from None
             if isinstance(event, dict) and event.get("type") in (
                 "error",
                 "turn.failed",
@@ -192,17 +195,17 @@ class _Events:
                 raise _native_failure(event) from None
             self.event(event)
         if len(self.buffer) > 65536:
-            raise ValueError("event_too_large")
+            raise _AnalysisError(31)
 
     def event(self, event: dict[str, Any]) -> None:
         if not isinstance(event, dict):
-            raise ValueError("invalid_event")
+            raise _AnalysisError(32)
         kind = event.get("type")
         if kind == "thread.started" and self.phase == 0:
             if set(event) != {"type", "thread_id"} or not isinstance(
                 event["thread_id"], str
             ):
-                raise ValueError("invalid_thread")
+                raise _AnalysisError(32)
             self.phase = 1
         elif kind == "turn.started" and self.phase == 1 and set(event) == {"type"}:
             self.phase = 2
@@ -211,15 +214,15 @@ class _Events:
             and self.phase == 2
         ):
             if set(event) != {"type", "item"}:
-                raise ValueError("invalid_item")
+                raise _AnalysisError(33)
             self.item(event["item"], kind == "item.completed")
         elif kind == "turn.completed" and self.phase == 2 and self.analysis is not None:
             if set(event) != {"type", "usage"}:
-                raise ValueError("invalid_usage")
+                raise _AnalysisError(34)
             self.usage = self.checked_usage(event["usage"])
             self.phase = 3
         else:
-            raise ValueError("unexpected_action_or_event")
+            raise _AnalysisError(32)
 
     def item(self, item: dict[str, Any], completed: bool) -> None:
         if (
@@ -232,16 +235,16 @@ class _Events:
                 {"type": "error", "message": item["message"]}
             ) from None
         if not isinstance(item, dict) or set(item) != {"id", "type", "text"}:
-            raise ValueError("unexpected_action_or_item")
+            raise _AnalysisError(33)
         if (
             item["type"] not in ("reasoning", "agent_message")
             or not isinstance(item["id"], str)
             or not isinstance(item["text"], str)
         ):
-            raise ValueError("unexpected_action_or_item")
+            raise _AnalysisError(33)
         if item["type"] == "agent_message" and completed:
             if self.analysis is not None or len(item["text"].encode()) > 65536:
-                raise ValueError("invalid_final_message")
+                raise _AnalysisError(35)
             self.analysis = item["text"]
 
     @staticmethod
@@ -249,50 +252,86 @@ class _Events:
         required = {"input_tokens", "cached_input_tokens", "output_tokens"}
         allowed = required | {"cache_write_input_tokens", "reasoning_output_tokens"}
         if not isinstance(usage, dict) or not required <= set(usage) <= allowed:
-            raise ValueError("invalid_usage")
+            raise _AnalysisError(34)
         if any(type(v) is not int or not 0 <= v <= 10**12 for v in usage.values()):
-            raise ValueError("invalid_usage")
+            raise _AnalysisError(34)
         return usage
 
     def result(self) -> dict[str, Any]:
         if self.buffer or self.phase != 3 or self.analysis is None:
-            raise ValueError("incomplete_analysis")
-        parsed = json.loads(self.analysis, object_pairs_hook=_object)
-        if not isinstance(parsed, dict):
-            raise ValueError("invalid_analysis_json")
-        json.dumps(parsed, allow_nan=False)
+            raise _AnalysisError(35)
+        try:
+            parsed = json.loads(self.analysis, object_pairs_hook=_object)
+            if not isinstance(parsed, dict):
+                raise _AnalysisError(36)
+            json.dumps(parsed, allow_nan=False)
+        except (ValueError, TypeError, RecursionError):
+            raise _AnalysisError(36) from None
         return {"analysis": self.analysis, "usage": self.usage}
+
+
+def _early_failure(diagnostic: bytearray) -> _AnalysisError:
+    message = diagnostic.decode("utf-8", errors="replace").casefold()
+    if any(
+        marker in message
+        for marker in (
+            "error loading config",
+            "error parsing config",
+            "invalid configuration",
+            "unexpected argument",
+            "invalid value",
+            "unknown variant",
+        )
+    ):
+        return _AnalysisError(43)
+    if "permission denied" in message:
+        return _AnalysisError(44)
+    failure = _native_failure({"type": "error", "message": message})
+    return _AnalysisError(42) if failure.exit_code == 24 else failure
+
+
+def _send_prompt(pipe: Any, prompt: bytes, offset: int, ready: Any) -> int:
+    try:
+        offset += os.write(pipe.fileno(), prompt[offset : offset + 4096])
+    except BrokenPipeError:
+        offset = len(prompt)
+    if offset == len(prompt):
+        ready.unregister(pipe)
+        pipe.close()
+    return offset
 
 
 def _exchange(
     process: subprocess.Popen[bytes], prompt: bytes, deadline: float
 ) -> dict[str, Any]:
     if process.stdin is None or process.stdout is None:
-        raise ValueError("missing_process_pipes")
+        raise _AnalysisError(38)
     output, offset = _Events(), 0
+    diagnostic = bytearray()
     os.set_blocking(process.stdin.fileno(), False)
     os.set_blocking(process.stdout.fileno(), False)
     with selectors.DefaultSelector() as ready:
         ready.register(process.stdin, selectors.EVENT_WRITE, "stdin")
         ready.register(process.stdout, selectors.EVENT_READ, "stdout")
+        if process.stderr is not None:
+            ready.register(process.stderr, selectors.EVENT_READ, "stderr")
         while ready.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError
             for key, _ in ready.select(remaining):
                 if key.data == "stdin":
-                    offset += os.write(
-                        process.stdin.fileno(), prompt[offset : offset + 4096]
-                    )
-                    if offset == len(prompt):
-                        ready.unregister(process.stdin)
-                        process.stdin.close()
+                    offset = _send_prompt(process.stdin, prompt, offset, ready)
                 else:
-                    chunk = os.read(process.stdout.fileno(), 4096)
+                    chunk = os.read(key.fd, 4096)
                     if not chunk:
-                        ready.unregister(process.stdout)
+                        ready.unregister(key.fileobj)
+                    elif key.data == "stderr":
+                        diagnostic.extend(chunk[: max(0, 8192 - len(diagnostic))])
                     else:
                         output.feed(chunk)
+    if output.phase == 0 and process.wait(timeout=max(0, deadline - time.monotonic())):
+        raise _early_failure(diagnostic) from None
     return output.result()
 
 
@@ -312,7 +351,7 @@ def _terminate(process: subprocess.Popen[bytes]) -> None:
         except subprocess.TimeoutExpired:
             if operation == signal.SIGKILL:
                 raise ValueError("analysis_process_not_terminal") from None
-    for pipe in (process.stdin, process.stdout):
+    for pipe in (process.stdin, process.stdout, process.stderr):
         if pipe is not None:
             pipe.close()
 
@@ -338,7 +377,7 @@ def run_analysis(bundle: dict[str, Any]) -> dict[str, Any]:
             ARGV,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             cwd=WORK,
             close_fds=True,
             start_new_session=True,
@@ -346,20 +385,22 @@ def run_analysis(bundle: dict[str, Any]) -> dict[str, Any]:
         )
         result = _exchange(process, prompt, deadline)
         if process.wait(timeout=max(0, deadline - time.monotonic())) != 0:
-            raise ValueError("analysis_process_failed")
+            raise _AnalysisError(37)
         return result
     except _AnalysisError:
         raise
     except (TimeoutError, subprocess.TimeoutExpired):
         raise _AnalysisError(29) from None
-    except (OSError, ValueError, TypeError, RecursionError):
-        raise _AnalysisError(22 if process is None else 23) from None
+    except OSError:
+        raise _AnalysisError(22 if process is None else 38) from None
+    except (ValueError, TypeError, RecursionError):
+        raise _AnalysisError(23) from None
     finally:
         if process is not None:
             try:
                 _terminate(process)
             except (OSError, ValueError, subprocess.TimeoutExpired):
-                raise _AnalysisError(23) from None
+                raise _AnalysisError(39) from None
 
 
 def _receive(connection: Any, count: int, deadline: float) -> bytes:
