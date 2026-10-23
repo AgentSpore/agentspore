@@ -20,12 +20,15 @@ def ledger(tmp_path):
     instance.close()
 
 
-def test_quota_counts_failed_and_interrupted_runs_and_changes_utc_day(ledger):
-    for state in ("success", "failed", "interrupted", "failed"):
+def test_sequential_analyses_have_no_daily_quota(ledger):
+    for state in ("success", "failed", "interrupted", "failed") * 3:
         run = ledger.reserve_analysis(NOW, DIGEST)
         assert run is not None
         ledger.finish_analysis(run, state, NOW)
-    assert ledger.reserve_analysis(NOW, DIGEST) is None
+    run = ledger.reserve_analysis(NOW, DIGEST)
+    assert run is not None
+    assert ledger.reserve_analysis(NOW + timedelta(days=1), DIGEST) is None
+    ledger.finish_analysis(run, "success", NOW + timedelta(days=1))
     assert ledger.reserve_analysis(NOW + timedelta(days=1), DIGEST) is not None
 
 
@@ -166,13 +169,12 @@ def test_transaction_failure_rolls_back_and_releases_writer(ledger):
     assert ledger.reserve_analysis(NOW, DIGEST) is not None
 
 
-def test_utc_midnight_resets_quota_without_resetting_moscow_publication(ledger):
+def test_sequential_runs_cross_utc_midnight_without_resetting_publication(ledger):
     before = NOW.replace(hour=23, minute=59)
-    for _ in range(4):
+    for _ in range(8):
         run = ledger.reserve_analysis(before, DIGEST)
         assert run is not None
         ledger.finish_analysis(run, "failed", before)
-    assert ledger.reserve_analysis(before, DIGEST) is None
     assert ledger.reserve_publication(before, "chat", DIGEST)
     after = before + timedelta(minutes=2)
     assert ledger.reserve_analysis(after, DIGEST) is not None

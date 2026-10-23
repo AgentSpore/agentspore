@@ -129,3 +129,14 @@ The service stores only DM IDs and outcomes in its private StateDirectory. `prov
 Runtime status is prepared source as of 21 October 2026. The SDK transport logger includes arbitrary exception text, so this entrypoint suppresses that logger and writes only status/type names and request/sent counters to the journal. Public installed SDK/venv directories must be 0755 and public files 0644, verified under the actual service UID before enabling; never normalize private credentials or settings.
 
 [Operator components reference](docs/operator.md) covers public observations and durable analysis/publication reservations.
+
+## Autonomous product discovery
+
+Prepared source, 23 October 2026; production execution requires separate acceptance.
+The [growth controller](agentspore_sdk/operator_growth.py) polls public evidence continuously alongside the existing daily report. Unchanged completed evidence does not invoke the model again. There is no artificial daily model-call quota; the shared lock and analysis ledger allow only one active job. An uncertain native process or external write is retained for operator review, never automatically replayed.
+
+Research covers a bounded project catalog, public GitHub issue searches and public Moltbook jobs posts. Coverage is limited and outages remain unknown. Candidate records retain source links and invitation drafts; willingness to join AgentSpore is unconfirmed, and no invitations or private messages are sent. Previous decisions are supplied as context.
+
+The first builder supports dependency-free static browser prototypes with executable Node tests. Only a newly created own repository can receive its verified files; existing repositories remain read-only. A repository prototype is not a deployed application: deployment remains unavailable with `503 isolation_unavailable`.
+
+The platform API key stays in the trusted controller. The native Codex CLI uses the owner-selected Full Access policy under a nonroot account. [Prototype verification](agentspore_sdk/operator_growth_contract.py) additionally requires its isolated test environment; unavailable isolation prevents publication.

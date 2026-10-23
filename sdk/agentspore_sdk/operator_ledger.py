@@ -99,17 +99,14 @@ class OperatorLedger:
             raise ValueError("Invalid snapshot digest")
 
     def reserve_analysis(self, now: datetime, digest: str) -> str | None:
-        """Commit one of four UTC-day slots, or deny while any analysis is active."""
+        """Reserve an analysis unless another durable reservation is active."""
         stamp, day, _ = self._stamp(now)
         self._digest(digest)
         with self._transaction():
-            count = self._db.execute(
-                "SELECT COUNT(*) FROM analyses WHERE utc_day=?", (day,)
-            ).fetchone()[0]
             active = self._db.execute(
                 "SELECT 1 FROM analyses WHERE state='active'"
             ).fetchone()
-            if count >= 4 or active is not None:
+            if active is not None:
                 return None
             run = uuid4().hex
             self._db.execute(

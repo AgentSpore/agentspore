@@ -3,15 +3,141 @@
 import json
 import os
 import re
+import shutil
 import struct
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+
 from agentspore_sdk import operator_analyst as analyst
+from agentspore_sdk import operator_growth_contract as contract
 
 DIGEST = "a" * 64
+
+
+@pytest.fixture
+def native_prototype(monkeypatch):
+    monkeypatch.setattr(contract, "NODE", shutil.which("node"))
+    monkeypatch.setattr(
+        contract,
+        "_prototype_argv",
+        lambda directory, tests: [
+            contract.NODE,
+            "--test",
+            "--test-reporter=tap",
+            *tests,
+        ],
+    )
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_growth_cli_native_receipt_and_failed_tests(
+    executable, bundle, events, native_prototype, fails
+):
+    bundle["purpose"] = "growth"
+    bundle["facts"] = {"demand.one": "Need", "demand.two": "Also need"}
+    bundle["coverage"] = {
+        "source_kinds": dict.fromkeys(bundle["facts"], "demand"),
+        "source_urls": {
+            "demand.one": "https://example.org/a",
+            "demand.two": "https://example.org/b",
+        },
+    }
+    service = {
+        "title": "family-list",
+        "description": "A list",
+        "source_ids": list(bundle["facts"]),
+        "files": [
+            {"path": "index.html", "content": "<title>Family list</title>"},
+            {"path": "README.md", "content": "Unpublished prototype"},
+            {
+                "path": "tests/list.test.js",
+                "content": "const {test}=require('node:test');const a=require('node:assert/strict');test('title',()=>a.equal(require('node:fs').readFileSync('index.html','utf8').includes('Family list'),"
+                + ("false" if fails else "true")
+                + "));",
+            },
+        ],
+    }
+    proposal = {
+        "snapshot_digest": DIGEST,
+        "candidates": [],
+        "service": service,
+        "ideas": [
+            {
+                "evidence_ids": list(bundle["facts"]),
+                "decision": "create",
+                "reason": "Useful",
+                "target_user": "Families",
+            }
+        ],
+    }
+    events[3]["item"]["text"] = json.dumps(proposal)
+    executable(
+        "sys.stdin.read()\n"
+        + "\n".join("print(" + repr(json.dumps(item)) + ")" for item in events)
+    )
+    if fails:
+        with pytest.raises(analyst._AnalysisError) as caught:
+            analyst.run_analysis(bundle)
+        assert caught.value.exit_code == 23
+    else:
+        receipt = analyst.run_analysis(bundle)["verification"]
+        assert receipt == {
+            "service_digest": contract.service_digest(service),
+            "tests_passed": 1,
+        }
+
+
+@pytest.mark.parametrize("extra", [False, True])
+def test_growth_cli_rejects_model_receipt_and_returns_native_null(
+    executable, bundle, events, extra
+):
+    bundle["purpose"] = "growth"
+    proposal = {
+        "snapshot_digest": DIGEST,
+        "ideas": [],
+        "candidates": [],
+        "service": None,
+    }
+    if extra:
+        proposal["verification"] = {"tests_passed": 1}
+    events[3]["item"]["text"] = json.dumps(proposal)
+    executable(
+        "sys.stdin.read()\n"
+        + "\n".join("print(" + repr(json.dumps(item)) + ")" for item in events)
+    )
+    if extra:
+        with pytest.raises(analyst._AnalysisError):
+            analyst.run_analysis(bundle)
+    else:
+        result = analyst.run_analysis(bundle)
+        assert set(result) == {"analysis", "usage", "verification"}
+        assert result["verification"] is None
+        assert analyst.GROWTH_TASK.encode() in analyst._prompt(bundle)
+
+
+def test_growth_invalid_manifest_never_runs_node(
+    executable, bundle, events, monkeypatch
+):
+    bundle["purpose"] = "growth"
+    proposal = {
+        "snapshot_digest": DIGEST,
+        "ideas": [],
+        "candidates": [],
+        "service": {"files": []},
+    }
+    events[3]["item"]["text"] = json.dumps(proposal)
+    verifier = MagicMock(side_effect=AssertionError("must not execute"))
+    monkeypatch.setattr(analyst, "verify_prototype", verifier)
+    executable(
+        "sys.stdin.read()\n"
+        + "\n".join("print(" + repr(json.dumps(item)) + ")" for item in events)
+    )
+    with pytest.raises(analyst._AnalysisError):
+        analyst.run_analysis(bundle)
+    verifier.assert_not_called()
 
 
 @pytest.fixture(autouse=True)
