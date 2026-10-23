@@ -35,7 +35,6 @@ DISABLED = (
     "shell_tool",
     "unified_exec",
     "code_mode",
-    "code_mode_host",
     "apps",
     "plugins",
     "multi_agent",

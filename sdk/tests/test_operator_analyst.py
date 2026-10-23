@@ -117,6 +117,8 @@ def test_real_subprocess_fixed_argv_prompt_and_usage(executable, bundle, events)
     )
     assert "--sandbox" not in capture["argv"]
     assert "--ask-for-approval" not in capture["argv"]
+    assert "code_mode_host" not in capture["argv"]
+    assert capture["argv"][capture["argv"].index("code_mode") - 1] == "--disable"
     assert capture["argv"][-1] == "-"
     assert "health.platform" in capture["stdin"]
 
