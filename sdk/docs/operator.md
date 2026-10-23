@@ -68,17 +68,39 @@ ledger recovery, configuration changes or publication.
 | 20 | Forbidden environment |
 | 21 | Invalid public evidence bundle |
 | 22 | Native process startup failure |
-| 23 | Invalid native protocol, unsuccessful exit or cleanup failure |
+| 23 | Unclassified native boundary failure |
 | 24 | Model unavailable or unclassified native error |
 | 25 | Authentication failure |
 | 26 | Usage quota or rate limit |
 | 27 | Network connection failure |
 | 28 | Provider service failure |
 | 29 | Native work deadline or reported request timeout |
+| 30 | Invalid native event JSON or duplicate keys |
+| 31 | Native output or event size limit |
+| 32 | Invalid event schema or ordering |
+| 33 | Invalid item or attempted executable action |
+| 34 | Invalid usage schema or values |
+| 35 | Missing, duplicate, oversized or incomplete final message |
+| 36 | Invalid final analysis JSON |
+| 37 | Unsuccessful native exit after a complete valid stream |
+| 38 | Native process communication failure |
+| 39 | Native cleanup failure |
+| 40 | Malformed native error event |
+| 42 | Unsuccessful native exit before any accepted event; unclassified |
+| 43 | Early stderr indicates configuration or argument rejection |
+| 44 | Early stderr indicates access denied |
 
 Classification recognizes only fixed markers in documented `error` and
 `turn.failed` events and `error` thread items. It is diagnostic, not proof of an outage cause. Unknown or
 malformed events still fail closed. Every failure remains compatible with
 `ValueError("analysis_unavailable")`; no original diagnostic is copied into it.
+
+The analyst drains stderr concurrently with stdout and retains at most 8 KiB in
+memory. Only an unsuccessful process with no accepted events uses fixed stderr
+markers; excess bytes are discarded. Successful or partially accepted streams
+do not use stderr to override their result. Marker classes are diagnostic hints,
+not proof of the underlying cause. No stderr text is saved, returned or logged.
+A child that closes stdin early still has its stdout and stderr drained.
+These statuses do not relax protocol validation or authorize a retry.
 
 Wire shapes follow the pinned [Codex 0.163.0 event definitions](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/exec/src/exec_events.rs).

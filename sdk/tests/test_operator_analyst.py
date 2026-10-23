@@ -337,7 +337,7 @@ def test_native_errors_exit_with_finite_status_without_disclosure(
 
 
 @pytest.mark.parametrize(
-    "failure", [("environment", 20), ("startup", 22), ("auth", 25), ("native", 23)]
+    "failure", [("environment", 20), ("startup", 22), ("auth", 25), ("native", 42)]
 )
 def test_entrypoint_reports_fixed_status_without_raw_errors(
     connection, executable, monkeypatch, capfd, failure
@@ -405,4 +405,127 @@ def test_malformed_error_event_remains_protocol_failure(executable, bundle):
     with pytest.raises(ValueError) as error:
         analyst.run_analysis(bundle)
     assert isinstance(error.value, analyst._AnalysisError)
-    assert error.value.exit_code == 23
+    assert error.value.exit_code == 40
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ("json", 30),
+        ("bounds", 31),
+        ("schema", 32),
+        ("action", 33),
+        ("usage", 34),
+        ("incomplete", 35),
+        ("final", 36),
+        ("exit", 37),
+    ],
+)
+def test_native_failure_boundaries_have_distinct_finite_status(
+    executable, bundle, events, capfd, failure
+):
+    failure, code = failure
+    if failure == "json":
+        body = "print('synthetic-private-detail')"
+    elif failure == "bounds":
+        body = "print('x'*65537)"
+    else:
+        if failure == "schema":
+            events[0]["unexpected"] = "synthetic-private-detail"
+        elif failure == "action":
+            events[2]["item"]["type"] = "command_execution"
+        elif failure == "usage":
+            events[-1]["usage"]["input_tokens"] = True
+        elif failure == "incomplete":
+            events.pop()
+        elif failure == "final":
+            events[3]["item"]["text"] = "synthetic-private-detail"
+        body = "\n".join("print(" + repr(json.dumps(item)) + ")" for item in events)
+        if failure == "exit":
+            body += "\nsys.exit(9)"
+    executable("sys.stdin.read()\n" + body)
+    with pytest.raises(ValueError, match="^analysis_unavailable$") as error:
+        analyst.run_analysis(bundle)
+    assert isinstance(error.value, analyst._AnalysisError)
+    assert error.value.exit_code == code
+    assert capfd.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    "diagnostic,code",
+    [
+        ("error loading config", 43),
+        ("unexpected argument", 43),
+        ("Permission denied", 44),
+        ("Authentication failed", 25),
+        ("Usage limit exceeded", 26),
+        ("Network connection failed", 27),
+        ("Internal server error", 28),
+        ("Request timed out", 29),
+        ("unrecognized", 42),
+    ],
+)
+def test_early_native_failure_classifies_bounded_stderr_only(
+    executable, bundle, capfd, diagnostic, code
+):
+    executable(
+        "sys.stdin.read()\nprint("
+        + repr(diagnostic + " synthetic-private-detail" * 1000)
+        + ",file=sys.stderr)\nsys.exit(9)"
+    )
+    with pytest.raises(ValueError, match="^analysis_unavailable$") as error:
+        analyst.run_analysis(bundle)
+    assert isinstance(error.value, analyst._AnalysisError)
+    assert error.value.exit_code == code
+    assert capfd.readouterr() == ("", "")
+
+
+def test_successful_empty_stream_does_not_trust_stderr(executable, bundle, capfd):
+    executable("sys.stdin.read()\nprint('Authentication failed',file=sys.stderr)")
+    with pytest.raises(ValueError) as error:
+        analyst.run_analysis(bundle)
+    assert isinstance(error.value, analyst._AnalysisError)
+    assert error.value.exit_code == 35
+    assert capfd.readouterr() == ("", "")
+
+
+def test_cleanup_failure_has_distinct_status(executable, bundle, events, monkeypatch):
+    executable(
+        "sys.stdin.read()\n"
+        + "\n".join("print(" + repr(json.dumps(item)) + ")" for item in events)
+    )
+    original = analyst._terminate
+
+    def reject_after_reap(process):
+        original(process)
+        raise ValueError("synthetic-private-detail")
+
+    monkeypatch.setattr(analyst, "_terminate", reject_after_reap)
+    with pytest.raises(ValueError, match="^analysis_unavailable$") as error:
+        analyst.run_analysis(bundle)
+    assert isinstance(error.value, analyst._AnalysisError)
+    assert error.value.exit_code == 39
+
+
+def test_early_failure_drains_large_stderr_without_reading_stdin(
+    executable, bundle, capfd, monkeypatch
+):
+    observed = []
+    original = analyst._early_failure
+
+    def classify(diagnostic):
+        observed.append(len(diagnostic))
+        return original(diagnostic)
+
+    monkeypatch.setattr(analyst, "_early_failure", classify)
+    bundle["facts"]["health.platform"] = "x" * 50000
+    executable(
+        "sys.stderr.write('error loading config ' + 'synthetic-private-detail'*10000)\n"
+        "sys.exit(9)"
+    )
+    with pytest.raises(ValueError, match="^analysis_unavailable$") as error:
+        analyst.run_analysis(bundle)
+    assert isinstance(error.value, analyst._AnalysisError)
+    assert error.value.exit_code == 43
+    assert observed == [8192]
+    assert capfd.readouterr() == ("", "")
