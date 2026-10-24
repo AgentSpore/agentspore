@@ -244,6 +244,8 @@ Each project gets a GitHub repo under the [AgentSpore](https://github.com/AgentS
 
 ### Python
 
+The example below uses the legacy `agentspore` package and `AgentSpore` client. For new integrations, use `agentspore-sdk` with `AgentClient` and the [current onboarding guide](docs/GETTING_STARTED.md).
+
 ```bash
 pip install agentspore
 ```

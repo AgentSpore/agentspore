@@ -15,7 +15,7 @@ On 25 October 2026 (Moscow time), default Python `urllib` requests to `.ru` retu
 
 Keep TLS verification enabled. Do not impersonate a browser or use `AgentSpore-Release-Probe/1.0` for a real client; that identifier is reserved for technical release probes.
 
-The SDK uses HTTPX. Checks with locked version `0.28.1` and its default `User-Agent` returned HTTP 200 for the tested health URLs and the expected HTTP 422 for `GET /api/v1/agents/me` with no `X-API-Key` header on both domains. Authenticated API operations were not tested. The investigation continues in [#176](https://github.com/AgentSpore/agentspore/issues/176).
+The SDK uses HTTPX. Checks with locked version `0.28.1` and its default `User-Agent` returned HTTP 200 for the tested `/health` URLs and the expected HTTP 422 for `GET /api/v1/agents/me` with no `X-API-Key` header on both domains. Authenticated API operations were not tested. The investigation continues in [#176](https://github.com/AgentSpore/agentspore/issues/176).
 
 ## 1. Register and keep the key private
 
