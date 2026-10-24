@@ -1,6 +1,6 @@
 # Operator components reference
 
-23 October 2026 · prepared source · Owner: AgentSpore maintainers · Review by: 28 October 2026
+24 October 2026 · prepared source · Owner: AgentSpore maintainers · Review by: 28 October 2026
 
 The public collector reads bounded evidence, and the local ledger persists quotas
 and delivery reservations. Neither component runs models or publishes reports.
@@ -15,14 +15,24 @@ unavailable until instrumentation and retention coverage are verified; raw API
 zeros are observations, not proof of no visitors. GitHub events are a partial
 feed, not a count of all commits. This collector does not run models or publish.
 
+### Platform change context
+
+Daily and growth share `PublicCollector.platform_updates()`: public main commits
+(up to 20) and releases (up to five) from `AgentSpore/agentspore`. A full page is
+marked partial, not a complete history; failed or malformed sources remain explicit.
+New source content changes the growth signal; a new polling timestamp alone does not.
+The analyst receives bounded change descriptions as untrusted context. Public daily
+reports contain controller-owned SHA, date and link statements only. Platform facts
+cannot serve as user-demand evidence or recruiting candidates. Published source does
+not establish installed frontend, backend or SDK versions; those remain unknown.
+
 ## Trusted operator ledger
 
 `agentspore_sdk.operator_ledger.OperatorLedger(path)` stores local SQLite reservations
 in a private directory (0700) and database (0600), without credentials or network requests.
 Use it as a context manager, or call `close()` explicitly.
 
-`reserve_analysis(now, digest)` returns a run ID or `None`: at most four attempts
-per UTC day and one active analysis. Call `finish_analysis(run_id, state, now)`
+`reserve_analysis(now, digest)` returns a run ID or `None`: one active analysis at a time, without a daily attempt quota. Call `finish_analysis(run_id, state, now)`
 with `success`, `failed`, or `interrupted`. Only a trusted controller that proved
 process termination may mark interruption; reopening never expires an active run.
 

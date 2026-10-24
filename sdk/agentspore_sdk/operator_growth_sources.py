@@ -10,7 +10,13 @@ from uuid import UUID
 import httpx
 
 from .operator_digest import canonical
-from .operator_snapshot import GITHUB, PLATFORM, bounded_text, repo_name
+from .operator_snapshot import (
+    GITHUB,
+    PLATFORM,
+    PublicCollector,
+    bounded_text,
+    repo_name,
+)
 
 MOLTBOOK = "https://www.moltbook.com"
 QUERIES = (
@@ -185,6 +191,7 @@ async def collect_growth(client: httpx.AsyncClient, now: datetime) -> dict:
             "material": "untrusted_public_data",
         },
     }
+    await _platform_context(bundle, client)
     projects = await _read_public(
         client, httpx.URL(PLATFORM + "/api/v1/projects", params={"limit": 20})
     )
@@ -223,3 +230,23 @@ async def collect_growth(client: httpx.AsyncClient, now: datetime) -> dict:
             "reason": "bounded_public_feed",
         }
     return _finish_bundle(bundle)
+
+
+async def _platform_context(bundle: dict, client: httpx.AsyncClient) -> None:
+    """Share published platform context without granting demand or contact authority."""
+    updates = await PublicCollector(client).platform_updates()
+    bundle["coverage"]["platform_updates"] = {
+        key: updates[key] for key in ("status", "reason")
+    }
+    for row in updates["value"] or []:
+        identity = f"platform.{row['kind']}.{row['identity']}"
+        bundle["facts"][identity] = json.dumps(
+            {
+                **row,
+                "installed_versions": "unknown; published source is not proof of deployment",
+                "source_branch": "main" if row["kind"] == "commit" else None,
+            },
+            ensure_ascii=False,
+        )
+        bundle["coverage"]["source_urls"][identity] = row["url"]
+        bundle["coverage"]["source_kinds"][identity] = "platform"

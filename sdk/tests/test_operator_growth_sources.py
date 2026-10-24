@@ -9,6 +9,8 @@ import httpx
 import pytest
 
 from agentspore_sdk.operator_digest import canonical
+from agentspore_sdk.operator_growth import _signal
+from agentspore_sdk.operator_growth_contract import parse_growth
 from agentspore_sdk.operator_growth_sources import collect_growth
 
 NOW = datetime(2026, 10, 23, tzinfo=UTC)
@@ -71,7 +73,7 @@ async def test_public_sources_isolate_credentials_and_project_fields(source_payl
         follow_redirects=True,
     ) as client:
         bundle = await collect_growth(client, NOW)
-    assert len(requests) == 4
+    assert len(requests) == 6
     assert all(r.method == "GET" for r in requests)
     assert all(
         not any(h in r.headers for h in ("authorization", "x-api-key", "cookie"))
@@ -120,7 +122,7 @@ async def test_sources_fail_unavailable_without_following_redirect(failure):
         transport=httpx.MockTransport(respond), follow_redirects=True
     ) as client:
         bundle = await collect_growth(client, NOW)
-    assert len(requests) == 4
+    assert len(requests) == 6
     assert bundle["facts"] == {}
     assert all(
         bundle["coverage"][key]["status"] == "unavailable"
@@ -187,3 +189,102 @@ async def test_unicode_budget_keeps_fact_maps_consistent(source_payloads):
         == set(bundle["coverage"]["source_urls"])
         == set(bundle["coverage"]["source_kinds"])
     )
+
+
+@pytest.fixture
+def platform_growth_transport(source_payloads):
+    sha = ["a" * 40]
+
+    def respond(request):
+        if request.url.path == "/repos/AgentSpore/agentspore/commits":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "sha": sha[0],
+                        "commit": {
+                            "message": "New platform capability",
+                            "committer": {"date": NOW.isoformat()},
+                        },
+                    }
+                ],
+            )
+        if request.url.path == "/repos/AgentSpore/agentspore/releases":
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=source_payloads[request.url.host])
+
+    return httpx.MockTransport(respond), sha
+
+
+@pytest.mark.asyncio
+async def test_platform_updates_change_signal_without_becoming_demand(
+    source_payloads, platform_growth_transport
+):
+    transport, sha = platform_growth_transport
+    async with httpx.AsyncClient(transport=transport) as client:
+        first = await collect_growth(client, NOW)
+        repeat = await collect_growth(client, NOW.replace(hour=1))
+        sha[0] = "b" * 40
+        changed = await collect_growth(client, NOW.replace(hour=2))
+    assert _signal(first) == _signal(repeat) != _signal(changed)
+    ids = [
+        identity
+        for identity, kind in first["coverage"]["source_kinds"].items()
+        if kind == "platform"
+    ]
+    assert ids and all(identity.startswith("platform.") for identity in ids)
+    assert first["coverage"]["platform_updates"]["status"] == "complete"
+    assert "installed" in " ".join(first["facts"][identity] for identity in ids)
+
+    project = source_payloads["agentspore.com"][0]
+    source_payloads["agentspore.com"] = [
+        dict(project, id=str(UUID(int=n + 1)), title="世" * 120, description="世" * 500)
+        for n in range(20)
+    ]
+    async with httpx.AsyncClient(transport=transport) as client:
+        saturated = await collect_growth(client, NOW)
+    assert "platform.commit." + sha[0] in saturated["facts"]
+    assert len(canonical(saturated)) <= 50 * 1024
+
+
+@pytest.mark.asyncio
+async def test_platform_context_cannot_authorize_service_or_recruitment(
+    platform_growth_transport,
+):
+    transport, _ = platform_growth_transport
+    async with httpx.AsyncClient(transport=transport) as client:
+        first = await collect_growth(client, NOW)
+    ids = [
+        identity
+        for identity, kind in first["coverage"]["source_kinds"].items()
+        if kind == "platform"
+    ]
+    reply = {
+        "snapshot_digest": first["snapshot_digest"],
+        "ideas": [],
+        "service": None,
+        "candidates": [
+            {"evidence_id": ids[0], "fit": "Fit", "invitation_draft": "Join"}
+        ],
+    }
+    with pytest.raises(ValueError, match="growth_agent_evidence_invalid"):
+        parse_growth(json.dumps(reply), first)
+    reply["candidates"] = []
+    reply["service"] = {
+        "title": "NewPrototype",
+        "description": "Test",
+        "source_ids": [
+            ids[0],
+            next(
+                key
+                for key, kind in first["coverage"]["source_kinds"].items()
+                if kind == "project"
+            ),
+        ],
+        "files": [
+            {"path": name, "content": "Test"}
+            for name in ("index.html", "README.md", "tests/app.test.js")
+        ],
+    }
+    with pytest.raises(ValueError, match="growth_demand_missing"):
+        parse_growth(json.dumps(reply), first)
