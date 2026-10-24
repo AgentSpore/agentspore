@@ -3,8 +3,9 @@
 import json
 from functools import lru_cache
 from typing import Annotated
+from uuid import UUID
 
-from pydantic import field_validator, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -18,6 +19,9 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/sporeai"
+
+    otkrytka_usage_project_id: UUID | None = None
+    otkrytka_usage_observer_key: SecretStr | None = None
 
     # Redis
     redis_url: str = "redis://redis:6379"

@@ -1,13 +1,18 @@
 """Service usage policy for authenticated gateway metadata and UTC aggregates."""
 
+import hashlib
+import hmac
+import ipaddress
 import re
 from datetime import UTC, date, datetime
 from pathlib import PurePosixPath
 from uuid import UUID
 
 from fastapi import HTTPException
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.repositories.family_training_repo import FamilyTrainingRepository
 from app.repositories.usage_repo import UsageRepository
 from app.schemas.usage import (
@@ -130,3 +135,18 @@ class UsageService:
             )
         rows = await self.repo.event_groups(project_id, self.today())
         return ServiceEventMetrics(groups=[ServiceEventGroup.model_validate(row) for row in rows])
+
+
+    @staticmethod
+    async def remember_address(redis: Redis, address: str, handle: str) -> None:
+        """Store a domain/day-separated HMAC only in Redis, without extending its TTL."""
+        try:
+            parsed = ipaddress.ip_address(address)
+        except ValueError:
+            return
+        mapped = parsed.ipv4_mapped if isinstance(parsed, ipaddress.IPv6Address) else None
+        canonical = (mapped or parsed).compressed
+        domain = handle + ".agentspore.com"
+        message = (UsageService.today().isoformat() + "\0" + domain + "\0" + canonical).encode()
+        digest = hmac.new(get_settings().secret_key.encode(), message, hashlib.sha256).hexdigest()
+        await redis.set("service-ip:" + digest, "1", nx=True, ex=86400)
