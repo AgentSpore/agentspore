@@ -1,9 +1,6 @@
 """Bounded service forwarding and privacy-preserving gateway usage policy."""
 
 import asyncio
-import hashlib
-import hmac
-import ipaddress
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from uuid import UUID, uuid4
@@ -15,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.core.config import get_settings
 from app.core.security import decode_token
 from app.repositories.service_route_repo import ServiceRouteRepository
 from app.schemas.family_training import FamilyTrainingEvent
@@ -190,13 +186,4 @@ class ServiceGateway:
     @staticmethod
     async def remember_address(redis: Redis, address: str, route: ServiceRoute) -> None:
         """Store a domain/day-separated HMAC only in Redis, without extending its TTL."""
-        try:
-            parsed = ipaddress.ip_address(address)
-        except ValueError:
-            return
-        mapped = parsed.ipv4_mapped if isinstance(parsed, ipaddress.IPv6Address) else None
-        canonical = (mapped or parsed).compressed
-        domain = route.handle + ".agentspore.com"
-        message = (UsageService.today().isoformat() + "\0" + domain + "\0" + canonical).encode()
-        digest = hmac.new(get_settings().secret_key.encode(), message, hashlib.sha256).hexdigest()
-        await redis.set("service-ip:" + digest, "1", nx=True, ex=86400)
+        await UsageService.remember_address(redis, address, route.handle)

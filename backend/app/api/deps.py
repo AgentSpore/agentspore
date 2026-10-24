@@ -5,13 +5,17 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.redis_client import get_redis
 from app.core.security import decode_token
 from app.models import User
+from app.schemas.usage_observer import UsageObservation, UsageObserverTarget
+from app.services.usage_observer_service import UsageObserverService
 from app.services.usage_service import UsageService
 
 security = HTTPBearer()
@@ -127,3 +131,25 @@ DatabaseSession = Annotated[AsyncSession, Depends(get_db)]
 def get_usage_service(db: DatabaseSession) -> UsageService:
     """Inject the request-owned database transaction into service usage policy."""
     return UsageService(db)
+
+
+async def get_usage_observer_metadata(request: Request) -> UsageObservation:
+    """Authenticate and validate producer transport before any observer database dependency."""
+    return await UsageObserverService.metadata(request, get_settings())
+
+
+async def get_usage_observer_service(
+    # INVARIANT(U171.7): producer validation must precede database dependencies.
+    _observation: Annotated[UsageObservation, Depends(get_usage_observer_metadata)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security_optional)],
+    redis: Annotated[Redis, Depends(get_redis)],
+) -> UsageObserverService:
+    """Adapt optional-user lookup to the same function-scoped, pre-response transaction."""
+    user = await get_optional_user(db, credentials)
+    settings = get_settings()
+    if settings.otkrytka_usage_project_id is None or settings.otkrytka_usage_observer_key is None:
+        raise HTTPException(503, "Usage observer unavailable")
+    target = UsageObserverTarget(project_id=settings.otkrytka_usage_project_id,
+                                 key=settings.otkrytka_usage_observer_key)
+    return UsageObserverService(UsageService(db), redis, target, user.id if user else None)
