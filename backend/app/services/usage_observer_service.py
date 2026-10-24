@@ -74,10 +74,20 @@ class UsageObserverService:
         except (ValidationError, TimeoutError):
             raise HTTPException(400, "Invalid usage observation") from None
 
-    async def observe(self, metadata: UsageObservation) -> GatewayVisit:
-        """Insert through existing SQL policy; dependency cleanup commits before delivery."""
+    async def observe(self, metadata: UsageObservation) -> GatewayVisit | None:
+        """Return None for an action, or a visit for post-commit cookie delivery."""
         if await self.usage.repo.project_creator(self.target.project_id) is None:
             raise HTTPException(404, "Project not found")
+        if metadata.kind == "board_created":
+            if self.usage.is_browser(metadata.user_agent):
+                material = b"agentspore:otkrytka:board-created:v1\0" + metadata.request_id.bytes
+                receipt = hmac.new(
+                    self.target.key.get_secret_value().encode(), material, hashlib.sha256
+                ).digest()
+                await self.usage.repo.record_action_receipt(
+                    self.target.project_id, receipt, self.user_id, self.usage.today()
+                )
+            return None
         try:
             visitor, new_cookie = UUID(metadata.visitor_id), False
         except ValueError:

@@ -1,9 +1,9 @@
 """Closed, transient metadata supplied only by the scoped Otkrytka producer."""
 
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field, IPvAnyAddress, SecretStr, field_validator
+from pydantic import UUID4, BaseModel, ConfigDict, Field, IPvAnyAddress, SecretStr, model_validator
 
 from app.schemas.usage import GatewayVisit
 
@@ -24,19 +24,33 @@ class UsageObservation(BaseModel):
     visitor_id: str = Field(default="", alias="x-usage-visitor-id", max_length=80, repr=False)
     user_agent: str = Field(alias="x-usage-user-agent", max_length=4096, repr=False)
     accept: str = Field(alias="x-usage-accept", max_length=4096, repr=False)
-    method: Literal["GET"] = Field(alias="x-usage-method")
+    kind: Literal["visit", "board_created"] = Field(alias="x-usage-kind")
+    method: Literal["GET", "POST"] = Field(alias="x-usage-method")
     status: int = Field(alias="x-usage-status", ge=200, lt=300)
     content_type: str = Field(alias="x-usage-content-type", max_length=128)
-    path_class: Literal["document", "probe"] = Field(alias="x-usage-path-class")
+    path_class: Literal["document", "probe", "board_creation"] = Field(alias="x-usage-path-class")
     client_ip: IPvAnyAddress = Field(alias="x-usage-client-ip", repr=False)
 
-    @field_validator("content_type")
-    @classmethod
-    def require_html(cls, value: str) -> str:
-        """Response headers describe HTML eligibility, never application content."""
-        if value.split(";", 1)[0].strip().lower() != "text/html":
-            raise ValueError("expected_html")
-        return value
+    @model_validator(mode="after")
+    def require_matching_response(self) -> Self:
+        """Only the closed, source-verified response combinations are eligible."""
+        mime = self.content_type.split(";", 1)[0].strip().lower()
+        visit = (
+            self.kind == "visit"
+            and self.method == "GET"
+            and mime == "text/html"
+            and self.path_class in {"document", "probe"}
+        )
+        action = (
+            self.kind == "board_created"
+            and self.method == "POST"
+            and self.status == 200
+            and mime == "application/json"
+            and self.path_class == "board_creation"
+        )
+        if not (visit or action):
+            raise ValueError("invalid_observation_response")
+        return self
 
     def visit(self, visitor: UUID, user_id: UUID | None, new_cookie: bool) -> GatewayVisit:
         """Map the closed path class onto existing visit exclusions without a raw path."""
