@@ -27,6 +27,8 @@ COUNTERS = (
     "total_repos_created",
     "total_prs_merged",
 )
+PLATFORM_REPO = "AgentSpore/agentspore"
+PLATFORM_CODE = "https://github.com/" + PLATFORM_REPO
 SLUG = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}")
 
 
@@ -139,6 +141,24 @@ class PublicCollector:
             else None,
         )
 
+    async def platform_updates(self) -> Observation:
+        """Read published source changes; never infer independently deployed versions."""
+        commits = platform_update_feed(
+            await self.read(
+                f"/repos/{PLATFORM_REPO}/commits?sha=main&per_page=20", True
+            ),
+            "commit",
+            20,
+        )
+        releases = platform_update_feed(
+            await self.read(f"/repos/{PLATFORM_REPO}/releases?per_page=5", True),
+            "release",
+            5,
+        )
+        values = (commits["value"] or []) + (releases["value"] or [])
+        reason = commits["reason"] or releases["reason"]
+        return observation(values if values or reason is None else None, reason)
+
     async def events(self, since: datetime, until: datetime) -> Observation:
         """Events are a bounded public feed, never a full commit history."""
         found = {}
@@ -229,6 +249,7 @@ async def collect_snapshot(client: httpx.AsyncClient, now: datetime) -> PublicSn
         "counters": counter_observation(counters),
         "projects": projects,
         "github_repos": repository_observation(repos),
+        "platform_updates": await collector.platform_updates(),
         "github_events": await collector.events(since, until),
         "github_ci": await collector.ci(projects, since, until),
     }
@@ -347,3 +368,103 @@ def valid_ci_row(row) -> bool:
         and (row["conclusion"] is None or isinstance(row["conclusion"], str))
         and parse_time(row.get("created_at")) is not None
     )
+
+
+def platform_update_row(row, kind: str) -> dict | None:
+    """Project a GitHub response onto bounded, explicitly untrusted change context."""
+    if not isinstance(row, dict):
+        return None
+    if kind == "commit":
+        identity, commit = row.get("sha"), row.get("commit")
+        if (
+            not isinstance(identity, str)
+            or not re.fullmatch(r"[a-f0-9]{40}", identity)
+            or not isinstance(commit, dict)
+        ):
+            return None
+        committer = commit.get("committer")
+        stamp = (
+            parse_time(committer.get("date")) if isinstance(committer, dict) else None
+        )
+        summary, details = commit.get("message"), ""
+        url = PLATFORM_CODE + "/commit/" + identity
+    else:
+        identity, stamp = row.get("id"), parse_time(row.get("published_at"))
+        if (
+            type(identity) is not int
+            or not 1 <= identity <= 10**20
+            or row.get("draft") is not False
+        ):
+            return None
+        identity = str(identity)
+        summary, details = row.get("tag_name"), row.get("body")
+        url = PLATFORM_CODE + "/releases"
+    if stamp is None or not isinstance(summary, str) or not summary.strip():
+        return None
+    return {
+        "kind": kind,
+        "identity": identity,
+        "summary": bounded_text(summary, 240),
+        "details": bounded_text(details, 800),
+        "created_at": stamp.isoformat(),
+        "url": url,
+    }
+
+
+def checked_platform_update(row) -> dict:
+    """Reject forged IPC update identities, text, timestamps and source links."""
+    if not isinstance(row, dict) or set(row) != {
+        "kind",
+        "identity",
+        "summary",
+        "details",
+        "created_at",
+        "url",
+    }:
+        raise ValueError("invalid platform update")
+    identity, kind = row["identity"], row["kind"]
+    pattern = (
+        r"[a-f0-9]{40}"
+        if kind == "commit"
+        else r"[1-9][0-9]{0,20}"
+        if kind == "release"
+        else None
+    )
+    if (
+        pattern is None
+        or not isinstance(identity, str)
+        or not re.fullmatch(pattern, identity)
+    ):
+        raise ValueError("invalid platform identity")
+    url = PLATFORM_CODE + ("/commit/" + identity if kind == "commit" else "/releases")
+    if row["url"] != url or parse_time(row["created_at"]) is None:
+        raise ValueError("invalid platform source")
+    if not isinstance(row["summary"], str) or not row["summary"].strip():
+        raise ValueError("invalid platform change summary")
+    if any(
+        not isinstance(row[key], str) or len(row[key]) > limit
+        for key, limit in (("summary", 240), ("details", 800))
+    ):
+        raise ValueError("invalid platform change text")
+    return row
+
+
+def platform_update_feed(rows, kind: str, limit: int) -> Observation:
+    """Keep bounded page coverage separate from individual change projection."""
+    if not isinstance(rows, list):
+        return observation(None, "source_unreachable")
+    updates, invalid = [], False
+    for row in rows[:limit]:
+        parsed = platform_update_row(row, kind)
+        if parsed is None:
+            invalid = True
+        else:
+            updates.append(parsed)
+    reason = (
+        "source_shape_invalid"
+        if invalid or (kind == "commit" and not rows)
+        else "pagination_incomplete"
+        if len(rows) >= limit
+        else None
+    )
+    return observation(updates if updates or reason is None else None, reason)

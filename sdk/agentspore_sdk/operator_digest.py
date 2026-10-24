@@ -4,6 +4,8 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
+from .operator_snapshot import checked_platform_update
+
 SOURCES = ("counters", "projects", "github_repos", "github_events", "github_ci")
 COUNTERS = {
     "total_agents": "Registered agents (lifetime)",
@@ -58,7 +60,8 @@ def canonical(value) -> bytes:
 
 def checked_sources(snapshot: dict) -> dict:
     """Validate mandatory observation shapes without trusting source annotations."""
-    return {name: checked_observation(name, snapshot.get(name)) for name in SOURCES}
+    names = SOURCES + (("platform_updates",) if "platform_updates" in snapshot else ())
+    return {name: checked_observation(name, snapshot.get(name)) for name in names}
 
 
 def checked_observation(name: str, item) -> dict:
@@ -74,6 +77,7 @@ def checked_observation(name: str, item) -> dict:
         "github_repos": 100,
         "github_events": 300,
         "github_ci": 50,
+        "platform_updates": 25,
     }
     if isinstance(item["value"], list) and len(item["value"]) > limits[name]:
         raise ValueError("source limit exceeded")
@@ -85,6 +89,10 @@ def checked_values(name: str, item: dict) -> None:
     """Reject malformed records instead of reporting complete empty evidence."""
     value = item["value"]
     if value is None:
+        return
+    if name == "platform_updates":
+        for row in value:
+            checked_platform_update(row)
         return
     if name == "counters":
         checked_counters(value, item["status"] == "complete")
@@ -125,6 +133,10 @@ def evidence_bundle(snapshot: dict) -> dict:
     facts = snapshot_facts(snapshot, sources)
     facts["feed.ci_outcomes"] = ci_outcomes(sources["github_ci"])
     coverage = coverage_summary(sources)
+    if "platform_updates" in sources:
+        coverage["platform_updates"]["untrusted_changes"] = (
+            sources["platform_updates"]["value"] or []
+        )
     return {
         "snapshot_digest": hashlib.sha256(raw).hexdigest(),
         "window": {
@@ -244,6 +256,24 @@ def snapshot_facts(snapshot: dict, sources: dict) -> dict:
         value = sources[name]["value"]
         count = str(len(value)) if isinstance(value, list) else "unavailable"
         facts["feed." + name] = f"Observed {name.replace('_', ' ')} records: {count}."
+    if "platform_updates" in sources:
+        facts.update(platform_source_facts(sources["platform_updates"]))
+    return facts
+
+
+def platform_source_facts(source: dict) -> dict:
+    """Render only controlled source identity statements, never change descriptions."""
+    rows = source["value"] or []
+    main = next((row["identity"] for row in rows if row["kind"] == "commit"), "unknown")
+    if source["reason"] == "source_shape_invalid":
+        main = "unknown"
+    facts = {
+        "platform.main": f"Observed platform main SHA: {main}. Installed frontend, backend and SDK versions: unknown. Published source is not proof of deployment."
+    }
+    for row in rows:
+        facts[f"platform.{row['kind']}.{row['identity']}"] = (
+            f"Published platform {row['kind']} {row['identity']} at {row['created_at']}: {row['url']}."
+        )
     return facts
 
 
