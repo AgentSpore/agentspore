@@ -63,7 +63,7 @@ async def observe_usage(
     request.state.usage_observer = service
     visit = await service.observe(metadata)
     response = Response(status_code=204)
-    if visit.new_cookie:
+    if visit is not None and visit.new_cookie:
         response.set_cookie(
             ServiceGateway.COOKIE,
             str(visit.visitor_id),

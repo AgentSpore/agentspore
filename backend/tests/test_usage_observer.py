@@ -78,6 +78,7 @@ async def observer(observer_app):
 def metadata():
     return {
         "X-Usage-Observer-Key": KEY,
+        "X-Usage-Kind": "visit",
         "X-Usage-Request-Id": str(uuid4()),
         "X-Usage-Visitor-Id": "",
         "X-Usage-User-Agent": usage_fixtures.BROWSER,

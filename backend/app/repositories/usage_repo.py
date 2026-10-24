@@ -77,6 +77,23 @@ class UsageRepository:
         )
         return inserted is not None
 
+    async def record_action_receipt(
+        self, project_id: UUID, receipt: bytes, identity: UUID | None, today: date
+    ) -> None:
+        """Deduplicate delivery and exclude the verified owner in one atomic statement."""
+        await self.db.execute(
+            text("""
+                INSERT INTO service_action_receipts (project_id, action_day, action, receipt_hash)
+                SELECT p.id, :today, 'board_created', :receipt
+                FROM projects p JOIN agents a ON a.id = p.creator_agent_id
+                WHERE p.id = :project_id
+                  AND (CAST(:identity AS uuid) IS NULL OR a.owner_user_id IS NULL
+                       OR a.owner_user_id <> CAST(:identity AS uuid))
+                ON CONFLICT (project_id, receipt_hash) DO NOTHING
+            """),
+            {"project_id": project_id, "today": today, "receipt": receipt, "identity": identity},
+        )
+
     async def _usage_rows(
         self,
         today: date,
@@ -127,7 +144,7 @@ class UsageRepository:
         return [ProjectUsage.model_validate(row) for row in rows]
 
     async def purge_expired(self, today: date) -> int:
-        """Purge visits and binder actions, returning only the deleted visit count."""
+        """Purge visits and action records, returning only the deleted visit count."""
         count = await self.db.scalar(
             text(
                 "WITH deleted AS (DELETE FROM service_visits WHERE visit_day < :oldest "
@@ -137,6 +154,10 @@ class UsageRepository:
         )
         await self.db.execute(
             text("DELETE FROM emergency_binder_event_counts WHERE event_day < :oldest"),
+            {"oldest": today - timedelta(days=7)},
+        )
+        await self.db.execute(
+            text("DELETE FROM service_action_receipts WHERE action_day < :oldest"),
             {"oldest": today - timedelta(days=7)},
         )
         return int(count or 0)
