@@ -1,5 +1,6 @@
 """Internal gateway visit metadata and public service usage aggregates."""
 
+from datetime import date
 from typing import Literal, Self
 from uuid import UUID
 
@@ -29,6 +30,37 @@ class UsageMetrics(BaseModel):
     uniques_1d: int = Field(default=0, ge=0)
     uniques_7d: int = Field(default=0, ge=0)
     retention_d7: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class UsageCoverage(BaseModel):
+    """Unknown producer coverage; stored visits do not establish ingress verification."""
+
+    status: Literal["unverified"] = "unverified"
+    since: date | None = None
+
+
+class UsageD7(BaseModel):
+    """Observed UTC cohort counts with no numeric retention for an empty cohort."""
+
+    cohort_day: date
+    observed_cohort_size: int = Field(ge=0)
+    observed_returned_count: int = Field(ge=0)
+    value: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class UsageMeasurement(BaseModel):
+    """Describe observation dates independently of unverified producer coverage."""
+
+    as_of_day: date
+    timezone: Literal["UTC"] = "UTC"
+    coverage: UsageCoverage = Field(default_factory=UsageCoverage)
+    d7: UsageD7
+
+
+class UsageReport(UsageMetrics):
+    """Public usage adds measurement context while heartbeat retains legacy metrics."""
+
+    measurement: UsageMeasurement
 
 
 class ProjectUsage(UsageMetrics):

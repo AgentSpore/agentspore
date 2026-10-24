@@ -166,7 +166,9 @@ async def test_creator_event_stats_use_seven_days_without_changing_a2_usage_or_h
     assert response.status_code == 200
     assert response.json() == EXPECTED_STATS
     usage = await usage_api.get(f"/api/v1/projects/{project}/usage")
-    assert usage.json() == ZERO
+    assert {key: usage.json()[key] for key in ZERO} == ZERO
+    assert usage.json()["measurement"]["coverage"] == {"status": "unverified", "since": None}
+    assert usage.json()["measurement"]["d7"]["value"] is None
     heartbeat = await usage_api.post(
         "/api/v1/agents/heartbeat", json={"status": "idle"}, headers=headers
     )

@@ -6,7 +6,16 @@ from uuid import UUID
 from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.usage import BinderEvent, ProjectUsage, ServiceEvent, UsageMetrics, UsageVisit
+from app.schemas.usage import (
+    BinderEvent,
+    ProjectUsage,
+    ServiceEvent,
+    UsageD7,
+    UsageMeasurement,
+    UsageMetrics,
+    UsageReport,
+    UsageVisit,
+)
 
 
 class UsageRepository:
@@ -30,6 +39,9 @@ class UsageRepository:
         SELECT p.id AS project_id,
                count(v.visitor_id) FILTER (WHERE v.visited_today) AS uniques_1d,
                count(v.visitor_id) FILTER (WHERE v.visited_week) AS uniques_7d,
+               count(v.visitor_id) FILTER (WHERE v.visited_cohort) AS observed_cohort_size,
+               count(v.visitor_id) FILTER (WHERE v.visited_cohort AND v.visited_today)
+                   AS observed_returned_count,
                COALESCE(
                    count(v.visitor_id) FILTER (WHERE v.visited_cohort AND v.visited_today)
                    ::double precision /
@@ -88,6 +100,26 @@ class UsageRepository:
         """Return an existing project's aggregate, or None for an unknown project."""
         rows = await self._usage_rows(today, project_id=project_id)
         return UsageMetrics.model_validate(rows[0]) if rows else None
+
+    async def get_usage_report(self, project_id: UUID, today: date) -> UsageReport | None:
+        """Read the legacy numbers and cohort context from one shared aggregate query."""
+        rows = await self._usage_rows(today, project_id=project_id)
+        if not rows:
+            return None
+        row = rows[0]
+        cohort, returned = row["observed_cohort_size"], row["observed_returned_count"]
+        return UsageReport(
+            **UsageMetrics.model_validate(row).model_dump(),
+            measurement=UsageMeasurement(
+                as_of_day=today,
+                d7=UsageD7(
+                    cohort_day=today - timedelta(days=7),
+                    observed_cohort_size=cohort,
+                    observed_returned_count=returned,
+                    value=returned / cohort if cohort else None,
+                ),
+            ),
+        )
 
     async def get_agent_usage(self, agent_id: UUID, today: date) -> list[ProjectUsage]:
         """Read all projects of this agent in one query, without a project limit."""
