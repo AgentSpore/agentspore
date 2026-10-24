@@ -21,3 +21,15 @@ For `visit`, the producer must assert GET, a 2xx HTML response and `document` or
 Board creation records no visit and sets or refreshes no cookie. Recognized bots and the verified project owner are excluded. PostgreSQL stores only project ID, UTC action day, closed action name and a 32-byte domain-separated HMAC of the ingress UUID using the scoped key. The receipt domain differs from the visitor domain. Concurrent retries of one ingress UUID share one receipt; distinct UUIDs remain distinct. This is delivery deduplication within the eight-day retention window, not business idempotency or exactly-once client delivery. Key rotation changes receipt derivation and must not occur during delivery retries.
 
 The existing purge removes receipts older than today minus seven UTC days while preserving its deleted-visit return count. No public action statistics or new heartbeat fields are introduced. Coverage remains unverified even when receipts exist.
+
+## Optional ingress configuration
+
+The tracked [restored-services configuration](../deploy/restored-services.caddy) wraps only the direct Otkrytka proxy. PodMemory and Pereklichka retain their existing routes. This source configuration is not evidence that production loaded it.
+
+Set `OTKRYTKA_USAGE_OBSERVER_KEY` for Caddy and the backend, and `OTKRYTKA_USAGE_PROJECT_ID` for the backend, through the operator's existing local Compose environment file. Use a separate scoped key. Leave both variables absent to disable observation; do not set the optional project UUID to an empty string. Compose's null environment mappings pass configured values and omit unresolved variables from the container environment. Caddy resolves the key at runtime; a missing or empty key skips delivery without changing application responses.
+
+The producer sends empty POSTs with no query, strips incoming headers before adding the observer contract, and forwards Bearer proof only to the observer. Only GET 2xx HTML and exact POST `/api/v1/boards` 200 JSON responses qualify. Application cookies, status and body remain intact. A private Caddy loopback responder on `127.0.0.1:8081` supplies the fallback acknowledgment; it needs no published port or extra daemon. Observer connection and response-header deadlines are 200 ms, with a 500 ms retry budget. Only a trusted backend 204 with a nonempty cookie may add a visitor cookie. Request UUIDs are removed from service access logs.
+
+Before enabling production, verify the installed Caddy version and loaded routes, validate the configuration, confirm the configured project binding, and retain the previous configuration for rollback. Acceptance still requires a real application/database run and production ingress evidence; coverage remains unverified.
+
+Before HTML visit delivery, the producer excludes the exact probe names and descendants defined by `UsageService._PROBES`, case-insensitively. For example, `/ready` and `/ready/check` are excluded, while `/ready-made` remains eligible. Classification stays inside Caddy; raw paths are never sent to the observer.
