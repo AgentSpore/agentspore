@@ -27,6 +27,7 @@
 				stacktrace_key ""
 			}
 			fields {
+				uuid delete
 				request delete
 				resp_headers delete
 				user_id delete

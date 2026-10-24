@@ -1,6 +1,109 @@
+(otkrytka_observe) {
+ @enabled expression `{env.OTKRYTKA_USAGE_OBSERVER_KEY} != ""`
+ handle @enabled {
+ request_body {
+  set {vars.empty_body}
+ }
+ reverse_proxy backend:8000 127.0.0.1:8081 {
+  lb_policy first
+  lb_try_duration 500ms
+  lb_try_interval 10ms
+  lb_retry_match {
+   method POST
+  }
+  fail_duration 1s
+  max_fails 1
+  method POST
+  rewrite /api/v1/_internal/usage/otkrytka/observe?
+  header_up -*
+  header_up Host agentspore.com
+  header_up Content-Length 0
+  header_up X-Usage-Observer-Key {env.OTKRYTKA_USAGE_OBSERVER_KEY}
+  header_up X-Usage-Request-Id {vars.usage_id}
+  header_up X-Usage-Kind {vars.kind}
+  header_up X-Usage-Visitor-Id {vars.visitor}
+  header_up X-Usage-User-Agent {vars.ua}
+  header_up X-Usage-Accept {vars.accept}
+  header_up X-Usage-Method {vars.method}
+  header_up X-Usage-Status {vars.response_status}
+  header_up X-Usage-Content-Type {vars.response_type}
+  header_up X-Usage-Path-Class {vars.path_class}
+  header_up X-Usage-Client-IP {vars.client_ip}
+  header_up Authorization {vars.platform_auth}
+  header_up -X-Forwarded-For
+  header_up -X-Forwarded-Host
+  header_up -X-Forwarded-Proto
+  transport http {
+   dial_timeout 200ms
+   response_header_timeout 200ms
+  }
+  handle_response {
+   @cookie expression `{rp.status_code} == 204 && {rp.header.Set-Cookie} != ""`
+   header @cookie +Set-Cookie "{rp.header.Set-Cookie}"
+  }
+ }
+ }
+}
 otkrytka.agentspore.com, otkrytka.agentspore.ru {
-    import service_access_log otkrytka
-	reverse_proxy restored-otkrytka:8000
+ import service_access_log otkrytka
+ route {
+  vars {
+   usage_id {http.request.uuid}
+   empty_body ""
+   ua {http.request.header.User-Agent}
+   accept {http.request.header.Accept}
+   visitor {http.request.cookie.__Host-visitor}
+   platform_auth {http.request.header.Authorization}
+   client_ip {http.request.remote.host}
+   method {http.request.method}
+   path {http.request.uri.path}
+  }
+  intercept {
+   @html {
+    status 2xx
+    header Content-Type text/html*
+   }
+   @json {
+    status 200
+    header Content-Type application/json*
+   }
+   handle_response @html {
+    route {
+     @document expression `{vars.method} == "GET" && !{vars.path}.matches("(?i)^/(health|healthz|ready|readyz|readiness|live|livez|liveness|metrics|robots[.]txt|favicon[.]ico|api|static|assets)(/|$)")`
+     handle @document {
+      vars {
+       kind visit
+       path_class document
+       response_status {resp.status_code}
+       response_type {resp.header.Content-Type}
+      }
+      import otkrytka_observe
+     }
+    }
+   }
+   handle_response @json {
+    route {
+     @creation expression `{vars.method} == "POST" && {vars.path} == "/api/v1/boards"`
+     handle @creation {
+      vars {
+       kind board_created
+       path_class board_creation
+       response_status {resp.status_code}
+       response_type {resp.header.Content-Type}
+      }
+      import otkrytka_observe
+     }
+    }
+   }
+  }
+  reverse_proxy restored-otkrytka:8000 {
+   header_up -Authorization
+  }
+ }
+}
+http://127.0.0.1:8081 {
+ bind 127.0.0.1
+ respond 204
 }
 
 podmemory.agentspore.com, podmemory.agentspore.ru {
