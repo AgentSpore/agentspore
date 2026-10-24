@@ -1,6 +1,6 @@
 """Bounded public observations consumed by the trusted operator controller."""
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 
 class Observation(TypedDict):
@@ -21,3 +21,4 @@ class PublicSnapshot(TypedDict):
     github_repos: Observation
     github_events: Observation
     github_ci: Observation
+    platform_updates: NotRequired[Observation]
