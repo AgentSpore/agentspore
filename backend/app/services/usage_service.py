@@ -18,7 +18,7 @@ from app.schemas.usage import (
     ServiceEvent,
     ServiceEventGroup,
     ServiceEventMetrics,
-    UsageMetrics,
+    UsageReport,
     UsageVisit,
 )
 
@@ -85,9 +85,9 @@ class UsageService:
             return False
         return await self.repo.record_visit(project_id, visit, self.today())
 
-    async def get_usage(self, project_id: UUID) -> UsageMetrics:
-        """Expose only an aggregate for an existing public project."""
-        result = await self.repo.get_usage(project_id, self.today())
+    async def get_usage(self, project_id: UUID) -> UsageReport:
+        """Expose aggregate observations with explicitly unverified measurement coverage."""
+        result = await self.repo.get_usage_report(project_id, self.today())
         if result is None:
             raise HTTPException(status_code=404, detail="Project not found")
         return result
