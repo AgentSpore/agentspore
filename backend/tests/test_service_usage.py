@@ -189,13 +189,20 @@ async def test_utc_windows_count_distinct_and_exact_d7_cohort(usage_world, cohor
 
 
 @pytest.mark.parametrize("offset", [timedelta(hours=-1), timedelta(hours=23)])
-async def test_calendar_day_changes_only_at_utc_midnight(usage_world, visit, monkeypatch, offset):
+async def test_calendar_day_changes_only_at_utc_midnight(
+    usage_world, visit, monkeypatch, offset, usage_api
+):
     instant = datetime(2026, 10, 16, tzinfo=UTC) + offset
     monkeypatch.setattr(UsageService, "today", staticmethod(lambda: instant.date()))
     async with usage_world.maker.begin() as db:
         assert await UsageService(db).record_visit(usage_world.projects[0], visit) is True
         stored_day = await db.scalar(text("SELECT visit_day FROM service_visits"))
         assert stored_day == instant.date()
+    response = await usage_api.get(f"/api/v1/projects/{usage_world.projects[0]}/usage")
+    measurement = response.json()["measurement"]
+    assert measurement["as_of_day"] == instant.date().isoformat()
+    assert measurement["timezone"] == "UTC"
+    assert measurement["d7"]["cohort_day"] == (instant.date() - timedelta(days=7)).isoformat()
 
 
 @pytest.mark.parametrize(
@@ -334,7 +341,14 @@ async def test_public_usage_reads_aggregate_and_unknown_is_404(
 ):
     response = await usage_api.get(f"/api/v1/projects/{usage_world.projects[0]}/usage")
     assert response.status_code == 200
-    assert response.json() == {"uniques_1d": 2, "uniques_7d": 3, "retention_d7": 0.5}
+    assert {key: response.json()[key] for key in ZERO} == {
+        "uniques_1d": 2,
+        "uniques_7d": 3,
+        "retention_d7": 0.5,
+    }
+    assert response.json()["measurement"]["d7"]["observed_cohort_size"] == 2
+    assert response.json()["measurement"]["d7"]["observed_returned_count"] == 1
+    assert response.json()["measurement"]["d7"]["value"] == 0.5
     assert (await usage_api.get(f"/api/v1/projects/{uuid4()}/usage")).status_code == 404
 
 
@@ -524,3 +538,62 @@ async def test_repeatable_registry_sql_can_run_twice_and_preserves_identity_guar
             )
             == params["revision"]
         )
+
+
+@pytest.mark.parametrize("cohort_case", [(0, 0, None), (2, 0, 0.0), (2, 1, 0.5)])
+async def test_usage_report_distinguishes_empty_zero_and_returning_cohort(
+    usage_api, usage_world, usage_clock, cohort_case
+):
+    size, returned, value = cohort_case
+    project = usage_world.projects[0]
+    visitors = [uuid4() for _ in range(size)]
+    rows = [
+        {"project": project, "visitor": visitor, "day": TODAY - timedelta(days=7)}
+        for visitor in visitors
+    ]
+    rows.extend(
+        {"project": project, "visitor": visitor, "day": TODAY} for visitor in visitors[:returned]
+    )
+    async with usage_world.maker.begin() as db:
+        if rows:
+            await db.execute(
+                text(
+                    "INSERT INTO service_visits (project_id,visitor_id,visit_day) "
+                    "VALUES (:project,:visitor,:day)"
+                ),
+                rows,
+            )
+    statements = []
+    engine = usage_world.maker.kw["bind"].sync_engine
+
+    def capture(*args):
+        if "service_visits" in args[2]:
+            statements.append(args[2])
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = await usage_api.get(f"/api/v1/projects/{project}/usage")
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert response.status_code == 200 and len(statements) == 1
+    payload = response.json()
+    assert type(payload["uniques_1d"]) is int and type(payload["uniques_7d"]) is int
+    assert type(payload["retention_d7"]) is float
+    assert all(str(visitor) not in response.text for visitor in visitors)
+    assert {key: payload[key] for key in ZERO} == {
+        "uniques_1d": returned,
+        "uniques_7d": returned,
+        "retention_d7": value or 0.0,
+    }
+    assert payload["measurement"] == {
+        "as_of_day": TODAY.isoformat(),
+        "timezone": "UTC",
+        "coverage": {"status": "unverified", "since": None},
+        "d7": {
+            "cohort_day": (TODAY - timedelta(days=7)).isoformat(),
+            "observed_cohort_size": size,
+            "observed_returned_count": returned,
+            "value": value,
+        },
+    }
+    assert not {"visitor_id", "verified_user_id", "ip"} & payload.keys()
