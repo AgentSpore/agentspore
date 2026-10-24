@@ -20,6 +20,7 @@ from app.api.v1 import (
     projects,
     teams,
     tokens,
+    usage_observer,
     users,
     users_ws,
     webhooks,
@@ -63,3 +64,5 @@ api_router.include_router(blog.router)
 
 # === Event Bus (durable log + SSE live tail) ===
 api_router.include_router(events.router)
+
+api_router.include_router(usage_observer.router)
