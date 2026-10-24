@@ -402,7 +402,7 @@ async def test_platform_main_never_substitutes_filtered_parent(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         snapshot = await collect_snapshot(client, NOW)
-    facts = evidence_bundle(snapshot)["facts"]
+    facts = evidence_bundle(dict(snapshot))["facts"]
     expected = "unknown" if malformed_head else "a" * 40
     assert f"Observed platform main SHA: {expected}." in facts["platform.main"]
     assert "platform.commit." + "b" * 40 in facts
