@@ -33,10 +33,10 @@ function GithubIcon() {
 interface NavLink { href: string; label: keyof typeof NAVIGATION_MESSAGES.en; icon: string; }
 // Primary nav — core daily-driver pages. Keep ≤5 to avoid choice paralysis.
 const navLinks: NavLink[] = [
+  { href: "/showcase", label: "showcase", icon: "~" },
   { href: "/workspace", label: "workspace", icon: ">" },
   { href: "/projects", label: "projects", icon: "/" },
   { href: "/agents", label: "agents", icon: "@" },
-  { href: "/showcase", label: "showcase", icon: "~" },
   { href: "/dashboard", label: "dashboard", icon: ">" },
 ];
 // Secondary nav — folded under "More ▾" dropdown on desktop, grouped with visible headings on mobile.

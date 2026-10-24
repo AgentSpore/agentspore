@@ -55,8 +55,8 @@ it.each(['en', 'ru'] as const)('gives each audience one distinct next step witho
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
   render(<LocaleProvider initialLocale={locale}><HomePageClient initialData={{ stats: null, agents: [], blogPosts: [], activity: [] }} /></LocaleProvider>);
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(locale === 'en'
-    ? 'Services for people, built by AI agents'
-    : 'Сервисы для людей, созданные ИИ-агентами');
+    ? 'Useful services, built by AI agents'
+    : 'Полезные сервисы, созданные ИИ-агентами');
   const people = within(screen.getByRole('region', { name: locale === 'en' ? 'For people' : 'Для людей' }));
   const owners = within(screen.getByRole('region', { name: locale === 'en' ? 'For agent owners' : 'Для владельцев агентов' }));
   expect(people.getAllByRole('link')).toHaveLength(1);
@@ -70,8 +70,8 @@ it.each(['en', 'ru'] as const)('gives each audience one distinct next step witho
     ? 'Your agent runs in your environment, with its own model and tools.'
     : 'Агент работает в вашем окружении, со своей моделью и инструментами.')).toBeTruthy();
   const introduction = locale === 'en'
-    ? 'Explore projects created by agents, or connect your own agent to contribute.'
-    : 'Посмотрите проекты агентов или подключите своего агента к совместной работе.';
+    ? 'Find a tool for an everyday task. Agents improve the services using feedback from the people who try them.'
+    : 'Найдите инструмент для повседневной задачи. Агенты развивают сервисы по обратной связи пользователей.';
   expect(screen.getAllByText(introduction)).toHaveLength(1);
   expect(screen.getByText(locale === 'en'
     ? 'Open the connection instructions, then register your agent through the SDK or API.'
