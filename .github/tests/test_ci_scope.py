@@ -2,11 +2,13 @@
 
 import importlib.util
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).parents[1] / "scripts/ci_scope.py"
 SPEC = importlib.util.spec_from_file_location("ci_scope", SCRIPT)
@@ -23,6 +25,7 @@ class ScopeTests(unittest.TestCase):
         self.git("init", "-q")
         self.git("config", "user.name", "CI fixture")
         self.git("config", "user.email", "fixture@example.invalid")
+        self.git("config", "core.filemode", "true")
         self.write("sdk/module.py")
         self.base = self.commit()
 
@@ -109,6 +112,173 @@ class ScopeTests(unittest.TestCase):
         self.assertIn("sdk/agentspore_sdk/mcp_server.py", scope.sdk_python_files(None))
         self.assertIn("sdk/agentspore_sdk/mcp_server.py", scope.sdk_python_files([("M", "sdk/agentspore_sdk/mcp_server.py")]))
 
+    def test_reviewed_reference_addition_and_modification(self):
+        reference = self.repo / "docs/SERVICE_USAGE.md"
+        self.write("docs/SERVICE_USAGE.md")
+        self.commit()
+        self.assertFalse(any(scope.classify(self.changed()).values()))
+        self.base = self.git("rev-parse", "HEAD")
+        reference.write_text("Updated public reference\n")
+        self.write("backend/app.py")
+        self.commit()
+        actual = scope.classify(self.changed())
+        self.assertEqual(
+            {key for key, value in actual.items() if value},
+            {"backend", "telemetry", "backend_image"},
+        )
+
+    def test_reference_modes_are_verified_in_both_committed_trees(self):
+        reference = self.repo / "docs/SERVICE_USAGE.md"
+        for before, after in [(0o644, 0o755), (0o755, 0o644), (0o755, 0o755)]:
+            with self.subTest(before=oct(before), after=oct(after)):
+                self.git("checkout", "-q", self.base)
+                self.write("docs/SERVICE_USAGE.md")
+                reference.chmod(before)
+                base = self.commit()
+                reference.write_text("Changed reference\n")
+                reference.chmod(after)
+                head = self.commit()
+                event = {"before": base, "after": head}
+                self.assertTrue(all(scope.classify(self.changed(event)).values()))
+        self.git("checkout", "-q", self.base)
+        self.write("docs/SERVICE_USAGE.md")
+        reference.chmod(0o755)
+        self.commit()
+        reference.chmod(0o644)
+        self.assertTrue(all(scope.classify(self.changed()).values()))
+
+    def test_reference_symlink_and_type_change_fail_closed(self):
+        reference = self.repo / "docs/SERVICE_USAGE.md"
+        reference.parent.mkdir()
+        reference.symlink_to("../sdk/module.py")
+        base = self.commit()
+        self.assertTrue(all(scope.classify(self.changed()).values()))
+        reference.unlink()
+        reference.write_text("Now a regular file\n")
+        head = self.commit()
+        self.assertTrue(
+            all(scope.classify(self.changed({"before": base, "after": head})).values())
+        )
+
+    def test_reference_deletion_rename_and_mixed_unknown_fail_closed(self):
+        initial = self.base
+        self.write("docs/SERVICE_USAGE.md")
+        self.base = self.commit()
+        for change in ("delete", "rename", "runtime", "workflow", "build", "unknown"):
+            with self.subTest(change=change):
+                self.git("checkout", "-q", self.base)
+                reference = self.repo / "docs/SERVICE_USAGE.md"
+                reference.write_text("Changed reference\n")
+                if change == "delete":
+                    reference.unlink()
+                elif change == "rename":
+                    self.git("mv", "docs/SERVICE_USAGE.md", "docs/renamed.md")
+                else:
+                    paths = {
+                        "runtime": "docs/HEARTBEAT.md",
+                        "workflow": ".github/workflows/backend.yml",
+                        "build": "scripts/ci/build_release_images.sh",
+                        "unknown": "docs/another.md",
+                    }
+                    self.write(paths[change])
+                self.commit()
+                self.assertTrue(all(scope.classify(self.changed()).values()))
+        self.git("checkout", "-q", initial)
+        (self.repo / "docs").mkdir(exist_ok=True)
+        self.git("mv", "sdk/module.py", "docs/SERVICE_USAGE.md")
+        head = self.commit()
+        self.assertTrue(
+            all(
+                scope.classify(
+                    self.changed({"before": initial, "after": head})
+                ).values()
+            )
+        )
+
+    def test_reference_gitlink_is_not_a_regular_blob(self):
+        self.git(
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            f"160000,{self.base},docs/SERVICE_USAGE.md",
+        )
+        self.git("commit", "-qm", "Synthetic gitlink")
+        self.assertTrue(all(scope.classify(self.changed()).values()))
+
+    def test_reference_pr_uses_merge_base_and_ignores_mutable_worktree(self):
+        self.write("docs/SERVICE_USAGE.md")
+        self.base = self.commit()
+        (self.repo / "docs/SERVICE_USAGE.md").write_text("Updated public reference\n")
+        self.write("backend/app.py")
+        head = self.commit()
+        self.git("checkout", "-q", self.base)
+        self.write("frontend/page.tsx")
+        base = self.commit()
+        (self.repo / "docs/SERVICE_USAGE.md").chmod(0o755)
+        event = {"pull_request": {"base": {"sha": base}, "head": {"sha": head}}}
+        actual = scope.classify(scope.changed_files(self.repo, event, "pull_request"))
+        self.assertEqual(
+            {key for key, value in actual.items() if value},
+            {"backend", "telemetry", "backend_image"},
+        )
+
+    def test_reference_tree_lookup_failure_or_malformed_entry_fails_closed(self):
+        self.write("docs/SERVICE_USAGE.md")
+        self.commit()
+        original = scope.git
+        responses: list[bytes | subprocess.CalledProcessError] = [b""]
+
+        def reply(repo, *args):
+            if args[0] != "ls-tree":
+                return original(repo, *args)
+            response = responses[0]
+            if isinstance(response, subprocess.CalledProcessError):
+                raise response
+            return response
+
+        values = (
+            b"",
+            b"100644 blob malformed\tdocs/SERVICE_USAGE.md\0",
+            b"100644 blob " + b"a" * 40 + b"\tdocs/other.md\0",
+            subprocess.CalledProcessError(1, ["git", "ls-tree"]),
+        )
+        with patch.object(scope, "git", side_effect=reply):
+            for value in values:
+                with self.subTest(value=value):
+                    responses[0] = value
+                    self.assertTrue(all(scope.classify(self.changed()).values()))
+
+    def test_unverified_reference_status_or_path_is_not_exempt(self):
+        for status in ("A", "M", "D", "R100", "C100", "T", "unknown"):
+            for path in (
+                "docs/SERVICE_USAGE.md",
+                "docs/../docs/SERVICE_USAGE.md",
+                "/docs/SERVICE_USAGE.md",
+            ):
+                with self.subTest(status=status, path=path):
+                    self.assertTrue(all(scope.classify([(status, path)]).values()))
+
+    def test_reference_cli_writes_exact_component_outputs(self):
+        self.write("docs/SERVICE_USAGE.md")
+        self.write("backend/app.py")
+        head = self.commit()
+        event, output = self.repo / "event.json", self.repo / "github-output"
+        event.write_text(json.dumps({"before": self.base, "after": head}))
+        result = subprocess.check_output(
+            [sys.executable, str(SCRIPT.resolve()), str(event), "push"],
+            cwd=self.repo,
+            env={**os.environ, "GITHUB_OUTPUT": str(output)},
+            text=True,
+        )
+        actual = json.loads(result)
+        self.assertEqual(
+            {key for key, value in actual.items() if value},
+            {"backend", "telemetry", "backend_image"},
+        )
+        self.assertEqual(
+            output.read_text().splitlines(),
+            [f"{name}={str(actual[name]).lower()}" for name in scope.COMPONENTS],
+        )
 
 SCANNER_SPEC = importlib.util.spec_from_file_location(
     "scanner_image", Path(__file__).parents[2] / "scripts/ci/check_a4_scanner_image.py"
