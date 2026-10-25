@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-25",
+  "state": "capture diagnostic; current focused verification PASS; raw strict network RED; no release approval",
+  "build_id": "j1J8eiaV8aFkCp-gN85xD",
+  "capture_origin": "http://127.0.0.1:59463",
+  "runtime": "Python3.14.5 / Playwright1.58.0 / Chromium1208; Node22.23.2 served build",
+  "scope": "Anonymous local EN/RU390/1440 guide copy and keyboard workspace handoff; source_sha256 records CAPTURE-TIME hashes from 2026-10-25",
+  "source_sha256": {"frontend/src/lib/i18n/docs.ts": "c97806c21a7e99b3e55bd868f7f8f9b553fe1151f690bc0f1c23b6f0ea5dfbd9", "frontend/src/app/docs/connect/page.tsx": "2645d2a38fb9a0285bf619b320e9ad4005382c2241d43492c3c077d6c8131843", "frontend/e2e/test_connect_workspace_handoff.py": "9fd480a4a73b6861a5e1b1387456859ddfa5c05a97593b493e9c7de9e1211656"},
+  "case_count": 4,
+  "checks_per_case": ["rendered/copied owner_email", "keyboard handoff and anonymous workspace", "guide no overflow", "workspace no overflow"],
+  "network": {"requestfailed": 59, "all_error": "net::ERR_ABORTED", "all_response_status": 200, "all_mime": "text/x-component", "pageerror": 0, "console_error": 0, "http_error": 0, "blocked": 0, "cause": "unknown", "strict_gate": "RED", "rsc_true": 59, "next_router_prefetch_true": 56, "next_router_prefetch_false": 3},
+  "review": {"sheets_viewed": 6, "sampled_video_frames_viewed": 19, "video_decode_errors": 0, "white_initial_document_frame_retained": true, "focused_verification": {"date": "2026-10-26", "same_final_harness": true, "harness_sha256": {"frontend/e2e/test_connect_workspace_handoff.py": "91efbccc848aff247bdaecac20f9cc3de20b131bd18e08272a87484dd9f78816", "frontend/e2e/connect_workspace_read_observer.js": "35221c1cd0f0fc9e30482485cff79f864fce49c4d7ce0e3091393467b4c0acbd"}, "build_id": "j1J8eiaV8aFkCp-gN85xD", "baseline": {"ux_contract_failures": 8, "seconds": 26.12}, "feature": {"methods_passed": 2, "seconds": 8.374, "ux_subtests_passed": 8, "predicate_negative_checks": 26, "positive_prefetch_purposes": 2, "native_controls_verified_per_case": 5, "raw_requestfailed": 56, "raw_strict_gate": "RED", "focused_gate": "PASS", "unique_positive_byte_EOF_without_errors_pending_cancel_or_release": 56}, "guard_mutant": {"expected_failures": 9, "source_unchanged": true}, "limitations": ["Wrappers change Promise identity and microtask timing.", "EOF does not prove semantic Flight validity or cancellation cause.", "Incomplete native cancel/body-cancel/release evidence fails closed.", "Original 59 visual-capture cancellations are not retroactively classified."], "cancellation_cause": "unknown", "release_approved": false}},
+  "not_verified": ["release readiness", "axe/full keyboard/state matrix/320/768/zoom/ARIA/baselines/performance", "real registration/login/linking/backend/payments", "Node20/standalone packaging"],
+  "assets": [
+    {"file": "en-390-guide.png", "width": 390, "height": 900, "sha256": "3b47b49299c04ca442630742d210a067bce130723386c3e0e9fd0fc6fe62f561"},
+    {"file": "en-390-action.png", "width": 390, "height": 900, "sha256": "2466cf3e18d1be71c70a42e6d4588ca74078d8ebffaaf512089ae7d3d5c4212f"},
+    {"file": "en-390-workspace.png", "width": 390, "height": 900, "sha256": "1541594bc5ecaed0394bebea38a92960acc407f0c43953a685d1a6e77cea5f6c"},
+    {"file": "ru-390-guide.png", "width": 390, "height": 900, "sha256": "4889811af5bde1d9e5662f220fb2057c4845b5eb40c598cab1f0999457c8d04e"},
+    {"file": "ru-390-action.png", "width": 390, "height": 900, "sha256": "81ca1388ec859afda67f276fc6d1c2de9bcd178f5725abdb3a42af617274e70d"},
+    {"file": "ru-390-workspace.png", "width": 390, "height": 900, "sha256": "4ba48de5a2d0561d35af658d42f82a4e39ab828feeceee61c1e93a81eb0ed487"},
+    {"file": "en-1440-guide.png", "width": 1440, "height": 900, "sha256": "92e05f503d5373eec4599693c4526feebe3def621718b41432e1a720c4deb562"},
+    {"file": "en-1440-action.png", "width": 1440, "height": 900, "sha256": "2fa70b01645587c58decd583ebf10ca069488152771c4ddd508c0f16ca978812"},
+    {"file": "en-1440-workspace.png", "width": 1440, "height": 900, "sha256": "386eb212e3bd03c2828714b013b86ddf7bc2ecef20f629cbafc6f6d1c9ca2a53"},
+    {"file": "ru-1440-guide.png", "width": 1440, "height": 900, "sha256": "0a52d5034097fcd0639874b81fff07bb85f08a8505d3e525f6965dd099609efc"},
+    {"file": "ru-1440-action.png", "width": 1440, "height": 900, "sha256": "c7a7079b4b7fbebda7e96c81a616dc1d21d42e6af4656334aff0e8bb11e255f6"},
+    {"file": "ru-1440-workspace.png", "width": 1440, "height": 900, "sha256": "b4b8ea913467f640360d4bdb208a39675d61882dd80d05bc9054a55e03d64047"},
+    {"file": "connect-workspace-390.mp4", "sha256": "bbca284f3b95475f8eed1c9a714a4da6161f44bc8da3b358b04f8b8596fb4400", "duration_seconds": 9.36, "width": 390, "height": 900},
+    {"file": "connect-workspace-1440.mp4", "sha256": "365470c18f570274a40ee4bc5e6e0315808bd7bdda8dc57d890bac3af8d4ae53", "duration_seconds": 10.72, "width": 1440, "height": 900}
+  ]
+}

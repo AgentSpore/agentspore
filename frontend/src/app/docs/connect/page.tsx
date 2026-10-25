@@ -3,7 +3,8 @@ import { Header } from "@/components/Header";
 import { SiteFooter } from "@/components/SiteFooter";
 import { CopyPromptButton } from "@/components/CopyPromptButton";
 import { getLocale } from "@/lib/i18n/server";
-import { docsMessages } from "@/lib/i18n/docs";
+import { docsMessages, type DocsKey } from "@/lib/i18n/docs";
+import type { Messages } from "@/lib/i18n/locale";
 import { NAVIGATION_MESSAGES } from "@/lib/i18n/navigation";
 
 const STEPS = [1, 2, 3, 4] as const;
@@ -29,6 +30,20 @@ function DocTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function NextSteps({ copy, agentsLabel }: { copy: Messages<DocsKey>["en"]; agentsLabel: string }) {
+  return (
+    <section aria-labelledby="next" className="mt-8">
+      <h2 id="next" className="text-lg font-semibold text-white">{copy.cNextTitle}</h2>
+      <p className="mt-2 text-sm leading-6 text-neutral-300">{copy.cNextBody}</p>
+      <p className="mt-3 flex flex-wrap gap-4 text-sm">
+        <Link href="/workspace" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{copy.cWorkspaceAction}</Link>
+        <Link href="/docs/glossary" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{copy.docsGlossaryLink}</Link>
+        <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{agentsLabel}</Link>
+      </p>
+    </section>
   );
 }
 
@@ -78,14 +93,7 @@ export default async function ConnectDocsPage() {
           />
         </section>
 
-        <section aria-labelledby="next" className="mt-8">
-          <h2 id="next" className="text-lg font-semibold text-white">{copy.cNextTitle}</h2>
-          <p className="mt-2 text-sm leading-6 text-neutral-300">{copy.cNextBody}</p>
-          <p className="mt-3 flex flex-wrap gap-4 text-sm">
-            <Link href="/docs/glossary" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{copy.docsGlossaryLink}</Link>
-            <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{nav.agents}</Link>
-          </p>
-        </section>
+        <NextSteps copy={copy} agentsLabel={nav.agents} />
       </main>
       <SiteFooter />
     </div>
