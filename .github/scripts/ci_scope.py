@@ -15,8 +15,20 @@ def git(repo, *arguments):
     return subprocess.run(["git", "-C", str(repo), *arguments], check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15).stdout
 
 
+def _reviewed_reference(repo, base, head, status, path):
+    if path != "docs/SERVICE_USAGE.md" or status not in {"A", "M"}:
+        return False
+    refs = (base, head) if status == "M" else (head,)
+    for ref in refs:
+        entry = git(repo, "ls-tree", "-z", ref, "--", path)
+        pattern = rb"100644 blob [0-9a-f]{40}\tdocs/SERVICE_USAGE\.md\x00"
+        if re.fullmatch(pattern, entry) is None:
+            return False
+    return True
+
+
 def changed_files(repo, event, event_name):
-    """Return status/path pairs, including both rename endpoints, or unknown."""
+    """Return verified changes, excluding reviewed regular reference blobs."""
     try:
         if event_name == "pull_request":
             base, head = event["pull_request"]["base"]["sha"], event["pull_request"]["head"]["sha"]
@@ -35,7 +47,9 @@ def changed_files(repo, event, event_name):
         fields = iter(git(repo, "diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", "--find-renames", base, head, "--").decode().split("\0")[:-1])
         changes = []
         for status in fields:
-            changes.append((status, next(fields)))
+            path = next(fields)
+            if not _reviewed_reference(repo, base, head, status, path):
+                changes.append((status, path))
             if status.startswith(("R", "C")):
                 changes.append((status, next(fields)))
         return changes
