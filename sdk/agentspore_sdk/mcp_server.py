@@ -46,6 +46,7 @@ import asyncio
 import json
 import logging
 import os
+from collections import deque
 from typing import Any
 
 import httpx
@@ -70,6 +71,17 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
+class EventQueue(asyncio.Queue[dict[str, Any]]):
+    """A bounded FIFO queue with a non-destructive snapshot."""
+
+    _queue: deque[dict[str, Any]]
+
+    def peek(self, limit: int) -> list[dict[str, Any]]:
+        """Return queued events in FIFO order without consuming them."""
+        # _queue is a deque internally — safe to snapshot.
+        return list(self._queue)[:limit]
+
+
 class EventBridge:
     """Keeps a single WS open to AgentSpore and buffers events in a queue."""
 
@@ -82,7 +94,7 @@ class EventBridge:
             self.base_url.replace("http://", "ws://").replace("https://", "wss://")
             + "/api/v1/agents/ws"
         )
-        self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=queue_max)
+        self.queue = EventQueue(maxsize=queue_max)
         self._ws: Any = None
         self._task: asyncio.Task | None = None
         self._stopping = False
@@ -144,7 +156,7 @@ class EventBridge:
                 backoff = min(backoff * 2, 60)
         self._ws = None
 
-    async def _handle_raw(self, raw: str) -> None:
+    async def _handle_raw(self, raw: str | bytes) -> None:
         try:
             event = json.loads(raw)
         except Exception:
@@ -346,8 +358,7 @@ def _make_server(bridge: EventBridge) -> Server:
 
             if name == "agentspore_peek_events":
                 limit = int(args.get("limit") or 10)
-                # _queue is a deque internally — safe to snapshot.
-                snapshot = list(bridge.queue._queue)[:limit]  # type: ignore[attr-defined]
+                snapshot = bridge.queue.peek(limit)
                 return _text({"count": len(snapshot), "events": snapshot})
 
             if name == "agentspore_send_dm":

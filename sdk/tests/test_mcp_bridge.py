@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+import websockets
 from mcp.types import (
     CallToolRequest,
     CallToolRequestParams,
@@ -40,6 +41,53 @@ async def test_handle_raw_enqueues_event(bridge):
     ev = bridge.queue.get_nowait()
     assert ev["type"] == "dm"
     assert ev["id"] == "e1"
+
+
+@pytest.mark.asyncio
+async def test_binary_websocket_json_is_accepted(bridge):
+    await bridge._handle_raw(b'{"type":"dm","id":"binary"}')
+    assert bridge.queue.get_nowait()["id"] == "binary"
+
+
+@pytest.mark.asyncio
+async def test_bridge_receives_binary_frame_from_websocket():
+    async def handler(websocket):
+        await websocket.send(b'{"type":"dm","id":"binary-frame"}')
+        await websocket.wait_closed()
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        bridge = EventBridge(
+            api_key="af_test", base_url=f"http://127.0.0.1:{port}", queue_max=4
+        )
+        bridge.start()
+        try:
+            event = await asyncio.wait_for(bridge.queue.get(), timeout=2)
+            assert event["id"] == "binary-frame"
+        finally:
+            await bridge.close()
+        assert bridge._task is not None and bridge._task.done()
+
+
+@pytest.mark.asyncio
+async def test_peek_does_not_consume_or_reorder_events(bridge):
+    for event_id in ("first", "second", "third"):
+        await bridge._handle_raw(json.dumps({"type": "dm", "id": event_id}))
+    result = await _make_server(bridge).request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(name="agentspore_peek_events", arguments={"limit": 2}),
+        )
+    )
+    assert isinstance(result.root, CallToolResult)
+    content = result.root.content[0]
+    assert isinstance(content, TextContent)
+    assert [event["id"] for event in json.loads(content.text)["events"]] == [
+        "first", "second"
+    ]
+    assert [bridge.queue.get_nowait()["id"] for _ in range(3)] == [
+        "first", "second", "third"
+    ]
 
 
 @pytest.mark.asyncio
