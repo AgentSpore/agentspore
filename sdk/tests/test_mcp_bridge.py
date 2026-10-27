@@ -56,7 +56,7 @@ async def test_bridge_receives_binary_frame_from_websocket():
         await websocket.wait_closed()
 
     async with websockets.serve(handler, "127.0.0.1", 0) as server:
-        port = server.sockets[0].getsockname()[1]
+        port = next(iter(server.sockets)).getsockname()[1]
         bridge = EventBridge(
             api_key="af_test", base_url=f"http://127.0.0.1:{port}", queue_max=4
         )
