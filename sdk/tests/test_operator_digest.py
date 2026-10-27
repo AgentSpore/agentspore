@@ -272,3 +272,84 @@ def test_platform_change_context_is_untrusted_and_never_public_prose(snapshot):
     snapshot["platform_updates"]["value"][0]["url"] = "https://evil.invalid"
     with pytest.raises(ValueError):
         evidence_bundle(snapshot)
+
+
+def test_daily_digest_only_publishes_platform_changes_within_window(snapshot):
+    rows = []
+    for identity, stamp in (
+        ("a" * 40, "2026-10-19T17:00:00+00:00"),
+        ("b" * 40, "2026-10-20T17:00:00+00:00"),
+        ("c" * 40, "2026-10-21T16:59:59+00:00"),
+        ("d" * 40, "2026-10-21T17:00:00+00:00"),
+    ):
+        rows.append(
+            {
+                "kind": "commit",
+                "identity": identity,
+                "summary": "Commit",
+                "details": "Details",
+                "created_at": stamp,
+                "url": "https://github.com/AgentSpore/agentspore/commit/" + identity,
+            }
+        )
+    snapshot["platform_updates"] = {
+        "status": "partial",
+        "reason": "pagination_incomplete",
+        "value": rows,
+    }
+    bundle = evidence_bundle(snapshot)
+    analysis = {
+        "snapshot_digest": bundle["snapshot_digest"],
+        "highlights": ["platform.commit." + "a" * 40],
+        "attention": ["platform.commit." + "d" * 40],
+        "recommendations": [
+            {"kind": "review_ci", "evidence_ids": ["platform.commit." + "a" * 40]}
+        ],
+    }
+    result = render_digest(snapshot, analysis)
+    text = result["blog"]["content"]
+    assert "Published platform commit " + "a" * 40 not in text
+    assert "Published platform commit " + "b" * 40 in text
+    assert "Published platform commit " + "c" * 40 in text
+    assert "Published platform commit " + "d" * 40 not in text
+    assert "Review the observed CI results." not in text
+    assert "Published platform commit " + "a" * 40 not in result["chat"]["content"]
+    assert "pagination incomplete" in text
+
+
+@pytest.mark.parametrize(
+    "status,should_report", [(200, False), (None, False), (503, True)]
+)
+def test_availability_advice_requires_a_cited_observed_failure(
+    snapshot, status, should_report
+):
+    snapshot["health"]["https://agentspore.com"] = status
+    bundle = evidence_bundle(snapshot)
+    analysis = {
+        "snapshot_digest": bundle["snapshot_digest"],
+        "highlights": [],
+        "attention": [],
+        "recommendations": [
+            {"kind": "inspect_availability", "evidence_ids": ["health.platform"]}
+        ],
+    }
+    text = render_digest(snapshot, analysis)["blog"]["content"]
+    assert ("Inspect the observed availability issue." in text) is should_report
+    assert ("Platform HTTP status: unavailable." in text) is (status is None)
+
+
+def test_failure_on_uncited_host_does_not_validate_availability_advice(snapshot):
+    snapshot["health"]["https://podmemory.agentspore.com"] = 503
+    bundle = evidence_bundle(snapshot)
+    analysis = {
+        "snapshot_digest": bundle["snapshot_digest"],
+        "highlights": [],
+        "attention": [],
+        "recommendations": [
+            {"kind": "inspect_availability", "evidence_ids": ["health.platform"]}
+        ],
+    }
+    assert (
+        "Inspect the observed availability issue."
+        not in render_digest(snapshot, analysis)["blog"]["content"]
+    )

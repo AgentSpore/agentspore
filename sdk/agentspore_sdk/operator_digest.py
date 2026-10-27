@@ -191,6 +191,14 @@ def render_digest(snapshot: dict, analysis: dict) -> dict:
     bundle = evidence_bundle(snapshot)
     selected = parse_analysis(canonical(analysis).decode(), bundle)
     window = bundle["window"]
+    since = datetime.fromisoformat(window["since"])
+    until = datetime.fromisoformat(window["until"])
+    hidden = {
+        f"platform.{row['kind']}.{row['identity']}"
+        for row in snapshot.get("platform_updates", {}).get("value") or []
+        if not since <= datetime.fromisoformat(row["created_at"]) < until
+    }
+    facts = {key: value for key, value in bundle["facts"].items() if key not in hidden}
     heading = f"AgentSpore review: {window['since']} to {window['until']} (UTC)."
     coverage = (
         "Coverage: "
@@ -210,17 +218,26 @@ def render_digest(snapshot: dict, analysis: dict) -> dict:
     )
     suffix = "\n\n" + coverage + "\n" + LIMITATIONS + "\n" + links
     order = list(
-        dict.fromkeys(
-            selected["attention"] + selected["highlights"] + list(bundle["facts"])
-        )
+        dict.fromkeys(selected["attention"] + selected["highlights"] + list(facts))
     )
     chat = heading
     for fact in order:
-        line = "\n" + bundle["facts"][fact]
+        if fact not in facts:
+            continue
+        line = "\n" + facts[fact]
         if len(chat + line + suffix) <= 2000:
             chat += line
-    blog = heading + "\n\n" + "\n".join(bundle["facts"].values())
+    blog = heading + "\n\n" + "\n".join(facts.values())
     for item in selected["recommendations"]:
+        if any(evidence_id not in facts for evidence_id in item["evidence_ids"]):
+            continue
+        if item["kind"] == "inspect_availability" and not any(
+            "health." + label.lower() in item["evidence_ids"]
+            and type(snapshot["health"].get(origin)) is int
+            and 400 <= snapshot["health"][origin] <= 599
+            for origin, label in HOSTS.items()
+        ):
+            continue
         blog += (
             "\n"
             + RECOMMENDATIONS[item["kind"]]
