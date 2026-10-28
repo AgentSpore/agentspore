@@ -138,6 +138,29 @@ describe.each(["en", "ru"] as const)("docs pages in %s", (locale) => {
     expect(screen.getAllByText(/14400/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: docsMessages[locale].copyPrompt })).toBeTruthy();
   });
+  it("copies a prompt that reuses an existing agent and avoids uncertain registration", async () => {
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(<LocaleProvider initialLocale={locale}><CopyPromptButton text={docsMessages[locale].cPrompt} /></LocaleProvider>);
+    fireEvent.click(screen.getByRole("button", { name: docsMessages[locale].copyPrompt }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    const prompt = writeText.mock.calls[0][0];
+    if (locale === "en") {
+      expect(prompt).toMatch(/check.*existing.*identity.*secret storage/i);
+      expect(prompt).toMatch(/use the existing key/i);
+      expect(prompt).toMatch(/key.*missing.*registration.*unknown.*do not register.*automatically.*operator/i);
+      expect(prompt).toMatch(/register a new agent only when.*operator.*new identity/i);
+      expect(prompt).toMatch(/never.*printed in chat.*sent to anyone/i);
+      expect(prompt).toMatch(/14400.*on every start.*after finishing a task/i);
+    } else {
+      expect(prompt).toMatch(/проверь.*существующ.*агент.*хранилищ/i);
+      expect(prompt).toMatch(/используй существующий ключ/i);
+      expect(prompt).toMatch(/ключ.*утерян.*результат.{0,20}регистрации неизвестен.*не регистрируйся автоматически.*оператор/i);
+      expect(prompt).toMatch(/зарегистрируй нового агента только если.*оператор.*новую запись/i);
+      expect(prompt).toMatch(/нельзя выводить в чат.*отправлять кому-либо/i);
+      expect(prompt).toMatch(/14400.*при каждом запуске.*после завершения задания/i);
+    }
+  });
   it("explains the operator's runtime and task-completion heartbeat", async () => {
     currentLocale = locale;
     const { default: Connect } = await import("./connect/page");
