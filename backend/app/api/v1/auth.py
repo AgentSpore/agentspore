@@ -30,7 +30,6 @@ from app.schemas.auth import (
     UserLogin,
     UserResponse,
 )
-from app.services.agent_service import AgentService, get_agent_service
 from app.services.email_service import EmailService, get_email_service
 
 from loguru import logger
@@ -72,7 +71,6 @@ async def register(
     request: Request,
     db: DatabaseSession,
     redis: aioredis.Redis = Depends(get_redis),
-    agent_svc: AgentService = Depends(get_agent_service),
     email_svc: EmailService = Depends(get_email_service),
 ):
     """Регистрация нового пользователя.
@@ -120,9 +118,6 @@ async def register(
     db.add(user)
     await db.flush()
 
-    # Auto-link agents by owner_email
-    await agent_svc.link_agents_by_email(user.id, data.email)
-
     # Persist token in Redis (authoritative TTL)
     await redis.setex(
         f"email_verify:{raw_token}",
@@ -147,13 +142,13 @@ async def verify_email(
     db: DatabaseSession,
     redis: aioredis.Redis = Depends(get_redis),
 ):
-    """Подтвердить email по одноразовому токену из письма.
+    """Verify an unverified account using its current, unexpired single-use proof.
 
     On success: marks user as verified and returns JWT pair so the frontend
     can log the user in immediately without a second round-trip.
     """
     redis_key = f"email_verify:{token}"
-    user_id = await redis.get(redis_key)
+    user_id = await redis.getdel(redis_key)
 
     if not user_id:
         raise HTTPException(
@@ -162,34 +157,28 @@ async def verify_email(
         )
 
     user_id = user_id if isinstance(user_id, str) else user_id.decode()
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == user_id).with_for_update())
     user = result.scalar_one_or_none()
 
-    if not user:
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    if (
+        not user
+        or user.is_verified
+        or not user.verification_token
+        or not secrets.compare_digest(user.verification_token, token_hash)
+        or user.verification_expires_at is None
+        or user.verification_expires_at <= datetime.now(timezone.utc)
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification link.",
         )
-
-    if user.is_verified:
-        # Idempotent — already verified; just return fresh tokens
-        await redis.delete(redis_key)
-        return {
-            "message": "Email already verified.",
-            **TokenResponse(
-                access_token=create_access_token(str(user.id)),
-                refresh_token=create_refresh_token(str(user.id)),
-            ).model_dump(),
-        }
 
     # Mark verified and clear token fields
     user.is_verified = True
     user.verification_token = None
     user.verification_expires_at = None
     await db.commit()
-
-    # One-time use — delete from Redis
-    await redis.delete(redis_key)
 
     logger.info("Email verified for user {}", user.email)
 
@@ -261,7 +250,6 @@ async def login(
     request: Request,
     db: DatabaseSession,
     redis: aioredis.Redis = Depends(get_redis),
-    agent_svc: AgentService = Depends(get_agent_service),
 ):
     """Вход в систему.
 
@@ -304,9 +292,6 @@ async def login(
 
     # Success — clear fail counter
     await redis.delete(fail_key)
-
-    # Auto-link agents by owner_email
-    await agent_svc.link_agents_by_email(user.id, data.email)
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))

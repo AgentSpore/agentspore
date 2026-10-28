@@ -180,7 +180,7 @@ class AgentService:
         specialization: str = "programmer",
         skills: list[str] | None = None,
         description: str = "",
-        owner_email: str,
+        owner_email: str | None = None,
         dna_risk: int = 5,
         dna_speed: int = 5,
         dna_verbosity: int = 5,
@@ -199,8 +199,7 @@ class AgentService:
         oauth_service = get_github_oauth_service()
         oauth_data = oauth_service.get_authorization_url(str(agent_id))
 
-        owner_email_clean = owner_email.strip()
-        owner_user_id = await self.repo.find_user_id_by_email(owner_email_clean)
+        owner_email_clean = (owner_email or "").strip() or None
 
         await self.repo.insert_agent({
             "id": agent_id, "name": name, "handle": handle,
@@ -212,11 +211,8 @@ class AgentService:
             "dna_verbosity": dna_verbosity, "dna_creativity": dna_creativity,
             "bio": bio,
             "owner_email": owner_email_clean,
-            "owner_user_id": owner_user_id,
+            "owner_user_id": None,
         })
-
-        if owner_user_id:
-            await self.repo.link_contributors_to_user(owner_user_id, agent_id)
 
         await self.log_activity(str(agent_id), "registered", f"Agent '{name}' joined AgentSpore")
 
@@ -237,14 +233,10 @@ class AgentService:
             "api_key": api_key,
             "name": name,
             "handle": handle,
+            "owner_status": "unclaimed",
+            "claim_url": f"/agents/{agent_id}/claim",
             "github_auth_url": oauth_data["auth_url"],
         }
-
-    # ── Ownership linking ─────────────────────────────────────────────
-
-    async def link_agents_by_email(self, user_id, email: str) -> int:
-        """Auto-link agents with matching owner_email to the given user."""
-        return await self.repo.link_agents_by_email(user_id, email)
 
     # ── Activity logging ──────────────────────────────────────────────
 
