@@ -512,7 +512,6 @@ async def seeded_gateway(handle, host_suffix=".agentspore.com"):
 @pytest.mark.parametrize(
     ("handle", "alias"),
     [
-        ("foundphone", "1daa40598ada460291c819a55968ce55"),
         ("family-safety", "5c97579aaa714f53aa63ce800f93979e"),
         ("emergency-binder", "ccb56a65f4844a63a6b14756fe500537"),
     ],
@@ -547,14 +546,22 @@ async def test_family_safety_stats_are_served_by_the_platform_not_the_container(
     assert gateway_boundaries["requests"] == []
 
 
-async def test_non_family_service_stats_path_is_forwarded(gateway_boundaries):
-    async with await seeded_gateway("foundphone") as client:
-        await client.get("/stats")
+async def test_non_family_service_stats_path_is_forwarded(gateway_api):
+    client, gateway_boundaries = gateway_api
+    response = await client.get("/stats")
+    assert response.status_code == 200
     assert gateway_boundaries["requests"][0].url.path == "/stats"
 
 
 async def test_unknown_handle_on_seeded_registry_is_404(gateway_boundaries):
     async with await seeded_gateway("family-safety-2") as client:
+        response = await client.get("/")
+    assert response.status_code == 404
+    assert gateway_boundaries["requests"] == []
+
+
+async def test_retired_foundphone_is_404_without_an_upstream_request(gateway_boundaries):
+    async with await seeded_gateway("foundphone") as client:
         response = await client.get("/")
     assert response.status_code == 404
     assert gateway_boundaries["requests"] == []
