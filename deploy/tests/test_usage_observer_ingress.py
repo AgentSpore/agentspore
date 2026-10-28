@@ -170,7 +170,7 @@ def checks():
     if enabled:
         failure_checks()
     rows = [json.loads(line) for line in Path("/fixture/services.jsonl").read_text().splitlines()]
-    assert rows and all(set(row) == {"ts", "service", "method", "status", "duration", "size"} for row in rows)
+    assert rows and all(set(row) == {"ts", "service", "method", "status", "duration", "size", "route"} for row in rows)
     print("native ingress checks passed")
 
 

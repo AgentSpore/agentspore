@@ -1,4 +1,16 @@
 (service_access_log) {
+	# Only fixed public paths become labels; arbitrary paths and query strings
+	# must never reach the access log.
+	map {path} {access_route} {
+		default other
+		/ home
+		/showcase showcase
+		/agents agents
+		/projects projects
+		/docs/connect connect
+		/api/v1/agents/register agent_registration
+		/api/v1/auth/register user_registration
+	}
 	map {method} {access_method} {
 		default OTHER
 		GET GET
@@ -11,6 +23,7 @@
 	}
 	log_append <service {args[0]}
 	log_append <method {access_method}
+	log_append <route {access_route}
 	log {
 		output file /var/log/caddy/services.jsonl {
 			mode 0600
