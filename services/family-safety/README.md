@@ -32,7 +32,7 @@ FS8. An external agent can review the public statistics and current public warni
 
 ## Local container packaging
 
-FS9. The Dockerfile uses the same immutable official Caddy 2.11.7 base as the verified FoundPhone packaging. It retains the base's notices and files, removes Caddy's binary capability and runs as UID/GID 65532. Only the 35 explicit public files and Caddy configuration are copied; tests, documentation, helper scripts and private files are excluded. Directory-level allowlist exceptions are deliberately absent.
+FS9. The Dockerfile uses the immutable official Caddy 2.11.7 base. It retains the base's notices and files, removes Caddy's binary capability and runs as UID/GID 65532. Only the 35 explicit public files and Caddy configuration are copied; tests, documentation, helper scripts and private files are excluded. Directory-level allowlist exceptions are deliberately absent.
 
 FS10. Caddy serves HTTP on port 8080 and `/health`; the platform gateway provides external TLS. The admin API, automatic HTTPS, config persistence, request access logs and directory listing are disabled. The CSP permits same-origin scripts, styles, images and connections, blocks objects and embedding, and disallows form submissions. There are no CDN dependencies or dynamic backend routes.
 

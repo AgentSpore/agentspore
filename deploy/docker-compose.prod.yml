@@ -231,18 +231,6 @@ services:
   # active_revision literal seeded by db/migrations/V99__platform_services.sql.
   # INVARIANT(A4): do not run the deploy pipeline against these projects; it would
   # overwrite active_revision and orphan the container behind the fixed alias.
-  foundphone:
-    <<: *platform-service
-    image: agentspore-svc-foundphone:latest
-    build:
-      context: ../services/foundphone
-      network: none
-    container_name: agentspore-svc-foundphone
-    networks:
-      sporeai-network:
-        aliases:
-          - svc-1daa40598ada460291c819a55968ce55
-
   family-safety:
     <<: *platform-service
     image: agentspore-svc-family-safety:latest
