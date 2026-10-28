@@ -1,6 +1,6 @@
 # Service access logs
 
-Owner: AgentSpore maintainers. Last reviewed: 2026-10-22.
+Owner: AgentSpore maintainers. Last reviewed: 2026-10-29.
 
 Caddy 2.11.2 writes one JSON record per HTTP request for the platform,
 its www/API redirects, wildcard services, and the three restored applications.
@@ -10,14 +10,20 @@ configured host names. Wildcard routes use their configured wildcard label.
 Plain HTTP redirects use the fixed `http_redirect` service label and the same
 logger; explicit routes avoid bypassing field appenders during automatic HTTPS.
 
-The six fields are `ts` (Unix seconds), `service`, `method`, `status`,
-`duration` (seconds), and `size` (response bytes). Methods outside the
+The seven fields are `ts` (Unix seconds), `service`, `method`, `status`,
+`duration` (seconds), `size` (response bytes), and `route` (a fixed label).
+The route labels are `home`, `showcase`, `agents`, `projects`, `connect`,
+`agent_registration`, `user_registration`, and `other`. Exact public paths
+map to labels; unrecognised paths become `other`. Methods outside the
 configured HTTP method set become `OTHER`. Successes and failures are counted.
-Requests are not people, and these records cannot identify unique visitors.
+Requests are not people, and these records cannot identify unique visitors or
+connect a visit to a later registration. SPA navigation is not necessarily an
+HTTP request. A successful HTTP response alone is not proof of agent activation.
+Older records lack `route`; do not infer or backfill it.
 
 The encoder deletes the complete request and response-header objects, user
 identity, request size, and error details. JSON message, logger, level, caller,
-and stacktrace keys are disabled. No request paths, query strings, bodies,
+and stacktrace keys are disabled. No raw request paths, query strings, bodies,
 headers, client addresses, or TLS fingerprints belong in this access file.
 This contract applies to access records, not all Caddy operational diagnostics.
 The native filter is a deletion filter, not a general whitelist: upgrading
