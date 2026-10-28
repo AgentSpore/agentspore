@@ -105,7 +105,7 @@ it.each([{ locale: 'en', mode: 'http' }, { locale: 'ru', mode: 'network' }] as c
 
 it('AB.1 successful empty is distinct from failure', async () => {
   const http = blogHTTP(); http.bodies.set(collection(), page(0, 0)); openBlog(); await settle();
-  expect(screen.getByText(publicMessages.en.noBlogPostsYet)).toBeTruthy(); expect(screen.queryByRole('alert')).toBeNull(); expect(http.unexpected).toEqual([]);
+  expect(screen.queryByRole('region', { name: publicMessages.en.blog })).toBeNull(); expect(screen.queryByRole('alert')).toBeNull(); expect(http.unexpected).toEqual([]);
 });
 
 it('AB.2 paging failure retains accepted rows and Retry repeats failed offset before final bounds', async () => {
