@@ -1,7 +1,9 @@
 """Ownership schemas."""
 
 import re
+from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from solders.pubkey import Pubkey
@@ -27,7 +29,7 @@ class SolanaWalletConnectRequest(BaseModel):
 
 
 class LinkOwnerRequest(BaseModel):
-    agent_id: str
+    agent_id: UUID
 
 
 class ContributorShare(BaseModel):
@@ -166,3 +168,30 @@ class DepositRpcResponse(BaseModel):
     jsonrpc: Literal["2.0"]
     id: int
     result: DepositTransactionResult
+
+
+class AgentOwnerClaimCreate(BaseModel):
+    """Identify an agent without asserting ownership or exposing credentials."""
+
+    model_config = ConfigDict(extra="forbid")
+    agent_id: UUID
+
+
+class AgentOwnerClaimDecision(BaseModel):
+    """Bind agent consent to one exact human subject."""
+
+    model_config = ConfigDict(extra="forbid")
+    expected_user_id: UUID
+    decision: Literal["approve", "deny"]
+
+
+class AgentOwnerClaimResponse(BaseModel):
+    """Expose only public identifiers and an authenticated claim's bounded state."""
+
+    claim_id: UUID
+    agent_id: UUID
+    agent_name: str
+    user_id: UUID
+    user_name: str
+    status: Literal["pending", "claimed", "denied", "canceled", "expired"]
+    expires_at: datetime

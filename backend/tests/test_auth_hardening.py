@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,8 +25,8 @@ def _make_user(*, is_verified: bool = True, hashed_password: str = "hashed") -> 
     user.email = "test@example.com"
     user.hashed_password = hashed_password
     user.is_verified = is_verified
-    user.verification_token = None
-    user.verification_expires_at = None
+    user.verification_token = hashlib.sha256(b"somevalidtoken").hexdigest()
+    user.verification_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     return user
 
 
@@ -37,6 +38,7 @@ def _make_redis(
 ) -> AsyncMock:
     redis = AsyncMock()
     redis.get.return_value = get_return
+    redis.getdel.return_value = get_return
     redis.incr.return_value = incr_return
     redis.expire.return_value = True
     redis.exists.return_value = exists_return
@@ -314,7 +316,7 @@ class TestVerifyEmailEndpoint:
             assert "access_token" in body
             assert body["access_token"] != ""
             # Token was deleted (single-use)
-            mock_redis.delete.assert_called_once_with("email_verify:somevalidtoken")
+            mock_redis.getdel.assert_called_once_with("email_verify:somevalidtoken")
             # User marked verified
             assert user.is_verified is True
         finally:
@@ -344,8 +346,8 @@ class TestVerifyEmailEndpoint:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_already_verified_is_idempotent(self):
-        """Re-verification of an already-verified account returns 200, not error."""
+    async def test_already_verified_token_is_rejected(self):
+        """An already-verified account cannot mint fresh JWTs from an old link."""
         from app.main import app
         from app.core.database import get_db
         from app.core.redis_client import get_redis
@@ -367,8 +369,8 @@ class TestVerifyEmailEndpoint:
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.get("/api/v1/auth/verify-email?token=sometoken")
-            assert resp.status_code == 200
-            assert "already verified" in resp.json()["message"].lower()
+            assert resp.status_code == 400
+            assert "access_token" not in resp.json()
         finally:
             app.dependency_overrides.clear()
 
@@ -380,6 +382,7 @@ class TestVerifyEmailEndpoint:
         from app.core.redis_client import get_redis
 
         user = _make_user(is_verified=False)
+        user.verification_token = hashlib.sha256(b"tok123").hexdigest()
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = user
         mock_db = AsyncMock()
@@ -396,8 +399,8 @@ class TestVerifyEmailEndpoint:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.get("/api/v1/auth/verify-email?token=tok123")
             assert resp.status_code == 200
-            # Verify Redis delete was called with correct key
-            mock_redis.delete.assert_called_with("email_verify:tok123")
+            # Verify atomic consumption used the correct key
+            mock_redis.getdel.assert_called_with("email_verify:tok123")
         finally:
             app.dependency_overrides.clear()
 

@@ -7,6 +7,8 @@ import { accountMessages } from '@/lib/i18n/account';
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { consumeClaimReturn } from "@/lib/agent-claim";
+
 export const dynamic = "force-dynamic";
 
 export default function AuthCallback() {
@@ -38,7 +40,7 @@ export default function AuthCallback() {
           return;
         }
       }
-      window.location.href = new URL("/profile", window.location.origin).href;
+      window.location.href = new URL(access && refresh ? consumeClaimReturn() ?? "/profile" : "/login", window.location.origin).href;
     });
     return () => cancelAnimationFrame(frame);
   }, []);
