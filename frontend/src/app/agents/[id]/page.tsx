@@ -8,7 +8,7 @@ import { sharedMessages } from '@/lib/i18n/shared';
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { ACTION_META, BADGE_RARITY_COLOR, isAgentLive, timeAgo, historySource } from "@/lib/api";
+import { ACTION_META, BADGE_RARITY_COLOR, timeAgo, historySource } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FetchError } from "@/components/FetchError";
 import { useAgentDetails } from "./useAgentDetails";
@@ -114,6 +114,7 @@ const DNA_TRAITS = [
   const { id } = useParams<{ id: string }>();
   const details = useAgentDetails(id);
   const { agent, activities, githubActivity, modelUsage, badges, failures } = details;
+  const visibleActivities = activities.filter(event => event.action_type !== "heartbeat" && event.action_type !== "registered");
   const loading = details.status === "loading";
   const [ghFilter, setGhFilter] = useState<string>("all");
 
@@ -171,48 +172,26 @@ const DNA_TRAITS = [
             {tr('agents')}</Link>
           <span className="text-neutral-700 text-xs">/</span>
           <span className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400">{agent.name}</span>
-          {agent.handle && (
-            <span className="text-neutral-600 text-xs font-mono [overflow-wrap:anywhere]">@{agent.handle}</span>
-          )}
         </div>
 
         {/* Hero */}
         <div className="relative flex flex-col sm:flex-row sm:flex-wrap gap-6 items-start mb-10 fade-up-d1">
-          {/* Avatar */}
-          <div className="w-20 h-20 rounded-xl flex items-center justify-center shrink-0 bg-neutral-900/30 border border-neutral-800/50 backdrop-blur-sm relative">
-            <div className={`w-4 h-4 rounded-full ${isAgentLive(agent) ? "bg-emerald-400" : "bg-neutral-600"}`} />
-            {isAgentLive(agent) && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-4 h-4 rounded-full bg-emerald-400 animate-ping opacity-40" />
-              </div>
-            )}
-          </div>
-
           <div className="flex-1 min-w-0 max-w-full basis-full sm:basis-64">
             <div className="flex flex-wrap items-center gap-3 mb-1">
               <h1 className="min-w-0 max-w-full text-2xl font-bold text-white font-mono [overflow-wrap:anywhere]">{agent.name}</h1>
               {agent.handle && (
                 <span className="text-sm text-neutral-500 font-mono [overflow-wrap:anywhere]">@{agent.handle}</span>
               )}
-              <span className={`min-h-11 min-w-11 max-w-full focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs px-2.5 py-1 rounded-full border font-mono [overflow-wrap:anywhere] uppercase tracking-[0.15em] ${isAgentLive(agent) ? "bg-emerald-400/10 text-emerald-400 border-emerald-400/20" : "bg-neutral-700/30 text-neutral-400 border-neutral-600/30"}`}>
-                {isAgentLive(agent) ? tr('online') : agent.recovery_provenance ? tr('historicalProfile') : tr('offline')}
-              </span>
               <span className="text-xs px-2.5 py-1 rounded-full bg-neutral-900/30 text-neutral-400 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] uppercase tracking-[0.1em]">
                 {displayPublicLabel(locale, agent.specialization)}
               </span>
             </div>
-            <p className="text-neutral-500 text-sm mb-2 font-mono [overflow-wrap:anywhere]">{agent.recovery_provenance ? tr('unknownOriginalModel') : `${agent.model_provider ?? ''} / ${agent.model_name ?? ''}`}</p>
             {agent.recovery_provenance && <p className="text-sm text-neutral-400">{tr('unverifiedHistory')}</p>}
             {historySource(agent.recovery_provenance) && <a href={historySource(agent.recovery_provenance) ?? undefined} className="inline-flex min-h-11 items-center text-sm text-violet-300 underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
             {agent.bio && <p className="text-neutral-300 text-sm leading-relaxed max-w-xl [overflow-wrap:anywhere]">{agent.bio}</p>}
             {!agent.bio && <p className="text-neutral-600 text-sm italic font-mono [overflow-wrap:anywhere]">{tr('noBioYet')}</p>}
-          </div>
-
-          {/* Stats */}
-          <div className="grid w-full sm:w-auto min-w-0 max-w-full grid-cols-1 sm:grid-cols-2 gap-3">
-            {statCols.map(s => (
-              <StatCard key={`${s.label}:${s.value}`} label={s.label} value={s.value} />
-            ))}
+            <p className="text-sm text-neutral-400 mt-2">{tr('lastCheckIn')} {timeAgo(agent.last_heartbeat, locale)}</p>
+            {agent.skills?.length > 0 && <div className="flex flex-wrap gap-2 mt-3">{agent.skills.map(skill => <span key={skill} className="min-w-0 max-w-full [overflow-wrap:anywhere] text-xs text-cyan-300 rounded-full border border-cyan-400/15 px-3 py-1">{skill}</span>)}</div>}
           </div>
 
           {/* Actions sidebar */}
@@ -222,32 +201,10 @@ const DNA_TRAITS = [
               className="min-h-11 min-w-11 inline-flex items-center justify-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 w-full text-center bg-white text-black font-medium font-mono [overflow-wrap:anywhere] text-sm px-5 py-2.5 rounded-lg hover:bg-neutral-200 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]"
             >
               {tr('message')}</Link>}
-            <CopyIdButton id={id || ""} />
           </div>
         </div>
 
-        {/* Meta info */}
-        <div className="relative flex flex-wrap min-w-0 gap-2 mb-10 text-xs text-neutral-500 fade-up-d2">
-          {agent.handle && (
-            <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
-              {tr('handle')}<span className="text-neutral-400">@{agent.handle}</span>
-            </span>
-          )}
-          <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
-            {tr('iD')}<span className="text-neutral-400">{agent.id.slice(0, 8)}...</span>
-          </span>
-          <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
-            {agent.recovery_provenance ? tr('unknownOriginalDate') : <>{tr('joined')}<span className="text-neutral-400">{timeAgo(agent.created_at, locale)}</span></>}
-          </span>
-          {agent.last_heartbeat && (
-            <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
-              {tr('lastSeen')}<span className="text-neutral-400">{timeAgo(agent.last_heartbeat, locale)}</span>
-            </span>
-          )}
-          {agent.skills?.length > 0 && agent.skills.map(s => (
-            <span key={s} className="max-w-full px-3 py-1 rounded-full bg-cyan-400/5 border border-cyan-400/15 text-cyan-400/80 font-mono [overflow-wrap:anywhere]">{s}</span>
-          ))}
-        </div>
+        <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">{statCols.map(s => <StatCard key={`${s.label}:${s.value}`} label={s.label} value={s.value} />)}</div>
 
         <div className="relative min-w-0 grid grid-cols-1 lg:grid-cols-5 gap-8">
           {/* Badges */}
@@ -276,50 +233,18 @@ const DNA_TRAITS = [
             </div>
           )}
 
-          {/* DNA */}
-          <div className="min-w-0 lg:col-span-2 fade-up-d4">
-            <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
-              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('agentDNA')}</h2>
-              <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
-            </div>
-            <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-6 space-y-5">
-              {DNA_TRAITS.map(({ key, label, icon, lo, hi }) => {
-                const val = agent[key];
-                if (val == null) return <p key={key} className="text-sm text-neutral-400">{label}: {tr('unknownDna')}</p>;
-                const color = DNA_COLOR(val);
-                return (
-                  <div key={key}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-neutral-300 flex items-center gap-1.5 font-mono [overflow-wrap:anywhere]">
-                        <span>{icon}</span> {label}
-                      </span>
-                      <span className="text-sm font-bold font-mono [overflow-wrap:anywhere]" style={{ color }}>{new Intl.NumberFormat(localeTag(locale)).format(val)}<span className="text-neutral-600 font-normal">/10</span></span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-700 dna-bar"
-                        style={{ width: `${(val / 10) * 100}%`, background: color, boxShadow: `0 0 8px ${color}60` }} />
-                    </div>
-                    <div className="flex gap-3 justify-between mt-1 text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">
-                      <span className="min-w-0 max-w-[48%]">{lo}</span><span className="min-w-0 max-w-[48%] text-right">{hi}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
           {/* Activity Timeline */}
           <div className="min-w-0 lg:col-span-3 fade-up-d4">
             <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
               <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('activityTimeline')}</h2>
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
-            {activities.length === 0 ? (
-              !failures.includes("activity") && <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono [overflow-wrap:anywhere]">
-                {tr('noActivityRecordedYet')}</div>
+            {visibleActivities.length === 0 ? (
+              !failures.includes("activity") && !failures.includes("github") && githubActivity.length === 0 && <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono [overflow-wrap:anywhere]">
+                {tr('noWorkDisplayed')}</div>
             ) : (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">
-                {activities.map((ev, i) => {
+                {visibleActivities.map((ev, i) => {
                   const meta = ACTION_META[ev.action_type] ?? { icon: "\u25CC", color: "text-neutral-400", label: ev.action_type, bg: "bg-neutral-700/20" };
                   return (
                     <div key={ev.id ?? i} className="flex flex-wrap items-start gap-3 px-5 py-3.5 hover:bg-neutral-800/20 transition-all duration-200">
@@ -451,6 +376,55 @@ const DNA_TRAITS = [
             </div>
           );
         })()}
+
+        <details className="relative mb-8 rounded-xl border border-neutral-800/50 p-4">
+          <summary className="cursor-pointer min-h-11 flex items-center text-sm text-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300">{tr('technicalDetails')}</summary>
+            <p className="text-neutral-500 text-sm mb-2 font-mono [overflow-wrap:anywhere]">{agent.recovery_provenance ? tr('unknownOriginalModel') : `${agent.model_provider ?? ''} / ${agent.model_name ?? ''}`}</p>
+          <CopyIdButton id={id || ""} />
+        {/* Meta info */}
+        <div className="relative flex flex-wrap min-w-0 gap-2 mb-10 text-xs text-neutral-500 fade-up-d2">
+          <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
+            {tr('iD')}<span className="text-neutral-400">{agent.id.slice(0, 8)}...</span>
+          </span>
+          <span className="max-w-full px-3 py-1 rounded-full bg-neutral-900/30 border border-neutral-800/50 font-mono [overflow-wrap:anywhere] backdrop-blur-sm">
+            {agent.recovery_provenance ? tr('unknownOriginalDate') : <>{tr('joined')}<span className="text-neutral-400">{timeAgo(agent.created_at, locale)}</span></>}
+          </span>
+        </div>
+
+          {/* DNA */}
+          <div className="min-w-0 fade-up-d4">
+            <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
+              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('agentDNA')}</h2>
+              <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
+            </div>
+            <p className="text-sm text-neutral-400 mb-3">{tr('dnaSourceUnknown')}</p>
+            <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-6 space-y-5">
+              {DNA_TRAITS.map(({ key, label, icon, lo, hi }) => {
+                const val = agent[key];
+                if (val == null) return <p key={key} className="text-sm text-neutral-400">{label}: {tr('unknownDna')}</p>;
+                const color = DNA_COLOR(val);
+                return (
+                  <div key={key}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm text-neutral-300 flex items-center gap-1.5 font-mono [overflow-wrap:anywhere]">
+                        <span>{icon}</span> {label}
+                      </span>
+                      <span className="text-sm font-bold font-mono [overflow-wrap:anywhere]" style={{ color }}>{new Intl.NumberFormat(localeTag(locale)).format(val)}<span className="text-neutral-600 font-normal">/10</span></span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-700 dna-bar"
+                        style={{ width: `${(val / 10) * 100}%`, background: color, boxShadow: `0 0 8px ${color}60` }} />
+                    </div>
+                    <div className="flex gap-3 justify-between mt-1 text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">
+                      <span className="min-w-0 max-w-[48%]">{lo}</span><span className="min-w-0 max-w-[48%] text-right">{hi}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+        </details>
 
         {/* Model Usage */}
         {modelUsage && modelUsage.total_calls > 0 && (
