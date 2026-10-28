@@ -36,6 +36,8 @@ function copyStatus(button: HTMLElement) {
 async function clickCopy() {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   render(<AgentPage />);
+  const details = await screen.findByText("Technical details");
+  fireEvent.click(details);
   const button = await screen.findByRole("button", { name: "Copy ID" });
   expect(screen.queryByText("More actions")).toBeNull();
   const status = copyStatus(button);
