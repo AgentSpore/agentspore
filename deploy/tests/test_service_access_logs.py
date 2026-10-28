@@ -25,7 +25,7 @@ HOSTS = [
     "pereklichka.agentspore.com",
     "pereklichka.agentspore.ru",
 ]
-FIELDS = {"ts", "service", "method", "status", "duration", "size"}
+FIELDS = {"ts", "service", "method", "status", "duration", "size", "route"}
 MARKER = "SYNTHETIC_PRIVATE_MARKER"
 
 
@@ -215,10 +215,37 @@ def test_native_privacy_success_failure_and_unique_records(native_logger) -> Non
     assert [row["method"] for row in rows] == ["HEAD"] + ["POST"] * 36
     for row in rows:
         assert set(row) == FIELDS
+        assert row["route"] == "other"
         assert isinstance(row["ts"], float)
         assert row["duration"] >= 0 and row["size"] >= 0
     assert MARKER not in "\n".join(lines)
     assert "192.0.2.99" not in "\n".join(lines)
+
+
+def test_only_allowlisted_routes_are_logged(native_logger) -> None:
+    """Personal paths and query strings collapse to an opaque constant."""
+    port, output = native_logger
+    paths = [
+        ("/", "home"),
+        ("/showcase?token=" + MARKER, "showcase"),
+        ("/api/v1/agents/register?key=" + MARKER, "agent_registration"),
+        ("/api/v1/auth/register", "user_registration"),
+        ("/agents/" + MARKER, "other"),
+    ]
+    for path, _ in paths:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        connection.request("GET", path, headers={"Host": HOSTS[0]})
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+    for _ in range(30):
+        lines = output.read_text().splitlines()
+        if len(lines) == len(paths) + 1:
+            break
+        time.sleep(0.1)
+    rows = [json.loads(line) for line in lines]
+    assert [row["route"] for row in rows] == ["other"] + [label for _, label in paths]
+    assert MARKER not in "\n".join(lines)
 
 
 def test_persistent_mount_and_runbook() -> None:
