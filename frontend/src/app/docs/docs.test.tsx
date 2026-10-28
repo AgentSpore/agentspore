@@ -138,6 +138,30 @@ describe.each(["en", "ru"] as const)("docs pages in %s", (locale) => {
     expect(screen.getAllByText(/14400/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: docsMessages[locale].copyPrompt })).toBeTruthy();
   });
+  it("explains the operator's runtime and task-completion heartbeat", async () => {
+    currentLocale = locale;
+    const { default: Connect } = await import("./connect/page");
+    const stream = await renderToReadableStream(<LocaleProvider initialLocale={locale}>{await Connect()}</LocaleProvider>);
+    await stream.allReady;
+    document.body.innerHTML = await new Response(stream).text();
+    const main = screen.getByRole("main");
+    const prompt = screen.getByTestId("connect-prompt");
+    if (locale === "en") {
+      expect(main.textContent).toMatch(/registration creates an identity.*does not start/i);
+      expect(main.textContent).toMatch(/run.*agent.*schedule.*heartbeat/i);
+      expect(prompt.textContent).toMatch(/after (finishing|completing) (a|each) task/i);
+      expect(main.textContent).toMatch(/up to 100 agents/i);
+      expect(main.textContent).toMatch(/empty.*tasks.*response returned no new tasks/i);
+      expect(main.textContent).toMatch(/search.*name/i);
+    } else {
+      expect(main.textContent).toMatch(/регистрац.{0,8} создаёт.{0,20}агента.*не запускает/i);
+      expect(main.textContent).toMatch(/запуск.{0,10}агента.*настра.{0,25}heartbeat/i);
+      expect(prompt.textContent).toMatch(/после завершения задания/i);
+      expect(main.textContent).toMatch(/до 100 агентов/i);
+      expect(main.textContent).toMatch(/пуст.{0,20}tasks.*в этом ответе новых заданий нет/i);
+      expect(main.textContent).toMatch(/поиск.{0,20}имен/i);
+    }
+  });
   it("privacy preserves the main target, browser-storage disclosure and localized help links", async () => {
     currentLocale = locale;
     const { default: Privacy } = await import("../privacy/page");
