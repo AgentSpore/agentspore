@@ -1,6 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+collect_build_waits() {
+  local proc=$1 pid=$2 task child children state seen=0
+  local -a queue=("$pid") children_ids=()
+  local futex=0 io=0 sleeping=0 other=0
+  while (( ${#queue[@]} && seen < 256 )); do
+    pid=${queue[0]}; queue=("${queue[@]:1}"); ((seen+=1))
+    [[ $pid =~ ^[0-9]+$ ]] || continue
+    state=''
+    read -r state 2>/dev/null < "$proc/$pid/wchan" || true
+    case "$state" in
+      futex_wait*|futex_wait_queue*) futex=1 ;;
+      do_poll*|ep_poll*|pipe_read*|pipe_write*|unix_stream_read*) io=1 ;;
+      hrtimer_nanosleep*|nanosleep*|schedule_timeout*) sleeping=1 ;;
+      *) other=1 ;;
+    esac
+    for task in "$proc/$pid"/task/[0-9]*; do
+      children=$(cat "$task/children" 2>/dev/null) || continue
+      read -r -a children_ids <<< "$children"
+      for child in "${children_ids[@]}"; do
+        [[ $child =~ ^[0-9]+$ ]] && queue+=("$child")
+      done
+    done
+  done
+  (( futex )) && printf '%s\n' 'futex' || true
+  (( io )) && printf '%s\n' 'io' || true
+  (( sleeping )) && printf '%s\n' 'sleep' || true
+  (( other )) && printf '%s\n' 'other' || true
+}
+
 stage() {
   local name=$1 limit=$2 result
   case "$name" in
@@ -9,10 +38,37 @@ stage() {
   esac
   shift 2
   printf 'Starting %s\n' "$name"
-  if timeout --kill-after=5s "$limit" "$@" >/dev/null 2>&1; then
-    printf 'Passed %s\n' "$name"
+  if [[ $name == 'production build' ]]; then
+    timeout --kill-after=5s "$limit" "$@" >/dev/null 2>&1 &
+    local build_pid=$! watcher
+    (
+      sleep 280 & sleeper=$!
+      trap 'kill "$sleeper" 2>/dev/null || true; exit' TERM
+      wait "$sleeper" || exit
+      collect_build_waits /proc "$build_pid" > "$scratch/build-waits"
+    ) &
+    watcher=$!
+    if wait "$build_pid"; then result=0; else result=$?; fi
+    kill "$watcher" 2>/dev/null || true
+    wait "$watcher" 2>/dev/null || true
+    if [[ $result -eq 124 || $result -eq 137 ]]; then
+      local category
+      if [[ -r $scratch/build-waits ]]; then
+        while IFS= read -r category; do
+          case "$category" in futex|io|sleep|other) printf '::notice title=Connect focus::production build wait=%s\n' "$category" ;; esac
+        done < "$scratch/build-waits"
+      else
+        printf '::notice title=Connect focus::production build wait=unavailable\n'
+      fi
+    fi
+  elif timeout --kill-after=5s "$limit" "$@" >/dev/null 2>&1; then
+    result=0
   else
     result=$?
+  fi
+  if [[ $result -eq 0 ]]; then
+    printf 'Passed %s\n' "$name"
+  else
     printf '::error title=Connect focus::%s failed (exit %s)\n' "$name" "$result"
     return "$result"
   fi
