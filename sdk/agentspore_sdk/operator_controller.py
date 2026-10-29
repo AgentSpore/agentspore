@@ -233,34 +233,25 @@ class OperatorController:
                 ledger.finish_analysis(run, "failed", self.now())
                 return "analysis_unavailable"
             ledger.finish_analysis(run, "success", self.now())
-            outcomes = []
-            for channel in ("chat", "blog"):
-                reserved_at = self.now()
-                if not daily_window(reserved_at):
-                    return "outside_window"
-                outcome = await self._deliver(
-                    ledger,
-                    "daily_" + channel,
-                    payloads[channel],
-                    bundle["snapshot_digest"],
-                )
-                if outcome == "outside_window":
-                    return outcome
-                outcomes.append(outcome)
-        if "uncertain" in outcomes:
-            return "daily_uncertain"
-        return "daily_complete" if outcomes == ["sent", "sent"] else "daily_reserved"
+            outcome = await self._deliver(
+                ledger, "daily_chat", payloads["chat"], bundle["snapshot_digest"]
+            )
+        return {
+            "outside_window": "outside_window",
+            "uncertain": "daily_uncertain",
+            "sent": "daily_complete",
+        }.get(outcome, "daily_reserved")
 
     async def _deliver(
         self, ledger: OperatorLedger, operation: str, payload: dict, digest: str
     ) -> str:
         """Reserve durably before POST and retain the original reservation clock."""
-        if operation not in ("daily_chat", "daily_blog", "incident_chat"):
+        if operation not in ("daily_chat", "incident_chat"):
             raise ValueError("unknown publication operation")
         reserved_at = self.now()
         if operation != "incident_chat" and not daily_window(reserved_at):
             return "outside_window"
-        channel = "blog" if operation == "daily_blog" else "chat"
+        channel = "chat"
         if not ledger.reserve_publication(reserved_at, channel, digest):
             return "already_reserved"
         receipt = await self.publisher.publish(channel, payload)

@@ -187,7 +187,7 @@ def parse_analysis(text: str, bundle: dict) -> dict:
 
 
 def render_digest(snapshot: dict, analysis: dict) -> dict:
-    """Render bounded chat/blog payloads using only controller-owned language."""
+    """Render a bounded chat payload using only controller-owned language."""
     bundle = evidence_bundle(snapshot)
     selected = parse_analysis(canonical(analysis).decode(), bundle)
     window = bundle["window"]
@@ -199,7 +199,7 @@ def render_digest(snapshot: dict, analysis: dict) -> dict:
         if not since <= datetime.fromisoformat(row["created_at"]) < until
     }
     facts = {key: value for key, value in bundle["facts"].items() if key not in hidden}
-    heading = f"AgentSpore review: {window['since']} to {window['until']} (UTC)."
+    chat = f"AgentSpore review: {window['since']} to {window['until']} (UTC)."
     coverage = (
         "Coverage: "
         + "; ".join(
@@ -217,17 +217,33 @@ def render_digest(snapshot: dict, analysis: dict) -> dict:
         "Platform: https://agentspore.com\nPublic code: https://github.com/AgentSpore"
     )
     suffix = "\n\n" + coverage + "\n" + LIMITATIONS + "\n" + links
-    order = list(
-        dict.fromkeys(selected["attention"] + selected["highlights"] + list(facts))
+    recommendations = digest_recommendations(snapshot, selected, facts)
+    cited = [key for item in recommendations for key in item["evidence_ids"]]
+    order = dict.fromkeys(
+        selected["attention"] + selected["highlights"] + cited + list(facts)
     )
-    chat = heading
+    for item in recommendations:
+        line = (
+            "\n"
+            + RECOMMENDATIONS[item["kind"]]
+            + " Evidence: "
+            + ", ".join(item["evidence_ids"])
+            + "."
+        )
+        if len(chat + line + suffix) <= 2000:
+            chat += line
     for fact in order:
         if fact not in facts:
             continue
         line = "\n" + facts[fact]
         if len(chat + line + suffix) <= 2000:
             chat += line
-    blog = heading + "\n\n" + "\n".join(facts.values())
+    return {"chat": {"message_type": "text", "content": chat + suffix}}
+
+
+def digest_recommendations(snapshot: dict, selected: dict, facts: dict) -> list:
+    """Retain recommendations supported by current, cited observations."""
+    recommendations = []
     for item in selected["recommendations"]:
         if any(evidence_id not in facts for evidence_id in item["evidence_ids"]):
             continue
@@ -238,20 +254,8 @@ def render_digest(snapshot: dict, analysis: dict) -> dict:
             for origin, label in HOSTS.items()
         ):
             continue
-        blog += (
-            "\n"
-            + RECOMMENDATIONS[item["kind"]]
-            + " Evidence: "
-            + ", ".join(item["evidence_ids"])
-            + "."
-        )
-    return {
-        "chat": {"message_type": "text", "content": chat + suffix},
-        "blog": {
-            "title": "AgentSpore daily review: " + window["until"][:10],
-            "content": blog + suffix,
-        },
-    }
+        recommendations.append(item)
+    return recommendations
 
 
 def snapshot_facts(snapshot: dict, sources: dict) -> dict:
