@@ -1,67 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-collect_build_waits() {
-  local proc=$1 pid=$2 task child children state seen=0
-  local -a queue=("$pid") children_ids=()
-  local futex=0 io=0 sleeping=0 other=0
-  while (( ${#queue[@]} && seen < 256 )); do
-    pid=${queue[0]}; queue=("${queue[@]:1}"); ((seen+=1))
-    [[ $pid =~ ^[0-9]+$ ]] || continue
-    state=''
-    read -r state 2>/dev/null < "$proc/$pid/wchan" || true
-    case "$state" in
-      futex_wait*|futex_wait_queue*) futex=1 ;;
-      do_poll*|ep_poll*|pipe_read*|pipe_write*|unix_stream_read*) io=1 ;;
-      hrtimer_nanosleep*|nanosleep*|schedule_timeout*) sleeping=1 ;;
-      *) other=1 ;;
-    esac
-    for task in "$proc/$pid"/task/[0-9]*; do
-      children=$(cat "$task/children" 2>/dev/null) || continue
-      read -r -a children_ids <<< "$children"
-      for child in "${children_ids[@]}"; do
-        [[ $child =~ ^[0-9]+$ ]] && queue+=("$child")
-      done
-    done
-  done
-  (( futex )) && printf '%s\n' 'futex' || true
-  (( io )) && printf '%s\n' 'io' || true
-  (( sleeping )) && printf '%s\n' 'sleep' || true
-  (( other )) && printf '%s\n' 'other' || true
-}
-
 stage() {
   local name=$1 limit=$2 result
   case "$name" in
-    "host network control"|"production build"|"build permissions"|"proxy controls"|"backend readiness"|"direct backend control"|"proxy readiness"|"browser tests") ;;
+    "host network control"|"host IPv6 control"|"local build IPC"|"production build"|"build permissions"|"proxy controls"|"backend readiness"|"direct backend control"|"proxy readiness"|"browser tests") ;;
     *) echo 'Invalid stage name' >&2; return 1 ;;
   esac
   shift 2
   printf 'Starting %s\n' "$name"
-  if [[ $name == 'production build' ]]; then
-    timeout --kill-after=5s "$limit" "$@" >/dev/null 2>&1 &
-    local build_pid=$! watcher
-    (
-      sleep 280 & sleeper=$!
-      trap 'kill "$sleeper" 2>/dev/null || true; exit' TERM
-      wait "$sleeper" || exit
-      collect_build_waits /proc "$build_pid" > "$scratch/build-waits"
-    ) &
-    watcher=$!
-    if wait "$build_pid"; then result=0; else result=$?; fi
-    kill "$watcher" 2>/dev/null || true
-    wait "$watcher" 2>/dev/null || true
-    if [[ $result -eq 124 || $result -eq 137 ]]; then
-      local category
-      if [[ -r $scratch/build-waits ]]; then
-        while IFS= read -r category; do
-          case "$category" in futex|io|sleep|other) printf '::notice title=Connect focus::production build wait=%s\n' "$category" ;; esac
-        done < "$scratch/build-waits"
-      else
-        printf '::notice title=Connect focus::production build wait=unavailable\n'
-      fi
-    fi
-  elif timeout --kill-after=5s "$limit" "$@" >/dev/null 2>&1; then
+  if timeout --kill-after=5s "$limit" "$@" >/dev/null 2>&1; then
     result=0
   else
     result=$?
@@ -109,7 +57,7 @@ cleanup_services() {
 
 if [[ ${1:-} != --inside ]]; then
   [[ $(uname -s) == Linux && $(id -u) -ne 0 ]] || { echo 'Linux and an unprivileged runner are required' >&2; exit 1; }
-  for binary in sudo unshare ip iptables python3 curl setpriv timeout; do command -v "$binary" >/dev/null || exit 1; done
+  for binary in sudo unshare ip iptables ip6tables python3 curl setpriv timeout; do command -v "$binary" >/dev/null || exit 1; done
   node_dir=$(dirname "$(command -v node)")
   runner_uid=$(id -u)
   runner_gid=$(id -g)
@@ -118,46 +66,55 @@ if [[ ${1:-} != --inside ]]; then
   trap cleanup_host EXIT
   timeout --kill-after=1s 5s sudo -n chown "0:$runner_gid" "$scratch"
   timeout --kill-after=1s 5s sudo -n chmod 710 "$scratch"
-  sudo -n python3 -c 'import http.server,sys
+  sudo -n python3 -c 'import http.server,socket,sys,threading
 class Handler(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
   with open(sys.argv[1],"a") as f: f.write("hit\n")
   self.send_response(200); self.end_headers()
  def log_message(self,*args): pass
+class IPv6Server(http.server.HTTPServer):
+ address_family=socket.AF_INET6
 server=http.server.HTTPServer(("127.0.0.1",0),Handler)
-with open(sys.argv[2],"w") as f: f.write(str(server.server_port))
+server6=IPv6Server(("::1",0),Handler)
+threading.Thread(target=server6.serve_forever,daemon=True).start()
+with open(sys.argv[2],"w") as f: f.write(str(server.server_port)+" "+str(server6.server_port)+"\n")
 server.serve_forever()' "$scratch/hits" "$scratch/port" >/dev/null 2>&1 &
   listener=$!
   printf 'Starting host listener control\n'
   for _ in {1..100}; do [[ -s $scratch/port ]] && break; sleep .05; done
   [[ -s $scratch/port ]] || exit 1
-  port=$(cat "$scratch/port")
-  [[ $port =~ ^[0-9]+$ ]] || exit 1
-  curl --max-time 5 -fsS "http://127.0.0.1:$port/" >/dev/null
-  [[ -f $scratch/hits && $(wc -l < "$scratch/hits") -eq 1 ]] || exit 1
+  read -r port port6 < "$scratch/port"
+  [[ $port =~ ^[0-9]+$ && $port6 =~ ^[0-9]+$ ]] || exit 1
+  curl --noproxy '*' --max-time 5 -fsS "http://127.0.0.1:$port/" >/dev/null
+  curl --noproxy '*' --max-time 5 -fsS "http://[::1]:$port6/" >/dev/null
+  [[ -f $scratch/hits && $(wc -l < "$scratch/hits") -eq 2 ]] || exit 1
   printf 'Passed host listener control\n'
   timeout --kill-after=1s 5s sudo -n chgrp "$runner_gid" "$scratch/hits"
   timeout --kill-after=1s 5s sudo -n chmod 640 "$scratch/hits"
   printf 'Starting isolated gate\n'
-  if timeout --kill-after=10s 14m sudo -n env -i PATH="$node_dir:/usr/sbin:/usr/bin:/sbin:/bin" unshare --net bash "$PWD/scripts/connect-focus-isolation.sh" --inside "$runner_uid" "$PWD" "$node_dir" "$HOME/.cache/ms-playwright" "$scratch" "$port" "$runner_gid"; then
+  if timeout --kill-after=10s 14m sudo -n env -i PATH="$node_dir:/usr/sbin:/usr/bin:/sbin:/bin" unshare --net bash "$PWD/scripts/connect-focus-isolation.sh" --inside "$runner_uid" "$PWD" "$node_dir" "$HOME/.cache/ms-playwright" "$scratch" "$port" "$runner_gid" "$port6"; then
     printf 'Passed isolated gate\n'
   else
     result=$?
     printf '::error title=Connect focus::isolated gate failed (exit %s)\n' "$result"
     exit "$result"
   fi
-  [[ $(wc -l < "$scratch/hits") -eq 1 ]] || { echo 'Host listener reached from namespace' >&2; exit 1; }
+  [[ $(wc -l < "$scratch/hits") -eq 2 ]] || { echo 'Host listener reached from namespace' >&2; exit 1; }
   exit 0
 fi
 
-[[ $(id -u) -eq 0 && $# -eq 8 ]] || exit 1
-runner_uid=$2; workdir=$3; node_dir=$4; browser_path=$5; scratch=$6; host_port=$7; runner_gid=$8
+[[ $(id -u) -eq 0 && $# -eq 9 ]] || exit 1
+runner_uid=$2; workdir=$3; node_dir=$4; browser_path=$5; scratch=$6; host_port=$7; runner_gid=$8; host_port6=$9
 [[ $runner_uid =~ ^[0-9]+$ && $runner_uid != 0 && $runner_uid != 65534 ]] || exit 1
 cd "$workdir"
 compgen -G '.env*' >/dev/null && { echo 'Environment files are not permitted' >&2; exit 1; }
 timeout --kill-after=1s 5s ip link set lo up
-timeout --kill-after=1s 5s iptables -A OUTPUT -m owner --uid-owner "$runner_uid" -d 127.0.0.1/32 -p tcp --dport 3187 -j ACCEPT
-timeout --kill-after=1s 5s iptables -A OUTPUT -m owner --uid-owner "$runner_uid" -j REJECT
+links=$(timeout --kill-after=1s 5s ip -o link show) || exit 1
+[[ $(printf "%s\n" "$links" | wc -l) -eq 1 ]] || exit 1
+timeout --kill-after=1s 5s ip -o link show lo >/dev/null
+routes4=$(timeout --kill-after=1s 5s ip -4 route show table main) || exit 1
+routes6=$(timeout --kill-after=1s 5s ip -6 route show table main) || exit 1
+[[ -z $routes4 && -z $routes6 ]] || exit 1
 mkdir "$scratch/work"
 chgrp "$runner_gid" "$scratch/work"
 chmod 770 "$scratch/work"
@@ -187,7 +144,12 @@ for identity in runner service; do
 done
 printf 'Passed privilege and evidence controls\n'
 stage "host network control" 10s "${service[@]}" node -e 'const s=require("net").connect(Number(process.argv[1]),"127.0.0.1");s.on("connect",()=>process.exit(1));s.on("error",()=>process.exit(0));setTimeout(()=>process.exit(1),2000)' "$host_port"
+stage "host IPv6 control" 10s "${runner[@]}" node -e 'const s=require("net").connect(Number(process.argv[1]),"::1");s.on("connect",()=>process.exit(1));s.on("error",()=>process.exit(0));setTimeout(()=>process.exit(1),2000)' "$host_port6"
+stage "local build IPC" 10s "${runner[@]}" node -e 'const n=require("net");const server=n.createServer(s=>s.end());server.listen(0,"127.0.0.1",()=>{const s=n.connect(server.address().port,"127.0.0.1");s.on("connect",()=>{s.end();server.close()});s.on("error",()=>process.exit(1))});setTimeout(()=>process.exit(1),5000).unref()'
 stage "production build" 5m "${runner[@]}" npm run build
+timeout --kill-after=1s 5s iptables -A OUTPUT -m owner --uid-owner "$runner_uid" -d 127.0.0.1/32 -p tcp --dport 3187 -j ACCEPT
+timeout --kill-after=1s 5s iptables -A OUTPUT -m owner --uid-owner "$runner_uid" -j REJECT
+timeout --kill-after=1s 5s ip6tables -A OUTPUT -m owner --uid-owner "$runner_uid" -j REJECT
 stage "build permissions" 30s chmod -R g+rwX .next
 stage "proxy controls" 30s "${service[@]}" node --test scripts/connect-focus-proxy.test.mjs
 "${service[@]}" node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3186 >/dev/null 2>&1 &
