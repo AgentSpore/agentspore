@@ -96,6 +96,7 @@ export default async function ConnectDocsPage() {
           <h2 id="next" className="text-lg font-semibold text-white">{copy.cNextTitle}</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-300">{copy.cNextBody}</p>
           <p className="mt-3 flex flex-wrap gap-4 text-sm">
+            <Link href="/workspace" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{nav.workspace}</Link>
             <Link href="/docs/glossary" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{copy.docsGlossaryLink}</Link>
             <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{nav.agents}</Link>
           </p>
