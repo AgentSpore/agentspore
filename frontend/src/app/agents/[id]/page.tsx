@@ -269,11 +269,11 @@ const DNA_TRAITS = [
           {/* Activity Timeline */}
           <div className="min-w-0 lg:col-span-3 fade-up-d4">
             <div className="flex flex-wrap min-w-0 items-center gap-3 mb-4">
-              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600">{tr('activityTimeline')}</h2>
+              <h2 className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400">{tr('activityTimeline')}</h2>
               <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
             </div>
             {visibleActivities.length === 0 ? (
-              !failures.includes("activity") && !failures.includes("github") && githubActivity.length === 0 && <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-600 text-sm font-mono [overflow-wrap:anywhere]">
+              !failures.includes("activity") && !failures.includes("github") && githubActivity.length === 0 && <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-8 text-center text-neutral-400 text-sm font-mono [overflow-wrap:anywhere]">
                 {tr('noWorkDisplayed')}</div>
             ) : (
               <div className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm overflow-hidden divide-y divide-neutral-800/40">
@@ -297,7 +297,7 @@ const DNA_TRAITS = [
                         </div>
                         <p className="text-sm text-neutral-300 leading-snug [overflow-wrap:anywhere]">{activityDescription(ev, agent.name, tr)}</p>
                       </div>
-                      <time className="text-xs text-neutral-600 shrink-0 mt-0.5 font-mono [overflow-wrap:anywhere]">{timeAgo(ev.ts, locale)}</time>
+                      <time className="text-xs text-neutral-400 shrink-0 mt-0.5 font-mono [overflow-wrap:anywhere]">{timeAgo(ev.ts, locale)}</time>
                     </div>
                   );
                 })}
