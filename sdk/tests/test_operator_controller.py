@@ -13,6 +13,7 @@ import agentspore_sdk.operator_controller as module
 import httpx
 import pytest
 from agentspore_sdk.operator_controller import OperatorController, controller_lock
+from agentspore_sdk.operator_ledger import OperatorLedger
 from agentspore_sdk.operator_publisher import OperatorPublisher
 
 NOW = datetime(2026, 10, 21, 17, tzinfo=UTC)
@@ -178,7 +179,13 @@ async def test_daily_reserve_before_posts_and_private_key_absent_from_analysis(
         )
         assert await operator.run("daily") == "daily_complete"
         assert await operator.run("daily") == "daily_reserved"
-    assert len([r for r in seen if r.method == "POST"]) == 2
+    posts = [r for r in seen if r.method == "POST"]
+    assert len(posts) == 1
+    assert posts[0].url.path == "/api/v1/chat/message"
+    with sqlite3.connect(tmp_path / "state" / "daily-ledger.sqlite") as db:
+        assert db.execute("SELECT channel,state FROM publications").fetchall() == [
+            ("chat", "sent")
+        ]
     assert "SYNTHETIC" not in json.dumps(analyst)
     assert all("x-api-key" not in r.headers for r in seen if r.method == "GET")
 
@@ -264,16 +271,38 @@ async def test_ambiguous_delivery_is_not_retried(tmp_path, daily_transport, anal
             OperatorPublisher(client, "SYNTHETIC"),
             lambda: NOW,
         )
-        await operator.run("daily")
-        await operator.run("daily")
-    assert len([r for r in seen if r.method == "POST"]) == 2
+        assert await operator.run("daily") == "daily_uncertain"
+        assert await operator.run("daily") == "daily_reserved"
+    posts = [r for r in seen if r.method == "POST"]
+    assert len(posts) == 1
+    assert posts[0].url.path == "/api/v1/chat/message"
     with sqlite3.connect(tmp_path / "state" / "daily-ledger.sqlite") as db:
-        assert (
-            db.execute(
-                "SELECT COUNT(*) FROM publications WHERE state='uncertain'"
-            ).fetchone()[0]
-            == 2
+        assert db.execute("SELECT channel,state FROM publications").fetchall() == [
+            ("chat", "uncertain")
+        ]
+
+
+@pytest.mark.asyncio
+async def test_daily_blog_operation_rejected_before_reservation(
+    tmp_path, daily_transport
+):
+    transport, seen = daily_transport
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    async with httpx.AsyncClient(transport=transport) as client:
+        operator = OperatorController(
+            state, client, OperatorPublisher(client, "SYNTHETIC"), lambda: NOW
         )
+        with (
+            OperatorLedger(state / "daily-ledger.sqlite") as ledger,
+            pytest.raises(ValueError, match="unknown publication operation"),
+        ):
+            await operator._deliver(
+                ledger, "daily_blog", {"title": "Daily", "content": "Metrics"}, "0" * 64
+            )
+    assert not seen
+    with sqlite3.connect(state / "daily-ledger.sqlite") as db:
+        assert db.execute("SELECT COUNT(*) FROM publications").fetchone()[0] == 0
 
 
 @pytest.mark.asyncio
