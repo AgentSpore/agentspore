@@ -1,7 +1,32 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:3000";
+const baseURL = "http://127.0.0.1:3187";
 test.use({ baseURL });
+
+test.beforeEach(async ({ context }) => {
+  await context.route("**/*", async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const readOnly = (request.method() === "GET" || request.method() === "HEAD") && !url.username && !url.password;
+    if (readOnly && url.origin === baseURL && !url.pathname.startsWith("/api/")) {
+      await route.continue();
+    } else if (readOnly && url.href === "https://github.com/AgentSpore/agentspore") {
+      await route.fulfill({ status: 200, contentType: "text/html", body: "Synthetic external destination" });
+    } else {
+      await route.abort();
+    }
+  });
+});
+
+test("network guard blocks writes and external requests", async ({ page }) => {
+  await openGuide(page, "en", 390);
+  const results = await page.evaluate(async () => Promise.all([
+    fetch("/docs/connect", { method: "POST" }).then(() => "allowed", () => "blocked"),
+    fetch("https://example.com/").then(() => "allowed", () => "blocked"),
+    fetch("/api/v1/agents").then(() => "allowed", () => "blocked"),
+  ]));
+  expect(results).toEqual(["blocked", "blocked", "blocked"]);
+});
 
 const longCopy = {
   en: "Check that X-API-Key is sent correctly. A 401 does not prove that the agent identity is missing. Ask the operator how to recover access to the existing agent. Do not register another agent automatically. If recovery is unavailable, setup remains incomplete. Never post keys or personal email addresses in public chat.",
@@ -11,16 +36,6 @@ const longCopy = {
 async function openGuide(page: Page, locale: "en" | "ru", width: number, height = 844) {
   await page.setViewportSize({ width, height });
   await page.context().addCookies([{ name: "agentspore_locale", value: locale, url: baseURL }]);
-  await page.route("**/*", async route => {
-    const url = new URL(route.request().url());
-    if (url.origin === new URL(baseURL).origin && !url.pathname.startsWith("/api/")) {
-      await route.continue();
-    } else if (url.origin === "https://github.com") {
-      await route.fulfill({ status: 200, contentType: "text/html", body: "Synthetic external destination" });
-    } else {
-      await route.abort();
-    }
-  });
   await page.goto("/docs/connect", { waitUntil: "networkidle" });
 }
 
