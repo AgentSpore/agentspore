@@ -3,13 +3,17 @@ set -euo pipefail
 
 stage() {
   local name=$1 limit=$2 result
+  case "$name" in
+    "host network control"|"production build"|"build permissions"|"proxy controls"|"backend readiness"|"direct backend control"|"proxy readiness"|"browser tests") ;;
+    *) echo 'Invalid stage name' >&2; return 1 ;;
+  esac
   shift 2
   printf 'Starting %s\n' "$name"
   if timeout --kill-after=5s "$limit" "$@" >/dev/null 2>&1; then
     printf 'Passed %s\n' "$name"
   else
     result=$?
-    printf 'Failed %s (exit %s)\n' "$name" "$result" >&2
+    printf '::error title=Connect focus::%s failed (exit %s)\n' "$name" "$result"
     return "$result"
   fi
 }
@@ -83,7 +87,7 @@ server.serve_forever()' "$scratch/hits" "$scratch/port" >/dev/null 2>&1 &
     printf 'Passed isolated gate\n'
   else
     result=$?
-    printf 'Failed isolated gate (exit %s)\n' "$result" >&2
+    printf '::error title=Connect focus::isolated gate failed (exit %s)\n' "$result"
     exit "$result"
   fi
   [[ $(wc -l < "$scratch/hits") -eq 1 ]] || { echo 'Host listener reached from namespace' >&2; exit 1; }
