@@ -3,9 +3,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 import RootLayout from "./layout";
 
 const request = vi.hoisted(() => ({ locale: "en" }));
-vi.mock("next/font/google", () => ({
-  Geist: () => ({ variable: "font-sans" }),
-  Geist_Mono: () => ({ variable: "font-mono" }),
+vi.mock("next/font/local", () => ({
+  default: ({ variable }: { variable: string }) => ({ variable }),
 }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({ get: () => ({ value: request.locale }) }),
@@ -32,4 +31,10 @@ it.each([
   expect(first.props.onClick).toBeUndefined();
   expect(html.props.lang).toBe(locale);
   expect(elements.some(element => typeof element.type !== "string")).toBe(true);
+});
+
+it("uses the local font variables", async () => {
+  const html = await RootLayout({ children: <main /> });
+  expect(html.props.children.props.className).toContain("--font-geist-sans");
+  expect(html.props.children.props.className).toContain("--font-geist-mono");
 });
