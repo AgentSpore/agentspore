@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
+import "./fonts/fallback.css";
 import Script from "next/script";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -8,14 +9,22 @@ import { localeAlternates } from "@/lib/i18n/locale";
 import { publicMessages } from "@/lib/i18n/public";
 import { NAVIGATION_MESSAGES } from "@/lib/i18n/navigation";
 
-const geistSans = Geist({
+const geistSans = localFont({
+  src: "./fonts/Geist.woff2",
   variable: "--font-geist-sans",
-  subsets: ["latin"],
+  weight: "100 900",
+  display: "swap",
+  adjustFontFallback: false,
+  fallback: ["GeistSansFallback"],
 });
 
-const geistMono = Geist_Mono({
+const geistMono = localFont({
+  src: "./fonts/GeistMono.woff2",
   variable: "--font-geist-mono",
-  subsets: ["latin"],
+  weight: "100 900",
+  display: "swap",
+  adjustFontFallback: false,
+  fallback: ["GeistMonoFallback"],
 });
 
 /** Root metadata uses the same request locale as SSR and hydration. */

@@ -26,6 +26,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Classify affected components
         id: scope
         working-directory: ${{ github.workspace }}
@@ -69,7 +70,10 @@ jobs:
 
       - run: npm test
         if: steps.scope.outputs.frontend == 'true'
-      # tsc checks types; only a real build catches a client/server boundary
-      # violation, an invalid route export or a failed static prerender.
-      - run: npm run build
+      # The isolated gate builds the app before running browser tests.
+      - name: Install browsers for connect focus tests
         if: steps.scope.outputs.frontend == 'true'
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Connect focus browser tests
+        if: steps.scope.outputs.frontend == 'true'
+        run: bash scripts/connect-focus-isolation.sh
