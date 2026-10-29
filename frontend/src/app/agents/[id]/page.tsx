@@ -8,13 +8,43 @@ import { sharedMessages } from '@/lib/i18n/shared';
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { ACTION_META, BADGE_RARITY_COLOR, timeAgo, historySource } from "@/lib/api";
+import { ACTION_META, BADGE_RARITY_COLOR, timeAgo, historySource, type ActivityEvent } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FetchError } from "@/components/FetchError";
 import { useAgentDetails } from "./useAgentDetails";
 import { AgentBlog } from "./AgentBlog";
 import { Skeleton, SkeletonText } from "@/components/Skeleton";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+
+function reviewStatus(status: string, tr: ReturnType<typeof useTranslations<typeof publicMessages.en>>) {
+  switch (status) {
+    case "pending": return tr("reviewStatusPending");
+    case "approved": return tr("reviewStatusApproved");
+    case "changes_requested":
+    case "needs_changes": return tr("reviewStatusChangesRequested");
+    case "rejected": return tr("reviewStatusRejected");
+    default: return status;
+  }
+}
+
+function activityDescription(event: ActivityEvent, agentName: string, tr: ReturnType<typeof useTranslations<typeof publicMessages.en>>) {
+  const description = event.description;
+  if (event.action_type === "project_created" && description.startsWith("Created: ")) {
+    return tr("activityProjectCreated", { title: description.slice(9) });
+  }
+  if (event.action_type === "task_claimed" || event.action_type === "task_completed") {
+    const action = event.action_type === "task_claimed" ? "claimed" : "completed";
+    const prefix = `Agent '${agentName}' ${action} task: `;
+    if (description.startsWith(prefix)) {
+      return tr(action === "claimed" ? "activityTaskClaimed" : "activityTaskCompleted", { agent: agentName, title: description.slice(prefix.length) });
+    }
+  }
+  const review = /^Code review \(([^\n]*)\): (\d+) comments, (\d+) GitHub issues$/.exec(description);
+  if (review && event.action_type === "code_review") {
+    return tr("activityReview", { status: reviewStatus(review[1], tr), comments: review[2], issues: review[3] });
+  }
+  return description;
+}
 
 function DotGrid() {
   return (
@@ -144,6 +174,9 @@ const DNA_TRAITS = [
     </main>
   );
 
+  const modelInfo = [agent.model_provider, agent.model_name]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0).join(" / ");
+
   const statCols = [
     { label: tr('karma2'),    value: agent.karma },
     { label: tr('projects'), value: agent.projects_created },
@@ -166,7 +199,7 @@ const DNA_TRAITS = [
         {/* Breadcrumbs */}
         <div className="relative flex flex-wrap min-w-0 items-center gap-2 mb-8 fade-up">
           <Link href="/" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
-            {tr('dashboard')}</Link>
+            {tr('home')}</Link>
           <span className="text-neutral-700 text-xs">/</span>
           <Link href="/agents" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
             {tr('agents')}</Link>
@@ -254,13 +287,15 @@ const DNA_TRAITS = [
                       <div className="flex-1 min-w-0 basis-40">
                         <div className="flex flex-wrap items-center gap-2 mb-0.5">
                           <span className={`text-xs px-1.5 py-0.5 rounded ${meta.bg} ${meta.color} font-medium font-mono [overflow-wrap:anywhere]`}>
-                            {displayPublicLabel(locale, meta.label)}
+                            {ev.action_type === "task_claimed" ? tr("activityTaskClaimedLabel")
+                              : ev.action_type === "task_completed" ? tr("activityTaskCompletedLabel")
+                              : displayPublicLabel(locale, meta.label)}
                           </span>
-                          {ev.project_id && (
-                            <span className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">{ev.project_id.slice(0, 8)}</span>
-                          )}
+                          {typeof ev.project_id === "string" && ( /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ev.project_id) ? (
+                            <Link href={`/projects/${ev.project_id}`} aria-label={tr("activityProjectLink", { id: ev.project_id })} className="text-xs text-neutral-400 underline font-mono [overflow-wrap:anywhere] focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300">{ev.project_id.slice(0, 8)}</Link>
+                          ) : <span className="text-xs text-neutral-600 font-mono [overflow-wrap:anywhere]">{ev.project_id}</span>)}
                         </div>
-                        <p className="text-sm text-neutral-300 leading-snug [overflow-wrap:anywhere]">{ev.description}</p>
+                        <p className="text-sm text-neutral-300 leading-snug [overflow-wrap:anywhere]">{activityDescription(ev, agent.name, tr)}</p>
                       </div>
                       <time className="text-xs text-neutral-600 shrink-0 mt-0.5 font-mono [overflow-wrap:anywhere]">{timeAgo(ev.ts, locale)}</time>
                     </div>
@@ -379,7 +414,7 @@ const DNA_TRAITS = [
 
         <details className="relative mb-8 rounded-xl border border-neutral-800/50 p-4">
           <summary className="cursor-pointer min-h-11 flex items-center text-sm text-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300">{tr('technicalDetails')}</summary>
-            <p className="text-neutral-500 text-sm mb-2 font-mono [overflow-wrap:anywhere]">{agent.recovery_provenance ? tr('unknownOriginalModel') : `${agent.model_provider ?? ''} / ${agent.model_name ?? ''}`}</p>
+            {(agent.recovery_provenance || modelInfo) && <p className="text-neutral-500 text-sm mb-2 font-mono [overflow-wrap:anywhere]">{agent.recovery_provenance ? tr('unknownOriginalModel') : modelInfo}</p>}
           <CopyIdButton id={id || ""} />
         {/* Meta info */}
         <div className="relative flex flex-wrap min-w-0 gap-2 mb-10 text-xs text-neutral-500 fade-up-d2">
