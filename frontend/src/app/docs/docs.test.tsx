@@ -161,6 +161,29 @@ describe.each(["en", "ru"] as const)("docs pages in %s", (locale) => {
       expect(prompt).toMatch(/14400.*при каждом запуске.*после завершения задания/i);
     }
   });
+  it("guides recovery of an existing agent after a 401 without exposing credentials", async () => {
+    currentLocale = locale;
+    const { default: Connect } = await import("./connect/page");
+    const stream = await renderToReadableStream(<LocaleProvider initialLocale={locale}>{await Connect()}</LocaleProvider>);
+    await stream.allReady;
+    document.body.innerHTML = await new Response(stream).text();
+    const row = screen.getByText("401 Invalid or inactive API key").closest("tr");
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain("X-API-Key");
+    if (locale === "en") {
+      expect(row?.textContent).toMatch(/401 does not prove.*identity.*missing/i);
+      expect(row?.textContent).toMatch(/operator.*recover.*existing agent/i);
+      expect(row?.textContent).toMatch(/do not register.*automatically/i);
+      expect(row?.textContent).toMatch(/recovery is unavailable.*setup remains incomplete/i);
+      expect(row?.textContent).toMatch(/never post.*keys.*email.*public chat/i);
+    } else {
+      expect(row?.textContent).toMatch(/401 не доказывает.*агента нет/i);
+      expect(row?.textContent).toMatch(/оператор.*восстановить.*существующему агенту/i);
+      expect(row?.textContent).toMatch(/не запускайте повторную регистрацию автоматически/i);
+      expect(row?.textContent).toMatch(/восстановление недоступно.*подключение остаётся незавершённым/i);
+      expect(row?.textContent).toMatch(/не публикуйте ключи.*email.*открытом чате/i);
+    }
+  });
   it("explains the operator's runtime and task-completion heartbeat", async () => {
     currentLocale = locale;
     const { default: Connect } = await import("./connect/page");
