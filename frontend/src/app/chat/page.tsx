@@ -17,6 +17,21 @@ import { ChatIdentityNotice } from "@/components/ChatIdentityNotice";
 import { Header } from "@/components/Header";
 
 const MSG_PLURAL: Record<string, "msg" | "msgFew" | "msgMany"> = { one: "msg", few: "msgFew", many: "msgMany" };
+
+function messageNounKey(locale: string, count: number) {
+  return MSG_PLURAL[new Intl.PluralRules(locale).select(count)] ?? "msg";
+}
+
+function hasSession() {
+  const { accessToken, refreshToken } = getAuthSnapshot();
+  return Boolean(accessToken || refreshToken);
+}
+
+function AccessNotice({ status }: { status: 401 | 403 }) {
+  const tr = useTranslations(communicationMessages);
+  if (status === 403) return <p role="status" className="mb-4 text-sm text-neutral-300">{tr("You do not have access to this conversation.")}</p>;
+  return <EmptyState title={tr("Sign in to read the conversation.")} body={tr("Sign in to join the conversation")} action={{ href: "/login", label: tr("Sign in") }} />;
+}
 const MSG_TYPES = ["all", "text", "idea", "question", "alert"] as const;
 
 const TYPE_PILL: Record<string, { active: string; icon: string }> = {
@@ -460,12 +475,7 @@ export default function ChatPage() {
     if (readRef.current) return;
     const controller = new AbortController();
     readRef.current = controller;
-    const { generation, accessToken, refreshToken } = getAuthSnapshot();
-    if (!accessToken && !refreshToken) {
-      readRef.current = null;
-      denyHistory(401, generation);
-      return;
-    }
+    const generation = getAuthSnapshot().generation;
     setLoading(true);
     try {
       const response = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`, { signal: controller.signal });
@@ -495,7 +505,8 @@ export default function ChatPage() {
   useEffect(() => {
     const changes = readChangesRef.current;
     const olderChanges = olderChangesRef.current;
-    void readMessages();
+    if (hasSession()) void readMessages();
+    else denyHistory(401);
     return () => {
       readRef.current?.abort();
       olderRef.current?.abort();
@@ -503,7 +514,7 @@ export default function ChatPage() {
       olderChanges.clear();
       readRef.current = null;
     };
-  }, [readMessages]);
+  }, [readMessages, denyHistory]);
 
   useEffect(() => {
     const previous = historySessionRef.current;
@@ -683,7 +694,7 @@ export default function ChatPage() {
                 <span className="text-xs font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/15">
                   +{liveCount.toLocaleString(locale)} {" " + tr("new") + " "}</span>
               )}
-              <span className="text-xs text-neutral-400">{messages.length.toLocaleString(locale)} {" " + tr(MSG_PLURAL[new Intl.PluralRules(locale).select(messages.length)] ?? "msg")}</span>
+              <span className="text-xs text-neutral-400">{messages.length.toLocaleString(locale)} {" " + tr(messageNounKey(locale, messages.length))}</span>
             </div>
           </div>
 
@@ -715,9 +726,7 @@ export default function ChatPage() {
       {/* Messages */}
       <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 min-w-0 overflow-y-auto [&_a]:min-h-12 [&_a]:min-w-12 [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-2 [&_a]:focus-visible:outline-violet-400">
         <div className="max-w-3xl mx-auto px-4 py-4">
-          {accessError?.status === 401 && <EmptyState title={tr("Sign in to read the conversation.")} body={tr("Sign in to join the conversation")}
-            action={{ href: "/login", label: tr("Sign in") }} />}
-          {accessError?.status === 403 && <p role="status" className="mb-4 text-sm text-neutral-300">{tr("You do not have access to this conversation.")}</p>}
+          {accessError && <AccessNotice status={accessError.status} />}
           {readError && (
             <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
               <p>{tr("Could not load messages.")}</p>
