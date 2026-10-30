@@ -29,9 +29,9 @@ RETIRED = {
     "emergency-binder": (UUID("8b72ce11-d9c5-4957-8413-49e9aacd8107"), RETIRE_FAMILY_AND_BINDER),
 }
 SERVICES = {
-    "foundphone": (None, "1daa40598ada460291c819a55968ce55"),
-    "family-safety": (None, "5c97579aaa714f53aa63ce800f93979e"),
-    "emergency-binder": (None, "ccb56a65f4844a63a6b14756fe500537"),
+    "foundphone": "1daa40598ada460291c819a55968ce55",
+    "family-safety": "5c97579aaa714f53aa63ce800f93979e",
+    "emergency-binder": "ccb56a65f4844a63a6b14756fe500537",
 }
 
 
@@ -342,7 +342,7 @@ async def test_retirement_waits_for_concurrent_identity_changes(usage_world, leg
                 pass
             await writer.commit()
     seeded = (await snapshot(usage_world.maker, [handle]))[handle]
-    assert seeded["revision"] == SERVICES[handle][1]
+    assert seeded["revision"] == SERVICES[handle]
     assert seeded["status"] == "deployed"
 
 
