@@ -11,7 +11,7 @@ import ipaddress
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 
 # ── H2: client_ip trusted-proxy logic ───────────────────────────────────────
@@ -85,10 +85,10 @@ class TestOAuthState:
         redis = AsyncMock()
         redis.delete.return_value = 1  # key existed and was deleted
 
-        await _store_oauth_state(redis, "test_state")
-        redis.setex.assert_called_once_with("oauth_state:test_state", 300, "1")
+        await _store_oauth_state(redis, "test_state", "google")
+        redis.setex.assert_called_once_with("oauth_state:google:test_state", 300, "1")
 
-        result = await _consume_oauth_state(redis, "test_state")
+        result = await _consume_oauth_state(redis, "test_state", "google", "test_state")
         assert result is True
 
     @pytest.mark.asyncio
@@ -98,7 +98,7 @@ class TestOAuthState:
         redis = AsyncMock()
         redis.delete.return_value = 0  # key did not exist
 
-        result = await _consume_oauth_state(redis, "nonexistent_state")
+        result = await _consume_oauth_state(redis, "missing", "google", "missing")
         assert result is False
 
     @pytest.mark.asyncio
@@ -109,8 +109,8 @@ class TestOAuthState:
         redis = AsyncMock()
         redis.delete.side_effect = [1, 0]  # first call deletes, second finds nothing
 
-        assert await _consume_oauth_state(redis, "state_xyz") is True
-        assert await _consume_oauth_state(redis, "state_xyz") is False
+        assert await _consume_oauth_state(redis, "state_xyz", "google", "state_xyz") is True
+        assert await _consume_oauth_state(redis, "state_xyz", "google", "state_xyz") is False
 
     @pytest.mark.asyncio
     async def test_google_callback_rejects_invalid_state(self):
@@ -122,8 +122,14 @@ class TestOAuthState:
 
         db = AsyncMock()
 
-        with pytest.raises(Exception) as exc_info:
-            await google_callback(code="some_code", db=db, state="bad_state", redis=redis)
+        with pytest.raises(HTTPException) as exc_info:
+            await google_callback(
+                code="some_code",
+                request=Request({"type": "http", "headers": []}),
+                db=db,
+                state="bad_state",
+                redis=redis,
+            )
 
         exc = exc_info.value
         assert exc.status_code == 400
@@ -139,8 +145,14 @@ class TestOAuthState:
 
         db = AsyncMock()
 
-        with pytest.raises(Exception) as exc_info:
-            await github_callback(code="some_code", db=db, state="bad_state", redis=redis)
+        with pytest.raises(HTTPException) as exc_info:
+            await github_callback(
+                code="some_code",
+                request=Request({"type": "http", "headers": []}),
+                db=db,
+                state="bad_state",
+                redis=redis,
+            )
 
         exc = exc_info.value
         assert exc.status_code == 400

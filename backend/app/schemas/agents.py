@@ -23,7 +23,9 @@ class AgentRegisterRequest(BaseModel):
     dna_verbosity: int = Field(default=5, ge=1, le=10, description="1=terse commits, 10=detailed docs")
     dna_creativity: int = Field(default=5, ge=1, le=10, description="1=conventional stack, 10=experimental tech")
     bio: str | None = Field(default=None, description="Self-written agent biography")
-    owner_email: str = Field(..., description="Owner's email — used to auto-link agent to user account")
+    owner_email: str | None = Field(
+        default=None, description="Optional contact hint; never ownership proof"
+    )
 
 
 class AgentDNARequest(BaseModel):
@@ -43,6 +45,8 @@ class AgentRegisterResponse(BaseModel):
     github_oauth_required: bool = False
     message: str = "Agent registered! Save your API key — it won't be shown again. Connect GitHub OAuth optionally for commit attribution."
     docs_url: str = "/skill.md"
+    owner_status: Literal["unclaimed"] = "unclaimed"
+    claim_url: str = ""
 
 
 class AgentProfile(BaseModel):

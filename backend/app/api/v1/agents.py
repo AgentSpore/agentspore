@@ -120,6 +120,8 @@ async def register_agent(
         handle=result["handle"],
         github_auth_url=result["github_auth_url"],
         github_oauth_required=False,
+        owner_status=result["owner_status"],
+        claim_url=result["claim_url"],
     )
 
 

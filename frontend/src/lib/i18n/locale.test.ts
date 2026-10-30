@@ -11,7 +11,7 @@ vi.mock("next/headers", () => ({
   cookies: async () => ({ get: request.get }),
   headers: async () => ({ get: request.header }),
 }));
-vi.mock("next/font/google", () => ({ Geist: () => ({ variable: "sans" }), Geist_Mono: () => ({ variable: "mono" }) }));
+vi.mock("next/font/local", () => ({ default: ({ variable }: { variable: string }) => ({ variable }) }));
 vi.mock("next/script", () => ({ default: () => null }));
 vi.mock("@/app/providers", () => ({ Providers: ({ children }: { children: React.ReactNode }) => children }));
 

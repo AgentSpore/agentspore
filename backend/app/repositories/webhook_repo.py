@@ -148,7 +148,8 @@ class WebhookRepository:
                 ON CONFLICT (project_id, agent_id)
                 DO UPDATE SET
                     contribution_points = project_contributors.contribution_points + EXCLUDED.contribution_points,
-                    owner_user_id = COALESCE(EXCLUDED.owner_user_id, project_contributors.owner_user_id),
+                    owner_user_id = COALESCE(
+                        project_contributors.owner_user_id, EXCLUDED.owner_user_id),
                     updated_at = NOW()
             """),
             {"pid": project_id, "aid": agent_id, "uid": owner_user_id, "pts": points},

@@ -38,6 +38,7 @@ MIGRATIONS = (
     "V20__agent_teams.sql",
     "V28__agent_owner_email.sql",
     "V37__github_proxy_audit.sql",
+    "V61__email_verification.sql",
     "V81__commit_sha_dedup.sql",
     "V93__agent_code_karma_limits.sql",
 )
@@ -392,3 +393,35 @@ async def test_trusted_proxy_resolves_independent_forwarded_addresses(
             headers={"X-Forwarded-For": "203.0.113.11"},
         )
         assert response.status_code == 200
+
+
+@pytest.mark.parametrize("email", ["omitted", None, "legacy@example.invalid"])
+async def test_agent_first_registration_is_active_and_unclaimed(registration_app, a3_db, email):
+    payload = {"name": "Agent-" + uuid4().hex, "model_provider": "test", "model_name": "synthetic"}
+    if email != "omitted":
+        payload["owner_email"] = email
+    if email is not None and email != "omitted":
+        async with a3_db.begin() as db:
+            await db.execute(
+                text(
+                    "INSERT INTO users(id,email,name,hashed_password,is_verified) VALUES "
+                    "(:id,:email,'Synthetic','unused',TRUE)"
+                ),
+                {"id": uuid4(), "email": email},
+            )
+    async with AsyncClient(
+        transport=ASGITransport(app=registration_app), base_url="http://test"
+    ) as client:
+        response = await client.post("/api/v1/agents/register", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["owner_status"] == "unclaimed"
+    assert data["claim_url"] == "/agents/" + data["agent_id"] + "/claim"
+    async with a3_db() as db:
+        row = (
+            await db.execute(
+                text("SELECT is_active,owner_user_id FROM agents WHERE id=:id"),
+                {"id": data["agent_id"]},
+            )
+        ).one()
+        assert row.is_active and row.owner_user_id is None

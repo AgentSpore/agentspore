@@ -13,6 +13,7 @@ Endpoints:
 from __future__ import annotations
 
 import hashlib
+from uuid import UUID
 
 from eth_account import Account
 from eth_account.messages import encode_defunct
@@ -21,6 +22,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from app.api.deps import CurrentUser, DatabaseSession
 from app.repositories import ownership_repo
 from app.schemas.ownership import (
+    AgentOwnerClaimCreate,
+    AgentOwnerClaimDecision,
+    AgentOwnerClaimResponse,
     AsporeDepositRequest,
     ContributorShare,
     LinkOwnerRequest,
@@ -28,6 +32,8 @@ from app.schemas.ownership import (
     SolanaWalletConnectRequest,
     WalletConnectRequest,
 )
+from app.services.agent_ownership_service import AgentOwnershipService, get_agent_ownership_service
+from app.services.agent_service import get_agent_by_api_key
 from app.services.payout_service import PayoutService, get_payout_service
 
 router = APIRouter(tags=["ownership"])
@@ -170,18 +176,14 @@ async def link_agent_owner(
     current_user: CurrentUser,
     db: DatabaseSession,
     x_api_key: str = Header(..., alias="X-API-Key"),
+    svc: AgentOwnershipService = Depends(get_agent_ownership_service),
 ):
-    """
-    Link an agent (identified by X-API-Key) to the authenticated human user.
-    Also updates all project_contributors rows for this agent.
-    """
-    key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
-    if not await ownership_repo.verify_agent_api_key(db, body.agent_id, key_hash):
-        raise HTTPException(status_code=403, detail="Invalid agent_id or API key")
-
-    await ownership_repo.link_agent_to_user(db, body.agent_id, str(current_user.id))
+    """Link with both proofs while preserving existing owners and historical attribution."""
+    result = await svc.legacy(
+        body.agent_id, current_user.id, hashlib.sha256(x_api_key.encode()).hexdigest()
+    )
     await db.commit()
-    return {"agent_id": body.agent_id, "owner_user_id": str(current_user.id), "status": "linked"}
+    return result
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -221,3 +223,62 @@ async def get_project_ownership(
         contributors=contributors,
     )
 
+
+@router.post("/users/me/agent-claims", response_model=AgentOwnerClaimResponse)
+async def create_owner_claim(
+    body: AgentOwnerClaimCreate,
+    current_user: CurrentUser,
+    db: DatabaseSession,
+    svc: AgentOwnershipService = Depends(get_agent_ownership_service),
+):
+    """Create a verified human's non-authorizing intent for an exact agent."""
+    result = await svc.create(body.agent_id, current_user.id)
+    await db.commit()
+    return result
+
+
+@router.get("/users/me/agent-claims/{claim_id}", response_model=AgentOwnerClaimResponse)
+async def get_owner_claim(
+    claim_id: UUID,
+    current_user: CurrentUser,
+    svc: AgentOwnershipService = Depends(get_agent_ownership_service),
+):
+    """Return only the authenticated human's intent."""
+    return await svc.human(claim_id, current_user.id)
+
+
+@router.delete("/users/me/agent-claims/{claim_id}", response_model=AgentOwnerClaimResponse)
+async def cancel_owner_claim(
+    claim_id: UUID,
+    current_user: CurrentUser,
+    db: DatabaseSession,
+    svc: AgentOwnershipService = Depends(get_agent_ownership_service),
+):
+    """Withdraw human consent while serializing against agent approval."""
+    result = await svc.human(claim_id, current_user.id, cancel=True)
+    await db.commit()
+    return result
+
+
+@router.get("/agents/owner-claims/{claim_id}", response_model=AgentOwnerClaimResponse)
+async def get_agent_owner_claim(
+    claim_id: UUID,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: AgentOwnershipService = Depends(get_agent_ownership_service),
+):
+    """Show the exact human subject only to the intended active agent."""
+    return await svc.agent(claim_id, agent)
+
+
+@router.post("/agents/owner-claims/{claim_id}", response_model=AgentOwnerClaimResponse)
+async def decide_owner_claim(
+    claim_id: UUID,
+    body: AgentOwnerClaimDecision,
+    db: DatabaseSession,
+    agent: dict = Depends(get_agent_by_api_key),
+    svc: AgentOwnershipService = Depends(get_agent_ownership_service),
+):
+    """Approve or deny one exact intent using current independent agent control."""
+    result = await svc.decide(claim_id, agent, body)
+    await db.commit()
+    return result

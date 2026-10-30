@@ -5,6 +5,7 @@ import { CopyPromptButton } from "@/components/CopyPromptButton";
 import { getLocale } from "@/lib/i18n/server";
 import { docsMessages } from "@/lib/i18n/docs";
 import { NAVIGATION_MESSAGES } from "@/lib/i18n/navigation";
+import { FocusableDocTable } from "./FocusableDocTable";
 
 const STEPS = [1, 2, 3, 4] as const;
 const ERRORS = ["401", "422", "429", "503", "400"] as const;
@@ -12,9 +13,9 @@ const TOOLS = ["Skill", "Sdk", "Mcp"] as const;
 const CELL = "border border-neutral-800 px-3 py-2 align-top text-sm text-neutral-300";
 
 /** Table whose first cell of each row is its row header. */
-function DocTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
+function DocTable({ headers, rows, label }: { headers: string[]; rows: string[][]; label: string }) {
   return (
-    <div className="mt-3 overflow-x-auto">
+    <FocusableDocTable label={label}>
       <table className="w-full border-collapse text-left">
         <thead><tr>
           {headers.map((h) => <th key={h} scope="col" className={CELL}>{h}</th>)}
@@ -28,7 +29,7 @@ function DocTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
           ))}
         </tbody>
       </table>
-    </div>
+    </FocusableDocTable>
   );
 }
 
@@ -37,7 +38,18 @@ export default async function ConnectDocsPage() {
   const copy = docsMessages[locale];
   const nav = NAVIGATION_MESSAGES[locale];
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
+    <div data-connect-docs className="min-h-screen bg-neutral-950 text-neutral-100">
+      <style>{`
+        html:has([data-connect-docs]) { scroll-padding-top: 6rem; }
+        @media (min-width: 640px) {
+          html:has([data-connect-docs]) { scroll-padding-top: 8rem; }
+        }
+        @media (max-height: 12rem) {
+          html:has([data-connect-docs]) { scroll-padding-top: 0; }
+          [data-connect-docs] [data-agent-header] { position: relative; }
+          [data-connect-docs] [data-doc-table] { max-height: max(4rem, calc(100dvh - 10rem)); }
+        }
+      `}</style>
       <Header />
       <main id="main-content" tabIndex={-1} className="mx-auto max-w-3xl px-4 py-8 sm:py-12">
         <h1 className="text-2xl font-semibold text-white sm:text-3xl">{copy.cTitle}</h1>
@@ -65,6 +77,7 @@ export default async function ConnectDocsPage() {
         <section aria-labelledby="errors" className="mt-8">
           <h2 id="errors" className="text-lg font-semibold text-white">{copy.cErrorsTitle}</h2>
           <DocTable
+            label={copy.cErrorsRegion}
             headers={["HTTP", copy.cErrCause, copy.cErrFix]}
             rows={ERRORS.map((code) => [copy[`cErr${code}`], copy[`cErr${code}Cause`], copy[`cErr${code}Fix`]])}
           />
@@ -73,6 +86,7 @@ export default async function ConnectDocsPage() {
         <section aria-labelledby="tools" className="mt-8">
           <h2 id="tools" className="text-lg font-semibold text-white">{copy.cToolsTitle}</h2>
           <DocTable
+            label={copy.cToolsRegion}
             headers={[copy.cColWhat, copy.cColWhen]}
             rows={TOOLS.map((tool) => [copy[`cTool${tool}`], copy[`cTool${tool}When`]])}
           />
@@ -82,6 +96,7 @@ export default async function ConnectDocsPage() {
           <h2 id="next" className="text-lg font-semibold text-white">{copy.cNextTitle}</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-300">{copy.cNextBody}</p>
           <p className="mt-3 flex flex-wrap gap-4 text-sm">
+            <Link href="/workspace" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{nav.workspace}</Link>
             <Link href="/docs/glossary" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{copy.docsGlossaryLink}</Link>
             <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{nav.agents}</Link>
           </p>

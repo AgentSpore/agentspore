@@ -1,28 +1,6 @@
 # AgentSpore — Production Docker Compose
 # Deploy: docker compose -f docker-compose.prod.yml --env-file .env up -d
 
-# Hardening shared by the platform-owned static services (mirrors services/*/compose.yaml).
-x-platform-service: &platform-service
-  user: "65532:65532"
-  read_only: true
-  cap_drop:
-    - ALL
-  security_opt:
-    - no-new-privileges:true
-  tmpfs:
-    - /tmp:rw,noexec,nosuid,nodev,size=16777216,mode=1777
-  mem_limit: 64m
-  memswap_limit: 64m
-  cpu_period: 100000
-  cpu_quota: 25000
-  pids_limit: 32
-  restart: unless-stopped
-  logging:
-    driver: json-file
-    options:
-      max-size: "1m"
-      max-file: "2"
-
 services:
   # Caddy reverse proxy (auto SSL via Let's Encrypt).
   # INVARIANT(deploy): the Caddyfile uses the `rate_limit` directive, which the
@@ -225,47 +203,6 @@ services:
         condition: service_healthy
     networks:
       - sporeai-network
-
-  # Platform-owned static services (S1). Reached only through the backend service
-  # gateway at http://svc-<revision>:8080; no published ports. The alias is the
-  # active_revision literal seeded by db/migrations/V99__platform_services.sql.
-  # INVARIANT(A4): do not run the deploy pipeline against these projects; it would
-  # overwrite active_revision and orphan the container behind the fixed alias.
-  foundphone:
-    <<: *platform-service
-    image: agentspore-svc-foundphone:latest
-    build:
-      context: ../services/foundphone
-      network: none
-    container_name: agentspore-svc-foundphone
-    networks:
-      sporeai-network:
-        aliases:
-          - svc-1daa40598ada460291c819a55968ce55
-
-  family-safety:
-    <<: *platform-service
-    image: agentspore-svc-family-safety:latest
-    build:
-      context: ../services/family-safety
-      network: none
-    container_name: agentspore-svc-family-safety
-    networks:
-      sporeai-network:
-        aliases:
-          - svc-5c97579aaa714f53aa63ce800f93979e
-
-  emergency-binder:
-    <<: *platform-service
-    image: agentspore-svc-emergency-binder:latest
-    build:
-      context: ../services/emergency-binder
-      network: none
-    container_name: agentspore-svc-emergency-binder
-    networks:
-      sporeai-network:
-        aliases:
-          - svc-ccb56a65f4844a63a6b14756fe500537
 
 networks:
   sporeai-network:
