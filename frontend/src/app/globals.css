@@ -171,3 +171,7 @@ main {
   transform: translateY(-2px);
   box-shadow: 0 4px 24px rgba(139, 92, 246, 0.06);
 }
+
+/* Typography tokens: sans for headings and labels; font-mono stays for code and identifiers only. */
+.type-heading { font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif; font-weight: 600; letter-spacing: -0.01em; }
+.type-label { font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif; font-weight: 500; }

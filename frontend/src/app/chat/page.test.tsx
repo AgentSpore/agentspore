@@ -21,12 +21,26 @@ function stubChat(rows: unknown[]) {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => rows }));
   vi.stubGlobal("EventSource", class { onmessage = null; close() {} });
   Element.prototype.scrollIntoView = vi.fn();
+  withFixtureIdentity();
 }
 
 beforeEach(() => localStorage.clear());
+const FIXTURE_TOKEN = "synthetic-fixture-access";
+const signIn = () => localStorage.setItem("access_token", FIXTURE_TOKEN);
+
+/** Answers the identity request for tests that called signIn(); every other request reaches the stub. */
+function withFixtureIdentity() {
+  if (localStorage.getItem("access_token") !== FIXTURE_TOKEN) return;
+  const inner = fetch;
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return new URL(href).pathname === "/api/v1/auth/me" ? Promise.resolve(Response.json(COMPOSER_OWNER)) : inner(input, init);
+  }));
+}
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it.each(["en", "ru"] as const)("teaches only when no message was loaded in %s", async (locale) => {
+  signIn();
   stubChat([]);
   render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
   expect(await screen.findByText(docsMessages[locale].eChatTitle)).toBeTruthy();
@@ -34,6 +48,7 @@ it.each(["en", "ru"] as const)("teaches only when no message was loaded in %s", 
 });
 
 it.each(["en", "ru"] as const)("shows a plain line, not the teaching state, when only the type filter is empty in %s", async (locale) => {
+  signIn();
   stubChat([MESSAGE]);
   render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
   await screen.findByText("hello there");
@@ -51,6 +66,7 @@ const READ_ERROR = {
 const LIVE_MESSAGE = { ...MESSAGE, id: "m2", content: "An idea arriving live" };
 
 it.each([401, 403])("explains access instead of retry for denied history %i", async status => {
+  signIn();
   stubInitialRead(async () => new Response(null, { status }));
   render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
   expect(await screen.findByText(status === 401 ? "Sign in to read the conversation." : "You do not have access to this conversation.")).toBeTruthy();
@@ -67,7 +83,27 @@ it("explains denied history in Russian", async () => {
   expect(screen.queryByText(READ_ERROR.ru)).toBeNull();
 });
 
+it.each(["en", "ru"] as const)("does not request history without tokens and shows one sign-in call to action in %s", async locale => {
+  const read = vi.fn(async () => Response.json([]));
+  stubInitialRead(read);
+  render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
+  const prompt = communicationMessages[locale]["Sign in to read the conversation."];
+  expect(await screen.findByText(prompt)).toBeTruthy();
+  expect(read).not.toHaveBeenCalled();
+  expect(within(screen.getByRole("main")).getAllByRole("link", { name: communicationMessages[locale]["Sign in"] })).toHaveLength(1);
+  expect(screen.queryByRole("link", { name: communicationMessages[locale]["Sign in to join the conversation"] })).toBeNull();
+});
+
+it("counts messages with the Russian plural form", async () => {
+  stubChat([MESSAGE]);
+  localStorage.setItem("access_token", "synthetic-plural-access");
+  render(<LocaleProvider initialLocale="ru"><ChatPage /></LocaleProvider>);
+  await screen.findByText("hello there");
+  expect(screen.getByText(/1\s+сообщение/)).toBeTruthy();
+});
+
 it("clears live history when its retry is denied", async () => {
+  signIn();
   const read = vi.fn<() => Promise<Response>>()
     .mockResolvedValueOnce(new Response(null, { status: 503 }))
     .mockResolvedValueOnce(new Response(null, { status: 401 }));
@@ -105,6 +141,7 @@ function stubInitialRead(read: () => Promise<Response>) {
   }
   vi.stubGlobal("EventSource", SyntheticEventSource);
   Element.prototype.scrollIntoView = vi.fn();
+  withFixtureIdentity();
   return {
     emit(message: typeof MESSAGE | { type: "edit"; id: string; content: string } | { type: "delete"; id: string }) {
       const stream = streams.at(-1);
@@ -118,6 +155,7 @@ it.each([
   { locale: "en", failure: "503" }, { locale: "ru", failure: "503" },
   { locale: "en", failure: "network" }, { locale: "ru", failure: "network" },
 ] as const)("shows a localized read error instead of empty teaching after $failure in $locale", async ({ locale, failure }) => {
+  signIn();
   stubInitialRead(async () => {
     if (failure === "network") throw new TypeError("Synthetic network failure");
     return new Response("Service unavailable", { status: 503 });
@@ -131,6 +169,7 @@ it.each([
 });
 
 it.each(["en", "ru"] as const)("retries once while pending and preserves live messages when history succeeds in %s", async (locale) => {
+  signIn();
   const retry = pendingRead();
   const read = vi.fn<() => Promise<Response>>()
     .mockResolvedValueOnce(new Response("Service unavailable", { status: 503 }))
@@ -157,6 +196,7 @@ it.each(["en", "ru"] as const)("retries once while pending and preserves live me
 });
 
 it.each(["en", "ru"] as const)("keeps an event received before the initial history response in %s", async (locale) => {
+  signIn();
   const initial = pendingRead();
   const stream = stubInitialRead(() => initial.promise);
   render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
@@ -173,6 +213,7 @@ it.each([
   { stage: "initial", mutation: "edit" }, { stage: "initial", mutation: "delete" },
   { stage: "retry", mutation: "edit" }, { stage: "retry", mutation: "delete" },
 ] as const)("preserves an unseen message $mutation while $stage history is pending", async ({ stage, mutation }) => {
+  signIn();
   const history = pendingRead();
   const read = vi.fn<() => Promise<Response>>();
   if (stage === "retry") read.mockResolvedValueOnce(new Response("Unavailable", { status: 503 }));
@@ -195,12 +236,13 @@ it.each([
 });
 
 it("replaces the cancelled StrictMode read without leaving chat loading", async () => {
+  signIn();
   const pending = pendingRead();
   const read = vi.fn(() => pending.promise.then(response => response.clone()));
   stubInitialRead(read);
   const { unmount } = render(<StrictMode><LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider></StrictMode>);
   expect(read).toHaveBeenCalledTimes(2);
-  const requests = vi.mocked(fetch).mock.calls;
+  const requests = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/chat/messages"));
   expect(requests[0][1]?.signal?.aborted).toBe(true);
   expect(requests[1][1]?.signal?.aborted).toBe(false);
   await act(async () => pending.resolve(Response.json([MESSAGE])));
@@ -365,19 +407,20 @@ it("reads a replacement token after sign-in recovers denied history", async () =
   expect(history.unexpected).toEqual([]);
 });
 
-it("explains sign-in for denied history without sending a malformed Bearer when signed out", async () => {
+it("explains sign-in for denied history without sending a request when signed out", async () => {
   const history = stubAuthorizedHistory();
   render(<LocaleProvider initialLocale="en"><ChatPage /></LocaleProvider>);
 
   expect(await screen.findByText("Sign in to read the conversation.")).toBeTruthy();
   expect(screen.queryByRole("button", { name: sharedMessages.en.retry })).toBeNull();
-  expect(history.requests[0].authorization).toBeNull();
+  expect(history.requests).toHaveLength(0);
   expect(screen.queryByText(docsMessages.en.eChatTitle)).toBeNull();
   expect(screen.queryByText(MESSAGE.content)).toBeNull();
   expect(history.unexpected).toEqual([]);
 });
 
 it("reloads signed-in history after a late anonymous denial", async () => {
+  localStorage.setItem("access_token", "synthetic-stale-access");
   const pending = pendingRead();
   const history = stubAuthorizedHistory();
   const read = fetch;
@@ -642,6 +685,7 @@ it.each([
 });
 
 it.each(["edit", "delete"] as const)("preserves unseen older SSE %s, new messages and known rows once", async (mutation) => {
+  signIn();
   const chat = await openOperationChat("en");
   fireEvent.scroll(screen.getByRole("main"));
   await act(async () => {
@@ -682,6 +726,7 @@ it.each([
 });
 
 it("keeps another message deletion error when the first retry succeeds", async () => {
+  signIn();
   const chat = await openOperationChat("en");
   const remove = screen.getAllByTitle("Delete");
   fireEvent.click(remove[0]); fireEvent.click(remove[1]);
@@ -897,6 +942,7 @@ it.each(["en", "ru"] as const)("CH.3 names the public composer and send/save act
 });
 
 it.each(["en", "ru"] as const)("CH.4 exposes the selected filter and restores loaded chat in %s", async locale => {
+  signIn();
   stubChat([MESSAGE]);
   render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
   await screen.findByText(MESSAGE.content);
@@ -954,7 +1000,7 @@ it.each(["en", "ru"] as const)("CH.4b public distinguishes checking from signed-
   publicSecurityControls("security-a", false, locale);
   await act(async () => publicSecuritySession(null));
   expect(screen.queryByText(PROFILE_COPY[locale].checking)).toBeNull();
-  expect(screen.getByRole("link", { name: locale === "en" ? "Sign in to join the conversation" : "Войдите, чтобы участвовать в разговоре" })).toBeTruthy();
+  expect(within(screen.getByRole("main")).getByRole("link", { name: communicationMessages[locale]["Sign in"] })).toBeTruthy();
 });
 
 it.each([
