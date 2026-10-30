@@ -31,7 +31,7 @@ function BlogFeedContent({ read, children }: { read: ReturnType<typeof useBlogFe
         <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center mb-4 animate-pulse">
           <span className="text-violet-400 font-mono text-xs">...</span>
         </div>
-        <p role="status" className="text-neutral-400 text-xs font-mono">{tr('loadingPosts2')}</p>
+        <p role="status" className="text-neutral-400 text-xs type-label">{tr('loadingPosts2')}</p>
       </div>
     ) : !read.data ? null : read.posts.length === 0 ? (
       <EmptyState title={docsTr('eBlogTitle')} body={t('emptyBody')}
@@ -58,10 +58,10 @@ export default function BlogFeedPage() {
         <div className="relative z-10">
           {/* Breadcrumbs */}
           <div className="flex flex-wrap items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono uppercase tracking-[0.2em] text-neutral-400 hover:text-neutral-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs type-label uppercase tracking-[0.2em] text-neutral-400 hover:text-neutral-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {tr('home2')}</Link>
             <span className="text-neutral-700 text-xs">/</span>
-            <span className="text-xs font-mono uppercase tracking-[0.2em] text-violet-400">{tr('blog')}</span>
+            <span className="text-xs type-label uppercase tracking-[0.2em] text-violet-400">{tr('blog')}</span>
           </div>
 
           {/* Page header */}
@@ -79,7 +79,7 @@ export default function BlogFeedPage() {
             </div>
             {read.hasPages && (
               <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2">
-                <span className="text-xs font-mono text-neutral-500">
+                <span className="text-xs type-label text-neutral-500">
                   {tr('page')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.floor(offset / LIMIT) + 1)} {tr('of')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(Math.ceil(total / LIMIT))}
                 </span>
               </div>
@@ -110,7 +110,7 @@ export default function BlogFeedPage() {
                           aria-label={tr(blogReactionLabels[r])}
                           disabled={reactions.pairs[`${post.id}:${r}`]?.outcome === 'pending'}
                           onClick={() => void reactions.react(post.id, r)}
-                          className={`flex min-h-11 min-w-11 items-center justify-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-mono transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50 ${
+                          className={`flex min-h-11 min-w-11 items-center justify-center gap-1 px-2.5 py-1 rounded-lg border text-xs type-label transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50 ${
                             count > 0
                               ? "bg-neutral-800/40 border-neutral-700/60 text-neutral-300 hover:border-violet-500/30"
                               : "bg-neutral-900/30 border-neutral-800/50 text-neutral-400 hover:text-neutral-200 hover:border-neutral-700/60"
@@ -132,16 +132,16 @@ export default function BlogFeedPage() {
                   <button
                     onClick={() => loadPosts(offset - LIMIT)}
                     disabled={loading || offset === 0}
-                    className="min-h-11 min-w-11 text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
+                    className="min-h-11 min-w-11 text-xs type-label px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
                   >
                     {tr('prev')}</button>
-                  <span className="text-xs text-neutral-400 font-mono tracking-wider">
+                  <span className="text-xs text-neutral-400 type-label tracking-wider">
                     {new Intl.NumberFormat(localeTag(locale)).format(offset + 1)} - {new Intl.NumberFormat(localeTag(locale)).format(Math.min(offset + LIMIT, total))} {tr('of')}{' '}{new Intl.NumberFormat(localeTag(locale)).format(total)}
                   </span>
                   <button
                     onClick={() => loadPosts(offset + LIMIT)}
                     disabled={loading || offset + LIMIT >= total}
-                    className="min-h-11 min-w-11 text-xs font-mono px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
+                    className="min-h-11 min-w-11 text-xs type-label px-4 py-2 rounded-lg bg-neutral-800/30 border border-neutral-800/50 text-neutral-400 disabled:opacity-30 disabled:cursor-not-allowed hover:border-neutral-700/60 hover:text-white transition-all"
                   >
                     {tr('next')}</button>
                 </div>

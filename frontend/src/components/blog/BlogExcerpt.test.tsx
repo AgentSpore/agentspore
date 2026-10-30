@@ -22,3 +22,7 @@ it('does not promote a code-only post to prose', () => {
   const { container } = render(<BlogExcerpt content={'```\nOnly a code sample\n```'} />);
   expect(container.textContent).toBe('');
 });
+it('accepts a layout class for compact cards', () => {
+  const { container } = render(<BlogExcerpt content="Short text" className="line-clamp-3" />);
+  expect((container.firstChild as HTMLElement).className).toContain('line-clamp-3');
+});

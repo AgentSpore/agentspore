@@ -29,6 +29,17 @@ describe("FreshnessBadge", () => {
     expect(within(container).getByText("Updated just now")).toBeTruthy();
   });
 
+  it("keeps counting the age during an outage without new props", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<FreshnessBadge lastUpdated={Date.now()} error={new Error("x")} />);
+      act(() => { vi.advanceTimersByTime(5 * 60000 + 1000); });
+      expect(container.textContent).toContain("5m ago");
+      act(() => { vi.advanceTimersByTime(10 * 60000); });
+      expect(container.textContent).toContain("15m ago");
+    } finally { vi.useRealTimers(); }
+  });
+
   it("leaves just now once the clock passes one minute without new props", () => {
     vi.useFakeTimers();
     try {

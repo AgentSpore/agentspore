@@ -52,14 +52,14 @@ function ActivityRow({ ev }: { ev: ActivityEvent }) {
             </Link>
           ) : <span>{tr('unknownAuthor')}</span>}
           {ev.metadata?.source === "github_public_history" && <span className="text-xs text-neutral-400">{tr('importedHistory')}</span>}
-          <span className={`flex-shrink-0 text-xs px-1.5 py-0.5 rounded font-mono uppercase tracking-wider ${meta.bg} ${meta.color}`}>
+          <span className={`flex-shrink-0 text-xs px-1.5 py-0.5 rounded type-label uppercase tracking-wider ${meta.bg} ${meta.color}`}>
             {displayPublicLabel(locale, meta.label)}
           </span>
         </div>
-        <p className="text-xs text-neutral-500 mt-0.5 break-words leading-relaxed">{text}</p>
+        <p className="text-xs text-neutral-400 mt-0.5 break-words leading-relaxed">{text}</p>
         {historySource(ev.metadata) && <a href={historySource(ev.metadata) ?? undefined} className="inline-flex min-h-11 items-center text-xs text-violet-300 underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
       </div>
-      <span className="flex-shrink-0 text-xs text-neutral-700 font-mono whitespace-nowrap mt-0.5">{timeAgo(ev.ts, locale)}</span>
+      <span className="flex-shrink-0 text-xs text-neutral-400 font-mono whitespace-nowrap mt-0.5">{timeAgo(ev.ts, locale)}</span>
     </div>
   );
 }
@@ -69,6 +69,8 @@ export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const [actFilter, setActFilter] = useState<ActivityFilter>("all");
+  const [moreBelow, setMoreBelow] = useState(false);
+  const syncFade = (el: HTMLElement | null) => { if (el) setMoreBelow(el.scrollTop + el.clientHeight < el.scrollHeight - 4); };
   const filters = [
     { key: "all", label: tr('all') },
     { key: "actions", label: tr('actions') },
@@ -82,18 +84,18 @@ export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
           </span>
-          <span className="text-xs font-mono uppercase tracking-[0.15em] text-neutral-600">{activities.some(event => event.metadata?.source === "github_public_history") ? tr('activityTimeline') : tr('liveActivity')}</span>
+          <span className="text-xs type-label uppercase tracking-[0.15em] text-neutral-400">{activities.some(event => event.metadata?.source === "github_public_history") ? tr('activityTimeline') : tr('liveActivity')}</span>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex rounded-lg overflow-hidden border border-neutral-800/60 text-xs">
             {filters.map(f => (
               <button key={f.key} onClick={() => setActFilter(f.key)}
-                className={`inline-flex min-h-11 min-w-11 items-center justify-center px-2.5 py-1 font-mono transition-all ${actFilter === f.key ? "bg-neutral-800/80 text-white" : "text-neutral-600 hover:text-neutral-400"}`}>
+                className={`inline-flex min-h-11 min-w-11 items-center justify-center px-2.5 py-1 type-label transition-all ${actFilter === f.key ? "bg-neutral-800/80 text-white" : "text-neutral-400 hover:text-neutral-200"}`}>
                 {f.label}
               </button>
             ))}
           </div>
-          <span className="text-xs text-neutral-700 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(activities.length)}</span>
+          <span className="text-xs text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(activities.length)}</span>
         </div>
       </div>
 
@@ -104,8 +106,8 @@ export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
             <div className="w-2 h-2 rounded-full bg-neutral-700" />
             <div className="w-2 h-2 rounded-full bg-neutral-700" />
           </div>
-          <span aria-hidden="true" className="text-[10px] font-mono text-neutral-600 ml-2">activity://stream</span>
-          <span className="ml-auto text-xs font-mono text-neutral-700">{tr('autoRefresh15s')}</span>
+          <span aria-hidden="true" className="text-[10px] font-mono text-neutral-400 ml-2">activity://stream</span>
+          <span className="ml-auto text-xs type-label text-neutral-400">{tr('autoRefresh15s')}</span>
         </div>
 
         {activities.length === 0 ? (
@@ -113,7 +115,7 @@ export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
             {[0,1,2,3,4].map(i => <SkeletonActivity key={i} />)}
           </div>
         ) : (
-          <div tabIndex={0} role="region" aria-label={tr('activityTimeline')} className="divide-y divide-neutral-800/30 max-h-[520px] overflow-y-auto snap-y snap-proximity scrollbar-thin focus-visible:outline-2 focus-visible:outline-violet-300">
+          <div ref={syncFade} onScroll={e => syncFade(e.currentTarget)} data-more-below={moreBelow} tabIndex={0} role="region" aria-label={tr('activityTimeline')} className="data-[more-below=true]:[mask-image:linear-gradient(to_bottom,black_calc(100%-3rem),transparent)] divide-y divide-neutral-800/30 max-h-[520px] overflow-y-auto snap-y snap-proximity scrollbar-thin focus-visible:outline-2 focus-visible:outline-violet-300">
             {activities.filter(ev =>
               actFilter === "all" || ev.action_type !== "heartbeat"
             ).map((ev, i) => <ActivityRow key={ev.id ?? i} ev={ev} />)}
