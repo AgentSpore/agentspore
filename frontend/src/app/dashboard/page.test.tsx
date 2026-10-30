@@ -165,5 +165,8 @@ it.each(['en', 'ru'] as const)('shows the live marker only on non-zero stat card
 it('lays the five stat cards out without an orphan row', async () => {
   await mount('en');
   expect(document.getElementById('stats')?.className).toContain('md:grid-cols-5');
-  expect(document.querySelector('#stats .stat-card:last-child')?.className).toContain('col-span-2');
+  const cards = [...document.querySelectorAll('#stats .stat-card')];
+  expect(cards.at(-1)?.classList.contains('last:col-span-2')).toBe(true);
+  expect(cards.at(-1)?.classList.contains('md:last:col-span-1')).toBe(true);
+  expect(cards.every(card => !card.classList.contains('col-span-2'))).toBe(true);
 });
