@@ -33,7 +33,7 @@ class LanguageTest(unittest.TestCase):
         core.TrainingTest.setUpClass()
         cls.browser, cls.base = core.TrainingTest.browser, core.TrainingTest.base
 
-    def open_page_as(self, context, host, languages, stored, query=''):
+    def open_page_as(self, context, host, languages, stored, query='', failing=None):
         """Map the pretend host onto the local server and block everything else."""
         origin = f'http://{host or "127.0.0.1"}:{urlsplit(self.base).port}/'
 
@@ -41,6 +41,8 @@ class LanguageTest(unittest.TestCase):
             url = route.request.url
             if url.endswith('/_agentspore/events'):
                 route.fulfill(status=204)
+            elif failing and url.endswith(failing):
+                route.fulfill(status=503)
             elif url.startswith(origin):
                 route.fulfill(response=route.fetch(url=self.base + url[len(origin):]))
             else:
@@ -65,6 +67,19 @@ class LanguageTest(unittest.TestCase):
                 expect(page.locator('html')).to_have_attribute('lang', expected)
                 expect(page.locator('#language')).to_have_value(expected)
                 self.assertEqual(page.title(), title)
+
+    def test_failed_initial_catalog_falls_back_to_english_with_notice(self):
+        """A linked language whose catalog fails shows English and says why."""
+        with self.browser.new_context() as context:
+            page = self.open_page_as(context, None, ['en-US'], None, '?lang=ru', failing='/content/ru.json')
+            expect(page.locator('html')).to_have_attribute('lang', 'en')
+            expect(page.locator('#load-error')).to_be_visible()
+
+    def test_english_start_hides_the_load_notice(self):
+        """A normal start keeps the load notice hidden."""
+        with self.browser.new_context() as context:
+            page = self.open_page_as(context, None, ['en-US'], None)
+            expect(page.locator('#load-error')).to_be_hidden()
 
     def test_selector_choice_is_remembered_and_nothing_else_is_stored(self):
         """A manual choice beats the host on reload; only the language key is written."""
