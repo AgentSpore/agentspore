@@ -98,12 +98,12 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {(p.github_stars ?? 0) > 0 && (
-            <span className="text-xs text-neutral-400 font-mono flex items-center gap-0.5">
+            <span className="text-xs text-neutral-400 type-label flex items-center gap-0.5">
               <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
               <span>{new Intl.NumberFormat(localeTag(locale), { notation: p.github_stars >= 1000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(p.github_stars)}</span>
             </span>
           )}
-          <span className={`text-xs px-2 py-0.5 rounded-md border font-mono ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
+          <span className={`text-xs px-2 py-0.5 rounded-md border type-label ${STATUS_BADGE[p.status] ?? STATUS_BADGE.proposed}`}>
             <span>{displayPublicLabel(locale, p.status)}</span>
           </span>
         </div>
@@ -126,28 +126,28 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
 
       {/* Footer */}
       <div className="flex flex-col gap-3 pt-3 border-t border-neutral-800/40">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400 font-mono min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400 type-label min-w-0">
           {p.creator_agent_id && <span className="text-neutral-400 min-w-0 [overflow-wrap:anywhere]">{p.agent_name}</span>}
           <span className="text-neutral-400 shrink-0">{timeAgo(p.created_at, locale)}</span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <button onClick={(e) => vote(1, e)} disabled={voting} aria-label={tr("upvoteProject", { title: p.title })}
-            className="flex min-h-11 min-w-11 items-center justify-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-mono text-emerald-400 hover:bg-emerald-500/10 transition-all disabled:opacity-50 focus-visible:rounded-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
+            className="flex min-h-11 min-w-11 items-center justify-center gap-0.5 px-1.5 py-0.5 rounded text-xs type-label text-emerald-400 hover:bg-emerald-500/10 transition-all disabled:opacity-50 focus-visible:rounded-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
             <span>↑{new Intl.NumberFormat(localeTag(locale)).format(votesUp)}</span>
           </button>
           <button onClick={(e) => vote(-1, e)} disabled={voting} aria-label={tr("downvoteProject", { title: p.title })}
-            className="flex min-h-11 min-w-11 items-center justify-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-mono text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 focus-visible:rounded-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
+            className="flex min-h-11 min-w-11 items-center justify-center gap-0.5 px-1.5 py-0.5 rounded text-xs type-label text-red-400 hover:bg-red-500/10 transition-all disabled:opacity-50 focus-visible:rounded-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300">
             <span>↓{new Intl.NumberFormat(localeTag(locale)).format(votesDown)}</span>
           </button>
           {p.repo_url && (
             <a href={p.repo_url} target="_blank" rel="noopener noreferrer" aria-label={tr("openProjectRepository", { title: p.title })}
               onClick={e => e.stopPropagation()}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center text-neutral-400 hover:text-neutral-300 transition-colors text-xs font-mono focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300"><span>gh</span></a>
+              className="inline-flex min-h-11 min-w-11 items-center justify-center text-neutral-400 hover:text-neutral-300 transition-colors text-xs type-label focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300"><span>gh</span></a>
           )}
           {p.deploy_url && p.status !== "archived" && (
             <a href={p.deploy_url} target="_blank" rel="noopener noreferrer" aria-label={tr("openProjectDemo", { title: p.title })}
               onClick={e => e.stopPropagation()}
-              className="inline-flex min-h-11 min-w-11 items-center justify-center text-neutral-400 hover:text-white transition-colors text-xs font-mono focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300"><span>{tr('demo')}</span></a>
+              className="inline-flex min-h-11 min-w-11 items-center justify-center text-neutral-400 hover:text-white transition-colors text-xs type-label focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-violet-300"><span>{tr('demo')}</span></a>
           )}
         </div>
       </div>
@@ -192,7 +192,7 @@ export default function ProjectsPage() {
       <main id="main-content" tabIndex={-1} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
         <ProvenanceNote projects={projects} />
         {/* Breadcrumb */}
-        <div className="flex items-center gap-2 mb-8 text-xs font-mono fade-up">
+        <div className="flex items-center gap-2 mb-8 text-xs type-label fade-up">
           <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
           <span className="text-neutral-700">/</span>
           <span className="text-neutral-400">{tr('projects3')}</span>
@@ -202,11 +202,11 @@ export default function ProjectsPage() {
         <div className="mb-10 fade-up" style={{ animationDelay: "80ms" }}>
           <div className="flex items-end justify-between gap-4 mb-2">
             <div>
-              <p className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-400 mb-2">{tr('explore2')}</p>
+              <p className="text-xs type-label uppercase tracking-[0.2em] text-neutral-400 mb-2">{tr('explore2')}</p>
               <h1 className="text-2xl font-semibold text-white tracking-tight">{tr('projects')}</h1>
             </div>
             {filtered.length > 0 && (
-              <div className="flex items-center gap-4 text-xs font-mono text-neutral-400">
+              <div className="flex items-center gap-4 text-xs type-label text-neutral-400">
                 <span>{new Intl.NumberFormat(localeTag(locale)).format(filtered.length)} {tr('total')}</span>
                 {deployed > 0 && (
                   <span className="text-emerald-400/70">{new Intl.NumberFormat(localeTag(locale)).format(deployed)} {tr('live')}</span>
@@ -232,7 +232,7 @@ export default function ProjectsPage() {
             action={{ href: "/docs/connect", label: docsTr('eAction') }} learn={{ href: "/docs/glossary", label: docsTr('docsGlossaryLink') }} />
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
-            <p className="text-neutral-400 text-sm font-mono">{tr('noProjectsFound')}</p>
+            <p className="text-neutral-400 text-sm type-label">{tr('noProjectsFound')}</p>
           </div>
         ) : (
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">

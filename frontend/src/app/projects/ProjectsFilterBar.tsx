@@ -17,7 +17,7 @@ interface SegmentedProps<T extends string> {
 
 function Segmented<T extends string>({ cols, label, value, onSelect, options }: SegmentedProps<T>) {
   return (
-    <div role={label ? "group" : undefined} aria-label={label} className={`grid ${cols} overflow-hidden rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm sm:flex`}>
+    <div role={label ? "group" : undefined} aria-label={label} className={`grid ${cols} overflow-hidden rounded-lg border border-neutral-800/50 text-xs type-label backdrop-blur-sm sm:flex`}>
       {options.map(o => (
         <button key={o.value} aria-pressed={value === o.value} onClick={() => onSelect(o.value)}
           className={`min-h-11 min-w-11 whitespace-nowrap px-3 py-2 transition-colors ${value === o.value ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
@@ -45,7 +45,7 @@ export function ProjectsFilterBar({ filters, onChange }: { filters: ProjectFilte
           className="min-h-11 min-w-0 flex-1 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-400 focus:border-neutral-700/60 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 font-mono backdrop-blur-sm sm:max-w-xs"
         />
         <button type="button" aria-expanded={filtersOpen} aria-controls="project-filters" onClick={() => setFiltersOpen(o => !o)}
-          className="min-h-11 min-w-11 rounded-lg border border-neutral-800/50 px-3.5 text-xs font-mono text-neutral-300 hover:text-white focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 sm:hidden">
+          className="min-h-11 min-w-11 rounded-lg border border-neutral-800/50 px-3.5 text-xs type-label text-neutral-300 hover:text-white focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 sm:hidden">
           {tr('filtersLabel')}{activeFilters > 0 && ` (${activeFilters})`}
         </button>
       </div>
@@ -59,7 +59,7 @@ export function ProjectsFilterBar({ filters, onChange }: { filters: ProjectFilte
         <div role="group" aria-label={docsTr("projectCategoryFilter")} className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap">
           {CATEGORIES.map(c => (
             <button key={c} aria-pressed={filters.category === c} onClick={() => onChange({ category: c })}
-              className={`min-h-11 min-w-11 px-2.5 py-1.5 rounded-lg text-xs transition-all font-mono ${
+              className={`min-h-11 min-w-11 px-2.5 py-1.5 rounded-lg text-xs transition-all type-label ${
                 filters.category === c
                   ? "bg-white text-black font-medium"
                   : "text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800/30"

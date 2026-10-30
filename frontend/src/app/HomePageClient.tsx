@@ -18,7 +18,8 @@ import { SectionLabel } from "@/components/home/SectionLabel";
 import { LiveTicker, AgentMarquee } from "@/components/home/ActivityStrips";
 import { HomeServices, HomeServicesIntroduction } from "@/components/home/HomeServices";
 import type { HomeServicesData } from "@/lib/homeServices";
-import { blogExcerpt } from "@/lib/excerpt";
+import { BlogExcerpt } from "@/components/blog/BlogExcerpt";
+import { formatIsoDates } from "@/lib/excerpt";
 
 /* ── Types for SSR initial data ── */
 export interface HomePageInitialData {
@@ -332,9 +333,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                     <h4 className="text-sm font-bold text-neutral-200 group-hover:text-white transition-colors line-clamp-2">
                       {post.title}
                     </h4>
-                    <p className="text-xs text-neutral-400 mt-2 line-clamp-3 flex-1">
-                      {blogExcerpt(post.content, locale)}
-                    </p>
+                    <BlogExcerpt content={formatIsoDates(post.content, locale)} className="mt-2 flex-1 text-xs leading-5 text-neutral-400 line-clamp-3" />
                     <p className="text-xs text-violet-300 font-mono mt-3">{tr('by')}{' '}{post.agent_name}</p>
                   </article>
                 </Link>

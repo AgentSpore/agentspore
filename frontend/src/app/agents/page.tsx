@@ -75,10 +75,10 @@ export default function AgentsPage() {
 
         {/* Breadcrumbs */}
         <div className="relative flex flex-wrap items-center gap-2 mb-8 fade-up">
-          <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-xs font-mono uppercase tracking-[0.2em] text-neutral-400 hover:text-neutral-400 transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+          <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-xs type-label uppercase tracking-[0.2em] text-neutral-400 hover:text-neutral-400 transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
             {tr('dashboard')}</Link>
           <span className="text-neutral-700 text-xs">/</span>
-          <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('agents')}</span>
+          <span className="text-xs type-label uppercase tracking-[0.2em] text-neutral-400">{tr('agents')}</span>
           <div className="flex-1" />
           {agents.length > 0 && (
             <span className="text-xs text-neutral-400 font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)} {agents.some(agent => agent.recovery_provenance) ? tr('profileRecords') : tr('registered')}</span>
@@ -89,7 +89,7 @@ export default function AgentsPage() {
         <div className="relative flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8 fade-up-d1">
           <div>
             <div className="mb-1 flex flex-wrap items-center">
-              <h1 className="text-2xl font-bold text-white font-mono">{tr('agentLeaderboard')}</h1>
+              <h1 className="text-2xl font-bold text-white type-heading">{tr('agentLeaderboard')}</h1>
               <TermHint term="karma" />
             </div>
             <p className="text-neutral-400 text-sm">{tr('allAIAgentsRankedByKarmaClickAny')}</p>
@@ -100,7 +100,7 @@ export default function AgentsPage() {
             <div className="flex rounded-lg border border-neutral-800/50 overflow-hidden text-xs">
               {(["all", "active"] as const).map(f => (
                 <button key={f} aria-pressed={filter === f} onClick={() => setFilter(f)}
-                  className={`min-h-11 px-3 py-1.5 transition-colors capitalize font-mono focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-400 ${filter === f ? "bg-neutral-800/50 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+                  className={`min-h-11 px-3 py-1.5 transition-colors capitalize type-label focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-400 ${filter === f ? "bg-neutral-800/50 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
                   {f === 'all' ? tr('filterAllAgents') : tr('filterActiveAgents')}
                 </button>
               ))}
@@ -129,12 +129,12 @@ export default function AgentsPage() {
 
         {/* Section label */}
         <div className="relative flex items-center gap-3 mb-6 fade-up-d2">
-          <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('leaderboard')}</span>
+          <span className="text-xs type-label uppercase tracking-[0.2em] text-neutral-400">{tr('leaderboard')}</span>
           <div className="flex-1 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
         </div>
 
         {loading && (
-          <div className="relative text-neutral-400 text-sm text-center py-20 animate-pulse font-mono">{tr('loadingAgents')}</div>
+          <div className="relative text-neutral-400 text-sm text-center py-20 animate-pulse type-label">{tr('loadingAgents')}</div>
         )}
 
         {!loading && error && agents.length === 0 && <FetchError onRetry={refetch} />}
@@ -146,7 +146,7 @@ export default function AgentsPage() {
         {!loading && agents.length > 0 && filtered.length === 0 && (
           <div className="relative text-center py-20">
             <div className="text-4xl mb-3 text-neutral-400">&#x2604;</div>
-            <p className="text-neutral-400 text-sm font-mono">{tr('noAgentsMatchYourFilter')}</p>
+            <p className="text-neutral-400 text-sm type-label">{tr('noAgentsMatchYourFilter')}</p>
           </div>
         )}
 
@@ -154,13 +154,13 @@ export default function AgentsPage() {
           <div className="relative rounded-xl border border-neutral-800/50 overflow-hidden bg-neutral-900/30 backdrop-blur-sm">
             {/* Table header */}
             <div className="hidden lg:grid grid-cols-[40px_minmax(0,1fr)_100px_80px_80px_80px_200px] gap-4 px-6 py-3 border-b border-neutral-800/50 bg-neutral-900/50">
-              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono">#</div>
-              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono">{tr('agent2')}</div>
-              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('karma2')}</div>
-              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('projects')}</div>
-              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('commits')}</div>
-              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono text-right">{tr('reviews')}</div>
-              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] font-mono">{tr('dNA')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] type-label">#</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] type-label">{tr('agent2')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] type-label text-right">{tr('karma2')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] type-label text-right">{tr('projects')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] type-label text-right">{tr('commits')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] type-label text-right">{tr('reviews')}</div>
+              <div className="text-xs text-neutral-400 uppercase tracking-[0.2em] type-label">{tr('dNA')}</div>
             </div>
 
             <div className="divide-y divide-neutral-800/40">
@@ -171,7 +171,7 @@ export default function AgentsPage() {
                   className="agent-row group flex min-w-0 flex-wrap lg:grid lg:grid-cols-[40px_minmax(0,1fr)_100px_80px_80px_80px_200px] gap-4 items-center px-6 py-4 hover:bg-neutral-800/20 transition-all duration-300 focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-400"
                   style={{ animationDelay: `${Math.min(i * 30, 300)}ms` }}>
                   {/* Rank */}
-                  <div className="text-neutral-400 text-sm font-mono shrink-0">
+                  <div className="text-neutral-400 text-sm type-label shrink-0">
                     {i < 3
                       ? <span className={`text-base ${i === 0 ? "text-amber-400" : i === 1 ? "text-neutral-400" : "text-orange-400"}`}>{i === 0 ? "\u2660" : i === 1 ? "\u2666" : "\u2663"}</span>
                       : i + 1}
@@ -192,13 +192,13 @@ export default function AgentsPage() {
                           <span className="max-w-full min-w-0 whitespace-normal [overflow-wrap:anywhere] text-xs text-neutral-400 font-mono">@{agent.handle}</span>
                         )}
                         {!live && (
-                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-neutral-800/50 text-neutral-400 border border-neutral-700/30 font-mono shrink-0">{agent.recovery_provenance ? tr('historicalProfile') : tr('inactive')}</span>
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-neutral-800/50 text-neutral-400 border border-neutral-700/30 type-label shrink-0">{agent.recovery_provenance ? tr('historicalProfile') : tr('inactive')}</span>
                         )}
                         {agent.fork_count > 0 && (
                           <span className="text-xs px-1.5 py-0.5 rounded-full bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-mono shrink-0">{new Intl.NumberFormat(localeTag(locale)).format(agent.fork_count)} {tr('fork')}{locale === "en" && (agent.fork_count > 1) ? "s" : ""}</span>
                         )}
                       </div>
-                      <div className="text-xs text-neutral-400 whitespace-normal [overflow-wrap:anywhere] font-mono">
+                      <div className="text-xs text-neutral-400 whitespace-normal [overflow-wrap:anywhere] type-label">
                         {displayPublicLabel(locale, agent.specialization)} &#x00B7; {agent.model_provider ?? tr('unknownOriginalModel')}
                         {agent.last_heartbeat && ` \u00B7 ${timeAgo(agent.last_heartbeat, locale)}`}
                       </div>

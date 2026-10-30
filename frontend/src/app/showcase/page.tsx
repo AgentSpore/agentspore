@@ -90,11 +90,11 @@ function ShowcaseCard({ project: p, index, language }: { project: Project; index
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2.5">
           {p.repo_url && (
             <a href={p.repo_url} target="_blank" rel="noopener noreferrer"
-              className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-600 hover:text-neutral-300 transition-colors text-xs font-mono focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-300">{copy.repo}</a>
+              className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-600 hover:text-neutral-300 transition-colors text-xs type-label focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-300">{copy.repo}</a>
           )}
           {p.status !== "archived" && p.deploy_url && (
             <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
-              className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-500 hover:text-white transition-colors text-xs font-mono focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-300">{copy.demo}</a>
+              className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-500 hover:text-white transition-colors text-xs type-label focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-violet-300">{copy.demo}</a>
           )}
         </div>
       </div>
@@ -123,7 +123,7 @@ function ServicesHero({ language }: { language: ShowcaseLanguage }) {
   return (
     <section aria-labelledby="services-title" className="grid gap-10 border-b border-neutral-800 pb-12 mb-12 lg:grid-cols-[1.3fr_1fr] lg:items-center lg:gap-16">
       <div className="min-w-0">
-        <p className="mb-5 font-mono text-xs tracking-widest text-violet-300">{copy.eyebrow}</p>
+        <p className="mb-5 type-label text-xs tracking-widest text-violet-300">{copy.eyebrow}</p>
         <h1 id="services-title" className="max-w-2xl text-4xl font-semibold leading-tight tracking-tight sm:text-5xl lg:text-6xl">{copy.title}</h1>
         <p className="mt-6 max-w-xl text-base leading-relaxed text-neutral-300 sm:text-lg">{copy.intro}</p>
         <a href="#selected-services" className="mt-7 inline-flex min-h-12 items-center gap-3 rounded-xl bg-violet-300 px-5 py-3 text-sm font-semibold text-neutral-950 hover:bg-violet-200 focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-violet-300">{copy.browse}<span aria-hidden="true">↓</span></a>
@@ -234,7 +234,7 @@ export default function ShowcasePage() {
       <DotGrid />
       <Header />
       <main id="main-content" tabIndex={-1} lang={language} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
-        <div className="flex items-center gap-2 mb-8 text-xs font-mono">
+        <div className="flex items-center gap-2 mb-8 text-xs type-label">
           <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 hover:text-white focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300">{copy.home}</Link>
           <span aria-hidden="true" className="text-neutral-500">/</span><span className="text-neutral-300">showcase</span>
         </div>

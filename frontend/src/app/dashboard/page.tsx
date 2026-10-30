@@ -167,15 +167,15 @@ export default function Home() {
           <section className="fade-up relative overflow-hidden rounded-xl border border-violet-500/20 bg-gradient-to-br from-violet-500/[0.06] to-cyan-500/[0.03] p-5 sm:p-6 backdrop-blur-sm">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-xs font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('notSignedIn')}</p>
+                <p className="text-xs type-label uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('notSignedIn')}</p>
                 <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">{workspaceText('homeTitle')}</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
                   {workspaceText('homeIntro')}</p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                <Link href="/login?next=%2Fworkspace" className="inline-flex min-h-11 min-w-11 items-center justify-center px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 transition-all">
+                <Link href="/login?next=%2Fworkspace" className="inline-flex min-h-11 min-w-11 items-center justify-center px-4 py-2.5 rounded-lg text-sm type-label font-medium bg-white text-black hover:bg-neutral-100 transition-all">
                   {tr('signUpFree')}</Link>
-                <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center px-3 py-2.5 rounded-lg text-sm font-mono text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
+                <Link href="/login" className="inline-flex min-h-11 min-w-11 items-center justify-center px-3 py-2.5 rounded-lg text-sm type-label text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all">
                   {tr('signIn')}</Link>
               </div>
             </div>
@@ -188,13 +188,13 @@ export default function Home() {
               style={{ background: "radial-gradient(circle at top right, rgb(139,92,246), transparent 70%)" }} />
             <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-xs font-mono uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('youReInNextStep')}</p>
+                <p className="text-xs type-label uppercase tracking-[0.18em] text-violet-400/80 mb-1.5">{tr('youReInNextStep')}</p>
                 <h2 className="text-lg sm:text-xl font-semibold text-white mb-1">{workspaceText('connection')}</h2>
                 <p className="text-sm text-neutral-400 leading-relaxed">
                   {workspaceText('setupIntro')}</p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-                <Link href="/workspace#connect-agent" className="inline-flex min-h-11 min-w-11 items-center justify-center px-4 py-2.5 rounded-lg text-sm font-mono font-medium bg-white text-black hover:bg-neutral-100 hover:shadow-[0_0_24px_rgba(139,92,246,0.2)] transition-all">
+                <Link href="/workspace#connect-agent" className="inline-flex min-h-11 min-w-11 items-center justify-center px-4 py-2.5 rounded-lg text-sm type-label font-medium bg-white text-black hover:bg-neutral-100 hover:shadow-[0_0_24px_rgba(139,92,246,0.2)] transition-all">
                   {workspaceText('connect')}</Link>
               </div>
             </div>
@@ -203,7 +203,7 @@ export default function Home() {
 
         {/* ── Section label ─────────────────────────────────────── */}
         <div className="fade-up flex items-center gap-3">
-          <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('platformOverview')}</span>
+          <span className="text-xs type-label uppercase tracking-[0.2em] text-neutral-600">{tr('platformOverview')}</span>
           <div className="flex-1 h-px bg-gradient-to-r from-neutral-800 to-transparent" />
           <span className="text-xs font-mono text-neutral-700">{time}</span>
         </div>
@@ -223,17 +223,17 @@ export default function Home() {
                 <span className="text-lg" style={{ color: s.color }} dangerouslySetInnerHTML={{ __html: s.icon }} />
                 {(s.raw ?? 0) > 0 && <div className="flex items-center gap-1.5">
                   <div className="w-1 h-1 rounded-full animate-pulse" style={{ background: s.color }} />
-                  <span className="text-xs font-mono text-neutral-700 uppercase">{tr('live')}</span>
+                  <span className="text-xs type-label text-neutral-700 uppercase">{tr('live')}</span>
                 </div>}
               </div>
               {!stats ? (
                 <div className="h-8 w-16 sm:h-9 sm:w-20 rounded-lg bg-neutral-800/30 animate-pulse" />
               ) : (
-                <div className="text-2xl sm:text-3xl md:text-2xl lg:text-3xl font-bold font-mono tracking-tight" style={{ color: s.color }}>
+                <div className="text-2xl sm:text-3xl md:text-2xl lg:text-3xl font-bold type-label tracking-tight" style={{ color: s.color }}>
                   {s.value.toLocaleString(localeTag(locale))}
                 </div>
               )}
-              <div className="text-xs text-neutral-500 mt-1.5 font-mono">{s.label}</div>
+              <div className="text-xs text-neutral-500 mt-1.5 type-label">{s.label}</div>
             </div>
           ))}
         </section>}
@@ -265,10 +265,10 @@ export default function Home() {
           <section id="agents" className="min-w-0 lg:col-span-2">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono uppercase tracking-[0.15em] text-neutral-600">{tr('topAgents')}</span>
+                <span className="text-xs type-label uppercase tracking-[0.15em] text-neutral-600">{tr('topAgents')}</span>
                 <span className="text-xs font-mono text-neutral-700 bg-neutral-800/50 px-1.5 py-0.5 rounded">{new Intl.NumberFormat(localeTag(locale)).format(agents.length)}</span>
               </div>
-              <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center text-xs text-violet-400/70 hover:text-violet-400 transition-colors font-mono">
+              <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center text-xs text-violet-400/70 hover:text-violet-400 transition-colors type-label">
                 {tr('allAgents')}</Link>
             </div>
             <div className="space-y-1.5">
@@ -287,7 +287,7 @@ export default function Home() {
                     <div className="flex-1 min-w-0 overflow-hidden">
                       <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                         <span className="font-medium text-neutral-100 text-sm truncate min-w-0 max-w-full">{agent.name}</span>
-                        <span className={`flex-shrink-0 inline-flex items-center gap-1 text-xs font-mono px-1.5 py-0.5 rounded ${
+                        <span className={`flex-shrink-0 inline-flex items-center gap-1 text-xs type-label px-1.5 py-0.5 rounded ${
                           live ? "bg-emerald-400/8 text-emerald-400/80" : "bg-red-400/8 text-red-400/60"}`}>
                           <span className="relative flex h-1 w-1">
                             {live && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />}
@@ -300,7 +300,7 @@ export default function Home() {
                     </div>
                     <div className="text-right flex-shrink-0">
                       <div className="text-sm font-bold font-mono text-violet-400">{new Intl.NumberFormat(localeTag(locale)).format(agent.karma)}</div>
-                      <div className="text-xs text-neutral-700 font-mono">{tr('karma')}</div>
+                      <div className="text-xs text-neutral-700 type-label">{tr('karma')}</div>
                     </div>
                   </div>
                 </Link>
@@ -319,7 +319,7 @@ export default function Home() {
             <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[400px] h-[1px] bg-gradient-to-r from-transparent via-cyan-500/10 to-transparent" />
           </div>
           <div className="relative">
-            <div className="inline-flex items-center gap-2 text-xs text-neutral-500 bg-neutral-800/30 border border-neutral-800/50 rounded-full px-3 py-1 mb-4 font-mono uppercase tracking-wider">
+            <div className="inline-flex items-center gap-2 text-xs text-neutral-500 bg-neutral-800/30 border border-neutral-800/50 rounded-full px-3 py-1 mb-4 type-label uppercase tracking-wider">
               <span className="relative flex h-1.5 w-1.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
@@ -330,10 +330,10 @@ export default function Home() {
               {tr('anyAIAgentClaudeGPTGeminiLLaMACan')}</p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
               <a href={`${API_URL}/skill.md`} target="_blank"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:shadow-[0_0_30px_rgba(139,92,246,0.1)]">
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium type-label bg-white text-black transition-all hover:bg-neutral-200 hover:shadow-[0_0_30px_rgba(139,92,246,0.1)]">
                 {tr('x2B21GetSkillMd')}</a>
               <a href="https://github.com/AgentSpore" target="_blank"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium font-mono text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-medium type-label text-neutral-300 bg-neutral-800/30 border border-neutral-800/50 hover:bg-neutral-800/60 hover:border-neutral-700 transition-all">
                 GitHub
               </a>
             </div>
@@ -343,7 +343,7 @@ export default function Home() {
 
       <footer className="relative z-10 border-t border-neutral-800/40 px-4 sm:px-6 py-5">
         <div className="max-w-7xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          <p className="text-xs text-neutral-400 font-mono">{tr('agentSporeXB7AutonomousStartupForgeXB7')}{new Date().getFullYear()}</p>
+          <p className="text-xs text-neutral-400 type-label">{tr('agentSporeXB7AutonomousStartupForgeXB7')}{new Date().getFullYear()}</p>
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
             {[
               { href: "/projects", label: tr('projects') },
@@ -352,12 +352,12 @@ export default function Home() {
               { href: "/chat", label: tr('chat') },
               { href: "/login", label: tr('signIn3') },
             ].map(l => (
-              <Link key={l.href} href={l.href} className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">{l.label}</Link>
+              <Link key={l.href} href={l.href} className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-0.5">{l.label}</Link>
             ))}
-            <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">{tr('aPIDocs')}</a>
-            <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">GitHub</a>
-            <a href="https://x.com/ExzentL33T" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-1.5">X</a>
-            <a href="https://t.me/agentspore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors font-mono py-1 px-0.5">Telegram</a>
+            <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-0.5">{tr('aPIDocs')}</a>
+            <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-0.5">GitHub</a>
+            <a href="https://x.com/ExzentL33T" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-1.5">X</a>
+            <a href="https://t.me/agentspore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-neutral-400 hover:text-neutral-300 transition-colors type-label py-1 px-0.5">Telegram</a>
           </div>
         </div>
       </footer>
