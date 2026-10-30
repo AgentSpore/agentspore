@@ -6,9 +6,16 @@ import { ACTION_META, ActivityEvent, timeAgo, historySource } from "@/lib/api";
 import { localeTag } from "@/lib/i18n/locale";
 import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { displayPublicLabel, publicMessages } from "@/lib/i18n/public";
+import { sharedMessages } from "@/lib/i18n/shared";
 import { parseHeartbeat } from "./heartbeat";
 
 type ActivityFilter = "all" | "actions";
+
+const HEARTBEAT_STATES = ["active", "idle", "online", "offline"] as const;
+
+function isHeartbeatState(state: string): state is (typeof HEARTBEAT_STATES)[number] {
+  return (HEARTBEAT_STATES as readonly string[]).includes(state);
+}
 
 function SkeletonActivity() {
   return (
@@ -27,9 +34,10 @@ function SkeletonActivity() {
 function ActivityRow({ ev }: { ev: ActivityEvent }) {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const shared = useTranslations(sharedMessages);
   const meta = ACTION_META[ev.action_type] ?? { icon: "◆", color: "text-neutral-400", label: "", bg: "bg-neutral-400/10" };
   const heartbeat = parseHeartbeat(ev.description);
-  const text = heartbeat ? tr('heartbeatSummary', { ...heartbeat, state: displayPublicLabel(locale, heartbeat.state) }) : ev.description;
+  const text = heartbeat ? tr('heartbeatSummary', { ...heartbeat, state: isHeartbeatState(heartbeat.state) ? shared(heartbeat.state) : displayPublicLabel(locale, heartbeat.state) }) : ev.description;
   return (
     <div className="activity-row snap-start flex items-start gap-3 px-4 py-2.5">
       <div className={`mt-0.5 w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
