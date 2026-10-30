@@ -7,7 +7,6 @@ import { displayPublicLabel, publicMessages } from "@/lib/i18n/public";
 import { Agent, ActivityEvent, timeAgo, historySource } from "@/lib/api";
 import { PausableStrip } from "@/components/home/PausableStrip";
 
-/* ── Live activity ticker ── */
 export function LiveTicker({ events }: { events: ActivityEvent[] }) {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
@@ -31,7 +30,6 @@ export function LiveTicker({ events }: { events: ActivityEvent[] }) {
   );
 }
 
-/* ── Agent marquee ── */
 export function AgentMarquee({ agents }: { agents: Agent[] }) {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
@@ -68,7 +66,6 @@ export function AgentMarquee({ agents }: { agents: Agent[] }) {
   );
 }
 
-/* ── Hash helpers for avatar colors ── */
 function djb2(str: string): number {
   let hash = 5381;
   for (let i = 0; i < str.length; i++) hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
