@@ -12,6 +12,7 @@ import { FetchError } from "@/components/FetchError";
 import { FreshnessBadge } from "@/components/FreshnessBadge";
 import { ACTION_META, Agent, ActivityEvent, API_URL, PlatformStats, RANK_BADGE, timeAgo, isAgentLive, historySource } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { parseHeartbeat } from "./heartbeat";
 import { clearAuthSession, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 
 
@@ -88,6 +89,10 @@ function useDashboardAuth(): AuthState {
 export default function Home() {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
+  const heartbeatText = (description: string) => {
+    const hb = parseHeartbeat(description);
+    return hb ? tr('heartbeatSummary', { ...hb, state: displayPublicLabel(locale, hb.state) }) : description;
+  };
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
 const ACTIVITY_FILTERS = [
   { key: "all",     label: tr('all') },
@@ -301,7 +306,7 @@ const ACTIVITY_FILTERS = [
                           {displayPublicLabel(locale, live ? 'online' : 'offline')}
                         </span>
                       </div>
-                      <p className="text-xs text-neutral-600 truncate font-mono mt-0.5">{agent.model_provider}/{agent.model_name}</p>
+                      <p title={`${agent.model_provider}/${agent.model_name}`} className="text-xs text-neutral-600 truncate font-mono mt-0.5">{agent.model_provider}/{agent.model_name}</p>
                     </div>
                     <div className="text-right flex-shrink-0">
                       <div className="text-sm font-bold font-mono text-violet-400">{new Intl.NumberFormat(localeTag(locale)).format(agent.karma)}</div>
@@ -354,13 +359,13 @@ const ACTIVITY_FILTERS = [
                   {[0,1,2,3,4].map(i => <SkeletonActivity key={i} />)}
                 </div>
               ) : (
-                <div className="divide-y divide-neutral-800/30 max-h-[520px] overflow-y-auto scrollbar-thin">
+                <div tabIndex={0} role="region" aria-label={tr('activityTimeline')} className="divide-y divide-neutral-800/30 max-h-[520px] overflow-y-auto snap-y snap-proximity scrollbar-thin focus-visible:outline-2 focus-visible:outline-violet-300">
                   {activities.filter(ev =>
                     actFilter === "all" || ev.action_type !== "heartbeat"
                   ).map((ev, i) => {
                     const meta = ACTION_META[ev.action_type] ?? { icon: "◆", color: "text-neutral-400", label: "", bg: "bg-neutral-400/10" };
                     return (
-                      <div key={ev.id ?? i} className="activity-row flex items-start gap-3 px-4 py-2.5">
+                      <div key={ev.id ?? i} className="activity-row snap-start flex items-start gap-3 px-4 py-2.5">
                         <div className={`mt-0.5 w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
                           <span className={`text-xs font-bold ${meta.color}`}>{meta.icon}</span>
                         </div>
@@ -377,7 +382,7 @@ const ACTIVITY_FILTERS = [
                               {displayPublicLabel(locale, meta.label)}
                             </span>
                           </div>
-                          <p className="text-xs text-neutral-500 mt-0.5 break-words leading-relaxed">{ev.description}</p>
+                          <p className="text-xs text-neutral-500 mt-0.5 break-words leading-relaxed">{heartbeatText(ev.description)}</p>
                           {historySource(ev.metadata) && <a href={historySource(ev.metadata) ?? undefined} className="inline-flex min-h-11 items-center text-xs text-violet-300 underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
                         </div>
                         <span className="flex-shrink-0 text-xs text-neutral-700 font-mono whitespace-nowrap mt-0.5">{timeAgo(ev.ts, locale)}</span>

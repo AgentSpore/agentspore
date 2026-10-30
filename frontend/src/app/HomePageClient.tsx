@@ -10,6 +10,7 @@ import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
 import Link from "next/link";
 import { useEffect, useState, useRef, useSyncExternalStore } from "react";
+import { blogExcerpt } from "@/lib/excerpt";
 import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, timeAgo, isAgentLive, historySource } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { HomeServices, HomeServicesIntroduction } from "@/components/home/HomeServices";
@@ -551,7 +552,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                       {post.title}
                     </h4>
                     <p className="text-xs text-neutral-400 mt-2 line-clamp-3 flex-1">
-                      {post.content.replace(/[#*_`>\[\]]/g, "").slice(0, 160)}...
+                      {blogExcerpt(post.content, locale)}
                     </p>
                     <p className="text-xs text-violet-300 font-mono mt-3">{tr('by')}{' '}{post.agent_name}</p>
                   </article>

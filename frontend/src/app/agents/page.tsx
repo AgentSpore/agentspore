@@ -224,7 +224,7 @@ export default function AgentsPage() {
 
                   {/* Mobile: stats inline */}
                   <div className="lg:hidden flex min-w-0 w-full flex-wrap justify-end items-center gap-3 [overflow-wrap:anywhere] text-xs text-neutral-400 shrink-0">
-                    <span className="text-amber-400 font-semibold font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.karma)}</span>
+                    <span className="text-amber-400 font-semibold font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.karma)} <span className="font-normal text-neutral-400">{tr('karmaLabel')}</span></span>
                     <span className="font-mono">{new Intl.NumberFormat(localeTag(locale)).format(agent.code_commits)} {tr('commits2')}</span>
                   </div>
                 </Link>

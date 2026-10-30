@@ -365,7 +365,7 @@ function ProjectDetails({ projectId }: { projectId: string }) {
       <div className="relative z-20 border-b border-neutral-800/50 bg-[#0a0a0a]/80 backdrop-blur-sm px-6 py-3">
         <div className="max-w-4xl mx-auto flex min-w-0 flex-wrap items-center justify-between gap-3">
           {/* Breadcrumbs */}
-          <div className="flex min-w-0 flex-1 basis-full items-center gap-2 text-xs font-mono sm:basis-0">
+          <div className="flex min-w-0 flex-1 basis-0 items-center gap-2 text-xs font-mono">
             <Link href="/" className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-neutral-600 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
             <span className="text-neutral-800">/</span>
             <Link href="/projects" className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-neutral-600 hover:text-neutral-400 transition-colors">{tr('projects3')}</Link>
@@ -396,17 +396,16 @@ function ProjectDetails({ projectId }: { projectId: string }) {
               <p className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 mb-3">{tr('project')}</p>
               <h1 className="text-2xl font-semibold text-white tracking-tight [overflow-wrap:anywhere]">{project.title}</h1>
               <p className="text-neutral-500 text-sm mt-2 font-mono [overflow-wrap:anywhere]">
-                {tr('by')}{" "}
-                {project.creator_agent_id ? <Link href={`/agents/${project.creator_agent_id}`}
+                {project.creator_agent_id ? <>{tr('by')}{" "}<Link href={`/agents/${project.creator_agent_id}`}
                   className="text-violet-400 hover:text-violet-300 transition-colors [overflow-wrap:anywhere]">
                   @{project.agent_handle || project.agent_name}
-                </Link> : <span>{tr('unknownAuthor')}</span>}
-                {project.recovery_provenance && <span className="ml-2 text-xs">{tr('importedHistory')}</span>}
+                </Link></> : <span>{tr('unknownAuthor')}</span>}
                 <span className="text-neutral-700 mx-2">|</span>
                 <span className="text-neutral-500">{displayPublicLabel(locale, project.category)}</span>
                 <span className="text-neutral-700 mx-2">|</span>
                 <span className={`capitalize ${STATUS_COLOR[project.status] ?? "text-neutral-500"}`}>{displayPublicLabel(locale, project.status)}</span>
               </p>
+              {project.recovery_provenance && <p className="mt-1 text-xs text-neutral-400">{tr('importedHistory')}</p>}
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
               {project.status !== "archived" && project.deploy_url && (
@@ -424,10 +423,10 @@ function ProjectDetails({ projectId }: { projectId: string }) {
           </div>
 
           {/* Tabs */}
-          <div className="flex min-w-0 flex-wrap gap-1 mt-8 fade-up" style={{ animationDelay: "100ms" }}>
+          <div className="grid min-w-0 grid-cols-2 gap-1 mt-8 fade-up sm:flex sm:flex-wrap" style={{ animationDelay: "100ms" }}>
             {TABS.map(t => (
               <button key={t.key} aria-pressed={tab === t.key} onClick={() => setTab(t.key)}
-                className={`px-3.5 py-1.5 text-xs font-mono rounded-lg transition-all min-h-12 min-w-12 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
+                className={`px-3.5 py-1.5 text-xs font-mono whitespace-nowrap rounded-lg transition-all min-h-12 min-w-12 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
                   tab === t.key
                     ? "bg-white text-black font-medium"
                     : "text-neutral-600 hover:text-neutral-300 hover:bg-neutral-800/30"

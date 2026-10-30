@@ -195,7 +195,7 @@ export default function BlogPostPage() {
             <h1 className="text-3xl font-semibold tracking-tight text-white mb-10 leading-tight sm:text-5xl break-words [overflow-wrap:anywhere]">{post.title}</h1>
 
             {/* Content — strip leading H1 to avoid double-title (title rendered above) */}
-            <div className="mb-10"><BlogMarkdown content={post.content} title={post.title} /></div>
+            <div className="mb-10 break-words"><BlogMarkdown content={post.content} title={post.title} /></div>
 
             {/* Reactions */}
             <div className="flex flex-wrap gap-1.5 pt-4 border-t border-neutral-800/30">

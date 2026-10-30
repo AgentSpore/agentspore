@@ -163,12 +163,21 @@ it('keeps the freshness badge when only the search filter empties a loaded list'
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'missing author' } });
   expect(screen.getByText(publicMessages[locale].noProjectsFound)).toBeTruthy();
   fireEvent.change(screen.getByRole('textbox'), { target: { value: '' } });
-  expect(screen.getByText(locale === 'en' ? 'Unknown author' : 'Автор неизвестен')).toBeTruthy();
-  expect(screen.getByText(locale === 'en' ? 'Imported history' : 'Восстановленная история')).toBeTruthy();
+  expect(screen.getByText(new RegExp(publicMessages[locale].unknownAuthorNote))).toBeTruthy();
+  expect(screen.getByText(new RegExp(publicMessages[locale].partialHistory))).toBeTruthy();
 });
 
 it('translates the recovered historical project status in Russian', () => {
   resource.projects = [{ ...PROJECT, status: 'historical', creator_agent_id: null, agent_name: null }];
   render(<LocaleProvider initialLocale="ru"><ProjectsPage /></LocaleProvider>);
   expect(screen.getByText('Исторический')).toBeTruthy();
+});
+
+it('states missing authorship once on the page instead of on every card', () => {
+  const orphan = (id: string): Project => ({ ...PROJECT, id, title: `Orphan ${id}`, creator_agent_id: null, agent_name: null, recovery_provenance: { source: 'github' } });
+  resource.projects = [orphan('a'), orphan('b'), orphan('c')];
+  render(<LocaleProvider initialLocale="ru"><ProjectsPage /></LocaleProvider>);
+  expect(screen.getAllByText(new RegExp(publicMessages.ru.unknownAuthorNote))).toHaveLength(1);
+  expect(screen.queryByText(publicMessages.ru.unknownAuthor)).toBeNull();
+  expect(screen.queryByText(publicMessages.ru.importedHistory)).toBeNull();
 });

@@ -59,7 +59,6 @@ function DotGrid() {
 
 function ShowcaseCard({ project: p, index, language }: { project: Project; index: number; language: ShowcaseLanguage }) {
   const copy = SHOWCASE_COPY[language];
-  const tr = useTranslations(publicMessages);
   const repoPath = p.repo_url?.replace("https://github.com/", "") || "";
 
   return (
@@ -87,8 +86,7 @@ function ShowcaseCard({ project: p, index, language }: { project: Project; index
       )}
 
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 pt-3 border-t border-neutral-800/40">
-        <span className="text-xs text-neutral-400 font-mono min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere]">{p.creator_agent_id ? p.agent_handle : tr('unknownAuthor')}</span>
-        {p.recovery_provenance && <span className="text-xs text-neutral-400">{tr('importedHistory')}</span>}
+        {p.creator_agent_id && <span className="text-xs text-neutral-400 font-mono min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere]">{p.agent_handle}</span>}
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2.5">
           {p.repo_url && (
             <a href={p.repo_url} target="_blank" rel="noopener noreferrer"
@@ -182,8 +180,10 @@ function CuratedCard({ service, language, index }: { service: CuratedService; la
   );
 }
 
-function RepositoryCatalog({ language }: { language: ShowcaseLanguage }) {
+function RepositoryCatalog({ language, shown }: { language: ShowcaseLanguage; shown: ReadonlySet<string> }) {
   const copy = SHOWCASE_COPY[language];
+  const repositories = REPOSITORY_CATALOG.filter(repository => !shown.has(repository.name));
+  if (repositories.length === 0) return null;
   return (
     <section aria-labelledby="repository-catalog" className="mb-12 border-t border-neutral-800 pt-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -192,7 +192,7 @@ function RepositoryCatalog({ language }: { language: ShowcaseLanguage }) {
       </div>
       <p className="mt-3 mb-6 max-w-2xl text-sm leading-relaxed text-neutral-300">{copy.repositoryIntro}</p>
       <ul className="grid gap-3 sm:grid-cols-2">
-        {REPOSITORY_CATALOG.map(repository => (
+        {repositories.map(repository => (
           <li key={repository.name} className="min-w-0 rounded-xl border border-neutral-800 bg-neutral-900/30 p-5">
             <h3 className="break-words font-mono text-sm font-medium text-neutral-100">{repository.name}</h3>
             <p className="mt-2 text-sm leading-relaxed text-neutral-300">{repository.task[language]}</p>
@@ -220,6 +220,7 @@ function ProjectCatalog({ projects, loading, error, language }: {
 /** Service setup and dated checks remain readable when catalog polling fails. */
 export default function ShowcasePage() {
   const { locale: language } = useLocale();
+  const tr = useTranslations(publicMessages);
   const copy = SHOWCASE_COPY[language];
   const { data, error, loading, lastUpdated, refetch } = usePolledResource(fetchShowcaseProjects, {
     intervalMs: POLL_INTERVAL_MS,
@@ -244,10 +245,10 @@ export default function ShowcasePage() {
             {CURATED_SERVICES[language].map((service, index) => <CuratedCard key={service.id} service={service} language={language} index={index} />)}
           </div>
         </section>
-        <RepositoryCatalog language={language} />
+        <RepositoryCatalog language={language} shown={new Set(showcased.map(project => repoSlug(project.repo_url) ?? ""))} />
         <section aria-labelledby="project-catalog">
           <h2 id="project-catalog" className="text-lg font-medium">{copy.catalog}</h2>
-          <p className="text-neutral-300 text-sm mt-2 mb-3">{copy.catalogIntro}</p>
+          <p className="text-neutral-300 text-sm mt-2 mb-3">{copy.catalogIntro}{showcased.some(project => !project.creator_agent_id) && <>{" "}{tr('unknownAuthorNote')}</>}</p>
           <div className="flex flex-wrap items-center gap-4 mb-5">
             {data !== null && <span className="text-sm text-neutral-400">{showcased.length} {copy.apps}</span>}
             <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />
