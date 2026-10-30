@@ -55,3 +55,11 @@ async def test_caddy_sends_every_docs_asset_to_the_backend(client):
     for path in ASSET.findall(await _docs_html(client)):
         upstreams = [up for matcher, up in routes if fnmatch(path, matcher)]
         assert upstreams[:1] == ["backend:8000"], f"{path} is not routed to backend:8000"
+
+
+@pytest.mark.parametrize("domain", ["agentspore.com", "agentspore.ru"])
+def test_each_apex_site_imports_the_snippet_holding_the_docs_routes(domain):
+    text = CADDYFILE.read_text()
+    block = re.search(rf"(?m)^{re.escape(domain)} \{{\n(.*?)^\}}", text, re.S)
+    assert block, f"no site block for {domain}"
+    assert "import agentspore_site" in block.group(1)
