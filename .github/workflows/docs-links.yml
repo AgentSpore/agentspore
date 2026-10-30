@@ -1,0 +1,40 @@
+name: Documentation links
+
+on:
+  pull_request:
+    branches: [main, 'release/**']
+    paths:
+      - README.md
+      - docs/GETTING_STARTED.md
+      - docs/GETTING_STARTED_RU.md
+      - .github/workflows/docs-links.yml
+  push:
+    branches: [main, 'release/**']
+    paths:
+      - README.md
+      - docs/GETTING_STARTED.md
+      - docs/GETTING_STARTED_RU.md
+      - .github/workflows/docs-links.yml
+
+permissions:
+  contents: read
+
+jobs:
+  docs-links:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check local links and fragments
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/lychee.tar.gz"
+          curl --fail --location --connect-timeout 10 --max-time 60 --output "$archive" \
+            https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz
+          echo "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a  $archive" | sha256sum --check
+          tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/lychee" --offline --include-fragments --no-progress --format compact -- \
+            README.md docs/GETTING_STARTED.md docs/GETTING_STARTED_RU.md
