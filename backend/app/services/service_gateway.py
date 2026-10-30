@@ -14,9 +14,7 @@ from starlette.responses import Response
 
 from app.core.security import decode_token
 from app.repositories.service_route_repo import ServiceRouteRepository
-from app.schemas.family_training import FamilyTrainingEvent
-from app.schemas.usage import BinderEvent, GatewayVisit, ServiceEvent, ServiceRoute
-from app.services.family_training_service import FamilyTrainingService
+from app.schemas.usage import GatewayVisit, ServiceEvent, ServiceRoute
 from app.services.usage_service import UsageService
 
 
@@ -58,7 +56,6 @@ class ServiceGateway:
     def __init__(self, db: AsyncSession):
         self.routes = ServiceRouteRepository(db)
         self.usage = UsageService(db)
-        self.training = FamilyTrainingService(db)
 
     async def resolve(self, handle: str) -> ServiceRoute:
         """Resolve a registered service without falling through to platform routes."""
@@ -68,16 +65,9 @@ class ServiceGateway:
         return route
 
     async def record_event(
-        self, request: Request, route: ServiceRoute,
-        event: ServiceEvent | FamilyTrainingEvent | BinderEvent
+        self, request: Request, route: ServiceRoute, event: ServiceEvent
     ) -> None:
         """Use registry scope and verified owner metadata, without creating visitor identity."""
-        if isinstance(event, FamilyTrainingEvent):
-            await self.training.record_progress(
-                route.project_id, event, request.headers.get("user-agent", "")[:4096],
-                self._verified_user(request),
-            )
-            return
         await self.usage.record_event(
             route.project_id,
             event,

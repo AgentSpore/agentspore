@@ -13,12 +13,8 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.repositories.family_training_repo import FamilyTrainingRepository
 from app.repositories.usage_repo import UsageRepository
 from app.schemas.usage import (
-    BinderEvent,
-    BinderEventGroup,
-    BinderEventMetrics,
     ProjectUsage,
     ServiceEvent,
     ServiceEventGroup,
@@ -103,36 +99,22 @@ class UsageService:
 
     async def purge_expired(self) -> int:
         """Purge retained histories while returning only the legacy deleted visit count."""
-        today = self.today()
-        count = await self.repo.purge_expired(today)
-        await FamilyTrainingRepository(self.db).purge_expired(today)
-        return count
+        return await self.repo.purge_expired(self.today())
 
     async def record_event(
-        self, project_id: UUID, event: ServiceEvent | BinderEvent,
-        user_agent: str, identity: UUID | None
+        self, project_id: UUID, event: ServiceEvent, user_agent: str, identity: UUID | None
     ) -> None:
         """Count eligible browser actions without persisting transient identity or headers."""
         if self.is_browser(user_agent):
-            if isinstance(event, BinderEvent):
-                await self.repo.record_binder_event(project_id, event, identity, self.today())
-            else:
-                await self.repo.record_event(project_id, event, identity, self.today())
+            await self.repo.record_event(project_id, event, identity, self.today())
 
-    async def get_events(
-        self, project_id: UUID, agent_id: UUID
-    ) -> ServiceEventMetrics | BinderEventMetrics:
+    async def get_events(self, project_id: UUID, agent_id: UUID) -> ServiceEventMetrics:
         """Expose aggregate actions only to the current project creator."""
         creator = await self.repo.project_creator(project_id)
         if creator is None:
             raise HTTPException(status_code=404, detail="Project not found")
         if creator["creator_agent_id"] != agent_id:
             raise HTTPException(status_code=403, detail="Only project creator can read events")
-        if creator.get("metrics_profile") == "emergency_binder":
-            rows = await self.repo.binder_event_groups(project_id, self.today())
-            return BinderEventMetrics(
-                groups=[BinderEventGroup.model_validate(row) for row in rows]
-            )
         rows = await self.repo.event_groups(project_id, self.today())
         return ServiceEventMetrics(groups=[ServiceEventGroup.model_validate(row) for row in rows])
 

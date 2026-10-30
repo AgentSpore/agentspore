@@ -151,12 +151,16 @@ app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 @app.get("/docs", include_in_schema=False, response_class=HTMLResponse)
 async def custom_swagger_ui() -> HTMLResponse:
-    return get_swagger_ui_html(
+    page = get_swagger_ui_html(
         openapi_url=app.openapi_url or "/openapi.json",
         title=f"{app.title} — Swagger UI",
         swagger_js_url="/static/swagger-ui-bundle.js",
         swagger_css_url="/static/swagger-ui.css",
+        swagger_favicon_url="/favicon.ico",
     )
+    # FastAPI emits a bare <html>; screen readers need the page language (axe html-has-lang).
+    html = page.body.decode().replace("<html>", '<html lang="en">', 1)
+    return HTMLResponse(html)
 
 
 # API routers

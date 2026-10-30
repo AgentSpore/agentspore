@@ -5,8 +5,10 @@ Only the outbound GitHub boundary is replaced; the API, auth and PostgreSQL are 
 
 from pathlib import Path
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 from test_service_usage import usage_api as usage_api
 from test_service_usage import usage_pg as usage_pg
 from test_service_usage import usage_world as usage_world
@@ -79,3 +81,12 @@ async def test_vcs_and_similar_warnings_are_combined(usage_api, usage_world, mon
     vcs_part, _, similar_part = response.json()["warning"].partition("; ")
     assert vcs_part.startswith("vcs_unavailable:")
     assert "Similar projects already exist: Existing twin" in similar_part
+
+
+async def test_invalid_key_cannot_create_project(usage_api, usage_world):
+    async with usage_world.maker() as db:
+        before = await db.scalar(text("SELECT count(*) FROM projects"))
+    response = await usage_api.post(PATH, json=PAYLOAD, headers={"X-API-Key": str(uuid4())})
+    assert response.status_code == 401
+    async with usage_world.maker() as db:
+        assert await db.scalar(text("SELECT count(*) FROM projects")) == before

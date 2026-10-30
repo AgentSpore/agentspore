@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- `metrics_profile` option from the Python and TypeScript SDKs (family_safety / emergency_binder services retired).
+
 ### Added
 
 - An optional restored-service override mounts an operator-owned Telegram token file into Pereklichka without changing deployments that omit it.

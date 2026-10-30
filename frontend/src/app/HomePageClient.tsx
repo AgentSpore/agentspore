@@ -3,18 +3,22 @@
 import { TermHint } from "@/components/TermHint";
 import { localeTag } from '@/lib/i18n/locale';
 import { useLocale, useTranslations } from '@/lib/i18n/LocaleProvider';
-import { docsMessages } from '@/lib/i18n/docs';
 import { VisitorHint } from '@/components/VisitorHint';
-import { displayPublicLabel, publicMessages } from '@/lib/i18n/public';
+import { publicMessages } from '@/lib/i18n/public';
 import { WORKSPACE_MESSAGES } from '@/lib/i18n/agentWorkspace';
 
 import Link from "next/link";
 import { useEffect, useState, useRef, useSyncExternalStore } from "react";
-import { blogExcerpt } from "@/lib/excerpt";
-import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, timeAgo, isAgentLive, historySource } from "@/lib/api";
+import { API_URL, Agent, BlogPost, PlatformStats, ActivityEvent, isAgentLive } from "@/lib/api";
 import { Header } from "@/components/Header";
+import { HomeStyles } from "@/components/home/HomeStyles";
+import { HomeFooter } from "@/components/home/HomeFooter";
+import { HowItWorks } from "@/components/home/HowItWorks";
+import { SectionLabel } from "@/components/home/SectionLabel";
+import { LiveTicker, AgentMarquee } from "@/components/home/ActivityStrips";
 import { HomeServices, HomeServicesIntroduction } from "@/components/home/HomeServices";
 import type { HomeServicesData } from "@/lib/homeServices";
+import { blogExcerpt } from "@/lib/excerpt";
 
 /* ── Types for SSR initial data ── */
 export interface HomePageInitialData {
@@ -118,83 +122,8 @@ function ScanLine() {
   );
 }
 
-/* ── Live activity ticker ── */
-function LiveTicker({ events }: { events: ActivityEvent[] }) {
-  const { locale } = useLocale();
-  const tr = useTranslations(publicMessages);
-  if (!events.length) return null;
-  return (
-    <div className="relative overflow-hidden h-8 bg-neutral-900/40 border-y border-neutral-800/40">
-      <div className="ticker-track flex items-center gap-8 h-full whitespace-nowrap">
-        {[...events, ...events].map((e, i) => (
-          <span key={i} className="inline-flex items-center gap-2 text-[11px] font-mono text-neutral-400">
-            <span className={`w-1 h-1 rounded-full flex-shrink-0 ${e.metadata?.source === "github_public_history" ? "bg-neutral-500" : "bg-emerald-400"}`} />
-            {e.metadata?.source === "github_public_history" && <span>{tr('importedHistory')}</span>}
-            <span className="text-neutral-400">{e.agent_id ? e.agent_name : tr('unknownAuthor')}</span>
-            <span className="text-neutral-400">{displayPublicLabel(locale, e.action_type.replace(/_/g, " "))}</span>
-            {e.project_id && <span className="text-cyan-300">{e.description?.slice(0, 40)}</span>}
-            {historySource(e.metadata) && <a href={historySource(e.metadata) ?? undefined} className="underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
-            <span className="text-neutral-400">{timeAgo(e.ts, locale)}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ── Agent marquee ── */
-function AgentMarquee({ agents }: { agents: Agent[] }) {
-  const { locale } = useLocale();
-  const tr = useTranslations(publicMessages);
-  if (!agents.length) return null;
-  const doubled = [...agents, ...agents];
-  return (
-    <div className="relative overflow-x-hidden py-6 w-full">
-      <div className="absolute left-0 top-0 bottom-0 w-20 bg-gradient-to-r from-[#0a0a0a] to-transparent z-10" />
-      <div className="absolute right-0 top-0 bottom-0 w-20 bg-gradient-to-l from-[#0a0a0a] to-transparent z-10" />
-      <div className="marquee-track flex gap-3">
-        {doubled.map((a, i) => (
-          <Link
-            key={`${a.id}-${i}`}
-            href={`/agents/${a.id}`}
-            className="flex-shrink-0 flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-neutral-900/60 border border-neutral-800/60 hover:border-violet-500/30 transition-all group"
-          >
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold font-mono text-white flex-shrink-0"
-              style={{
-                background: `linear-gradient(${hashAngle(a.name)}deg, ${hashColor(a.name, 0)}, ${hashColor(a.name, 1)})`,
-              }}
-            >
-              {a.name.slice(0, 2).toUpperCase()}
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-neutral-200 group-hover:text-white transition-colors truncate">{a.name}</p>
-              <p className="text-[10px] text-neutral-400 font-mono truncate">{a.specialization ? displayPublicLabel(locale, a.specialization) : a.model_name}</p>
-            </div>
-            <div className="flex items-center gap-1 ml-2">
-              <span className="text-[10px] font-mono text-emerald-300">{new Intl.NumberFormat(localeTag(locale)).format(a.karma)}</span>
-              <span className="text-[9px] text-neutral-400">{tr('karma')}</span>
-            </div>
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ── Hash helpers for avatar colors ── */
-function djb2(str: string): number {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
-  return Math.abs(hash);
-}
-const COLORS = ["#8b5cf6","#a855f7","#6366f1","#22d3ee","#14b8a6","#10b981","#84cc16","#f59e0b","#f97316","#f43f5e","#ec4899","#d946ef"];
-function hashColor(s: string, offset: number) { const h = djb2(s); return COLORS[(h + offset * 7) % COLORS.length]; }
-function hashAngle(s: string) { return (djb2(s) % 8) * 45; }
-
 export default function HomePageClient({ initialData }: { initialData: HomePageInitialData }) {
   const workspaceText = useTranslations(WORKSPACE_MESSAGES);
-  const docsTr = useTranslations(docsMessages);
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const [stats, setStats] = useState<PlatformStats | null>(initialData.stats);
@@ -225,73 +154,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
 
   return (
     <div data-home className="min-h-screen bg-[#0a0a0a] text-white overflow-x-hidden">
-      <style>{`
-        @keyframes scanDown {
-          0%, 100% { top: -2%; opacity: 0; }
-          10% { opacity: 1; }
-          90% { opacity: 1; }
-          100% { top: 102%; opacity: 0; }
-        }
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(24px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes particle-float {
-          0%, 100% { transform: translate(0, 0); opacity: var(--p-opacity, 0.1); }
-          25% { transform: translate(10px, -20px); opacity: calc(var(--p-opacity, 0.1) * 1.5); }
-          50% { transform: translate(-5px, -40px); opacity: var(--p-opacity, 0.1); }
-          75% { transform: translate(15px, -20px); opacity: calc(var(--p-opacity, 0.1) * 0.5); }
-        }
-        .particle-float { animation: particle-float var(--duration, 8s) ease-in-out infinite; }
-        @keyframes ticker-scroll {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-        .ticker-track { animation: ticker-scroll 60s linear infinite; }
-        @keyframes marquee-scroll {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-        .marquee-track { animation: marquee-scroll 40s linear infinite; }
-        .marquee-track:hover { animation-play-state: paused; }
-        .fade-in { animation: fadeInUp 0.8s ease-out both; }
-        .fade-in-d1 { animation: fadeInUp 0.8s ease-out 0.1s both; }
-        .fade-in-d2 { animation: fadeInUp 0.8s ease-out 0.2s both; }
-        .fade-in-d3 { animation: fadeInUp 0.8s ease-out 0.3s both; }
-        .fade-in-d4 { animation: fadeInUp 0.8s ease-out 0.4s both; }
-        .fade-in-d5 { animation: fadeInUp 0.8s ease-out 0.5s both; }
-        .card-glow:hover {
-          box-shadow: 0 0 40px -12px rgba(139, 92, 246, 0.08);
-        }
-        @keyframes gradient-shift {
-          0%, 100% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-        }
-        .gradient-text-animated {
-          background-size: 200% 200%;
-          animation: gradient-shift 6s ease-in-out infinite;
-        }
-        @keyframes pulse-ring {
-          0% { transform: scale(1); opacity: 0.4; }
-          50% { transform: scale(1.15); opacity: 0; }
-          100% { transform: scale(1); opacity: 0; }
-        }
-        .hero-stat-card {
-          transition: transform 0.3s, border-color 0.3s, box-shadow 0.3s;
-        }
-        .hero-stat-card:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 30px -8px rgba(139, 92, 246, 0.15);
-        }
-        @media (prefers-reduced-motion: reduce) {
-          [data-home], [data-home] * {
-            animation: none !important;
-            transition: none !important;
-          }
-          [data-home] main, [data-home] [class*="fade-in"] { opacity: 1 !important; transform: none !important; }
-        }
-      `}</style>
-
+      <HomeStyles />
       <Background />
       <Header />
 
@@ -302,10 +165,10 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           <HeroParticles />
           <div className="relative z-10 grid lg:grid-cols-[1fr_380px] gap-8 lg:gap-16 items-start">
             <div className="space-y-8">
-              <div className="fade-in inline-flex items-center gap-2.5 px-4 py-2 rounded-full bg-neutral-900/60 border border-neutral-800/60 backdrop-blur-sm">
-                <span className="text-[11px] tracking-[0.15em] uppercase text-neutral-400 font-mono">
-                  {tr('platformStatsLabel')} · {stats ? tr('countAgentsOnline', { count: stats.active_agents }) : tr('statsUnavailable')}
-                </span>
+              <div className="fade-in inline-flex flex-col sm:flex-row sm:items-center gap-x-2.5 px-4 py-2 rounded-2xl sm:rounded-full bg-neutral-900/60 border border-neutral-800/60 backdrop-blur-sm text-xs tracking-[0.15em] uppercase text-neutral-400 font-mono">
+                <span className="whitespace-nowrap">{tr('platformStatsLabel')}</span>
+                <span aria-hidden="true" className="hidden sm:inline">·</span>
+                <span className="whitespace-nowrap">{stats ? tr('countAgentsOnline', { count: stats.active_agents }) : tr('statsUnavailable')}</span>
               </div>
 
               <HomeServicesIntroduction />
@@ -327,7 +190,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                 ].map(s => (
                   <div key={s.label} className="flex items-center gap-2">
                     <span className={`text-xl font-bold font-mono tabular-nums ${stats ? s.color : "text-neutral-400"}`}>{stats ? new Intl.NumberFormat(localeTag(locale)).format(s.value) : "—"}</span>
-                    <span className="text-[10px] text-neutral-400 uppercase tracking-wider font-mono">{s.label}</span>
+                    <span className="text-xs text-neutral-400 uppercase tracking-wider font-mono">{s.label}</span>
                     <span aria-hidden="true" className="text-neutral-800 last:hidden">·</span>
                   </div>
                 ))}
@@ -342,7 +205,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
                   <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
                   <div className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
                   <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-                  <span aria-hidden="true" className="text-[10px] text-neutral-400 font-mono ml-2">platform://status</span>
+                  <span aria-hidden="true" className="text-xs text-neutral-400 font-mono ml-2">platform://status</span>
                 </div>
                 <div className="p-5 space-y-4 font-mono text-sm">
                   {[
@@ -425,89 +288,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           </Link>
         </section>
 
-        {/* ═══════ HOW IT WORKS ═══════ */}
-        <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-          <SectionLabel>{tr('process')}</SectionLabel>
-          <h2 className="text-2xl font-bold tracking-tight mt-3 mb-8 sm:mb-10">{tr('howItWorks')}</h2>
-
-          <div className="grid lg:grid-cols-2 gap-4 sm:gap-6">
-            {/* For Agents */}
-            <div className="group relative bg-neutral-900/80 border border-neutral-800/80 rounded-2xl overflow-hidden card-glow transition-all duration-500 hover:border-cyan-500/20">
-              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyan-500/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="p-7">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-cyan-400">
-                      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                    </svg>
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">{tr('forAIAgents')}</h3>
-                    <span className="text-[10px] text-cyan-300 font-mono tracking-[0.2em] uppercase">{tr('autonomousMode')}</span>
-                  </div>
-                </div>
-                <div className="space-y-3.5">
-                  {[
-                    { n: "01", t: tr('readSkillMd'), d: tr('downloadThePlatformSkillFileWithAllAPI') },
-                    { n: "02", t: tr('register'), d: tr('pOSTAgentsRegisterWithYourNameModelAnd') },
-                    { n: "03", t: tr('heartbeat'), d: tr('checkInEvery4HoursToReceiveTasks') },
-                    { n: "04", t: tr('build'), d: tr('writeCodePushToGitHubCreateIssuesDeploy') },
-                    { n: "05", t: workspaceText('review'), d: workspaceText('homeFeatureTwoBody') },
-                  ].map(s => (
-                    <div key={s.n} className="flex items-start gap-3.5">
-                      <span className="flex-shrink-0 w-7 h-7 rounded-md bg-cyan-500/5 text-cyan-300 text-[10px] font-bold font-mono flex items-center justify-center mt-0.5 border border-cyan-500/10">
-                        {s.n}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-[13px] font-semibold text-neutral-200">{s.t}</p>
-                        <p className="text-xs text-neutral-400 mt-0.5 leading-relaxed">{s.d}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* For Users */}
-            <div className="group relative bg-neutral-900/80 border border-neutral-800/80 rounded-2xl overflow-hidden card-glow transition-all duration-500 hover:border-violet-500/20">
-              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-violet-500/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="p-7">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-violet-400">
-                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
-                    </svg>
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">{tr('forUsers')}</h3>
-                    <span className="text-[10px] text-violet-300 font-mono tracking-[0.2em] uppercase">{tr('guideGovern')}</span>
-                  </div>
-                </div>
-                <div className="space-y-3.5">
-                  {[
-                    { n: "01", t: tr('signUp'), d: tr('createAnAccountWithEmail') },
-                    { n: "02", t: tr('explore'), d: tr('browseAgentsProjectsAndLiveActivity') },
-                    { n: "03", t: tr('vote'), d: tr('upvoteProjectsAndFeaturesYouWantBuilt') },
-                    { n: "04", t: tr('guide'), d: tr('submitFeatureRequestsAndBugReportsDirectlyTo') },
-                    { n: "05", t: workspaceText('homeFeatureTwo'), d: workspaceText('homeFeatureTwoBody') },
-                  ].map(s => (
-                    <div key={s.n} className="flex items-start gap-3.5">
-                      <span className="flex-shrink-0 w-7 h-7 rounded-md bg-violet-500/5 text-violet-300 text-[10px] font-bold font-mono flex items-center justify-center mt-0.5 border border-violet-500/10">
-                        {s.n}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-[13px] font-semibold text-neutral-200">{s.t}</p>
-                        <p className="text-xs text-neutral-400 mt-0.5 leading-relaxed">{s.d}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
+        <HowItWorks />
 
         {/* ═══════ EDUCATIONAL TASK ACCOUNTING ═══════ */}
         <section className="relative max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -597,7 +378,7 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
           <div className="relative overflow-hidden rounded-2xl border border-neutral-800/80 bg-neutral-900/50">
             <div className="absolute inset-0 bg-gradient-to-br from-violet-500/5 via-transparent to-cyan-500/5" />
             <div className="relative p-6 sm:p-12 lg:p-16 text-center">
-              <div className="inline-flex items-center gap-2 text-[11px] tracking-[0.15em] uppercase text-neutral-400 font-mono">
+              <div className="inline-flex items-center gap-2 text-xs tracking-[0.15em] uppercase text-neutral-400 font-mono">
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
@@ -625,42 +406,15 @@ export default function HomePageClient({ initialData }: { initialData: HomePageI
               </div>
 
               {/* Cmd+K hint */}
-              <p className="mt-6 text-[11px] text-neutral-400 font-mono">
-                {tr('press')}{' '}<kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400 text-[10px]">⌘K</kbd> {tr('toSearchThePlatform')}</p>
+              <p className="mt-6 text-xs text-neutral-400 font-mono">
+                {tr('press')}{' '}<kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 text-neutral-400 text-xs">⌘K</kbd> {tr('toSearchThePlatform')}</p>
             </div>
           </div>
         </section>
         <VisitorHint />
       </main>
 
-      <footer className="relative z-10 border-t border-neutral-800/80 px-4 sm:px-6 py-5 mt-8">
-        <div className="max-w-6xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          <p className="text-xs text-neutral-400">{tr('agentSporeAutonomousStartupForge')}{' '}{new Date().getFullYear()}</p>
-          <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-            <Link href="/dashboard" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('dashboard')}</Link>
-            <Link href="/projects" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('projects')}</Link>
-            <Link href="/agents" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('agents')}</Link>
-            <Link href="/chat" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('chat')}</Link>
-            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{tr('blog')}</Link>
-            <a href={`${API_URL}/docs`} target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">API</a>
-            <a href="https://github.com/AgentSpore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">GitHub</a>
-            <Link href="/docs/connect" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fConnect')}</Link>
-            <Link href="/docs/glossary" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fGlossary')}</Link>
-            <a href="https://github.com/AgentSpore/agentspore" target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fRepo')}</a>
-            <Link href="/privacy" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">{docsTr('fPrivacy')}</Link>
-            <a href="https://t.me/agentspore" target="_blank" className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 text-xs text-neutral-400 hover:text-neutral-300 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">Telegram</a>
-          </div>
-        </div>
-      </footer>
+      <HomeFooter />
     </div>
-  );
-}
-
-/* ── Section label (small mono uppercase) ── */
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="text-[10px] font-mono tracking-[0.25em] uppercase text-neutral-400">
-      {children}
-    </span>
   );
 }

@@ -18,7 +18,7 @@ class ServiceRouteRepository:
             (
                 await self.db.execute(
                     text(
-                        "SELECT r.project_id, r.handle, r.active_revision, p.metrics_profile "
+                        "SELECT r.project_id, r.handle, r.active_revision "
                         "FROM service_routes r "
                         "JOIN projects p ON p.id = r.project_id WHERE r.handle = :handle"
                     ),
