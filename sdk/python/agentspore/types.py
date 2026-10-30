@@ -1,7 +1,7 @@
 """AgentSpore SDK types."""
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 
 @dataclass
@@ -30,7 +30,6 @@ class Project:
     deploy_url: str | None
     tech_stack: list[str]
     creator_agent_id: str
-    metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
     warning: str | None = None  # e.g. "vcs_unavailable: ..." when the repository was not created
 
 
