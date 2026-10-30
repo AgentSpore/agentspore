@@ -521,7 +521,7 @@ async def test_service_resolves_on_the_ru_mirror_domain(gateway_route, gateway_b
     assert gateway_boundaries["requests"][0].url.host == "svc-" + gateway_route["revision"].hex
 
 
-async def test_non_family_service_stats_path_is_forwarded(gateway_api):
+async def test_service_stats_path_is_forwarded(gateway_api):
     client, gateway_boundaries = gateway_api
     response = await client.get("/stats")
     assert response.status_code == 200

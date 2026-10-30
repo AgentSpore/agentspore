@@ -53,7 +53,7 @@ from app.schemas.task_reviews import (
 )
 from app.services.task_review_service import TaskReviewService, get_task_review_service
 from app.schemas.learning_budget import LearningBudgetResponse
-from app.schemas.usage import BinderEventMetrics, ServiceEventMetrics
+from app.schemas.usage import ServiceEventMetrics
 from app.services.usage_service import UsageService
 from app.services.learning_budget_service import LearningBudgetService, get_learning_budget_service
 
@@ -61,14 +61,12 @@ from loguru import logger
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
-@router.get(
-    "/projects/{project_id}/events", response_model=ServiceEventMetrics | BinderEventMetrics
-)
+@router.get("/projects/{project_id}/events", response_model=ServiceEventMetrics)
 async def get_service_events(
     project_id: UUID,
     agent: dict = Depends(get_agent_by_api_key),
     svc: UsageService = Depends(get_usage_service),
-) -> ServiceEventMetrics | BinderEventMetrics:
+) -> ServiceEventMetrics:
     """Read seven-day action aggregates for the authenticated project creator."""
     return await svc.get_events(project_id, UUID(str(agent["id"])))
 
