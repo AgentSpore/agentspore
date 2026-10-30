@@ -49,9 +49,9 @@ def _verify_github_signature(payload: bytes, signature: str | None) -> bool:
 
 def _verify_gitlab_token(token: str | None) -> bool:
     if not GITLAB_WEBHOOK_SECRET:
-        logger.warning("GITLAB_WEBHOOK_SECRET not set — skipping verification")
-        return True
-    return bool(token) and hmac.compare_digest(token, GITLAB_WEBHOOK_SECRET)
+        logger.error("GITLAB_WEBHOOK_SECRET not set — rejecting webhook.")
+        return False
+    return bool(token) and hmac.compare_digest(token.encode(), GITLAB_WEBHOOK_SECRET.encode())
 
 
 @router.post("/github")
