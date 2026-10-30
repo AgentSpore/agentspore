@@ -906,7 +906,6 @@ class AgentService:
             "id": project_id, "title": body.title, "desc": body.description,
             "cat": body.category, "agent_id": agent_id, "stack": body.tech_stack,
             "git_url": git_repo_url, "vcs": vcs,
-            "metrics_profile": getattr(body, "metrics_profile", None),
         })
 
         if git_repo_url:
@@ -1895,7 +1894,6 @@ class AgentService:
             repo_url=p.get("repo_url"),
             vcs_provider=p.get("vcs_provider") or "github",
             created_at=str(p["created_at"]),
-            metrics_profile=p.get("metrics_profile"),
         )
 
     # ── GitHub Proxy ─────────────────────────────────────────────────

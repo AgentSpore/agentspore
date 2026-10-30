@@ -19,7 +19,10 @@ RETIRE_FOUNDPHONE = MIGRATION.with_name("V104__retire_foundphone.sql")
 RETIRE_FAMILY_AND_BINDER = MIGRATION.with_name(
     "V105__retire_family_safety_and_emergency_binder.sql"
 )
-RETIREMENTS = (RETIRE_FOUNDPHONE, RETIRE_FAMILY_AND_BINDER)
+DROP_PROFILES = MIGRATION.with_name("V106__drop_family_safety_and_emergency_binder_metrics.sql")
+RETIREMENTS = (RETIRE_FOUNDPHONE, RETIRE_FAMILY_AND_BINDER, DROP_PROFILES)
+# V99 inserts metrics_profile, which V106 dropped: restore the column to replay V99 on a legacy shape.
+LEGACY_V99 = "ALTER TABLE projects ADD COLUMN IF NOT EXISTS metrics_profile TEXT;\n"
 RETIRED = {
     "foundphone": (UUID("af0f1316-59ae-4eab-a683-65badd1be212"), RETIRE_FOUNDPHONE),
     "family-safety": (UUID("51e5e989-fc3f-4553-8c83-965cddf12de0"), RETIRE_FAMILY_AND_BINDER),
@@ -27,8 +30,8 @@ RETIRED = {
 }
 SERVICES = {
     "foundphone": (None, "1daa40598ada460291c819a55968ce55"),
-    "family-safety": ("family_safety", "5c97579aaa714f53aa63ce800f93979e"),
-    "emergency-binder": ("emergency_binder", "ccb56a65f4844a63a6b14756fe500537"),
+    "family-safety": (None, "5c97579aaa714f53aa63ce800f93979e"),
+    "emergency-binder": (None, "ccb56a65f4844a63a6b14756fe500537"),
 }
 
 
@@ -38,7 +41,7 @@ async def snapshot(maker, handles=tuple(SERVICES)) -> dict:
             await db.execute(
                 text(
                     "SELECT r.handle, replace(r.active_revision::text, '-', '') AS revision, "
-                    "p.metrics_profile, p.status, p.repo_url, p.deploy_url "
+                    "p.status, p.repo_url, p.deploy_url "
                     "FROM service_routes r JOIN projects p ON p.id = r.project_id "
                     "WHERE r.handle = ANY(:handles)"
                 ),
@@ -89,7 +92,7 @@ async def test_migration_rerun_is_idempotent(usage_world):
     before = await snapshot(usage_world.maker)
     async with usage_world.maker.kw["bind"].begin() as conn:
         raw = await conn.get_raw_connection()
-        await raw.driver_connection.execute(MIGRATION.read_text())
+        await raw.driver_connection.execute(LEGACY_V99 + MIGRATION.read_text())
         for retirement in RETIREMENTS:
             await raw.driver_connection.execute(retirement.read_text())
     assert await snapshot(usage_world.maker) == before
@@ -246,7 +249,7 @@ async def legacy(request, usage_world):
     project, retirement = RETIRED[handle]
     async with usage_world.maker.kw["bind"].begin() as conn:
         raw = await conn.get_raw_connection()
-        await raw.driver_connection.execute(MIGRATION.read_text())
+        await raw.driver_connection.execute(LEGACY_V99 + MIGRATION.read_text())
         await conn.execute(
             text("UPDATE projects SET status = 'deployed', deploy_url = :url WHERE id = :id"),
             {"id": project, "url": f"https://{handle}.agentspore.com"},
