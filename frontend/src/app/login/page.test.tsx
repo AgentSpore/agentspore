@@ -59,7 +59,7 @@ it.each([
   vi.stubGlobal('localStorage', { setItem: vi.fn(), getItem: vi.fn(() => null) });
   render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
   fireEvent.change(screen.getByPlaceholderText('you@example.com'), { target: { value: 'synthetic@example.invalid' } });
-  fireEvent.change(screen.getByPlaceholderText('••••••••'), { target: { value: 'synthetic-password' } });
+  fireEvent.change(screen.getByPlaceholderText('Enter your password'), { target: { value: 'synthetic-password' } });
   fireEvent.submit(screen.getByRole('button', { name: 'Sign In' }).closest('form')!);
   await waitFor(() => expect(destination.href).toBe(expected));
 });
@@ -85,7 +85,7 @@ it.each(['en', 'ru'] as const)('describes the external agent workspace inside th
     vi.stubGlobal('fetch', fetchMock);
     render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
     const email = screen.getByPlaceholderText('you@example.com');
-    const password = screen.getByPlaceholderText('••••••••');
+    const password = screen.getByPlaceholderText('Enter your password');
     fireEvent.change(email, { target: { value: 'synthetic@example.invalid' } });
     fireEvent.change(password, { target: { value: 'synthetic-password' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Русский' })[0]);
@@ -284,4 +284,12 @@ it('hides the next login password after registration requests email verification
   fireEvent.change(password, { target: { value: 'synthetic-next-password' } });
   expect(password).toHaveProperty('type', 'password');
   expect(authCalls(fetchMock)).toHaveLength(1);
+});
+
+it('keeps a visible focus ring on the fields and a text-only password placeholder', () => {
+  render(<LocaleProvider initialLocale="en"><LoginPage /></LocaleProvider>);
+  for (const field of [screen.getByPlaceholderText('you@example.com'), screen.getByPlaceholderText('Enter your password')]) {
+    expect(field.className).not.toContain('outline-none');
+    expect(field.className).toContain('focus-visible:outline-2');
+  }
 });
