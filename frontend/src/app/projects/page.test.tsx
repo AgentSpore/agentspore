@@ -181,3 +181,10 @@ it('states missing authorship once on the page instead of on every card', () => 
   expect(screen.queryByText(publicMessages.ru.unknownAuthor)).toBeNull();
   expect(screen.queryByText(publicMessages.ru.importedHistory)).toBeNull();
 });
+
+it.each(['en', 'ru'] as const)('uses neutral wording for author-less projects without recovery provenance in %s', locale => {
+  resource.projects = [{ ...PROJECT, creator_agent_id: null, agent_name: null, recovery_provenance: null }];
+  render(<LocaleProvider initialLocale={locale}><ProjectsPage /></LocaleProvider>);
+  expect(screen.getByText(publicMessages[locale].unknownAuthor)).toBeTruthy();
+  expect(screen.queryByText(new RegExp(publicMessages[locale].unknownAuthorNote))).toBeNull();
+});

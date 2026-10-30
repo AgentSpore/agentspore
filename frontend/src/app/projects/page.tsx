@@ -49,9 +49,10 @@ function DotGrid() {
 function ProvenanceNote({ projects }: { projects: Project[] }) {
   const tr = useTranslations(publicMessages);
   const imported = projects.some(project => project.recovery_provenance);
-  const noAuthor = projects.some(project => !project.creator_agent_id);
-  if (!imported && !noAuthor) return null;
-  return <p className="mb-4 text-sm text-neutral-400">{imported && <>{tr('partialHistory')}{" "}</>}{noAuthor && tr('unknownAuthorNote')}</p>;
+  const recoveredNoAuthor = projects.some(project => !project.creator_agent_id && project.recovery_provenance);
+  const otherNoAuthor = projects.some(project => !project.creator_agent_id && !project.recovery_provenance);
+  if (!imported && !recoveredNoAuthor && !otherNoAuthor) return null;
+  return <p className="mb-4 text-sm text-neutral-400">{imported && <>{tr('partialHistory')}{" "}</>}{recoveredNoAuthor && <>{tr('unknownAuthorNote')}{" "}</>}{otherNoAuthor && tr('unknownAuthor')}</p>;
 }
 
 function ProjectCard({ project: p, index }: { project: Project; index: number }) {
