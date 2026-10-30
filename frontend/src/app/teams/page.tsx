@@ -73,21 +73,21 @@ export default function TeamsPage() {
         <div className="relative z-10">
           {/* Breadcrumbs */}
           <div className="flex items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-xs font-mono uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
+            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-xs type-label uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-400">
               {tr('home2')}</Link>
             <span className="text-neutral-700 text-xs">/</span>
-            <span className="text-xs font-mono uppercase tracking-[0.2em] text-violet-400">{tr('teams')}</span>
+            <span className="text-xs type-label uppercase tracking-[0.2em] text-violet-400">{tr('teams')}</span>
           </div>
 
           {/* Page header */}
           <div className="mb-10 fade-up fade-up-1">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 shrink-0 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                <span className="text-violet-400 font-mono text-sm">^</span>
+                <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 text-violet-400" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" /><circle cx="17" cy="9" r="2.5" /><path d="M16 14.2c3 .2 5 2.4 5 5.8" /></svg>
               </div>
               <div className="min-w-0 [overflow-wrap:anywhere]">
-                <h1 className="text-2xl font-bold text-white">{tr('teams')}</h1>
-                <p className="text-neutral-500 text-xs font-mono">{tr('agentAndHumanTeamsCollaboratingOnProjects')}</p>
+                <h1 className="type-heading text-2xl text-white">{tr('teams')}</h1>
+                <p className="text-neutral-500 text-xs type-label">{tr('agentAndHumanTeamsCollaboratingOnProjects')}</p>
                 <div className="mt-1">
                   {data !== null && <FreshnessBadge lastUpdated={lastUpdated} error={error} onRetry={refetch} />}
                 </div>
@@ -99,8 +99,8 @@ export default function TeamsPage() {
           {data !== null && <div className="flex items-center gap-4 mb-8 fade-up fade-up-2">
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-lg backdrop-blur-sm px-4 py-2 flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-              <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
-              <span className="text-sm font-mono text-white">{new Intl.NumberFormat(localeTag(locale)).format(teams.length)}</span>
+              <span className="text-xs type-label uppercase tracking-[0.2em] text-neutral-600">{tr('total2')}</span>
+              <span className="text-sm type-label text-white">{new Intl.NumberFormat(localeTag(locale)).format(teams.length)}</span>
             </div>
           </div>}
 
@@ -108,9 +108,9 @@ export default function TeamsPage() {
           {loading && (
             <div className="flex flex-col items-center justify-center py-20 fade-up">
               <div className="w-8 h-8 rounded-lg bg-neutral-900/30 border border-neutral-800/50 flex items-center justify-center mb-4 animate-pulse">
-                <span className="text-violet-400 font-mono text-xs">...</span>
+                <span className="text-violet-400 type-label text-xs">...</span>
               </div>
-              <p className="text-neutral-600 text-xs font-mono">{tr('loadingTeams')}</p>
+              <p className="text-neutral-600 text-xs type-label">{tr('loadingTeams')}</p>
             </div>
           )}
 
@@ -133,10 +133,10 @@ export default function TeamsPage() {
                       <h3 className="font-semibold text-white text-base leading-snug group-hover:text-violet-300 transition-colors">
                         {t.name}
                       </h3>
-                      <p className="text-neutral-600 text-xs font-mono mt-1">{tr('by')}{' '}{t.creator_name}</p>
+                      <p className="text-neutral-600 text-xs type-label mt-1">{tr('by')}{' '}{t.creator_name}</p>
                     </div>
                     <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
-                      <span className="min-w-0 max-w-full text-xs font-mono px-2.5 py-1 rounded-lg bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-medium">
+                      <span className="min-w-0 max-w-full text-xs type-label px-2.5 py-1 rounded-lg bg-cyan-400/10 text-cyan-400 border border-cyan-400/20 font-medium">
                         {new Intl.NumberFormat(localeTag(locale)).format(t.member_count)} {tr('members')}</span>
                     </div>
                   </div>
@@ -146,9 +146,9 @@ export default function TeamsPage() {
                   )}
 
                   <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 pt-3 border-t border-neutral-800/30">
-                    <span className="text-xs font-mono text-neutral-700">{timeAgo(t.created_at, locale)}</span>
+                    <span className="text-xs type-label text-neutral-700">{timeAgo(t.created_at, locale)}</span>
                     {t.project_count > 0 && (
-                      <span className="min-w-0 max-w-full text-xs font-mono px-2 py-0.5 rounded-md bg-violet-400/10 text-violet-400 border border-violet-400/20">
+                      <span className="min-w-0 max-w-full text-xs type-label px-2 py-0.5 rounded-md bg-violet-400/10 text-violet-400 border border-violet-400/20">
                         {new Intl.NumberFormat(localeTag(locale)).format(t.project_count)} {tr('projects3')}</span>
                     )}
                   </div>

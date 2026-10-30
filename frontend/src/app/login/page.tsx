@@ -173,7 +173,7 @@ function LoginPageInner() {
   };
 
   const inputClass =
-    "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-400 focus:border-violet-500/50 focus:outline-none font-mono px-4 py-3 text-sm transition-colors";
+    "w-full bg-neutral-900/50 border border-neutral-800/50 rounded-lg text-white placeholder:text-neutral-400 focus:border-violet-500/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 px-4 py-3 text-sm transition-colors";
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -193,7 +193,7 @@ function LoginPageInner() {
         <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-5 sm:p-8">
           {/* Terminal header */}
           {/* Tabs */}
-          <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 mb-6 text-sm font-mono">
+          <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 mb-6 text-sm">
             {(["login", "register"] as const).map(t => (
               <button key={t} type="button" aria-pressed={tab === t} onClick={() => { setTab(t); setPasswordVisible(false); }}
                 className={`min-h-11 flex-1 py-2.5 font-medium transition-colors ${
@@ -210,23 +210,23 @@ function LoginPageInner() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {tab === "register" && (
               <div>
-                <label htmlFor="auth-name" className="block text-xs text-neutral-400 font-mono mb-1.5">{tr('name')}</label>
+                <label htmlFor="auth-name" className="block text-xs text-neutral-400 mb-1.5">{tr('name')}</label>
                 <input id="auth-name" value={name} onChange={e => setName(e.target.value)}
                   placeholder={tr('yourName')} autoComplete="name" required
                   className={inputClass} />
               </div>
             )}
             <div>
-              <label htmlFor="auth-email" className="block text-xs text-neutral-400 font-mono mb-1.5">{tr('email')}</label>
+              <label htmlFor="auth-email" className="block text-xs text-neutral-400 mb-1.5">{tr('email')}</label>
               <input id="auth-email" value={email} onChange={e => setEmail(e.target.value)}
                 type="email" placeholder="you@example.com" autoComplete="email" required
                 className={inputClass} />
             </div>
             <div>
-              <label htmlFor="auth-password" className="block text-xs text-neutral-400 font-mono mb-1.5">{tr('password')}</label>
+              <label htmlFor="auth-password" className="block text-xs text-neutral-400 mb-1.5">{tr('password')}</label>
               <div className="relative">
                 <input id="auth-password" value={password} onChange={e => setPassword(e.target.value)}
-                  type={passwordVisible ? "text" : "password"} placeholder="••••••••" required
+                  type={passwordVisible ? "text" : "password"} placeholder={tr('enterYourPassword')} required
                   autoComplete={tab === "login" ? "current-password" : "new-password"}
                   className={`${inputClass} pr-24`} />
                 <button type="button" aria-controls="auth-password" aria-pressed={passwordVisible}
@@ -240,26 +240,26 @@ function LoginPageInner() {
 
             {tab === "login" && (
               <div className="text-right">
-                <Link href="/forgot-password" className="inline-flex min-h-11 items-center px-1 text-xs text-neutral-400 hover:text-violet-400 transition-colors font-mono">
+                <Link href="/forgot-password" className="inline-flex min-h-11 items-center px-1 text-xs text-neutral-400 hover:text-violet-400 transition-colors">
                   {tr('forgotPassword')}</Link>
               </div>
             )}
 
             {error && (
               <div className="bg-red-950/30 border border-red-800/30 rounded-lg px-4 py-3">
-                <p role="alert" className="text-red-400 text-xs font-mono">{displayAccountLabel(locale, error)}</p>
+                <p role="alert" className="text-red-400 text-xs">{displayAccountLabel(locale, error)}</p>
               </div>
             )}
 
             {loading && slowHint && (
               <div className="bg-amber-950/20 border border-amber-800/30 rounded-lg px-4 py-3">
-                <p className="text-amber-400/90 text-xs font-mono">
+                <p className="text-amber-400/90 text-xs">
                   {tr('serverIsTakingLongerThanUsualHangTight')}</p>
               </div>
             )}
 
             <button type="submit" disabled={loading}
-              className="w-full py-3 rounded-lg text-sm font-mono font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50 flex items-center justify-center gap-2">
+              className="w-full py-3 rounded-lg text-sm font-medium bg-white text-black transition-all hover:bg-neutral-200 disabled:opacity-50 flex items-center justify-center gap-2">
               {loading && (
                 <span className="inline-block w-3.5 h-3.5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
               )}
@@ -273,18 +273,18 @@ function LoginPageInner() {
             <>
               <div className="flex items-center gap-3 my-6">
                 <div className="flex-1 h-px bg-neutral-800/50" />
-                <span className="text-xs text-neutral-400 font-mono">{tr('orSignInWith')}</span>
+                <span className="text-xs text-neutral-400">{tr('orSignInWith')}</span>
                 <div className="flex-1 h-px bg-neutral-800/50" />
               </div>
               <div className="space-y-2.5">
                 {oauth.github && (
                   <a onClick={() => rememberClaimReturn(nextUrl)} href={`${API_URL}/api/v1/oauth/github`}
-                    className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm text-neutral-300">
                     <GithubIcon /> {tr('continueWithGitHub')}</a>
                 )}
                 {oauth.google && (
                   <a onClick={() => rememberClaimReturn(nextUrl)} href={`${API_URL}/api/v1/oauth/google`}
-                    className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
+                    className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm text-neutral-300">
                     <GoogleIcon /> {tr('continueWithGoogle')}</a>
                 )}
               </div>

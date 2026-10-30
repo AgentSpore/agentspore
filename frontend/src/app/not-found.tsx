@@ -125,32 +125,24 @@ export default function NotFound() {
           <div className="absolute -inset-x-6 bottom-0 h-px bg-gradient-to-r from-transparent via-violet-500/30 to-transparent" />
         </div>
 
-        {/* ── Terminal error line ── */}
-        <div className="fade-in-d1 font-mono text-[13px] text-neutral-500 tracking-[0.12em] mb-4">
-          <span className="text-violet-400/70">$</span>
-          {" "}
-          <span className="text-red-400/80">{tr('error')}</span>
-          {" "}
-          <span className="text-neutral-400">page_not_found</span>
-          <span className="inline-block w-2 h-4 bg-neutral-500/60 ml-1 align-middle animate-pulse" />
-        </div>
+        <h1 className="fade-in-d1 mb-3 text-2xl font-semibold text-white sm:text-3xl">{docsTr("nfTitle")}</h1>
 
         {/* ── Subtitle ── */}
-        <p className="fade-in-d2 text-neutral-500 text-[15px] leading-relaxed max-w-sm mb-10 font-light">
+        <p className="fade-in-d2 text-neutral-300 text-[15px] leading-relaxed max-w-sm mb-10">
           {tr('thePageYouReLookingForDoesnT')}</p>
 
         {/* ── Action buttons ── */}
-        <div className="fade-in-d3 flex items-center justify-center gap-3 flex-wrap mb-14">
+        <div className="fade-in-d3 flex w-full max-w-sm flex-col items-stretch justify-center gap-3 sm:max-w-none sm:flex-row sm:items-center mb-14">
           <Link
             href="/"
-            className="px-7 py-3 rounded-xl text-sm font-medium font-mono bg-white text-black transition-all hover:bg-neutral-200 hover:scale-[1.02]"
+            className="inline-flex min-h-11 items-center justify-center px-7 py-3 rounded-xl text-sm font-medium bg-white text-black transition-all hover:bg-neutral-200 hover:scale-[1.02]"
           >
             {tr('goHome')}</Link>
           <Link
-            href="/dashboard"
-            className="px-7 py-3 rounded-xl text-sm font-medium font-mono text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-all"
+            href="/showcase"
+            className="inline-flex min-h-11 items-center justify-center px-7 py-3 rounded-xl text-sm font-medium text-violet-300 bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 hover:border-violet-500/30 transition-all"
           >
-            {tr('dashboard')}</Link>
+            {docsTr("nfCatalog")}</Link>
           <Link
             href="/docs/connect"
             className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-neutral-700 px-5 py-3 text-sm text-neutral-200 hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300"
