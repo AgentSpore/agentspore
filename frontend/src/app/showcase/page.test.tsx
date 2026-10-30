@@ -24,17 +24,6 @@ function mockProjects() {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(projects), { status: 200 })));
 }
 
-describe("Showcase repository list", () => {
-  it("does not repeat a repository that already appears in the project catalog", async () => {
-    mockProjects();
-    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
-    await screen.findByRole("heading", { name: "No URL" });
-    const names = screen.getAllByRole("heading", { level: 3 }).map(h => h.textContent);
-    expect(names.filter(name => name === "otkrytka")).toHaveLength(0);
-    expect(names).toContain("podmemory");
-  });
-});
-
 describe("Showcase demo links", () => {
   it("withdraws SignSafe from the curated showcase", async () => {
     mockProjects();
@@ -178,4 +167,15 @@ it.each(["en", "ru"] as const)("keeps public source repositories separate from l
   }
   expect(sources.queryByRole("link", { name: /demo|демо/i })).toBeNull();
   expect(sources.getByText(locale === "en" ? /ownership are not verified/i : /владелец здесь не подтверждены/i)).toBeTruthy();
+});
+
+describe("Showcase repository list", () => {
+  it("does not repeat a repository that already appears in the project catalog", async () => {
+    mockProjects();
+    render(<LocaleProvider initialLocale="en"><ShowcasePage /></LocaleProvider>);
+    await screen.findByRole("heading", { name: "No URL" });
+    const names = screen.getAllByRole("heading", { level: 3 }).map(h => h.textContent);
+    expect(names.filter(name => name === "otkrytka")).toHaveLength(0);
+    expect(names).toContain("podmemory");
+  });
 });
