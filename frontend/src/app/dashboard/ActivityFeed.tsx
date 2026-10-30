@@ -23,6 +23,39 @@ function SkeletonActivity() {
   );
 }
 
+/** One activity event: icon, author, localized label and heartbeat summary, relative time. */
+function ActivityRow({ ev }: { ev: ActivityEvent }) {
+  const { locale } = useLocale();
+  const tr = useTranslations(publicMessages);
+  const meta = ACTION_META[ev.action_type] ?? { icon: "◆", color: "text-neutral-400", label: "", bg: "bg-neutral-400/10" };
+  const heartbeat = parseHeartbeat(ev.description);
+  const text = heartbeat ? tr('heartbeatSummary', { ...heartbeat, state: displayPublicLabel(locale, heartbeat.state) }) : ev.description;
+  return (
+    <div className="activity-row snap-start flex items-start gap-3 px-4 py-2.5">
+      <div className={`mt-0.5 w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
+        <span className={`text-xs font-bold ${meta.color}`}>{meta.icon}</span>
+      </div>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="flex items-center gap-2 flex-wrap">
+          {ev.agent_id && ev.agent_name ? (
+            <Link href={`/agents/${ev.agent_id}`} onClick={e => e.stopPropagation()}
+              className="inline-flex min-h-11 min-w-11 max-w-full items-center text-[13px] font-medium text-neutral-300 hover:text-white transition-colors truncate">
+              {ev.agent_name}
+            </Link>
+          ) : <span>{tr('unknownAuthor')}</span>}
+          {ev.metadata?.source === "github_public_history" && <span className="text-xs text-neutral-400">{tr('importedHistory')}</span>}
+          <span className={`flex-shrink-0 text-xs px-1.5 py-0.5 rounded font-mono uppercase tracking-wider ${meta.bg} ${meta.color}`}>
+            {displayPublicLabel(locale, meta.label)}
+          </span>
+        </div>
+        <p className="text-xs text-neutral-500 mt-0.5 break-words leading-relaxed">{text}</p>
+        {historySource(ev.metadata) && <a href={historySource(ev.metadata) ?? undefined} className="inline-flex min-h-11 items-center text-xs text-violet-300 underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
+      </div>
+      <span className="flex-shrink-0 text-xs text-neutral-700 font-mono whitespace-nowrap mt-0.5">{timeAgo(ev.ts, locale)}</span>
+    </div>
+  );
+}
+
 /** Live activity terminal: filter toggle, skeleton while empty, scrollable event list. */
 export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
   const { locale } = useLocale();
@@ -32,10 +65,6 @@ export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
     { key: "all", label: tr('all') },
     { key: "actions", label: tr('actions') },
   ] as const;
-  const heartbeatText = (description: string) => {
-    const hb = parseHeartbeat(description);
-    return hb ? tr('heartbeatSummary', { ...hb, state: displayPublicLabel(locale, hb.state) }) : description;
-  };
   return (
     <section id="activity" className="min-w-0 lg:col-span-3">
       {activities.some(event => event.metadata?.source === "github_public_history") && <p className="mb-3 text-xs text-neutral-400">{tr('partialHistory')}</p>}
@@ -79,33 +108,7 @@ export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
           <div tabIndex={0} role="region" aria-label={tr('activityTimeline')} className="divide-y divide-neutral-800/30 max-h-[520px] overflow-y-auto snap-y snap-proximity scrollbar-thin focus-visible:outline-2 focus-visible:outline-violet-300">
             {activities.filter(ev =>
               actFilter === "all" || ev.action_type !== "heartbeat"
-            ).map((ev, i) => {
-              const meta = ACTION_META[ev.action_type] ?? { icon: "◆", color: "text-neutral-400", label: "", bg: "bg-neutral-400/10" };
-              return (
-                <div key={ev.id ?? i} className="activity-row snap-start flex items-start gap-3 px-4 py-2.5">
-                  <div className={`mt-0.5 w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${meta.bg}`}>
-                    <span className={`text-xs font-bold ${meta.color}`}>{meta.icon}</span>
-                  </div>
-                  <div className="flex-1 min-w-0 overflow-hidden">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {ev.agent_id && ev.agent_name ? (
-                        <Link href={`/agents/${ev.agent_id}`} onClick={e => e.stopPropagation()}
-                          className="inline-flex min-h-11 min-w-11 max-w-full items-center text-[13px] font-medium text-neutral-300 hover:text-white transition-colors truncate">
-                          {ev.agent_name}
-                        </Link>
-                      ) : <span>{tr('unknownAuthor')}</span>}
-                      {ev.metadata?.source === "github_public_history" && <span className="text-xs text-neutral-400">{tr('importedHistory')}</span>}
-                      <span className={`flex-shrink-0 text-xs px-1.5 py-0.5 rounded font-mono uppercase tracking-wider ${meta.bg} ${meta.color}`}>
-                        {displayPublicLabel(locale, meta.label)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-neutral-500 mt-0.5 break-words leading-relaxed">{heartbeatText(ev.description)}</p>
-                    {historySource(ev.metadata) && <a href={historySource(ev.metadata) ?? undefined} className="inline-flex min-h-11 items-center text-xs text-violet-300 underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
-                  </div>
-                  <span className="flex-shrink-0 text-xs text-neutral-700 font-mono whitespace-nowrap mt-0.5">{timeAgo(ev.ts, locale)}</span>
-                </div>
-              );
-            })}
+            ).map((ev, i) => <ActivityRow key={ev.id ?? i} ev={ev} />)}
           </div>
         )}
       </div>
