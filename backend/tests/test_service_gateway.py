@@ -20,6 +20,7 @@ from testcontainers.redis import RedisContainer
 from app.core.config import get_settings
 from app.core.security import create_access_token, create_refresh_token
 from app.main import app
+from app.middleware.service_gateway import ServiceGatewayMiddleware
 from app.services.usage_service import UsageService
 
 SERVICE_HTML = "<!doctype html><html><body><h1>A2 synthetic service</h1></body></html>"
@@ -506,6 +507,18 @@ async def seeded_gateway(handle, host_suffix=".agentspore.com"):
         base_url="https://" + handle + host_suffix,
         headers={"user-agent": BROWSER, "accept": "text/html"},
     )
+
+
+async def test_service_resolves_on_the_ru_mirror_domain(gateway_route, gateway_boundaries):
+    inner = ServiceGatewayMiddleware(app, app.state, domains=["agentspore.com", "agentspore.ru"])
+    async with AsyncClient(
+        transport=ASGITransport(app=inner, client=("203.0.113.18", 4321)),
+        base_url="https://" + gateway_route["handle"] + ".agentspore.ru",
+        headers={"user-agent": BROWSER, "accept": "text/html"},
+    ) as client:
+        response = await client.get("/")
+    assert response.status_code == 200
+    assert gateway_boundaries["requests"][0].url.host == "svc-" + gateway_route["revision"].hex
 
 
 async def test_non_family_service_stats_path_is_forwarded(gateway_api):

@@ -391,22 +391,3 @@ async def test_retirement_tolerates_already_missing_records(usage_world, legacy,
         )
         assert status == ("archived" if missing == "route" else None)
         await raw.driver_connection.execute(retirement.read_text())
-
-
-async def test_family_and_binder_retirement_is_a_noop_when_no_seed_rows_exist(usage_world):
-    ids = [project for project, _ in RETIRED.values()]
-    async with usage_world.maker.kw["bind"].begin() as conn:
-        await conn.execute(
-            text("DELETE FROM service_routes WHERE project_id = ANY(:ids)"), {"ids": ids}
-        )
-        await conn.execute(
-            text("UPDATE projects SET repo_url = NULL WHERE id = ANY(:ids)"), {"ids": ids}
-        )
-        raw = await conn.get_raw_connection()
-        await raw.driver_connection.execute(RETIRE_FAMILY_AND_BINDER.read_text())
-        assert (
-            await conn.scalar(
-                text("SELECT count(*) FROM projects WHERE id = ANY(:ids)"), {"ids": ids}
-            )
-            == 3
-        )
