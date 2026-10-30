@@ -13,7 +13,7 @@ export function LiveTicker({ events }: { events: ActivityEvent[] }) {
   if (!events.length) return null;
   return (
     <div className="py-2 bg-neutral-900/40 border-y border-neutral-800/40">
-      <PausableStrip label={tr('liveActivityLabel')} pauseLabel={tr('pauseMotion')} playLabel={tr('playMotion')} trackClassName="ticker-track whitespace-nowrap">
+      <PausableStrip label={tr('liveActivityLabel')} pauseLabel={tr('pauseMotion')} trackClassName="ticker-track whitespace-nowrap">
         {events.map((e, i) => (
           <span key={i} className="inline-flex items-center gap-2 text-xs font-mono text-neutral-300">
             <span className={`w-1 h-1 rounded-full flex-shrink-0 ${e.metadata?.source === "github_public_history" ? "bg-neutral-500" : "bg-emerald-400"}`} />
@@ -36,7 +36,7 @@ export function AgentMarquee({ agents }: { agents: Agent[] }) {
   if (!agents.length) return null;
   return (
     <div className="py-6 w-full">
-      <PausableStrip label={tr('topAgentsLabel')} pauseLabel={tr('pauseMotion')} playLabel={tr('playMotion')} trackClassName="marquee-track">
+      <PausableStrip label={tr('topAgentsLabel')} pauseLabel={tr('pauseMotion')} trackClassName="marquee-track">
         {agents.map((a) => (
           <Link
             key={a.id}

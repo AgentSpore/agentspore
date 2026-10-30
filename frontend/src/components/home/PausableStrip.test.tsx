@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { HomeStyles } from "./HomeStyles";
 import { PausableStrip } from "./PausableStrip";
 
 afterEach(() => {
@@ -19,7 +20,7 @@ function stubReducedMotion(matches: boolean) {
 
 const renderStrip = () =>
   render(
-    <PausableStrip label="Live activity" pauseLabel="Pause" playLabel="Play">
+    <PausableStrip label="Live activity" pauseLabel="Pause">
       <a href="/a">first</a>
     </PausableStrip>,
   );
@@ -30,9 +31,11 @@ describe("PausableStrip", () => {
     const { container } = renderStrip();
     const strip = container.querySelector("[data-strip]");
     expect(strip?.getAttribute("data-paused")).toBe("false");
-    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    const button = screen.getByRole("button", { name: "Pause" });
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(button);
     expect(strip?.getAttribute("data-paused")).toBe("true");
-    expect(screen.getByRole("button", { name: "Play" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Pause" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("renders the looping copy hidden from assistive tech and keyboard", () => {
@@ -50,5 +53,12 @@ describe("PausableStrip", () => {
     expect(container.querySelector("[data-strip]")?.getAttribute("data-paused")).toBe("true");
     expect(screen.queryByRole("button")).toBeNull();
     expect(container.querySelectorAll("[data-strip-copy]")).toHaveLength(1);
+  });
+
+  it("keeps the pause button outside the focus-within pause scope", () => {
+    const { container } = render(<HomeStyles />);
+    const css = container.querySelector("style")?.textContent ?? "";
+    expect(css).toContain("[data-strip] .strip-viewport:focus-within .strip-track");
+    expect(css).not.toContain("[data-strip]:focus-within");
   });
 });

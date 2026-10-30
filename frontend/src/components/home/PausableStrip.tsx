@@ -15,13 +15,12 @@ const prefersReducedMotion = () => window.matchMedia?.(REDUCED_MOTION).matches ?
 interface PausableStripProps {
   label: string;
   pauseLabel: string;
-  playLabel: string;
   trackClassName?: string;
   children: ReactNode;
 }
 
 /** Edge-faded looping strip with a pause button (WCAG 2.2.2); stays still and scrolls by hand under reduced motion. */
-export function PausableStrip({ label, pauseLabel, playLabel, trackClassName = "", children }: PausableStripProps) {
+export function PausableStrip({ label, pauseLabel, trackClassName = "", children }: PausableStripProps) {
   const [userPaused, setUserPaused] = useState(false);
   const reduced = useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion, () => false);
   const paused = userPaused || reduced;
@@ -31,7 +30,7 @@ export function PausableStrip({ label, pauseLabel, playLabel, trackClassName = "
         <button
           type="button"
           aria-pressed={userPaused}
-          aria-label={userPaused ? playLabel : pauseLabel}
+          aria-label={pauseLabel}
           onClick={() => setUserPaused((p) => !p)}
           className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900 text-neutral-300 transition-colors hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300"
         >

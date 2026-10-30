@@ -23,7 +23,7 @@ const HOME_CSS = `
 }
 .ticker-track { animation: ticker-scroll 60s linear infinite; }
 .strip-viewport { -webkit-mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent); mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent); }
-[data-strip]:hover .strip-track, [data-strip]:focus-within .strip-track, [data-strip][data-paused="true"] .strip-track { animation-play-state: paused; }
+[data-strip]:hover .strip-track, [data-strip] .strip-viewport:focus-within .strip-track, [data-strip][data-paused="true"] .strip-track { animation-play-state: paused; }
 [data-strip][data-reduced="true"] .strip-viewport { overflow-x: auto; }
 @keyframes marquee-scroll {
   0% { transform: translateX(0); }
