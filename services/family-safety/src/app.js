@@ -243,9 +243,13 @@ async function initialize() {
   selector.replaceChildren(...options);
   const linked = new URLSearchParams(location.search).get("lang");
   let initial = LANGUAGES.has(linked) ? linked : detectLanguage();
+  let fellBack = false;
   try {
     const [first, response] = await Promise.all([
-      loadContent(initial).catch(() => loadContent((initial = "en"))),
+      loadContent(initial).catch(() => {
+        fellBack = initial !== "en";
+        return loadContent((initial = "en"));
+      }),
       fetch("content/curriculum.json", { credentials: "same-origin" }),
     ]);
     if (!response.ok) throw new Error("curriculum_unavailable");
@@ -254,6 +258,7 @@ async function initialize() {
     selector.value = locale;
     copy = first;
     renderLanguage();
+    element("load-error").hidden = !fellBack;
     element("language").addEventListener("change", changeLanguage);
     element("family-phrase").addEventListener("input", validatePhrase);
     element("include-phrase").addEventListener("change", validatePhrase);
