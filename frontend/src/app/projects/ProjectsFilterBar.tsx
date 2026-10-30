@@ -6,7 +6,27 @@ import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { displayPublicLabel, publicMessages } from "@/lib/i18n/public";
 import { activeFilterCount, type ProjectFilters } from "./projectFilters";
 
+const STATUSES = ["all", "deployed", "building", "review", "proposed", "archived"];
+const TIMES = ["all", "24h", "7d", "30d"] as const;
+const SORTS = ["newest", "stars", "votes"] as const;
 const CATEGORIES = ["all", "productivity", "saas", "ai", "fintech", "devtools", "social", "other"];
+
+interface SegmentedProps<T extends string> {
+  cols: string; label?: string; value: T; onSelect: (value: T) => void; options: readonly { value: T; label: string }[];
+}
+
+function Segmented<T extends string>({ cols, label, value, onSelect, options }: SegmentedProps<T>) {
+  return (
+    <div role={label ? "group" : undefined} aria-label={label} className={`grid ${cols} overflow-hidden rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm sm:flex`}>
+      {options.map(o => (
+        <button key={o.value} aria-pressed={value === o.value} onClick={() => onSelect(o.value)}
+          className={`min-h-11 min-w-11 whitespace-nowrap px-3 py-2 transition-colors ${value === o.value ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /** Search stays visible; the filter groups collapse behind a toggle on narrow screens. */
 export function ProjectsFilterBar({ filters, onChange }: { filters: ProjectFilters; onChange: (patch: Partial<ProjectFilters>) => void }) {
@@ -30,30 +50,12 @@ export function ProjectsFilterBar({ filters, onChange }: { filters: ProjectFilte
         </button>
       </div>
       <div id="project-filters" className={`${filtersOpen ? "flex" : "hidden"} flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center`}>
-        <div role="group" aria-label={docsTr("projectStatusFilter")} className="grid grid-cols-3 overflow-hidden rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm sm:flex">
-          {["all", "deployed", "building", "review", "proposed", "archived"].map(s => (
-            <button key={s} aria-pressed={filters.status === s} onClick={() => onChange({ status: s })}
-              className={`min-h-11 min-w-11 whitespace-nowrap px-3 py-2 transition-colors ${filters.status === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
-              {displayPublicLabel(locale, s)}
-            </button>
-          ))}
-        </div>
-        <div className="grid grid-cols-4 overflow-hidden rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm sm:flex">
-          {(["all", "24h", "7d", "30d"] as const).map(t => (
-            <button key={t} aria-pressed={filters.time === t} onClick={() => onChange({ time: t })}
-              className={`min-h-11 min-w-11 px-3 py-2 transition-colors ${filters.time === t ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
-              {displayPublicLabel(locale, t)}
-            </button>
-          ))}
-        </div>
-        <div className="grid grid-cols-3 overflow-hidden rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm sm:flex">
-          {(["newest", "stars", "votes"] as const).map(s => (
-            <button key={s} aria-pressed={filters.sort === s} onClick={() => onChange({ sort: s })}
-              className={`min-h-11 min-w-11 px-3 py-2 transition-colors ${filters.sort === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
-              {displayPublicLabel(locale, s === "stars" ? "stars" : s === "votes" ? "votes" : "new")}
-            </button>
-          ))}
-        </div>
+        <Segmented cols="grid-cols-3" label={docsTr("projectStatusFilter")} value={filters.status} onSelect={status => onChange({ status })}
+          options={STATUSES.map(v => ({ value: v, label: displayPublicLabel(locale, v) }))} />
+        <Segmented cols="grid-cols-4" value={filters.time} onSelect={time => onChange({ time })}
+          options={TIMES.map(v => ({ value: v, label: displayPublicLabel(locale, v) }))} />
+        <Segmented cols="grid-cols-3" value={filters.sort} onSelect={sort => onChange({ sort })}
+          options={SORTS.map(v => ({ value: v, label: displayPublicLabel(locale, v === "newest" ? "new" : v) }))} />
         <div role="group" aria-label={docsTr("projectCategoryFilter")} className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap">
           {CATEGORIES.map(c => (
             <button key={c} aria-pressed={filters.category === c} onClick={() => onChange({ category: c })}
