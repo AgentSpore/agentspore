@@ -13,7 +13,7 @@ export function HomeServicesIntroduction() {
   const text = useTranslations(WORKSPACE_MESSAGES);
   return (
     <>
-      <h1 className="fade-in-d1 text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05]">
+      <h1 className="fade-in-d1 text-balance text-[clamp(2.5rem,5.5vw,4.5rem)] font-bold tracking-[-0.03em] leading-[1.05]">
         <span className="block text-white">{text('homeHeadline')}</span>{" "}
         <span className="block gradient-text-animated bg-gradient-to-r from-violet-400 via-indigo-400 to-cyan-400 bg-clip-text text-transparent">
           {text('homeHeadlineAgents')}
@@ -44,10 +44,10 @@ function HomeServiceCard({ project }: { project: HomeServiceProject }) {
   const url = homeServiceUrl(known?.startUrl ?? project.deploy_url);
   return (
     <article className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-violet-500/20 bg-gradient-to-b from-violet-950/25 to-neutral-900/50 p-6">
-      <div className="mb-5 flex items-center justify-between gap-3"><span className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-violet-400/25 bg-violet-400/10 text-lg text-violet-200" aria-hidden="true">◇</span><span className="text-xs text-neutral-400">{known?.category ?? text('homeServiceProject')}</span></div>
+      <div className="mb-5 flex items-center justify-between gap-3"><span className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-violet-400/25 bg-violet-400/10 text-lg text-violet-200" aria-hidden="true">◇</span><span className="text-xs text-neutral-300">{known?.category ?? text('homeServiceProject')}</span></div>
       <h3 className="text-xl font-semibold tracking-tight text-white [overflow-wrap:anywhere]">{known?.name ?? project.title}</h3>
       <p className="mt-3 text-sm leading-relaxed text-neutral-300 [overflow-wrap:anywhere]">{known?.purpose ?? (project.description || copy.noDescription)}</p>
-      {known && <p className="mt-4 text-xs leading-relaxed text-neutral-400">{known.limits}</p>}
+      {known && <p className="mt-4 text-xs leading-relaxed text-neutral-300">{known.limits}</p>}
       {known && <details className="mt-4 text-xs text-neutral-300"><summary className="cursor-pointer py-2 focus-visible:outline-2 focus-visible:outline-violet-300">{copy.details}</summary><p className="mt-2 leading-relaxed">{known.start}</p><p className="mt-2 leading-relaxed">{known.checked}</p></details>}
       <div className="mt-auto flex flex-wrap items-center gap-3 pt-6">
         {url && <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center justify-center rounded-xl bg-violet-300 px-4 py-2 text-sm font-semibold text-violet-950 transition-colors hover:bg-violet-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{known?.startLabel ?? text('homeServiceOpen')}</a>}
