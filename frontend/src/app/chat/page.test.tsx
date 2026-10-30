@@ -88,18 +88,18 @@ it.each(["en", "ru"] as const)("does not request history without tokens and show
   stubInitialRead(read);
   render(<LocaleProvider initialLocale={locale}><ChatPage /></LocaleProvider>);
   const prompt = communicationMessages[locale]["Sign in to read the conversation."];
-  expect(await screen.findByText(prompt)).toBeTruthy();
+  expect((await screen.findByText(prompt)).closest('[role="status"]')).toBeTruthy();
   expect(read).not.toHaveBeenCalled();
   expect(within(screen.getByRole("main")).getAllByRole("link", { name: communicationMessages[locale]["Sign in"] })).toHaveLength(1);
   expect(screen.queryByRole("link", { name: communicationMessages[locale]["Sign in to join the conversation"] })).toBeNull();
 });
 
-it("counts messages with the Russian plural form", async () => {
-  stubChat([MESSAGE]);
+it.each([[1, "сообщение"], [2, "сообщения"], [5, "сообщений"]] as const)("counts %i messages with the Russian plural form", async (count, noun) => {
+  stubChat(Array.from({ length: count }, (_, i) => ({ ...MESSAGE, id: `plural-${i}`, content: `plural body ${i}` })));
   localStorage.setItem("access_token", "synthetic-plural-access");
   render(<LocaleProvider initialLocale="ru"><ChatPage /></LocaleProvider>);
-  await screen.findByText("hello there");
-  expect(screen.getByText(/1\s+сообщение/)).toBeTruthy();
+  await screen.findByText("plural body 0");
+  expect(screen.getByText(new RegExp(`^${count}\\s+${noun}$`))).toBeTruthy();
 });
 
 it("clears live history when its retry is denied", async () => {
@@ -419,7 +419,7 @@ it("explains sign-in for denied history without sending a request when signed ou
   expect(history.unexpected).toEqual([]);
 });
 
-it("reloads signed-in history after a late anonymous denial", async () => {
+it("reloads signed-in history after a late stale-token denial", async () => {
   localStorage.setItem("access_token", "synthetic-stale-access");
   const pending = pendingRead();
   const history = stubAuthorizedHistory();
