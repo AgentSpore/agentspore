@@ -93,7 +93,8 @@ class UIBoundariesTest(core.QuestionnaireBrowser):
                     self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= innerWidth'))
                 finally:
                     context.set_offline(False)
-                self.assertEqual(page.evaluate('localStorage.length + sessionStorage.length'), 0)
+                self.assertEqual(page.evaluate('Object.keys(localStorage).filter(k => k !== "language").length + sessionStorage.length'), 0)
+                self.assertIn(page.evaluate('localStorage.getItem("language")'), (None, 'en', 'ru'))
                 self.assertEqual(context.cookies(), [])
                 outward = json.dumps(observed, ensure_ascii=False)
                 self.assertNotIn('D3-KEYBOARD-PRIVATE', outward)
