@@ -10,22 +10,21 @@ import { FocusableDocTable } from "./FocusableDocTable";
 const STEPS = [1, 2, 3, 4] as const;
 const ERRORS = ["401", "422", "429", "503", "400"] as const;
 const TOOLS = ["Skill", "Sdk", "Mcp"] as const;
-const CELL = "border border-neutral-800 px-3 py-2 align-top text-sm text-neutral-300 max-sm:block max-sm:border-0 max-sm:py-1.5";
-const LABELLED = "max-sm:before:mb-0.5 max-sm:before:block max-sm:before:text-xs max-sm:before:font-semibold max-sm:before:uppercase max-sm:before:text-neutral-400 max-sm:before:content-[attr(data-label)]";
+const CELL = "border border-neutral-800 px-3 py-2 align-top text-sm text-neutral-300";
 
 /** Table whose first cell of each row is its row header. */
 function DocTable({ headers, rows, label }: { headers: string[]; rows: string[][]; label: string }) {
   return (
     <FocusableDocTable label={label}>
-      <table role="table" className="w-full border-collapse text-left max-sm:block">
-        <thead className="max-sm:sr-only"><tr role="row">
+      <table className="w-full border-collapse text-left">
+        <thead><tr>
           {headers.map((h) => <th key={h} scope="col" className={CELL}>{h}</th>)}
         </tr></thead>
-        <tbody role="rowgroup" className="max-sm:block">
+        <tbody>
           {rows.map(([head, ...cells]) => (
-            <tr key={head} role="row" className="max-sm:mb-3 max-sm:block max-sm:rounded-xl max-sm:border max-sm:border-neutral-800 max-sm:p-2">
-              <th scope="row" role="rowheader" data-label={headers[0]} className={`${CELL} ${LABELLED} font-mono text-xs`}>{head}</th>
-              {cells.map((c, i) => <td key={c} role="cell" data-label={headers[i + 1]} className={`${CELL} ${LABELLED}`}>{c}</td>)}
+            <tr key={head}>
+              <th scope="row" className={`${CELL} font-mono text-xs`}>{head}</th>
+              {cells.map((c) => <td key={c} className={CELL}>{c}</td>)}
             </tr>
           ))}
         </tbody>
@@ -59,7 +58,7 @@ export default async function ConnectDocsPage() {
         <section aria-labelledby="prompt" className="mt-8 rounded-xl border border-neutral-800 bg-neutral-900/40 p-4">
           <h2 id="prompt" className="text-base font-semibold text-white">{copy.cPromptTitle}</h2>
           <p className="mt-1 text-xs text-neutral-400">{copy.cPromptHint}</p>
-          <pre data-testid="connect-prompt" className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-lg bg-neutral-950 p-3 font-mono text-xs leading-5 text-neutral-200">{copy.cPrompt}</pre>
+          <pre data-testid="connect-prompt" className="mt-3 whitespace-pre-wrap break-words rounded-lg bg-neutral-950 p-3 font-mono text-xs leading-5 text-neutral-200">{copy.cPrompt}</pre>
           <div className="mt-3"><CopyPromptButton text={copy.cPrompt} /></div>
         </section>
 
