@@ -49,6 +49,29 @@ function formatText(key, values = {}) {
   return copy.ui[key].replace(/\{(\w+)\}/g, (token, name) => values[name] ?? token);
 }
 
+function rememberLanguage(language) {
+  try { localStorage.setItem("language", language); } catch {}
+}
+
+function storedLanguage() {
+  try { return localStorage.getItem("language"); } catch { return null; }
+}
+
+function catalogFor(tag) {
+  const [primary, ...rest] = String(tag).toLowerCase().split("-");
+  const alias = { iw: "he", fil: "tl" }[primary] ?? primary;
+  if (alias === "zh") return rest.some((part) => ["hant", "tw", "hk", "mo"].includes(part)) ? null : "zh-Hans";
+  return LANGUAGES.has(alias) ? alias : null;
+}
+
+function detectLanguage() {
+  const stored = storedLanguage();
+  if (LANGUAGES.has(stored)) return stored;
+  if (/\.ru\.?$/i.test(location.hostname)) return "ru";
+  const preferred = navigator.languages?.length ? navigator.languages : [navigator.language];
+  return preferred.map(catalogFor).find(Boolean) ?? "en";
+}
+
 async function loadContent(language) {
   if (!LANGUAGES.has(language)) throw new Error("unsupported_language");
   if (translations.has(language)) return translations.get(language);
@@ -145,6 +168,7 @@ async function changeLanguage() {
     if (request !== localeRequest) return;
     locale = requested;
     copy = nextCopy;
+    rememberLanguage(locale);
     element("load-error").hidden = true;
     renderLanguage();
   } catch {
@@ -217,15 +241,24 @@ async function initialize() {
     return option;
   });
   selector.replaceChildren(...options);
-  selector.value = locale;
+  const linked = new URLSearchParams(location.search).get("lang");
+  let initial = LANGUAGES.has(linked) ? linked : detectLanguage();
+  let fellBack = false;
   try {
-    const [english, response] = await Promise.all([
-      loadContent("en"), fetch("content/curriculum.json", { credentials: "same-origin" }),
+    const [first, response] = await Promise.all([
+      loadContent(initial).catch(() => {
+        fellBack = initial !== "en";
+        return loadContent((initial = "en"));
+      }),
+      fetch("content/curriculum.json", { credentials: "same-origin" }),
     ]);
     if (!response.ok) throw new Error("curriculum_unavailable");
     curriculum = await response.json();
-    copy = english;
+    locale = initial;
+    selector.value = locale;
+    copy = first;
     renderLanguage();
+    element("load-error").hidden = !fellBack;
     element("language").addEventListener("change", changeLanguage);
     element("family-phrase").addEventListener("input", validatePhrase);
     element("include-phrase").addEventListener("change", validatePhrase);
@@ -237,11 +270,6 @@ async function initialize() {
     element("pause-verify").addEventListener("click", () => answerRound(true));
     element("ordinary-request").addEventListener("click", () => answerRound(false));
     element("next-round").addEventListener("click", nextRound);
-    const preferred = new URLSearchParams(location.search).get("lang");
-    if (LANGUAGES.has(preferred) && preferred !== locale) {
-      selector.value = preferred;
-      await changeLanguage();
-    }
     element("start-training").disabled = false;
     selector.disabled = false;
   } catch {
