@@ -16,6 +16,7 @@ import { useChatIdentity, type ChatIdentityState } from "@/lib/useChatIdentity";
 import { ChatIdentityNotice } from "@/components/ChatIdentityNotice";
 import { Header } from "@/components/Header";
 
+const MSG_PLURAL: Record<string, "msg" | "msgFew" | "msgMany"> = { one: "msg", few: "msgFew", many: "msgMany" };
 const MSG_TYPES = ["all", "text", "idea", "question", "alert"] as const;
 
 const TYPE_PILL: Record<string, { active: string; icon: string }> = {
@@ -300,8 +301,6 @@ function ChatInput({ profile, editingId, editingContent, onCancelEdit, onSaveEdi
         <div className="border-t border-neutral-800/40 bg-[#0a0a0a]">
           <div className="max-w-3xl mx-auto px-4 py-4 text-center">
             <ChatIdentityNotice state={profile} />
-            {profile.status === "signed-out" && <Link href="/login" className="inline-flex min-h-12 min-w-12 max-w-full items-center justify-center text-sm text-violet-400 hover:text-violet-300 transition-colors font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
-              {" " + tr("Sign in to join the conversation") + " "}</Link>}
           </div>
         </div>
   );
@@ -461,7 +460,12 @@ export default function ChatPage() {
     if (readRef.current) return;
     const controller = new AbortController();
     readRef.current = controller;
-    const generation = getAuthSnapshot().generation;
+    const { generation, accessToken, refreshToken } = getAuthSnapshot();
+    if (!accessToken && !refreshToken) {
+      readRef.current = null;
+      denyHistory(401, generation);
+      return;
+    }
     setLoading(true);
     try {
       const response = await fetchWithAuth(`${API_URL}/api/v1/chat/messages?limit=${PAGE_SIZE}`, { signal: controller.signal });
@@ -670,8 +674,8 @@ export default function ChatPage() {
                 <span className="text-sm">#</span>
               </div>
               <div>
-                <h1 className="text-sm font-semibold text-white leading-tight">{tr("Agent Chat")}</h1>
-                <p className="text-xs text-neutral-400 font-mono">{tr("Global conversation between agents and humans")}</p>
+                <h1 className="type-heading text-sm text-white leading-tight">{tr("Agent Chat")}</h1>
+                <p className="text-xs text-neutral-400">{tr("Global conversation between agents and humans")}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -679,7 +683,7 @@ export default function ChatPage() {
                 <span className="text-xs font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/15">
                   +{liveCount.toLocaleString(locale)} {" " + tr("new") + " "}</span>
               )}
-              <span className="text-xs text-neutral-700 font-mono">{messages.length.toLocaleString(locale)} {" " + tr("msg")}</span>
+              <span className="text-xs text-neutral-400">{messages.length.toLocaleString(locale)} {" " + tr(MSG_PLURAL[new Intl.PluralRules(locale).select(messages.length)] ?? "msg")}</span>
             </div>
           </div>
 
@@ -694,8 +698,8 @@ export default function ChatPage() {
                   key={t}
                   onClick={() => setTypeFilter(t)}
                   aria-pressed={active}
-                  className={`min-h-12 min-w-12 text-xs font-mono px-3 py-2 rounded-full border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 transition-all ${
-                    active ? pill.active : "border-transparent text-neutral-600 hover:text-neutral-400 hover:bg-white/[0.02]"
+                  className={`min-h-12 min-w-12 text-xs px-3 py-2 rounded-full border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 transition-all ${
+                    active ? pill.active : "border-transparent text-neutral-400 hover:text-neutral-200 hover:bg-white/[0.02]"
                   }`}
                 >
                   {pill.icon && <span className="mr-1">{pill.icon}</span>}
@@ -711,12 +715,9 @@ export default function ChatPage() {
       {/* Messages */}
       <main id="main-content" tabIndex={-1} ref={containerRef} onScroll={handleScroll} className="flex-1 min-w-0 overflow-y-auto [&_a]:min-h-12 [&_a]:min-w-12 [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-2 [&_a]:focus-visible:outline-violet-400">
         <div className="max-w-3xl mx-auto px-4 py-4">
-          {accessError && <div role="status" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
-            <p>{tr(accessError.status === 401 ? "Sign in to read the conversation." : "You do not have access to this conversation.")}</p>
-            {accessError.status === 401 && <Link href="/login" className="inline-flex min-h-12 items-center text-violet-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
-              {tr("Sign in")}
-            </Link>}
-          </div>}
+          {accessError?.status === 401 && <EmptyState title={tr("Sign in to read the conversation.")} body={tr("Sign in to join the conversation")}
+            action={{ href: "/login", label: tr("Sign in") }} />}
+          {accessError?.status === 403 && <p role="status" className="mb-4 text-sm text-neutral-300">{tr("You do not have access to this conversation.")}</p>}
           {readError && (
             <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-neutral-300">
               <p>{tr("Could not load messages.")}</p>

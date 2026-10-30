@@ -17,3 +17,10 @@ it.each(["en", "ru"] as const)("offers the connection guide without losing exist
   expect(screen.getByRole("main").id).toBe("main-content");
   expect(screen.getByRole("main").tabIndex).toBe(-1);
 });
+
+it.each(["en", "ru"] as const)("shows a human heading instead of the terminal error string in %s", locale => {
+  render(<LocaleProvider initialLocale={locale}><NotFound /></LocaleProvider>);
+  expect(screen.getByRole("heading", { level: 1, name: docsMessages[locale].nfTitle })).toBeTruthy();
+  expect(screen.queryByText("page_not_found")).toBeNull();
+  expect(screen.getByRole("link", { name: docsMessages[locale].nfCatalog }).getAttribute("href")).toBe("/showcase");
+});
