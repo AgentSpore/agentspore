@@ -1,10 +1,10 @@
 """Internal gateway visit metadata and public service usage aggregates."""
 
 from datetime import date
-from typing import Literal, Self
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UsageVisit(BaseModel):
@@ -75,7 +75,6 @@ class ServiceRoute(BaseModel):
     project_id: UUID
     handle: str
     active_revision: UUID
-    metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
 
 
 class GatewayVisit(UsageVisit):
@@ -108,47 +107,3 @@ class ServiceEventMetrics(BaseModel):
 
     period_days: Literal[7] = 7
     groups: list[ServiceEventGroup]
-
-
-BinderSection = Literal["contacts", "home", "documents", "accounts", "care", "overview"]
-
-
-class BinderEvent(BaseModel):
-    """Fixed action dimensions; no country, input or individual identifier is accepted."""
-
-    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
-    event: Literal[
-        "folder_open", "section_open", "section_complete", "print_request", "backup_download"
-    ]
-    section: BinderSection
-    lang: Literal["en", "ru"]
-
-    @model_validator(mode="after")
-    def require_matching_section(self) -> Self:
-        """Restrict section actions to sections and folder actions to overview."""
-        is_section_event = self.event in {"section_open", "section_complete"}
-        if is_section_event and self.section == "overview":
-            raise ValueError("Section action requires an actual section")
-        if not is_section_event and self.section != "overview":
-            raise ValueError("Folder action requires overview")
-        return self
-
-
-class BinderEventGroup(BaseModel):
-    """Action totals per section and language; the action ratio may exceed one."""
-
-    section: BinderSection
-    lang: Literal["en", "ru"]
-    folder_open: int = Field(ge=0)
-    section_open: int = Field(ge=0)
-    section_complete: int = Field(ge=0)
-    print_request: int = Field(ge=0)
-    backup_download: int = Field(ge=0)
-    completion_open_ratio: float | None = Field(ge=0)
-
-
-class BinderEventMetrics(BaseModel):
-    """Only populated section/language groups from seven UTC calendar days."""
-
-    period_days: Literal[7] = 7
-    groups: list[BinderEventGroup]

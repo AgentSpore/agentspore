@@ -7,7 +7,6 @@ from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.usage import (
-    BinderEvent,
     ProjectUsage,
     ServiceEvent,
     UsageD7,
@@ -153,10 +152,6 @@ class UsageRepository:
             {"oldest": today - timedelta(days=7)},
         )
         await self.db.execute(
-            text("DELETE FROM emergency_binder_event_counts WHERE event_day < :oldest"),
-            {"oldest": today - timedelta(days=7)},
-        )
-        await self.db.execute(
             text("DELETE FROM service_action_receipts WHERE action_day < :oldest"),
             {"oldest": today - timedelta(days=7)},
         )
@@ -180,9 +175,9 @@ class UsageRepository:
         )
 
     async def project_creator(self, project_id: UUID) -> RowMapping | None:
-        """Read the creator and profile before any creator-only event aggregate."""
+        """Read the creator before any creator-only event aggregate."""
         result = await self.db.execute(
-            text("SELECT creator_agent_id, metrics_profile FROM projects WHERE id=:id"),
+            text("SELECT creator_agent_id FROM projects WHERE id=:id"),
             {"id": project_id},
         )
         return result.mappings().first()
@@ -200,47 +195,6 @@ class UsageRepository:
               AND event_day BETWEEN :start AND :today
             GROUP BY model,lang ORDER BY model,lang
         """),
-            {"project": project_id, "start": today - timedelta(days=6), "today": today},
-        )
-        return list(rows.mappings())
-
-    async def record_binder_event(
-        self, project_id: UUID, event: BinderEvent, identity: UUID | None, today: date
-    ) -> None:
-        """Increment an authoritative profiled action while excluding the verified owner."""
-        await self.db.execute(
-            text("""
-                INSERT INTO emergency_binder_event_counts
-                    (project_id, event_day, event, section, lang, count)
-                SELECT p.id, :today, :event, :section, :lang, 1
-                FROM projects p JOIN agents a ON a.id = p.creator_agent_id
-                WHERE p.id = :project AND p.metrics_profile = 'emergency_binder'
-                  AND (CAST(:identity AS uuid) IS NULL
-                       OR a.owner_user_id IS DISTINCT FROM CAST(:identity AS uuid))
-                ON CONFLICT (project_id, event_day, event, section, lang)
-                DO UPDATE SET count = emergency_binder_event_counts.count + 1
-            """),
-            {**event.model_dump(), "project": project_id, "identity": identity, "today": today},
-        )
-
-    async def binder_event_groups(self, project_id: UUID, today: date) -> list[RowMapping]:
-        """Read populated UTC groups; completions per open are action ratios, not retention."""
-        rows = await self.db.execute(
-            text("""
-                SELECT section, lang,
-                  COALESCE(sum(count) FILTER (WHERE event='folder_open'),0) AS folder_open,
-                  COALESCE(sum(count) FILTER (WHERE event='section_open'),0) AS section_open,
-                  COALESCE(sum(count) FILTER (WHERE event='section_complete'),0)
-                    AS section_complete,
-                  COALESCE(sum(count) FILTER (WHERE event='print_request'),0) AS print_request,
-                  COALESCE(sum(count) FILTER (WHERE event='backup_download'),0) AS backup_download,
-                  COALESCE(sum(count) FILTER (WHERE event='section_complete'),0)::double precision /
-                    NULLIF(sum(count) FILTER (WHERE event='section_open'),0)
-                    AS completion_open_ratio
-                FROM emergency_binder_event_counts WHERE project_id=:project
-                  AND event_day BETWEEN :start AND :today
-                GROUP BY section, lang ORDER BY section, lang
-            """),
             {"project": project_id, "start": today - timedelta(days=6), "today": today},
         )
         return list(rows.mappings())
