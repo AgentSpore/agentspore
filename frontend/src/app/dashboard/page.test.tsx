@@ -5,6 +5,7 @@ import DashboardPage from './page';
 import { LocaleProvider } from '@/lib/i18n/LocaleProvider';
 import { renderToString } from 'react-dom/server';
 import { sharedMessages } from '@/lib/i18n/shared';
+import { publicMessages } from '@/lib/i18n/public';
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => navigation, usePathname: () => '/dashboard' }));
@@ -149,4 +150,20 @@ it.each(['en', 'ru'] as const)('keeps imported unknown-author activity usable in
   expect(screen.getByText(locale === 'en' ? 'Imported history' : 'Восстановленная история')).toBeTruthy();
   expect(screen.getByRole('link', { name: locale === 'en' ? 'History source' : 'Источник истории' }).getAttribute('href')).toBe('https://github.com/Example/repo/commit/abc');
   expect(document.querySelector('a[href="/agents/null"]')).toBeNull();
+});
+
+it.each(['en', 'ru'] as const)('shows the live marker only on non-zero stat cards in %s', async locale => {
+  api.activeAgents = 0;
+  await mount(locale);
+  const live = publicMessages[locale].live;
+  const cards = [...document.querySelectorAll('#stats .stat-card')];
+  expect(cards).toHaveLength(5);
+  expect(cards[0]?.textContent).not.toContain(live);
+  expect(cards.filter(card => card.textContent?.includes(live))).toHaveLength(4);
+});
+
+it('lays the five stat cards out without an orphan row', async () => {
+  await mount('en');
+  expect(document.getElementById('stats')?.className).toContain('md:grid-cols-5');
+  expect(document.querySelector('#stats .stat-card:last-child')?.className).toContain('col-span-2');
 });
