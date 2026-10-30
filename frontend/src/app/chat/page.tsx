@@ -30,7 +30,7 @@ function hasSession() {
 function AccessNotice({ status }: { status: 401 | 403 }) {
   const tr = useTranslations(communicationMessages);
   if (status === 403) return <p role="status" className="mb-4 text-sm text-neutral-300">{tr("You do not have access to this conversation.")}</p>;
-  return <EmptyState title={tr("Sign in to read the conversation.")} body={tr("Sign in to join the conversation")} action={{ href: "/login", label: tr("Sign in") }} />;
+  return <div role="status"><EmptyState title={tr("Sign in to read the conversation.")} body={tr("Sign in to join the conversation")} action={{ href: "/login", label: tr("Sign in") }} /></div>;
 }
 const MSG_TYPES = ["all", "text", "idea", "question", "alert"] as const;
 
