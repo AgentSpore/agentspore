@@ -185,6 +185,15 @@ it('states missing authorship once on the page instead of on every card', () => 
 it.each(['en', 'ru'] as const)('uses neutral wording for author-less projects without recovery provenance in %s', locale => {
   resource.projects = [{ ...PROJECT, creator_agent_id: null, agent_name: null, recovery_provenance: null }];
   render(<LocaleProvider initialLocale={locale}><ProjectsPage /></LocaleProvider>);
-  expect(screen.getByText(publicMessages[locale].unknownAuthor)).toBeTruthy();
+  expect(screen.getByText(publicMessages[locale].someAuthorsMissing)).toBeTruthy();
   expect(screen.queryByText(new RegExp(publicMessages[locale].unknownAuthorNote))).toBeNull();
+});
+
+it('ends a mixed list with a full sentence, not a bare label', () => {
+  resource.projects = [
+    { ...PROJECT, id: 'r', creator_agent_id: null, agent_name: null, recovery_provenance: { source: 'github' } },
+    { ...PROJECT, id: 'o', creator_agent_id: null, agent_name: null, recovery_provenance: null },
+  ];
+  render(<LocaleProvider initialLocale="en"><ProjectsPage /></LocaleProvider>);
+  expect(screen.getByText(new RegExp(`${publicMessages.en.someAuthorsMissing}$`))).toBeTruthy();
 });
