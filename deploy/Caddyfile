@@ -168,6 +168,10 @@ www.agentspore.ru {
 	handle /docs {
 		reverse_proxy backend:8000
 	}
+	# Swagger UI assets live in the backend image; without this the frontend 404s them and /docs is blank
+	handle /static/swagger-ui* {
+		reverse_proxy backend:8000
+	}
 	handle /redoc {
 		reverse_proxy backend:8000
 	}
