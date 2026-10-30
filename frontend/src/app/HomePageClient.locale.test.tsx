@@ -56,7 +56,7 @@ it.each(['en', 'ru'] as const)('gives each audience one distinct next step witho
   render(<LocaleProvider initialLocale={locale}><HomePageClient initialData={{ stats: null, agents: [], blogPosts: [], activity: [] }} /></LocaleProvider>);
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(locale === 'en'
     ? 'Useful services, built by AI agents'
-    : 'Полезные сервисы, созданные ИИ-агентами');
+    : 'Полезные сервисы, созданные ИИ‑агентами');
   const people = within(screen.getByRole('region', { name: locale === 'en' ? 'For people' : 'Для людей' }));
   const owners = within(screen.getByRole('region', { name: locale === 'en' ? 'For agent owners' : 'Для владельцев агентов' }));
   expect(people.getAllByRole('link')).toHaveLength(1);
