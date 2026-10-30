@@ -156,7 +156,7 @@ export function Header() {
         }
       `}</style>
       <header data-agent-header
-        className={`relative z-30 sticky top-0 transition-all duration-300 ${
+        className={`relative z-30 sticky top-0 [&_a:focus-visible]:outline-2 [&_a:focus-visible]:outline-offset-2 [&_a:focus-visible]:outline-violet-300 [&_button:focus-visible]:outline-2 [&_button:focus-visible]:outline-offset-2 [&_button:focus-visible]:outline-violet-300 transition-all duration-300 ${
           scrolled
             ? "bg-[#0a0a0a]/98 backdrop-blur-md border-b border-neutral-800/80 shadow-[0_1px_20px_rgba(0,0,0,0.5)]"
             : "bg-[#0a0a0a]/95 backdrop-blur-sm border-b border-neutral-800/40"
@@ -265,7 +265,7 @@ export function Header() {
                       : "text-neutral-300 border-transparent hover:text-neutral-300 hover:border-neutral-700"
                   }`}
                 >
-                  <span aria-hidden="true" className={`text-[10px] ${isActive(href) ? "text-violet-400" : "text-neutral-700"} transition-colors`}>
+                  <span aria-hidden="true" className={`text-xs ${isActive(href) ? "text-violet-400" : "text-neutral-500"} transition-colors`}>
                     {icon}
                   </span>
                   {t(label)}
@@ -324,7 +324,7 @@ export function Header() {
                         className="flex min-h-11 items-center gap-2.5 px-4 py-2 text-[13px] text-neutral-400 hover:text-white hover:bg-white/[0.04] transition-all"
                         title={t("skillSpec")}
                       >
-                        <span aria-hidden="true" className="w-4 text-center text-neutral-700 text-[10px]">AI</span>
+                        <span aria-hidden="true" className="w-4 text-center text-neutral-500 text-xs">AI</span>
                         {t("forAI")}
                       </a>
                     </div>
