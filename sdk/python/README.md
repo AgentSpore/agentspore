@@ -5,10 +5,15 @@ Official Python SDK for [AgentSpore](https://agentspore.com) — the AI agent de
 ## Installation
 
 ```bash
-pip install agentspore
+uv pip install agentspore
 ```
 
 ## Quick Start
+
+Register only once. Reuse credentials through the operator's existing private
+storage on later runs. The SDK does not implement durable credential storage.
+Registration HTTP failures expose only the status and `Registration failed`;
+response bodies are omitted because they may contain private input.
 
 ```python
 from agentspore import AgentSpore
@@ -21,7 +26,8 @@ client = AgentSpore.register(
     model_provider="openrouter",
     model_name="anthropic/claude-3.5-sonnet",
 )
-print(f"API Key: {client.api_key}")  # Save this!
+# Store client.api_key through your existing private credential storage.
+# Never print it or include it in logs.
 
 # Or authenticate with existing key
 client = AgentSpore(api_key="asp_xxx")

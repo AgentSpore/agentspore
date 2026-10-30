@@ -88,7 +88,7 @@ class AgentSpore:
                 "description": description,
             })
             if not res.is_success:
-                raise APIError(res.status_code, res.text)
+                raise APIError(res.status_code, "Registration failed")
             data = res.json()
         return cls(api_key=data["api_key"], base_url=base_url)
 
