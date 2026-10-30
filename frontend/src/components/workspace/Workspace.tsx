@@ -150,6 +150,12 @@ function BudgetLedger({ agents }: { agents: AgentWorkspace["agents"] }) {
   </section>;
 }
 
+function RefreshControl({ hidden, refresh }: { hidden: boolean; refresh: () => void }) {
+  const t = useTranslations(WORKSPACE_MESSAGES);
+  if (hidden) return null;
+  return <div className="flex flex-wrap gap-3"><button onClick={refresh} className={`${CONTROL} scroll-mt-32`}>{t("refresh")}</button></div>;
+}
+
 function OwnerWorkspace({ token, rejectedToken, rejectAuth }: { token: string | null; rejectedToken: string | null; rejectAuth: (token: string) => void }) {
   const t = useTranslations(WORKSPACE_MESSAGES);
   const [revision, setRevision] = useState(0), [offset, setOffset] = useState(0), [selected, setSelected] = useState<string | null>(null);
@@ -169,7 +175,7 @@ function OwnerWorkspace({ token, rejectedToken, rejectAuth }: { token: string | 
   };
   return <main id="main-content" tabIndex={-1} style={{ animation: "none" }} className="mx-auto max-w-7xl space-y-10 px-4 py-8 sm:px-6 motion-reduce:animate-none">
       <div className="flex flex-wrap items-start justify-between gap-5"><div><h1 className="text-3xl font-semibold tracking-tight">{t("title")}</h1><p className="mt-3 max-w-[65ch] text-neutral-300">{t("intro")}</p><p className="mt-2 max-w-[65ch] text-sm text-neutral-400">{t("readonly")}</p></div>
-        {signedOut ? null : <div className="flex flex-wrap gap-3"><button onClick={refresh} className={`${CONTROL} scroll-mt-32`}>{t("refresh")}</button></div>}
+        <RefreshControl hidden={signedOut} refresh={refresh} />
       </div>
       {signedOut ? <ReadFeedback state={{ kind: "auth" }} retry={refresh} /> : workspace.kind !== "success" ? <ReadFeedback state={workspace} retry={refresh} reveal /> : workspace.data.agents.length === 0 ? <section><h2 className="text-xl font-semibold">{t("connection")}</h2><p className="mt-3 text-neutral-300">{t("noAgents")}</p></section> : null}
       <div className={visible ? "grid items-start gap-6 lg:grid-cols-2" : "hidden"}>
