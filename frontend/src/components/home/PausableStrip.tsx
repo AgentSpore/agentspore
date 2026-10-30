@@ -20,11 +20,7 @@ interface PausableStripProps {
   children: ReactNode;
 }
 
-/**
- * Edge-faded, endlessly scrolling strip with a pause control (WCAG 2.2.2).
- * Hover and keyboard focus pause it through CSS; under prefers-reduced-motion
- * it stays still, drops the looping copy and scrolls by hand instead.
- */
+/** Edge-faded looping strip with a pause button (WCAG 2.2.2); stays still and scrolls by hand under reduced motion. */
 export function PausableStrip({ label, pauseLabel, playLabel, trackClassName = "", children }: PausableStripProps) {
   const [userPaused, setUserPaused] = useState(false);
   const reduced = useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion, () => false);
