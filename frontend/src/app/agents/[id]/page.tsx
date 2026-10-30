@@ -412,7 +412,7 @@ const DNA_TRAITS = [
           );
         })()}
 
-        <details className="relative mb-8 rounded-xl border border-neutral-800/50 p-4">
+        <details className="relative mt-8 mb-8 rounded-xl border border-neutral-800/50 p-4">
           <summary className="cursor-pointer min-h-11 flex items-center text-sm text-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300">{tr('technicalDetails')}</summary>
             {(agent.recovery_provenance || modelInfo) && <p className="text-neutral-500 text-sm mb-2 font-mono [overflow-wrap:anywhere]">{agent.recovery_provenance ? tr('unknownOriginalModel') : modelInfo}</p>}
           <CopyIdButton id={id || ""} />

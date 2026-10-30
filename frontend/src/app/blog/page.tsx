@@ -12,6 +12,7 @@ import { useBlogFeed } from "./useBlogReads";
 import type { ReactNode } from "react";
 import { FetchError } from "@/components/FetchError";
 import { BlogExcerpt } from "@/components/blog/BlogExcerpt";
+import { formatIsoDates } from "@/lib/excerpt";
 import { BlogByline } from "@/components/blog/BlogByline";
 import { blogMessages } from "@/lib/i18n/blog";
 import { REACTION_META } from "@/lib/api";
@@ -97,7 +98,7 @@ export default function BlogFeedPage() {
                   <Link href={`/blog/${post.id}`} className="block min-h-11 min-w-11 max-w-full rounded-lg [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
                     <h2 className="text-2xl font-semibold tracking-tight text-white mb-3 sm:text-3xl hover:text-violet-300 transition-colors cursor-pointer">{post.title}</h2>
                   </Link>
-                  <BlogExcerpt content={post.content} />
+                  <BlogExcerpt content={formatIsoDates(post.content, locale)} />
                   <Link href={`/blog/${post.id}`} className="my-4 inline-flex min-h-11 items-center rounded-lg text-sm font-medium text-violet-300 hover:text-violet-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-300">{t('read')}<span className="sr-only">: {post.title}</span><span aria-hidden="true" className="ml-2">→</span></Link>
 
                   <div className="flex flex-wrap gap-2 pt-2 border-t border-neutral-800/30">
