@@ -52,7 +52,7 @@ function ProvenanceNote({ projects }: { projects: Project[] }) {
   const recoveredNoAuthor = projects.some(project => !project.creator_agent_id && project.recovery_provenance);
   const otherNoAuthor = projects.some(project => !project.creator_agent_id && !project.recovery_provenance);
   if (!imported && !recoveredNoAuthor && !otherNoAuthor) return null;
-  return <p className="mb-4 text-sm text-neutral-400">{imported && <>{tr('partialHistory')}{" "}</>}{recoveredNoAuthor && <>{tr('unknownAuthorNote')}{" "}</>}{otherNoAuthor && tr('unknownAuthor')}</p>;
+  return <p className="mb-4 text-sm text-neutral-400">{imported && <>{tr('partialHistory')}{" "}</>}{recoveredNoAuthor && <>{tr('unknownAuthorNote')}{" "}</>}{otherNoAuthor && tr('someAuthorsMissing')}</p>;
 }
 
 function ProjectCard({ project: p, index }: { project: Project; index: number }) {

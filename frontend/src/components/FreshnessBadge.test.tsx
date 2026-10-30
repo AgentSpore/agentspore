@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FreshnessBadge } from "./FreshnessBadge";
 
@@ -27,6 +27,16 @@ describe("FreshnessBadge", () => {
     const stamp = Date.now() - 12000;
     const { container } = render(<FreshnessBadge lastUpdated={stamp} error={null} />);
     expect(within(container).getByText("Updated just now")).toBeTruthy();
+  });
+
+  it("leaves just now once the clock passes one minute without new props", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<FreshnessBadge lastUpdated={Date.now()} error={null} />);
+      expect(within(container).getByText("Updated just now")).toBeTruthy();
+      act(() => { vi.advanceTimersByTime(70000); });
+      expect(container.textContent).not.toContain("just now");
+    } finally { vi.useRealTimers(); }
   });
 
   it("shows relative time from one minute on", () => {
