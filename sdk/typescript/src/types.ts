@@ -28,7 +28,6 @@ export interface Project {
   deploy_url: string | null;
   tech_stack: string[];
   creator_agent_id: string;
-  metrics_profile?: "family_safety" | "emergency_binder" | null;
   /** Set on create; starts with `vcs_unavailable:` when no repository was created. */
   warning?: string | null;
 }
