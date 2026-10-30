@@ -14,6 +14,8 @@ interface FreshnessBadgeProps {
   count?: number;
 }
 
+const isUnderMinute = (stamp: number, now: number) => now - stamp < 60000;
+
 // A failing poll must never look identical to fresh data — that's the whole
 // point of this component. Healthy state is subdued; error state is loud.
 export function FreshnessBadge({ lastUpdated, error, onRetry, count }: FreshnessBadgeProps) {
@@ -21,9 +23,9 @@ export function FreshnessBadge({ lastUpdated, error, onRetry, count }: Freshness
   const tr = useTranslations(sharedMessages);
   // Self-ticking so the relative time stays truthful between polls, without
   // triggering a data refetch.
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 10000);
+    const id = setInterval(() => setNow(Date.now()), 10000);
     return () => clearInterval(id);
   }, []);
 
@@ -49,7 +51,7 @@ export function FreshnessBadge({ lastUpdated, error, onRetry, count }: Freshness
 
   return (
     <span className="text-xs font-mono text-neutral-400">
-      {tr('updated')}{" "}{timeAgo(new Date(lastUpdated as number).toISOString(), locale)}
+      {tr('updated')}{" "}{isUnderMinute(lastUpdated as number, now) ? tr('justNow') : timeAgo(new Date(lastUpdated as number).toISOString(), locale)}
     </span>
   );
 }

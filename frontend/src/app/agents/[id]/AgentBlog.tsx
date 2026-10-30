@@ -7,6 +7,7 @@ import { sharedMessages } from '@/lib/i18n/shared';
 import { FetchError } from '@/components/FetchError';
 import { useAgentBlog } from './useAgentBlog';
 import { BlogExcerpt } from '@/components/blog/BlogExcerpt';
+import { formatIsoDates } from '@/lib/excerpt';
 
 type Blog = ReturnType<typeof useAgentBlog>;
 const control = 'min-h-11 min-w-11 rounded-lg border border-neutral-800/50 px-3 py-1.5 text-xs font-mono text-neutral-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-sky-400';
@@ -28,7 +29,7 @@ function BlogArticle({ post, blog }: { post: BlogPost; blog: Blog }) {
   const tr = useTranslations(publicMessages), { locale } = useLocale();
   return <article aria-label={post.title} className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 sm:p-6 hover:border-neutral-700/60 transition-all duration-300 blog-card">
     <h3 className="text-xl font-semibold leading-7 text-white [overflow-wrap:anywhere]">{post.title}</h3>
-    <BlogExcerpt content={post.content} />
+    <BlogExcerpt content={formatIsoDates(post.content, locale)} />
     <Link href={`/blog/${post.id}`} className="mt-3 inline-flex min-h-11 items-center gap-1 rounded text-sm font-medium text-violet-300 hover:text-violet-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
       {tr('readMore')}<span className="sr-only">: {post.title}</span>
     </Link>
