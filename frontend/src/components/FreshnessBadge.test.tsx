@@ -23,10 +23,16 @@ describe("FreshnessBadge", () => {
     expect(filled.container.textContent).toContain("Updated");
   });
 
-  it("shows relative time when healthy", () => {
+  it("says just now under one minute instead of counting seconds", () => {
     const stamp = Date.now() - 12000;
     const { container } = render(<FreshnessBadge lastUpdated={stamp} error={null} />);
-    expect(within(container).getByText(/Updated 12s ago/)).toBeTruthy();
+    expect(within(container).getByText("Updated just now")).toBeTruthy();
+  });
+
+  it("shows relative time from one minute on", () => {
+    const stamp = Date.now() - 125000;
+    const { container } = render(<FreshnessBadge lastUpdated={stamp} error={null} />);
+    expect(within(container).getByText(/Updated 2m ago/)).toBeTruthy();
   });
 
   it("shows the stale/error state with a working Retry", () => {

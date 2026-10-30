@@ -117,9 +117,8 @@ function ProjectCard({ project: p, index }: { project: Project; index: number })
       {/* Footer */}
       <div className="flex flex-col gap-3 pt-3 border-t border-neutral-800/40">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-400 font-mono min-w-0">
-          <span className="text-neutral-400 min-w-0 [overflow-wrap:anywhere]">{p.creator_agent_id ? p.agent_name : tr('unknownAuthor')}</span>
+          {p.creator_agent_id && <span className="text-neutral-400 min-w-0 [overflow-wrap:anywhere]">{p.agent_name}</span>}
           <span className="text-neutral-400 shrink-0">{timeAgo(p.created_at, locale)}</span>
-          {p.recovery_provenance && <span className="text-xs text-neutral-400">{tr('importedHistory')}</span>}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <button onClick={(e) => vote(1, e)} disabled={voting} aria-label={tr("upvoteProject", { title: p.title })}
@@ -154,6 +153,7 @@ export default function ProjectsPage() {
   const [category, setCategory] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [timeFilter, setTimeFilter] = useState<"all" | "24h" | "7d" | "30d">("all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [sort, setSort] = useState<"newest" | "stars" | "votes">("newest");
 
   const fetchProjects = async (): Promise<Project[]> => {
@@ -172,6 +172,7 @@ export default function ProjectsPage() {
     deps: [category, statusFilter],
   });
   const projects = data ?? [];
+  const activeFilters = [statusFilter !== "all", timeFilter !== "all", sort !== "newest", category !== "all"].filter(Boolean).length;
   const hasServerFilter = category !== "all" || statusFilter !== "all";
 
   const TIME_WINDOW_MS: Record<"24h" | "7d" | "30d", number> = {
@@ -207,7 +208,10 @@ export default function ProjectsPage() {
 
 
       <main id="main-content" tabIndex={-1} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
-        {projects.some(project => project.recovery_provenance) && <p className="mb-4 text-sm text-neutral-400">{tr('partialHistory')}</p>}
+        {(projects.some(project => project.recovery_provenance) || projects.some(project => !project.creator_agent_id)) && <p className="mb-4 text-sm text-neutral-400">
+          {projects.some(project => project.recovery_provenance) && <>{tr('partialHistory')}{" "}</>}
+          {projects.some(project => !project.creator_agent_id) && tr('unknownAuthorNote')}
+        </p>}
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 mb-8 text-xs font-mono fade-up">
           <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
@@ -237,58 +241,57 @@ export default function ProjectsPage() {
           </div>
         </div>
 
-        {/* Filters */}
-        {(projects.length > 0 || hasServerFilter) && <div className="fade-up flex flex-wrap items-center gap-3 mb-8" style={{ animationDelay: "160ms" }}>
-          {/* Search */}
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            aria-label={tr('search')} placeholder={tr('search')}
-            className="min-h-11 min-w-11 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-400 focus:border-neutral-700/60 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 w-56 font-mono backdrop-blur-sm"
-          />
-
-          {/* Status filter */}
-          <div role="group" aria-label={docsTr("projectStatusFilter")} className="flex flex-wrap max-w-full rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
-            {["all", "deployed", "building", "review", "proposed", "archived"].map(s => (
-              <button key={s} aria-pressed={statusFilter === s} onClick={() => setStatusFilter(s)}
-                className={`min-h-11 min-w-11 whitespace-nowrap px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
-                {displayPublicLabel(locale, s)}
-              </button>
-            ))}
+        {/* Filters: search always visible; groups collapse behind a toggle on narrow screens */}
+        {(projects.length > 0 || hasServerFilter) && <div className="fade-up mb-8 flex flex-col gap-3" style={{ animationDelay: "160ms" }}>
+          <div className="flex gap-3">
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              aria-label={tr('search')} placeholder={tr('search')}
+              className="min-h-11 min-w-0 flex-1 bg-neutral-900/30 border border-neutral-800/50 rounded-lg px-3.5 py-2 text-sm text-neutral-200 placeholder-neutral-400 focus:border-neutral-700/60 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 font-mono backdrop-blur-sm sm:max-w-xs"
+            />
+            <button type="button" aria-expanded={filtersOpen} aria-controls="project-filters" onClick={() => setFiltersOpen(o => !o)}
+              className="min-h-11 min-w-11 rounded-lg border border-neutral-800/50 px-3.5 text-xs font-mono text-neutral-300 hover:text-white focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-violet-300 sm:hidden">
+              {tr('filtersLabel')}{activeFilters > 0 && ` (${activeFilters})`}
+            </button>
           </div>
-
-          {/* Time filter */}
-          <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
-            {(["all", "24h", "7d", "30d"] as const).map(t => (
-              <button key={t} aria-pressed={timeFilter === t} onClick={() => setTimeFilter(t)}
-                className={`min-h-11 min-w-11 px-3 py-2 transition-colors ${timeFilter === t ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
-                {displayPublicLabel(locale, t)}
-              </button>
-            ))}
-          </div>
-
-          {/* Sort */}
-          <div className="flex rounded-lg overflow-hidden border border-neutral-800/50 text-xs font-mono backdrop-blur-sm">
-            {(["newest", "stars", "votes"] as const).map(s => (
-              <button key={s} aria-pressed={sort === s} onClick={() => setSort(s)}
-                className={`min-h-11 min-w-11 px-3 py-2 transition-colors ${sort === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
-                {displayPublicLabel(locale, s === "stars" ? "stars" : s === "votes" ? "votes" : "new")}
-              </button>
-            ))}
-          </div>
-
-          {/* Category filter */}
-          <div role="group" aria-label={docsTr("projectCategoryFilter")} className="flex flex-wrap gap-1.5">
-            {CATEGORIES.map(c => (
-              <button key={c} aria-pressed={category === c} onClick={() => setCategory(c)}
-                className={`min-h-11 min-w-11 px-2.5 py-1.5 rounded-lg text-xs transition-all font-mono ${
-                  category === c
-                    ? "bg-white text-black font-medium"
-                    : "text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800/30"
-                }`}>
-                {displayPublicLabel(locale, c)}
-              </button>
-            ))}
+          <div id="project-filters" className={`${filtersOpen ? "flex" : "hidden"} flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center`}>
+            <div role="group" aria-label={docsTr("projectStatusFilter")} className="grid grid-cols-3 overflow-hidden rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm sm:flex">
+              {["all", "deployed", "building", "review", "proposed", "archived"].map(s => (
+                <button key={s} aria-pressed={statusFilter === s} onClick={() => setStatusFilter(s)}
+                  className={`min-h-11 min-w-11 whitespace-nowrap px-3 py-2 transition-colors ${statusFilter === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+                  {displayPublicLabel(locale, s)}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-4 overflow-hidden rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm sm:flex">
+              {(["all", "24h", "7d", "30d"] as const).map(t => (
+                <button key={t} aria-pressed={timeFilter === t} onClick={() => setTimeFilter(t)}
+                  className={`min-h-11 min-w-11 px-3 py-2 transition-colors ${timeFilter === t ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+                  {displayPublicLabel(locale, t)}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-3 overflow-hidden rounded-lg border border-neutral-800/50 text-xs font-mono backdrop-blur-sm sm:flex">
+              {(["newest", "stars", "votes"] as const).map(s => (
+                <button key={s} aria-pressed={sort === s} onClick={() => setSort(s)}
+                  className={`min-h-11 min-w-11 px-3 py-2 transition-colors ${sort === s ? "bg-neutral-800/60 text-white" : "text-neutral-400 hover:text-neutral-300"}`}>
+                  {displayPublicLabel(locale, s === "stars" ? "stars" : s === "votes" ? "votes" : "new")}
+                </button>
+              ))}
+            </div>
+            <div role="group" aria-label={docsTr("projectCategoryFilter")} className="grid grid-cols-4 gap-1.5 sm:flex sm:flex-wrap">
+              {CATEGORIES.map(c => (
+                <button key={c} aria-pressed={category === c} onClick={() => setCategory(c)}
+                  className={`min-h-11 min-w-11 px-2.5 py-1.5 rounded-lg text-xs transition-all font-mono ${
+                    category === c
+                      ? "bg-white text-black font-medium"
+                      : "text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800/30"
+                  }`}>
+                  {displayPublicLabel(locale, c)}
+                </button>
+              ))}
+            </div>
           </div>
         </div>}
 
