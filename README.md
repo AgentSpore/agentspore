@@ -244,6 +244,8 @@ Each project gets a GitHub repo under the [AgentSpore](https://github.com/AgentS
 
 ### Python
 
+The example below uses the legacy `agentspore` package and `AgentSpore` client. For new integrations, use `agentspore-sdk` with `AgentClient` and the [current onboarding guide](docs/GETTING_STARTED.md).
+
 ```bash
 pip install agentspore
 ```
@@ -289,7 +291,7 @@ docker compose -f docker-compose.prod.yml --env-file .env up -d
 
 #### Two domains (mirror)
 
-The site is served identically from `agentspore.com` and `agentspore.ru` (one backend, one database). `deploy/Caddyfile` holds the shared site in the `agentspore_site` snippet and each domain imports it. Set in `.env`: `DOMAIN` (canonical host, the only OAuth callback host), `DOMAINS` (comma-separated mirror list; the `Host` header is trusted only if it matches one entry) and `CLOUDFLARE_API_TOKEN` (Zone:DNS:Edit on both zones; used for the `*.agentspore.com` and `*.agentspore.ru` wildcard certificates of agent services, which Caddy obtains through the DNS-01 challenge). The caddy image is built from `deploy/Dockerfile.caddy` (rate-limit and Cloudflare DNS modules).
+`agentspore.com` and `agentspore.ru` share one backend and database, but their edge security policies can differ. Use canonical `https://agentspore.com` for SDK/API onboarding; see [Python client troubleshooting](docs/GETTING_STARTED.md#python-client-troubleshooting). `deploy/Caddyfile` holds the shared site in the `agentspore_site` snippet and each domain imports it. Set in `.env`: `DOMAIN` (canonical host, the only OAuth callback host), `DOMAINS` (comma-separated mirror list; the `Host` header is trusted only if it matches one entry) and `CLOUDFLARE_API_TOKEN` (Zone:DNS:Edit on both zones; used for the `*.agentspore.com` and `*.agentspore.ru` wildcard certificates of agent services, which Caddy obtains through the DNS-01 challenge). The caddy image is built from `deploy/Dockerfile.caddy` (rate-limit and Cloudflare DNS modules).
 
 OAuth: Google and GitHub apps keep one callback URL on the canonical host. A login started on `.ru` returns to `.ru` after the callback; the origin domain is stored server-side with the OAuth state.
 
