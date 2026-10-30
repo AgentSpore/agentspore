@@ -1,7 +1,8 @@
 """S1: platform-owned static services are seeded by V99 and hidden from agent rankings."""
 
+import asyncio
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
@@ -14,6 +15,16 @@ from app.repositories.webhook_repo import WebhookRepository
 from app.schemas.deployments import DeploymentEnqueue
 
 MIGRATION = Path(__file__).resolve().parents[2] / "db/migrations/V99__platform_services.sql"
+RETIRE_FOUNDPHONE = MIGRATION.with_name("V104__retire_foundphone.sql")
+RETIRE_FAMILY_AND_BINDER = MIGRATION.with_name(
+    "V105__retire_family_safety_and_emergency_binder.sql"
+)
+RETIREMENTS = (RETIRE_FOUNDPHONE, RETIRE_FAMILY_AND_BINDER)
+RETIRED = {
+    "foundphone": (UUID("af0f1316-59ae-4eab-a683-65badd1be212"), RETIRE_FOUNDPHONE),
+    "family-safety": (UUID("51e5e989-fc3f-4553-8c83-965cddf12de0"), RETIRE_FAMILY_AND_BINDER),
+    "emergency-binder": (UUID("8b72ce11-d9c5-4957-8413-49e9aacd8107"), RETIRE_FAMILY_AND_BINDER),
+}
 SERVICES = {
     "foundphone": (None, "1daa40598ada460291c819a55968ce55"),
     "family-safety": ("family_safety", "5c97579aaa714f53aa63ce800f93979e"),
@@ -21,7 +32,7 @@ SERVICES = {
 }
 
 
-async def snapshot(maker) -> dict:
+async def snapshot(maker, handles=tuple(SERVICES)) -> dict:
     async with maker.begin() as db:
         rows = (
             await db.execute(
@@ -31,27 +42,24 @@ async def snapshot(maker) -> dict:
                     "FROM service_routes r JOIN projects p ON p.id = r.project_id "
                     "WHERE r.handle = ANY(:handles)"
                 ),
-                {"handles": list(SERVICES)},
+                {"handles": list(handles)},
             )
         ).mappings()
         return {row["handle"]: dict(row) for row in rows}
 
 
-async def test_seed_registers_three_services_with_fixed_revisions(usage_world):
-    seeded = await snapshot(usage_world.maker)
-    assert set(seeded) == set(SERVICES)
-    for handle, (profile, revision) in SERVICES.items():
-        row = seeded[handle]
-        assert (row["metrics_profile"], row["revision"], row["status"]) == (
-            profile,
-            revision,
-            "deployed",
-        )
-        assert row["deploy_url"] == f"https://{handle}.agentspore.com"
-        assert row["repo_url"].endswith(f"/services/{handle}")
+async def test_all_seeded_services_are_retired_after_the_full_migration_run(usage_world):
+    assert await snapshot(usage_world.maker) == {}
     async with usage_world.maker.begin() as db:
         reserved = (await db.execute(text("SELECT count(*) FROM service_hostnames"))).scalar_one()
+        projects = (
+            await db.execute(
+                text("SELECT status, deploy_url FROM projects WHERE id = ANY(:ids)"),
+                {"ids": [project for project, _ in RETIRED.values()]},
+            )
+        ).all()
     assert reserved >= 3
+    assert [tuple(row) for row in projects] == [("archived", None)] * 3
 
 
 async def test_system_agent_is_inactive_keyless_and_owns_the_projects(usage_world):
@@ -82,6 +90,8 @@ async def test_migration_rerun_is_idempotent(usage_world):
     async with usage_world.maker.kw["bind"].begin() as conn:
         raw = await conn.get_raw_connection()
         await raw.driver_connection.execute(MIGRATION.read_text())
+        for retirement in RETIREMENTS:
+            await raw.driver_connection.execute(retirement.read_text())
     assert await snapshot(usage_world.maker) == before
     async with usage_world.maker.begin() as db:
         counts = (
@@ -93,7 +103,7 @@ async def test_migration_rerun_is_idempotent(usage_world):
                 {"h": list(SERVICES)},
             )
         ).one()
-    assert tuple(counts) == (1, 3)
+    assert tuple(counts) == (1, 0)
 
 
 async def test_leaderboard_excludes_the_inactive_system_agent(usage_world):
@@ -104,12 +114,12 @@ async def test_leaderboard_excludes_the_inactive_system_agent(usage_world):
     assert {"a2-0", "a2-1"} <= handles
 
 
-async def test_platform_stats_count_services_but_not_the_system_agent(usage_world):
+async def test_platform_stats_exclude_retired_services_and_the_system_agent(usage_world):
     async with usage_world.maker.begin() as db:
         stats = await AgentRepository(db).get_platform_stats()
     assert stats["total_agents"] == 2
-    assert stats["projects_deployed"] == 3
-    assert stats["total_projects"] >= 3 + 3
+    assert stats["projects_deployed"] == 0
+    assert stats["total_projects"] == len(usage_world.projects)
 
 
 @pytest.mark.parametrize("handle", ["foundphone", "family-safety", "emergency-binder"])
@@ -228,3 +238,156 @@ async def test_deployment_enqueue_rejects_platform_service_projects(usage_world)
             await DeploymentRepository(db).enqueue(request)
         ordinary = request.model_copy(update={"project_id": usage_world.projects[0]})
         assert await DeploymentRepository(db).enqueue(ordinary) is not None
+
+
+@pytest.fixture(params=list(RETIRED))
+async def legacy(request, usage_world):
+    handle = request.param
+    project, retirement = RETIRED[handle]
+    async with usage_world.maker.kw["bind"].begin() as conn:
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.execute(MIGRATION.read_text())
+        await conn.execute(
+            text("UPDATE projects SET status = 'deployed', deploy_url = :url WHERE id = :id"),
+            {"id": project, "url": f"https://{handle}.agentspore.com"},
+        )
+    return handle, project, retirement
+
+
+async def test_retirement_preserves_project_reservation_visits_and_contributions(
+    usage_world, legacy
+):
+    handle, project, retirement = legacy
+    params = {"id": project, "agent": usage_world.agents[0], "visitor": uuid4()}
+    async with usage_world.maker.begin() as db:
+        await db.execute(
+            text("INSERT INTO service_visits VALUES (:id, :visitor, CURRENT_DATE)"), params
+        )
+        await db.execute(
+            text(
+                "INSERT INTO project_contributors (project_id, agent_id, contribution_points) "
+                "VALUES (:id, :agent, 17)"
+            ),
+            params,
+        )
+    assert (await snapshot(usage_world.maker, [handle]))[handle]["status"] == "deployed"
+    async with usage_world.maker.kw["bind"].begin() as conn:
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.execute(retirement.read_text())
+        row = (
+            await conn.execute(
+                text("SELECT status, deploy_url FROM projects WHERE id = :id"), params
+            )
+        ).one()
+        assert tuple(row) == ("archived", None)
+        for table, expected in (
+            ("service_hostnames WHERE original_project_id", 1),
+            ("service_visits WHERE project_id", 1),
+        ):
+            assert (
+                await conn.scalar(text(f"SELECT count(*) FROM {table} = :id"), params) == expected
+            )
+        assert (
+            await conn.scalar(
+                text("SELECT contribution_points FROM project_contributors WHERE project_id = :id"),
+                params,
+            )
+            == 17
+        )
+        await raw.driver_connection.execute(retirement.read_text())
+    assert await snapshot(usage_world.maker, [handle]) == {}
+
+
+@pytest.mark.parametrize("changed", ["creator", "source", "revision"])
+async def test_retirement_preserves_changed_seed_identity(usage_world, legacy, changed):
+    handle, project, retirement = legacy
+    params = {"id": project, "agent": usage_world.agents[0], "revision": uuid4()}
+    mutations = {
+        "creator": "UPDATE projects SET creator_agent_id = :agent WHERE id = :id",
+        "source": (
+            "UPDATE projects SET repo_url = 'https://github.com/example/other' WHERE id = :id"
+        ),
+        "revision": "UPDATE service_routes SET active_revision = :revision WHERE project_id = :id",
+    }
+    async with usage_world.maker.begin() as db:
+        await db.execute(text(mutations[changed]), params)
+    before = await snapshot(usage_world.maker, [handle])
+    async with usage_world.maker.kw["bind"].begin() as conn:
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.execute(retirement.read_text())
+    assert await snapshot(usage_world.maker, [handle]) == before
+
+
+@pytest.mark.parametrize("changed", ["creator", "source"])
+async def test_retirement_waits_for_concurrent_identity_changes(usage_world, legacy, changed):
+    handle, project, retirement = legacy
+    engine = usage_world.maker.kw["bind"]
+    params = {"id": project, "agent": usage_world.agents[0]}
+    mutations = {
+        "creator": "UPDATE projects SET creator_agent_id = :agent WHERE id = :id",
+        "source": "UPDATE projects SET repo_url = 'https://example.invalid/new' WHERE id = :id",
+    }
+    async with asyncio.timeout(10), engine.begin() as writer, engine.begin() as migration:
+        await writer.execute(text(mutations[changed]), params)
+        pid = await migration.scalar(text("SELECT pg_backend_pid()"))
+        raw = await migration.get_raw_connection()
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(raw.driver_connection.execute(retirement.read_text()))
+            while not await writer.scalar(
+                text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"), {"pid": pid}
+            ):
+                pass
+            await writer.commit()
+    seeded = (await snapshot(usage_world.maker, [handle]))[handle]
+    assert seeded["revision"] == SERVICES[handle][1]
+    assert seeded["status"] == "deployed"
+
+
+async def test_retirement_preserves_a_different_project_with_the_original_source(
+    usage_world, legacy
+):
+    handle, _, retirement = legacy
+    params = {"id": usage_world.projects[0]}
+    async with usage_world.maker.kw["bind"].begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE projects SET status = 'deployed', "
+                "creator_agent_id = '62373959-a237-41b9-8e85-3b954d7da6a9', "
+                "repo_url = 'https://github.com/AgentSpore/agentspore/tree/main/services/' || :h, "
+                "deploy_url = 'https://example.invalid' WHERE id = :id"
+            ),
+            {**params, "h": handle},
+        )
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.execute(retirement.read_text())
+        project = (
+            await conn.execute(
+                text("SELECT status, deploy_url FROM projects WHERE id = :id"), params
+            )
+        ).one()
+    assert tuple(project) == ("deployed", "https://example.invalid")
+
+
+@pytest.mark.parametrize("missing", ["route", "project"])
+async def test_retirement_tolerates_already_missing_records(usage_world, legacy, missing):
+    _, project, retirement = legacy
+    async with usage_world.maker.kw["bind"].begin() as conn:
+        query = (
+            "DELETE FROM service_routes WHERE project_id = :id"
+            if missing == "route"
+            else "DELETE FROM projects WHERE id = :id"
+        )
+        await conn.execute(text(query), {"id": project})
+        raw = await conn.get_raw_connection()
+        await raw.driver_connection.execute(retirement.read_text())
+        assert (
+            await conn.scalar(
+                text("SELECT count(*) FROM service_routes WHERE project_id = :id"), {"id": project}
+            )
+            == 0
+        )
+        status = await conn.scalar(
+            text("SELECT status FROM projects WHERE id = :id"), {"id": project}
+        )
+        assert status == ("archived" if missing == "route" else None)
+        await raw.driver_connection.execute(retirement.read_text())

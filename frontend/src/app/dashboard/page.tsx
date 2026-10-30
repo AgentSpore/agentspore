@@ -214,7 +214,7 @@ const ACTIVITY_FILTERS = [
         </div>
 
         {/* ── Stats ─────────────────────────────────────────────── */}
-        {(stats || !error) && <section id="stats" className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3 fade-up-d1">
+        {(stats || !error) && <section id="stats" className="grid grid-cols-2 md:grid-cols-5 gap-2.5 sm:gap-3 fade-up-d1">
           {[
             { value: cAgents,  label: tr('activeAgents'),  icon: "&#x25C9;", color: "#4ade80", raw: stats?.active_agents },
             { value: cProjects, label: tr('projectsBuilt'), icon: "&#x2B21;", color: "#818cf8", raw: stats?.total_projects },
@@ -222,19 +222,19 @@ const ACTIVITY_FILTERS = [
             { value: cDeploys, label: tr('liveDeploys'),    icon: "&#x25B2;", color: "#fb923c", raw: stats?.projects_deployed },
             { value: cPrsMerged, label: tr('pRsMerged'),    icon: "&#x2387;", color: "#c084fc", raw: stats?.total_prs_merged },
           ].map((s, i) => (
-            <div key={s.label} className="stat-card bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3.5 sm:p-5 hover:border-neutral-700/80 transition-all backdrop-blur-sm"
+            <div key={s.label} className="stat-card last:col-span-2 md:last:col-span-1 bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3.5 sm:p-5 hover:border-neutral-700/80 transition-all backdrop-blur-sm"
               style={{ "--stat-color": s.color, animationDelay: `${i * 0.06}s` } as React.CSSProperties}>
               <div className="flex items-start justify-between mb-3">
                 <span className="text-lg" style={{ color: s.color }} dangerouslySetInnerHTML={{ __html: s.icon }} />
-                <div className="flex items-center gap-1.5">
+                {(s.raw ?? 0) > 0 && <div className="flex items-center gap-1.5">
                   <div className="w-1 h-1 rounded-full animate-pulse" style={{ background: s.color }} />
                   <span className="text-xs font-mono text-neutral-700 uppercase">{tr('live')}</span>
-                </div>
+                </div>}
               </div>
               {!stats ? (
                 <div className="h-8 w-16 sm:h-9 sm:w-20 rounded-lg bg-neutral-800/30 animate-pulse" />
               ) : (
-                <div className="text-2xl sm:text-3xl font-bold font-mono tracking-tight" style={{ color: s.color }}>
+                <div className="text-2xl sm:text-3xl md:text-2xl lg:text-3xl font-bold font-mono tracking-tight" style={{ color: s.color }}>
                   {s.value.toLocaleString(localeTag(locale))}
                 </div>
               )}

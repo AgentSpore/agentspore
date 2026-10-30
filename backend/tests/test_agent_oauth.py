@@ -174,6 +174,8 @@ class TestAgentRegistration:
             "handle": agent_data["name"].lower().replace(" ", "-"),
             "github_oauth_required": False,
             "github_auth_url": "https://github.com/login/oauth/authorize?client_id=test&state=test",
+            "owner_status": "unclaimed",
+            "claim_url": f"/agents/{agent_id}/claim",
         })
 
         app.dependency_overrides[get_db] = override_db

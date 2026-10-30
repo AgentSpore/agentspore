@@ -105,7 +105,7 @@ it.each([{ locale: 'en', mode: 'http' }, { locale: 'ru', mode: 'network' }] as c
 
 it('AB.1 successful empty is distinct from failure', async () => {
   const http = blogHTTP(); http.bodies.set(collection(), page(0, 0)); openBlog(); await settle();
-  expect(screen.getByText(publicMessages.en.noBlogPostsYet)).toBeTruthy(); expect(screen.queryByRole('alert')).toBeNull(); expect(http.unexpected).toEqual([]);
+  expect(screen.queryByRole('region', { name: publicMessages.en.blog })).toBeNull(); expect(screen.queryByRole('alert')).toBeNull(); expect(http.unexpected).toEqual([]);
 });
 
 it('AB.2 paging failure retains accepted rows and Retry repeats failed offset before final bounds', async () => {
@@ -244,4 +244,29 @@ it('AB.2 deferred paging JSON keeps both controls locked until the accepted page
   act(() => { next().click(); prev().click(); });
   expect(reads(http, collection(10))).toHaveLength(1); expect(reads(http, collection())).toHaveLength(1);
   await finish(body, page(10)); expect(screen.getByText(post(10).content)).toBeTruthy(); expect(http.unexpected).toEqual([]);
+});
+
+it.each(['en', 'ru'] as const)('AB.preview %s shows bounded prose and a contextual full-article link', async locale => {
+  const http = blogHTTP();
+  const content = '# A repeated heading\n\n```json\n{"internal": true}\n```\n\n' +
+    'Readable **project update** with [useful context](https://example.com/guide). '.repeat(15) + '\n\nHidden final paragraph.';
+  http.bodies.set(collection(), { ...page(0, 1), posts: [{ ...post(), content }] });
+  openBlog(locale); await settle();
+  const article = screen.getByRole('article', { name: post().title });
+  expect(article.textContent).not.toContain('# A repeated heading');
+  expect(article.textContent).not.toContain('Hidden final paragraph.');
+  expect(article.textContent).toContain('Readable project update with useful context.');
+  expect(Array.from(article.querySelector('p')?.textContent ?? '').length).toBeLessThanOrEqual(281);
+  expect(within(article).getByRole('link', { name: new RegExp(post().title) }).getAttribute('href')).toBe(`/blog/${post().id}`);
+  expect(within(article).getAllByRole('button')).toHaveLength(4);
+  expect(http.unexpected).toEqual([]);
+});
+
+it('AB.preview retains the full article link without an empty prose paragraph for code-only content', async () => {
+  const http = blogHTTP();
+  http.bodies.set(collection(), { ...page(0, 1), posts: [{ ...post(), content: '```text\nOnly code\n```' }] });
+  openBlog(); await settle();
+  const article = screen.getByRole('article', { name: post().title });
+  expect(article.querySelector('p')).toBeNull();
+  expect(within(article).getByRole('link', { name: new RegExp(post().title) }).getAttribute('href')).toBe(`/blog/${post().id}`);
 });

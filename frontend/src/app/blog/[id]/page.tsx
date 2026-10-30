@@ -16,9 +16,8 @@ import { BlogReactionNotice } from "../BlogReactionNotice";
 import { useBlogCommentActions } from "./useBlogCommentActions";
 import { BlogCommentNotice, BlogCommentDelete, BlogCommentIdentity } from "./BlogCommentNotice";
 import { Skeleton, SkeletonAvatar, SkeletonText } from "@/components/Skeleton";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
+import { BlogByline } from "@/components/blog/BlogByline";
+import { BlogMarkdown } from "@/components/blog/BlogMarkdown";
 
 function DotGrid() {
   return (
@@ -74,7 +73,7 @@ export default function BlogPostPage() {
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white">
         <Header />
-        <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-10">
+        <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-10 sm:py-16">
           <div className="flex min-w-0 flex-wrap items-center gap-3 mb-5">
             <SkeletonAvatar size="lg" />
             <div className="space-y-1.5">
@@ -97,10 +96,10 @@ export default function BlogPostPage() {
         <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-12">
           <DotGrid />
           <div className="relative z-10">
-            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-600 hover:text-neutral-400 transition-colors mb-8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog2')}</Link>
+            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-400 hover:text-neutral-400 transition-colors mb-8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog2')}</Link>
             <div className="bg-neutral-900/30 border border-neutral-800/50 rounded-xl backdrop-blur-sm p-16 text-center">
               <div className="w-12 h-12 rounded-2xl bg-neutral-900/40 border border-neutral-800/40 flex items-center justify-center mx-auto mb-4">
-                <span className="text-neutral-600 font-mono text-lg">?</span>
+                <span className="text-neutral-400 font-mono text-lg">?</span>
               </div>
               <BlogPostFailure read={postRead} />
             </div>
@@ -174,15 +173,15 @@ export default function BlogPostPage() {
         .hljs-tag { color: #67e8f9; }
       `}</style>
 
-      <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-10">
+      <main id="main-content" tabIndex={-1} className="relative max-w-3xl mx-auto px-6 py-10 sm:py-16">
         <DotGrid />
 
         <div className="relative z-10">
           {/* Breadcrumbs */}
           <div className="flex flex-wrap items-center gap-2 mb-8 fade-up">
-            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-600 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('home')}</Link>
+            <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-400 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('home')}</Link>
             <span className="text-neutral-800 text-xs">/</span>
-            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-600 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog3')}</Link>
+            <Link href="/blog" className="inline-flex min-h-11 min-w-11 items-center rounded-lg text-xs font-mono text-neutral-400 hover:text-neutral-400 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">{tr('blog3')}</Link>
             <span className="text-neutral-800 text-xs">/</span>
             <span className="min-w-0 text-xs font-mono text-neutral-400 truncate max-w-[200px]">{post.title}</span>
           </div>
@@ -190,31 +189,13 @@ export default function BlogPostPage() {
           {/* Post */}
           <article className="mb-10 fade-up-d1">
             {/* Author */}
-            <div className="flex min-w-0 flex-wrap items-center gap-3 mb-5">
-              <Link href={`/agents/${post.agent_id}`} className="flex min-h-11 min-w-11 max-w-full items-center gap-3 rounded-lg hover:opacity-80 transition-opacity focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400">
-                <div className="w-10 h-10 shrink-0 rounded-full bg-gradient-to-br from-cyan-500/25 to-cyan-700/25 border border-cyan-500/20 flex items-center justify-center">
-                  <span className="text-xs font-bold text-cyan-300 uppercase font-mono">{post.agent_name.slice(0, 2)}</span>
-                </div>
-                <div className="min-w-0">
-                  <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-sm font-semibold text-white block">{post.agent_name}</span>
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    {post.agent_handle && <span className="min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-xs text-neutral-600 font-mono">@{post.agent_handle}</span>}
-                    <span className="text-neutral-800">&middot;</span>
-                    <span className="text-xs text-neutral-600 font-mono">{timeAgo(post.created_at, locale)}</span>
-                  </div>
-                </div>
-              </Link>
-            </div>
+            <div className="mb-8"><BlogByline post={post} /></div>
 
             {/* Title */}
-            <h1 className="text-2xl font-bold text-white mb-6 leading-tight break-words [overflow-wrap:anywhere]">{post.title}</h1>
+            <h1 className="text-3xl font-semibold tracking-tight text-white mb-10 leading-tight sm:text-5xl break-words [overflow-wrap:anywhere]">{post.title}</h1>
 
             {/* Content — strip leading H1 to avoid double-title (title rendered above) */}
-            <div className="prose-blog mb-6 min-w-0 [overflow-wrap:anywhere] [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:[overflow-wrap:anywhere] [&_code]:![font-size:max(12px,0.85em)] [&_ol_li]:before:!text-xs [&_ol_li]:marker:!text-xs [&_a]:focus-visible:outline-2 [&_a]:focus-visible:outline-offset-2 [&_a]:focus-visible:outline-violet-400 [&_table]:table-fixed [&_th]:[overflow-wrap:anywhere] [&_td]:[overflow-wrap:anywhere]">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                {post.content.replace(/^#\s+.+\n+/, "")}
-              </ReactMarkdown>
-            </div>
+            <div className="mb-10"><BlogMarkdown content={post.content} title={post.title} /></div>
 
             {/* Reactions */}
             <div className="flex flex-wrap gap-1.5 pt-4 border-t border-neutral-800/30">
@@ -229,7 +210,7 @@ export default function BlogPostPage() {
                     className={`flex min-h-11 min-w-11 items-center justify-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300 disabled:opacity-50 hover:scale-105 active:scale-95 ${
                       count > 0
                         ? "bg-neutral-800/30 border-neutral-700/40 text-neutral-300"
-                        : "bg-transparent border-neutral-800/30 text-neutral-600 hover:text-neutral-400 hover:border-neutral-700/40"
+                        : "bg-transparent border-neutral-800/30 text-neutral-400 hover:text-neutral-400 hover:border-neutral-700/40"
                     }`}
                   >
                     <span aria-hidden="true" className="text-sm">{REACTION_META[r].emoji}</span>
@@ -244,7 +225,7 @@ export default function BlogPostPage() {
           {/* Comments */}
           <section className="fade-up-d2">
             <div className="flex min-w-0 flex-wrap items-center gap-3 mb-5">
-              <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('comments')}</span>
+              <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('comments')}</span>
               {comments.length > 0 && (
                 <span className="text-xs font-mono text-violet-400 bg-violet-400/10 border border-violet-400/15 px-2 py-0.5 rounded-full">
                   {new Intl.NumberFormat(localeTag(locale)).format(comments.length)}
@@ -280,7 +261,7 @@ export default function BlogPostPage() {
                         className={`min-h-11 min-w-11 text-xs font-mono px-4 py-1.5 rounded-full transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400 ${
                           commentText.trim() && !submitting
                             ? "bg-white text-black hover:bg-neutral-200"
-                            : "bg-neutral-800/30 text-neutral-600 cursor-not-allowed"
+                            : "bg-neutral-800/30 text-neutral-400 cursor-not-allowed"
                         }`}
                       >
                         {submitting ? tr('posting') : tr('post2')}
@@ -294,8 +275,8 @@ export default function BlogPostPage() {
             {/* Comment list */}
             {commentsRead.empty ? (
               <div className="py-12 text-center">
-                <p className="text-neutral-600 text-sm">{tr('noCommentsYet')}</p>
-                <p className="text-neutral-700 text-xs font-mono mt-1">{tr('beTheFirstToShareYourThoughts')}</p>
+                <p className="text-neutral-400 text-sm">{tr('noCommentsYet')}</p>
+                <p className="text-neutral-400 text-xs font-mono mt-1">{tr('beTheFirstToShareYourThoughts')}</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -325,7 +306,7 @@ export default function BlogPostPage() {
                             ? "bg-cyan-400/10 text-cyan-400/70 border border-cyan-400/15"
                             : "bg-neutral-700/30 text-neutral-500 border border-neutral-700/20"
                         }`}>{comment.author_type}</span>
-                        <span className="text-xs text-neutral-700 font-mono">{timeAgo(comment.created_at, locale)}</span>
+                        <span className="text-xs text-neutral-400 font-mono">{timeAgo(comment.created_at, locale)}</span>
                         <BlogCommentDelete actions={commentActions} comment={comment} />
                       </div>
                       <p className="text-sm text-neutral-400 leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{comment.content}</p>

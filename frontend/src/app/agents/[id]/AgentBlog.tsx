@@ -6,6 +6,7 @@ import { publicMessages } from '@/lib/i18n/public';
 import { sharedMessages } from '@/lib/i18n/shared';
 import { FetchError } from '@/components/FetchError';
 import { useAgentBlog } from './useAgentBlog';
+import { BlogExcerpt } from '@/components/blog/BlogExcerpt';
 
 type Blog = ReturnType<typeof useAgentBlog>;
 const control = 'min-h-11 min-w-11 rounded-lg border border-neutral-800/50 px-3 py-1.5 text-xs font-mono text-neutral-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-sky-400';
@@ -25,10 +26,13 @@ function ReactionNotice({ state, blog }: { state: Blog['pairs'][string]; blog: B
 
 function BlogArticle({ post, blog }: { post: BlogPost; blog: Blog }) {
   const tr = useTranslations(publicMessages), { locale } = useLocale();
-  return <article aria-label={post.title} className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 hover:border-neutral-700/60 transition-all duration-300 blog-card">
-    <h3 className="text-base font-medium text-white mb-2 font-mono [overflow-wrap:anywhere]">{post.title}</h3>
-    <p className="text-sm text-neutral-300 leading-relaxed whitespace-pre-wrap mb-4 [overflow-wrap:anywhere]">{post.content}</p>
-    <div className="flex flex-wrap items-center justify-between gap-2">
+  return <article aria-label={post.title} className="rounded-xl border border-neutral-800/50 bg-neutral-900/30 backdrop-blur-sm p-5 sm:p-6 hover:border-neutral-700/60 transition-all duration-300 blog-card">
+    <h3 className="text-xl font-semibold leading-7 text-white [overflow-wrap:anywhere]">{post.title}</h3>
+    <BlogExcerpt content={post.content} />
+    <Link href={`/blog/${post.id}`} className="mt-3 inline-flex min-h-11 items-center gap-1 rounded text-sm font-medium text-violet-300 hover:text-violet-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-300">
+      {tr('readMore')}<span className="sr-only">: {post.title}</span>
+    </Link>
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-800/50 pt-4">
       <div className="flex flex-wrap gap-2">
         {reactions.map(reaction => {
           const count = post.reactions[reaction] ?? 0, state = blog.pairs[`${post.id}:${reaction}`];
@@ -39,7 +43,7 @@ function BlogArticle({ post, blog }: { post: BlogPost; blog: Blog }) {
           </button>;
         })}
       </div>
-      <span className="text-xs text-neutral-600 font-mono">{timeAgo(post.created_at, locale)}</span>
+      <span className="text-xs text-neutral-400 font-mono">{timeAgo(post.created_at, locale)}</span>
     </div>
     {Object.values(blog.pairs).filter(state => state.postId === post.id).map(state => <ReactionNotice key={state.reaction} state={state} blog={blog} />)}
   </article>;
@@ -48,11 +52,12 @@ function BlogArticle({ post, blog }: { post: BlogPost; blog: Blog }) {
 /** Render the agent's existing public blog, pagination and reaction outcomes. */
 export function AgentBlog({ agentId }: { agentId: string }) {
   const blog = useAgentBlog(agentId), tr = useTranslations(publicMessages), { locale } = useLocale();
+  if (!blog.pending && !blog.error && blog.offset === 0 && blog.posts.length === 0 && blog.total === 0) return null;
   return <section aria-label={tr('blog')} className="relative mt-10 fade-up-d5">
     <div className="flex flex-wrap items-center gap-3 mb-4">
-      <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-600">{tr('blog')}</span>
+      <span className="text-xs font-mono uppercase tracking-[0.2em] text-neutral-400">{tr('blog')}</span>
       <div className="w-16 h-px bg-gradient-to-r from-neutral-800/80 to-transparent" />
-      {blog.total > 0 && <span className="text-xs font-mono text-neutral-600">{new Intl.NumberFormat(localeTag(locale)).format(blog.total)} {tr('post')}{locale === 'en' && blog.total !== 1 ? 's' : ''}</span>}
+      {blog.total > 0 && <span className="text-xs font-mono text-neutral-400">{new Intl.NumberFormat(localeTag(locale)).format(blog.total)}</span>}
     </div>
     {blog.error && <FetchError onRetry={() => void blog.retry()} />}
     <BlogReadState blog={blog} />

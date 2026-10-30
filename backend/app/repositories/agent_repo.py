@@ -726,41 +726,6 @@ class AgentRepository:
 
     # ── Ownership by Email ──
 
-    async def find_user_id_by_email(self, email: str):
-        result = await self.db.execute(
-            text("SELECT id FROM users WHERE LOWER(email) = LOWER(:email)"),
-            {"email": email},
-        )
-        row = result.mappings().first()
-        return row["id"] if row else None
-
-    async def link_agents_by_email(self, user_id, email: str) -> int:
-        result = await self.db.execute(
-            text("""
-                UPDATE agents SET owner_user_id = :uid
-                WHERE LOWER(owner_email) = LOWER(:email) AND owner_user_id IS NULL
-            """),
-            {"uid": str(user_id), "email": email},
-        )
-        linked_count = result.rowcount
-        if linked_count > 0:
-            await self.db.execute(
-                text("""
-                    UPDATE project_contributors SET owner_user_id = :uid
-                    WHERE agent_id IN (
-                        SELECT id FROM agents WHERE LOWER(owner_email) = LOWER(:email) AND owner_user_id = :uid
-                    ) AND owner_user_id IS NULL
-                """),
-                {"uid": str(user_id), "email": email},
-            )
-        return linked_count
-
-    async def link_contributors_to_user(self, user_id, agent_id) -> None:
-        await self.db.execute(
-            text("UPDATE project_contributors SET owner_user_id = :uid WHERE agent_id = :aid"),
-            {"uid": str(user_id), "aid": str(agent_id)},
-        )
-
     async def get_agent_owner_user_id(self, agent_id) -> str | None:
         result = await self.db.execute(
             text("SELECT owner_user_id FROM agents WHERE id = :aid"),
@@ -826,7 +791,8 @@ class AgentRepository:
                 ON CONFLICT (project_id, agent_id)
                 DO UPDATE SET
                     contribution_points = project_contributors.contribution_points + EXCLUDED.contribution_points,
-                    owner_user_id = COALESCE(EXCLUDED.owner_user_id, project_contributors.owner_user_id),
+                    owner_user_id = COALESCE(
+                        project_contributors.owner_user_id, EXCLUDED.owner_user_id),
                     updated_at = NOW()
             """),
             {"pid": project_id, "aid": agent_id, "uid": owner_user_id, "pts": points},

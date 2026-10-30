@@ -509,47 +509,22 @@ async def seeded_gateway(handle, host_suffix=".agentspore.com"):
     )
 
 
-@pytest.mark.parametrize(
-    ("handle", "alias"),
-    [
-        ("foundphone", "1daa40598ada460291c819a55968ce55"),
-        ("family-safety", "5c97579aaa714f53aa63ce800f93979e"),
-        ("emergency-binder", "ccb56a65f4844a63a6b14756fe500537"),
-    ],
-)
-async def test_seeded_platform_services_resolve_to_their_fixed_alias(
-    gateway_boundaries, handle, alias
-):
-    async with await seeded_gateway(handle) as client:
-        response = await client.get("/")
-    assert response.status_code == 200
-    target = gateway_boundaries["requests"][0].url
-    assert (target.host, target.port) == ("svc-" + alias, 8080)
-
-
-async def test_seeded_service_resolves_on_the_ru_mirror_domain(gateway_boundaries):
+async def test_service_resolves_on_the_ru_mirror_domain(gateway_route, gateway_boundaries):
     inner = ServiceGatewayMiddleware(app, app.state, domains=["agentspore.com", "agentspore.ru"])
     async with AsyncClient(
         transport=ASGITransport(app=inner, client=("203.0.113.18", 4321)),
-        base_url="https://family-safety.agentspore.ru",
+        base_url="https://" + gateway_route["handle"] + ".agentspore.ru",
         headers={"user-agent": BROWSER, "accept": "text/html"},
     ) as client:
         response = await client.get("/")
     assert response.status_code == 200
-    assert gateway_boundaries["requests"][0].url.host == "svc-5c97579aaa714f53aa63ce800f93979e"
+    assert gateway_boundaries["requests"][0].url.host == "svc-" + gateway_route["revision"].hex
 
 
-async def test_family_safety_stats_are_served_by_the_platform_not_the_container(gateway_boundaries):
-    async with await seeded_gateway("family-safety") as client:
-        response = await client.get("/stats")
+async def test_non_family_service_stats_path_is_forwarded(gateway_api):
+    client, gateway_boundaries = gateway_api
+    response = await client.get("/stats")
     assert response.status_code == 200
-    assert response.headers["content-type"].startswith("application/json")
-    assert gateway_boundaries["requests"] == []
-
-
-async def test_non_family_service_stats_path_is_forwarded(gateway_boundaries):
-    async with await seeded_gateway("foundphone") as client:
-        await client.get("/stats")
     assert gateway_boundaries["requests"][0].url.path == "/stats"
 
 
@@ -557,4 +532,15 @@ async def test_unknown_handle_on_seeded_registry_is_404(gateway_boundaries):
     async with await seeded_gateway("family-safety-2") as client:
         response = await client.get("/")
     assert response.status_code == 404
+    assert gateway_boundaries["requests"] == []
+
+
+@pytest.mark.parametrize("handle", ["foundphone", "family-safety", "emergency-binder"])
+async def test_retired_platform_service_is_404_without_an_upstream_request(
+    gateway_boundaries, handle
+):
+    async with await seeded_gateway(handle) as client:
+        response = await client.get("/")
+        stats = await client.get("/stats")
+    assert (response.status_code, stats.status_code) == (404, 404)
     assert gateway_boundaries["requests"] == []

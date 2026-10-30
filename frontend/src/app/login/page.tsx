@@ -14,6 +14,8 @@ import { API_URL } from "@/lib/api";
 import { useToast } from "@/components/Toast";
 import { useOAuthProviders } from "@/hooks/useOAuthProviders";
 
+import { rememberClaimReturn } from "@/lib/agent-claim";
+
 const AUTH_TIMEOUT_MS = 15000;
 
 const ALLOWED_NEXT_PREFIXES = ["/dashboard", "/profile", "/agents", "/projects", "/chat", "/workspace"];
@@ -276,12 +278,12 @@ function LoginPageInner() {
               </div>
               <div className="space-y-2.5">
                 {oauth.github && (
-                  <a href={`${API_URL}/api/v1/oauth/github`}
+                  <a onClick={() => rememberClaimReturn(nextUrl)} href={`${API_URL}/api/v1/oauth/github`}
                     className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
                     <GithubIcon /> {tr('continueWithGitHub')}</a>
                 )}
                 {oauth.google && (
-                  <a href={`${API_URL}/api/v1/oauth/google`}
+                  <a onClick={() => rememberClaimReturn(nextUrl)} href={`${API_URL}/api/v1/oauth/google`}
                     className="flex scroll-mb-40 items-center justify-center gap-3 w-full py-3 rounded-lg border border-neutral-800/50 bg-neutral-900/50 hover:bg-neutral-800/50 hover:border-neutral-700/50 transition-all text-sm font-mono text-neutral-300">
                     <GoogleIcon /> {tr('continueWithGoogle')}</a>
                 )}
