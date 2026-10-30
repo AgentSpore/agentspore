@@ -10,14 +10,12 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.datastructures import State
 from starlette.requests import ClientDisconnect, Request
-from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.deps import client_ip
 from app.core.config import get_settings
-from app.schemas.family_training import FamilyTrainingEvent
-from app.schemas.usage import BinderEvent, GatewayVisit, ServiceEvent, ServiceRoute
-from app.services.family_training_service import FamilyTrainingService
+from app.schemas.usage import GatewayVisit, ServiceEvent, ServiceRoute
 from app.services.service_gateway import ServiceGateway
 
 
@@ -58,11 +56,6 @@ class ServiceGatewayMiddleware:
             is_event = request.method == "POST" and request.url.path == self.EVENTS_PATH
             body = await self._body(request, self.EVENT_LIMIT if is_event else self.BODY_LIMIT)
             route = await self._resolve(handle)
-            if (route.metrics_profile == "family_safety" and request.method == "GET"
-                    and request.url.path == "/stats"):
-                response = await self._stats(request, route)
-                await response(scope, receive, send)
-                return
             if is_event:
                 response = await self._event(request, route, body)
                 await response(scope, receive, send)
@@ -122,14 +115,7 @@ class ServiceGatewayMiddleware:
         ):
             raise HTTPException(status_code=415, detail="JSON required")
         try:
-            schema: type[BinderEvent | FamilyTrainingEvent | ServiceEvent]
-            if route.metrics_profile == "emergency_binder":
-                schema = BinderEvent
-            elif route.metrics_profile == "family_safety":
-                schema = FamilyTrainingEvent
-            else:
-                schema = ServiceEvent
-            event = schema.model_validate_json(body)
+            event = ServiceEvent.model_validate_json(body)
         except ValidationError as error:
             kind = error.errors(include_input=False, include_context=False)[0]["type"]
             raise HTTPException(
@@ -138,16 +124,6 @@ class ServiceGatewayMiddleware:
         async with asyncio.timeout(2), self.resources.service_gateway_db_factory.begin() as db:
             await ServiceGateway(db).record_event(request, route, event)
         return Response(status_code=204)
-
-    async def _stats(self, request: Request, route: ServiceRoute) -> Response:
-        query = request.query_params
-        raw = query.get("curriculum_version", "1")
-        if (set(query) - {"curriculum_version"} or len(query.multi_items()) > 1
-                or not re.fullmatch(r"[0-9]{1,7}", raw) or not 1 <= int(raw) <= 1_000_000):
-            raise HTTPException(status_code=422, detail="Invalid training stats query")
-        async with asyncio.timeout(2), self.resources.service_gateway_db_factory() as db:
-            stats = await FamilyTrainingService(db).get_stats(route.project_id, int(raw))
-        return JSONResponse(stats.model_dump(mode="json"), headers={"cache-control": "no-store"})
 
     async def _resolve(self, handle: str) -> ServiceRoute:
         async with asyncio.timeout(2), self.resources.service_gateway_db_factory() as db:

@@ -137,7 +137,6 @@ class ProjectCreateRequest(BaseModel):
     tech_stack: list[str] = Field(default=[])
     idea_id: str | None = Field(default=None)
     vcs_provider: str = Field(default="github", pattern="^(github|gitlab)$")
-    metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -155,7 +154,6 @@ class ProjectResponse(BaseModel):
     vcs_provider: str = "github"
     created_at: str
     warning: str | None = None
-    metrics_profile: Literal["family_safety", "emergency_binder"] | None = None
     recovery_provenance: dict[str, Any] | None = None
 
 
