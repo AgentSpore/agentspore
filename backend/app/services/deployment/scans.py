@@ -150,8 +150,10 @@ _COPY_FROM = re.compile(r"^COPY\s+.*?--from=(\S+)", re.IGNORECASE)
 _FLAG_FORBIDDEN = re.compile(r"""['"\\$]""")
 _MOUNT_KEYS = frozenset(
     "type target dst destination id sharing mode uid gid required size "
-    "ro readonly rw source src".split()
+    "ro readonly rw source src env".split()
 )
+_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\x85\u2028\u2029]")
+_CONTINUATION = re.compile(r"\\[ \t]*$")
 _MOUNT_BARE = frozenset({"required", "ro", "readonly", "rw"})
 _MOUNT_TYPES = frozenset({"cache", "tmpfs", "secret", "bind", "ssh"})
 _MOUNT_VALUE = re.compile(r"[A-Za-z0-9_./:@-]+")
@@ -183,8 +185,12 @@ class DockerfileScanner:
         path = root / self.dockerfile
         if not path.is_file():
             return [Finding("dockerfile-missing", self.dockerfile, 0, "dockerfile_missing")]
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        for number, physical in enumerate(text.split("\n"), 1):
+            if _CONTROL.search(physical):
+                return [Finding(_UNSUPPORTED, self.dockerfile, number, "base_not_allowed")]
         findings, stages = [], set()
-        for number, line in self._logical_lines(path.read_text(errors="replace")):
+        for number, line in self._logical_lines(text):
             rule = self._violation(line, stages)
             if rule:
                 findings.append(Finding(rule, self.dockerfile, number, "base_not_allowed"))
@@ -201,6 +207,8 @@ class DockerfileScanner:
             ok = self._allowed(match.group(1), stages)
             if match.group(2):
                 stages.add(match.group(2).lower())
+            if ok and _FLAG_FORBIDDEN.search(match.group(1)):
+                return _UNSUPPORTED
             return None if ok else "from-not-allowed"
         if (match := _COPY_FROM.match(line)) is not None and not self._allowed(
             match.group(1), stages, stage_index=True
@@ -210,9 +218,11 @@ class DockerfileScanner:
 
     def _flag_violation(self, line: str, stages: set[str]) -> str | None:
         for word in self._flags(line):
-            if _FLAG_FORBIDDEN.search(word):
-                return _UNSUPPORTED
-            if word.lower().startswith("--mount"):
+            name = word.partition("=")[0].lower()
+            if name.startswith("--mount") or name == "--from":
+                if _FLAG_FORBIDDEN.search(word):
+                    return _UNSUPPORTED
+            if name.startswith("--mount"):
                 rule = self._mount_violation(word, stages)
                 if rule:
                     return rule
@@ -246,17 +256,17 @@ class DockerfileScanner:
 
     @staticmethod
     def _logical_lines(text: str) -> list[tuple[int, str]]:
-        """Join backslash continuations; number is the first physical line."""
+        """Join continuations like BuildKit (indent kept, comments skipped); number = first line."""
         out, buffer, start = [], "", 0
-        for number, raw in enumerate(text.splitlines(), 1):
-            stripped = raw.strip()
+        for number, raw in enumerate(text.split("\n"), 1):
+            stripped = raw.strip(" \t")
             if not stripped or stripped.startswith("#"):
                 if not buffer and stripped:
                     out.append((number, stripped))
                 continue
             start = start or number
-            buffer += stripped.removesuffix("\\")
-            if not stripped.endswith("\\"):
+            buffer += _CONTINUATION.sub("", raw if buffer else raw.lstrip(" \t"))
+            if not _CONTINUATION.search(raw):
                 out.append((start, buffer.strip()))
                 buffer, start = "", 0
         return out + ([(start, buffer.strip())] if buffer else [])
