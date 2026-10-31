@@ -192,7 +192,7 @@ def test_proxy_checks_tls_sni_by_peek_and_splice_without_interception():
     # Without --client-requested a missing SNI falls back to the CONNECT target and matches.
     assert len(sni) == 1 and sni[0][2] == "--client-requested"
     assert set(sni[0][3:]) == EGRESS_DOMAINS
-    # server_name never yields "none" (it falls back to the CONNECT target): the helper sees the SNI.
+    # server_name never yields "none" (CONNECT-target fallback): the helper sees the SNI.
     assert ["step2", "at_step", "SslBump2"] in acls
     assert ["sni_present", "external", "sni_check"] in acls
     helper = next(r for r in _directives(conf, "external_acl_type") if r[0] == "sni_check")
@@ -203,7 +203,9 @@ def test_proxy_checks_tls_sni_by_peek_and_splice_without_interception():
 def test_sni_helper_rejects_absent_sni_and_is_shipped_in_the_image():
     script = CONF / "sni-present.sh"
     lines = "- -\n\npypi.org -\npypi.org -\n"
-    run = subprocess.run(["sh", str(script)], input=lines, capture_output=True, text=True, timeout=10)
+    run = subprocess.run(
+        ["sh", str(script)], input=lines, capture_output=True, text=True, timeout=10
+    )
     assert run.stdout.split() == ["ERR", "ERR", "OK", "OK"]
     dockerfile = (CONF / "Dockerfile.squid").read_text()
     assert "COPY sni-present.sh /usr/local/bin/sni-present.sh" in dockerfile
