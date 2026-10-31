@@ -20,10 +20,16 @@ export function trackingOptOut(nav: BrowserSignals): boolean {
   return nav.doNotTrack === "1" || nav.globalPrivacyControl === true;
 }
 
-/** Pages that must never be counted: the admin area itself, or paths the schema rejects. */
+/** Private areas (admin, signed-in pages, token flows) are never reported, even to be discarded. */
+const PRIVATE_PREFIXES = [
+  "/admin", "/dashboard", "/profile", "/workspace", "/auth",
+  "/reset-password", "/forgot-password", "/verify-email",
+];
+
+/** Public pages within the schema limit; private areas and over-long paths are skipped. */
 export function isCountablePath(path: string): boolean {
   if (path.length === 0 || path.length > MAX_PATH) return false;
-  return path !== "/admin" && !path.startsWith("/admin/");
+  return !PRIVATE_PREFIXES.some(prefix => path === prefix || path.startsWith(`${prefix}/`));
 }
 
 function externalOrigin(referrer: string, ownHost: string): string | undefined {

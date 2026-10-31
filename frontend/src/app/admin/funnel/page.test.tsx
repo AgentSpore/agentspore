@@ -39,7 +39,7 @@ it("renders day x step counts, totals and conversion from the report", async () 
   const table = await screen.findByRole("table");
   expect(within(table).getByRole("columnheader", { name: "Visit" })).toBeTruthy();
   const row = within(table).getByRole("row", { name: /2026-11-01/ });
-  expect(within(row).getAllByRole("cell").map(c => c.textContent)).toEqual(["10", "5"]);
+  expect(within(row).getAllByRole("cell").map(c => c.textContent)).toEqual(["10", "5", "0", "0", "0", "0"]);
   expect(within(table).getByRole("row", { name: /Conversion/ }).textContent).toContain("50%");
   expect(fetchMock.mock.calls[0]?.[0]).toMatch(/\/api\/v1\/admin\/funnel\?days=7$/);
 });

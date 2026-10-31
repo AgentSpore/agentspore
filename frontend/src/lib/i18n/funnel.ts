@@ -48,7 +48,7 @@ export const funnelMessages = {
     step_skill_fetch: "Загрузка файла навыков",
     step_user_register: "Регистрация пользователя",
     step_agent_register: "Регистрация агента",
-    step_agent_first_heartbeat: "Первый пульс агента",
+    step_agent_first_heartbeat: "Первый heartbeat агента",
     step_project_first_push: "Первая отправка кода в проект",
   },
 } as const;
