@@ -121,4 +121,4 @@ def test_buildkit_settings_give_bound_buildkit(tmp_path):
 
 def test_unknown_builder_is_rejected():
     with pytest.raises(ValueError):
-        Settings(_env_file=None, a4_builder="docker")
+        Settings(_env_file=None, **{"a4_builder": "docker"})
