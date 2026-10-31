@@ -6,7 +6,6 @@ untrusted, so each tool runs on platform-owned config and every unreadable or
 unexpected report is a `tool_failed`, never a pass.
 """
 
-import csv
 import json
 import re
 import tempfile
@@ -148,7 +147,15 @@ class OsvScanner:
 _DIRECTIVE = re.compile(r"^#\s*(syntax|escape|check)\s*=", re.IGNORECASE)
 _FROM = re.compile(r"^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
 _COPY_FROM = re.compile(r"^COPY\s+.*?--from=(\S+)", re.IGNORECASE)
-_MOUNT = re.compile(r'--mount=((?:"[^"]*"?|[^\s"])+)', re.IGNORECASE)
+_FLAG_FORBIDDEN = re.compile(r"""['"\\$]""")
+_MOUNT_KEYS = frozenset(
+    "type target dst destination id sharing mode uid gid required size "
+    "ro readonly rw source src".split()
+)
+_MOUNT_BARE = frozenset({"required", "ro", "readonly", "rw"})
+_MOUNT_TYPES = frozenset({"cache", "tmpfs", "secret", "bind", "ssh"})
+_MOUNT_VALUE = re.compile(r"[A-Za-z0-9_./:@-]+")
+_UNSUPPORTED = "dockerfile-unsupported"
 _DIGEST = re.compile(r"@(sha256:[0-9a-f]{64})$")
 
 
@@ -157,6 +164,9 @@ class DockerfileScanner:
 
     Directives (`syntax`, `escape`, `check`) are refused outright: BuildKit would read the
     file with a different escape character than this scanner and see FROM lines it cannot.
+    Instruction flags are an allowlist grammar (no quotes, escapes or `$`; fixed `--mount` keys),
+    never a blacklist of spellings. Defense in depth: the registry-mirror allowlist (P3) is the
+    real boundary for which images a build can pull.
     """
 
     def __init__(self, allowed_digests: frozenset[str], dockerfile: str = "Dockerfile"):
@@ -185,6 +195,8 @@ class DockerfileScanner:
             return (
                 "syntax-directive" if directive.group(1).lower() == "syntax" else "parser-directive"
             )
+        if rule := self._flag_violation(line, stages):
+            return rule
         if (match := _FROM.match(line)) is not None:
             ok = self._allowed(match.group(1), stages)
             if match.group(2):
@@ -194,20 +206,43 @@ class DockerfileScanner:
             match.group(1), stages, stage_index=True
         ):
             return "from-not-allowed"
-        if any(not self._allowed(ref, stages) for ref in self._mount_sources(line)):
-            return "from-not-allowed"
+        return None
+
+    def _flag_violation(self, line: str, stages: set[str]) -> str | None:
+        for word in self._flags(line):
+            if _FLAG_FORBIDDEN.search(word):
+                return _UNSUPPORTED
+            if word.lower().startswith("--mount"):
+                rule = self._mount_violation(word, stages)
+                if rule:
+                    return rule
         return None
 
     @staticmethod
-    def _mount_sources(line: str) -> list[str]:
-        """Every `from=` value of every `--mount`; a value is CSV, as BuildKit parses it."""
-        refs = []
-        for mount in _MOUNT.findall(line):
-            for field in next(csv.reader([mount]), []):
-                key, _, value = field.partition("=")
-                if key.strip().lower() == "from":
-                    refs.append(value.strip())
-        return refs
+    def _flags(line: str) -> list[str]:
+        flags = []
+        for word in line.split()[1:]:
+            if not word.startswith("--"):
+                break
+            flags.append(word)
+        return flags
+
+    def _mount_violation(self, word: str, stages: set[str]) -> str | None:
+        name, sep, value = word.partition("=")
+        if name != "--mount" or not sep:
+            return _UNSUPPORTED
+        for field in value.split(","):
+            key, has_value, ref = field.partition("=")
+            if key == "from" and has_value and _MOUNT_VALUE.fullmatch(ref):
+                if not self._allowed(ref, stages):
+                    return "from-not-allowed"
+            elif key in _MOUNT_BARE and not has_value:
+                continue
+            elif key not in _MOUNT_KEYS or not _MOUNT_VALUE.fullmatch(ref):
+                return _UNSUPPORTED
+            elif key == "type" and ref not in _MOUNT_TYPES:
+                return _UNSUPPORTED
+        return None
 
     @staticmethod
     def _logical_lines(text: str) -> list[tuple[int, str]]:
@@ -215,11 +250,12 @@ class DockerfileScanner:
         out, buffer, start = [], "", 0
         for number, raw in enumerate(text.splitlines(), 1):
             stripped = raw.strip()
-            if stripped.startswith("#") and not buffer:
-                out.append((number, stripped))
+            if not stripped or stripped.startswith("#"):
+                if not buffer and stripped:
+                    out.append((number, stripped))
                 continue
             start = start or number
-            buffer += " " + stripped.removesuffix("\\")
+            buffer += stripped.removesuffix("\\")
             if not stripped.endswith("\\"):
                 out.append((start, buffer.strip()))
                 buffer, start = "", 0
