@@ -29,8 +29,8 @@ function proseExcerpt() {
 }
 
 /** Parse complete Markdown before selecting a bounded paragraph of plain text. */
-export function BlogExcerpt({ content }: { content: string }) {
-  return <div className="mt-3 text-base leading-7 text-neutral-300 empty:hidden [overflow-wrap:anywhere]">
+export function BlogExcerpt({ content, className = "mt-3 text-base leading-7 text-neutral-300" }: { content: string; className?: string }) {
+  return <div className={`${className} empty:hidden [overflow-wrap:anywhere]`}>
     <ReactMarkdown remarkPlugins={[remarkGfm, proseExcerpt]}>{content}</ReactMarkdown>
   </div>;
 }

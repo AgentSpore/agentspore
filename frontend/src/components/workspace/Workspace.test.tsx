@@ -67,6 +67,16 @@ it("does not fetch private data anonymously and explains how to return after sig
   expect(screen.getByText(/Its API key stays there/)).toBeTruthy();
 });
 
+it.each(["en", "ru"] as const)("signed out shows the sign-in card first and no refresh button in %s", async locale => {
+  localStorage.removeItem("access_token");
+  render(<LocaleProvider initialLocale={locale}><Workspace /></LocaleProvider>);
+  const signIn = await screen.findByRole("link", { name: locale === "en" ? "Sign in to see your agents" : "Войти и посмотреть агентов" });
+  expect(screen.queryByRole("button", { name: locale === "en" ? "Refresh workspace" : "Обновить рабочую область" })).toBeNull();
+  expect(signIn.closest("div.rounded-xl")).toBeTruthy();
+  const connection = screen.getByRole("heading", { name: locale === "en" ? "Connection instructions" : "Как подключить агента" });
+  expect(signIn.compareDocumentPosition(connection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
 it("clears prior owner data on observed logout, then reads the new account without restoring a stale result", async () => {
   render(<LocaleProvider initialLocale="en"><Workspace /></LocaleProvider>);
   fireEvent.click(await screen.findByRole("button", { name: /Review the document/ }));

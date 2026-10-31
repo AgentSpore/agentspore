@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { EmptyState } from "@/components/EmptyState";
 import { Header } from "@/components/Header";
 import { SkeletonText } from "@/components/Skeleton";
 import { getAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
@@ -61,7 +62,7 @@ function ReadFeedback({ state, retry, detail = false, reveal = false }: { state:
     return () => cancelAnimationFrame(frame);
   }, [state.kind, reveal]);
   if (state.kind === "loading") return <div role="status" aria-busy="true" className="space-y-5 py-8"><p className="text-neutral-300">{t(detail ? "loadingDetail" : "loading")}</p><SkeletonText lines={5} /></div>;
-  if (state.kind === "auth") return <div className="py-8"><p className="max-w-[65ch] text-neutral-300">{t("auth")}</p><Link href="/login?next=/workspace" className={`${CONTROL} mt-5`}>{t("signIn")}</Link></div>;
+  if (state.kind === "auth") return <EmptyState title={t("authTitle")} body={t("auth")} action={{ href: "/login?next=/workspace", label: t("signIn") }} />;
   return <div ref={alert} role="alert" className="py-6"><p className="max-w-[65ch] text-neutral-300">{t(state.kind === "missing" ? "missing" : "error")}</p><button onClick={retry} className={`${CONTROL} mt-4`}>{t("retry")}</button></div>;
 }
 
@@ -149,6 +150,12 @@ function BudgetLedger({ agents }: { agents: AgentWorkspace["agents"] }) {
   </section>;
 }
 
+function RefreshControl({ hidden, refresh }: { hidden: boolean; refresh: () => void }) {
+  const t = useTranslations(WORKSPACE_MESSAGES);
+  if (hidden) return null;
+  return <div className="flex flex-wrap gap-3"><button onClick={refresh} className={`${CONTROL} scroll-mt-32`}>{t("refresh")}</button></div>;
+}
+
 function OwnerWorkspace({ token, rejectedToken, rejectAuth }: { token: string | null; rejectedToken: string | null; rejectAuth: (token: string) => void }) {
   const t = useTranslations(WORKSPACE_MESSAGES);
   const [revision, setRevision] = useState(0), [offset, setOffset] = useState(0), [selected, setSelected] = useState<string | null>(null);
@@ -157,6 +164,7 @@ function OwnerWorkspace({ token, rejectedToken, rejectAuth }: { token: string | 
   if (tasks.kind === "success" && tasks.data.items.length === 0 && tasks.data.offset >= tasks.data.total && tasks.data.offset > 0) {
     setOffset(Math.max(0, Math.floor((tasks.data.total - 1) / tasks.data.limit) * tasks.data.limit));
   }
+  const signedOut = !token || rejectedToken === token;
   const visible = workspace.kind === "success" && workspace.data.agents.length > 0 && rejectedToken !== token;
   const select = (id: string) => { setSelected(id); document.getElementById("task-detail")?.focus(); };
   const refresh = () => setRevision(value => value + 1);
@@ -167,9 +175,9 @@ function OwnerWorkspace({ token, rejectedToken, rejectAuth }: { token: string | 
   };
   return <main id="main-content" tabIndex={-1} style={{ animation: "none" }} className="mx-auto max-w-7xl space-y-10 px-4 py-8 sm:px-6 motion-reduce:animate-none">
       <div className="flex flex-wrap items-start justify-between gap-5"><div><h1 className="text-3xl font-semibold tracking-tight">{t("title")}</h1><p className="mt-3 max-w-[65ch] text-neutral-300">{t("intro")}</p><p className="mt-2 max-w-[65ch] text-sm text-neutral-400">{t("readonly")}</p></div>
-        <div className="flex flex-wrap gap-3"><button onClick={refresh} className={`${CONTROL} scroll-mt-32`}>{t("refresh")}</button></div>
+        <RefreshControl hidden={signedOut} refresh={refresh} />
       </div>
-      {rejectedToken !== null && rejectedToken === token ? <ReadFeedback state={{ kind: "auth" }} retry={refresh} /> : workspace.kind !== "success" ? <ReadFeedback state={workspace} retry={refresh} reveal /> : workspace.data.agents.length === 0 ? <section><h2 className="text-xl font-semibold">{t("connection")}</h2><p className="mt-3 text-neutral-300">{t("noAgents")}</p></section> : null}
+      {signedOut ? <ReadFeedback state={{ kind: "auth" }} retry={refresh} /> : workspace.kind !== "success" ? <ReadFeedback state={workspace} retry={refresh} reveal /> : workspace.data.agents.length === 0 ? <section><h2 className="text-xl font-semibold">{t("connection")}</h2><p className="mt-3 text-neutral-300">{t("noAgents")}</p></section> : null}
       <div className={visible ? "grid items-start gap-6 lg:grid-cols-2" : "hidden"}>
         <TaskInbox state={tasks} visible={visible} retry={refresh} selected={selected} select={select} changePage={changePage} clearSelection={() => setSelected(null)} />
         {visible && <SelectedTask id={selected} revision={revision} token={token} rejectAuth={rejectAuth} />}
