@@ -1,6 +1,7 @@
 """Hardening gate for the A4 builder stack (`deploy/a4-builder.compose.yml`)."""
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,7 @@ HTTP_ACCESS = [
     "allow CONNECT egress_ok SSL_ports",
     "deny all",
 ]
-SSL_BUMP = ["peek step1", "splice allowed_sni", "terminate all"]
+SSL_BUMP = ["peek step1", "terminate step2 !sni_present", "splice allowed_sni", "terminate all"]
 MIRROR_BASES = {"python", "node", "golang", "rust", "alpine", "debian", "busybox"}
 MIRROR_LOCATIONS = ["= /v2/", "~ MIRROR_REGEX", "/"]
 BUILDKITD_COMMAND = [
@@ -188,7 +189,29 @@ def test_proxy_checks_tls_sni_by_peek_and_splice_without_interception():
     acls = _directives(conf, "acl")
     assert ["step1", "at_step", "SslBump1"] in acls
     sni = [r for r in acls if r[:2] == ["allowed_sni", "ssl::server_name"]]
-    assert len(sni) == 1 and set(sni[0][2:]) == EGRESS_DOMAINS
+    # Without --client-requested a missing SNI falls back to the CONNECT target and matches.
+    assert len(sni) == 1 and sni[0][2] == "--client-requested"
+    assert set(sni[0][3:]) == EGRESS_DOMAINS
+    # server_name never yields "none" (it falls back to the CONNECT target): the helper sees the SNI.
+    assert ["step2", "at_step", "SslBump2"] in acls
+    assert ["sni_present", "external", "sni_check"] in acls
+    helper = next(r for r in _directives(conf, "external_acl_type") if r[0] == "sni_check")
+    assert "%ssl::>sni" in helper and helper[-1] == "/usr/local/bin/sni-present.sh"
+    assert "ttl=0" in helper and "negative_ttl=0" in helper
+
+
+def test_sni_helper_rejects_absent_sni_and_is_shipped_in_the_image():
+    script = CONF / "sni-present.sh"
+    lines = "- -\n\npypi.org -\npypi.org -\n"
+    run = subprocess.run(["sh", str(script)], input=lines, capture_output=True, text=True, timeout=10)
+    assert run.stdout.split() == ["ERR", "ERR", "OK", "OK"]
+    dockerfile = (CONF / "Dockerfile.squid").read_text()
+    assert "COPY sni-present.sh /usr/local/bin/sni-present.sh" in dockerfile
+
+
+def test_squid_is_pinned_to_an_exact_version():
+    dockerfile = (CONF / "Dockerfile.squid").read_text()
+    assert re.search(r"squid-openssl=\d+\.\d+-\S+", dockerfile)
 
 
 def test_platform_file_is_untracked_mounted_strictly_and_checked_by_healthcheck(services):
@@ -296,3 +319,5 @@ def test_runbook_records_p3b_rules_residual_risk_and_sni_checks():
     assert "domain fronting" in text and "P3c" in text and "devpi" in text
     assert "-servername example.com" in text
     assert "platform-dst.conf.example" in text
+    assert "-noservername" in text and "squid -v" in text
+    assert re.search(r"\bECH\b", text) and "inner SNI" in text

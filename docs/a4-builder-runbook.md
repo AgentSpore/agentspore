@@ -11,7 +11,7 @@ compose project; the existing platform stack is not changed by it.
 | `buildkitd` | rootless BuildKit under gVisor (`runtime: runsc`), 1 CPU, 2 GiB, `pids_limit` 512, no host socket, state in an anonymous volume, mTLS-only listener | `a4-builder` (internal) |
 | `mirror-gate` | nginx allowlist in front of the mirror: GET/HEAD of manifests and blobs addressed by `sha256:` digest (tags get 403) for `library/{python,node,golang,rust,alpine,debian,busybox}` only | `a4-builder`, `a4-mirror-back` |
 | `mirror` | `registry:3` (distribution v3.0.0) pull-through cache of Docker Hub, `proxy.ttl` 12 h | `a4-mirror-back`, `a4-upstream` |
-| `egress-proxy` | squid-openssl (built from `Dockerfile.squid`): HTTPS CONNECT to `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `proxy.golang.org`, `crates.io` (plus `index.`/`static.crates.io` for cargo), and the TLS SNI must name one of them too (peek and splice, no interception). IP-literal hosts, private, link-local, multicast, reserved ranges, and this host's own addresses (`platform-dst.conf`) are denied | `a4-builder`, `a4-upstream` |
+| `egress-proxy` | squid-openssl (built from `Dockerfile.squid`): HTTPS CONNECT to `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `proxy.golang.org`, `crates.io` (plus `index.`/`static.crates.io` for cargo), and the TLS SNI must name one of them too, a missing SNI is terminated (peek and splice, no interception). IP-literal hosts, private, link-local, multicast, reserved ranges, and this host's own addresses (`platform-dst.conf`) are denied | `a4-builder`, `a4-upstream` |
 
 `a4-builder` and `a4-mirror-back` are `internal`: `buildkitd` has no route to the internet or to
 platform networks. `docker.io` in `buildkitd.toml` is mirrored to `mirror-gate:5000`, so base images
@@ -114,6 +114,9 @@ probe 'printf "CONNECT <this host public IP>:443 HTTP/1.1\r\n\r\n" | nc egress-p
 curl -x http://egress-proxy:3128 https://pypi.org/simple/ -o /dev/null -w '%{http_code}'   # 200
 openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -servername example.com    # fails: unexpected eof
 openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -servername www.fastly.com # fails
+openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -noservername              # fails: no SNI is terminated
+openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -servername pypi.org       # handshakes
+docker run --rm --entrypoint sh a4-builder/squid-openssl:local -c 'squid -v | head -1'   # Squid Cache: Version 6.14
 probe 'wget -q -T 5 -O /dev/null http://1.1.1.1'                    # fails: Network unreachable
 probe 'nc -z -w 3 buildkitd 1234 && echo open; echo | nc -w 3 buildkitd 1234 | wc -c'  # no plaintext answer
 ```
@@ -125,10 +128,12 @@ Static hardening is asserted by `python -m pytest backend/tests/test_a4_builder_
 
 ## Accepted residual risk
 
-Until the package mirrors below exist, the generic proxy leaves two gaps; the production flag
+Until the package mirrors below exist, the generic proxy leaves three gaps; the production flag
 (`A4_DEPLOY_ENABLED`) stays off until they are closed.
 - Host-header domain fronting: SNI and CONNECT host name an allowed site, but the HTTP `Host`
   header inside the TLS stream can address another site served by the same CDN edge.
+- Encrypted Client Hello (ECH): squid 6 cannot inspect it. The outer SNI can name an allowed host
+  while the inner SNI names another co-tenant of the same CDN. Closed by P3c; the flag stays off until then.
 - Uploads: allowed hosts accept writes (PyPI, npm and similar), so a `RUN` can publish data there.
 
 Closure is phase P3c: replace the generic proxy with package mirrors (devpi, verdaccio, Athens, a
