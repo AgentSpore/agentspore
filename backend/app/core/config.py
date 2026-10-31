@@ -142,7 +142,8 @@ class Settings(BaseSettings):
     def _pkg_mirror_host_is_ipv4(cls, value: str) -> str:
         """A private IPv4 literal: `RUN` under runsc has no Docker DNS; the mirror is internal."""
         addr = ipaddress.IPv4Address(value)
-        if not addr.is_private or addr.is_reserved or addr.is_loopback or addr.is_unspecified or addr.is_link_local:
+        special = addr.is_reserved or addr.is_loopback or addr.is_unspecified or addr.is_link_local
+        if special or not addr.is_private:
             raise ValueError("must be a private, non-loopback IPv4 address")
         return value
 
