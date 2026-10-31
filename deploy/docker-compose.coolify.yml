@@ -26,6 +26,7 @@ services:
       -url=jdbc:postgresql://db:5432/sporeai
       -user=postgres
       -password=${POSTGRES_PASSWORD:-postgres}
+      -postgresql.transactional.lock=false
       migrate
     volumes:
       - ./db/migrations:/flyway/sql:ro
