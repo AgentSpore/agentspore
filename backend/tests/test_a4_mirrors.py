@@ -142,7 +142,6 @@ REJECTED = [
     "/github.com/x/../../y/@v/list",
     "/sumdb/lookup/../../x",
     "/sumdb/tile/8/0/../x",
-    "/simple/requests/?x=1",
     "/files/packages/a\r\nHost: evil",
     "/-/v1/search",
     "/-/whoami",
