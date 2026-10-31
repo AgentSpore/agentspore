@@ -1,8 +1,6 @@
 """Turn the verified OCI tarball into a push plan: one image manifest, its config and layers.
 
-Everything here is trusted-side parsing of untrusted bytes: the plan is built only from what
-the tar itself proves (sizes and sha256 recomputed locally), so a lying descriptor, a second
-manifest, an attestation, or a foreign layer never reaches the registry.
+The plan is built only from what the tar proves (sizes and sha256 recomputed locally).
 """
 
 import hashlib

@@ -49,15 +49,19 @@ def image_tar(tmp_path):
         extra_entries=(),
         manifest_type=OCI_MANIFEST,
         name="image.tar",
+        schema_version=2,
+        body_type=None,
+        raw_manifest=None,
+        corrupt_manifest=False,
+        as_dir=None,
     ) -> Path:
-        manifest = json.dumps(
-            {
-                "schemaVersion": 2,
-                "mediaType": manifest_type,
-                "config": descriptor(config, OCI_CONFIG, **(config_extra or {})),
-                "layers": [descriptor(b, layer_type, **(layer_extra or {})) for b in layers],
-            }
-        ).encode()
+        doc = {
+            "schemaVersion": schema_version,
+            "mediaType": body_type or manifest_type,
+            "config": descriptor(config, OCI_CONFIG, **(config_extra or {})),
+            "layers": [descriptor(b, layer_type, **(layer_extra or {})) for b in layers],
+        }
+        manifest = raw_manifest or json.dumps(doc).encode()
         entry = descriptor(manifest, manifest_type, **(entry_extra or {}))
         index = json.dumps({"manifests": [entry, *extra_entries]}).encode()
         members = {"index.json": index, "oci-layout": b'{"imageLayoutVersion":"1.0.0"}'}
@@ -65,10 +69,14 @@ def image_tar(tmp_path):
             members["blobs/sha256/" + sha(data)[7:]] = data
         if corrupt is not None:
             members["blobs/sha256/" + sha(corrupt)[7:]] = b"tampered" + corrupt[8:]
+        if corrupt_manifest:
+            members["blobs/sha256/" + sha(manifest)[7:]] = b"x" * len(manifest)
         path = tmp_path / name
         with tarfile.open(path, "w", format=tarfile.USTAR_FORMAT) as tf:
             for member, data in members.items():
                 info = tarfile.TarInfo(member)
+                if as_dir is not None and member.endswith(sha(as_dir)[7:]):
+                    info.type, data = tarfile.DIRTYPE, b""
                 info.size = len(data)
                 tf.addfile(info, io.BytesIO(data))
         return path
@@ -172,6 +180,13 @@ async def test_relative_and_same_origin_locations_are_followed(image_tar):
     assert puts and all(r.url.params["_state"] == "abc" for r in puts)
 
 
+async def test_path_relative_location_resolves_against_the_upload_url(image_tar):
+    registry = FakeRegistry(location="u3?_state=abc")
+    await pusher(registry).push(image_tar(), "r")
+    puts = [r for r in registry.requests if r.method == "PUT" and "blobs" in r.url.path]
+    assert puts and all(r.url.path == "/v2/r/blobs/uploads/u3" for r in puts)
+
+
 async def test_redirects_are_never_followed(image_tar):
     seen = []
 
@@ -191,7 +206,7 @@ async def test_client_ignores_proxy_environment_and_sets_every_timeout():
     assert client.follow_redirects is False
     assert client._trust_env is False  # noqa: SLF001 (httpx exposes no public flag)
     assert all(
-        0 < t <= 120
+        t is not None and 0 < t <= 120
         for t in (
             client.timeout.connect,
             client.timeout.read,
@@ -216,6 +231,11 @@ async def test_descriptor_size_lie_is_refused_before_any_request(image_tar, regi
 @pytest.mark.parametrize(
     ("kwargs", "text"),
     [
+        ({"corrupt_manifest": True}, "does not match"),
+        ({"schema_version": 1}, "manifest is malformed"),
+        ({"body_type": "application/vnd.oci.image.index.v1+json"}, "manifest is malformed"),
+        ({"raw_manifest": b"not json at all"}, "not JSON"),
+        ({"layers": (b"",), "as_dir": b""}, "lacks a blob"),
         ({"layer_extra": {"urls": ["http://evil.example/l"]}}, "layer descriptor"),
         ({"config_extra": {"urls": ["http://evil.example/c"]}}, "config descriptor"),
         ({"entry_extra": {"urls": ["http://evil.example/m"]}}, "manifest descriptor"),

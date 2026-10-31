@@ -1,10 +1,8 @@
 """Push the verified image tarball to the private `a4-registry` over the OCI distribution API.
 
-No Docker daemon and no `docker load`: the worker reads blobs straight from the tarball.
-The registry listens on loopback and the worker's control network only, and is unauthenticated
-by design, so no credential exists to put into a URL, header or log line. A blob upload
-`Location` is followed only when it resolves to the registry origin; redirects are never followed.
-The returned reference is `<ref_host>/<repo>@sha256:...`, never a tag.
+No `docker load`. The registry is unauthenticated (loopback/internal network), so no credential can
+leak into a URL or log. Redirects are never followed; an upload `Location` must keep the registry
+origin. The returned reference is digest-only, never a tag.
 """
 
 import asyncio
@@ -15,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
-from loguru import logger
 
 from app.services.deployment.builder import Builder, BuildRequest, BuildResult
 from app.services.deployment.errors import DeployRejectedError
@@ -97,7 +94,8 @@ class RegistryPusher:
             return
         start = await self._send(client, "POST", f"/v2/{repo}/blobs/uploads/")
         start.expect(202)
-        target = self._same_origin(start.headers.get("location"))
+        upload_url = self.base.join(f"/v2/{repo}/blobs/uploads/")
+        target = self._same_origin(start.headers.get("location"), upload_url)
         reply = await self._send(
             client,
             "PUT",
@@ -123,10 +121,10 @@ class RegistryPusher:
         if echoed is not None and echoed != plan.manifest.digest:
             raise _failed("registry stored a different manifest digest")
 
-    def _same_origin(self, location: str | None) -> httpx.URL:
-        """The upload URL must resolve to exactly the registry's scheme, host and port."""
+    def _same_origin(self, location: str | None, upload_url: httpx.URL) -> httpx.URL:
+        """`location` resolved against the upload URL must keep the registry's exact origin."""
         try:
-            target = self.base.join(location or "")
+            target = upload_url.join(location or "")
         except httpx.InvalidURL as exc:
             raise _failed("registry upload location is invalid") from exc
         origin = (target.scheme, target.host, target.port)
@@ -171,5 +169,4 @@ class PushingBuilder:
                     tar.unlink(missing_ok=True)
         if ref.rpartition("@")[2] != result.image_ref.rpartition("@")[2]:
             raise _failed("pushed digest differs from the build digest")
-        logger.info("deploy image pushed repo={}", ref.partition("/")[2].partition("@")[0])
         return BuildResult(image_ref=ref, image_bytes=result.image_bytes)
