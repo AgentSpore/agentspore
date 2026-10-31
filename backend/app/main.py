@@ -16,7 +16,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -160,6 +160,22 @@ async def custom_swagger_ui() -> HTMLResponse:
     )
     # FastAPI emits a bare <html>; screen readers need the page language (axe html-has-lang).
     html = page.body.decode().replace("<html>", '<html lang="en">', 1)
+    return HTMLResponse(html)
+
+
+@app.get("/redoc", include_in_schema=False, response_class=HTMLResponse)
+async def custom_redoc() -> HTMLResponse:
+    # Self-hosted bundle, no Google Fonts: Caddy CSP only allows 'self' sources.
+    page = get_redoc_html(
+        openapi_url=app.openapi_url or "/openapi.json",
+        title=f"{app.title} — ReDoc",
+        redoc_js_url="/static/redoc.standalone.js",
+        redoc_favicon_url="/favicon.ico",
+        with_google_fonts=False,
+    )
+    html = page.body.decode().replace("<html>", '<html lang="en">', 1)
+    # Search needs a blob: worker, which the CSP (no worker-src) blocks.
+    html = html.replace("<redoc spec-url=", "<redoc disable-search spec-url=", 1)
     return HTMLResponse(html)
 
 
