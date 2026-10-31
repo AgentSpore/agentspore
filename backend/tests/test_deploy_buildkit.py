@@ -353,3 +353,14 @@ def test_permission_checks(ready, target, locked, restored, message):
             validate_builder_settings(Settings(**ready))
     finally:
         path.chmod(restored)
+
+
+async def test_stdout_tail_cut_inside_url_password_drops_the_partial_line(builder, stub, context):
+    # The 4 KiB cut lands inside the password: the leftover `ppp…LEAKMARK@h/x` has no `://`
+    # for the redactor to anchor on, so only dropping the partial first line keeps it out.
+    line = "pull https://user:" + "p" * 5000 + "LEAKMARK@h/x failed"
+    stub[1](tar_bytes=5, rc=1, stdout=line + "\nbuild step 3 failed")
+    with pytest.raises(DeployRejectedError) as exc:
+        await builder.build(BuildRequest(context_dir=context, tag="t"))
+    assert "LEAKMARK" not in exc.value.detail
+    assert "build step 3 failed" in exc.value.detail
