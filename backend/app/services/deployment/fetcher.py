@@ -1,10 +1,12 @@
 """Trusted-worker source fetch (spec §2): GitHub tarball of one commit, capped, plain files."""
 
 import asyncio
+import gzip
 import re
 import shutil
 import tarfile
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -22,6 +24,8 @@ _KEY_FILES = frozenset({"id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"})
 _ENV_KEPT = frozenset({".env.example", ".env.sample"})
 _SCANNER_CONFIGS = frozenset({".gitleaks.toml", ".gitleaksignore", "osv-scanner.toml"})
 _CHUNK = 64 * 1024
+_HEADER_ALLOWANCE = 1536  # tar header + padding per member
+_HEADROOM = 1024 * 1024  # pax/GNU extension headers
 
 
 @dataclass(frozen=True)
@@ -108,27 +112,68 @@ def _unpack(tar: tarfile.TarFile, member: tarfile.TarInfo, dest: Path) -> bool:
     return False
 
 
-def _extract(archive: Path, dest: Path, policy: FetchPolicy) -> None:
+class _BoundedReader:
+    """Gunzipped archive stream: every read enforces the byte cap, deadline and stop flag.
+
+    tarfile reads pax/GNU long-name headers inside its own header parsing, so only a bound on
+    the raw stream keeps those from escaping `max_bytes` and the extraction deadline.
+    """
+
+    def __init__(self, source, cap: int, deadline: float, stop: threading.Event):
+        self.source, self.cap, self.deadline, self.stop = source, cap, deadline, stop
+        self.read_so_far = 0
+
+    def check(self) -> None:
+        if self.stop.is_set():
+            raise DeployRejectedError("source_fetch_failed", "extraction cancelled")
+        if time.monotonic() > self.deadline:
+            raise DeployRejectedError("source_fetch_failed", "extraction timeout")
+
+    def read(self, size: int) -> bytes:
+        self.check()
+        data = self.source.read(size)
+        self.read_so_far += len(data)
+        if self.read_so_far > self.cap:
+            raise DeployRejectedError("source_too_large", "unpacked source over the size cap")
+        return data
+
+
+def _extract(archive: Path, dest: Path, policy: FetchPolicy, stop: threading.Event) -> None:
     files, total, dropped_links = 0, 0, 0
+    cap = policy.max_bytes + policy.max_files * _HEADER_ALLOWANCE + _HEADROOM
     deadline = time.monotonic() + policy.extract_timeout
     try:
-        with tarfile.open(archive, "r:gz") as tar:
-            for member in tar:
-                if time.monotonic() > deadline:
-                    raise DeployRejectedError("source_fetch_failed", "extraction timeout")
-                files += 1
-                total += member.size
-                if files > policy.max_files or total > policy.max_bytes:
-                    raise DeployRejectedError(
-                        "source_too_large", "unpacked source over the file or size cap"
-                    )
-                dropped_links += _unpack(tar, member, dest)
+        with gzip.open(archive, "rb") as gz:
+            reader = _BoundedReader(gz, cap, deadline, stop)
+            with tarfile.open(fileobj=reader, mode="r|") as tar:
+                for member in tar:
+                    reader.check()
+                    files += 1
+                    total += member.size
+                    if files > policy.max_files or total > policy.max_bytes:
+                        raise DeployRejectedError(
+                            "source_too_large", "unpacked source over the file or size cap"
+                        )
+                    dropped_links += _unpack(tar, member, dest)
     except (tarfile.TarError, EOFError, OSError) as exc:
         raise DeployRejectedError(
             "source_fetch_failed", f"unreadable archive: {type(exc).__name__}"
         ) from exc
     if dropped_links:
         logger.info("fetcher dropped {} symlink members", dropped_links)
+
+
+async def _extract_in_thread(archive: Path, dest: Path, policy: FetchPolicy) -> None:
+    """Run `_extract` in a worker thread; on cancel, stop it and wait before returning control."""
+    stop = threading.Event()
+    worker = asyncio.ensure_future(asyncio.to_thread(_extract, archive, dest, policy, stop))
+    try:
+        await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        stop.set()
+        await asyncio.wait([worker])
+        worker.exception()
+        raise
 
 
 async def _fetch(client: httpx.AsyncClient, url: str, dest: Path, policy: FetchPolicy) -> None:
@@ -139,7 +184,7 @@ async def _fetch(client: httpx.AsyncClient, url: str, dest: Path, policy: FetchP
                 await _download(client, url, archive, policy)
         except TimeoutError as exc:
             raise DeployRejectedError("source_fetch_failed", "download timeout") from exc
-        await asyncio.to_thread(_extract, archive, dest, policy)
+        await _extract_in_thread(archive, dest, policy)
 
 
 async def fetch_source(

@@ -3,10 +3,13 @@
 import asyncio
 import io
 import tarfile
+import threading
+import time
 
 import httpx
 import pytest
 
+from app.services.deployment import fetcher
 from app.services.deployment.errors import DeployRejectedError
 from app.services.deployment.fetcher import FetchPolicy, fetch_source, is_stripped
 
@@ -259,3 +262,42 @@ async def test_fetcher_rejects_bad_inputs_without_a_request(tmp_path, url, sha):
         await fetch_source(url, sha, tmp_path / "dest", client=client)
     assert exc.value.reason_code == "source_invalid"
     assert not (tmp_path / "dest").exists()
+
+
+async def test_fetcher_refuses_oversized_pax_headers(serve, tmp_path):
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz", format=tarfile.PAX_FORMAT) as tar:
+        info = tarfile.TarInfo(f"{TOP}/a.txt")
+        info.pax_headers = {"comment": "x" * 4_000_000}
+        tar.addfile(info, io.BytesIO(b""))
+    policy = FetchPolicy(max_bytes=1024, max_files=10)
+    with pytest.raises(DeployRejectedError) as exc:
+        await fetch_source(REPO, SHA, tmp_path / "dest", policy, serve(buffer.getvalue()))
+    assert exc.value.reason_code == "source_too_large"
+    assert not (tmp_path / "dest").exists()
+
+
+async def test_fetcher_cancel_waits_for_the_extraction_thread(
+    make_tarball, serve, tmp_path, monkeypatch
+):
+    started, writes = threading.Event(), []
+    real_unpack = fetcher._unpack
+
+    def slow_unpack(tar, member, dest):
+        writes.append(member.name)
+        started.set()
+        time.sleep(0.2)
+        return real_unpack(tar, member, dest)
+
+    monkeypatch.setattr(fetcher, "_unpack", slow_unpack)
+    body = make_tarball([(f"f{i}.txt", "file", "x") for i in range(30)])
+    dest = tmp_path / "dest"
+    task = asyncio.create_task(fetch_source(REPO, SHA, dest, client=serve(body)))
+    await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    seen = len(writes)
+    await asyncio.sleep(0.6)
+    assert not dest.exists()
+    assert len(writes) == seen
