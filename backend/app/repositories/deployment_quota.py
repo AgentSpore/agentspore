@@ -35,8 +35,7 @@ async def _agent_usage(db: AsyncSession, agent: UUID) -> RowMapping:
                     "CEIL(EXTRACT(EPOCH FROM min(d.created_at) FILTER (WHERE d.created_at > "
                     "clock_timestamp() - interval '7 days') + interval '7 days' "
                     "- clock_timestamp()))::int AS weekly_retry "
-                    "FROM project_deployments d JOIN projects p ON p.id = d.project_id "
-                    "WHERE p.creator_agent_id = :agent"
+                    "FROM project_deployments d WHERE d.creator_agent_id = :agent"
                 ),
                 {"agent": agent},
             )
@@ -52,12 +51,10 @@ async def _active_services(db: AsyncSession, project_id: UUID, who: RowMapping) 
             await db.execute(
                 text(
                     "SELECT count(DISTINCT d.project_id) FILTER (WHERE "
-                    "CASE WHEN CAST(:owner AS uuid) IS NULL THEN a.id = :agent "
-                    "ELSE a.owner_user_id = CAST(:owner AS uuid) END) AS owned, "
+                    "CASE WHEN CAST(:owner AS uuid) IS NULL THEN d.creator_agent_id = :agent "
+                    "ELSE d.owner_user_id = CAST(:owner AS uuid) END) AS owned, "
                     "count(DISTINCT d.project_id) AS platform "
-                    "FROM project_deployments d JOIN projects p ON p.id = d.project_id "
-                    "JOIN agents a ON a.id = p.creator_agent_id "
-                    "WHERE d.status = 'active' AND d.project_id <> :id"
+                    "FROM project_deployments d WHERE d.status = 'active' AND d.project_id <> :id"
                 ),
                 {"id": project_id, "agent": who["agent"], "owner": who["owner"]},
             )

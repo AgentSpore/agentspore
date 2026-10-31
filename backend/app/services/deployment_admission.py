@@ -36,11 +36,16 @@ _CONFLICT_STATUS = {"project_missing": 404}
 
 
 def candidate_handle(repo_url: str | None) -> str | None:
-    """Project slug (repository name) if it is a valid, unreserved hostname label."""
+    """Project slug (repository name) if it is a valid, unreserved hostname label.
+
+    `p-` is the fallback namespace; `--` at positions 3-4 is reserved (IDNA, `xn--`).
+    """
     if not repo_url:
         return None
     slug = repo_url.rstrip("/").rsplit("/", 1)[-1].lower()
-    if _HANDLE.fullmatch(slug) is None or slug.startswith("xn--") or slug in RESERVED_HANDLES:
+    if slug.startswith("p-") or _HANDLE.fullmatch(slug) is None or slug[2:4] == "--":
+        return None
+    if slug in RESERVED_HANDLES:
         return None
     return slug
 
@@ -69,7 +74,8 @@ class DeploymentAdmission:
         """Authorize the author, honour the kill switch, then enqueue idempotently."""
         project = await self._author_project(project_id, agent)
         settings = get_settings()
-        # INVARIANT(A4.4): untrusted builds stay closed until isolation ships; if removed, prod accepts jobs no worker can isolate.
+        # INVARIANT(A4.4): untrusted builds stay closed until isolation ships;
+        # if removed, prod accepts jobs no worker can isolate.
         if not settings.a4_deploy_enabled:
             raise HTTPException(
                 status_code=503,
@@ -105,7 +111,8 @@ class DeploymentAdmission:
                 status_code=_CONFLICT_STATUS.get(code, 409), detail={"reason_code": code}
             ) from error
         await self.db.commit()
-        return DeploymentAccepted(deployment_id=deployment_id)
+        status = await self.repo.deployment_status(deployment_id)
+        return DeploymentAccepted(deployment_id=deployment_id, status=status)
 
     async def status(self, project_id: UUID, agent: dict) -> DeploymentStatus:
         """Latest state, active revision, public URL and the last five deployments."""

@@ -7,6 +7,8 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 from test_deployment_control_plane import deployment_client as deployment_client
 from test_deployment_control_plane import deployment_engine as deployment_engine
 from test_deployment_control_plane import deployment_postgres as deployment_postgres
@@ -29,6 +31,9 @@ GITHUB = "https://github.com/AgentSpore/"
         (GITHUB + "api", None),
         (GITHUB + "podmemory", None),
         (GITHUB + "xn--e1afmkfd", None),
+        (GITHUB + "ab--app", None),
+        (GITHUB + "p-" + "a" * 32, None),
+        (GITHUB + "p-anything", None),
         (GITHUB + "ab", None),
         (GITHUB + "a" * 41, None),
         (GITHUB + "-lead", None),
@@ -115,8 +120,11 @@ async def seed(deployment_session):
             await deployment_session.execute(
                 text(
                     "INSERT INTO project_deployments (project_id, idempotency_key, commit_sha, "
-                    "repository_url, status, created_at) VALUES (:p, :k, :sha, 'https://x/y', "
-                    ":s, clock_timestamp() - CAST(:age AS interval))"
+                    "repository_url, status, created_at, creator_agent_id, owner_user_id) "
+                    "SELECT p.id, :k, :sha, 'https://x/y', :s, "
+                    "clock_timestamp() - CAST(:age AS interval), p.creator_agent_id, "
+                    "a.owner_user_id FROM projects p JOIN agents a ON a.id = p.creator_agent_id "
+                    "WHERE p.id = :p"
                 ),
                 {"p": project_id, "k": uuid4(), "sha": SHA, "s": status, "age": age},
             )
@@ -273,14 +281,67 @@ async def test_status_author_only(enabled, deployment_client, new_project):
 
 
 async def test_admission_waits_on_global_advisory_lock(
-    enabled, deployment_client, new_project, deployment_engine
+    enabled, deployment_client, new_project, deployment_postgres
 ):
     """A concurrent admission holds the lock, so quota counts cannot be read stale."""
     project = await new_project("lock-app")
-    async with deployment_engine.connect() as holder:
+    waiting = text(
+        "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+        "AND wait_event = 'advisory'"
+    )
+    url = deployment_postgres.get_connection_url().replace("psycopg2", "asyncpg")
+    side = create_async_engine(url, poolclass=NullPool)
+    async with side.connect() as holder:
         await holder.execute(text("SELECT pg_advisory_xact_lock(hashtext('a4_admission'))"))
         pending = asyncio.ensure_future(deploy(deployment_client, project))
-        done, _ = await asyncio.wait({pending}, timeout=1.0)
-        assert not done
+        for _ in range(100):
+            if await holder.scalar(waiting):
+                break
+            await asyncio.sleep(0.1)
+        assert await holder.scalar(waiting) == 1
+        assert not pending.done()
         await holder.rollback()
+    await side.dispose()
     assert (await pending).status_code == 202
+
+
+async def test_unknown_project_404(enabled, deployment_client, new_project):
+    ghost = {**await new_project("ghost-app"), "id": uuid4()}
+    response = await deploy(deployment_client, ghost)
+    assert response.status_code == 404
+    assert response.json()["detail"]["reason_code"] == "project_not_found"
+
+
+async def test_quota_survives_project_deletion(
+    enabled, deployment_client, new_project, seed, deployment_session
+):
+    first = await new_project("deleted-app")
+    await seed(first["id"], 5)
+    await deployment_session.execute(text("DELETE FROM projects WHERE id = :p"), {"p": first["id"]})
+    await deployment_session.commit()
+    second_id = uuid4()
+    await deployment_session.execute(
+        text(
+            "INSERT INTO projects (id, title, creator_agent_id, repo_url, status) "
+            "VALUES (:id, 'p', :a, :repo, 'deployed')"
+        ),
+        {"id": second_id, "a": first["agent"], "repo": GITHUB + "replacement-app"},
+    )
+    await deployment_session.commit()
+    response = await deploy(deployment_client, {**first, "id": second_id})
+    assert response.status_code == 429
+    assert response.json()["detail"]["reason_code"] == "agent_daily_quota"
+
+
+async def test_replay_reports_stored_status(
+    enabled, deployment_client, new_project, deployment_session
+):
+    project, key = await new_project("replay-status-app"), uuid4()
+    first = await deploy(deployment_client, project, key)
+    await deployment_session.execute(
+        text("UPDATE project_deployments SET status = 'failed' WHERE id = :i"),
+        {"i": UUID(first.json()["deployment_id"])},
+    )
+    await deployment_session.commit()
+    again = await deploy(deployment_client, project, key)
+    assert again.json() == {"deployment_id": first.json()["deployment_id"], "status": "failed"}

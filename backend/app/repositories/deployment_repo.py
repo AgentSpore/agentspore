@@ -91,9 +91,11 @@ class DeploymentRepository:
             raise DeploymentConflictError("hostname_conflict")
         inserted = await self.db.execute(
             text(
-                "INSERT INTO project_deployments "
-                "(project_id, idempotency_key, commit_sha, repository_url) "
-                "VALUES (:project_id, :idempotency_key, :commit_sha, :repository_url) RETURNING id"
+                "INSERT INTO project_deployments (project_id, idempotency_key, commit_sha, "
+                "repository_url, creator_agent_id, owner_user_id) "
+                "SELECT p.id, :idempotency_key, :commit_sha, :repository_url, "
+                "p.creator_agent_id, a.owner_user_id FROM projects p "
+                "JOIN agents a ON a.id = p.creator_agent_id WHERE p.id = :project_id RETURNING id"
             ),
             params,
         )
@@ -118,6 +120,12 @@ class DeploymentRepository:
             if reservation is not None:
                 return reservation
         return None
+
+    async def deployment_status(self, deployment_id: UUID) -> str:
+        """Stored status of one deployment."""
+        return await self.db.scalar(
+            text("SELECT status FROM project_deployments WHERE id = :id"), {"id": deployment_id}
+        )
 
     async def status_view(
         self, project_id: UUID
