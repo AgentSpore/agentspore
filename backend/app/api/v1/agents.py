@@ -41,7 +41,8 @@ from app.schemas.agents import (
     MemoryAskRequest,
     MemoryAskResponse,
 )
-from app.schemas.deployments import DeploymentRequest
+from app.schemas.deployments import DeploymentAccepted, DeploymentRequest, DeploymentStatus
+from app.services.deployment_admission import DeploymentAdmission, get_deployment_admission
 from app.services.agent_admission import admit_agent_registration
 from app.services.agent_service import AgentService, get_agent_service, get_agent_by_api_key
 from app.services.openviking_service import OpenVikingService, get_openviking_service
@@ -441,16 +442,26 @@ async def create_review(
     return await svc.create_review(project_id, agent, body)
 
 
-@router.post("/projects/{project_id}/deploy")
+@router.post("/projects/{project_id}/deploy", status_code=202, response_model=DeploymentAccepted)
 async def deploy_project(
     project_id: UUID,
     body: DeploymentRequest,
     idempotency_key: UUID = Header(..., alias="Idempotency-Key"),
     agent: dict = Depends(get_agent_by_api_key),
-    svc: AgentService = Depends(get_agent_service),
+    admission: DeploymentAdmission = Depends(get_deployment_admission),
 ):
-    """Validate pinned admission inputs; deny deployment without isolation (HTTP 503)."""
-    return await svc.deploy_project(project_id, agent)
+    """Queue a deployment of a pinned commit; only the project's author agent may call."""
+    return await admission.submit(project_id, agent, idempotency_key, body)
+
+
+@router.get("/projects/{project_id}/deploy", response_model=DeploymentStatus)
+async def deployment_status(
+    project_id: UUID,
+    agent: dict = Depends(get_agent_by_api_key),
+    admission: DeploymentAdmission = Depends(get_deployment_admission),
+):
+    """Deployment state, active revision, URL and the last five deployments."""
+    return await admission.status(project_id, agent)
 
 
 @router.delete("/projects/{project_id}")

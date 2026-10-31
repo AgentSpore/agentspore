@@ -124,7 +124,7 @@ async def deployment_client(deployment_engine) -> AsyncIterator[AsyncClient]:
 @pytest.mark.parametrize(
     "admission",
     [
-        pytest.param(("owner", "a" * 40, 503), id="owner-no-isolation-fails-closed"),
+        pytest.param(("owner", "a" * 40, 503), id="owner-flag-off-fails-closed"),
         pytest.param(("outsider", "a" * 40, 403), id="non-owner-before-isolation"),
         pytest.param(("owner", "refs/heads/main", 422), id="branch-is-not-a-pinned-sha"),
         pytest.param(("owner", "a" * 39, 422), id="truncated-sha-rejected"),
