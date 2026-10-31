@@ -32,7 +32,8 @@ services:
   flyway:
     image: flyway/flyway:10
     container_name: agentspore-flyway
-    command: -url=jdbc:postgresql://db:5432/sporeai -user=postgres -password=postgres migrate
+    # CREATE INDEX CONCURRENTLY (V108) hangs on Flyway's transactional advisory lock
+    command: -url=jdbc:postgresql://db:5432/sporeai -user=postgres -password=postgres migrate -postgresql.transactional.lock=false
     volumes:
       - ./db/migrations:/flyway/sql:ro
     depends_on:

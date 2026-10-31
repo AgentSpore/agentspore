@@ -2,8 +2,8 @@
 
 Measured with flyway/flyway:10 against PostgreSQL 16: with Flyway's default transactional advisory
 lock its second connection stays "idle in transaction" and CREATE INDEX CONCURRENTLY waits for it
-forever, so the run below needs `-postgresql.transactional.lock=false`. The compose Flyway
-commands do not set it yet (reported to the coordinator, those files are out of this PR's scope).
+forever, so every compose Flyway command sets `-postgresql.transactional.lock=false` and the run
+below takes that flag from docker-compose.yml.
 """
 
 import shutil
@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from sqlalchemy import text
 from test_deployment_control_plane import deployment_engine as deployment_engine
 from test_deployment_control_plane import deployment_postgres as deployment_postgres
@@ -20,6 +21,13 @@ MIGRATION = (
     Path(__file__).resolve().parents[2]
     / "db/migrations/V108__project_deployments_creator_index.sql"
 )
+ROOT = MIGRATION.parents[2]
+COMPOSE_FILES = (
+    "docker-compose.yml",
+    "deploy/docker-compose.prod.yml",
+    "deploy/docker-compose.coolify.yml",
+)
+LOCK_FLAG = "-postgresql.transactional.lock=false"
 INDEX = "idx_project_deployments_creator_created"
 FLYWAY_IMAGE = "flyway/flyway:10"  # the image docker-compose.yml runs
 BASELINE = (
@@ -54,13 +62,24 @@ async def test_creator_index_is_valid_and_rerun_fails_loudly(deployment_engine):
     assert "(creator_agent_id, created_at)" in state.definition
 
 
+def compose_flyway_flags(compose_file: str) -> list[str]:
+    """The `-postgresql.*` options of the Flyway service command in `compose_file`."""
+    command = yaml.safe_load((ROOT / compose_file).read_text())["services"]["flyway"]["command"]
+    return [arg for arg in command.split() if arg.startswith("-postgresql.")]
+
+
+@pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+async def test_compose_flyway_disables_the_transactional_lock(compose_file):
+    assert LOCK_FLAG in compose_flyway_flags(compose_file)
+
+
 def flyway_migrate(postgres, database, migrations: Path) -> subprocess.CompletedProcess:
     """Run real Flyway on `database` with `migrations` copied in (no bind mount on colima)."""
     ip = postgres.get_docker_client().bridge_ip(postgres.get_wrapped_container().id)
     url = f"-url=jdbc:postgresql://{ip}:5432/{database}"
     created = subprocess.run(
         ["docker", "create", FLYWAY_IMAGE, url, f"-user={postgres.username}",
-         f"-password={postgres.password}", "-postgresql.transactional.lock=false", "migrate"],
+         f"-password={postgres.password}", *compose_flyway_flags("docker-compose.yml"), "migrate"],
         capture_output=True, text=True, check=True,
     )  # fmt: skip
     container = created.stdout.strip()
