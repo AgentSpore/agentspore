@@ -6,7 +6,6 @@ digest, the worker reads the tar's own `index.json` and refuses on any disagreem
 
 import contextlib
 import json
-import posixpath
 import re
 import tarfile
 from dataclasses import dataclass
@@ -24,6 +23,9 @@ _PLAIN_MEMBERS = (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE)
 _PAX_TYPES = (tarfile.XHDTYPE, tarfile.XGLTYPE)
 _BLOCK = tarfile.BLOCKSIZE
 _MAX_PAX_BYTES = 64 * 1024
+_NAME_OK = re.compile(
+    r"index\.json|oci-layout|blobs/?|blobs/sha256/?|blobs/sha256/[0-9a-f]{64}"
+)  # the OCI image layout; anything else (NUL, `..`, aliases) is not the exporter's output
 _PAX_KEYS = (b"path", b"linkpath", b"mtime", b"atime", b"ctime")
 
 
@@ -50,9 +52,11 @@ def _check_pax_records(payload: bytes) -> None:
         if space < 0 or not digits.isdigit() or not 0 < int(digits) <= len(payload) - pos:
             raise _refuse("image tar has a malformed extended header")
         record = payload[space + 1 : pos + int(digits)]
-        key, eq, _ = record.partition(b"=")
+        key, eq, value = record.partition(b"=")
         if not eq or not record.endswith(b"\n") or key not in _PAX_KEYS:
             raise _refuse("image tar extended header carries an unsupported key")
+        if key == b"path" and not _NAME_OK.fullmatch(value[:-1].decode("utf-8", "replace")):
+            raise _refuse("image tar extended header names a path outside the OCI layout")
         pos += int(digits)
 
 
@@ -89,15 +93,9 @@ def _screen_headers(tar: Path) -> int:
 
 
 def _check_member(member: tarfile.TarInfo, seen: set[str]) -> None:
-    """Plain type, a clean unique name; `seen` collects the names of earlier members."""
+    """Plain type, an OCI-layout name, no repeats; `seen` collects earlier member names."""
     name = member.name.removesuffix("/") if member.isdir() else member.name
-    if (
-        member.type not in _PLAIN_MEMBERS
-        or name.startswith("/")
-        or ".." in name.split("/")
-        or posixpath.normpath(name) != name
-        or name in seen
-    ):
+    if member.type not in _PLAIN_MEMBERS or not _NAME_OK.fullmatch(member.name) or name in seen:
         raise _refuse("image tar has an unexpected member")
     seen.add(name)
 
