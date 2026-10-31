@@ -1,0 +1,110 @@
+# A4 builder: disposable rootless buildkitd under gVisor (runsc), isolated from the platform.
+# Standalone project; the existing stack is untouched. Start/stop: docs/a4-builder-runbook.md
+#   docker compose -p a4-builder -f deploy/a4-builder.compose.yml up -d
+#
+# Topology:
+#   buildkitd -- a4-builder (internal) -- mirror-gate, egress-proxy
+#   mirror-gate -- a4-mirror-back (internal) -- mirror
+#   mirror, egress-proxy -- a4-upstream (internet route)
+# buildkitd has no route to the internet or to platform networks. Base images come only
+# through mirror-gate (repo allowlist); RUN steps reach package registries only through
+# egress-proxy (builder passes HTTP_PROXY/HTTPS_PROXY=http://egress-proxy:3128 as build args).
+
+x-hardened: &hardened
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  buildkitd:
+    # moby/buildkit:v0.23.2-rootless
+    image: moby/buildkit@sha256:cab936745de5d673465948f1e93ff4d6e372bbe33f218afd3314eba45a6f85a9
+    runtime: runsc
+    user: "1000:1000"
+    command:
+      - --addr=tcp://0.0.0.0:1234
+      - --config=/etc/buildkit/buildkitd.toml
+      - --oci-worker-no-process-sandbox
+    restart: "no"
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    # rootless BuildKit needs these two relaxed; gVisor is the boundary, not seccomp/AppArmor.
+    security_opt: ["seccomp=unconfined", "apparmor=unconfined"]
+    pids_limit: 512
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 2G }
+    volumes:
+      - /home/user/.local/share/buildkit
+      - ./a4-builder/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
+    tmpfs:
+      - /run/user/1000:uid=1000,gid=1000,mode=0700,size=64m
+      - /tmp:size=256m
+    networks: [a4-builder]
+    depends_on:
+      mirror-gate: { condition: service_healthy }
+      egress-proxy: { condition: service_started }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  mirror-gate:
+    # nginxinc/nginx-unprivileged:1.27-alpine
+    image: nginxinc/nginx-unprivileged@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+    <<: *hardened
+    volumes:
+      - ./a4-builder/mirror-gate.conf:/etc/nginx/conf.d/default.conf:ro
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/v2/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+    networks: [a4-builder, a4-mirror-back]
+    depends_on: [mirror]
+
+  mirror:
+    # registry:2.8.3, pull-through cache of registry-1.docker.io
+    image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    <<: *hardened
+    user: "1000:1000"
+    volumes:
+      - ./a4-builder/registry-config.yml:/etc/docker/registry/config.yml:ro
+    tmpfs:
+      - /var/lib/registry:uid=1000,gid=1000,mode=0750,size=2g
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 3G }
+    networks: [a4-mirror-back, a4-upstream]
+
+  egress-proxy:
+    # ubuntu/squid:6.6-24.04_edge
+    image: ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c
+    <<: *hardened
+    user: "13:13"
+    volumes:
+      - ./a4-builder/squid.conf:/etc/squid/squid.conf:ro
+    tmpfs:
+      - /var/run/squid:uid=13,gid=13
+      - /var/spool/squid:uid=13,gid=13
+      - /var/log/squid:uid=13,gid=13
+      - /tmp
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+    networks: [a4-builder, a4-upstream]
+
+networks:
+  a4-builder:
+    name: a4-builder
+    internal: true
+  a4-mirror-back:
+    internal: true
+  a4-upstream: {}
