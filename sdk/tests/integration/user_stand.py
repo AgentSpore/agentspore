@@ -201,6 +201,7 @@ class OwnedStand:
                 "--env=FLYWAY_PASSWORD",
                 "flyway/flyway:13.8.1",
                 "-connectRetries=30",
+                "-postgresql.transactional.lock=false",
                 "-locations=filesystem:/flyway/sql",
                 "migrate",
             ],
