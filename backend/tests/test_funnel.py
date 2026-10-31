@@ -11,16 +11,20 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
 
 from app.api.deps import get_admin_user
+from app.api.v1.auth import router as auth_router
 from app.api.v1.funnel import get_funnel_service, router
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.redis_client import get_redis
 from app.repositories.agent_repo import AgentRepository
+from app.services.email_service import get_email_service
 from app.services.funnel_service import FunnelService
 
 MIGRATION_DIR = Path(__file__).resolve().parents[2] / "db/migrations"
@@ -37,8 +41,12 @@ MIGRATIONS = (
     "V14__project_governance.sql",
     "V15__unique_agent_name.sql",
     "V16__gitlab_vcs_provider.sql",
+    "V19__admin_and_prize_pool.sql",
     "V20__agent_teams.sql",
+    "V21__user_oauth.sql",
     "V28__agent_owner_email.sql",
+    "V29__solana_wallet_payouts.sql",
+    "V30__aspore_balance.sql",
     "V37__github_proxy_audit.sql",
     "V61__email_verification.sql",
     "V81__commit_sha_dedup.sql",
@@ -114,6 +122,7 @@ async def app(sessions, svc):
     async def request_db():
         async with sessions() as db:
             yield db
+            await db.commit()
 
     app.dependency_overrides[get_db] = request_db
     app.dependency_overrides[get_funnel_service] = lambda: svc
@@ -320,11 +329,61 @@ async def test_concurrent_first_heartbeats_count_once(sessions):
 
 
 async def test_concurrent_first_pushes_count_once(sessions):
+    """B starts while A's transaction still holds the project row uncommitted."""
     agent_id, project_id = uuid4(), uuid4()
     await seed_agent(sessions, agent_id)
     await seed_project(sessions, agent_id, project_id)
-    await asyncio.gather(*(push(sessions, agent_id, project_id, f"sha{n}") for n in range(4)))
+    async with sessions.begin() as first_tx:
+        await AgentRepository(first_tx).record_commit_shas(
+            agent_id, ["sha-a"], project_id=project_id
+        )
+        racer = asyncio.create_task(push(sessions, agent_id, project_id, "sha-b"))
+        await asyncio.sleep(0.5)
+        assert not racer.done()
+    await racer
     assert await rows(sessions) == [("project_first_push", "direct", 1)]
+
+
+async def test_register_counts_after_email_send_not_before(app, sessions, svc, redis):
+    """The counter row lock must not be held while the verification email is sent."""
+    await svc.record("user_register")
+    lock_free = []
+    lock_sql = "SELECT 1 FROM funnel_daily WHERE step='user_register' FOR UPDATE NOWAIT"
+
+    class ProbeEmail:
+        async def send_verification_email(self, *args):
+            try:
+                async with sessions.begin() as other:
+                    await other.execute(text(lock_sql))
+                lock_free.append(True)
+            except DBAPIError:
+                lock_free.append(False)
+            return True
+
+    app.include_router(auth_router, prefix="/api/v1")
+    app.dependency_overrides[get_redis] = lambda: redis
+    app.dependency_overrides[get_email_service] = ProbeEmail
+    async with visitor(app) as c:
+        r = await c.post(
+            "/api/v1/auth/register",
+            json={"email": "new@example.com", "password": "Str0ng!Passw0rd", "name": "N"},
+        )
+    assert r.status_code == 202, r.text
+    assert lock_free == [True]
+    assert await rows(sessions) == [("user_register", "direct", 2)]
+
+
+async def test_ipv6_addresses_in_one_64_share_rate_bucket(svc):
+    assert await svc.allow("2001:db8:1:2::1", "ua", 1) is True
+    assert await svc.allow("2001:db8:1:2:ffff::9", "ua", 1) is False
+    assert await svc.allow("2001:db8:1:3::1", "ua", 1) is True
+
+
+async def test_ipv6_addresses_in_one_64_share_daily_cap(svc, sessions):
+    for n in range(30):
+        await svc.record_unique("visit", "direct", f"2001:db8:1:2::{n + 1:x}", f"ua-{n}")
+    assert await svc.record_unique("visit", "direct", "2001:db8:1:3::1", "ua-x") is True
+    assert await rows(sessions) == [("visit", "direct", 21)]
 
 
 async def test_funnel_write_failure_keeps_heartbeat_and_push(sessions):
