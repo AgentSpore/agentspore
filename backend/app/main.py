@@ -174,6 +174,8 @@ async def custom_redoc() -> HTMLResponse:
         with_google_fonts=False,
     )
     html = page.body.decode().replace("<html>", '<html lang="en">', 1)
+    # Search needs a blob: worker, which the CSP (no worker-src) blocks.
+    html = html.replace("<redoc spec-url=", "<redoc disable-search spec-url=", 1)
     return HTMLResponse(html)
 
 
