@@ -1,0 +1,15 @@
+version: 0.1
+log:
+  level: info
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: false
+  cache:
+    blobdescriptor: inmemory
+http:
+  addr: :5000
+proxy:
+  remoteurl: https://registry-1.docker.io
+  ttl: 12h

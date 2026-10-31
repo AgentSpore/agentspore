@@ -1,0 +1,10 @@
+# docker.io resolves only through the allowlist gate; no other registry has a route.
+[registry."docker.io"]
+  mirrors = ["mirror-gate:5000"]
+
+[registry."mirror-gate:5000"]
+  http = true
+
+[worker.oci]
+  max-parallelism = 2
+  gc = false
