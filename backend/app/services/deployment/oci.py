@@ -11,6 +11,7 @@ import re
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from app.services.deployment.builder import Builder, BuildRequest, BuildResult
 from app.services.deployment.errors import DeployRejectedError
@@ -23,30 +24,82 @@ _PLAIN_MEMBERS = (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE)
 _PAX_TYPES = (tarfile.XHDTYPE, tarfile.XGLTYPE)
 _BLOCK = tarfile.BLOCKSIZE
 _MAX_PAX_BYTES = 64 * 1024
+_PAX_KEYS = (b"path", b"linkpath", b"mtime", b"atime", b"ctime")
 
 
 def _refuse(detail: str) -> DeployRejectedError:
     return DeployRejectedError("build_failed", detail)
 
 
-def _screen_headers(tar: Path) -> None:
-    """Walk the raw headers before `tarfile` does: it buffers pax/GNU payloads without a cap."""
+def _checksum_ok(block: bytes) -> bool:
+    """tarfile's rule: the stored sum matches the unsigned or the signed byte sum."""
+    try:
+        stored = int(block[148:156].strip(b"\0 "), 8)
+    except ValueError:
+        return False
+    rest = block[:148] + b" " * 8 + block[156:]
+    return stored in (sum(rest), sum(rest) - 256 * sum(byte >= 128 for byte in rest))
+
+
+def _check_pax_records(payload: bytes) -> None:
+    """Only `<len> <key>=<value>\\n` records for path/time keys: no `size` or other overrides."""
+    pos = 0
+    while pos < len(payload):
+        space = payload.find(b" ", pos)
+        digits = payload[pos:space]
+        if space < 0 or not digits.isdigit() or not 0 < int(digits) <= len(payload) - pos:
+            raise _refuse("image tar has a malformed extended header")
+        record = payload[space + 1 : pos + int(digits)]
+        key, eq, _ = record.partition(b"=")
+        if not eq or not record.endswith(b"\n") or key not in _PAX_KEYS:
+            raise _refuse("image tar extended header carries an unsupported key")
+        pos += int(digits)
+
+
+def _skip_data(raw: BinaryIO, kind: bytes, size: int) -> None:
+    if kind in _PAX_TYPES:
+        if size > _MAX_PAX_BYTES:
+            raise _refuse("image tar has an oversized extended header")
+        _check_pax_records(raw.read(size))
+        raw.seek(-size % _BLOCK, 1)
+    else:
+        raw.seek(-(-size // _BLOCK) * _BLOCK, 1)
+
+
+def _screen_headers(tar: Path) -> int:
+    """Walk the raw headers before `tarfile` does (it buffers pax/GNU payloads without a cap).
+
+    Returns the offset where the archive ends; `tarfile` must stop at the same place.
+    """
     with tar.open("rb") as raw:
         for _ in range(_MAX_MEMBERS + 1):
+            start = raw.tell()
             block = raw.read(_BLOCK)
             if len(block) < _BLOCK or block == b"\0" * _BLOCK:
-                return
+                return start
             kind = block[156:157]
             try:
                 size = int(block[124:136].strip(b"\0 ") or b"0", 8)
             except ValueError as exc:
                 raise _refuse("image tar header is malformed") from exc
-            if kind not in _PLAIN_MEMBERS + _PAX_TYPES:
+            if kind not in _PLAIN_MEMBERS + _PAX_TYPES or not _checksum_ok(block):
                 raise _refuse("image tar has an unexpected member")
-            if kind in _PAX_TYPES and size > _MAX_PAX_BYTES:
-                raise _refuse("image tar has an oversized extended header")
-            raw.seek(-(-size // _BLOCK) * _BLOCK, 1)
+            _skip_data(raw, kind, size)
     raise _refuse("image tar has too many members")
+
+
+def _check_member(member: tarfile.TarInfo, seen: set[str]) -> None:
+    """Plain type, a clean unique name; `seen` collects the names of earlier members."""
+    name = member.name.removesuffix("/") if member.isdir() else member.name
+    if (
+        member.type not in _PLAIN_MEMBERS
+        or name.startswith("/")
+        or ".." in name.split("/")
+        or posixpath.normpath(name) != name
+        or name in seen
+    ):
+        raise _refuse("image tar has an unexpected member")
+    seen.add(name)
 
 
 def _read_index(tar: Path) -> bytes:
@@ -54,24 +107,18 @@ def _read_index(tar: Path) -> bytes:
     found: bytes | None = None
     seen: set[str] = set()
     try:
-        _screen_headers(tar)
+        end = _screen_headers(tar)
         with tarfile.open(tar, "r:") as tf:
             for member in tf:
-                name = member.name.removesuffix("/") if member.isdir() else member.name
-                if (
-                    name.startswith("/")
-                    or ".." in name.split("/")
-                    or posixpath.normpath(name) != name
-                    or name in seen
-                ):
-                    raise _refuse("image tar has an unexpected member")
-                seen.add(name)
+                _check_member(member, seen)
                 if member.name != _INDEX:
                     continue
                 if member.size > _MAX_INDEX_BYTES or not member.isreg():
                     raise _refuse("image tar index.json is invalid")
                 stream = tf.extractfile(member)
                 found = stream.read(_MAX_INDEX_BYTES + 1) if stream else None
+            if tf.offset != end:
+                raise _refuse("image tar parses differently than its headers say")
     except (tarfile.TarError, OSError, EOFError) as exc:
         raise _refuse("image tar is unreadable") from exc
     if found is None:
