@@ -1,116 +1,152 @@
-"""Trusted-worker source fetch: one exact commit, no credentials, hard caps, no escaping links."""
+"""Trusted-worker source fetch (spec §2): GitHub tarball of one commit, capped, plain files."""
 
+import asyncio
 import re
 import shutil
+import tarfile
+import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
+import httpx
+
 from app.services.deployment.errors import DeployRejectedError
-from app.services.deployment.process import run_tool
 
 _SHA = re.compile(r"[0-9a-f]{40}")
-_STRIPPED_FILES = ("*.pem", "*.key", "id_*", ".env", ".env.*")
+_REPO_PATH = re.compile(r"/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?")
+_CODELOAD = "https://codeload.github.com/{owner}/{repo}/tar.gz/{sha}"
+_KEY_FILES = frozenset({"id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"})
+_ENV_KEPT = frozenset({".env.example", ".env.sample"})
+_SCANNER_CONFIGS = frozenset({".gitleaks.toml", ".gitleaksignore", "osv-scanner.toml"})
+_CHUNK = 64 * 1024
 
 
 @dataclass(frozen=True)
 class FetchPolicy:
-    max_files: int = 20_000
+    max_archive: int = 50 * 1024 * 1024
     max_bytes: int = 200 * 1024 * 1024
+    max_files: int = 20_000
     timeout: float = 120.0
-    schemes: tuple[str, ...] = ("https",)
 
 
 DEFAULT_POLICY = FetchPolicy()
 
 
-def _validate(repo_url: str, commit_sha: str, policy: FetchPolicy) -> None:
+def is_stripped(name: str) -> bool:
+    """Key material and scanner/ignore configs never reach the build context."""
+    if name in _KEY_FILES or name in _SCANNER_CONFIGS:
+        return True
+    if name == ".env" or (name.startswith(".env.") and name not in _ENV_KEPT):
+        return True
+    return name.endswith((".pem", ".key"))
+
+
+def _archive_url(repo_url: str, commit_sha: str) -> str:
     parts = urlsplit(repo_url)
+    match = _REPO_PATH.fullmatch(parts.path)
     if (
-        parts.scheme not in policy.schemes
+        parts.scheme != "https"
+        or parts.hostname != "github.com"
         or parts.username
         or parts.password
-        or repo_url.startswith("-")
+        or parts.port
+        or parts.query
+        or parts.fragment
+        or match is None
+        or _SHA.fullmatch(commit_sha) is None
     ):
         raise DeployRejectedError(
-            "source_invalid", "repository url must be credential-free " + "/".join(policy.schemes)
+            "source_invalid", "need https://github.com/<owner>/<repo> and a 40-hex sha"
         )
-    if _SHA.fullmatch(commit_sha) is None:
-        raise DeployRejectedError("source_invalid", "commit_sha must be 40 lower-case hex")
+    return _CODELOAD.format(owner=match[1], repo=match[2], sha=commit_sha)
 
 
-async def _git(args: list[str], dest: Path, policy: FetchPolicy, scheme: str = "https") -> bytes:
-    argv = [
-        "git",
-        "-c",
-        "protocol.allow=never",
-        "-c",
-        f"protocol.{scheme}.allow=always",
-        "-c",
-        "core.hooksPath=/dev/null",
-        *args,
-    ]
-    env = {"GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
-    rc, out = await run_tool(argv, cwd=dest, timeout=policy.timeout, env=env)
-    if rc != 0:
-        raise DeployRejectedError("source_fetch_failed", f"git {args[0]} exited {rc}")
-    return out
-
-
-def _check_caps(listing: bytes, policy: FetchPolicy) -> None:
-    files, total = 0, 0
-    for line in listing.splitlines():
-        meta, _, _ = line.partition(b"\t")
-        size = meta.split()[-1]
-        files += 1
-        total += int(size) if size.isdigit() else 0
-        if files > policy.max_files or total > policy.max_bytes:
-            raise DeployRejectedError(
-                "source_too_large", f"over {policy.max_files} files or {policy.max_bytes} bytes"
-            )
-
-
-def _sanitize(root: Path) -> None:
-    """Drop `.git` and key material; refuse any link that resolves outside `root`."""
-    shutil.rmtree(root / ".git", ignore_errors=True)
-    resolved_root = root.resolve()
-    for path in sorted(root.rglob("*")):
-        if path.is_symlink():
-            if not path.resolve().is_relative_to(resolved_root):
+async def _download(client: httpx.AsyncClient, url: str, target: Path, policy: FetchPolicy) -> None:
+    try:
+        async with client.stream("GET", url) as response:
+            if response.status_code != 200:
                 raise DeployRejectedError(
-                    "source_unsafe", f"link escapes the source: {path.relative_to(root)}"
+                    "source_fetch_failed", f"archive host answered {response.status_code}"
                 )
-        elif path.is_file() and any(path.match(pattern) for pattern in _STRIPPED_FILES):
-            path.unlink()
+            received = 0
+            with target.open("wb") as out:
+                async for chunk in response.aiter_bytes(_CHUNK):
+                    received += len(chunk)
+                    if received > policy.max_archive:
+                        raise DeployRejectedError(
+                            "source_too_large", f"archive over {policy.max_archive} bytes"
+                        )
+                    out.write(chunk)
+    except httpx.HTTPError as exc:
+        raise DeployRejectedError("source_fetch_failed", type(exc).__name__) from exc
+
+
+def _relative(member: tarfile.TarInfo) -> PurePosixPath | None:
+    """Path below the single top-level directory GitHub adds, or None for that directory itself."""
+    parts = PurePosixPath(member.name).parts
+    if member.name.startswith("/") or ".." in parts:
+        raise DeployRejectedError("source_unsafe", f"unsafe path in archive: {member.name[:80]}")
+    return PurePosixPath(*parts[1:]) if len(parts) > 1 else None
+
+
+def _extract(archive: Path, dest: Path, policy: FetchPolicy) -> None:
+    files, total = 0, 0
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            for member in tar:
+                if not (member.isfile() or member.isdir()):
+                    raise DeployRejectedError(
+                        "source_unsafe", f"not a plain file or directory: {member.name[:80]}"
+                    )
+                relative = _relative(member)
+                if relative is None or (member.isfile() and is_stripped(relative.name)):
+                    continue
+                files += 1
+                total += member.size
+                if files > policy.max_files or total > policy.max_bytes:
+                    raise DeployRejectedError(
+                        "source_too_large", "unpacked source over the file or size cap"
+                    )
+                member.name = relative.as_posix()
+                tar.extract(member, dest, filter="data")
+    except (tarfile.TarError, EOFError, OSError) as exc:
+        raise DeployRejectedError(
+            "source_fetch_failed", f"unreadable archive: {type(exc).__name__}"
+        ) from exc
+
+
+async def _fetch(client: httpx.AsyncClient, url: str, dest: Path, policy: FetchPolicy) -> None:
+    with tempfile.TemporaryDirectory() as scratch:
+        archive = Path(scratch) / "source.tar.gz"
+        try:
+            async with asyncio.timeout(policy.timeout):
+                await _download(client, url, archive, policy)
+        except TimeoutError as exc:
+            raise DeployRejectedError("source_fetch_failed", "download timeout") from exc
+        await asyncio.to_thread(_extract, archive, dest, policy)
 
 
 async def fetch_source(
-    repo_url: str, commit_sha: str, dest: Path, policy: FetchPolicy = DEFAULT_POLICY
+    repo_url: str,
+    commit_sha: str,
+    dest: Path,
+    policy: FetchPolicy = DEFAULT_POLICY,
+    client: httpx.AsyncClient | None = None,
 ) -> None:
-    """Shallow-fetch `commit_sha` of `repo_url` into `dest` (created here, removed on refusal)."""
-    _validate(repo_url, commit_sha, policy)
+    """Download and unpack `commit_sha` of a github.com repository into `dest`.
+
+    `client` is the seam for authentication (a GitHub App token header) and for tests.
+    `dest` is created here and removed on any refusal.
+    """
+    url = _archive_url(repo_url, commit_sha)
     dest.mkdir(parents=True)
-    scheme = urlsplit(repo_url).scheme
+    owned = client or httpx.AsyncClient(follow_redirects=False)
     try:
-        await _git(["init", "-q"], dest, policy, scheme)
-        await _git(
-            [
-                "fetch",
-                "-q",
-                "--depth",
-                "1",
-                "--no-tags",
-                "--no-recurse-submodules",
-                repo_url,
-                commit_sha,
-            ],
-            dest,
-            policy,
-            scheme,
-        )
-        _check_caps(await _git(["ls-tree", "-r", "-l", "FETCH_HEAD"], dest, policy, scheme), policy)
-        await _git(["checkout", "-q", "--detach", "FETCH_HEAD"], dest, policy, scheme)
-        _sanitize(dest)
+        await _fetch(owned, url, dest, policy)
     except BaseException:
         shutil.rmtree(dest, ignore_errors=True)
         raise
+    finally:
+        if client is None:
+            await owned.aclose()

@@ -37,8 +37,8 @@ def _unique(value: list[str]) -> list[str]:
 
 
 def _host(value: str) -> str:
-    if _HOST.fullmatch(value) is None:
-        raise ValueError("must be a lower-case hostname")
+    if _HOST.fullmatch(value) is None or not value.rsplit(".", 1)[1].isalpha():
+        raise ValueError("must be a lower-case hostname with an alphabetic TLD, not an IP literal")
     return value
 
 
@@ -72,7 +72,7 @@ def load_manifest(root: Path) -> Manifest:
         )
     try:
         data = tomllib.loads(raw.decode())
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError, RecursionError) as exc:
         raise DeployRejectedError("manifest_invalid", "not valid TOML") from exc
     try:
         return Manifest.model_validate(data)

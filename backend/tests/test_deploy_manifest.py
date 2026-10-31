@@ -53,6 +53,11 @@ def test_manifest_full_roundtrip(tmp_path):
         'egress = ["bad host"]\n',
         'storage = "yes"\n',
         "port = = 1\n",
+        'egress = ["169.254.169.254"]\n',
+        'egress = ["10.0.0.1"]\n',
+        'egress = ["metadata.1"]\n',
+        'egress = ["localhost"]\n',
+        "x = " + "[" * 5000 + "]" * 5000 + "\n",
     ],
 )
 def test_manifest_rejects_invalid(tmp_path, body):
