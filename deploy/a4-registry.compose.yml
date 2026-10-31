@@ -8,7 +8,7 @@
 services:
   a4-registry-init:
     image: registry@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
-    entrypoint: ["chown", "1000:1000", "/var/lib/registry"]
+    entrypoint: ["chown", "-R", "1000:1000", "/var/lib/registry"]
     network_mode: none
     read_only: true
     cap_drop: [ALL]
@@ -52,7 +52,8 @@ volumes:
   a4-registry-data:
 
 networks:
-  # Internal; only a4-worker and a4-registry. Created by the compose file that defines a4-worker.
+  # Internal; only a4-worker and a4-registry. Created by the compose file that defines a4-worker;
+  # to start the registry first, run `docker network create --internal a4-registry-net` (never without --internal).
   a4-registry-net:
     external: true
     name: a4-registry-net
