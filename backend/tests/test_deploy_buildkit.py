@@ -5,6 +5,7 @@ import sys
 
 import pytest
 
+from app.core.config import Settings
 from app.services.deployment.builder import Builder, BuildRequest
 from app.services.deployment.buildkit import BuildKitBuilder
 from app.services.deployment.errors import DeployRejectedError
@@ -76,7 +77,7 @@ async def test_success_argv_and_result(builder, stub, context, tmp_path):
     assert result.image_bytes == 10
     argv = json.loads(stub[2].read_text())
     tls = tmp_path / "tls"
-    proxy = "http://10.213.77.11:3128"
+    h = "10.213.77.12"
     assert argv == [
         "--addr", "tcp://10.213.77.5:1234",
         "--tlscacert", str(tls / "ca.pem"),
@@ -87,13 +88,71 @@ async def test_success_argv_and_result(builder, stub, context, tmp_path):
         "--local", f"context={context}",
         "--local", f"dockerfile={context}",
         "--opt", "filename=Dockerfile",
-        "--opt", f"build-arg:HTTP_PROXY={proxy}",
-        "--opt", f"build-arg:HTTPS_PROXY={proxy}",
-        "--opt", f"build-arg:http_proxy={proxy}",
-        "--opt", f"build-arg:https_proxy={proxy}",
+        "--opt", f"build-arg:PIP_INDEX_URL=http://{h}:8081/simple/",
+        "--opt", f"build-arg:PIP_TRUSTED_HOST={h}",
+        "--opt", f"build-arg:npm_config_registry=http://{h}:8082/",
+        "--opt", "build-arg:npm_config_audit=false",
+        "--opt", f"build-arg:GOPROXY=http://{h}:8083",
+        "--opt", f"build-arg:GOSUMDB=sum.golang.org http://{h}:8083/sumdb",
         "--output", f"type=oci,dest={tar}",
         "--metadata-file", str(tmp_path / "out" / "proj_app_abc123.json"),
     ]  # fmt: skip
+
+
+async def test_mirror_host_is_the_only_address_in_build_args(stub, context, tmp_path):
+    out = tmp_path / "out2"
+    out.mkdir()
+    custom = BuildKitBuilder(
+        addr="tcp://10.213.77.5:1234",
+        tls_dir=tmp_path / "tls",
+        out_dir=out,
+        mirror_host="10.9.8.7",
+        buildctl=str(stub[0]),
+        timeout=5,
+    )
+    await custom.build(BuildRequest(context_dir=context, tag="t"))
+    argv = json.loads(stub[2].read_text())
+    args = [a for a in argv if a.startswith("build-arg:")]
+    assert len(args) == 6
+    assert not [a for a in args if "CARGO" in a]
+    assert not [a for a in args if "PROXY=" in a.upper().replace("GOPROXY=", "")]
+    assert "10.213.77.12" not in " ".join(args)
+    assert sum("10.9.8.7" in a for a in args) == 5
+
+
+@pytest.mark.parametrize("host", ["10.213.77.12", "192.168.0.1", "172.16.5.9"])
+def test_mirror_host_accepts_ipv4_literals(host):
+    assert Settings(_env_file=None, a4_pkg_mirror_host=host).a4_pkg_mirror_host == host
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "pkg-mirror",
+        "pkg.example.com",
+        "::1",
+        "fe80::1",
+        "1.2.3.4:80",
+        "",
+        " 10.0.0.1",
+        "10.0.0",
+        "999.1.1.1",
+        "10.0.0.1/8",
+        "010.0.0.1",
+        "127.0.0.1",
+        "0.0.0.0",
+        "169.254.1.1",
+        "8.8.8.8",
+        "255.255.255.255",
+    ],
+)
+def test_mirror_host_rejects_everything_but_an_ipv4_literal(host):
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, a4_pkg_mirror_host=host)
+
+
+def test_proxy_setting_is_gone():
+    assert not hasattr(Settings(_env_file=None), "a4_builder_proxy_url")
 
 
 async def test_never_passes_secret_ssh_or_entitlements(builder, stub, context):

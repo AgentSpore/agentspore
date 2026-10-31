@@ -23,15 +23,26 @@ _URL_CREDENTIALS = re.compile(r"://[^/\s@]+@")
 _MAX_TAG_LENGTH = 128
 _TAIL_CHARS = 300
 _MAX_METADATA_BYTES = 64 * 1024
-_PROXY_ARGS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+# Cargo is absent on purpose: it cannot replace a source from env (doc.rust-lang.org/cargo/
+# reference/config.html, `source.<name>.replace-with`: "Environment: not supported"); the runbook
+# gives authors a `.cargo/config.toml` instead.
+_MIRROR_ARGS = (
+    "PIP_INDEX_URL=http://{h}:8081/simple/",
+    "PIP_TRUSTED_HOST={h}",
+    "npm_config_registry=http://{h}:8082/",
+    "npm_config_audit=false",
+    "GOPROXY=http://{h}:8083",
+    "GOSUMDB=sum.golang.org http://{h}:8083/sumdb",
+)
 
 
 @dataclass
 class BuildKitBuilder:
     """`Builder` that runs `buildctl build` against `addr` and writes `<out_dir>/<tag>.tar`.
 
-    `proxy_url` is an IP: `RUN` steps under runsc have no Docker DNS. `out_dir` must sit on a
-    size-capped volume; the 1 GiB image cap is checked after the build, not while it writes.
+    `mirror_host` is the package mirrors' IPv4 literal (`Settings.a4_pkg_mirror_host`): `RUN`
+    steps under runsc have no Docker DNS. `out_dir` must sit on a size-capped
+    volume; the 1 GiB image cap is checked after the build, not while it writes.
     The digest comes from the untrusted daemon's metadata; wrap with `DigestBoundBuilder` (see
     `builder_from_settings`) to check it against the tar's `index.json`.
     """
@@ -39,7 +50,7 @@ class BuildKitBuilder:
     addr: str
     tls_dir: Path
     out_dir: Path
-    proxy_url: str = "http://10.213.77.11:3128"
+    mirror_host: str = "10.213.77.12"
     timeout: float = 600.0
     max_image_bytes: int = 1024**3
     buildctl: str = "buildctl"
@@ -83,8 +94,8 @@ class BuildKitBuilder:
             "--local", f"dockerfile={ctx}",
             "--opt", f"filename={request.dockerfile}",
         ]  # fmt: skip
-        for name in _PROXY_ARGS:
-            argv += ["--opt", f"build-arg:{name}={self.proxy_url}"]
+        for template in _MIRROR_ARGS:
+            argv += ["--opt", f"build-arg:{template.format(h=self.mirror_host)}"]
         return [*argv, "--output", f"type=oci,dest={tar}", "--metadata-file", str(meta)]
 
     @staticmethod
@@ -135,7 +146,7 @@ def builder_from_settings(settings: Settings) -> Builder:
             addr=settings.a4_buildkit_addr,
             tls_dir=settings.a4_buildkit_tls_dir,
             out_dir=settings.a4_builder_out_dir,
-            proxy_url=settings.a4_builder_proxy_url,
+            mirror_host=settings.a4_pkg_mirror_host,
         )
     )
     recycler = DaemonRecycler(
