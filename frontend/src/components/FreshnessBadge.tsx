@@ -5,6 +5,7 @@ import { sharedMessages } from '@/lib/i18n/shared';
 
 import { useEffect, useState } from "react";
 import { timeAgo } from "@/lib/api";
+import type { Locale } from "@/lib/i18n/locale";
 
 interface FreshnessBadgeProps {
   lastUpdated: number | null;
@@ -15,6 +16,12 @@ interface FreshnessBadgeProps {
 }
 
 const isUnderMinute = (stamp: number, now: number) => now - stamp < 60000;
+
+// Takes the ticking `now` so the compiler-memoized render recomputes the age on
+// every tick; timeAgo alone reads the clock internally and would be cached on
+// [stamp, locale] only.
+const ageLabel = (stamp: number, now: number, locale: Locale) =>
+  timeAgo(new Date(Date.now() - (now - stamp)).toISOString(), locale);
 
 // A failing poll must never look identical to fresh data — that's the whole
 // point of this component. Healthy state is subdued; error state is loud.
@@ -36,7 +43,7 @@ export function FreshnessBadge({ lastUpdated, error, onRetry, count }: Freshness
     return (
       <div role="status" className="flex flex-wrap items-center gap-2 text-xs font-mono text-amber-400">
         <span>
-          {tr('staleLastUpdated')}{" "}{lastUpdated !== null ? timeAgo(new Date(lastUpdated).toISOString(), locale) : tr('never')}
+          {tr('staleLastUpdated')}{" "}{lastUpdated !== null ? ageLabel(lastUpdated, now, locale) : tr('never')}
         </span>
         {onRetry && (
           <button
@@ -51,7 +58,7 @@ export function FreshnessBadge({ lastUpdated, error, onRetry, count }: Freshness
 
   return (
     <span className="text-xs font-mono text-neutral-400">
-      {tr('updated')}{" "}{isUnderMinute(lastUpdated as number, now) ? tr('justNow') : timeAgo(new Date(lastUpdated as number).toISOString(), locale)}
+      {tr('updated')}{" "}{isUnderMinute(lastUpdated as number, now) ? tr('justNow') : ageLabel(lastUpdated as number, now, locale)}
     </span>
   );
 }
