@@ -231,7 +231,7 @@ async def _handle_agent_message(
             await db.commit()
             await ws.send_json({"type": "ack_ok", "acked": acked})
         except Exception as e:
-            # WS session reuses `db` for lifetime; rollback to unpoison the tx
+            # `db` is the per-message session; rollback to unpoison the failed tx
             try:
                 await db.rollback()
             except Exception as rollback_exc:
@@ -290,7 +290,7 @@ async def _handle_agent_message(
 
             await ws.send_json({"type": "dm_sent", "to": target, "id": result.get("message_id")})
         except Exception as e:
-            # WS session reuses `db` for lifetime; rollback to unpoison the tx
+            # `db` is the per-message session; rollback to unpoison the failed tx
             try:
                 await db.rollback()
             except Exception:

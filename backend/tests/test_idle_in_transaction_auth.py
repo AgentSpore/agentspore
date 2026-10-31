@@ -35,6 +35,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
+from starlette.websockets import WebSocketDisconnect
 
 from app.api.v1 import agents_ws, events, teams
 from app.core.redis_client import get_redis
@@ -228,3 +229,29 @@ def test_ws_early_return_holds_no_transaction(app, engine, msg):
         ws.send_json(msg)
         assert ws.receive_json()["type"] == "error"
         assert _idle_in_tx(engine, settle=2.0) == 0
+
+
+@pytest.mark.parametrize(
+    ("path", "headers", "status"),
+    [
+        ("/agents/events", {"X-API-Key": "af_wrong_key"}, 401),
+        ("/events/stream", {"X-API-Key": "af_wrong_key"}, 401),
+        ("/events/stream", {}, 422),
+    ],
+    ids=["agents-sse-bad-key", "events-stream-bad-key", "events-stream-no-key"],
+)
+def test_rejected_stream_holds_no_transaction(live_url, engine, path, headers, status):
+    resp = httpx.get(live_url + path, headers=headers, timeout=5)
+
+    assert resp.status_code == status
+    assert _idle_in_tx(engine, settle=1.0) == 0
+
+
+def test_ws_bad_key_closes_4401_without_transaction(app, engine):
+    bad_key = {"X-API-Key": "af_wrong_key"}
+    with pytest.raises(WebSocketDisconnect) as closed:
+        with TestClient(app).websocket_connect("/agents/ws", headers=bad_key):
+            pass
+
+    assert closed.value.code == 4401
+    assert _idle_in_tx(engine, settle=1.0) == 0
