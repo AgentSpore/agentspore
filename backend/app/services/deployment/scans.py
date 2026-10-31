@@ -173,7 +173,7 @@ def _heredoc_terminator(match: tuple[str, ...]) -> str:
     return next(group for group in match[1:] if group)
 
 
-class _UnsupportedDockerfile(Exception):
+class _UnsupportedDockerfileError(Exception):
     """Construct this scanner refuses to model; `line` is the physical line number."""
 
     def __init__(self, line: int):
@@ -220,7 +220,7 @@ class DockerfileScanner:
                 return [Finding(_UNSUPPORTED, self.dockerfile, number, "base_not_allowed")]
         try:
             logical = self._logical_lines(lines)
-        except _UnsupportedDockerfile as refused:
+        except _UnsupportedDockerfileError as refused:
             return [Finding(_UNSUPPORTED, self.dockerfile, refused.line, "base_not_allowed")]
         findings, stages = [], set()
         for number, line in logical:
@@ -298,8 +298,16 @@ class DockerfileScanner:
             return []
         found = _HEREDOC.findall(line)
         if line.count("<<") != len(found):
-            raise _UnsupportedDockerfile(number)
+            raise _UnsupportedDockerfileError(number)
         return [(_heredoc_terminator(m), m[0] == "-") for m in found]
+
+    @staticmethod
+    def _piece(raw: str, joining: bool, number: int) -> tuple[str, bool]:
+        """Text one physical line adds to its logical line, and whether the next one joins."""
+        if _DOUBLE_BACKSLASH.search(raw):
+            raise _UnsupportedDockerfileError(number)
+        text = raw if joining else raw.lstrip(" \t")
+        return _CONTINUATION.sub("", text), _CONTINUATION.search(raw) is not None
 
     @classmethod
     def _logical_lines(cls, lines: list[str]) -> list[tuple[int, str]]:
@@ -319,16 +327,15 @@ class DockerfileScanner:
                 if not buffer and stripped:
                     out.append((number, stripped))
                 continue
-            if _DOUBLE_BACKSLASH.search(raw):
-                raise _UnsupportedDockerfile(number)
+            piece, continued = cls._piece(raw, bool(buffer), number)
             start = start or number
-            buffer += _CONTINUATION.sub("", raw if buffer else raw.lstrip(" \t"))
-            if not _CONTINUATION.search(raw):
+            buffer += piece
+            if not continued:
                 out.append((start, buffer.strip()))
                 pending = cls._heredocs(buffer.strip(), start)
                 buffer, start = "", 0
         if pending:
-            raise _UnsupportedDockerfile(len(lines))
+            raise _UnsupportedDockerfileError(len(lines))
         return out + ([(start, buffer.strip())] if buffer else [])
 
 
