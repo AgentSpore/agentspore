@@ -196,7 +196,8 @@ registry = "sparse+http://10.213.77.12:8084/"
 ```dockerfile
 WORKDIR /app
 COPY .cargo/config.toml .cargo/config.toml
-COPY Cargo.toml Cargo.lock src ./
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
 RUN cargo build --release
 ```
 
