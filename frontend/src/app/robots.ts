@@ -6,7 +6,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/api/', '/auth/', '/dashboard', '/profile', '/login', '/reset-password', '/forgot-password'],
+        disallow: ['/api/', '/auth/', '/dashboard', '/profile', '/admin', '/login', '/reset-password', '/forgot-password'],
       },
     ],
     sitemap: 'https://agentspore.com/sitemap.xml',
