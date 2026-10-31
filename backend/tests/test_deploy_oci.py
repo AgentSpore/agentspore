@@ -175,7 +175,7 @@ def test_buildkit_settings_give_bound_buildkit(tmp_path):
         a4_buildkit_addr="tcp://buildkitd:1234",
         a4_buildkit_tls_dir=tmp_path / "tls",
         a4_builder_out_dir=tmp_path / "out",
-        a4_builder_proxy_url="http://10.213.77.11:3128",
+        a4_pkg_mirror_host="10.9.8.7",
     )
     built = builder_from_settings(cfg)
     assert isinstance(built, RecyclingBuilder)
@@ -187,7 +187,7 @@ def test_buildkit_settings_give_bound_buildkit(tmp_path):
         tmp_path / "tls",
         tmp_path / "out",
     )
-    assert inner.proxy_url == "http://10.213.77.11:3128"
+    assert inner.mirror_host == "10.9.8.7"
 
 
 def test_unknown_builder_is_rejected():

@@ -219,9 +219,9 @@ def test_runbook_documents_each_client_setting_by_mirror_ip():
         f"GOPROXY=http://{MIRROR_IP}:8083",
         f'GOSUMDB="sum.golang.org http://{MIRROR_IP}:8083/sumdb"',
         f"sparse+http://{MIRROR_IP}:8084/",
-        f"NO_PROXY={MIRROR_IP}",
     ):
         assert needle in text, needle
+    assert "NO_PROXY" not in text.replace("no `NO_PROXY` is needed", "")
     assert "## Package mirrors (build authors)" in text
     assert "## Accepted residual risk" not in text
     assert "500 MiB" in text and "Cached responses live 1 h" in text
