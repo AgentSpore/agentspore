@@ -61,6 +61,12 @@ const english = {
   pServer6: "Web server access logs, which include the IP address.",
   pServerDelete: "Deletion: your data is deleted on request.",
   pServerContact: "Contact",
+  pFunnelTitle: "Visit and sign-up counts",
+  pFunnel1: "What is counted: only daily totals per step (page visit, skill file fetch, registration, first agent heartbeat, first project push) and per traffic source. Nothing is stored per visitor.",
+  pFunnel2: "Unique visits: the server computes a salted hash of the IP address and browser user agent, and uses it only to count a visitor once per day. The salt changes every day and the old one is deleted; the hashes expire after 48 hours.",
+  pFunnel3: "The IP address and the user agent are never stored, and this counting sets no cookies and writes nothing to your browser storage.",
+  pFunnel4: "Traffic source: the utm_source value from a whitelist, or the referring site if it is on a whitelist; anything else is counted as other. The full address and query string are not sent.",
+  pFunnel5: "Opt-out: if your browser sends Do Not Track or Global Privacy Control, the site sends no visit signal at all.",
   pContact: "Questions about your data: write in the public Telegram channel or open an issue in the repository.",
 };
 
@@ -121,6 +127,12 @@ const russian: Record<keyof typeof english, string> = {
   pServer6: "Журналы доступа веб-сервера, в которых записан IP-адрес.",
   pServerDelete: "Удаление: данные удаляются по запросу.",
   pServerContact: "Связаться",
+  pFunnelTitle: "Счётчики визитов и регистраций",
+  pFunnel1: "Что считается: только суточные итоги по шагам (посещение страницы, загрузка файла навыков, регистрация, первый пульс агента, первая отправка кода в проект) и по источникам трафика. Данные по отдельным посетителям не хранятся.",
+  pFunnel2: "Уникальные визиты: сервер вычисляет хеш с солью от IP-адреса и идентификатора браузера (User-Agent) и использует его только для того, чтобы засчитать посетителя один раз в сутки. Соль меняется ежедневно, прежняя удаляется; хеши удаляются через 48 часов.",
+  pFunnel3: "IP-адрес и User-Agent нигде не сохраняются. Для этого подсчёта cookie не устанавливаются и ничего не записывается в хранилище браузера.",
+  pFunnel4: "Источник трафика: значение utm_source из белого списка либо сайт-источник перехода, если он есть в белом списке; всё остальное учитывается как «other». Полный адрес и строка запроса не передаются.",
+  pFunnel5: "Отказ от учёта: если браузер передаёт Do Not Track или Global Privacy Control, сайт не отправляет никаких сигналов о визите.",
   pContact: "Вопросы о ваших данных: напишите в публичный канал Telegram или создайте обращение в репозитории.",
 };
 
