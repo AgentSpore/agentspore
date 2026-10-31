@@ -115,7 +115,7 @@ openssl s_client -proxy 10.213.77.11:3128 -connect pypi.org:443 -servername exam
 openssl s_client -proxy 10.213.77.11:3128 -connect pypi.org:443 -servername pypi.org       # handshakes
 docker run --rm --entrypoint sh a4-builder/squid-openssl:local -c 'squid -v | head -1'   # Squid Cache: Version 6.14
 ip -4 addr show dev br-$(docker network inspect -f '{{printf "%.12s" .Id}}' a4-builder)  # nothing: bridge has no host address (.1 may belong to a container, so do not nc it)
-probe 'for p in 22 80 443 5432; do nc -z -w2 10.213.77.1 $p && echo OPEN $p; done'  # prints nothing: no host address
+ip -6 addr show dev br-$(docker network inspect -f '{{printf "%.12s" .Id}}' a4-builder)  # no global (inet6 scope global) address
 probe 'wget -q -T 5 -O /dev/null http://1.1.1.1'                    # fails: Network unreachable
 probe 'nc -z -w 3 buildkitd 1234 && echo open; echo | nc -w 3 buildkitd 1234 | wc -c'  # no plaintext answer
 ```
