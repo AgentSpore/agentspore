@@ -1,6 +1,7 @@
 """A4 P2a: run_tool bounds - process-group kill on timeout, streamed output cap."""
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -104,11 +105,25 @@ async def test_stderr_flood_does_not_block_stdout(tmp_path):
     assert out.stdout == b"done"
 
 
-async def test_credential_urls_are_redacted_on_both_streams(tmp_path):
+async def test_stderr_is_redacted_and_stdout_is_returned_raw(tmp_path):
     cmd = "echo 'https://u:pw-1@git.example/x'; echo 'fatal: git://tok@h/y' >&2"
     out = await run_tool_captured(["sh", "-c", cmd], cwd=tmp_path, timeout=5)
-    assert b"pw-1" not in out.stdout and b"tok" not in out.stderr
-    assert b"://***@git.example/x" in out.stdout and b"://***@h/y" in out.stderr
+    assert b"tok" not in out.stderr and b"://***@h/y" in out.stderr
+    assert out.stdout == b"https://u:pw-1@git.example/x\n"
+
+
+async def test_json_stdout_round_trips_unchanged(tmp_path):
+    # scans.py json.loads scanner stdout: credential-like words in advisories must survive.
+    doc = {
+        "details": "sends Authorization:\nnext line, password: x, user:pw@host, token=abc",
+        "refs": ["https://u:p@h/x", "ghp_" + "a" * 30, "Cookie: sid=1"],
+    }
+    path = tmp_path / "osv.json"
+    path.write_text(json.dumps(doc))
+    captured = await run_tool_captured(["cat", str(path)], cwd=tmp_path, timeout=5)
+    _, plain = await run_tool(["cat", str(path)], cwd=tmp_path, timeout=5)
+    for raw in (captured.stdout, plain):
+        assert raw == path.read_bytes() and json.loads(raw) == doc
 
 
 async def test_cut_stderr_never_leaves_a_credential_fragment(tmp_path):
@@ -171,11 +186,47 @@ async def test_run_tool_reaps_with_both_stdout_and_stderr(tmp_path, monkeypatch)
         (b"GET /x?access_token=ghs_abc&y=1", b"ghs_abc", b"access_token=***&y=1"),
         (b"env GITHUB_TOKEN=tok123 PASSWORD=pw9 api_key=k1", b"tok123", b"GITHUB_TOKEN=***"),
         (b"a secret=top\nnext line", b"top", b"next line"),
+        (b"password: hunter2 rest", b"hunter2", b"rest"),
+        (b'{"password":"hunter2","a":1}', b"hunter2", b'"a":1'),
+        (b"mysql --password hunter2 -u x", b"hunter2", b"-u x"),
+        (b"PRIVATE-TOKEN: glx9", b"glx9", b"PRIVATE-TOKEN:"),
+        (b"X-Auth-Token: t0k3n", b"t0k3n", b"X-Auth-Token:"),
+        (b"Cookie: sid=abc; theme=dark", b"sid=abc", b"Cookie:"),
+        (b"push ghp_" + b"A" * 36 + b" failed", b"A" * 36, b" failed"),
+        (b"key glpat-" + b"b" * 22 + b" bad", b"b" * 22, b" bad"),
+        (b"id AKIA" + b"ABCDEFGHIJKLMNOP end", b"ABCDEFGHIJKLMNOP", b" end"),
     ],
 )
 def test_redact_masks_every_credential_shape(raw, gone, kept):
     out = redact(raw)
     assert gone not in out and kept in out
+
+
+def test_redact_masks_up_to_the_last_at_exactly():
+    assert redact(b"fatal: https://u:p/w@ss@host/path") == b"fatal: https://***@host/path"
+    assert redact(b"dial u:p@w@db:5432") == b"dial ***@db:5432"
+
+
+def test_header_at_end_of_line_leaves_the_next_line_alone():
+    assert (
+        redact(b"sent Authorization:\nnext line stays") == b"sent Authorization:\nnext line stays"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        b"pulling registry.local:5000/team/app@sha256:" + b"ab" * 32,
+        b"app:1.2@sha256:" + b"cd" * 32 + b" not found",
+    ],
+)
+def test_image_digest_references_survive(text):
+    assert redact(text) == text
+
+
+def test_credentials_before_a_digest_are_still_masked():
+    ref = b"https://u:pw@h/app@sha256:" + b"ef" * 32
+    assert redact(ref) == b"https://***@h/app@sha256:" + b"ef" * 32
 
 
 @pytest.mark.parametrize(
@@ -187,7 +238,21 @@ def test_redact_keeps_harmless_text(text):
 
 @pytest.mark.parametrize(
     "unit",
-    [b"://", b"Bearer ", b"authorization:", b"token=", b"a:b@", b"x" * 100, b"@" * 50 + b":"],
+    [
+        b"://",
+        b"Bearer ",
+        b"authorization:",
+        b"token=",
+        b"a:b@",
+        b"x" * 100,
+        b"@" * 50 + b":",
+        b"password:",
+        b"--password ",
+        b"Cookie:",
+        b"ghp_",
+        b"AKIA",
+        b"a:b@sha256:",
+    ],
 )
 def test_redact_is_linear_on_adversarial_input(unit):
     data = unit * (1_000_000 // len(unit))

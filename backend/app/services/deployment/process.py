@@ -14,9 +14,14 @@ MAX_OUTPUT = 32 * 1024 * 1024
 MAX_STDERR = 64 * 1024
 REAP_TIMEOUT = 5.0
 # Every pattern is anchored on a literal and bounded, so none can rescan a long input.
-_HEADER = re.compile(rb"(?i)(authorization\s?[:=]\s?)[^\r\n]{1,512}")
+_HEADER = re.compile(
+    rb"(?i)((?:authorization|private-token|x-auth-token|set-cookie|cookie)[ \t]?[:=][ \t]?)"
+    rb"[^\r\n]{1,512}"
+)
 _BEARER = re.compile(rb"(?i)\b(bearer\s{1,16})[A-Za-z0-9._~+/=-]{1,2048}")
 _PAIR = re.compile(rb"(?i)((?:token|password|passwd|secret|api_?key)=)[^\s&\"']{1,512}")
+_PASSWORD = re.compile(rb"(?i)(password\"?[ \t]*:[ \t]*\"?|--pass(?:word)?[ \t]+)[^\s\",}]{1,512}")
+_BARE = re.compile(rb"(?:gh[pousr]_|glpat-)[A-Za-z0-9_-]{20,512}|AKIA[0-9A-Z]{16}")
 _TOKEN = re.compile(rb"\S+")
 
 
@@ -32,6 +37,8 @@ def _mask_userinfo(match: re.Match[bytes]) -> bytes:
     password holding `/` or `@` leaks no tail. One whitespace-free token at a time: linear."""
     token = match.group()
     at = token.rfind(b"@")
+    while at >= 0 and token.startswith(b"sha256:", at + 1):  # an image digest, not userinfo
+        at = token.rfind(b"@", 0, at)
     if at < 0:
         return token
     scheme = token.find(b"://")
@@ -42,11 +49,14 @@ def _mask_userinfo(match: re.Match[bytes]) -> bytes:
 
 
 def redact(data: bytes) -> bytes:
-    """Mask URL and `user:pass@` credentials, `Authorization`/`Bearer` values and
-    `token|password|secret|api_key=` pairs; applied to every captured stream."""
+    """Mask URL and `user:pass@` credentials, credential headers, `Bearer` values, password and
+    `token|secret|api_key=` pairs and bare GitHub/GitLab/AWS keys. For text people read (stderr,
+    failure details), never for stdout a caller parses: JSON can come out invalid."""
     data = _HEADER.sub(rb"\1***", data)
     data = _BEARER.sub(rb"\1***", data)
     data = _PAIR.sub(rb"\1***", data)
+    data = _PASSWORD.sub(rb"\1***", data)
+    data = _BARE.sub(b"***", data)
     return _TOKEN.sub(_mask_userinfo, data)
 
 
@@ -102,7 +112,7 @@ async def run_tool_captured(
 ) -> ToolOutput:
     """Run `argv`; timeout, missing binary, huge stdout: `tool_failed`.
 
-    stdout is capped at `MAX_OUTPUT`, stderr keeps its last `MAX_STDERR` bytes; both are
+    stdout is returned raw, capped at `MAX_OUTPUT`; stderr keeps its last `MAX_STDERR` bytes,
     redacted. The tool runs in its own session so a timeout or overflow kills the process group.
     """
     try:
@@ -134,4 +144,4 @@ async def run_tool_captured(
             os.killpg(proc.pid, signal.SIGKILL)
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(_reap(proc, proc.stdout, proc.stderr), REAP_TIMEOUT)
-    return ToolOutput(proc.returncode or 0, redact(stdout), redact(stderr))
+    return ToolOutput(proc.returncode or 0, stdout, redact(stderr))
