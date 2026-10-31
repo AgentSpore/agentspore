@@ -236,8 +236,8 @@ class DeploymentRepository:
         )
         return lease
 
-    async def job_source(self, lease: DeploymentLease) -> tuple[str, str] | None:
-        """Repository URL and commit of a deployment the lease still owns."""
+    async def job_source(self, lease: DeploymentLease) -> tuple[str, str]:
+        """Repository URL and commit of the deployment this lease just claimed."""
         row = (
             await self.db.execute(
                 text(
@@ -247,8 +247,8 @@ class DeploymentRepository:
                 ),
                 lease.model_dump(),
             )
-        ).first()
-        return None if row is None else (row.repository_url, row.commit_sha)
+        ).one()
+        return row.repository_url, row.commit_sha
 
     async def renew(self, lease: DeploymentLease, seconds: int) -> bool:
         """Extend a live lease; an expired or replaced one stays untouched."""

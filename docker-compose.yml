@@ -125,9 +125,12 @@ services:
     container_name: agentspore-a4-worker
     restart: unless-stopped
     command: ["/app/.venv/bin/python", "-m", "app.workers.a4"]
+    init: true
+    stop_grace_period: 30s
     healthcheck:
       disable: true
     environment:
+      DEBUG: "true"
       DATABASE_URL: "postgresql+asyncpg://postgres:postgres@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
       A4_DEPLOY_ENABLED: "${A4_DEPLOY_ENABLED:-false}"
