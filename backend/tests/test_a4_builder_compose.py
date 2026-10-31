@@ -63,10 +63,10 @@ BUILDKITD_COMMAND = [
 ]
 
 
-def _is_internal(net: dict) -> bool:
-    # a4-control is external here (compose forbids `internal` with `external`); the main compose
-    # file declares it internal and test_deploy_worker_compose.py asserts that.
-    return net.get("internal") is True or net.get("external") is True
+def _is_internal(name: str, net: dict) -> bool:
+    # a4-control alone is external here (compose forbids `internal` with `external`); the main
+    # compose file declares it internal and test_deploy_worker_compose.py asserts that.
+    return net.get("internal") is True or (name == "a4-control" and net.get("external") is True)
 
 
 def _acl_deny_dst() -> list[str]:
@@ -149,7 +149,9 @@ def test_builder_network_is_pinned_and_peers_have_static_ips(stack, services):
 def test_networks_disable_ipv6_and_dynamic_range_excludes_static_ips(stack):
     # Prod hosts listen on [::]: IPv6 on these bridges is off explicitly, not by Docker default.
     for name, net in stack["networks"].items():
-        if not net.get("external"):  # a4-control is created and configured by the main compose file
+        if name == "a4-control":  # created and configured by the main compose file
+            assert net["external"] is True
+        else:
             assert net["enable_ipv6"] is False, name
     ip_range = ipaddress.IPv4Network(
         stack["networks"]["a4-builder"]["ipam"]["config"][0]["ip_range"]
@@ -188,7 +190,8 @@ def test_buildkitd_state_is_a_capped_tmpfs_so_a_restart_wipes_it(services):
     assert svc["restart"] == "no"
     (entry,) = [t for t in svc["tmpfs"] if t.startswith("/home/user/.local/share/buildkit:")]
     opts = entry.split(":", 1)[1].split(",")
-    assert {"uid=1000", "gid=1000", "mode=0700", "size=4g"} <= set(opts)
+    assert {"uid=1000", "gid=1000", "mode=0700", "size=4g", "exec"} <= set(opts)
+    assert not {"noexec", "nosuid", "nodev"} & set(opts)
     assert not [v for v in svc["volumes"] if "/.local/share/buildkit" in str(v)]
     assert not [
         v for v in svc["volumes"] if v.startswith(("/", "~", ".")) and ":" in v and ":ro" not in v
@@ -222,7 +225,7 @@ def test_only_proxy_and_registry_reach_the_internet(stack, services):
     routed = {
         name
         for name, svc in services.items()
-        if any(not _is_internal(stack["networks"][n]) for n in svc["networks"])
+        if any(not _is_internal(n, stack["networks"][n]) for n in svc["networks"])
     }
     assert routed == {"egress-proxy", "mirror"}
 
@@ -434,29 +437,27 @@ def test_gate_is_hardened_on_control_network_only_and_mounts_the_socket_read_onl
     assert [n for n, s in services.items() if "a4-control" in s["networks"]] == [GATE]
 
 
+RESTART_LOCATION = '~ "^/v1\\.[0-9]{2}/containers/a4-builder-buildkitd-1/restart$"'
+INSPECT_LOCATION = '~ "^/v1\\.[0-9]{2}/containers/a4-builder-buildkitd-1/json$"'
+
+
 def test_gate_default_denies_and_allows_only_restart_and_inspect_of_buildkitd():
     locations = _gate_locations()
-    assert [m for m, _ in locations][-1] == "/"
-    assert dict(locations)["/"].strip() == "return 403;"
-    allowed = {m: b for m, b in locations if m != "/"}
-    assert len(allowed) == 2
-    for pattern, body in allowed.items():
-        assert pattern.startswith('~ "^/v1\\.[0-9]{2}/containers/%s/' % CONTAINER), pattern
-        assert pattern.endswith('$"'), pattern
+    assert [m for m, _ in locations] == [RESTART_LOCATION, INSPECT_LOCATION, "/"]
+    bodies = dict(locations)
+    assert bodies["/"].strip() == "return 403;"
+    restart, inspect = bodies[RESTART_LOCATION], bodies[INSPECT_LOCATION]
+    for body in (restart, inspect):
         assert "proxy_pass http://unix:/var/run/docker.sock;" in body
-    restart = next(b for m, b in allowed.items() if "/restart" in m)
-    inspect = next(b for m, b in allowed.items() if "/json" in m)
     assert "$request_method != POST" in restart and "$request_method != GET" in inspect
     assert "proxy_pass_request_body off;" in restart
     assert '$args !~ "^(t=[0-9]{1,2})?$"' in restart and '$args != ""' in inspect
     assert "client_max_body_size 1;" in (CONF / "restart-gate.conf").read_text()
 
 
-def test_gate_regexes_match_only_the_two_calls():
-    regexes = {
-        "restart": re.compile(rf"^/v1\.[0-9]{{2}}/containers/{CONTAINER}/restart$"),
-        "json": re.compile(rf"^/v1\.[0-9]{{2}}/containers/{CONTAINER}/json$"),
-    }
+def test_gate_regexes_from_the_config_match_only_the_two_calls():
+    # Patterns come from restart-gate.conf itself, not from a copy kept in this file.
+    regexes = [re.compile(m.removeprefix("~ ").strip('"')) for m, _ in _gate_locations()[:2]]
     ok = [f"/v1.44/containers/{CONTAINER}/restart", f"/v1.51/containers/{CONTAINER}/json"]
     bad = [
         "/containers/create",
@@ -465,15 +466,29 @@ def test_gate_regexes_match_only_the_two_calls():
         f"/v1.44/containers/{CONTAINER}/restart/x",
         f"/v1.44/containers/{CONTAINER}x/restart",
         f"/v1.4/containers/{CONTAINER}/restart",
-        f"/v1.44/../containers/{CONTAINER}/json",
         "/v1.44/containers/other/restart",
         f"/v1.44/containers/{CONTAINER}/kill",
+        f"/v1.44/containers/{CONTAINER}/restart|/v1.44/containers/create",
     ]
-    assert sum(bool(r.match(p)) for r in regexes.values() for p in ok) == 2
-    assert not [p for p in bad if any(r.match(p) for r in regexes.values())]
+    assert [sum(bool(r.search(p)) for r in regexes) for p in ok] == [1, 1]
+    assert not [p for p in bad if any(r.search(p) for r in regexes)]
 
 
 def test_buildkitd_healthcheck_checks_mtls_so_the_gate_json_means_ready(services):
     test = services["buildkitd"]["healthcheck"]["test"]
     assert test[:2] == ["CMD", "buildctl"] and test[-2:] == ["debug", "workers"]
     assert "--tlsservername=buildkitd" in test and "--tlskey=/run/secrets/a4_buildkit_key" in test
+
+
+def test_buildkitd_rootfs_is_read_only_with_tmpfs_for_every_rootless_write_path(services):
+    # moby/buildkit v0.23.2 Dockerfile, rootless stage: XDG_RUNTIME_DIR=/run/user/1000,
+    # TMPDIR=/home/user/.local/tmp, state /home/user/.local/share/buildkit.
+    svc = services["buildkitd"]
+    assert svc["read_only"] is True
+    paths = {t.split(":", 1)[0] for t in svc["tmpfs"]}
+    assert paths == {
+        "/run/user/1000",
+        "/tmp",
+        "/home/user/.local/tmp",
+        "/home/user/.local/share/buildkit",
+    }

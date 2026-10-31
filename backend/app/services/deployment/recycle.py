@@ -17,6 +17,8 @@ from loguru import logger
 from app.services.deployment.builder import Builder, BuildRequest, BuildResult
 from app.services.deployment.errors import DeployRejectedError
 
+CANCEL_RECYCLE_TIMEOUT = 20.0  # a4-worker stop_grace_period is 30 s
+
 
 class Recycler(Protocol):
     async def ensure_clean(self) -> None:
@@ -55,7 +57,14 @@ class DaemonRecycler:
             ) as client:
                 await self._restart(client)
                 await self._wait_ready(client)
-        except (httpx.HTTPError, TimeoutError, ValueError, KeyError) as exc:
+        except (
+            httpx.HTTPError,
+            TimeoutError,
+            ValueError,
+            KeyError,
+            TypeError,
+            AttributeError,
+        ) as exc:
             logger.error("buildkitd recycle failed container={} error={!r}", self.container, exc)
             return
         self.dirty = False
@@ -95,4 +104,17 @@ class RecyclingBuilder:
         try:
             return await self.inner.build(request)
         finally:  # success, failure, timeout and cancel all end with a restart
+            await self._recycle_within_shutdown_budget()
+
+    async def _recycle_within_shutdown_budget(self) -> None:
+        """While cancelling (SIGTERM, lost lease) the restart gets `CANCEL_RECYCLE_TIMEOUT`, so the
+        worker still writes its outcome inside `stop_grace_period`; the daemon then stays dirty."""
+        task = asyncio.current_task()
+        if task is None or not task.cancelling():
             await self.recycler.recycle()
+            return
+        try:
+            async with asyncio.timeout(CANCEL_RECYCLE_TIMEOUT):
+                await self.recycler.recycle()
+        except TimeoutError:
+            logger.error("buildkitd recycle cut short while cancelling, daemon stays dirty")

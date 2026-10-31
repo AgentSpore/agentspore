@@ -26,7 +26,9 @@ services:
     runtime: runsc
     user: "1000:1000"
     # INVARIANT(A4-P3a): rootless RUN shares this container's network namespace, so the listener is
-    # reachable from untrusted code; mTLS (client cert held only by the worker) protects it.
+    # reachable from untrusted code, and a RUN can already ptrace the daemon. mTLS therefore only
+    # keeps OTHER network peers out; it is no boundary against RUN code, and the server key mounted
+    # here (also used by the healthcheck) grants a RUN nothing it does not already have.
     # --oci-worker-no-process-sandbox lets RUN kill or outlive daemon processes: one build per
     # daemon. The worker restarts this container after every build through a4-restart-gate; the
     # state below is a tmpfs, so the restart wipes all of it.
@@ -38,6 +40,8 @@ services:
       - --config=/etc/buildkit/buildkitd.toml
       - --oci-worker-no-process-sandbox
     restart: "no"
+    # Every path rootless buildkitd writes is a tmpfs below, so a restart wipes the whole container.
+    read_only: true
     cap_drop: [ALL]
     cap_add: [SETUID, SETGID]
     # rootless BuildKit needs these two relaxed; gVisor is the boundary, not seccomp/AppArmor.
@@ -49,7 +53,11 @@ services:
     volumes:
       - ./a4-builder/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
     tmpfs:
-      - /home/user/.local/share/buildkit:uid=1000,gid=1000,mode=0700,size=4g
+      # Docker adds noexec,nosuid,nodev to every tmpfs; `exec` is needed so RUN can exec binaries
+      # from snapshot rootfs on this mount.
+      - /home/user/.local/share/buildkit:uid=1000,gid=1000,mode=0700,size=4g,exec
+      # TMPDIR of the rootless image (moby/buildkit v0.23.2 Dockerfile, rootless stage).
+      - /home/user/.local/tmp:uid=1000,gid=1000,mode=0700,size=256m,exec
       - /run/user/1000:uid=1000,gid=1000,mode=0700,size=64m
       - /tmp:size=256m
     networks: [a4-builder]
