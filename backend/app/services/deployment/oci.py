@@ -100,15 +100,29 @@ def _check_member(member: tarfile.TarInfo, seen: set[str]) -> None:
     seen.add(name)
 
 
-def _read_index(tar: Path) -> bytes:
-    """Return `index.json` bytes; nothing is extracted, any odd member refuses the tar."""
+@dataclass(frozen=True)
+class LayoutScan:
+    """`index.json` bytes plus `blobs/sha256/<hex>` members as digest -> (data offset, size)."""
+
+    index: bytes
+    blobs: dict[str, tuple[int, int]]
+
+
+def scan_layout(tar: Path) -> LayoutScan:
+    """Screen the whole tar; nothing is extracted, any odd member refuses it."""
     found: bytes | None = None
+    blobs: dict[str, tuple[int, int]] = {}
     seen: set[str] = set()
     try:
         end = _screen_headers(tar)
         with tarfile.open(tar, "r:") as tf:
             for member in tf:
                 _check_member(member, seen)
+                if member.name.startswith("blobs/sha256/") and member.isreg():
+                    blobs["sha256:" + member.name.rpartition("/")[2]] = (
+                        member.offset_data,
+                        member.size,
+                    )
                 if member.name != _INDEX:
                     continue
                 if member.size > _MAX_INDEX_BYTES or not member.isreg():
@@ -121,7 +135,11 @@ def _read_index(tar: Path) -> bytes:
         raise _refuse("image tar is unreadable") from exc
     if found is None:
         raise _refuse("image tar has no index.json")
-    return found
+    return LayoutScan(found, blobs)
+
+
+def _read_index(tar: Path) -> bytes:
+    return scan_layout(tar).index
 
 
 def verify_oci_digest(tar: Path, digest: str) -> None:

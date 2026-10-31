@@ -1,0 +1,49 @@
+# A4 image registry: the worker pushes built images here over the OCI distribution API and the
+# runtime pulls them by digest. Standalone project:
+#   docker compose -p a4-registry -f deploy/a4-registry.compose.yml up -d
+# Unauthenticated BY DESIGN: it is reachable only from a4-control (a4-worker, a4-restart-gate) and
+# from the host loopback. It is on neither a4-builder nor any tenant network, so build and tenant
+# code cannot reach it. Deletes are off: digests, once pushed, stay.
+#
+# The published port needs a non-internal network (Docker publishes nothing for internal-only
+# containers), so a4-registry-host exists for that and has no other member.
+
+services:
+  a4-registry:
+    # registry:2.8.3 (index digest, Docker Hub, looked up 2026-10-31; 2.8.3 shipped 2024-03)
+    image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    container_name: a4-registry
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "false"
+      REGISTRY_HTTP_ADDR: "0.0.0.0:5000"
+    ports: ["127.0.0.1:5000:5000"]
+    volumes:
+      - a4-registry-data:/var/lib/registry
+    tmpfs: [/tmp:size=64m]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/v2/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M, pids: 128 }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    networks: [a4-control, a4-registry-host]
+
+volumes:
+  a4-registry-data:
+
+networks:
+  # Created by the main compose file (a4-worker); see a4-builder.compose.yml.
+  a4-control:
+    external: true
+    name: a4-control
+  a4-registry-host:
+    enable_ipv6: false
