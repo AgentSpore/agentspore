@@ -1,7 +1,6 @@
 """Hardening gate for the A4 builder stack (`deploy/a4-builder.compose.yml`)."""
 
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
