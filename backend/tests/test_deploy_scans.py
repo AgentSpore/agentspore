@@ -213,7 +213,11 @@ def dockerfile_scanner(root: Path, body: str) -> DockerfileScanner:
         f"FROM python@{DIGEST}\n# escape is only a word here\n",
         f"FROM python@{DIGEST}\nRUN --mount=type=cache,target=/root/.cache,sharing=locked true\n",
         f"FROM python@{DIGEST}\nRUN --mount=type=bind,source=.,target=/x,ro true\n",
-        f"FROM python@{DIGEST}\nRUN --mount=type=bind,\\\n  target=/x \\\n  true\n",
+        f"FROM python@{DIGEST}\nRUN --mount=type=bind,target=/x \\\n  true\n",
+        f"FROM --platform=$BUILDPLATFORM python@{DIGEST}\n",
+        f"FROM python@{DIGEST}\nCOPY --chown=${{UID}}:${{GID}} x /x\n",
+        f"FROM python@{DIGEST}\nRUN --mount=type=secret,id=x,env=TOKEN true\n",
+        f"FROM python@{DIGEST}\n# комментарий \u2014 not code\nCMD x\n",
         f"# comment\nFROM \\\n  python@{DIGEST}\n",
     ],
 )
@@ -281,6 +285,10 @@ BS = "\\"  # one backslash
         ("RUN --mount=type=bind,target=/x,,from=a true", UNSUPPORTED),
         ("RUN --mount=type=bind,target=${T} true", UNSUPPORTED),
         ("COPY --from='evil/img:1' /a /b", UNSUPPORTED),
+        (
+            f"RUN --network=none{BS}\n    --mount=type=bind,from=evil/img:latest,target=/x true",
+            "from-not-allowed",
+        ),
     ],
 )
 async def test_dockerfile_flags_outside_the_strict_grammar_are_refused(tmp_path, instruction, rule):
@@ -292,3 +300,16 @@ async def test_dockerfile_flags_outside_the_strict_grammar_are_refused(tmp_path,
 async def test_dockerfile_missing(tmp_path):
     findings = await DockerfileScanner(frozenset()).scan(tmp_path)
     assert findings == [Finding("dockerfile-missing", "Dockerfile", 0, "dockerfile_missing")]
+
+
+@pytest.mark.parametrize(
+    "char", ["\r", "\f", "\v", "\x1c", "\x1e", "\x85", "\u2028", "\u2029", "\x00"]
+)
+async def test_dockerfile_with_exotic_whitespace_is_refused(tmp_path, char):
+    body = (
+        f"FROM python@{DIGEST}\nRUN {char}--mount=type=bind,from=evil/img:latest,target=/x true\n"
+    )
+    (tmp_path / "Dockerfile").write_bytes(body.encode())
+    findings = await DockerfileScanner(frozenset({DIGEST})).scan(tmp_path)
+    assert [f.rule_id for f in findings] == [UNSUPPORTED]
+    assert findings[0].line == 2
