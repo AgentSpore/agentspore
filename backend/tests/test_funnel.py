@@ -480,3 +480,20 @@ async def test_record_never_raises_on_db_failure(redis):
     dead = create_async_engine("postgresql+asyncpg://u:p@127.0.0.1:1/db")
     await FunnelService(redis, session_factory=async_sessionmaker(dead)).record("user_register")
     await dead.dispose()
+
+
+async def test_dedup_keys_expiry_fixed_at_creation(svc, redis):
+    today = utc_today()
+    seen = f"funnel:seen:{today:%Y%m%d}:visit"
+    assert await svc.record_unique("visit", "direct", "203.0.113.7", "ua-1")
+    caps = await redis.keys(f"funnel:ipcap:{today:%Y%m%d}:visit:*")
+    assert len(caps) == 1
+    # age both keys: pretend most of the 48 h window has already passed
+    await redis.pexpire(seen, 10_000)
+    await redis.pexpire(caps[0], 10_000)
+    aged = {k: await redis.pexpiretime(k) for k in (seen, caps[0])}
+
+    assert await svc.record_unique("visit", "direct", "203.0.113.7", "ua-2")
+
+    for key, expiry in aged.items():
+        assert await redis.pexpiretime(key) == expiry
