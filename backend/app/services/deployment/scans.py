@@ -214,8 +214,6 @@ class DockerfileScanner:
             return (
                 "syntax-directive" if directive.group(1).lower() == "syntax" else "parser-directive"
             )
-        if line.split(None, 1)[0].upper() == "ONBUILD":
-            return _UNSUPPORTED
         if rule := self._flag_violation(line, stages):
             return rule
         if (match := _FROM.match(line)) is not None:
@@ -232,6 +230,8 @@ class DockerfileScanner:
         return None
 
     def _flag_violation(self, line: str, stages: set[str]) -> str | None:
+        if line.split(None, 1)[0].upper() == "ONBUILD":
+            return _UNSUPPORTED
         for word in self._flags(line):
             if _FLAG_FORBIDDEN.search(word) and not _PLATFORM_ARG.fullmatch(word):
                 return _UNSUPPORTED
