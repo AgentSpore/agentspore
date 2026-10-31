@@ -29,6 +29,8 @@ if mode.get("digest"):
     pathlib.Path(meta).write_text(json.dumps(body))
 if mode.get("stdout"):
     print(mode["stdout"])
+if mode.get("stderr"):
+    print(mode["stderr"], file=sys.stderr)
 sys.exit(mode.get("rc", 0))
 """
 
@@ -240,3 +242,21 @@ async def test_oversized_metadata_is_build_failed(builder, stub, context, tmp_pa
         await builder.build(BuildRequest(context_dir=context, tag="t"))
     assert exc.value.reason_code == "build_failed"
     assert list((tmp_path / "out").iterdir()) == []
+
+
+async def test_failure_detail_shows_redacted_stderr(builder, stub, context):
+    _, configure, _ = stub
+    configure(rc=1, stderr="error: pull https://bot:s3cret@mirror.local/v2 denied")
+    with pytest.raises(DeployRejectedError) as exc:
+        await builder.build(BuildRequest(context_dir=context, tag="t"))
+    assert exc.value.reason_code == "build_failed"
+    assert "denied" in exc.value.detail and "s3cret" not in exc.value.detail
+
+
+async def test_gosumdb_is_one_argv_element(builder, stub, context):
+    _, _, argv_file = stub
+    await builder.build(BuildRequest(context_dir=context, tag="t"))
+    argv = json.loads(argv_file.read_text())
+    gosumdb = [a for a in argv if a.startswith("build-arg:GOSUMDB=")]
+    assert gosumdb == ["build-arg:GOSUMDB=sum.golang.org http://10.213.77.12:8083/sumdb"]
+    assert argv[argv.index(gosumdb[0]) - 1] == "--opt"
