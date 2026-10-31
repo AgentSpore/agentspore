@@ -79,12 +79,12 @@ services:
     depends_on: [mirror]
 
   mirror:
-    # registry:2.8.3, pull-through cache of registry-1.docker.io
-    image: registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    # registry:3.0.0, pull-through cache of registry-1.docker.io (proxy.ttl exists only in v3)
+    image: registry@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
     <<: *hardened
     user: "1000:1000"
     volumes:
-      - ./a4-builder/registry-config.yml:/etc/docker/registry/config.yml:ro
+      - ./a4-builder/registry-config.yml:/etc/distribution/config.yml:ro
     tmpfs:
       - /var/lib/registry:uid=1000,gid=1000,mode=0750,size=4g
     deploy:
@@ -99,6 +99,7 @@ services:
     user: "13:13"
     volumes:
       - ./a4-builder/squid.conf:/etc/squid/squid.conf:ro
+      - ./a4-builder/platform-dst.conf:/etc/squid/platform-dst.conf:ro
     tmpfs:
       - /var/run/squid:uid=13,gid=13
       - /var/spool/squid:uid=13,gid=13
