@@ -6,6 +6,7 @@ untrusted, so each tool runs on platform-owned config and every unreadable or
 unexpected report is a `tool_failed`, never a pass.
 """
 
+import csv
 import json
 import re
 import tempfile
@@ -147,8 +148,7 @@ class OsvScanner:
 _DIRECTIVE = re.compile(r"^#\s*(syntax|escape|check)\s*=", re.IGNORECASE)
 _FROM = re.compile(r"^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
 _COPY_FROM = re.compile(r"^COPY\s+.*?--from=(\S+)", re.IGNORECASE)
-_MOUNT = re.compile(r"--mount=(\S+)", re.IGNORECASE)
-_MOUNT_FROM = re.compile(r"(?:^|,)from=([^,]*)", re.IGNORECASE)
+_MOUNT = re.compile(r'--mount=((?:"[^"]*"?|[^\s"])+)', re.IGNORECASE)
 _DIGEST = re.compile(r"@(sha256:[0-9a-f]{64})$")
 
 
@@ -194,11 +194,20 @@ class DockerfileScanner:
             match.group(1), stages, stage_index=True
         ):
             return "from-not-allowed"
-        for mount in _MOUNT.findall(line):
-            source = _MOUNT_FROM.search(mount)
-            if source is not None and not self._allowed(source.group(1), stages):
-                return "from-not-allowed"
+        if any(not self._allowed(ref, stages) for ref in self._mount_sources(line)):
+            return "from-not-allowed"
         return None
+
+    @staticmethod
+    def _mount_sources(line: str) -> list[str]:
+        """Every `from=` value of every `--mount`; a value is CSV, as BuildKit parses it."""
+        refs = []
+        for mount in _MOUNT.findall(line):
+            for field in next(csv.reader([mount]), []):
+                key, _, value = field.partition("=")
+                if key.strip().lower() == "from":
+                    refs.append(value.strip())
+        return refs
 
     @staticmethod
     def _logical_lines(text: str) -> list[tuple[int, str]]:
