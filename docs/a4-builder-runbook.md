@@ -144,7 +144,7 @@ crates mirror) that serve read-only and reject everything else.
 
 - `squid-openssl` is pinned in `Dockerfile.squid`. On `Version ... not found`, run `apt-cache policy
   squid-openssl` in the pinned base image, set the pin to the candidate, rebuild, repeat the smoke checks.
-- The 4 GiB build-disk and 10 minute limits are enforced by the builder (P3b), not by compose.
+- The 4 GiB build-disk cap is the `out_dir` volume limit, set in P3b-2; the builder enforces the 1 GiB image cap and the 10 minute timeout.
 - `buildkitd` under `runsc` is not exercised by CI; check it on the stand before `A4_DEPLOY_ENABLED`.
 - The mirror cache is a 4 GiB tmpfs (counted in the 5 GiB memory limit); registry v3 expires cached content after `proxy.ttl` (12 h; v2 keeps 7 days).
   When the cache is full or Docker Hub rate-limits, `mirror-gate` returns 5xx. Recycle: `$C up -d --force-recreate --no-deps mirror`; `$C logs --tail=50 mirror`.

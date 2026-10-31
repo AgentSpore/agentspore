@@ -24,7 +24,8 @@ if mode.get("sleep"):
 if mode.get("tar_bytes") is not None:
     pathlib.Path(dest).write_bytes(b"x" * mode["tar_bytes"])
 if mode.get("digest"):
-    pathlib.Path(meta).write_text(json.dumps({{"containerimage.digest": mode["digest"]}}))
+    body = {{"containerimage.digest": mode["digest"], "pad": "p" * mode.get("meta_pad", 0)}}
+    pathlib.Path(meta).write_text(json.dumps(body))
 if mode.get("stdout"):
     print(mode["stdout"])
 sys.exit(mode.get("rc", 0))
@@ -75,20 +76,24 @@ async def test_success_argv_and_result(builder, stub, context, tmp_path):
     assert result.image_bytes == 10
     argv = json.loads(stub[2].read_text())
     tls = tmp_path / "tls"
-    assert argv[:8] == [
+    proxy = "http://10.213.77.11:3128"
+    assert argv == [
         "--addr", "tcp://10.213.77.5:1234",
         "--tlscacert", str(tls / "ca.pem"),
         "--tlscert", str(tls / "client.pem"),
         "--tlskey", str(tls / "client-key.pem"),
+        "build",
+        "--frontend", "dockerfile.v0",
+        "--local", f"context={context}",
+        "--local", f"dockerfile={context}",
+        "--opt", "filename=Dockerfile",
+        "--opt", f"build-arg:HTTP_PROXY={proxy}",
+        "--opt", f"build-arg:HTTPS_PROXY={proxy}",
+        "--opt", f"build-arg:http_proxy={proxy}",
+        "--opt", f"build-arg:https_proxy={proxy}",
+        "--output", f"type=oci,dest={tar}",
+        "--metadata-file", str(tmp_path / "out" / "proj_app_abc123.json"),
     ]  # fmt: skip
-    assert argv[8:10] == ["build", "--frontend"]
-    assert "dockerfile.v0" in argv
-    assert f"context={context}" in argv and f"dockerfile={context}" in argv
-    assert "filename=Dockerfile" in argv
-    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-        assert f"build-arg:{name}=http://10.213.77.11:3128" in argv
-    assert f"type=oci,dest={tar}" in argv
-    assert argv[argv.index("--metadata-file") + 1].endswith(".json")
 
 
 async def test_never_passes_secret_ssh_or_entitlements(builder, stub, context):
@@ -98,7 +103,9 @@ async def test_never_passes_secret_ssh_or_entitlements(builder, stub, context):
         assert flag not in joined
 
 
-@pytest.mark.parametrize("name", ["../x", "/abs", "a/b", "..", "", "x\0y"])
+@pytest.mark.parametrize(
+    "name", ["../x", "/abs", "a/b", "..", "", "x\0y", "-x", "a,b", "a=b", " x"]
+)
 async def test_bad_dockerfile_name_rejected(builder, stub, context, name):
     with pytest.raises(DeployRejectedError) as exc:
         await builder.build(BuildRequest(context_dir=context, tag="t", dockerfile=name))
@@ -157,4 +164,20 @@ async def test_timeout_is_tool_failed_and_cleans(builder, stub, context, tmp_pat
     with pytest.raises(DeployRejectedError) as exc:
         await builder.build(BuildRequest(context_dir=context, tag="t"))
     assert exc.value.reason_code == "tool_failed"
+    assert list((tmp_path / "out").iterdir()) == []
+
+
+async def test_credential_url_straddling_tail_cut_is_redacted(builder, stub, context):
+    noise = "x" * 10 + " https://user:SECRETTOKEN@h/x " + "y" * 283
+    stub[1](tar_bytes=5, rc=1, stdout=noise)
+    with pytest.raises(DeployRejectedError) as exc:
+        await builder.build(BuildRequest(context_dir=context, tag="t"))
+    assert "SECRETTOKEN" not in str(exc.value)
+
+
+async def test_oversized_metadata_is_build_failed(builder, stub, context, tmp_path):
+    stub[1](tar_bytes=5, digest=DIGEST, meta_pad=70 * 1024)
+    with pytest.raises(DeployRejectedError) as exc:
+        await builder.build(BuildRequest(context_dir=context, tag="t"))
+    assert exc.value.reason_code == "build_failed"
     assert list((tmp_path / "out").iterdir()) == []

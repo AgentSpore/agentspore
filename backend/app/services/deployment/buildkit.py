@@ -20,6 +20,7 @@ _URL_CREDENTIALS = re.compile(r"://[^/\s@]+@")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _MAX_TAG_LENGTH = 128
 _TAIL_CHARS = 300
+_MAX_METADATA_BYTES = 64 * 1024
 _PROXY_ARGS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 
 
@@ -27,7 +28,8 @@ _PROXY_ARGS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 class BuildKitBuilder:
     """`Builder` that runs `buildctl build` against `addr` and writes `<out_dir>/<tag>.tar`.
 
-    `proxy_url` is an IP: `RUN` steps under runsc have no Docker DNS.
+    `proxy_url` is an IP: `RUN` steps under runsc have no Docker DNS. `out_dir` must sit on a
+    size-capped volume; the 1 GiB image cap is checked after the build, not while it writes.
     """
 
     addr: str
@@ -95,12 +97,15 @@ class BuildKitBuilder:
 
     @staticmethod
     def _failure_detail(rc: int, stdout: bytes) -> str:
-        tail = stdout.decode(errors="replace")[-_TAIL_CHARS:].strip()
-        return f"buildctl rc={rc}: {_URL_CREDENTIALS.sub('://***@', tail)}".rstrip(": ")
+        # buildctl writes errors to stderr, which run_tool discards: usually only `rc=N` remains.
+        redacted = _URL_CREDENTIALS.sub("://***@", stdout.decode(errors="replace"))
+        return f"buildctl rc={rc}: {redacted[-_TAIL_CHARS:].strip()}".rstrip(": ")
 
     @staticmethod
     def _read_digest(meta: Path) -> str:
         try:
+            if meta.stat().st_size > _MAX_METADATA_BYTES:
+                raise DeployRejectedError("build_failed", "buildctl metadata is too large")
             digest = json.loads(meta.read_text())["containerimage.digest"]
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise DeployRejectedError("build_failed", "buildctl metadata has no digest") from exc
