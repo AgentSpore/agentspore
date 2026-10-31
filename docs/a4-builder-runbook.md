@@ -12,7 +12,7 @@ compose project; the existing platform stack is not changed by it.
 | `a4-restart-gate` | nginx in front of the Docker socket (read-only bind, docker group via `A4_DOCKER_GID`): only `POST /v1.NN/containers/a4-builder-buildkitd-1/restart[?t=N]` and `GET .../json` pass, everything else gets 403; no request body is forwarded | `a4-control` only (never `a4-builder`) |
 | `mirror-gate` | nginx allowlist in front of the mirror: GET/HEAD of manifests and blobs addressed by `sha256:` digest (tags get 403) for `library/{python,node,golang,rust,alpine,debian,busybox}` only | `a4-builder`, `a4-mirror-back` |
 | `mirror` | `registry:3` (distribution v3.0.0) pull-through cache of Docker Hub, `proxy.ttl` 12 h | `a4-mirror-back`, `a4-upstream` |
-| `pkg-mirror` | one nginx (digest-pinned, `nginx-unprivileged`) serving read-only HTTP mirrors of PyPI `:8081`, npm `:8082`, Go `:8083`, crates.io `:8084` at `10.213.77.12`; the only package path out of `a4-builder`. Cache in a 1 GiB tmpfs | `a4-builder`, `a4-upstream` |
+| `pkg-mirror` | one nginx (digest-pinned, `nginx-unprivileged`) serving read-only HTTP mirrors of PyPI `:8081`, npm `:8082`, Go `:8083`, crates.io `:8084` at `10.213.77.12`; the only package path out of `a4-builder`. Cache in a 2 GiB tmpfs | `a4-builder`, `a4-upstream` |
 
 `a4-builder` and `a4-mirror-back` are `internal`: `buildkitd` has no route to the internet or to
 platform networks. `docker.io` in `buildkitd.toml` is mirrored to `mirror-gate:5000`, so base images
@@ -156,6 +156,9 @@ Static hardening is asserted by `python -m pytest backend/tests/test_a4_builder_
 It forwards nothing the client sent (headers, cookies, query string, body), so a `Host` header cannot
 pick another site and an upload is impossible. A `RUN` has no DNS under runsc: use the IPs.
 Cached responses live 1 h; a package published in the last hour may not be visible yet.
+The cache is a 2 GiB tmpfs (nginx keeps 1200 MB of entries and 500 MB free): an artifact above
+500 MiB (some CUDA wheels) can fail with a truncated body, which pip reports as a hash mismatch.
+Paths containing `..` are refused.
 
 | Ecosystem | Setting inside the build |
 |---|---|

@@ -86,18 +86,88 @@ def test_nothing_from_the_client_reaches_the_upstream(conf):
     assert "client_max_body_size 1k;" in conf
 
 
+def test_upstream_cookies_neither_block_caching_nor_reach_clients(conf):
+    # Cloudflare-fronted registries send Set-Cookie, which makes nginx skip the cache.
+    assert "proxy_ignore_headers Set-Cookie;" in conf
+    assert "proxy_hide_header Set-Cookie;" in conf
+
+
 def test_upstream_tls_is_verified_with_sni(conf):
     for line in ("proxy_ssl_server_name on;", "proxy_ssl_verify on;"):
         assert line in conf
     assert "proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in conf
 
 
-def test_every_proxied_location_has_a_strict_path_pattern(conf):
-    proxied = re.findall(r'location (~ "[^"]+") \{[^}]*proxy_pass', conf)
-    assert len(proxied) == 7
-    for pattern in proxied:
-        assert pattern.startswith('~ "^/') and pattern.endswith('$"'), pattern
-        assert not re.search(r"\.[*+]", re.sub(r"\[[^\]]*\]", "", pattern)), pattern
+NO_DOT_SEGMENTS = r"(?!.*\.\.)"
+LOCATIONS = {
+    8081: [
+        r"~ ^/simple/" + NO_DOT_SEGMENTS + r"[A-Za-z0-9._-]+/?$",
+        r"~ ^/files/" + NO_DOT_SEGMENTS + r"(packages/[A-Za-z0-9._/+-]+)$",
+        "/",
+    ],
+    8082: [
+        r"~ ^/"
+        + NO_DOT_SEGMENTS
+        + r"(@[A-Za-z0-9._~-]+/)?[A-Za-z0-9._~-]+(/-/[A-Za-z0-9._~-]+\.tgz)?$",
+        "/",
+    ],
+    8083: [
+        r"~ ^/"
+        + NO_DOT_SEGMENTS
+        + r"[A-Za-z0-9._~!/+-]+/@(v/[A-Za-z0-9._+!-]+\.(info|mod|zip)|v/list|latest)$",
+        r"~ ^/sumdb/"
+        + NO_DOT_SEGMENTS
+        + r"(latest|lookup/[A-Za-z0-9._/@+=!-]+|tile/[0-9]+/[0-9a-z./]+)$",
+        "/",
+    ],
+    8084: [
+        "= /config.json",
+        r"~ ^/(?:[12]|3/[a-z0-9_-]|[a-z0-9_-]{2}/[a-z0-9_-]{2})/[a-z0-9_-]+$",
+        r"~ ^/dl/" + NO_DOT_SEGMENTS + r"([A-Za-z0-9_-]+)/([A-Za-z0-9.+-]+)/download$",
+        "/",
+    ],
+}
+ALLOWED = [
+    "/simple/requests/",
+    "/files/packages/ab/cd/requests-2.32.3-py3-none-any.whl",
+    "/@types/node",
+    "/left-pad/-/left-pad-1.3.0.tgz",
+    "/github.com/pkg/errors/@v/v0.9.1.info",
+    "/sumdb/lookup/github.com/pkg/errors@v0.9.1",
+    "/se/rd/serde",
+    "/dl/itoa/1.0.9/download",
+]
+REJECTED = [
+    "/files/packages/../../simple/requests/",
+    "/github.com/x/../../y/@v/list",
+    "/sumdb/lookup/../../x",
+    "/sumdb/tile/8/0/../x",
+    "/simple/requests/?x=1",
+    "/files/packages/a\r\nHost: evil",
+    "/-/v1/search",
+    "/-/whoami",
+    "/dl/../x/1.0.0/download",
+]
+
+
+def _location_lines(block: str) -> list[str]:
+    """Each location's modifier and pattern, nginx quoting removed."""
+    return [m.replace('"', "") for m in re.findall(r"^\s+location (.+?) \{", block, re.M)]
+
+
+def test_every_location_pattern_is_pinned_exactly(conf):
+    servers = _servers(conf)
+    assert {port: _location_lines(block) for port, block in servers.items()} == LOCATIONS
+
+
+def test_patterns_admit_real_paths_and_refuse_dot_segments_and_extras(conf):
+    patterns = [
+        re.compile(line[2:]) for lines in LOCATIONS.values() for line in lines if line[:2] == "~ "
+    ]
+    for path in ALLOWED:
+        assert any(p.search(path) for p in patterns), path
+    for path in REJECTED:
+        assert not any(p.search(path) for p in patterns), path
 
 
 def test_rewritten_links_point_at_the_mirror_itself(conf):
@@ -109,9 +179,16 @@ def test_rewritten_links_point_at_the_mirror_itself(conf):
 
 
 def test_cache_is_bounded_and_keyed_per_port(conf, svc):
-    match = re.search(r"proxy_cache_path /tmp/cache .*max_size=(\d+)m", conf)
+    match = re.search(r"proxy_cache_path /tmp/cache .*max_size=(\d+)m min_free=(\d+)m", conf)
     tmpfs = re.search(r"size=(\d+)g", svc["tmpfs"][0])
-    assert match and tmpfs and int(match.group(1)) < int(tmpfs.group(1)) * 1024
+    assert match and tmpfs
+    max_size, min_free = int(match.group(1)), int(match.group(2))
+    # In-flight downloads share the tmpfs: leave room beyond max_size for them (min_free is the
+    # largest artifact the runbook promises), and keep the container limit above the tmpfs.
+    assert min_free >= 500 and max_size + min_free < int(tmpfs.group(1)) * 1024
+    assert (
+        int(svc["deploy"]["resources"]["limits"]["memory"].rstrip("M")) > int(tmpfs.group(1)) * 1024
+    )
     assert "proxy_cache_key $server_port$uri;" in conf
 
 
@@ -148,3 +225,4 @@ def test_runbook_documents_each_client_setting_by_mirror_ip():
         assert needle in text, needle
     assert "## Package mirrors (build authors)" in text
     assert "## Accepted residual risk" not in text
+    assert "500 MiB" in text and "Cached responses live 1 h" in text
