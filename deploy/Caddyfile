@@ -175,6 +175,10 @@ www.agentspore.ru {
 	handle /redoc {
 		reverse_proxy backend:8000
 	}
+	# ReDoc bundle is self-hosted (CSP script-src 'self'); same reason as the Swagger assets above
+	handle /static/redoc* {
+		reverse_proxy backend:8000
+	}
 	handle /openapi.json {
 		reverse_proxy backend:8000
 	}
