@@ -1,8 +1,10 @@
 """A4 worker step against real PostgreSQL fences; only fetch/scan/build I/O is substituted."""
 
 import asyncio
+import logging
 import os
 import signal
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -146,18 +148,53 @@ async def test_sigterm_during_blocked_build_ends_terminal(world, monkeypatch):
     assert not fetch.dests[0].exists()
 
 
-def test_entrypoint_installs_log_redaction(monkeypatch):
+@pytest.fixture
+def isolated_logging(monkeypatch, tmp_path):
+    """Let `setup_logging` run for real, but into tmp_path and with global state restored."""
+    root_handlers, root_level = list(logging.root.handlers), logging.root.level
+    monkeypatch.setattr("app.core.logging.Path", lambda *_: tmp_path / "logs")
+    yield
+    logger.remove()
+    logger.configure(patcher=lambda record: None)
+    logger.add(sys.stderr)
+    logging.root.handlers[:] = root_handlers
+    logging.root.setLevel(root_level)
+
+
+def test_entrypoint_installs_log_redaction(monkeypatch, isolated_logging):
     monkeypatch.setattr(a4, "serve", AsyncMock())
     monkeypatch.setattr(a4, "build_task", lambda: None)
     logger.configure(patcher=lambda record: None)
     a4.main()
     seen = []
-    handler = logger.add(seen.append, format="{message}")
-    try:
-        logger.info("connect redis://:hunter2hunter2@cache:6379")
-    finally:
-        logger.remove(handler)
+    logger.add(seen.append, format="{message}")
+    logger.info("connect redis://:hunter2hunter2@cache:6379")
     assert "hunter2hunter2" not in seen[0]
+
+
+async def test_failing_shutdown_write_does_not_block_sigterm(world, monkeypatch):
+    monkeypatch.setattr(get_settings(), "a4_deploy_enabled", True)
+    builder, fetch = BlockingBuilder(), Fetch()
+    loop_worker = worker(world, builder, fetch=fetch)
+    claims = 0
+    real_claim = loop_worker._claim
+
+    async def counting_claim():
+        nonlocal claims
+        claims += 1
+        return await real_claim()
+
+    async def broken_record(lease, reason):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(loop_worker, "_claim", counting_claim)
+    monkeypatch.setattr(loop_worker, "_record", broken_record)
+    serving = asyncio.create_task(serve(DeploymentWorkerTask(loop_worker)))
+    await builder.started.wait()
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(serving, 5)
+    assert claims == 1
+    assert not fetch.dests[0].exists()
 
 
 async def test_lost_lease_stops_build_without_terminal_write(world):
