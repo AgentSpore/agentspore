@@ -12,7 +12,7 @@ compose project; the existing platform stack is not changed by it.
 | `a4-restart-gate` | nginx in front of the Docker socket (read-only bind, docker group via `A4_DOCKER_GID`): only `POST /v1.NN/containers/a4-builder-buildkitd-1/restart[?t=N]` and `GET .../json` pass, everything else gets 403; no request body is forwarded | `a4-control` only (never `a4-builder`) |
 | `mirror-gate` | nginx allowlist in front of the mirror: GET/HEAD of manifests and blobs addressed by `sha256:` digest (tags get 403) for `library/{python,node,golang,rust,alpine,debian,busybox}` only | `a4-builder`, `a4-mirror-back` |
 | `mirror` | `registry:3` (distribution v3.0.0) pull-through cache of Docker Hub, `proxy.ttl` 12 h | `a4-mirror-back`, `a4-upstream` |
-| `egress-proxy` | squid-openssl (built from `Dockerfile.squid`): HTTPS CONNECT to `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `proxy.golang.org`, `crates.io` (plus `index.`/`static.crates.io` for cargo), and the TLS SNI must name one of them too (peek and splice, no interception; a ClientHello without SNI falls back to the CONNECT host, see Accepted residual risk). IP-literal hosts, private, link-local, multicast, reserved ranges, and this host's own addresses (`platform-dst.conf`) are denied | `a4-builder`, `a4-upstream` |
+| `pkg-mirror` | one nginx (digest-pinned, `nginx-unprivileged`) serving read-only HTTP mirrors of PyPI `:8081`, npm `:8082`, Go `:8083`, crates.io `:8084` at `10.213.77.12`; the only package path out of `a4-builder`. Cache in a 2 GiB tmpfs | `a4-builder`, `a4-upstream` |
 
 `a4-builder` and `a4-mirror-back` are `internal`: `buildkitd` has no route to the internet or to
 platform networks. `docker.io` in `buildkitd.toml` is mirrored to `mirror-gate:5000`, so base images
@@ -24,9 +24,9 @@ digest (`python:3.12-slim@sha256:...`) because the gate refuses tag manifests. `
 
 - Rootless BuildKit runs every `RUN` with `network.host`, in the daemon's own network namespace.
   A `RUN` therefore reaches every peer on `a4-builder`, including the `buildkitd` listener.
-  `HTTP_PROXY`/`HTTPS_PROXY` build args are advisory; the internal network is the real control.
+  The internal network is the real control, not build args or environment variables.
   Under runsc Docker's DNS refuses queries and a `RUN` has `resolv.conf` 8.8.8.8 and an empty
-  `/etc/hosts`: the P3b worker passes `HTTP_PROXY`/`HTTPS_PROXY=http://10.213.77.11:3128` by IP. The listener requires mTLS: the client key lives only in the worker.
+  `/etc/hosts`: peers are addressed by IP (`10.213.77.10` gate, `10.213.77.12` package mirrors). The listener requires mTLS: the client key lives only in the worker.
   The worker must open no listener on `a4-builder`.
 - Rule for P3b: a `RUN` can `ptrace` the daemon, so anything handed to `buildkitd` is exposed to
   untrusted code. The worker passes only the build context: no registry auth, no secrets or ssh
@@ -40,6 +40,7 @@ digest (`python:3.12-slim@sha256:...`) because the gate refuses tag manifests. `
 - With runsc's default `--host-uds=none` a unix socket created in the sandbox is not visible to the
   host, and changing that is a host-wide runtime flag, so no socket volume shared with the worker is
   used; mTLS over the internal network replaces it.
+- `RUN` steps cannot use setuid binaries: the state tmpfs is mounted `exec` but keeps Docker's default `nosuid`, so a `RUN` that needs `sudo`, `su` or a setuid helper fails.
 
 ## mTLS material (once per host, outside the repository)
 
@@ -61,13 +62,6 @@ shred -u ca-key.pem server-key.pem client-key.pem server.csr client.csr san.cnf 
 export A4_BUILDKIT_CERT_DIR=$D
 ```
 
-## Platform addresses (once per host)
-
-`cp deploy/a4-builder/platform-dst.conf.example deploy/a4-builder/platform-dst.conf`, then add this
-host's public IPv4 and IPv6 addresses as `acl platform_dst dst <addr>/32` (or `/128`) lines. The real
-file is untracked, so a pull cannot erase it. Fail closed: without the file `up` fails, and with no
-address besides loopback `egress-proxy` stays unhealthy, so `buildkitd` never starts.
-
 ## Check gVisor on the host
 
 ```bash
@@ -84,7 +78,7 @@ Prod already has `runsc` registered in Docker 29.9.1; nothing to install. Withou
 
 ```bash
 C="docker compose -p a4-builder -f deploy/a4-builder.compose.yml"
-$C up -d --build    # start (A4_BUILDKIT_CERT_DIR must be set; builds the squid image)
+$C up -d    # start (A4_BUILDKIT_CERT_DIR must be set)
 $C ps
 $C down -v          # stop, drop all state
 ```
@@ -117,7 +111,7 @@ Do not enable this on a live host before the stand check below. `buildctl` is in
 The switch is `A4_BUILDER=buildkit` (default `fake`; roll back by unsetting it) with
 `A4_BUILDKIT_CERT_DIR` (client `ca.pem`, `client.pem`, `client-key.pem`, mounted read-only),
 `A4_BUILDKIT_ADDR` (default `tcp://buildkitd:1234`) and `A4_BUILDER_PROXY_URL`
-(default `http://10.213.77.11:3128`), `A4_RECYCLE_GATE_URL` (default `http://a4-restart-gate:2375`). Tarballs go to a 4 GiB tmpfs; the container limit is 6 GiB.
+(default `http://10.213.77.11:3128`, an address that no longer exists after P3c: see Package mirrors), `A4_RECYCLE_GATE_URL` (default `http://a4-restart-gate:2375`). Tarballs go to a 4 GiB tmpfs; the container limit is 6 GiB.
 The worker checks the tarball's `index.json` digest against buildkitd's and refuses on mismatch.
 
 ## Rollback
@@ -131,49 +125,60 @@ Run a probe on the builder network (image already pinned in the compose file):
 ```bash
 IMG=$($C config --images | grep nginx)
 probe() { docker run --rm --network a4-builder --entrypoint sh "$IMG" -c "$1"; }
-G=http://10.213.77.10:5000/v2/library/python/manifests   # mirror-gate; egress-proxy is 10.213.77.11
+G=http://10.213.77.10:5000/v2/library/python/manifests   # mirror-gate
 probe "wget -S -q -O /dev/null $G/sha256:<index digest> 2>&1 | grep HTTP"   # 200 (digest of a python tag)
 probe "wget -S -q -O /dev/null $G/3.12-slim 2>&1 | grep HTTP"                # 403: tags refused
 probe "wget -S -q -O /dev/null http://10.213.77.10:5000/v2/library/ubuntu/manifests/latest 2>&1 | grep HTTP"  # 403
-# Denied CONNECT: an ssl-bump port answers "200 Connection established", then aborts. Judge by access.log.
-for h in 169.254.169.254 10.0.0.1 10.213.77.10 203.0.113.7 '[2606:4700::1111]' '<host public IP>'; do
-  probe "printf 'CONNECT $h:443 HTTP/1.1\r\n\r\n' | nc -w 3 10.213.77.11 3128 >/dev/null"; done
-$C logs --tail=10 egress-proxy | grep CONNECT   # all TCP_DENIED_ABORTED/200 ... HIER_NONE/-, never HIER_DIRECT
-# SNI checks (probe needs curl and openssl: use the built a4-builder/squid-openssl:local for s_client)
-curl -x http://10.213.77.11:3128 https://pypi.org/simple/ -o /dev/null -w '%{http_code}'   # 200 (access.log: TCP_TUNNEL/200 ... HIER_DIRECT)
-openssl s_client -proxy 10.213.77.11:3128 -connect pypi.org:443 -servername example.com    # fails: unexpected eof
-openssl s_client -proxy 10.213.77.11:3128 -connect pypi.org:443 -servername pypi.org       # handshakes
-docker run --rm --entrypoint sh a4-builder/squid-openssl:local -c 'squid -v | head -1'   # Squid Cache: Version 6.14
+# Package mirrors (pkg-mirror, 10.213.77.12); GET works, everything else is refused
+M=10.213.77.12
+probe "wget -S -q -O /dev/null http://$M:8081/simple/requests/ 2>&1 | grep HTTP"             # 200
+probe "wget -q -O - http://$M:8081/simple/requests/ | grep -c files.pythonhosted.org"        # 0: links rewritten to $M
+probe "wget -S -q -O /dev/null http://$M:8082/left-pad 2>&1 | grep HTTP"                     # 200
+probe "wget -S -q -O /dev/null http://$M:8083/github.com/pkg/errors/@v/v0.9.1.info 2>&1 | grep HTTP"   # 200
+probe "wget -S -q -O /dev/null http://$M:8084/3/a/arc 2>&1 | grep HTTP"                      # 200
+probe "wget -S -q -O /dev/null --post-data=x http://$M:8084/api/v1/crates/new 2>&1 | grep HTTP"   # 405: no publish
+probe "wget -S -q -O /dev/null http://$M:8081/legacy/ 2>&1 | grep HTTP"                      # 403: path not on the allowlist
+probe "wget -S -q -O /dev/null --header='Host: evil.example' http://$M:8081/simple/requests/ 2>&1 | grep HTTP"  # 200: Host ignored
 ip -4 addr show dev br-$(docker network inspect -f '{{printf "%.12s" .Id}}' a4-builder)  # nothing: bridge has no host address (.1 may belong to a container, so do not nc it)
 ip -6 addr show dev br-$(docker network inspect -f '{{printf "%.12s" .Id}}' a4-builder)  # no global (inet6 scope global) address
 probe 'wget -q -T 5 -O /dev/null http://1.1.1.1'                    # fails: Network unreachable
 probe 'nc -z -w 3 buildkitd 1234 && echo open; echo | nc -w 3 buildkitd 1234 | wc -c'  # no plaintext answer
 ```
 
-Static hardening is asserted by `python -m pytest backend/tests/test_a4_builder_compose.py`
-(no Docker needed). Validate squid after any change to its config:
-`docker run --rm --user 13:13 -v $PWD/deploy/a4-builder/squid.conf:/etc/squid/squid.conf:ro --entrypoint squid <egress-proxy image> -k parse -f /etc/squid/squid.conf`
-(with `platform-dst.conf` mounted next to it) must print no `WARNING`, `ERROR` or `FATAL`.
+Static hardening is asserted by `python -m pytest backend/tests/test_a4_builder_compose.py backend/tests/test_a4_mirrors.py`
+(no Docker needed). Validate the mirror config after any change:
+`docker run --rm --tmpfs /tmp -v $PWD/deploy/a4-builder/pkg-mirror.conf:/etc/nginx/conf.d/default.conf:ro <pkg-mirror image> nginx -t`.
 
-## Accepted residual risk
+## Package mirrors (build authors)
 
-Until the package mirrors below exist, the generic proxy leaves four gaps; the production flag
-(`A4_DEPLOY_ENABLED`) stays off until they are closed.
-- Host-header domain fronting: the HTTP `Host` header inside the TLS stream can address another
-  site on the same CDN edge.
-- ClientHello without SNI is matched against the CONNECT target, so `-noservername` is spliced, not
-  refused. A helper-based check fails open when its queue is full or the helper dies, so none is used.
-- Encrypted Client Hello (ECH): squid 6 cannot inspect it. The outer SNI can name an allowed host
-  while the inner SNI names another co-tenant of the same CDN.
-- Uploads: allowed hosts accept writes (PyPI, npm and similar), so a `RUN` can publish data there.
+`pkg-mirror` answers GET and HEAD only, for fixed upstream hosts (`pypi.org`, `files.pythonhosted.org`,
+`registry.npmjs.org`, `proxy.golang.org`, `sum.golang.org`, `index.crates.io`, `static.crates.io`).
+It forwards nothing the client sent (headers, cookies, query string, body), so a `Host` header cannot
+pick another site and an upload is impossible. A `RUN` has no DNS under runsc: use the IPs.
+Cached responses live 1 h; a package published in the last hour may not be visible yet.
+The cache is a 2 GiB tmpfs (nginx keeps 1200 MB of entries and 500 MB free): an artifact above
+500 MiB (some CUDA wheels) can fail with a truncated body, which pip reports as a hash mismatch.
+Paths containing `..` are refused.
 
-Closure is phase P3c: replace the generic proxy with package mirrors (devpi, verdaccio, Athens, a
-crates mirror) that serve read-only and reject everything else.
+| Ecosystem | Setting inside the build |
+|---|---|
+| pip | `PIP_INDEX_URL=http://10.213.77.12:8081/simple/` and `PIP_TRUSTED_HOST=10.213.77.12` |
+| npm | `npm_config_registry=http://10.213.77.12:8082/` and `npm_config_audit=false` (audit is a POST) |
+| Go | `GOPROXY=http://10.213.77.12:8083` and `GOSUMDB="sum.golang.org http://10.213.77.12:8083/sumdb"` |
+| cargo | `.cargo/config.toml`: `[source.crates-io] replace-with = "mirror"`, `[source.mirror] registry = "sparse+http://10.213.77.12:8084/"` |
+
+Proxy variables: until the worker stops passing them, `HTTP_PROXY`/`HTTPS_PROXY` still point at
+`10.213.77.11:3128`, which no longer exists. pip, npm and cargo honour them for an `http://` mirror too,
+so a build must also set `NO_PROXY=10.213.77.12`. Follow-up (backend, outside P3c): stop
+passing the proxy build args (`buildkit.py`, `A4_BUILDER_PROXY_URL`) and pass the settings above instead.
+
+Residual risk after P3c: the request path still reaches the upstream host (a lookup of a package or
+crate name that does not exist is a few bytes of one-way signal), and data is not scanned. Bulk
+upload and Host-header or SNI tricks are gone. Registries that are not mirrored (git hosts, Maven,
+RubyGems, apt) are unreachable from a `RUN`; add a mirror location when one is needed.
 
 ## Known limits
 
-- `squid-openssl` is pinned in `Dockerfile.squid`. On `Version ... not found`, run `apt-cache policy
-  squid-openssl` in the pinned base image, set the pin to the candidate, rebuild, repeat the smoke checks.
 - The 4 GiB build-disk cap is the `out_dir` volume limit, set in P3b-2; the builder enforces the 1 GiB image cap and the 10 minute timeout.
 - `buildkitd` under `runsc` is not exercised by CI; check it on the stand before `A4_DEPLOY_ENABLED`.
 - The mirror cache is a 4 GiB tmpfs (counted in the 5 GiB memory limit); registry v3 expires cached content after `proxy.ttl` (12 h; v2 keeps 7 days).
