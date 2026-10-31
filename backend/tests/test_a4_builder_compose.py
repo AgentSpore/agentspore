@@ -12,43 +12,11 @@ COMPOSE = ROOT / "deploy" / "a4-builder.compose.yml"
 CONF = ROOT / "deploy" / "a4-builder"
 RUNBOOK = ROOT / "docs" / "a4-builder-runbook.md"
 
-EGRESS_DOMAINS = {
-    "pypi.org",
-    "files.pythonhosted.org",
-    "registry.npmjs.org",
-    "proxy.golang.org",
-    "crates.io",
-    "index.crates.io",
-    "static.crates.io",
-}
-DENIED_DST = {
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "169.254.0.0/16",
-    "224.0.0.0/4",
-    "240.0.0.0/4",
-    "64:ff9b::/96",
-    "ff00::/8",
-}
-IP_LITERAL = ["-n", "^[0-9.]+$", "^[0-9a-f]*:[0-9a-f:.]*$", r"^\["]
-PLATFORM_INCLUDE = "/etc/squid/platform-dst.conf"
-HTTP_ACCESS = [
-    "deny ip_literal",
-    "deny !CONNECT",
-    "deny CONNECT !SSL_ports",
-    "deny CONNECT !egress_ok",
-    "deny deny_dst",
-    "deny platform_dst",
-    "allow CONNECT egress_ok SSL_ports",
-    "deny all",
-]
 BUILDER_SUBNET = ipaddress.IPv4Network("10.213.77.0/24")
 BUILDER_IPS = {
     "mirror-gate": ipaddress.ip_address("10.213.77.10"),
-    "egress-proxy": ipaddress.ip_address("10.213.77.11"),
+    "pkg-mirror": ipaddress.ip_address("10.213.77.12"),
 }
-SSL_BUMP = ["peek step1", "splice allowed_sni", "terminate all"]
 MIRROR_BASES = {"python", "node", "golang", "rust", "alpine", "debian", "busybox"}
 MIRROR_LOCATIONS = ["= /v2/", "~ MIRROR_REGEX", "/"]
 GATE = "a4-restart-gate"
@@ -69,21 +37,6 @@ def _is_internal(name: str, net: dict) -> bool:
     return net.get("internal") is True or (name == "a4-control" and net.get("external") is True)
 
 
-def _acl_deny_dst() -> list[str]:
-    rows = [r for r in _directives(CONF / "squid.conf", "acl") if r[:2] == ["deny_dst", "dst"]]
-    return [net for r in rows for net in r[2:] if ":" not in net]
-
-
-def _directives(path: Path, name: str) -> list[list[str]]:
-    """Whitespace-split arguments of every non-comment `name` directive."""
-    rows = []
-    for raw in path.read_text().splitlines():
-        parts = raw.split("#", 1)[0].split()
-        if parts[:1] == [name]:
-            rows.append(parts[1:])
-    return rows
-
-
 @pytest.fixture(scope="module")
 def stack() -> dict:
     return yaml.safe_load(COMPOSE.read_text())
@@ -101,17 +54,6 @@ def test_every_image_is_pinned_by_digest(services):
             assert re.search(r"^FROM \S+@sha256:[0-9a-f]{64}$", dockerfile, re.M), name
         else:
             assert re.search(r"@sha256:[0-9a-f]{64}$", svc["image"]), name
-
-
-def test_egress_proxy_is_built_with_openssl_for_sni_peek(services):
-    # The stock ubuntu/squid image links GnuTLS, which cannot ssl_bump; squid-openssl can.
-    svc = services["egress-proxy"]
-    assert svc["build"]["dockerfile"] == "Dockerfile.squid"
-    dockerfile = (CONF / "Dockerfile.squid").read_text()
-    assert "squid-openssl" in dockerfile and "USER proxy" in dockerfile
-    entry = (CONF / "squid-entrypoint.sh").read_text()
-    assert "/tmp/ssl" in entry and "BEGIN" not in entry
-    assert not list(CONF.glob("*.pem")) and not list(CONF.glob("*.key"))
 
 
 def test_buildkitd_runs_under_gvisor_without_privilege(services):
@@ -139,7 +81,7 @@ def test_builder_network_is_pinned_and_peers_have_static_ips(stack, services):
     assert subnet == BUILDER_SUBNET
     ips = {
         n: ipaddress.ip_address(services[n]["networks"]["a4-builder"]["ipv4_address"])
-        for n in ("mirror-gate", "egress-proxy")
+        for n in ("mirror-gate", "pkg-mirror")
     }
     assert ips == BUILDER_IPS and all(ip in subnet for ip in ips.values())
     hosts = {h.split(":")[0]: h.split(":")[1] for h in services["buildkitd"]["extra_hosts"]}
@@ -158,15 +100,6 @@ def test_networks_disable_ipv6_and_dynamic_range_excludes_static_ips(stack):
     )
     assert ip_range.subnet_of(BUILDER_SUBNET)
     assert not any(ip in ip_range for ip in BUILDER_IPS.values())
-
-
-def test_builder_subnet_avoids_docker_default_pools_and_is_denied_by_squid():
-    # Docker default pools: 172.17-31.0.0/16 and 192.168.0.0/16; the A4 runtime pool is separate.
-    for pool in ("172.16.0.0/12", "192.168.0.0/16"):
-        assert not BUILDER_SUBNET.overlaps(ipaddress.ip_network(pool))
-    # A CONNECT through the proxy to a peer on the builder network stays refused.
-    denied = [ipaddress.IPv4Network(net) for net in _acl_deny_dst()]
-    assert any(BUILDER_SUBNET.subnet_of(net) for net in denied)
 
 
 def test_buildkitd_command_is_exact_and_requires_mtls(services):
@@ -221,116 +154,29 @@ def test_buildkitd_only_on_internal_networks(stack, services):
         assert stack["networks"][net].get("internal") is True, net
 
 
-def test_only_proxy_and_registry_reach_the_internet(stack, services):
+def test_only_package_mirror_and_registry_reach_the_internet(stack, services):
     routed = {
         name
         for name, svc in services.items()
         if any(not _is_internal(n, stack["networks"][n]) for n in svc["networks"])
     }
-    assert routed == {"egress-proxy", "mirror"}
+    assert routed == {"pkg-mirror", "mirror"}
 
 
-def test_buildkitd_sees_only_gate_and_proxy(services):
+def test_buildkitd_sees_only_gate_and_package_mirror(services):
     peers = {
         name
         for name, svc in services.items()
         if name != "buildkitd" and set(svc["networks"]) & set(services["buildkitd"]["networks"])
     }
-    assert peers == {"mirror-gate", "egress-proxy"}
+    assert peers == {"mirror-gate", "pkg-mirror"}
 
 
-def test_buildkitd_waits_for_healthy_gate_and_proxy(services):
+def test_buildkitd_waits_for_healthy_gate_and_package_mirror(services):
     deps = services["buildkitd"]["depends_on"]
     assert deps["mirror-gate"]["condition"] == "service_healthy"
-    assert deps["egress-proxy"]["condition"] == "service_healthy"
-    assert services["egress-proxy"]["healthcheck"]["test"]
-
-
-def test_proxy_checks_tls_sni_by_peek_and_splice_without_interception():
-    conf = CONF / "squid.conf"
-    port = next(r for r in _directives(conf, "http_port") if r[0] == "3128")
-    assert "ssl-bump" in port and "generate-host-certificates=off" in port
-    assert any(a.startswith("cert=/tmp/ssl/") for a in port)
-    rules = [" ".join(r) for r in _directives(conf, "ssl_bump")]
-    assert rules == SSL_BUMP
-    acls = _directives(conf, "acl")
-    assert ["step1", "at_step", "SslBump1"] in acls
-    sni = [r for r in acls if r[:2] == ["allowed_sni", "ssl::server_name"]]
-    # --client-requested pins the name to the SNI; no SNI still falls back to the CONNECT target.
-    assert len(sni) == 1 and sni[0][2] == "--client-requested"
-    assert set(sni[0][3:]) == EGRESS_DOMAINS
-    assert not _directives(conf, "external_acl_type")
-    assert not (CONF / "sni-present.sh").exists()
-
-
-def test_ssl_bump_uses_only_fast_acls():
-    # A slow (external) ACL answering DUNNO (queue full, helper dead) makes squid splice.
-    conf = CONF / "squid.conf"
-    external = {r[0] for r in _directives(conf, "acl") if len(r) > 1 and r[1] == "external"}
-    for rule in _directives(conf, "ssl_bump"):
-        assert not external & {w.lstrip("!") for w in rule}, rule
-
-
-def test_squid_is_pinned_to_an_exact_version():
-    dockerfile = (CONF / "Dockerfile.squid").read_text()
-    assert re.search(r"squid-openssl=\d+\.\d+-\S+", dockerfile)
-
-
-def test_platform_file_is_untracked_mounted_strictly_and_checked_by_healthcheck(services):
-    svc = services["egress-proxy"]
-    mounts = [v for v in svc["volumes"] if isinstance(v, dict) and v["target"] == PLATFORM_INCLUDE]
-    assert len(mounts) == 1
-    mount = mounts[0]
-    assert mount["source"] == "./a4-builder/platform-dst.conf" and mount["read_only"] is True
-    assert mount["bind"]["create_host_path"] is False, "a missing file must fail the start"
-    assert (CONF / "platform-dst.conf.example").is_file()
-    assert (CONF / ".gitignore").read_text().split() == ["platform-dst.conf"]
-    health = " ".join(svc["healthcheck"]["test"])
-    assert "platform-dst.conf" in health and "127.0.0.1" in health
-
-
-def test_proxy_allowlist_is_exactly_the_registries_without_reverse_lookup():
-    rows = [
-        r for r in _directives(CONF / "squid.conf", "acl") if r[:2] == ["egress_ok", "dstdomain"]
-    ]
-    assert len(rows) == 1 and rows[0][2] == "-n"
-    assert set(rows[0][3:]) == EGRESS_DOMAINS
-
-
-def test_proxy_denies_ip_literals_and_internal_ranges():
-    acls = _directives(CONF / "squid.conf", "acl")
-    denied = {c for r in acls if r[:2] == ["deny_dst", "dst"] for c in r[2:]}
-    assert DENIED_DST <= denied
-    literal = [r[2:] for r in acls if r[:2] == ["ip_literal", "dstdom_regex"]]
-    assert literal == [IP_LITERAL]
-    assert not [r for r in acls if r[0] == "deny_dst" and r[1] != "dst"]
-
-
-def test_platform_destinations_come_from_an_operator_file_before_the_rules(services):
-    lines = [ln.split("#", 1)[0].split() for ln in (CONF / "squid.conf").read_text().splitlines()]
-    include = next(i for i, p in enumerate(lines) if p == ["include", PLATFORM_INCLUDE])
-    first_rule = next(i for i, p in enumerate(lines) if p[:1] == ["http_access"])
-    anchor = next(i for i, p in enumerate(lines) if p[:3] == ["acl", "platform_dst", "dst"])
-    assert anchor < include < first_rule
-    shipped = _directives(CONF / "platform-dst.conf.example", "acl")
-    assert not shipped, "host addresses are written per host, never shipped"
-    shared = [p for p in CONF.iterdir() if p.is_file() and p.name != "platform-dst.conf"]
-    assert "212.237.217.228" not in "".join(p.read_text() for p in shared)
-
-
-def test_proxy_http_access_order_is_exact():
-    rules = [" ".join(r) for r in _directives(CONF / "squid.conf", "http_access")]
-    assert rules == HTTP_ACCESS
-
-
-def test_proxy_resolves_only_allowlisted_names():
-    # A `dst` ACL makes squid resolve the CONNECT host: ahead of the allowlist that leaks via DNS.
-    conf = CONF / "squid.conf"
-    dst_acls = {r[0] for r in _directives(conf, "acl") if len(r) > 1 and r[1] == "dst"}
-    rules = _directives(conf, "http_access")
-    allowlist = rules.index(["deny", "CONNECT", "!egress_ok"])
-    first_dns = min(i for i, r in enumerate(rules) if dst_acls & {w.lstrip("!") for w in r})
-    assert allowlist < first_dns
+    assert deps["pkg-mirror"]["condition"] == "service_healthy"
+    assert services["pkg-mirror"]["healthcheck"]["test"]
 
 
 def test_builder_bridge_has_no_host_address(stack):
@@ -338,10 +184,6 @@ def test_builder_bridge_has_no_host_address(stack):
     net = stack["networks"]["a4-builder"]
     assert net["internal"] is True
     assert net["driver_opts"]["com.docker.network.bridge.gateway_mode_ipv4"] == "isolated"
-
-
-def test_proxy_has_no_obsolete_directives():
-    assert not _directives(CONF / "squid.conf", "dns_v4_first")
 
 
 def test_buildkitd_pulls_docker_io_only_through_mirror_gate():
@@ -390,28 +232,16 @@ def test_runbook_states_recycle_rules_and_network_limits():
     assert "mktemp -d" in text and "shred -u" in text
     assert "network.host" in text
     assert "cache is full" in text
-    assert "203.0.113.7" in text and "10.213.77.10" in text
+    assert "10.213.77.10" in text
 
 
-def test_runbook_records_p3b_rules_residual_risk_and_sni_checks():
+def test_runbook_records_p3b_rules_and_bridge_checks():
     text = RUNBOOK.read_text()
     assert "`registry:2`" not in text and "`registry:3`" in text
     assert "ptrace" in text and "type=oci,dest=" in text and "worker pushes" in text
-    assert "## Accepted residual risk" in text
-    assert "domain fronting" in text and "P3c" in text and "devpi" in text
-    assert "-servername example.com" in text
-    assert "platform-dst.conf.example" in text
-    assert (
-        "10.213.77.11:3128" in text
-        and "TCP_DENIED_ABORTED" in text
-        and "Connection established" in text
-    )
     assert "resolv.conf" in text and "by IP" in text
     assert "ip -4 addr show dev br-" in text and "gateway_mode_ipv4" in text
     assert "ip -6 addr show dev br-" in text and "10.213.77.1 $p" not in text
-    assert "-noservername" in text and "squid -v" in text and "apt-cache policy" in text
-    assert "without SNI is matched against the CONNECT target" in text
-    assert re.search(r"\bECH\b", text) and "inner SNI" in text
 
 
 def _gate_locations() -> list[tuple[str, str]]:
