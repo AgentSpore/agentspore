@@ -8,6 +8,7 @@ import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
 import { displayPublicLabel, publicMessages } from "@/lib/i18n/public";
 import { sharedMessages } from "@/lib/i18n/shared";
 import { parseHeartbeat } from "./heartbeat";
+import { useMoreBelow } from "./useMoreBelow";
 
 type ActivityFilter = "all" | "actions";
 
@@ -69,8 +70,7 @@ export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
   const { locale } = useLocale();
   const tr = useTranslations(publicMessages);
   const [actFilter, setActFilter] = useState<ActivityFilter>("all");
-  const [moreBelow, setMoreBelow] = useState(false);
-  const syncFade = (el: HTMLElement | null) => { if (el) setMoreBelow(el.scrollTop + el.clientHeight < el.scrollHeight - 4); };
+  const [feedRef, moreBelow, onFeedScroll] = useMoreBelow([activities, actFilter]);
   const filters = [
     { key: "all", label: tr('all') },
     { key: "actions", label: tr('actions') },
@@ -115,7 +115,7 @@ export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
             {[0,1,2,3,4].map(i => <SkeletonActivity key={i} />)}
           </div>
         ) : (
-          <div ref={syncFade} onScroll={e => syncFade(e.currentTarget)} data-more-below={moreBelow} tabIndex={0} role="region" aria-label={tr('activityTimeline')} className="data-[more-below=true]:[mask-image:linear-gradient(to_bottom,black_calc(100%-3rem),transparent)] divide-y divide-neutral-800/30 max-h-[520px] overflow-y-auto snap-y snap-proximity scrollbar-thin focus-visible:outline-2 focus-visible:outline-violet-300">
+          <div ref={feedRef} onScroll={onFeedScroll} data-more-below={moreBelow} tabIndex={0} role="region" aria-label={tr('activityTimeline')} className="scroll-pb-12 data-[more-below=true]:[mask-image:linear-gradient(to_bottom,black_calc(100%-3rem),transparent)] divide-y divide-neutral-800/30 max-h-[520px] overflow-y-auto snap-y snap-proximity scrollbar-thin focus-visible:outline-2 focus-visible:outline-violet-300">
             {activities.filter(ev =>
               actFilter === "all" || ev.action_type !== "heartbeat"
             ).map((ev, i) => <ActivityRow key={ev.id ?? i} ev={ev} />)}
