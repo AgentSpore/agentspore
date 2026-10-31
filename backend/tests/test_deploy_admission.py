@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 from test_deployment_control_plane import deployment_client as deployment_client
@@ -243,6 +244,43 @@ async def test_quota_owner_active_429(
     assert response.json()["detail"]["reason_code"] == "owner_active_quota"
 
 
+async def test_owner_active_quota_counts_agents_claimed_after_deploy(
+    enabled, deployment_client, new_project, seed, deployment_session
+):
+    """Snapshots of unowned agents stay NULL after a claim; the ceiling still counts them."""
+    owner = uuid4()
+    await deployment_session.execute(
+        text("INSERT INTO users (id, email, hashed_password, name) VALUES (:i, :e, 'x', 'o')"),
+        {"i": owner, "e": f"{owner}@example.com"},
+    )
+    for index in range(3):
+        project = await new_project(f"claimed-late-{index}")
+        await seed(project["id"], status="active")
+        await deployment_session.execute(
+            text("UPDATE agents SET owner_user_id = :o WHERE id = :a"),
+            {"o": owner, "a": project["agent"]},
+        )
+    await deployment_session.commit()
+    response = await deploy(deployment_client, await new_project("claimed-late-new", owner))
+    assert response.status_code == 429
+    assert response.json()["detail"]["reason_code"] == "owner_active_quota"
+
+
+async def test_creator_agent_snapshot_is_immutable_once_set(
+    enabled, new_project, seed, deployment_session
+):
+    project = await new_project("snapshot-app")
+    await seed(project["id"])
+    for value in (":other", "NULL"):
+        with pytest.raises(DBAPIError) as error:
+            await deployment_session.execute(
+                text(f"UPDATE project_deployments SET creator_agent_id = {value}"),
+                {"other": uuid4()} if value == ":other" else {},
+            )
+        assert getattr(error.value.orig, "sqlstate", None) == "23514"
+        await deployment_session.rollback()
+
+
 async def test_platform_capacity_429(enabled, deployment_client, new_project, seed):
     for index in range(10):
         await seed((await new_project(f"cap-{index}"))["id"], status="active")
@@ -291,17 +329,19 @@ async def test_admission_waits_on_global_advisory_lock(
     )
     url = deployment_postgres.get_connection_url().replace("psycopg2", "asyncpg")
     side = create_async_engine(url, poolclass=NullPool)
-    async with side.connect() as holder:
-        await holder.execute(text("SELECT pg_advisory_xact_lock(hashtext('a4_admission'))"))
-        pending = asyncio.ensure_future(deploy(deployment_client, project))
-        for _ in range(100):
-            if await holder.scalar(waiting):
-                break
-            await asyncio.sleep(0.1)
-        assert await holder.scalar(waiting) == 1
-        assert not pending.done()
-        await holder.rollback()
-    await side.dispose()
+    try:
+        async with side.connect() as holder:
+            await holder.execute(text("SELECT pg_advisory_xact_lock(hashtext('a4_admission'))"))
+            pending = asyncio.ensure_future(deploy(deployment_client, project))
+            for _ in range(100):
+                if await holder.scalar(waiting):
+                    break
+                await asyncio.sleep(0.1)
+            assert await holder.scalar(waiting) == 1
+            assert not pending.done()
+            await holder.rollback()
+    finally:
+        await side.dispose()
     assert (await pending).status_code == 202
 
 

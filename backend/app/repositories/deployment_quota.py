@@ -52,7 +52,9 @@ async def _active_services(db: AsyncSession, project_id: UUID, who: RowMapping) 
                 text(
                     "SELECT count(DISTINCT d.project_id) FILTER (WHERE "
                     "CASE WHEN CAST(:owner AS uuid) IS NULL THEN d.creator_agent_id = :agent "
-                    "ELSE d.owner_user_id = CAST(:owner AS uuid) END) AS owned, "
+                    "ELSE d.creator_agent_id IN "
+                    "(SELECT id FROM agents WHERE owner_user_id = CAST(:owner AS uuid)) END) "
+                    "AS owned, "
                     "count(DISTINCT d.project_id) AS platform "
                     "FROM project_deployments d WHERE d.status = 'active' AND d.project_id <> :id"
                 ),
