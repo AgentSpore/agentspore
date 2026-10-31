@@ -18,6 +18,7 @@ from app.services.deployment.oci import DigestBoundBuilder, verify_oci_digest
 
 DIGEST = "sha256:" + "ab" * 32
 OTHER = "sha256:" + "cd" * 32
+BLOB = "blobs/sha256/" + "e" * 64
 
 
 def index_for(*digests: str) -> bytes:
@@ -36,15 +37,15 @@ def write_tar(path: Path, members, extra=(), fmt=tarfile.USTAR_FORMAT) -> Path:
     return path
 
 
-def link(kind: bytes) -> tarfile.TarInfo:
-    info = tarfile.TarInfo("blobs/evil")
+def link(kind: bytes, name: str = "blobs/evil") -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
     info.type = kind
     info.linkname = "/etc/passwd"
     return info
 
 
 def test_matching_digest_passes(tmp_path):
-    tar = write_tar(tmp_path / "a.tar", {"index.json": index_for(DIGEST), "blobs/x": b"1"})
+    tar = write_tar(tmp_path / "a.tar", {"index.json": index_for(DIGEST), BLOB: b"1"})
     verify_oci_digest(tar, DIGEST)
     assert tar.exists()
 
@@ -130,7 +131,7 @@ def test_directory_entries_are_accepted(tmp_path):
 
 
 def test_missing_index_names_the_cause(tmp_path):
-    tar = write_tar(tmp_path / "a.tar", {"blobs/x": b"1"})
+    tar = write_tar(tmp_path / "a.tar", {BLOB: b"1"})
     with pytest.raises(DeployRejectedError, match="no index.json"):
         verify_oci_digest(tar, DIGEST)
 
@@ -254,14 +255,42 @@ def test_malformed_pax_record_is_refused(tmp_path):
         verify_oci_digest(tar, DIGEST)
 
 
-def test_long_pax_path_is_accepted(tmp_path):
-    long_name = "blobs/" + "n" * 150
+def test_pax_path_naming_a_layout_blob_is_accepted(tmp_path):
     tar = raw_tar(
         tmp_path / "a.tar",
-        entry(long_name, b"1", fmt=tarfile.PAX_FORMAT),
+        entry("x", b"1", fmt=tarfile.PAX_FORMAT, pax={"path": BLOB}),
         entry("index.json", index_for(DIGEST)),
     )
     verify_oci_digest(tar, DIGEST)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "foo",
+        "indexXjson",
+        "blobs/sha256/" + "e" * 63,
+        "blobs/sha256/../x",
+        "blobs/x",
+        "blobs/sha256/" + "E" * 64,
+        "./index.json",
+        "/index.json",
+    ],
+)
+def test_names_outside_the_oci_layout_are_refused(tmp_path, name):
+    tar = write_tar(tmp_path / "a.tar", {"index.json": index_for(DIGEST), name: b"1"})
+    with pytest.raises(DeployRejectedError):
+        verify_oci_digest(tar, DIGEST)
+
+
+def test_nul_in_pax_path_cannot_alias_index_json(tmp_path):
+    tar = raw_tar(
+        tmp_path / "a.tar",
+        entry("index.json", index_for(DIGEST)),
+        entry("x", index_for(OTHER), fmt=tarfile.PAX_FORMAT, pax={"path": "index.json\0junk"}),
+    )
+    with pytest.raises(DeployRejectedError):
+        verify_oci_digest(tar, DIGEST)
 
 
 def test_bad_checksum_mid_stream_is_refused(tmp_path):
@@ -313,7 +342,9 @@ def test_checksum_rule_matches_tarfile():
 
 
 def test_tarfile_loop_refuses_links_even_if_the_walker_is_bypassed(tmp_path, monkeypatch):
-    tar = write_tar(tmp_path / "a.tar", {"index.json": index_for(DIGEST)}, (link(tarfile.SYMTYPE),))
+    tar = write_tar(
+        tmp_path / "a.tar", {"index.json": index_for(DIGEST)}, (link(tarfile.SYMTYPE, BLOB),)
+    )
     monkeypatch.setattr(oci, "_screen_headers", lambda path: 1536)
     with pytest.raises(DeployRejectedError, match="unexpected member"):
         verify_oci_digest(tar, DIGEST)
@@ -324,4 +355,13 @@ def test_walker_alone_refuses_a_bad_checksum(tmp_path):
     bad[148:156] = b"0000000\0"
     tar = raw_tar(tmp_path / "a.tar", entry("index.json", index_for(DIGEST)), bytes(bad))
     with pytest.raises(DeployRejectedError):
+        oci._screen_headers(tar)
+
+
+def test_walker_alone_refuses_a_pax_path_outside_the_layout(tmp_path):
+    tar = raw_tar(
+        tmp_path / "a.tar",
+        entry("x", b"1", fmt=tarfile.PAX_FORMAT, pax={"path": "index.json\0junk"}),
+    )
+    with pytest.raises(DeployRejectedError, match="outside the OCI layout"):
         oci._screen_headers(tar)
