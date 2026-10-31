@@ -62,6 +62,11 @@ shred -u ca-key.pem server-key.pem client-key.pem server.csr client.csr san.cnf 
 export A4_BUILDKIT_CERT_DIR=$D
 ```
 
+If you copy `tls/` to another path or host instead (`cp`, `rsync`, `scp`), repeat the ownership:
+`sudo chown 1000:1000 server-key.pem && sudo chmod 0400 server-key.pem`. buildkitd runs as uid 1000
+and reads the key through a Docker secret; any other owner or mode kills it at start with
+`open /run/secrets/a4_buildkit_key: permission denied` (seen on the 31.10 smoke).
+
 ## Check gVisor on the host
 
 ```bash
@@ -112,6 +117,16 @@ The switch is `A4_BUILDER=buildkit` (default `fake`; roll back by unsetting it) 
 `A4_BUILDKIT_CERT_DIR` (client `ca.pem`, `client.pem`, `client-key.pem`, mounted read-only),
 `A4_BUILDKIT_ADDR` (default `tcp://buildkitd:1234`) and `A4_PKG_MIRROR_HOST`
 (default `10.213.77.12`; a private IPv4 literal, settings refuse a hostname, loopback and public addresses; it must equal the `pkg-mirror` `ipv4_address` in `deploy/a4-builder.compose.yml` and the address literals in `deploy/a4-builder/pkg-mirror.conf` (`sub_filter`, `proxy_redirect`, the crates `config.json`): changing only the setting breaks downloads), `A4_RECYCLE_GATE_URL` (default `http://a4-restart-gate:2375`). Tarballs go to a 4 GiB tmpfs; the container limit is 6 GiB.
+At start the worker refuses to run with `A4_BUILDER=buildkit` when `A4_BUILDKIT_ADDR` is not
+`tcp://host:port`, a client TLS file (`ca.pem`, `client.pem`, `client-key.pem`) is missing or
+unreadable, or `A4_BUILDER_OUT_DIR` is not a writable directory. The error names the setting or file, never contents.
+A failed build shows the last 300 characters of `buildctl` stderr in the log, with `scheme://user:pass@`
+credentials replaced by `://***@`.
+
+When you run `buildctl` by hand, `GOSUMDB` holds a space, so it is one quoted argument:
+`--opt 'build-arg:GOSUMDB=sum.golang.org http://10.213.77.12:8083/sumdb'` (unquoted, the shell splits it
+and buildctl reads `http://...` as a separate argument). The worker already passes it as a single argv element.
+
 The worker checks the tarball's `index.json` digest against buildkitd's and refuses on mismatch.
 
 ## Rollback

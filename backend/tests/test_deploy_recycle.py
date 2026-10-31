@@ -117,9 +117,13 @@ async def test_cancel_during_recycle_stays_dirty():
     assert r.dirty is True
 
 
-def test_settings_wrap_the_buildkit_builder_and_leave_fake_alone():
+def test_settings_wrap_the_buildkit_builder_and_leave_fake_alone(tmp_path):
+    for name in ("ca.pem", "client.pem", "client-key.pem"):
+        (tmp_path / name).write_text("pem")
     assert isinstance(builder_from_settings(Settings(a4_builder="fake")), FakeBuilder)
-    built = builder_from_settings(Settings(a4_builder="buildkit"))
+    built = builder_from_settings(
+        Settings(a4_builder="buildkit", a4_buildkit_tls_dir=tmp_path, a4_builder_out_dir=tmp_path)
+    )
     assert isinstance(built, RecyclingBuilder)
     r = built.recycler
     assert isinstance(r, DaemonRecycler) and r.dirty is True

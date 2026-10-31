@@ -6,21 +6,23 @@ OCI tarball on the trusted side; the worker scans and pushes it afterwards.
 """
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from app.core.config import Settings
 from app.services.deployment.builder import Builder, BuildRequest, BuildResult, FakeBuilder
 from app.services.deployment.errors import DeployRejectedError
 from app.services.deployment.oci import DIGEST_RE, DigestBoundBuilder
-from app.services.deployment.process import run_tool
+from app.services.deployment.process import ToolOutput, run_tool_captured
 from app.services.deployment.recycle import DaemonRecycler, RecyclingBuilder
 
 _DOCKERFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _UNSAFE_TAG_CHARS = re.compile(r"[^A-Za-z0-9._-]")
-_URL_CREDENTIALS = re.compile(r"://[^/\s@]+@")
 _MAX_TAG_LENGTH = 128
+_TLS_FILES = ("ca.pem", "client.pem", "client-key.pem")
 _TAIL_CHARS = 300
 _MAX_METADATA_BYTES = 64 * 1024
 # Cargo is absent on purpose: it cannot replace a source from env (doc.rust-lang.org/cargo/
@@ -62,11 +64,11 @@ class BuildKitBuilder:
         tar = self.out_dir / f"{stem}.tar"
         meta = self.out_dir / f"{stem}.json"
         try:
-            rc, stdout = await run_tool(
+            out = await run_tool_captured(
                 self._argv(request, tar, meta), cwd=self.out_dir, timeout=self.timeout
             )
-            if rc != 0:
-                raise DeployRejectedError("build_failed", self._failure_detail(rc, stdout))
+            if out.rc != 0:
+                raise DeployRejectedError("build_failed", self._failure_detail(out))
             digest = self._read_digest(meta)
             size = self._tar_size(tar)
             if size > self.max_image_bytes:
@@ -111,10 +113,10 @@ class BuildKitBuilder:
         return stem
 
     @staticmethod
-    def _failure_detail(rc: int, stdout: bytes) -> str:
-        # buildctl writes errors to stderr, which run_tool discards: usually only `rc=N` remains.
-        redacted = _URL_CREDENTIALS.sub("://***@", stdout.decode(errors="replace"))
-        return f"buildctl rc={rc}: {redacted[-_TAIL_CHARS:].strip()}".rstrip(": ")
+    def _failure_detail(out: ToolOutput) -> str:
+        # buildctl reports errors on stderr; both streams arrive already redacted.
+        text = f"{out.stderr.decode(errors='replace')}\n{out.stdout.decode(errors='replace')}"
+        return f"buildctl rc={out.rc}: {text.strip()[-_TAIL_CHARS:]}".rstrip(": ")
 
     @staticmethod
     def _read_digest(meta: Path) -> str:
@@ -136,11 +138,28 @@ class BuildKitBuilder:
             raise DeployRejectedError("build_failed", "buildctl produced no image") from exc
 
 
+def validate_builder_settings(settings: Settings) -> None:
+    """Refuse a misconfigured `A4_BUILDER=buildkit` at worker start; names only, never contents."""
+    if settings.a4_builder != "buildkit":
+        return
+    addr = urlsplit(settings.a4_buildkit_addr)
+    if addr.scheme != "tcp" or not addr.hostname or addr.port is None:
+        raise RuntimeError("A4_BUILDKIT_ADDR must look like tcp://host:port")
+    for name in _TLS_FILES:
+        path = settings.a4_buildkit_tls_dir / name
+        if not os.access(path, os.R_OK) or not path.is_file():
+            raise RuntimeError(f"A4_BUILDKIT_TLS_DIR: {name} is missing or unreadable")
+    out_dir = settings.a4_builder_out_dir
+    if not out_dir.is_dir() or not os.access(out_dir, os.W_OK):
+        raise RuntimeError("A4_BUILDER_OUT_DIR must be an existing writable directory")
+
+
 def builder_from_settings(settings: Settings) -> Builder:
-    """`FakeBuilder` by default; with `A4_BUILDER=buildkit`, a digest-bound `BuildKitBuilder`
-    that restarts its daemon after every build through the restart gate."""
+    """`FakeBuilder` by default; with `A4_BUILDER=buildkit`, a validated, digest-bound
+    `BuildKitBuilder` that restarts its daemon after every build through the restart gate."""
     if settings.a4_builder == "fake":
         return FakeBuilder()
+    validate_builder_settings(settings)
     inner = DigestBoundBuilder(
         BuildKitBuilder(
             addr=settings.a4_buildkit_addr,

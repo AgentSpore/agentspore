@@ -169,6 +169,10 @@ def test_default_settings_give_fake_builder():
 
 
 def test_buildkit_settings_give_bound_buildkit(tmp_path):
+    for sub in ("tls", "out"):
+        (tmp_path / sub).mkdir()
+    for name in ("ca.pem", "client.pem", "client-key.pem"):
+        (tmp_path / "tls" / name).write_text("pem")
     cfg = Settings(
         _env_file=None,
         a4_builder="buildkit",
