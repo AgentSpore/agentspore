@@ -18,13 +18,13 @@ def stack() -> dict:
 
 @pytest.fixture(scope="module")
 def svc(stack) -> dict:
-    assert list(stack["services"]) == ["a4-registry"]
+    assert list(stack["services"]) == ["a4-registry-init", "a4-registry"]
     return stack["services"]["a4-registry"]
 
 
-def test_image_is_registry_2_pinned_by_digest(svc):
+def test_image_is_registry_3_pinned_by_digest(svc):
     assert re.fullmatch(r"registry@sha256:[0-9a-f]{64}", svc["image"])
-    assert "registry:2.8.3" in REGISTRY.read_text()  # the comment records which release
+    assert "v3.1.2" in REGISTRY.read_text()  # the comment records which release
 
 
 def test_container_is_locked_down(svc):
@@ -33,6 +33,16 @@ def test_container_is_locked_down(svc):
     assert "cap_add" not in svc
     assert "no-new-privileges:true" in svc["security_opt"]
     assert not svc.get("privileged", False)
+
+
+def test_registry_runs_as_non_root_and_the_volume_is_chowned_first(stack, svc):
+    assert svc["user"] == "1000:1000"
+    init = stack["services"]["a4-registry-init"]
+    assert init["image"] == svc["image"]
+    assert init["entrypoint"] == ["chown", "1000:1000", "/var/lib/registry"]
+    assert init["network_mode"] == "none"
+    assert init["cap_drop"] == ["ALL"] and init["cap_add"] == ["CHOWN"]
+    assert svc["depends_on"]["a4-registry-init"]["condition"] == "service_completed_successfully"
 
 
 def test_memory_and_pids_are_limited(svc):
@@ -56,15 +66,10 @@ def test_port_is_published_on_loopback_only(svc):
     assert svc["ports"] == ["127.0.0.1:5000:5000"]
 
 
-def test_registry_is_on_the_worker_network_and_nothing_tenant_reachable(stack, svc):
-    assert set(svc["networks"]) == {"a4-control", "a4-registry-host"}
+def test_registry_is_on_neither_control_nor_builder_nor_any_tenant_network(stack, svc):
+    assert set(svc["networks"]) == {"a4-registry-net", "a4-registry-host"}
     builder_nets = set(yaml.safe_load(BUILDER.read_text())["networks"])
-    assert not (set(svc["networks"]) & (builder_nets - {"a4-control"}))
-    assert stack["networks"]["a4-control"]["external"] is True
+    assert not (set(svc["networks"]) & builder_nets)  # a4-control and a4-builder both live there
+    assert stack["networks"]["a4-registry-net"]["external"] is True
     assert not stack["networks"]["a4-registry-host"].get("internal", False)
-
-
-def test_worker_network_is_the_one_the_main_compose_gives_a4_worker():
-    main = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
-    assert "a4-control" in main["services"]["a4-worker"]["networks"]
-    assert "a4-registry-host" not in str(main["services"]["a4-worker"])
+    assert list(stack["networks"]) == ["a4-registry-net", "a4-registry-host"]
