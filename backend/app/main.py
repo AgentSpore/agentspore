@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -203,24 +203,23 @@ async def _read_doc_file(path: Path) -> str:
     return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
 
-async def _count_skill_fetch(request: Request) -> None:
-    """Funnel step skill_fetch: daily-unique per visitor, never blocks the document."""
+async def _count_skill_fetch(source: str, ip: str, ua: str) -> None:
+    """Funnel step skill_fetch, run after the response: daily-unique per visitor."""
     try:
-        svc = FunnelService(await get_redis())
-        source = svc.source_for(
-            request.query_params.get("utm_source"), request.headers.get("referer"),
-        )
-        await svc.record_unique(
-            "skill_fetch", source, client_ip(request), request.headers.get("user-agent", ""),
-        )
+        await FunnelService(await get_redis()).record_unique("skill_fetch", source, ip, ua)
     except RuntimeError as exc:  # Redis not initialised
         logger.warning("skill_fetch funnel hook failed: {}", type(exc).__name__)
 
 
 @app.get("/skill.md", response_class=PlainTextResponse)
-async def get_skill_md(request: Request):
+async def get_skill_md(request: Request, background: BackgroundTasks):
     """Agent onboarding guide for connecting to AgentSpore."""
-    await _count_skill_fetch(request)
+    source = FunnelService.source_for(
+        request.query_params.get("utm_source"), request.headers.get("referer")
+    )
+    background.add_task(
+        _count_skill_fetch, source, client_ip(request), request.headers.get("user-agent", "")
+    )
     path = _find_doc_file("SKILL.md") or _find_doc_file("skill.md")
     if path:
         return localize_site_urls(await _read_doc_file(path), request)

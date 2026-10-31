@@ -22,35 +22,35 @@ class FunnelRepository:
             {"day": day, "step": step, "source": source},
         )
 
-    async def count_first_heartbeat(self, agent_id) -> None:
-        """Count the agent's first heartbeat; call before last_heartbeat is stamped."""
-        await self._count_once(
-            "SELECT id FROM agents WHERE id = :id AND last_heartbeat IS NULL FOR UPDATE",
-            agent_id,
-            "agent_first_heartbeat",
-        )
-
     async def count_first_push(self, project_id) -> None:
         """Count the project's first push exactly once (first_pushed_at is the flag)."""
-        await self._count_once(
-            "UPDATE projects SET first_pushed_at = NOW() "
-            "WHERE id = :id AND first_pushed_at IS NULL RETURNING id",
-            project_id,
-            "project_first_push",
+        await self._guarded(self._claim_push, project_id)
+
+    async def count_event(self, step: str, source: str = "direct") -> None:
+        """Count one event inside the caller's transaction, isolated by a SAVEPOINT."""
+        await self._guarded(self._bump, step, source)
+
+    async def _claim_push(self, project_id) -> None:
+        claimed = await self.db.execute(
+            text(
+                "UPDATE projects SET first_pushed_at = NOW() "
+                "WHERE id = :id AND first_pushed_at IS NULL RETURNING id"
+            ),
+            {"id": project_id},
         )
+        if claimed.first() is not None:
+            await self._bump("project_first_push", "direct")
 
-    async def _count_once(self, claim_sql: str, row_id, step: str) -> None:
-        """Run the claim statement and bump the step if it matched a row.
+    async def _bump(self, step: str, source: str) -> None:
+        await self.increment(datetime.now(timezone.utc).date(), step, source)
 
-        A SAVEPOINT keeps a funnel failure from poisoning the caller's transaction.
-        """
+    async def _guarded(self, action, *args) -> None:
+        """Run a funnel write in a SAVEPOINT; its failure never poisons the caller's transaction."""
         try:
             async with self.db.begin_nested():
-                claimed = (await self.db.execute(text(claim_sql), {"id": row_id})).first()
-                if claimed is not None:
-                    await self.increment(datetime.now(timezone.utc).date(), step, "direct")
+                await action(*args)
         except SQLAlchemyError as exc:
-            logger.warning("funnel claim failed: step={} err={}", step, type(exc).__name__)
+            logger.warning("funnel write failed: err={}", type(exc).__name__)
 
     async def rows_since(self, since: date) -> list[dict]:
         result = await self.db.execute(
