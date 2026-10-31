@@ -30,6 +30,8 @@ class BuildKitBuilder:
 
     `proxy_url` is an IP: `RUN` steps under runsc have no Docker DNS. `out_dir` must sit on a
     size-capped volume; the 1 GiB image cap is checked after the build, not while it writes.
+    The digest comes from the untrusted daemon's metadata and is not checked against the tar's
+    `index.json`; the push step must derive or cross-check it before pinning by digest.
     """
 
     addr: str
