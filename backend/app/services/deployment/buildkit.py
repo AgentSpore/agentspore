@@ -10,8 +10,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.services.deployment.builder import BuildRequest, BuildResult
+from app.core.config import Settings
+from app.services.deployment.builder import Builder, BuildRequest, BuildResult, FakeBuilder
 from app.services.deployment.errors import DeployRejectedError
+from app.services.deployment.oci import DigestBoundBuilder
 from app.services.deployment.process import run_tool
 
 _DOCKERFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -30,8 +32,8 @@ class BuildKitBuilder:
 
     `proxy_url` is an IP: `RUN` steps under runsc have no Docker DNS. `out_dir` must sit on a
     size-capped volume; the 1 GiB image cap is checked after the build, not while it writes.
-    The digest comes from the untrusted daemon's metadata and is not checked against the tar's
-    `index.json`; the push step must derive or cross-check it before pinning by digest.
+    The digest comes from the untrusted daemon's metadata; wrap with `DigestBoundBuilder` (see
+    `builder_from_settings`) to check it against the tar's `index.json`.
     """
 
     addr: str
@@ -121,3 +123,17 @@ class BuildKitBuilder:
             return tar.stat().st_size
         except OSError as exc:
             raise DeployRejectedError("build_failed", "buildctl produced no image") from exc
+
+
+def builder_from_settings(settings: Settings) -> Builder:
+    """`FakeBuilder` by default; with `A4_BUILDER=buildkit`, a digest-bound `BuildKitBuilder`."""
+    if settings.a4_builder == "fake":
+        return FakeBuilder()
+    return DigestBoundBuilder(
+        BuildKitBuilder(
+            addr=settings.a4_buildkit_addr,
+            tls_dir=settings.a4_buildkit_tls_dir,
+            out_dir=settings.a4_builder_out_dir,
+            proxy_url=settings.a4_builder_proxy_url,
+        )
+    )

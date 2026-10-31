@@ -2,7 +2,8 @@
 
 import json
 from functools import lru_cache
-from typing import Annotated
+from pathlib import Path
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import SecretStr, field_validator, model_validator
@@ -27,6 +28,11 @@ class Settings(BaseSettings):
     a4_deploy_enabled: bool = False
     a4_max_active: int = 10
     a4_queue_max: int = 10
+    a4_builder: Literal["fake", "buildkit"] = "fake"
+    a4_buildkit_addr: str = "tcp://buildkitd:1234"
+    a4_buildkit_tls_dir: Path = Path("/run/a4-builder-tls")
+    a4_builder_out_dir: Path = Path("/var/lib/a4-out")
+    a4_builder_proxy_url: str = "http://10.213.77.11:3128"
 
     # Redis
     redis_url: str = "redis://redis:6379"

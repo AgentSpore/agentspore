@@ -90,6 +90,21 @@ Recycle: the daemon is destroyed after every build. `$C rm -fsv buildkitd` follo
 recreate already drops it). `--force-recreate` without `-V` keeps the anonymous state volume and
 with it the previous untrusted build's cache; never use it.
 
+## Enable the BuildKit builder in the worker
+
+The `a4-worker` service builds with `FakeBuilder` unless told otherwise.
+
+```bash
+export A4_BUILDKIT_CERT_DIR=/etc/a4-builder/tls   # holds ca.pem, client.pem, client-key.pem (client side only)
+export A4_BUILDER=buildkit A4_DEPLOY_ENABLED=true
+docker compose --profile a4 up -d a4-worker
+```
+
+- Defaults: `A4_BUILDKIT_ADDR=tcp://buildkitd:1234` (matches the server cert SAN), `A4_BUILDER_PROXY_URL=http://10.213.77.11:3128`. The worker must reach `buildkitd` by that name.
+- The worker mounts the cert dir read-only and writes OCI tarballs to a 4 GiB tmpfs at `/var/lib/a4-out`.
+- After each build the worker reads `index.json` from the tarball and refuses with `build_failed` if its single manifest digest differs from buildkitd's; the tarball is then deleted.
+- Back to `A4_BUILDER=fake` (the default) to roll back; no data to clean up.
+
 ## Rollback
 
 `$C down -v` removes the stack and its networks (`a4-builder`, `a4-mirror-back`, `a4-upstream`); revert the PR to remove the files.
