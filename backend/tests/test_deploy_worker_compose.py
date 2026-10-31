@@ -31,10 +31,11 @@ def test_memory_limit_covers_the_tmpfs(worker):
     assert worker["deploy"]["resources"]["limits"]["memory"] == "6g"
 
 
-def test_address_and_proxy_are_passed_through(worker):
+def test_address_and_mirror_host_are_passed_through(worker):
     env = worker["environment"]
     assert env["A4_BUILDKIT_ADDR"].startswith("${A4_BUILDKIT_ADDR:-")
-    assert env["A4_BUILDER_PROXY_URL"].startswith("${A4_BUILDER_PROXY_URL:-")
+    assert env["A4_PKG_MIRROR_HOST"] == "${A4_PKG_MIRROR_HOST:-10.213.77.12}"
+    assert "A4_BUILDER_PROXY_URL" not in env
 
 
 def test_out_dir_is_a_4g_tmpfs(worker):

@@ -1,5 +1,6 @@
 """Конфигурация приложения."""
 
+import ipaddress
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
     a4_buildkit_addr: str = "tcp://buildkitd:1234"
     a4_buildkit_tls_dir: Path = Path("/run/a4-builder-tls")
     a4_builder_out_dir: Path = Path("/var/lib/a4-out")
-    a4_builder_proxy_url: str = "http://10.213.77.11:3128"
+    a4_pkg_mirror_host: str = "10.213.77.12"
     a4_recycle_gate_url: str = "http://a4-restart-gate:2375"
     a4_buildkit_container: str = "a4-builder-buildkitd-1"
     a4_recycle_api_version: str = "v1.44"
@@ -135,6 +136,16 @@ class Settings(BaseSettings):
     # OpenViking (shared agent memory)
     openviking_url: str = ""
     openviking_api_key: str = ""
+
+    @field_validator("a4_pkg_mirror_host")
+    @classmethod
+    def _pkg_mirror_host_is_ipv4(cls, value: str) -> str:
+        """A private IPv4 literal: `RUN` under runsc has no Docker DNS; the mirror is internal."""
+        addr = ipaddress.IPv4Address(value)
+        special = addr.is_reserved or addr.is_loopback or addr.is_unspecified or addr.is_link_local
+        if special or not addr.is_private:
+            raise ValueError("must be a private, non-loopback IPv4 address")
+        return value
 
     @field_validator("domains", mode="before")
     @classmethod
