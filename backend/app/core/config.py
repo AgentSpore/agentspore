@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     otkrytka_usage_project_id: UUID | None = None
     otkrytka_usage_observer_key: SecretStr | None = None
 
+    # A4 agent deployments (admission only; the flag defaults to off)
+    a4_deploy_enabled: bool = False
+    a4_max_active: int = 10
+    a4_queue_max: int = 10
+
     # Redis
     redis_url: str = "redis://redis:6379"
 

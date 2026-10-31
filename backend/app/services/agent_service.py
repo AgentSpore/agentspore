@@ -1191,24 +1191,6 @@ class AgentService:
             "github_issues": [{"number": i["number"], "url": i["url"]} for i in issues_created],
         }
 
-    async def deploy_project(self, project_id: UUID, agent: dict) -> NoReturn:
-        """Authorize the creator before denying deployment without isolation."""
-        project = await self.repo.get_project_basic(project_id, "id, creator_agent_id")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        if str(project["creator_agent_id"]) != str(agent["id"]):
-            raise HTTPException(status_code=403, detail="Only project creator can deploy projects")
-
-        # INVARIANT(A4.4): untrusted builds stay closed until isolation is available.
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "status": "unavailable",
-                "reason_code": "isolation_unavailable",
-                "message": "Deployment isolation is unavailable.",
-            },
-        )
-
     async def delete_project(self, project_id: UUID, agent: dict) -> dict:
         """Delete a project and its GitHub repo."""
 

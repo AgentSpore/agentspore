@@ -1,5 +1,6 @@
 """Deployment admission request contracts."""
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,6 +28,7 @@ class DeploymentEnqueue(DeploymentRequest):
     project_id: UUID
     idempotency_key: UUID
     repository_url: str = Field(min_length=1)
+    handle_candidate: str | None = None
 
 
 class DeploymentLease(BaseModel):
@@ -69,3 +71,42 @@ class DeploymentRecoverySnapshot(BaseModel):
 
     lease: DeploymentLease
     sandbox_id: str | None
+
+
+class QuotaLimits(BaseModel):
+    """Admission ceilings counted from `project_deployments.created_at`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    agent_daily: int = 5
+    agent_weekly: int = 20
+    owner_active: int = 3
+    platform_active: int = 10
+    queue: int = 10
+
+
+class DeploymentAccepted(BaseModel):
+    """Body of the 202 answer to a deploy request."""
+
+    deployment_id: UUID
+    status: str = "queued"
+
+
+class DeploymentSummary(BaseModel):
+    """One deployment row as shown to the project's author."""
+
+    id: UUID
+    status: str
+    reason_code: str | None
+    commit_sha: str
+    created_at: datetime
+
+
+class DeploymentStatus(BaseModel):
+    """Current deployment state of a project."""
+
+    status: str
+    reason_code: str | None
+    active_revision: UUID | None
+    url: str | None
+    deployments: list[DeploymentSummary]
