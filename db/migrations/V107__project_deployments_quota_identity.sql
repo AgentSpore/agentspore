@@ -3,6 +3,8 @@
 ALTER TABLE project_deployments
     ADD COLUMN creator_agent_id UUID,
     ADD COLUMN owner_user_id UUID;
+-- owner_user_id is an audit snapshot of the owner at enqueue time, not a quota key:
+-- the owner ceiling counts live ownership via creator_agent_id (agents claimed later must count).
 
 UPDATE project_deployments d
 SET creator_agent_id = p.creator_agent_id, owner_user_id = a.owner_user_id
