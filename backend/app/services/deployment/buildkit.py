@@ -16,7 +16,7 @@ from app.core.config import Settings
 from app.services.deployment.builder import Builder, BuildRequest, BuildResult, FakeBuilder
 from app.services.deployment.errors import DeployRejectedError
 from app.services.deployment.oci import DIGEST_RE, DigestBoundBuilder
-from app.services.deployment.process import ToolOutput, run_tool_captured
+from app.services.deployment.process import ToolOutput, redact, run_tool_captured
 from app.services.deployment.recycle import DaemonRecycler, RecyclingBuilder
 
 _DOCKERFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -24,6 +24,7 @@ _UNSAFE_TAG_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 _MAX_TAG_LENGTH = 128
 _TLS_FILES = ("ca.pem", "client.pem", "client-key.pem")
 _TAIL_CHARS = 300
+_STDOUT_TAIL = 4096
 _MAX_METADATA_BYTES = 64 * 1024
 # Cargo is absent on purpose: it cannot replace a source from env (doc.rust-lang.org/cargo/
 # reference/config.html, `source.<name>.replace-with`: "Environment: not supported"); the runbook
@@ -114,8 +115,12 @@ class BuildKitBuilder:
 
     @staticmethod
     def _failure_detail(out: ToolOutput) -> str:
-        # buildctl reports errors on stderr; both streams arrive already redacted.
-        text = f"{out.stderr.decode(errors='replace')}\n{out.stdout.decode(errors='replace')}"
+        # buildctl reports errors on stderr (redacted on capture); stdout arrives raw, so only
+        # its bounded tail, from a line start, is redacted here.
+        tail = out.stdout[-_STDOUT_TAIL:]
+        if len(out.stdout) > _STDOUT_TAIL:
+            tail = tail.partition(b"\n")[2]
+        text = f"{out.stderr.decode(errors='replace')}\n{redact(tail).decode(errors='replace')}"
         return f"buildctl rc={out.rc}: {text.strip()[-_TAIL_CHARS:]}".rstrip(": ")
 
     @staticmethod
