@@ -217,6 +217,13 @@ def dockerfile_scanner(root: Path, body: str) -> DockerfileScanner:
         f"FROM --platform=$BUILDPLATFORM python@{DIGEST}\n",
         f"FROM python@{DIGEST}\r\nRUN --mount=type=bind,target=/x \\\r\n  true\r\n",
         f"FROM --platform=${{TARGETPLATFORM}} python@{DIGEST}\n",
+        f"FROM python@{DIGEST}\nCOPY --link x /x\nCOPY --parents x /x\nADD --keep-git-dir x /x\n",
+        (
+            f"FROM python@{DIGEST}\nRUN <<EOF\nFROM evil/img:latest\n"
+            "COPY --from=evil/img:latest /a /b\nEOF\n"
+        ),
+        f"FROM python@{DIGEST}\nRUN <<-EOF\n\tFROM evil\n\tEOF\nCMD x\n",
+        f"FROM python@{DIGEST}\nCOPY <<'A' /a\nx\nA\nCOPY <<B /b\ny\nB\n",
         f"FROM python@{DIGEST}\nRUN --mount=type=secret,id=x,env=TOKEN true\n",
         f"FROM python@{DIGEST}\n# комментарий \u2014 not code\nCMD x\n",
         f"# comment\nFROM \\\n  python@{DIGEST}\n",
@@ -293,6 +300,14 @@ BS = "\\"  # one backslash
         ("ONBUILD COPY --from=evil/img:latest /a /b", UNSUPPORTED),
         ("ONBUILD RUN --mount=type=bind,from=evil/img:latest,target=/x true", UNSUPPORTED),
         ("RUN echo é", UNSUPPORTED),
+        (f"RUN echo a{BS}{BS}\nCOPY --from=evil/img:latest /a /b", UNSUPPORTED),
+        (f"RUN echo a{BS}{BS}  \nCOPY --from=evil/img:latest /a /b", UNSUPPORTED),
+        (f"RUN <<'EO{BS}'\nbody\nEO{BS}\nCOPY --from=evil/img:latest /a /b", UNSUPPORTED),
+        ("RUN <<EOF\nbody\n", UNSUPPORTED),
+        ('RUN <<"E F"\nbody\nE F\n', UNSUPPORTED),
+        ("RUN echo $((1<<2))", UNSUPPORTED),
+        ("RUN --link x", UNSUPPORTED),
+        ("COPY --other x /x", UNSUPPORTED),
         (
             f"RUN --network=none{BS}\n    --mount=type=bind,from=evil/img:latest,target=/x true",
             "from-not-allowed",
