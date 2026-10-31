@@ -30,7 +30,8 @@ DENIED_DST = {
     "64:ff9b::/96",
     "ff00::/8",
 }
-PLATFORM_DST = {"212.237.217.228/32", "172.17.0.0/16"}
+IP_LITERAL = ["-n", "^[0-9.]+$", "^[0-9a-f]*:[0-9a-f:.]*$", r"^\["]
+PLATFORM_INCLUDE = "/etc/squid/platform-dst.conf"
 HTTP_ACCESS = [
     "deny ip_literal",
     "deny deny_dst",
@@ -173,11 +174,24 @@ def test_proxy_denies_ip_literals_and_internal_ranges():
     acls = _directives(CONF / "squid.conf", "acl")
     denied = {c for r in acls if r[:2] == ["deny_dst", "dst"] for c in r[2:]}
     assert DENIED_DST <= denied
-    platform = {c for r in acls if r[:2] == ["platform_dst", "dst"] for c in r[2:]}
-    assert PLATFORM_DST <= platform
-    literal = [r for r in acls if r[:2] == ["ip_literal", "dstdom_regex"]]
-    assert literal and literal[0][2] == "-n"
+    literal = [r[2:] for r in acls if r[:2] == ["ip_literal", "dstdom_regex"]]
+    assert literal == [IP_LITERAL]
     assert not [r for r in acls if r[0] == "deny_dst" and r[1] != "dst"]
+
+
+def test_platform_destinations_come_from_an_operator_file_before_the_rules(services):
+    lines = [ln.split("#", 1)[0].split() for ln in (CONF / "squid.conf").read_text().splitlines()]
+    include = next(i for i, p in enumerate(lines) if p == ["include", PLATFORM_INCLUDE])
+    first_rule = next(i for i, p in enumerate(lines) if p[:1] == ["http_access"])
+    anchor = next(i for i, p in enumerate(lines) if p[:3] == ["acl", "platform_dst", "dst"])
+    assert anchor < include < first_rule
+    assert (
+        f"./a4-builder/platform-dst.conf:{PLATFORM_INCLUDE}:ro"
+        in services["egress-proxy"]["volumes"]
+    )
+    shipped = _directives(CONF / "platform-dst.conf", "acl")
+    assert not shipped, "host addresses are written per host, never shipped"
+    assert "212.237.217.228" not in "".join(p.read_text() for p in CONF.iterdir() if p.is_file())
 
 
 def test_proxy_http_access_order_is_exact():
@@ -212,7 +226,11 @@ def test_mirror_gate_allows_listed_bases_and_manifests_only_by_digest():
     assert match.group(2) == r"(manifests/sha256:[a-f0-9]{64}|blobs/sha256:[a-f0-9]{64})"
 
 
-def test_mirror_registry_is_pull_through_with_expiry():
+def test_mirror_registry_is_v3_pull_through_with_expiry(services):
+    # proxy.ttl exists only in distribution v3 (config under /etc/distribution); v2 drops it.
+    volumes = services["mirror"]["volumes"]
+    assert "./a4-builder/registry-config.yml:/etc/distribution/config.yml:ro" in volumes
+    assert "# registry:3." in COMPOSE.read_text()
     cfg = yaml.safe_load((CONF / "registry-config.yml").read_text())
     assert cfg["proxy"]["remoteurl"] == "https://registry-1.docker.io"
     assert cfg["proxy"]["ttl"] == "12h"
@@ -222,7 +240,10 @@ def test_mirror_registry_is_pull_through_with_expiry():
 def test_runbook_states_recycle_rules_and_network_limits():
     text = RUNBOOK.read_text()
     assert "--oci-worker-no-process-sandbox" in text and "destroyed after every build" in text
-    assert "up -d --force-recreate -V" in text
+    assert "up -d --force-recreate --no-deps -V buildkitd" in text
+    assert "--host-uds=none" in text
+    assert "-V` does nothing for the mirror" in text
+    assert "mktemp -d" in text and "shred -u" in text
     assert "network.host" in text
     assert "cache is full" in text
     assert "CONNECT 203.0.113.7:443" in text
