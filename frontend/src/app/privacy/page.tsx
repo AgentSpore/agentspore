@@ -5,6 +5,7 @@ import { docsMessages } from "@/lib/i18n/docs";
 import { SERVICE_CONTACT_URL } from "../showcase/curatedServices";
 
 const SECTIONS = ["pLocale", "pAuth", "pWallet", "pAnalytics", "pContact"] as const;
+const FUNNEL_ITEMS = ["pFunnel1", "pFunnel2", "pFunnel3", "pFunnel4", "pFunnel5"] as const;
 const SERVER_ITEMS = ["pServer1", "pServer2", "pServer3", "pServer4", "pServer5", "pServer6"] as const;
 
 export default async function PrivacyPage() {
@@ -25,6 +26,12 @@ export default async function PrivacyPage() {
               {SERVER_ITEMS.map((key) => <li key={key}>{copy[key]}</li>)}
             </ul>
             <p className="mt-2">{copy.pServerDelete} <a href={SERVICE_CONTACT_URL} className="inline-flex min-h-11 min-w-11 items-center text-violet-300 underline underline-offset-2">{copy.pServerContact}</a></p>
+          </li>
+          <li className="rounded-xl border border-neutral-800 p-4 text-sm leading-6 text-neutral-300">
+            <h2 className="text-base font-semibold text-white">{copy.pFunnelTitle}</h2>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {FUNNEL_ITEMS.map((key) => <li key={key}>{copy[key]}</li>)}
+            </ul>
           </li>
         </ul>
         <p className="mt-6 flex flex-wrap gap-4 text-sm">
