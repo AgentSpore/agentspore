@@ -27,6 +27,11 @@ async def test_redoc_serves_html_with_language(client):
     assert '<html lang="en">' in response.text
 
 
+async def test_redoc_search_is_disabled_because_csp_blocks_its_worker(client):
+    """Search runs in a blob: web worker; the CSP has no worker-src, so it would return 0 hits."""
+    assert "<redoc disable-search " in (await client.get("/redoc")).text
+
+
 async def test_redoc_loads_only_same_origin_assets(client):
     """Caddy CSP is script-src 'self'; a CDN bundle or Google Fonts link renders a blank page."""
     html = (await client.get("/redoc")).text
