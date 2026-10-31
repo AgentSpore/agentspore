@@ -211,6 +211,9 @@ def dockerfile_scanner(root: Path, body: str) -> DockerfileScanner:
         f"FROM python@{DIGEST} AS a\nRUN --mount=type=bind,from=a,target=/x true\n",
         f"FROM python@{DIGEST}\nRUN --mount=type=bind,from=img@{DIGEST},target=/x true\n",
         f"FROM python@{DIGEST}\n# escape is only a word here\n",
+        f"FROM python@{DIGEST}\nRUN --mount=type=cache,target=/root/.cache,sharing=locked true\n",
+        f"FROM python@{DIGEST}\nRUN --mount=type=bind,source=.,target=/x,ro true\n",
+        f"FROM python@{DIGEST}\nRUN --mount=type=bind,\\\n  target=/x \\\n  true\n",
         f"# comment\nFROM \\\n  python@{DIGEST}\n",
     ],
 )
@@ -232,26 +235,10 @@ async def test_dockerfile_allows(tmp_path, body):
         ),
         (
             f"FROM python@{DIGEST}\nRUN --mount=type=cache,target=/c,From=evil true\n",
-            "from-not-allowed",
+            "dockerfile-unsupported",
         ),
         (
             f"FROM python@{DIGEST}\nRUN --mount=type=bind,from=0,target=/x true\n",
-            "from-not-allowed",
-        ),
-        (
-            f'FROM python@{DIGEST}\nRUN --mount=type=bind,"from=evil/img:latest",target=/x true\n',
-            "from-not-allowed",
-        ),
-        (
-            f'FROM python@{DIGEST}\nRUN --mount="from=evil/img:latest,target=/x" true\n',
-            "from-not-allowed",
-        ),
-        (
-            f'FROM python@{DIGEST}\nRUN --mount=type=bind,"FROM = evil/img:1",target=/x true\n',
-            "from-not-allowed",
-        ),
-        (
-            f'FROM python@{DIGEST}\nRUN --mount=type=bind,"from=evil/img:latest\n',
             "from-not-allowed",
         ),
         ("FROM 0\n", "from-not-allowed"),
@@ -269,6 +256,37 @@ async def test_dockerfile_rejects(tmp_path, body, rule):
     with pytest.raises(DeployRejectedError) as exc:
         await run_prescan(tmp_path, [DockerfileScanner(frozenset({DIGEST}))])
     assert exc.value.reason_code == "base_not_allowed"
+
+
+UNSUPPORTED = "dockerfile-unsupported"
+BS = "\\"  # one backslash
+
+
+@pytest.mark.parametrize(
+    ("instruction", "rule"),
+    [
+        ('RUN --mount=type=bind,"from=evil/img:latest",target=/x true', UNSUPPORTED),
+        ('RUN --mount="from=evil/img:latest,target=/x" true', UNSUPPORTED),
+        ('RUN --mount=type=bind,"FROM = evil/img:1",target=/x true', UNSUPPORTED),
+        ('RUN --mount=type=bind,"from=evil/img:latest', UNSUPPORTED),
+        ("RUN --mount=type=bind,'from=evil/img:latest',target=/x true", UNSUPPORTED),
+        ('RUN --mount=type=bind,fr"om"=evil/img:latest,target=/x true', UNSUPPORTED),
+        (f"RUN --mount=type=bind,f{BS}rom=evil/img:latest,target=/x true", UNSUPPORTED),
+        (f"RUN --mount=type=bind,{BS}\nfrom=evil/img:latest,target=/x true", "from-not-allowed"),
+        (f"RUN --mount=type=bind,{BS}\n# note\nfrom=evil/img:latest,target=/x", "from-not-allowed"),
+        (f"RUN --mount=type=bind,{BS}\n\nfrom=evil/img:latest,target=/x true", "from-not-allowed"),
+        ("RUN --mount=type=bind,From=evil/img:latest,target=/x true", UNSUPPORTED),
+        ("RUN --mount=type=bind,bogus=1,target=/x true", UNSUPPORTED),
+        ("RUN --mount=type=weird,target=/x true", UNSUPPORTED),
+        ("RUN --mount=type=bind,target=/x,,from=a true", UNSUPPORTED),
+        ("RUN --mount=type=bind,target=${T} true", UNSUPPORTED),
+        ("COPY --from='evil/img:1' /a /b", UNSUPPORTED),
+    ],
+)
+async def test_dockerfile_flags_outside_the_strict_grammar_are_refused(tmp_path, instruction, rule):
+    body = f"FROM python@{DIGEST}\n{instruction}\n"
+    findings = await dockerfile_scanner(tmp_path, body).scan(tmp_path)
+    assert [f.rule_id for f in findings] == [rule]
 
 
 async def test_dockerfile_missing(tmp_path):
