@@ -26,7 +26,7 @@ it('keeps an unknown heartbeat state as written', () => {
   expect(container.querySelector('p.break-words')?.textContent).toContain('working');
 });
 
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it('fades the clipped bottom row only while more rows are scrollable', () => {
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(100);
@@ -74,5 +74,4 @@ it('re-syncs the fade on resize when the region mounts after the skeleton', () =
   scrollHeight = 500;
   act(() => fire?.());
   expect(region.dataset.moreBelow).toBe('true');
-  vi.unstubAllGlobals();
 });
