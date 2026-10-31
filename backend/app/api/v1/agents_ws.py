@@ -43,6 +43,11 @@ async def authenticate_ws(
         return None
     key_hash = AgentService.hash_api_key(api_key)
     agent = await AgentRepository(db).get_agent_by_api_key_hash(key_hash)
+    # INVARIANT: the WS/SSE endpoint keeps this session for the whole connection;
+    # without ending the autobegun transaction the backend stays
+    # "idle in transaction" for as long as the agent is connected, which
+    # blocks CREATE INDEX CONCURRENTLY.
+    await db.commit()
     return agent
 
 
