@@ -4,6 +4,5 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends squid-openssl=6.14-0ubuntu0.24.04.5 openssl \
     && rm -rf /var/lib/apt/lists/*
 COPY squid-entrypoint.sh /usr/local/bin/squid-entrypoint.sh
-COPY sni-present.sh /usr/local/bin/sni-present.sh
 USER proxy
 ENTRYPOINT ["/usr/local/bin/squid-entrypoint.sh"]

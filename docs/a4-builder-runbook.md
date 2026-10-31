@@ -11,7 +11,7 @@ compose project; the existing platform stack is not changed by it.
 | `buildkitd` | rootless BuildKit under gVisor (`runtime: runsc`), 1 CPU, 2 GiB, `pids_limit` 512, no host socket, state in an anonymous volume, mTLS-only listener | `a4-builder` (internal) |
 | `mirror-gate` | nginx allowlist in front of the mirror: GET/HEAD of manifests and blobs addressed by `sha256:` digest (tags get 403) for `library/{python,node,golang,rust,alpine,debian,busybox}` only | `a4-builder`, `a4-mirror-back` |
 | `mirror` | `registry:3` (distribution v3.0.0) pull-through cache of Docker Hub, `proxy.ttl` 12 h | `a4-mirror-back`, `a4-upstream` |
-| `egress-proxy` | squid-openssl (built from `Dockerfile.squid`): HTTPS CONNECT to `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `proxy.golang.org`, `crates.io` (plus `index.`/`static.crates.io` for cargo), and the TLS SNI must name one of them too, a missing SNI is terminated (peek and splice, no interception). IP-literal hosts, private, link-local, multicast, reserved ranges, and this host's own addresses (`platform-dst.conf`) are denied | `a4-builder`, `a4-upstream` |
+| `egress-proxy` | squid-openssl (built from `Dockerfile.squid`): HTTPS CONNECT to `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `proxy.golang.org`, `crates.io` (plus `index.`/`static.crates.io` for cargo), and the TLS SNI must name one of them too, (peek and splice, no interception). IP-literal hosts, private, link-local, multicast, reserved ranges, and this host's own addresses (`platform-dst.conf`) are denied | `a4-builder`, `a4-upstream` |
 
 `a4-builder` and `a4-mirror-back` are `internal`: `buildkitd` has no route to the internet or to
 platform networks. `docker.io` in `buildkitd.toml` is mirrored to `mirror-gate:5000`, so base images
@@ -90,8 +90,7 @@ with it the previous untrusted build's cache; never use it.
 
 ## Rollback
 
-`$C down -v`. Nothing on the existing stack changes; the networks `a4-builder`, `a4-mirror-back`
-and `a4-upstream` go with it. To remove the files, revert the PR.
+`$C down -v` removes the stack and its networks (`a4-builder`, `a4-mirror-back`, `a4-upstream`); revert the PR to remove the files.
 
 ## Smoke checks
 
@@ -113,8 +112,6 @@ probe 'printf "CONNECT <this host public IP>:443 HTTP/1.1\r\n\r\n" | nc egress-p
 # SNI checks (probe needs curl and openssl: use the built a4-builder/squid-openssl:local for s_client)
 curl -x http://egress-proxy:3128 https://pypi.org/simple/ -o /dev/null -w '%{http_code}'   # 200
 openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -servername example.com    # fails: unexpected eof
-openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -servername www.fastly.com # fails
-openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -noservername              # fails: no SNI is terminated
 openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -servername pypi.org       # handshakes
 docker run --rm --entrypoint sh a4-builder/squid-openssl:local -c 'squid -v | head -1'   # Squid Cache: Version 6.14
 probe 'wget -q -T 5 -O /dev/null http://1.1.1.1'                    # fails: Network unreachable
@@ -128,12 +125,14 @@ Static hardening is asserted by `python -m pytest backend/tests/test_a4_builder_
 
 ## Accepted residual risk
 
-Until the package mirrors below exist, the generic proxy leaves three gaps; the production flag
+Until the package mirrors below exist, the generic proxy leaves four gaps; the production flag
 (`A4_DEPLOY_ENABLED`) stays off until they are closed.
-- Host-header domain fronting: SNI and CONNECT host name an allowed site, but the HTTP `Host`
-  header inside the TLS stream can address another site served by the same CDN edge.
+- Host-header domain fronting: the HTTP `Host` header inside the TLS stream can address another
+  site on the same CDN edge.
+- ClientHello without SNI is matched against the CONNECT target, so `-noservername` is spliced, not
+  refused. A helper-based check fails open when its queue is full or the helper dies, so none is used.
 - Encrypted Client Hello (ECH): squid 6 cannot inspect it. The outer SNI can name an allowed host
-  while the inner SNI names another co-tenant of the same CDN. Closed by P3c; the flag stays off until then.
+  while the inner SNI names another co-tenant of the same CDN.
 - Uploads: allowed hosts accept writes (PyPI, npm and similar), so a `RUN` can publish data there.
 
 Closure is phase P3c: replace the generic proxy with package mirrors (devpi, verdaccio, Athens, a
@@ -141,6 +140,8 @@ crates mirror) that serve read-only and reject everything else.
 
 ## Known limits
 
+- `squid-openssl` is pinned in `Dockerfile.squid`. On `Version ... not found`, run `apt-cache policy
+  squid-openssl` in the pinned base image, set the pin to the candidate, rebuild, repeat the smoke checks.
 - The 4 GiB build-disk and 10 minute limits are enforced by the builder (P3b), not by compose.
 - `buildkitd` under `runsc` is not exercised by CI; check it on the stand before enabling
   `A4_DEPLOY_ENABLED`.

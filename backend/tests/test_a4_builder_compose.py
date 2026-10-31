@@ -42,7 +42,7 @@ HTTP_ACCESS = [
     "allow CONNECT egress_ok SSL_ports",
     "deny all",
 ]
-SSL_BUMP = ["peek step1", "terminate step2 !sni_present", "splice allowed_sni", "terminate all"]
+SSL_BUMP = ["peek step1", "splice allowed_sni", "terminate all"]
 MIRROR_BASES = {"python", "node", "golang", "rust", "alpine", "debian", "busybox"}
 MIRROR_LOCATIONS = ["= /v2/", "~ MIRROR_REGEX", "/"]
 BUILDKITD_COMMAND = [
@@ -189,26 +189,19 @@ def test_proxy_checks_tls_sni_by_peek_and_splice_without_interception():
     acls = _directives(conf, "acl")
     assert ["step1", "at_step", "SslBump1"] in acls
     sni = [r for r in acls if r[:2] == ["allowed_sni", "ssl::server_name"]]
-    # Without --client-requested a missing SNI falls back to the CONNECT target and matches.
+    # --client-requested pins the name to the SNI; no SNI still falls back to the CONNECT target.
     assert len(sni) == 1 and sni[0][2] == "--client-requested"
     assert set(sni[0][3:]) == EGRESS_DOMAINS
-    # server_name never yields "none" (CONNECT-target fallback): the helper sees the SNI.
-    assert ["step2", "at_step", "SslBump2"] in acls
-    assert ["sni_present", "external", "sni_check"] in acls
-    helper = next(r for r in _directives(conf, "external_acl_type") if r[0] == "sni_check")
-    assert "%ssl::>sni" in helper and helper[-1] == "/usr/local/bin/sni-present.sh"
-    assert "ttl=0" in helper and "negative_ttl=0" in helper
+    assert not _directives(conf, "external_acl_type")
+    assert not (CONF / "sni-present.sh").exists()
 
 
-def test_sni_helper_rejects_absent_sni_and_is_shipped_in_the_image():
-    script = CONF / "sni-present.sh"
-    lines = "- -\n\npypi.org -\npypi.org -\n"
-    run = subprocess.run(
-        ["sh", str(script)], input=lines, capture_output=True, text=True, timeout=10
-    )
-    assert run.stdout.split() == ["ERR", "ERR", "OK", "OK"]
-    dockerfile = (CONF / "Dockerfile.squid").read_text()
-    assert "COPY sni-present.sh /usr/local/bin/sni-present.sh" in dockerfile
+def test_ssl_bump_uses_only_fast_acls():
+    # A slow (external) ACL answering DUNNO (queue full, helper dead) makes squid splice.
+    conf = CONF / "squid.conf"
+    external = {r[0] for r in _directives(conf, "acl") if len(r) > 1 and r[1] == "external"}
+    for rule in _directives(conf, "ssl_bump"):
+        assert not external & {w.lstrip("!") for w in rule}, rule
 
 
 def test_squid_is_pinned_to_an_exact_version():
@@ -321,5 +314,6 @@ def test_runbook_records_p3b_rules_residual_risk_and_sni_checks():
     assert "domain fronting" in text and "P3c" in text and "devpi" in text
     assert "-servername example.com" in text
     assert "platform-dst.conf.example" in text
-    assert "-noservername" in text and "squid -v" in text
+    assert "-noservername" in text and "squid -v" in text and "apt-cache policy" in text
+    assert "without SNI is matched against the CONNECT target" in text
     assert re.search(r"\bECH\b", text) and "inner SNI" in text
