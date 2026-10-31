@@ -53,6 +53,8 @@ PAGE_PREFIXES = (
 )
 DEDUP_TTL = 48 * 3600
 RATE_WINDOW = 60
+SALT_GRACE = 3600
+IP_DAILY_CAP = 20
 
 
 class FunnelService:
@@ -91,26 +93,32 @@ class FunnelService:
         except (SQLAlchemyError, OSError) as exc:
             logger.warning("funnel record failed: step={} err={}", step, type(exc).__name__)
 
-    async def _visitor_hash(self, ip: str, ua: str) -> tuple[str, str] | None:
-        """Return (day tag, HMAC) under today's salt; rotate (delete) yesterday's."""
+    async def _salted(self, ip: str, ua: str) -> tuple[str, str, str] | None:
+        """Return (day tag, HMAC(IP), HMAC(IP+UA)) under today's salt.
+
+        The salt lives until the next UTC midnight plus a grace hour and then expires on its own.
+        """
         now = datetime.now(timezone.utc)
         tag = f"{now:%Y%m%d}"
         salt_key = f"funnel:salt:{tag}"
-        await self.redis.set(salt_key, secrets.token_hex(16), ex=DEDUP_TTL, nx=True)
-        await self.redis.delete(f"funnel:salt:{now - timedelta(days=1):%Y%m%d}")
+        midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        ttl = int((midnight - now).total_seconds()) + SALT_GRACE
+        await self.redis.set(salt_key, secrets.token_hex(16), ex=ttl, nx=True)
         salt = await self.redis.get(salt_key)
         if not salt:
             return None
-        digest = hmac.new(salt.encode(), f"{ip}|{ua}".encode(), hashlib.sha256).hexdigest()
-        return tag, digest
+        key = salt.encode()
+        ip_hash = hmac.new(key, ip.encode(), hashlib.sha256).hexdigest()
+        visitor_hash = hmac.new(key, f"{ip}|{ua}".encode(), hashlib.sha256).hexdigest()
+        return tag, ip_hash, visitor_hash
 
     async def allow(self, ip: str, ua: str, limit: int) -> bool:
-        """Per-visitor rate limit keyed by the salted hash. Redis trouble: fail open."""
+        """Per-IP rate limit keyed by the salted IP hash. Redis trouble: fail open."""
         try:
-            hashed = await self._visitor_hash(ip, ua)
-            if hashed is None:
+            salted = await self._salted(ip, ua)
+            if salted is None:
                 return True
-            key = f"funnel:rl:{hashed[1]}"
+            key = f"funnel:rl:{salted[1]}"
             hits = await self.redis.incr(key)
             if hits == 1:
                 await self.redis.expire(key, RATE_WINDOW)
@@ -119,20 +127,25 @@ class FunnelService:
             return True
 
     async def record_unique(self, step: str, source: str, ip: str, ua: str) -> bool:
-        """Count once per visitor per UTC day. Redis down: not counted."""
+        """Count once per visitor per day, at most IP_DAILY_CAP per IP. Redis down: not counted."""
         try:
-            hashed = await self._visitor_hash(ip, ua)
-            if hashed is None:
+            salted = await self._salted(ip, ua)
+            if salted is None:
                 return False
-            tag, digest = hashed
+            tag, ip_hash, digest = salted
             seen_key = f"funnel:seen:{tag}:{step}"
             # redis-py stubs type sadd as a sync/async union
             added = await self.redis.sadd(seen_key, digest)  # ty: ignore[invalid-await]
             await self.redis.expire(seen_key, DEDUP_TTL)
+            if not added:
+                return False
+            cap_key = f"funnel:ipcap:{tag}:{step}:{ip_hash}"
+            used = await self.redis.incr(cap_key)
+            await self.redis.expire(cap_key, DEDUP_TTL)
+            if used > IP_DAILY_CAP:
+                return False
         except (RedisError, OSError) as exc:
             logger.warning("funnel dedup unavailable: {}", type(exc).__name__)
-            return False
-        if not added:
             return False
         await self.record(step, source)
         return True

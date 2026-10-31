@@ -20,6 +20,7 @@ from app.core.security import (
     verify_password,
 )
 from app.models import User
+from app.repositories.funnel_repo import FunnelRepository
 from app.schemas.auth import (
     ForgotPasswordRequest,
     RegisterResponse,
@@ -31,7 +32,6 @@ from app.schemas.auth import (
     UserResponse,
 )
 from app.services.email_service import EmailService, get_email_service
-from app.services.funnel_service import FunnelService
 
 from loguru import logger
 
@@ -115,7 +115,7 @@ async def register(
     )
     db.add(user)
     await db.flush()
-    await FunnelService(redis).record("user_register")
+    await FunnelRepository(db).count_event("user_register")
 
     # Persist token in Redis (authoritative TTL)
     await redis.setex(

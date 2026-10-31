@@ -1,5 +1,6 @@
 """F1 funnel: aggregate-only counters over real PostgreSQL and Redis."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -22,6 +23,7 @@ from app.core.database import get_db
 from app.repositories.agent_repo import AgentRepository
 from app.services.funnel_service import FunnelService
 
+MIGRATION_DIR = Path(__file__).resolve().parents[2] / "db/migrations"
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 MIGRATIONS = (
     "V1__init_schema.sql",
@@ -77,7 +79,7 @@ async def sessions(pg):
             driver = (await db.get_raw_connection()).driver_connection
             assert driver is not None
             for name in MIGRATIONS:
-                path = Path(__file__).resolve().parents[2] / "db/migrations" / name
+                path = MIGRATION_DIR / name
                 await driver.execute(path.read_text())
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
@@ -164,16 +166,48 @@ async def test_visit_dedup_same_day_salt_rotation(app, sessions, redis):
         async with visitor(app, ip="203.0.113.6") as c2:
             await visit(c2)
         assert await rows(sessions) == [("visit", "direct", 2)]
-        # new UTC day: salt and dedup set of the old day are gone, same visitor counts again
+        # a new UTC day brings a new salt: the same visitor counts again
         today = utc_today()
-        yesterday = today - timedelta(days=1)
         await redis.flushdb()
-        await redis.set(f"funnel:salt:{yesterday:%Y%m%d}", "old")
         await visit(c)
-        assert await redis.exists(f"funnel:salt:{yesterday:%Y%m%d}") == 0
         assert await redis.exists(f"funnel:salt:{today:%Y%m%d}") == 1
         ttl = await redis.ttl(f"funnel:seen:{today:%Y%m%d}:visit")
         assert 0 < ttl <= 48 * 3600
+
+
+async def test_salt_expires_at_next_utc_midnight_plus_grace(app, redis):
+    async with visitor(app) as c:
+        await visit(c)
+    now = datetime.now(timezone.utc)
+    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    ttl = await redis.ttl(f"funnel:salt:{now:%Y%m%d}")
+    assert 0 < ttl <= (midnight - now).total_seconds() + 3600 + 5
+    assert ttl > (midnight - now).total_seconds() - 5
+
+
+async def test_user_agent_rotation_cannot_exceed_daily_ip_cap(app, sessions, monkeypatch):
+    monkeypatch.setattr(get_settings(), "funnel_visit_rate_limit", 1000)
+    async with visitor(app) as c:
+        for n in range(30):
+            r = await c.post(
+                "/api/v1/funnel/visit", json={"path": "/"}, headers={"User-Agent": f"ua-{n}"}
+            )
+            assert r.status_code == 204
+    assert await rows(sessions) == [("visit", "direct", 20)]
+
+
+async def test_rate_limit_is_per_ip_not_per_user_agent(app, monkeypatch):
+    monkeypatch.setattr(get_settings(), "funnel_visit_rate_limit", 3)
+    async with visitor(app) as c:
+        codes = [
+            (
+                await c.post(
+                    "/api/v1/funnel/visit", json={"path": "/"}, headers={"User-Agent": f"ua-{n}"}
+                )
+            ).status_code
+            for n in range(5)
+        ]
+    assert codes == [204, 204, 204, 429, 429]
 
 
 @pytest.mark.parametrize(
@@ -253,6 +287,84 @@ async def test_project_first_push_counted_once(sessions):
         async with sessions.begin() as db:
             await AgentRepository(db).record_commit_shas(agent_id, [sha], project_id=project_id)
     assert await rows(sessions) == [("project_first_push", "direct", 1)]
+
+
+async def seed_project(sessions, agent_id, project_id):
+    async with sessions.begin() as db:
+        await db.execute(
+            text("INSERT INTO projects (id, title, creator_agent_id) VALUES (:p, 't', :a)"),
+            {"p": project_id, "a": agent_id},
+        )
+
+
+async def heartbeat(sessions, agent_id):
+    async with sessions.begin() as db:
+        await AgentRepository(db).update_heartbeat(agent_id)
+
+
+async def push(sessions, agent_id, project_id, sha):
+    async with sessions.begin() as db:
+        await AgentRepository(db).record_commit_shas(agent_id, [sha], project_id=project_id)
+
+
+async def test_concurrent_first_heartbeats_count_once(sessions):
+    """B starts while A's transaction still holds the agent row uncommitted."""
+    agent_id = uuid4()
+    await seed_agent(sessions, agent_id)
+    async with sessions.begin() as first_tx:
+        await AgentRepository(first_tx).update_heartbeat(agent_id)
+        racer = asyncio.create_task(heartbeat(sessions, agent_id))
+        await asyncio.sleep(0.5)
+    await racer
+    assert await rows(sessions) == [("agent_first_heartbeat", "direct", 1)]
+
+
+async def test_concurrent_first_pushes_count_once(sessions):
+    agent_id, project_id = uuid4(), uuid4()
+    await seed_agent(sessions, agent_id)
+    await seed_project(sessions, agent_id, project_id)
+    await asyncio.gather(*(push(sessions, agent_id, project_id, f"sha{n}") for n in range(4)))
+    assert await rows(sessions) == [("project_first_push", "direct", 1)]
+
+
+async def test_funnel_write_failure_keeps_heartbeat_and_push(sessions):
+    agent_id, project_id = uuid4(), uuid4()
+    await seed_agent(sessions, agent_id)
+    await seed_project(sessions, agent_id, project_id)
+    async with sessions.begin() as db:
+        await db.execute(text("DROP TABLE funnel_daily"))
+    await heartbeat(sessions, agent_id)
+    await push(sessions, agent_id, project_id, "sha1")
+    async with sessions() as db:
+        assert await db.scalar(text("SELECT last_heartbeat IS NOT NULL FROM agents")) is True
+        assert (
+            await db.scalar(
+                text("SELECT count(*) FROM agent_activity WHERE action_type = 'code_commit'")
+            )
+            == 1
+        )
+
+
+async def test_backfill_keeps_preexisting_pushed_project_out_of_funnel(sessions):
+    agent_id, project_id = uuid4(), uuid4()
+    await seed_agent(sessions, agent_id)
+    await seed_project(sessions, agent_id, project_id)
+    async with sessions.begin() as db:
+        await db.execute(text("DROP TABLE funnel_daily"))
+        await db.execute(text("ALTER TABLE projects DROP COLUMN first_pushed_at"))
+        await db.execute(
+            text(
+                "INSERT INTO agent_activity (agent_id, project_id, action_type, description, "
+                "metadata, created_at) VALUES (:a, :p, 'code_commit', 'old', "
+                "'{\"commit_sha\": \"old1\"}', NOW() - INTERVAL '30 days')"
+            ),
+            {"a": agent_id, "p": project_id},
+        )
+        driver = (await (await db.connection()).get_raw_connection()).driver_connection
+        assert driver is not None
+        await driver.execute((MIGRATION_DIR / "V109__funnel_daily.sql").read_text())
+    await push(sessions, agent_id, project_id, "new1")
+    assert await rows(sessions) == []
 
 
 async def test_skill_fetch_deduped_per_visitor(svc, sessions):
