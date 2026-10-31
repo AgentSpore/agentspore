@@ -39,7 +39,7 @@ def test_registry_runs_as_non_root_and_the_volume_is_chowned_first(stack, svc):
     assert svc["user"] == "1000:1000"
     init = stack["services"]["a4-registry-init"]
     assert init["image"] == svc["image"]
-    assert init["entrypoint"] == ["chown", "1000:1000", "/var/lib/registry"]
+    assert init["entrypoint"] == ["chown", "-R", "1000:1000", "/var/lib/registry"]
     assert init["network_mode"] == "none"
     assert init["cap_drop"] == ["ALL"] and init["cap_add"] == ["CHOWN"]
     assert svc["depends_on"]["a4-registry-init"]["condition"] == "service_completed_successfully"
