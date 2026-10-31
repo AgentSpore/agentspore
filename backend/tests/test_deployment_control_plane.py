@@ -34,7 +34,9 @@ MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 def deployment_postgres() -> Iterator[PostgresContainer]:
     """Own one bounded test database; never reuse or stop another container."""
     container = PostgresContainer("postgres:16-alpine").with_kwargs(
-        mem_limit="192m", memswap_limit="192m", nano_cpus=500_000_000,
+        mem_limit="192m",
+        memswap_limit="192m",
+        nano_cpus=500_000_000,
         pids_limit=128,
     )
     with container as postgres:
@@ -53,7 +55,11 @@ async def deployment_engine(deployment_postgres) -> AsyncIterator[AsyncEngine]:
     migrations = [path for path in versioned if int(path.name.split("__")[0][1:]) <= 90]
     migrations += [
         MIGRATIONS / name
-        for name in ("V92__service_usage.sql", "V94__project_deployments.sql")
+        for name in (
+            "V92__service_usage.sql",
+            "V94__project_deployments.sql",
+            "V107__project_deployments_quota_identity.sql",
+        )
         if (MIGRATIONS / name).is_file()
     ]
     migrations += sorted(MIGRATIONS.glob("R__*.sql"))
@@ -84,18 +90,29 @@ async def deployment_project(deployment_session) -> dict[str, str]:
     for role, key in keys.items():
         agent_id = owner_id if role == "owner" else str(uuid4())
         await deployment_session.execute(
-            text("INSERT INTO agents (id, name, handle, api_key_hash) "
-                 "VALUES (:id, :name, :handle, :hash)"),
-            {"id": agent_id, "name": f"A4-{agent_id}",
-             "handle": f"a4-{agent_id}", "hash": AgentService.hash_api_key(key)},
+            text(
+                "INSERT INTO agents (id, name, handle, api_key_hash) "
+                "VALUES (:id, :name, :handle, :hash)"
+            ),
+            {
+                "id": agent_id,
+                "name": f"A4-{agent_id}",
+                "handle": f"a4-{agent_id}",
+                "hash": AgentService.hash_api_key(key),
+            },
         )
     await deployment_session.execute(
-        text("INSERT INTO projects "
-             "(id, title, creator_agent_id, repo_url, deploy_url, status) "
-             "VALUES (:id, 'A4 fixture', :owner, :repo, :url, 'deployed')"),
-        {"id": project_id, "owner": owner_id,
-         "repo": "https://github.com/AgentSpore/a4-trusted-fixture",
-         "url": f"https://a4-{project_id}.agentspore.com"},
+        text(
+            "INSERT INTO projects "
+            "(id, title, creator_agent_id, repo_url, deploy_url, status) "
+            "VALUES (:id, 'A4 fixture', :owner, :repo, :url, 'deployed')"
+        ),
+        {
+            "id": project_id,
+            "owner": owner_id,
+            "repo": "https://github.com/AgentSpore/a4-trusted-fixture",
+            "url": f"https://a4-{project_id}.agentspore.com",
+        },
     )
     await deployment_session.commit()
     return {"id": project_id, **keys, "invalid": uuid4().hex}
@@ -124,7 +141,7 @@ async def deployment_client(deployment_engine) -> AsyncIterator[AsyncClient]:
 @pytest.mark.parametrize(
     "admission",
     [
-        pytest.param(("owner", "a" * 40, 503), id="owner-no-isolation-fails-closed"),
+        pytest.param(("owner", "a" * 40, 503), id="owner-flag-off-fails-closed"),
         pytest.param(("outsider", "a" * 40, 403), id="non-owner-before-isolation"),
         pytest.param(("owner", "refs/heads/main", 422), id="branch-is-not-a-pinned-sha"),
         pytest.param(("owner", "a" * 39, 422), id="truncated-sha-rejected"),
@@ -132,20 +149,27 @@ async def deployment_client(deployment_engine) -> AsyncIterator[AsyncClient]:
     ],
 )
 async def test_deploy_admission_preserves_active_project(
-    deployment_client, deployment_project, deployment_session,
+    deployment_client,
+    deployment_project,
+    deployment_session,
     admission: tuple[str, str, int],
 ) -> None:
     """Reject unsafe admission without announcing or replacing a deployment."""
     identity, commit_sha, expected_status = admission
     project_id = deployment_project["id"]
-    before = (await deployment_session.execute(
-        text("SELECT deploy_url, status FROM projects WHERE id = :id"),
-        {"id": project_id},
-    )).mappings().one()
+    before = (
+        (
+            await deployment_session.execute(
+                text("SELECT deploy_url, status FROM projects WHERE id = :id"),
+                {"id": project_id},
+            )
+        )
+        .mappings()
+        .one()
+    )
     response = await deployment_client.post(
         f"/api/v1/agents/projects/{project_id}/deploy",
-        headers={"X-API-Key": deployment_project[identity],
-                 "Idempotency-Key": str(uuid4())},
+        headers={"X-API-Key": deployment_project[identity], "Idempotency-Key": str(uuid4())},
         json={"commit_sha": commit_sha},
     )
     assert response.status_code == expected_status
@@ -153,8 +177,14 @@ async def test_deploy_admission_preserves_active_project(
     assert body.get("status") != "deployed"
     assert "deployment_id" not in body
     assert "deploy_url" not in body
-    after = (await deployment_session.execute(
-        text("SELECT deploy_url, status FROM projects WHERE id = :id"),
-        {"id": project_id},
-    )).mappings().one()
+    after = (
+        (
+            await deployment_session.execute(
+                text("SELECT deploy_url, status FROM projects WHERE id = :id"),
+                {"id": project_id},
+            )
+        )
+        .mappings()
+        .one()
+    )
     assert dict(after) == dict(before)

@@ -8,10 +8,12 @@ from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.repositories.deployment_quota import check_quotas
 from app.schemas.deployments import (
     DeploymentEnqueue,
     DeploymentLease,
     DeploymentRecoverySnapshot,
+    QuotaLimits,
     SandboxNamespaceAbsenceProof,
     SandboxStopProof,
 )
@@ -27,7 +29,9 @@ class DeploymentRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def enqueue(self, request: DeploymentEnqueue) -> UUID:
+    async def enqueue(
+        self, request: DeploymentEnqueue, limits: QuotaLimits = QuotaLimits()
+    ) -> UUID:
         """Deduplicate under the project lock and preserve hostname reservations."""
         project = (
             (
@@ -81,28 +85,81 @@ class DeploymentRepository:
         )
         if unfinished is not None:
             raise DeploymentConflictError("deployment_in_progress")
-        await self.db.execute(
-            text(
-                "INSERT INTO service_hostnames (handle, original_project_id) "
-                "VALUES (:handle, :project_id) ON CONFLICT DO NOTHING"
-            ),
-            {"handle": f"p-{request.project_id.hex}", "project_id": request.project_id},
-        )
-        reservation = await self.db.scalar(
-            text("SELECT handle FROM service_hostnames WHERE original_project_id = :project_id"),
-            params,
-        )
+        await check_quotas(self.db, request.project_id, limits)
+        reservation = await self._book_handle(request)
         if reservation is None:
             raise DeploymentConflictError("hostname_conflict")
         inserted = await self.db.execute(
             text(
-                "INSERT INTO project_deployments "
-                "(project_id, idempotency_key, commit_sha, repository_url) "
-                "VALUES (:project_id, :idempotency_key, :commit_sha, :repository_url) RETURNING id"
+                "INSERT INTO project_deployments (project_id, idempotency_key, commit_sha, "
+                "repository_url, creator_agent_id, owner_user_id) "
+                "SELECT p.id, :idempotency_key, :commit_sha, :repository_url, "
+                "p.creator_agent_id, a.owner_user_id FROM projects p "
+                "JOIN agents a ON a.id = p.creator_agent_id WHERE p.id = :project_id RETURNING id"
             ),
             params,
         )
         return inserted.scalar_one()
+
+    async def _book_handle(self, request: DeploymentEnqueue) -> str | None:
+        """Permanent booking: the project slug if free, else `p-<project hex>`."""
+        for handle in (request.handle_candidate, f"p-{request.project_id.hex}"):
+            if handle is None:
+                continue
+            await self.db.execute(
+                text(
+                    "INSERT INTO service_hostnames (handle, original_project_id) "
+                    "VALUES (:handle, :project_id) ON CONFLICT DO NOTHING"
+                ),
+                {"handle": handle, "project_id": request.project_id},
+            )
+            reservation = await self.db.scalar(
+                text("SELECT handle FROM service_hostnames WHERE original_project_id = :id"),
+                {"id": request.project_id},
+            )
+            if reservation is not None:
+                return reservation
+        return None
+
+    async def deployment_status(self, deployment_id: UUID) -> str:
+        """Stored status of one deployment."""
+        return await self.db.scalar(
+            text("SELECT status FROM project_deployments WHERE id = :id"), {"id": deployment_id}
+        )
+
+    async def status_view(
+        self, project_id: UUID
+    ) -> tuple[UUID | None, str | None, list[RowMapping]]:
+        """Active revision, its hostname and the last five deployments."""
+        route = (
+            (
+                await self.db.execute(
+                    text(
+                        "SELECT active_revision, handle FROM service_routes WHERE project_id = :id"
+                    ),
+                    {"id": project_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        rows = (
+            (
+                await self.db.execute(
+                    text(
+                        "SELECT id, status, reason_code, commit_sha, created_at "
+                        "FROM project_deployments WHERE project_id = :id "
+                        "ORDER BY created_at DESC, id DESC LIMIT 5"
+                    ),
+                    {"id": project_id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if route is None:
+            return None, None, list(rows)
+        return route["active_revision"], route["handle"], list(rows)
 
     async def _slot(self) -> RowMapping:
         return (
