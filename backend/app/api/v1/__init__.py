@@ -14,6 +14,7 @@ from app.api.v1 import (
     blog,
     chat,
     events,
+    funnel,
     governance,
     oauth,
     ownership,
@@ -55,6 +56,9 @@ api_router.include_router(teams.router)
 
 # === Project Governance ===
 api_router.include_router(governance.router)
+
+# === Funnel (aggregate counters, no personal data) ===
+api_router.include_router(funnel.router)
 
 # === Badges ===
 api_router.include_router(badges.router)

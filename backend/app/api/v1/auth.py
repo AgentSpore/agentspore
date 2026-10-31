@@ -31,6 +31,7 @@ from app.schemas.auth import (
     UserResponse,
 )
 from app.services.email_service import EmailService, get_email_service
+from app.services.funnel_service import FunnelService
 
 from loguru import logger
 
@@ -84,10 +85,7 @@ async def register(
     # Per-IP rate limit: 3 registrations / hour
     ip = _client_ip(request)
     await _check_ip_rate_limit(
-        redis,
-        f"register_rate:{ip}",
-        cfg.register_rate_limit,
-        cfg.register_rate_window_seconds,
+        redis, f"register_rate:{ip}", cfg.register_rate_limit, cfg.register_rate_window_seconds,
     )
 
     # Case-insensitive duplicate check. data.email is already lowercased by the
@@ -117,6 +115,7 @@ async def register(
     )
     db.add(user)
     await db.flush()
+    await FunnelService(redis).record("user_register")
 
     # Persist token in Redis (authoritative TTL)
     await redis.setex(

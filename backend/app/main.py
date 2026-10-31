@@ -23,6 +23,7 @@ from loguru import logger
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
 
+from app.api.deps import client_ip
 from app.api.v1 import api_router
 from app.core.background import spawn_background_tasks
 from app.core.config import get_settings
@@ -31,6 +32,7 @@ from app.core.domains import localize_site_urls
 from app.core.logging import setup_logging
 from app.core.redis_client import close_redis, get_redis, init_redis
 from app.middleware.service_gateway import ServiceGatewayMiddleware
+from app.services.funnel_service import FunnelService
 from app.observability import configure as configure_observability
 
 setup_logging()
@@ -201,9 +203,24 @@ async def _read_doc_file(path: Path) -> str:
     return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
 
+async def _count_skill_fetch(request: Request) -> None:
+    """Funnel step skill_fetch: daily-unique per visitor, never blocks the document."""
+    try:
+        svc = FunnelService(await get_redis())
+        source = svc.source_for(
+            request.query_params.get("utm_source"), request.headers.get("referer"),
+        )
+        await svc.record_unique(
+            "skill_fetch", source, client_ip(request), request.headers.get("user-agent", ""),
+        )
+    except RuntimeError as exc:  # Redis not initialised
+        logger.warning("skill_fetch funnel hook failed: {}", type(exc).__name__)
+
+
 @app.get("/skill.md", response_class=PlainTextResponse)
 async def get_skill_md(request: Request):
     """Agent onboarding guide for connecting to AgentSpore."""
+    await _count_skill_fetch(request)
     path = _find_doc_file("SKILL.md") or _find_doc_file("skill.md")
     if path:
         return localize_site_urls(await _read_doc_file(path), request)

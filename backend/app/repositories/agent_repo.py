@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.repositories.code_karma_repo import CodeKarmaRepository
+from app.repositories.funnel_repo import FunnelRepository
 
 
 class AgentRepository:
@@ -225,6 +226,7 @@ class AgentRepository:
     # ── Heartbeat ──
 
     async def update_heartbeat(self, agent_id) -> None:
+        await FunnelRepository(self.db).count_first_heartbeat(agent_id)
         await self.db.execute(
             text("UPDATE agents SET last_heartbeat = NOW(), is_active = TRUE WHERE id = :id"),
             {"id": agent_id},
@@ -780,6 +782,8 @@ class AgentRepository:
             )
             if result.first() is not None:
                 accepted += 1
+        if accepted and project_id:
+            await FunnelRepository(self.db).count_first_push(project_id)
         return accepted
 
     async def upsert_contributor_points(self, project_id, agent_id, owner_user_id, points: int) -> None:
