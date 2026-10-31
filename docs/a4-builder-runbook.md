@@ -110,8 +110,8 @@ Do not enable this on a live host before the stand check below. `buildctl` is in
 
 The switch is `A4_BUILDER=buildkit` (default `fake`; roll back by unsetting it) with
 `A4_BUILDKIT_CERT_DIR` (client `ca.pem`, `client.pem`, `client-key.pem`, mounted read-only),
-`A4_BUILDKIT_ADDR` (default `tcp://buildkitd:1234`) and `A4_BUILDER_PROXY_URL`
-(default `http://10.213.77.11:3128`, an address that no longer exists after P3c: see Package mirrors), `A4_RECYCLE_GATE_URL` (default `http://a4-restart-gate:2375`). Tarballs go to a 4 GiB tmpfs; the container limit is 6 GiB.
+`A4_BUILDKIT_ADDR` (default `tcp://buildkitd:1234`) and `A4_PKG_MIRROR_HOST`
+(default `10.213.77.12`; a private IPv4 literal, settings refuse a hostname, loopback and public addresses; it must equal the `pkg-mirror` `ipv4_address` in `deploy/a4-builder.compose.yml` and the address literals in `deploy/a4-builder/pkg-mirror.conf` (`sub_filter`, `proxy_redirect`, the crates `config.json`): changing only the setting breaks downloads), `A4_RECYCLE_GATE_URL` (default `http://a4-restart-gate:2375`). Tarballs go to a 4 GiB tmpfs; the container limit is 6 GiB.
 The worker checks the tarball's `index.json` digest against buildkitd's and refuses on mismatch.
 
 ## Rollback
@@ -160,17 +160,48 @@ The cache is a 2 GiB tmpfs (nginx keeps 1200 MB of entries and 500 MB free): an 
 500 MiB (some CUDA wheels) can fail with a truncated body, which pip reports as a hash mismatch.
 Paths containing `..` are refused.
 
-| Ecosystem | Setting inside the build |
-|---|---|
-| pip | `PIP_INDEX_URL=http://10.213.77.12:8081/simple/` and `PIP_TRUSTED_HOST=10.213.77.12` |
-| npm | `npm_config_registry=http://10.213.77.12:8082/` and `npm_config_audit=false` (audit is a POST) |
-| Go | `GOPROXY=http://10.213.77.12:8083` and `GOSUMDB="sum.golang.org http://10.213.77.12:8083/sumdb"` |
-| cargo | `.cargo/config.toml`: `[source.crates-io] replace-with = "mirror"`, `[source.mirror] registry = "sparse+http://10.213.77.12:8084/"` |
+The worker passes these `--build-arg`s to every untrusted build, derived from `A4_PKG_MIRROR_HOST`
+(default `10.213.77.12`, written below; it must equal the `pkg-mirror` `ipv4_address` in
+`deploy/a4-builder.compose.yml` and the literals in `pkg-mirror.conf`: `sub_filter`, `proxy_redirect`
+and the crates `config.json` still point at the old address if only the setting changes, and
+downloads fail). No `HTTP_PROXY`/`HTTPS_PROXY` is passed, so no `NO_PROXY` is needed.
 
-Proxy variables: until the worker stops passing them, `HTTP_PROXY`/`HTTPS_PROXY` still point at
-`10.213.77.11:3128`, which no longer exists. pip, npm and cargo honour them for an `http://` mirror too,
-so a build must also set `NO_PROXY=10.213.77.12`. Follow-up (backend, outside P3c): stop
-passing the proxy build args (`buildkit.py`, `A4_BUILDER_PROXY_URL`) and pass the settings above instead.
+| Ecosystem | Build arg or file |
+|---|---|
+| pip | `PIP_INDEX_URL=http://10.213.77.12:8081/simple/`, `PIP_TRUSTED_HOST=10.213.77.12` |
+| npm | `npm_config_registry=http://10.213.77.12:8082/`, `npm_config_audit=false` (audit is a POST, the mirror answers 405) |
+| Go | `GOPROXY=http://10.213.77.12:8083`, `GOSUMDB="sum.golang.org http://10.213.77.12:8083/sumdb"` |
+| cargo | no build arg: `.cargo/config.toml`, see below |
+
+BuildKit exposes a non-predefined build arg to `RUN` only when the Dockerfile declares it with
+`ARG NAME` in the stage that uses it, for example `ARG PIP_INDEX_URL` before `RUN pip install ...`.
+An undeclared arg is dropped silently and the tool then tries the public internet, which a build
+cannot reach. Declare every arg of the toolchain you use; `PIP_TRUSTED_HOST` is needed for pip
+because the mirror speaks plain HTTP. Declared args are recorded in the image history; the internal
+mirror address is not a secret, so this is accepted.
+
+Cargo cannot replace a source from the environment (the cargo config reference marks
+`source.<name>.replace-with` "Environment: not supported", checked 2026-10-31). `COPY` this file
+into the image, in a parent directory of the directory where `cargo` runs or at
+`$CARGO_HOME/config.toml`; a file that only sits in the build context is invisible to `RUN`:
+
+```toml
+[source.crates-io]
+replace-with = "mirror"
+
+[source.mirror]
+registry = "sparse+http://10.213.77.12:8084/"
+```
+
+```dockerfile
+WORKDIR /app
+COPY .cargo/config.toml .cargo/config.toml
+COPY Cargo.toml Cargo.lock src ./
+RUN cargo build --release
+```
+
+Use the same address as `A4_PKG_MIRROR_HOST`. `GOFLAGS` is not set: modules resolve through
+`GOPROXY` with the default `-mod` behaviour, and a vendored tree needs no mirror.
 
 Residual risk after P3c: the request path still reaches the upstream host (a lookup of a package or
 crate name that does not exist is a few bytes of one-way signal), and data is not scanned. Bulk
