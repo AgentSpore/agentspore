@@ -379,6 +379,18 @@ async def test_ipv6_addresses_in_one_64_share_rate_bucket(svc):
     assert await svc.allow("2001:db8:1:3::1", "ua", 1) is True
 
 
+async def test_ipv6_addresses_in_one_64_stay_distinct_visitors(svc, sessions):
+    assert await svc.record_unique("visit", "direct", "2001:db8:1:2::1", "ua") is True
+    assert await svc.record_unique("visit", "direct", "2001:db8:1:2::2", "ua") is True
+    assert await rows(sessions) == [("visit", "direct", 2)]
+
+
+def test_ipv4_mapped_addresses_keep_their_own_subject():
+    first = FunnelService._rate_subject("::ffff:192.0.2.1")
+    assert first == "192.0.2.1"
+    assert first != FunnelService._rate_subject("::ffff:192.0.2.2")
+
+
 async def test_ipv6_addresses_in_one_64_share_daily_cap(svc, sessions):
     for n in range(30):
         await svc.record_unique("visit", "direct", f"2001:db8:1:2::{n + 1:x}", f"ua-{n}")
