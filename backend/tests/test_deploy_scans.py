@@ -238,6 +238,22 @@ async def test_dockerfile_allows(tmp_path, body):
             f"FROM python@{DIGEST}\nRUN --mount=type=bind,from=0,target=/x true\n",
             "from-not-allowed",
         ),
+        (
+            f'FROM python@{DIGEST}\nRUN --mount=type=bind,"from=evil/img:latest",target=/x true\n',
+            "from-not-allowed",
+        ),
+        (
+            f'FROM python@{DIGEST}\nRUN --mount="from=evil/img:latest,target=/x" true\n',
+            "from-not-allowed",
+        ),
+        (
+            f'FROM python@{DIGEST}\nRUN --mount=type=bind,"FROM = evil/img:1",target=/x true\n',
+            "from-not-allowed",
+        ),
+        (
+            f'FROM python@{DIGEST}\nRUN --mount=type=bind,"from=evil/img:latest\n',
+            "from-not-allowed",
+        ),
         ("FROM 0\n", "from-not-allowed"),
         (f"# escape=`\nFROM python@{DIGEST}\nRUN echo \\\nFROM evil\n", "parser-directive"),
         (f"# ESCAPE = `\nFROM python@{DIGEST}\n", "parser-directive"),
