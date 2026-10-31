@@ -143,7 +143,11 @@ def validate_builder_settings(settings: Settings) -> None:
     if settings.a4_builder != "buildkit":
         return
     addr = urlsplit(settings.a4_buildkit_addr)
-    if addr.scheme != "tcp" or not addr.hostname or addr.port is None:
+    try:
+        port = addr.port
+    except ValueError:  # non-numeric or out of range
+        port = None
+    if addr.scheme != "tcp" or not addr.hostname or port is None:
         raise RuntimeError("A4_BUILDKIT_ADDR must look like tcp://host:port")
     for name in _TLS_FILES:
         path = settings.a4_buildkit_tls_dir / name

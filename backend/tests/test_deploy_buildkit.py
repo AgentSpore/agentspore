@@ -1,6 +1,7 @@
 """A4 P3b-1: BuildKitBuilder argv, limits and refusals against a stub `buildctl`."""
 
 import json
+import os
 import sys
 
 import pytest
@@ -297,7 +298,15 @@ def test_fake_builder_skips_validation(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "addr", ["buildkitd:1234", "http://buildkitd:1234", "tcp://buildkitd", "tcp://:1"]
+    "addr",
+    [
+        "buildkitd:1234",
+        "http://buildkitd:1234",
+        "tcp://buildkitd",
+        "tcp://:1",
+        "tcp://h:abc",
+        "tcp://h:99999",
+    ],
 )
 def test_bad_addr_is_refused(ready, addr):
     with pytest.raises(RuntimeError, match="A4_BUILDKIT_ADDR"):
@@ -316,3 +325,34 @@ def test_unwritable_out_dir_is_refused(ready, tmp_path):
     ready["a4_builder_out_dir"] = tmp_path / "absent"
     with pytest.raises(RuntimeError, match="A4_BUILDER_OUT_DIR"):
         validate_builder_settings(Settings(**ready))
+
+
+async def test_failure_detail_keeps_only_the_last_300_characters(builder, stub, context):
+    _, configure, _ = stub
+    configure(rc=1, stderr="a" * 5000 + "END-MARK")
+    with pytest.raises(DeployRejectedError) as exc:
+        await builder.build(BuildRequest(context_dir=context, tag="t"))
+    prefix = "buildctl rc=1: "
+    assert len(exc.value.detail) == len(prefix) + 300
+    assert exc.value.detail.endswith("END-MARK")
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+class TestPermissionChecks:
+    def test_read_only_out_dir_is_refused(self, ready):
+        out = ready["a4_builder_out_dir"]
+        out.chmod(0o555)
+        try:
+            with pytest.raises(RuntimeError, match="A4_BUILDER_OUT_DIR"):
+                validate_builder_settings(Settings(**ready))
+        finally:
+            out.chmod(0o755)
+
+    def test_unreadable_tls_file_is_refused_by_name(self, ready):
+        key = ready["a4_buildkit_tls_dir"] / "client-key.pem"
+        key.chmod(0o000)
+        try:
+            with pytest.raises(RuntimeError, match="client-key.pem"):
+                validate_builder_settings(Settings(**ready))
+        finally:
+            key.chmod(0o600)

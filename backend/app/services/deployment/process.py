@@ -13,7 +13,11 @@ from app.services.deployment.errors import DeployRejectedError
 MAX_OUTPUT = 32 * 1024 * 1024
 MAX_STDERR = 64 * 1024
 REAP_TIMEOUT = 5.0
-_URL_CREDENTIALS = re.compile(rb"://[^/\s@]+@")
+# Every pattern is anchored on a literal and bounded, so none can rescan a long input.
+_HEADER = re.compile(rb"(?i)(authorization\s?[:=]\s?)[^\r\n]{1,512}")
+_BEARER = re.compile(rb"(?i)\b(bearer\s{1,16})[A-Za-z0-9._~+/=-]{1,2048}")
+_PAIR = re.compile(rb"(?i)((?:token|password|passwd|secret|api_?key)=)[^\s&\"']{1,512}")
+_TOKEN = re.compile(rb"\S+")
 
 
 @dataclass(frozen=True)
@@ -23,9 +27,27 @@ class ToolOutput:
     stderr: bytes
 
 
+def _mask_userinfo(match: re.Match[bytes]) -> bytes:
+    """Mask `scheme://user:pass@host` and scheme-less `user:pass@host` up to the LAST `@`, so a
+    password holding `/` or `@` leaks no tail. One whitespace-free token at a time: linear."""
+    token = match.group()
+    at = token.rfind(b"@")
+    if at < 0:
+        return token
+    scheme = token.find(b"://")
+    if scheme >= 0:
+        return token[: scheme + 3] + b"***" + token[at:]
+    colon = token.find(b":")
+    return b"***" + token[at:] if 0 <= colon < at else token
+
+
 def redact(data: bytes) -> bytes:
-    """Replace `scheme://user:pass@` credentials; applied to every captured stream."""
-    return _URL_CREDENTIALS.sub(b"://***@", data)
+    """Mask URL and `user:pass@` credentials, `Authorization`/`Bearer` values and
+    `token|password|secret|api_key=` pairs; applied to every captured stream."""
+    data = _HEADER.sub(rb"\1***", data)
+    data = _BEARER.sub(rb"\1***", data)
+    data = _PAIR.sub(rb"\1***", data)
+    return _TOKEN.sub(_mask_userinfo, data)
 
 
 async def _read_tail(stream: asyncio.StreamReader) -> bytes:
