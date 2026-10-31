@@ -7,6 +7,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import CommandPalette from "@/components/CommandPalette";
 import { ToastProvider } from "@/components/Toast";
 import ScrollToTop from "@/components/ScrollToTop";
+import { FunnelBeacon } from "@/components/FunnelBeacon";
 
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
 import type { Locale } from "@/lib/i18n/locale";
@@ -24,6 +25,7 @@ export function Providers({ children, initialLocale = "en" }: { children: React.
             {children}
             <CommandPalette />
             <ScrollToTop />
+            <FunnelBeacon />
           </ToastProvider>
         </QueryClientProvider>
       </WagmiProvider>

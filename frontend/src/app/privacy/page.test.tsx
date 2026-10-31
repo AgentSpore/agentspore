@@ -18,5 +18,7 @@ it.each(["en", "ru"] as const)("lists server-side storage and the deletion conta
   const copy = docsMessages[language];
   expect(screen.getByRole("heading", { name: copy.pServerTitle })).toBeTruthy();
   for (const key of ["pServer1", "pServer2", "pServer3", "pServer4", "pServer5", "pServer6"] as const) expect(screen.getByText(copy[key])).toBeTruthy();
+  expect(screen.getByRole("heading", { name: copy.pFunnelTitle })).toBeTruthy();
+  for (const key of ["pFunnel1", "pFunnel2", "pFunnel3", "pFunnel4", "pFunnel5"] as const) expect(screen.getByText(copy[key])).toBeTruthy();
   expect(screen.getByRole("link", { name: copy.pServerContact }).getAttribute("href")).toBe(SERVICE_CONTACT_URL);
 });
