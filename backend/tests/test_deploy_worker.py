@@ -1,11 +1,15 @@
 """A4 worker step against real PostgreSQL fences; only fetch/scan/build I/O is substituted."""
 
 import asyncio
+import os
+import signal
 from pathlib import Path
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from test_deployment_queue import deployment_engine as deployment_engine
@@ -14,10 +18,14 @@ from test_deployment_queue import deployment_project as deployment_project
 from test_deployment_queue import deployment_session as deployment_session
 from test_deployment_queue import queue_world as queue_world
 
+from app.core.background import DeploymentWorkerTask
+from app.core.config import get_settings
 from app.repositories.deployment_repo import DeploymentRepository
 from app.services.deployment.builder import BuildResult, FakeBuilder
 from app.services.deployment.errors import DeployRejectedError
 from app.services.deployment.worker import DeploymentWorker
+from app.workers import a4
+from app.workers.a4 import serve
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
 ROW = text("SELECT status, reason_code FROM project_deployments ORDER BY created_at, id")
@@ -115,16 +123,41 @@ async def test_invalid_manifest_is_refused(world):
     assert (await rows(world))[0] == [("failed", "manifest_invalid")]
 
 
-async def test_cancel_keeps_lease_and_removes_tempdir(world):
+async def test_cancel_ends_row_terminal_and_removes_tempdir(world):
     builder, fetch = BlockingBuilder(), Fetch()
     task = asyncio.create_task(worker(world, builder, fetch=fetch).run_once())
     await builder.started.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    state, slot = await rows(world)
-    assert state == [("building", None)] and slot is not None
+    assert await rows(world) == ([("failed", "worker_shutdown")], None)
     assert not fetch.dests[0].exists()
+
+
+async def test_sigterm_during_blocked_build_ends_terminal(world, monkeypatch):
+    monkeypatch.setattr(get_settings(), "a4_deploy_enabled", True)
+    builder, fetch = BlockingBuilder(), Fetch()
+    task = DeploymentWorkerTask(worker(world, builder, fetch=fetch))
+    serving = asyncio.create_task(serve(task))
+    await builder.started.wait()
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(serving, 5)
+    assert await rows(world) == ([("failed", "worker_shutdown")], None)
+    assert not fetch.dests[0].exists()
+
+
+def test_entrypoint_installs_log_redaction(monkeypatch):
+    monkeypatch.setattr(a4, "serve", AsyncMock())
+    monkeypatch.setattr(a4, "build_task", lambda: None)
+    logger.configure(patcher=lambda record: None)
+    a4.main()
+    seen = []
+    handler = logger.add(seen.append, format="{message}")
+    try:
+        logger.info("connect redis://:hunter2hunter2@cache:6379")
+    finally:
+        logger.remove(handler)
+    assert "hunter2hunter2" not in seen[0]
 
 
 async def test_lost_lease_stops_build_without_terminal_write(world):
@@ -199,3 +232,25 @@ async def test_concurrent_claims_serialize_on_slot_lock(queue_world, deployment_
     await holder.close()
     await rival.close()
     await wide.dispose()
+
+
+async def test_fail_is_refused_once_the_fence_expired(world):
+    async with world.begin() as db:
+        lease = await DeploymentRepository(db).claim(uuid4())
+        await db.execute(
+            text(
+                "UPDATE deployment_worker_lease SET expires_at = clock_timestamp() - interval '1s'"
+            )
+        )
+    async with world.begin() as db:
+        assert await DeploymentRepository(db).fail(lease, "late") is False
+    assert await rows(world) == ([("building", None)], lease.deployment_id)
+
+
+async def test_fail_is_refused_for_a_foreign_fence(world):
+    async with world.begin() as db:
+        lease = await DeploymentRepository(db).claim(uuid4())
+    stranger = lease.model_copy(update={"worker_id": uuid4()})
+    async with world.begin() as db:
+        assert await DeploymentRepository(db).fail(stranger, "late") is False
+    assert await rows(world) == ([("building", None)], lease.deployment_id)

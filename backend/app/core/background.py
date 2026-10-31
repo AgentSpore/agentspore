@@ -681,7 +681,8 @@ class DeploymentWorkerTask(ScheduledTask):
     """A4 build loop. Runs only inside `python -m app.workers.a4`, never in API processes.
 
     The single deployment lease row in PostgreSQL already serializes workers, so no
-    Redis leader lock. `A4_DEPLOY_ENABLED` is re-read every step: off means idle.
+    Redis leader lock. `A4_DEPLOY_ENABLED` is checked from settings before every step; the
+    settings object is cached, so changing the env var needs a worker restart.
     """
 
     name = "a4_deploy_worker"

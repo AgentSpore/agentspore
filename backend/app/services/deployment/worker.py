@@ -57,25 +57,35 @@ class DeploymentWorker:
 
     async def run_once(self) -> bool:
         """Process one queued job, else recover an expired build; True when anything happened."""
-        async with self.sessions.begin() as db:
-            repo = DeploymentRepository(db)
-            lease = await repo.claim(self.worker_id, self.lease_seconds)
-            source = await repo.job_source(lease) if lease else None
-        if lease is None:
+        claimed = await self._claim()
+        if claimed is None:
             return await self.recovery.recover_once()
-        if source is None:
-            return False
+        lease, repo_url, commit_sha = claimed
         try:
-            reason = await self._supervised(lease, *source)
+            reason = await self._supervised(lease, repo_url, commit_sha)
         except LeaseLostError:
             logger.warning("deploy lease lost deployment={}", lease.deployment_id)
             return True
+        except asyncio.CancelledError:
+            await asyncio.shield(self._record(lease, "worker_shutdown"))
+            raise
+        await self._record(lease, reason)
+        return True
+
+    async def _record(self, lease: DeploymentLease, reason: str) -> None:
         async with self.sessions.begin() as db:
             if not await DeploymentRepository(db).fail(lease, reason):
                 logger.warning(
                     "deploy outcome dropped, fence gone deployment={}", lease.deployment_id
                 )
-        return True
+
+    async def _claim(self) -> tuple[DeploymentLease, str, str] | None:
+        async with self.sessions.begin() as db:
+            repo = DeploymentRepository(db)
+            lease = await repo.claim(self.worker_id, self.lease_seconds)
+            if lease is None:
+                return None
+            return lease, *await repo.job_source(lease)
 
     async def _supervised(self, lease: DeploymentLease, repo_url: str, commit_sha: str) -> str:
         """Run the pipeline while renewing the lease; cancel it the moment the fence is lost."""
