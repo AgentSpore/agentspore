@@ -116,7 +116,7 @@ services:
       - ./backend/app:/app/app:ro  # Hot-reload in dev
       - ./skill.md:/app/skill.md:ro  # skill.md for agents
 
-  # A4 deployment worker (FakeBuilder until P3). Same image as backend; no Docker socket.
+  # A4 deployment worker (A4_BUILDER=fake|buildkit, default fake). Same image as backend; no Docker socket.
   # Start with: docker compose --profile a4 up a4-worker (idle unless A4_DEPLOY_ENABLED=true)
   a4-worker:
     build:
@@ -134,6 +134,8 @@ services:
       DATABASE_URL: "postgresql+asyncpg://postgres:postgres@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
       A4_DEPLOY_ENABLED: "${A4_DEPLOY_ENABLED:-false}"
+      A4_BUILDER: "${A4_BUILDER:-fake}"
+      A4_BUILDER_OUT_DIR: /var/lib/a4-out
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -143,6 +145,9 @@ services:
       - sporeai-network
     volumes:
       - ./backend/app:/app/app:ro
+      - ${A4_BUILDKIT_CERT_DIR:-/etc/a4-builder/tls}:/run/a4-builder-tls:ro
+    tmpfs:
+      - /var/lib/a4-out:size=4g
     profiles:
       - a4
 

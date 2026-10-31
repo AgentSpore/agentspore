@@ -4,17 +4,20 @@ import asyncio
 import signal
 
 from app.core.background import DeploymentWorkerTask, ScheduledTask
+from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.logging import setup_logging
-from app.services.deployment.builder import FakeBuilder
+from app.services.deployment.buildkit import builder_from_settings
 from app.services.deployment.scans import DockerfileScanner, GitleaksScanner, OsvScanner
 from app.services.deployment.worker import DeploymentWorker
 
 
 def build_task() -> DeploymentWorkerTask:
-    """Wire P2 parts; P3 swaps `FakeBuilder` and supplies the real base-image allowlist."""
+    """Wire the worker; `A4_BUILDER` picks the builder. P3 supplies the base-image allowlist."""
     scanners = [GitleaksScanner(), OsvScanner(), DockerfileScanner(allowed_digests=frozenset())]
-    return DeploymentWorkerTask(DeploymentWorker(async_session_maker, FakeBuilder(), scanners))
+    return DeploymentWorkerTask(
+        DeploymentWorker(async_session_maker, builder_from_settings(get_settings()), scanners)
+    )
 
 
 async def serve(task: ScheduledTask) -> None:
