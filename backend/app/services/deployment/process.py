@@ -21,6 +21,17 @@ async def _read_capped(stream: asyncio.StreamReader, name: str) -> bytes:
     return bytes(buffer)
 
 
+async def _reap(proc: asyncio.subprocess.Process, stdout: asyncio.StreamReader) -> None:
+    """Wait for exit; `Process.wait()` also needs the stdout pipe at EOF (base_subprocess.py
+    `_try_finish`), and a paused transport only resumes when its reader is drained."""
+    await asyncio.gather(proc.wait(), _drain(stdout))
+
+
+async def _drain(stream: asyncio.StreamReader) -> None:
+    while await stream.read(65536):
+        pass
+
+
 async def run_tool(
     argv: list[str], *, cwd: Path, timeout: float, env: dict[str, str] | None = None
 ) -> tuple[int, bytes]:
@@ -51,5 +62,5 @@ async def run_tool(
         with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(proc.wait(), REAP_TIMEOUT)
+            await asyncio.wait_for(_reap(proc, proc.stdout), REAP_TIMEOUT)
     return proc.returncode or 0, stdout
