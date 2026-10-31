@@ -302,6 +302,16 @@ class DockerfileScanner:
         return [(_heredoc_terminator(m), m[0] == "-") for m in found]
 
     @staticmethod
+    def _in_heredoc_body(raw: str, pending: list[tuple[str, bool]]) -> bool:
+        """True for a heredoc body line; the terminator line is the last one and closes it."""
+        if not pending:
+            return False
+        terminator, dash = pending[0]
+        if (raw.lstrip("\t") if dash else raw) == terminator:
+            pending.pop(0)
+        return True
+
+    @staticmethod
     def _piece(raw: str, joining: bool, number: int) -> tuple[str, bool]:
         """Text one physical line adds to its logical line, and whether the next one joins."""
         if _DOUBLE_BACKSLASH.search(raw):
@@ -317,10 +327,7 @@ class DockerfileScanner:
         """
         out, buffer, start, pending = [], "", 0, []
         for number, raw in enumerate(lines, 1):
-            if pending:
-                terminator, dash = pending[0]
-                if (raw.lstrip("\t") if dash else raw) == terminator:
-                    pending.pop(0)
+            if cls._in_heredoc_body(raw, pending):
                 continue
             stripped = raw.strip(" \t")
             if not stripped or stripped.startswith("#"):
