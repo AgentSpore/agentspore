@@ -236,6 +236,58 @@ class DeploymentRepository:
         )
         return lease
 
+    async def job_source(self, lease: DeploymentLease) -> tuple[str, str] | None:
+        """Repository URL and commit of a deployment the lease still owns."""
+        row = (
+            await self.db.execute(
+                text(
+                    "SELECT repository_url, commit_sha FROM project_deployments "
+                    "WHERE id = :deployment_id AND generation = :generation "
+                    "AND worker_id = :worker_id AND status = 'building'"
+                ),
+                lease.model_dump(),
+            )
+        ).first()
+        return None if row is None else (row.repository_url, row.commit_sha)
+
+    async def renew(self, lease: DeploymentLease, seconds: int) -> bool:
+        """Extend a live lease; an expired or replaced one stays untouched."""
+        slot = await self._slot()
+        if not self._matches(slot, lease) or slot["expired"]:
+            return False
+        await self.db.execute(
+            text(
+                "UPDATE deployment_worker_lease SET expires_at = clock_timestamp() "
+                "+ CAST(:seconds AS integer) * interval '1 second' WHERE slot = 1"
+            ),
+            {"seconds": seconds},
+        )
+        return True
+
+    async def fail(self, lease: DeploymentLease, reason_code: str) -> bool:
+        """End a build that never created a sandbox and release the slot, under a live fence."""
+        slot = await self._slot()
+        if not self._matches(slot, lease) or slot["expired"]:
+            return False
+        updated = await self.db.scalar(
+            text(
+                "UPDATE project_deployments SET status = 'failed', reason_code = :reason_code "
+                "WHERE id = :deployment_id AND generation = :generation "
+                "AND worker_id = :worker_id AND status = 'building' AND sandbox_id IS NULL "
+                "RETURNING id"
+            ),
+            {**lease.model_dump(), "reason_code": reason_code},
+        )
+        if updated is None:
+            return False
+        await self.db.execute(
+            text(
+                "UPDATE deployment_worker_lease SET deployment_id = NULL, worker_id = NULL, "
+                "expires_at = NULL WHERE slot = 1"
+            )
+        )
+        return True
+
     async def record_sandbox(self, lease: DeploymentLease, sandbox_id: str) -> bool:
         """Persist the external sandbox identity once, only under a live fence."""
         if not sandbox_id:

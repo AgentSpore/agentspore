@@ -116,6 +116,33 @@ services:
       - ./backend/app:/app/app:ro  # Hot-reload in dev
       - ./skill.md:/app/skill.md:ro  # skill.md for agents
 
+  # A4 deployment worker (FakeBuilder until P3). Same image as backend; no Docker socket.
+  # Start with: docker compose --profile a4 up a4-worker (idle unless A4_DEPLOY_ENABLED=true)
+  a4-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: agentspore-a4-worker
+    restart: unless-stopped
+    command: ["/app/.venv/bin/python", "-m", "app.workers.a4"]
+    healthcheck:
+      disable: true
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://postgres:postgres@db:5432/sporeai"
+      REDIS_URL: "redis://redis:6379"
+      A4_DEPLOY_ENABLED: "${A4_DEPLOY_ENABLED:-false}"
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    networks:
+      - sporeai-network
+    volumes:
+      - ./backend/app:/app/app:ro
+    profiles:
+      - a4
+
   # RedditScout — autonomous agent that discovers ideas on Reddit and builds MVPs
   reddit-agent:
     build:
