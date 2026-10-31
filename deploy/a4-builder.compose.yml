@@ -25,8 +25,15 @@ services:
     image: moby/buildkit@sha256:cab936745de5d673465948f1e93ff4d6e372bbe33f218afd3314eba45a6f85a9
     runtime: runsc
     user: "1000:1000"
+    # INVARIANT(A4-P3a): rootless RUN shares this container's network namespace, so the listener is
+    # reachable from untrusted code; mTLS (client cert held only by the worker) protects it.
+    # --oci-worker-no-process-sandbox lets RUN kill or outlive daemon processes: one build per
+    # daemon, destroy it (rm -fsv) after every build.
     command:
       - --addr=tcp://0.0.0.0:1234
+      - --tlscert=/run/secrets/a4_buildkit_cert
+      - --tlskey=/run/secrets/a4_buildkit_key
+      - --tlscacert=/run/secrets/a4_buildkit_ca
       - --config=/etc/buildkit/buildkitd.toml
       - --oci-worker-no-process-sandbox
     restart: "no"
@@ -38,6 +45,7 @@ services:
     deploy:
       resources:
         limits: { cpus: "1.0", memory: 2G }
+    secrets: [a4_buildkit_cert, a4_buildkit_key, a4_buildkit_ca]
     volumes:
       - /home/user/.local/share/buildkit
       - ./a4-builder/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
@@ -47,7 +55,7 @@ services:
     networks: [a4-builder]
     depends_on:
       mirror-gate: { condition: service_healthy }
-      egress-proxy: { condition: service_started }
+      egress-proxy: { condition: service_healthy }
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
@@ -78,10 +86,10 @@ services:
     volumes:
       - ./a4-builder/registry-config.yml:/etc/docker/registry/config.yml:ro
     tmpfs:
-      - /var/lib/registry:uid=1000,gid=1000,mode=0750,size=2g
+      - /var/lib/registry:uid=1000,gid=1000,mode=0750,size=4g
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 3G }
+        limits: { cpus: "1.0", memory: 5G }
     networks: [a4-mirror-back, a4-upstream]
 
   egress-proxy:
@@ -96,10 +104,24 @@ services:
       - /var/spool/squid:uid=13,gid=13
       - /var/log/squid:uid=13,gid=13
       - /tmp
+    healthcheck:
+      test: ["CMD", "squid", "-k", "check", "-f", "/etc/squid/squid.conf"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 256M }
     networks: [a4-builder, a4-upstream]
+
+# mTLS material stays outside the repository: generate it per docs/a4-builder-runbook.md.
+secrets:
+  a4_buildkit_cert:
+    file: ${A4_BUILDKIT_CERT_DIR:?set A4_BUILDKIT_CERT_DIR}/server.pem
+  a4_buildkit_key:
+    file: ${A4_BUILDKIT_CERT_DIR:?set A4_BUILDKIT_CERT_DIR}/server-key.pem
+  a4_buildkit_ca:
+    file: ${A4_BUILDKIT_CERT_DIR:?set A4_BUILDKIT_CERT_DIR}/ca.pem
 
 networks:
   a4-builder:
