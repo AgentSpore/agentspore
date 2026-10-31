@@ -22,8 +22,9 @@ digest (`python:3.12-slim@sha256:...`) because the gate refuses tag manifests.
 
 - Rootless BuildKit runs every `RUN` with `network.host`, in the daemon's own network namespace.
   A `RUN` therefore reaches every peer on `a4-builder`, including the `buildkitd` listener.
-  `HTTP_PROXY`/`HTTPS_PROXY` build args (set by the P3b builder) are advisory; the internal network
-  is the real control. The listener requires mTLS: the client key lives only in the worker.
+  `HTTP_PROXY`/`HTTPS_PROXY` build args are advisory; the internal network is the real control.
+  Under runsc Docker's DNS refuses queries and a `RUN` has `resolv.conf` 8.8.8.8 and an empty
+  `/etc/hosts`: the P3b worker passes `HTTP_PROXY`/`HTTPS_PROXY=http://10.213.77.11:3128` by IP. The listener requires mTLS: the client key lives only in the worker.
   The worker must open no listener on `a4-builder`.
 - Rule for P3b: a `RUN` can `ptrace` the daemon, so anything handed to `buildkitd` is exposed to
   untrusted code. The worker passes only the build context: no registry auth, no secrets or ssh
@@ -99,20 +100,18 @@ Run a probe on the builder network (image already pinned in the compose file):
 ```bash
 IMG=$($C config --images | grep nginx)
 probe() { docker run --rm --network a4-builder --entrypoint sh "$IMG" -c "$1"; }
-G=http://mirror-gate:5000/v2/library/python/manifests
+G=http://10.213.77.10:5000/v2/library/python/manifests   # mirror-gate; egress-proxy is 10.213.77.11
 probe "wget -S -q -O /dev/null $G/sha256:<index digest> 2>&1 | grep HTTP"   # 200 (digest of a python tag)
 probe "wget -S -q -O /dev/null $G/3.12-slim 2>&1 | grep HTTP"                # 403: tags refused
-probe 'wget -S -q -O /dev/null http://mirror-gate:5000/v2/library/ubuntu/manifests/latest 2>&1 | grep HTTP'  # 403
-probe 'printf "CONNECT pypi.org:443 HTTP/1.1\r\n\r\n" | nc egress-proxy 3128 | head -1'    # 200 Connection established
-probe 'printf "CONNECT 169.254.169.254:443 HTTP/1.1\r\n\r\n" | nc egress-proxy 3128 | head -1'  # 403
-probe 'printf "CONNECT 10.0.0.1:443 HTTP/1.1\r\n\r\n" | nc egress-proxy 3128 | head -1'         # 403
-probe 'printf "CONNECT 203.0.113.7:443 HTTP/1.1\r\n\r\n" | nc egress-proxy 3128 | head -1'       # 403: IP literal, no PTR trick
-probe 'printf "CONNECT [2606:4700::1111]:443 HTTP/1.1\r\n\r\n" | nc egress-proxy 3128 | head -1' # 403: IPv6 literal
-probe 'printf "CONNECT <this host public IP>:443 HTTP/1.1\r\n\r\n" | nc egress-proxy 3128 | head -1'  # 403
+probe "wget -S -q -O /dev/null http://10.213.77.10:5000/v2/library/ubuntu/manifests/latest 2>&1 | grep HTTP"  # 403
+# Denied CONNECT: an ssl-bump port answers "200 Connection established", then aborts. Judge by access.log.
+for h in 169.254.169.254 10.0.0.1 10.213.77.10 203.0.113.7 '[2606:4700::1111]' <host public IP>; do
+  probe "printf 'CONNECT $h:443 HTTP/1.1\r\n\r\n' | nc -w 3 10.213.77.11 3128 >/dev/null"; done
+$C logs --tail=10 egress-proxy | grep CONNECT   # all TCP_DENIED_ABORTED/200 ... HIER_NONE/-, never HIER_DIRECT
 # SNI checks (probe needs curl and openssl: use the built a4-builder/squid-openssl:local for s_client)
-curl -x http://egress-proxy:3128 https://pypi.org/simple/ -o /dev/null -w '%{http_code}'   # 200
-openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -servername example.com    # fails: unexpected eof
-openssl s_client -proxy egress-proxy:3128 -connect pypi.org:443 -servername pypi.org       # handshakes
+curl -x http://10.213.77.11:3128 https://pypi.org/simple/ -o /dev/null -w '%{http_code}'   # 200 (access.log: TCP_TUNNEL/200 ... HIER_DIRECT)
+openssl s_client -proxy 10.213.77.11:3128 -connect pypi.org:443 -servername example.com    # fails: unexpected eof
+openssl s_client -proxy 10.213.77.11:3128 -connect pypi.org:443 -servername pypi.org       # handshakes
 docker run --rm --entrypoint sh a4-builder/squid-openssl:local -c 'squid -v | head -1'   # Squid Cache: Version 6.14
 probe 'wget -q -T 5 -O /dev/null http://1.1.1.1'                    # fails: Network unreachable
 probe 'nc -z -w 3 buildkitd 1234 && echo open; echo | nc -w 3 buildkitd 1234 | wc -c'  # no plaintext answer

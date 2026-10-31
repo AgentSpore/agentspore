@@ -8,7 +8,7 @@
 #   mirror, egress-proxy -- a4-upstream (internet route)
 # buildkitd has no route to the internet or to platform networks. Base images come only
 # through mirror-gate (repo allowlist); RUN steps reach package registries only through
-# egress-proxy (builder passes HTTP_PROXY/HTTPS_PROXY=http://egress-proxy:3128 as build args).
+# egress-proxy (builder passes HTTP_PROXY/HTTPS_PROXY=http://10.213.77.11:3128 as build args: RUN has no DNS).
 
 x-hardened: &hardened
   cap_drop: [ALL]
@@ -41,10 +41,9 @@ services:
     cap_add: [SETUID, SETGID]
     # rootless BuildKit needs these two relaxed; gVisor is the boundary, not seccomp/AppArmor.
     security_opt: ["seccomp=unconfined", "apparmor=unconfined"]
-    pids_limit: 512
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 2G }
+        limits: { cpus: "1.0", memory: 2G, pids: 512 }
     secrets: [a4_buildkit_cert, a4_buildkit_key, a4_buildkit_ca]
     volumes:
       - /home/user/.local/share/buildkit
@@ -53,6 +52,8 @@ services:
       - /run/user/1000:uid=1000,gid=1000,mode=0700,size=64m
       - /tmp:size=256m
     networks: [a4-builder]
+    # runsc: Docker's embedded DNS (127.0.0.11) refuses queries, so peers are addressed by pinned IP.
+    extra_hosts: ["mirror-gate:10.213.77.10", "egress-proxy:10.213.77.11"]
     depends_on:
       mirror-gate: { condition: service_healthy }
       egress-proxy: { condition: service_healthy }
@@ -75,7 +76,9 @@ services:
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 128M }
-    networks: [a4-builder, a4-mirror-back]
+    networks:
+      a4-builder: { ipv4_address: 10.213.77.10 }
+      a4-mirror-back: {}
     depends_on: [mirror]
 
   mirror:
@@ -126,7 +129,9 @@ services:
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 256M }
-    networks: [a4-builder, a4-upstream]
+    networks:
+      a4-builder: { ipv4_address: 10.213.77.11 }
+      a4-upstream: {}
 
 # mTLS material stays outside the repository: generate it per docs/a4-builder-runbook.md.
 secrets:
@@ -141,6 +146,10 @@ networks:
   a4-builder:
     name: a4-builder
     internal: true
+    # 10.213.77.0/24: outside Docker's default pools (172.17-31.0.0/16, 192.168.0.0/16) and any
+    # route on the host; the A4 runtime address pool must avoid 10.213.0.0/16. Inside squid's
+    # 10.0.0.0/8 deny, so a CONNECT to a peer here is refused.
+    ipam: { config: [{ subnet: 10.213.77.0/24 }] }
   a4-mirror-back:
     internal: true
   a4-upstream: {}
