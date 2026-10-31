@@ -52,6 +52,7 @@ PAGE_PREFIXES = (
     "/chat",
     "/start",
 )
+# Set once at key creation (expire nx=True, Redis >= 7), never extended: hashes die within 48 h.
 DEDUP_TTL = 48 * 3600
 RATE_WINDOW = 60
 SALT_GRACE = 3600
@@ -150,12 +151,12 @@ class FunnelService:
             seen_key = f"funnel:seen:{tag}:{step}"
             # redis-py stubs type sadd as a sync/async union
             added = await self.redis.sadd(seen_key, digest)  # ty: ignore[invalid-await]
-            await self.redis.expire(seen_key, DEDUP_TTL)
+            await self.redis.expire(seen_key, DEDUP_TTL, nx=True)
             if not added:
                 return False
             cap_key = f"funnel:ipcap:{tag}:{step}:{ip_hash}"
             used = await self.redis.incr(cap_key)
-            await self.redis.expire(cap_key, DEDUP_TTL)
+            await self.redis.expire(cap_key, DEDUP_TTL, nx=True)
             if used > IP_DAILY_CAP:
                 return False
         except (RedisError, OSError) as exc:
