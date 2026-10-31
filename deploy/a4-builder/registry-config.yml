@@ -12,3 +12,4 @@ http:
   addr: :5000
 proxy:
   remoteurl: https://registry-1.docker.io
+  ttl: 12h

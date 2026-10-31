@@ -9,6 +9,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "deploy" / "a4-builder.compose.yml"
 CONF = ROOT / "deploy" / "a4-builder"
+RUNBOOK = ROOT / "docs" / "a4-builder-runbook.md"
 
 EGRESS_DOMAINS = {
     "pypi.org",
@@ -16,15 +17,49 @@ EGRESS_DOMAINS = {
     "registry.npmjs.org",
     "proxy.golang.org",
     "crates.io",
+    "index.crates.io",
+    "static.crates.io",
 }
 DENIED_DST = {
     "10.0.0.0/8",
     "172.16.0.0/12",
     "192.168.0.0/16",
     "169.254.0.0/16",
-    "169.254.169.254/32",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+    "64:ff9b::/96",
+    "ff00::/8",
 }
+PLATFORM_DST = {"212.237.217.228/32", "172.17.0.0/16"}
+HTTP_ACCESS = [
+    "deny ip_literal",
+    "deny deny_dst",
+    "deny platform_dst",
+    "deny !CONNECT",
+    "deny CONNECT !SSL_ports",
+    "allow CONNECT egress_ok SSL_ports",
+    "deny all",
+]
 MIRROR_BASES = {"python", "node", "golang", "rust", "alpine", "debian", "busybox"}
+MIRROR_LOCATIONS = ["= /v2/", "~ MIRROR_REGEX", "/"]
+BUILDKITD_COMMAND = [
+    "--addr=tcp://0.0.0.0:1234",
+    "--tlscert=/run/secrets/a4_buildkit_cert",
+    "--tlskey=/run/secrets/a4_buildkit_key",
+    "--tlscacert=/run/secrets/a4_buildkit_ca",
+    "--config=/etc/buildkit/buildkitd.toml",
+    "--oci-worker-no-process-sandbox",
+]
+
+
+def _directives(path: Path, name: str) -> list[list[str]]:
+    """Whitespace-split arguments of every non-comment `name` directive."""
+    rows = []
+    for raw in path.read_text().splitlines():
+        parts = raw.split("#", 1)[0].split()
+        if parts[:1] == [name]:
+            rows.append(parts[1:])
+    return rows
 
 
 @pytest.fixture(scope="module")
@@ -50,6 +85,17 @@ def test_buildkitd_runs_under_gvisor_without_privilege(services):
     assert svc.get("user") not in (None, "0", "root", 0)
     assert set(svc.get("cap_add", [])) <= {"SETUID", "SETGID"}
     assert svc["pids_limit"] > 0
+    assert not [k for k in (svc.get("environment") or {}) if "PROXY" in str(k).upper()]
+
+
+def test_buildkitd_command_is_exact_and_requires_mtls(services):
+    # RUN shares the daemon's network namespace: a tcp listener needs mTLS.
+    assert services["buildkitd"]["command"] == BUILDKITD_COMMAND
+    assert set(services["buildkitd"]["secrets"]) == {
+        "a4_buildkit_cert",
+        "a4_buildkit_key",
+        "a4_buildkit_ca",
+    }
 
 
 def test_buildkitd_limits_one_cpu_two_gib(services):
@@ -99,7 +145,7 @@ def test_only_proxy_and_registry_reach_the_internet(stack, services):
     assert routed == {"egress-proxy", "mirror"}
 
 
-def test_buildkitd_sees_only_gate_and_proxy(stack, services):
+def test_buildkitd_sees_only_gate_and_proxy(services):
     peers = {
         name
         for name, svc in services.items()
@@ -108,23 +154,39 @@ def test_buildkitd_sees_only_gate_and_proxy(stack, services):
     assert peers == {"mirror-gate", "egress-proxy"}
 
 
-def test_proxy_allowlist_exact_domains_and_private_denies():
-    conf = (CONF / "squid.conf").read_text()
-    allowed = {
-        d
-        for line in conf.splitlines()
-        if line.startswith("acl egress_ok dstdomain")
-        for d in line.split()[3:]
-    }
-    assert EGRESS_DOMAINS <= allowed
-    assert not [d for d in allowed if d.startswith(".") or d == "*"]
-    for cidr in DENIED_DST:
-        assert cidr in conf
-    rules = [line for line in conf.splitlines() if line.startswith("http_access")]
-    assert rules.index("http_access deny deny_dst") < min(
-        i for i, r in enumerate(rules) if r.startswith("http_access allow")
-    )
-    assert rules[-1] == "http_access deny all"
+def test_buildkitd_waits_for_healthy_gate_and_proxy(services):
+    deps = services["buildkitd"]["depends_on"]
+    assert deps["mirror-gate"]["condition"] == "service_healthy"
+    assert deps["egress-proxy"]["condition"] == "service_healthy"
+    assert services["egress-proxy"]["healthcheck"]["test"]
+
+
+def test_proxy_allowlist_is_exactly_the_registries_without_reverse_lookup():
+    rows = [
+        r for r in _directives(CONF / "squid.conf", "acl") if r[:2] == ["egress_ok", "dstdomain"]
+    ]
+    assert len(rows) == 1 and rows[0][2] == "-n"
+    assert set(rows[0][3:]) == EGRESS_DOMAINS
+
+
+def test_proxy_denies_ip_literals_and_internal_ranges():
+    acls = _directives(CONF / "squid.conf", "acl")
+    denied = {c for r in acls if r[:2] == ["deny_dst", "dst"] for c in r[2:]}
+    assert DENIED_DST <= denied
+    platform = {c for r in acls if r[:2] == ["platform_dst", "dst"] for c in r[2:]}
+    assert PLATFORM_DST <= platform
+    literal = [r for r in acls if r[:2] == ["ip_literal", "dstdom_regex"]]
+    assert literal and literal[0][2] == "-n"
+    assert not [r for r in acls if r[0] == "deny_dst" and r[1] != "dst"]
+
+
+def test_proxy_http_access_order_is_exact():
+    rules = [" ".join(r) for r in _directives(CONF / "squid.conf", "http_access")]
+    assert rules == HTTP_ACCESS
+
+
+def test_proxy_has_no_obsolete_directives():
+    assert not _directives(CONF / "squid.conf", "dns_v4_first")
 
 
 def test_buildkitd_pulls_docker_io_only_through_mirror_gate():
@@ -133,15 +195,34 @@ def test_buildkitd_pulls_docker_io_only_through_mirror_gate():
     assert re.search(r'\[registry\."mirror-gate:5000"\]\s+http = true', toml)
 
 
-def test_mirror_gate_allows_only_listed_base_repositories():
+def test_mirror_gate_has_exactly_three_locations_and_one_upstream():
     conf = (CONF / "mirror-gate.conf").read_text()
-    match = re.search(r'location ~ "\^/v2/library/\(([^)]*)\)/', conf)
-    assert match and set(match.group(1).split("|")) == MIRROR_BASES
-    assert re.search(r"location / \{\s+return 403;", conf)
+    locations = re.findall(r"^\s*location\s+(.+?)\s*\{\s*$", conf, re.M)
+    shape = [re.sub(r'^~ ".*"$', "~ MIRROR_REGEX", loc) for loc in locations]
+    assert shape == MIRROR_LOCATIONS
+    assert conf.count("proxy_pass") == 1
     assert "limit_except GET HEAD" in conf
+    assert re.search(r"location / \{\s+return 403;", conf)
 
 
-def test_mirror_registry_is_pull_through_read_only():
+def test_mirror_gate_allows_listed_bases_and_manifests_only_by_digest():
+    conf = (CONF / "mirror-gate.conf").read_text()
+    match = re.search(r'location ~ "\^/v2/library/\(([^)]*)\)/(.*)\$"', conf)
+    assert match and set(match.group(1).split("|")) == MIRROR_BASES
+    assert match.group(2) == r"(manifests/sha256:[a-f0-9]{64}|blobs/sha256:[a-f0-9]{64})"
+
+
+def test_mirror_registry_is_pull_through_with_expiry():
     cfg = yaml.safe_load((CONF / "registry-config.yml").read_text())
     assert cfg["proxy"]["remoteurl"] == "https://registry-1.docker.io"
+    assert cfg["proxy"]["ttl"] == "12h"
     assert cfg["storage"]["delete"]["enabled"] is False
+
+
+def test_runbook_states_recycle_rules_and_network_limits():
+    text = RUNBOOK.read_text()
+    assert "--oci-worker-no-process-sandbox" in text and "destroyed after every build" in text
+    assert "up -d --force-recreate -V" in text
+    assert "network.host" in text
+    assert "cache is full" in text
+    assert "CONNECT 203.0.113.7:443" in text
