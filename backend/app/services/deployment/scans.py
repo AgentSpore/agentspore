@@ -158,11 +158,27 @@ _PLATFORM_ARG = re.compile(
     r"--platform=\$(?:\{(?:BUILD|TARGET)PLATFORM\}|(?:BUILD|TARGET)PLATFORM)"
 )
 _CONTINUATION = re.compile(r"\\[ \t]*$")
+_DOUBLE_BACKSLASH = re.compile(r"\\\\[ \t]*$")
+_HEREDOC = re.compile(r"<<(-?)(?:([A-Za-z0-9_]+)|'([A-Za-z0-9_]+)'|\"([A-Za-z0-9_]+)\")")
+_BARE_FLAGS = frozenset({"--link", "--parents", "--keep-git-dir"})
 _MOUNT_BARE = frozenset({"required", "ro", "readonly", "rw"})
 _MOUNT_TYPES = frozenset({"cache", "tmpfs", "secret", "bind", "ssh"})
 _MOUNT_VALUE = re.compile(r"[A-Za-z0-9_./:@-]+")
 _UNSUPPORTED = "dockerfile-unsupported"
 _DIGEST = re.compile(r"@(sha256:[0-9a-f]{64})$")
+
+
+def _heredoc_terminator(match: tuple[str, ...]) -> str:
+    """The terminator word of one `_HEREDOC` match, whichever alternative captured it."""
+    return next(group for group in match[1:] if group)
+
+
+class _UnsupportedDockerfile(Exception):
+    """Construct this scanner refuses to model; `line` is the physical line number."""
+
+    def __init__(self, line: int):
+        super().__init__(line)
+        self.line = line
 
 
 class DockerfileScanner:
@@ -202,8 +218,12 @@ class DockerfileScanner:
                 not physical.isascii() and not physical.lstrip(" \t").startswith("#")
             ):
                 return [Finding(_UNSUPPORTED, self.dockerfile, number, "base_not_allowed")]
+        try:
+            logical = self._logical_lines(lines)
+        except _UnsupportedDockerfile as refused:
+            return [Finding(_UNSUPPORTED, self.dockerfile, refused.line, "base_not_allowed")]
         findings, stages = [], set()
-        for number, line in self._logical_lines(lines):
+        for number, line in logical:
             rule = self._violation(line, stages)
             if rule:
                 findings.append(Finding(rule, self.dockerfile, number, "base_not_allowed"))
@@ -235,6 +255,8 @@ class DockerfileScanner:
         for word in self._flags(line):
             if _FLAG_FORBIDDEN.search(word) and not _PLATFORM_ARG.fullmatch(word):
                 return _UNSUPPORTED
+            if word in _BARE_FLAGS and line.split(None, 1)[0].upper() in {"COPY", "ADD"}:
+                continue
             if _FLAG_NAME.match(word) is None:
                 return _UNSUPPORTED
             if word.startswith("--mount="):
@@ -270,20 +292,43 @@ class DockerfileScanner:
         return None
 
     @staticmethod
-    def _logical_lines(lines: list[str]) -> list[tuple[int, str]]:
-        """Join continuations like BuildKit (indent kept, comments skipped); number = first line."""
-        out, buffer, start = [], "", 0
+    def _heredocs(line: str, number: int) -> list[tuple[str, bool]]:
+        """(terminator, tab-stripped) of each heredoc a RUN/COPY/ADD opens; odd `<<` is refused."""
+        if line.split(None, 1)[0].upper() not in {"RUN", "COPY", "ADD"}:
+            return []
+        found = _HEREDOC.findall(line)
+        if line.count("<<") != len(found):
+            raise _UnsupportedDockerfile(number)
+        return [(_heredoc_terminator(m), m[0] == "-") for m in found]
+
+    @classmethod
+    def _logical_lines(cls, lines: list[str]) -> list[tuple[int, str]]:
+        """Join continuations like BuildKit (indent kept, comments skipped); heredoc bodies skipped.
+
+        Number is the first physical line. Constructs the scanner does not model raise.
+        """
+        out, buffer, start, pending = [], "", 0, []
         for number, raw in enumerate(lines, 1):
+            if pending:
+                terminator, dash = pending[0]
+                if (raw.lstrip("\t") if dash else raw) == terminator:
+                    pending.pop(0)
+                continue
             stripped = raw.strip(" \t")
             if not stripped or stripped.startswith("#"):
                 if not buffer and stripped:
                     out.append((number, stripped))
                 continue
+            if _DOUBLE_BACKSLASH.search(raw):
+                raise _UnsupportedDockerfile(number)
             start = start or number
             buffer += _CONTINUATION.sub("", raw if buffer else raw.lstrip(" \t"))
             if not _CONTINUATION.search(raw):
                 out.append((start, buffer.strip()))
+                pending = cls._heredocs(buffer.strip(), start)
                 buffer, start = "", 0
+        if pending:
+            raise _UnsupportedDockerfile(len(lines))
         return out + ([(start, buffer.strip())] if buffer else [])
 
 
