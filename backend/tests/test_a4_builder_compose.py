@@ -88,6 +88,12 @@ def test_builder_network_is_pinned_and_peers_have_static_ips(stack, services):
     assert hosts == {n: str(ip) for n, ip in ips.items()}
 
 
+def test_builder_subnet_avoids_docker_default_pools():
+    # Docker default pools: 172.17-31.0.0/16 and 192.168.0.0/16; the A4 runtime pool is separate.
+    for pool in ("172.16.0.0/12", "192.168.0.0/16"):
+        assert not BUILDER_SUBNET.overlaps(ipaddress.ip_network(pool))
+
+
 def test_networks_disable_ipv6_and_dynamic_range_excludes_static_ips(stack):
     # Prod hosts listen on [::]: IPv6 on these bridges is off explicitly, not by Docker default.
     for name, net in stack["networks"].items():

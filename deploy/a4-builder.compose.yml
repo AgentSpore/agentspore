@@ -154,8 +154,9 @@ services:
     <<: *hardened
     volumes:
       - ./a4-builder/pkg-mirror.conf:/etc/nginx/conf.d/default.conf:ro
-    # Cache lives in RAM: nginx max_size 800m inside this 1g tmpfs (counted in the memory limit).
-    tmpfs: ["/tmp:size=1g,mode=1777"]
+    # Cache lives in RAM: nginx max_size 1200m, min_free 500m (room for one large in-flight download)
+    # inside this 2g tmpfs, which counts against the memory limit.
+    tmpfs: ["/tmp:size=2g,mode=1777"]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8084/config.json"]
       interval: 5s
@@ -163,7 +164,7 @@ services:
       retries: 10
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 1536M, pids: 128 }
+        limits: { cpus: "1.0", memory: 2560M, pids: 128 }
     networks:
       a4-builder: { ipv4_address: 10.213.77.12 }
       a4-upstream: {}
