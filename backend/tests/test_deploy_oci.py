@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from app.core.config import Settings
+from app.services.deployment import oci
 from app.services.deployment.builder import BuildRequest, BuildResult, FakeBuilder
 from app.services.deployment.buildkit import BuildKitBuilder, builder_from_settings
 from app.services.deployment.errors import DeployRejectedError
@@ -189,3 +190,138 @@ def test_buildkit_settings_give_bound_buildkit(tmp_path):
 def test_unknown_builder_is_rejected():
     with pytest.raises(ValueError):
         Settings(_env_file=None, **{"a4_builder": "docker"})
+
+
+def entry(name: str, data: bytes = b"", fmt=tarfile.USTAR_FORMAT, pax=None) -> bytes:
+    """One archive entry as raw bytes, without the end-of-archive blocks."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w", format=fmt) as tf:
+        info = tarfile.TarInfo(name)
+        info.size = len(data)
+        info.pax_headers = pax or {}
+        tf.addfile(info, io.BytesIO(data))
+    data = buf.getvalue()
+    while data.endswith(b"\0" * 512):
+        data = data[:-512]
+    return data
+
+
+def with_size(header: bytes, size: int) -> bytes:
+    """Rewrite a ustar header's size field and fix its checksum."""
+    head = bytearray(header)
+    head[124:136] = b"%011o\0" % size
+    head[148:156] = b" " * 8
+    head[148:156] = b"%06o\0 " % sum(head)
+    return bytes(head)
+
+
+def raw_tar(path: Path, *parts: bytes) -> Path:
+    path.write_bytes(b"".join(parts) + b"\0" * 1024)
+    return path
+
+
+@pytest.mark.parametrize("tail", [b"blobs/evil", b"x" * 100], ids=["symlink", "longname"])
+def test_pax_size_override_cannot_desync_the_walker(tmp_path, tail):
+    paxed = entry("blobs/a", fmt=tarfile.PAX_FORMAT, pax={"size": "0"})
+    pax_part, ustar_head = paxed[:1024], with_size(paxed[1024:1536], 0o77777777777)
+    hidden = entry(tail.decode(), fmt=tarfile.GNU_FORMAT)
+    tar = raw_tar(
+        tmp_path / "a.tar", pax_part, ustar_head, hidden, entry("index.json", index_for(DIGEST))
+    )
+    with pytest.raises(DeployRejectedError, match="unsupported key"):
+        verify_oci_digest(tar, DIGEST)
+
+
+@pytest.mark.parametrize("key", ["comment", "uid", "GNU.sparse.size"])
+def test_other_pax_keys_are_refused(tmp_path, key):
+    tar = raw_tar(
+        tmp_path / "a.tar",
+        entry("index.json", index_for(DIGEST), fmt=tarfile.PAX_FORMAT, pax={key: "1"}),
+    )
+    with pytest.raises(DeployRejectedError, match="unsupported key"):
+        verify_oci_digest(tar, DIGEST)
+
+
+def test_malformed_pax_record_is_refused(tmp_path):
+    body = b"99 path=x\n"
+    head = tarfile.TarInfo("pax")
+    head.type, head.size = tarfile.XHDTYPE, len(body)
+    raw = head.tobuf(tarfile.USTAR_FORMAT)
+    tar = raw_tar(
+        tmp_path / "a.tar", raw, body.ljust(512, b"\0"), entry("index.json", index_for(DIGEST))
+    )
+    with pytest.raises(DeployRejectedError, match="malformed extended header"):
+        verify_oci_digest(tar, DIGEST)
+
+
+def test_long_pax_path_is_accepted(tmp_path):
+    long_name = "blobs/" + "n" * 150
+    tar = raw_tar(
+        tmp_path / "a.tar",
+        entry(long_name, b"1", fmt=tarfile.PAX_FORMAT),
+        entry("index.json", index_for(DIGEST)),
+    )
+    verify_oci_digest(tar, DIGEST)
+
+
+def test_bad_checksum_mid_stream_is_refused(tmp_path):
+    bad = bytearray(entry("junk"))
+    bad[148:156] = b"0000000\0"
+    tar = raw_tar(
+        tmp_path / "a.tar",
+        entry("index.json", index_for(DIGEST)),
+        bytes(bad),
+        entry("index.json", index_for(OTHER)),
+    )
+    with pytest.raises(DeployRejectedError):
+        verify_oci_digest(tar, DIGEST)
+
+
+def test_walker_and_tarfile_must_end_at_the_same_offset(tmp_path, monkeypatch):
+    tar = write_tar(tmp_path / "a.tar", {"index.json": index_for(DIGEST)})
+    monkeypatch.setattr(oci, "_screen_headers", lambda path: 0)
+    with pytest.raises(DeployRejectedError, match="parses differently"):
+        verify_oci_digest(tar, DIGEST)
+
+
+@pytest.mark.parametrize("body", [b"10 path=xx", b"10 pathxxxx\n"], ids=["no-newline", "no-equals"])
+def test_pax_record_needs_newline_and_equals(tmp_path, body):
+    head = tarfile.TarInfo("pax")
+    head.type, head.size = tarfile.XHDTYPE, len(body)
+    tar = raw_tar(
+        tmp_path / "a.tar",
+        head.tobuf(tarfile.USTAR_FORMAT),
+        body.ljust(512, b"\0"),
+        entry("index.json", index_for(DIGEST)),
+    )
+    with pytest.raises(DeployRejectedError, match="extended header"):
+        verify_oci_digest(tar, DIGEST)
+
+
+def test_checksum_rule_matches_tarfile():
+    block = entry("index.json", b"{}")[:512]
+    assert oci._checksum_ok(block)
+    assert not oci._checksum_ok(block[:148] + b"0000000\0" + block[156:])
+    signed = bytearray(entry("\xe9", b"")[:512])
+    signed[148:156] = b"%06o\0 " % (
+        sum(signed[:148])
+        + 256
+        + sum(signed[156:])
+        - 256 * sum(b >= 128 for b in signed[:148] + signed[156:])
+    )
+    assert oci._checksum_ok(bytes(signed))
+
+
+def test_tarfile_loop_refuses_links_even_if_the_walker_is_bypassed(tmp_path, monkeypatch):
+    tar = write_tar(tmp_path / "a.tar", {"index.json": index_for(DIGEST)}, (link(tarfile.SYMTYPE),))
+    monkeypatch.setattr(oci, "_screen_headers", lambda path: 1536)
+    with pytest.raises(DeployRejectedError, match="unexpected member"):
+        verify_oci_digest(tar, DIGEST)
+
+
+def test_walker_alone_refuses_a_bad_checksum(tmp_path):
+    bad = bytearray(entry("junk"))
+    bad[148:156] = b"0000000\0"
+    tar = raw_tar(tmp_path / "a.tar", entry("index.json", index_for(DIGEST)), bytes(bad))
+    with pytest.raises(DeployRejectedError):
+        oci._screen_headers(tar)

@@ -148,7 +148,7 @@ services:
     volumes:
       - ./backend/app:/app/app:ro
       - type: bind
-        source: ${A4_BUILDKIT_CERT_DIR:-/etc/a4-builder/tls}
+        source: ${A4_BUILDKIT_CERT_DIR:-./deploy/a4-builder/client-tls-empty}
         target: /run/a4-builder-tls
         read_only: true
         bind:

@@ -44,3 +44,11 @@ def test_out_dir_is_a_4g_tmpfs(worker):
 
 def test_worker_has_no_docker_socket(worker):
     assert "docker.sock" not in str(worker)
+
+
+def test_default_cert_source_exists_so_fake_builder_hosts_still_start(worker):
+    (mount,) = [
+        v for v in worker["volumes"] if isinstance(v, dict) and v["target"] == "/run/a4-builder-tls"
+    ]
+    default = mount["source"].split(":-", 1)[1].removesuffix("}")
+    assert (ROOT / default).is_dir()
