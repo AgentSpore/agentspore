@@ -128,6 +128,7 @@ class Settings(BaseSettings):
     email_verification_resend_cooldown_seconds: int = 60  # 1 request/min per email
 
     # Auth rate limits (Redis-backed, per IP)
+    funnel_visit_rate_limit: int = 60   # beacon hits per visitor per minute
     register_rate_limit: int = 3        # attempts per window
     register_rate_window_seconds: int = 3600  # 1 hour
     login_fail_rate_limit: int = 5      # failed attempts per window

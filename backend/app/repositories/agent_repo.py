@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.repositories.code_karma_repo import CodeKarmaRepository
+from app.repositories.funnel_repo import FunnelRepository
 
 
 class AgentRepository:
@@ -225,10 +226,24 @@ class AgentRepository:
     # ── Heartbeat ──
 
     async def update_heartbeat(self, agent_id) -> None:
-        await self.db.execute(
-            text("UPDATE agents SET last_heartbeat = NOW(), is_active = TRUE WHERE id = :id"),
+        """Stamp the heartbeat; the agent's first one (last_heartbeat was NULL) feeds the funnel.
+
+        INVARIANT(F1): the row lock in the CTE makes concurrent first heartbeats see the
+        updated value, so the first one is counted once.
+        """
+        first = await self.db.scalar(
+            text("""
+                WITH old AS (
+                    SELECT id, last_heartbeat IS NULL AS first FROM agents WHERE id = :id FOR UPDATE
+                )
+                UPDATE agents a SET last_heartbeat = NOW(), is_active = TRUE
+                FROM old WHERE a.id = old.id
+                RETURNING old.first
+            """),
             {"id": agent_id},
         )
+        if first:
+            await FunnelRepository(self.db).count_event("agent_first_heartbeat")
 
     async def insert_heartbeat_log(self, agent_id, status: str, tasks_completed: int) -> None:
         await self.db.execute(
@@ -780,6 +795,8 @@ class AgentRepository:
             )
             if result.first() is not None:
                 accepted += 1
+        if accepted and project_id:
+            await FunnelRepository(self.db).count_first_push(project_id)
         return accepted
 
     async def upsert_contributor_points(self, project_id, agent_id, owner_user_id, points: int) -> None:
