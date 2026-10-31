@@ -14,12 +14,12 @@ import asyncio
 import json
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository
@@ -29,26 +29,22 @@ from app.services.connection_manager import get_connection_manager
 router = APIRouter(prefix="/agents", tags=["agents-ws"])
 
 
-async def authenticate_ws(
-    api_key: str | None,
-    db: AsyncSession,
-) -> dict | None:
+async def authenticate_ws(api_key: str | None) -> dict | None:
     """Authenticate an agent by API key for WebSocket connection.
 
     WebSocket can't easily use FastAPI's Depends + Header injection,
     so the key arrives via header, subprotocol, or (deprecated) query param.
     Returns agent dict or None if invalid.
+
+    Uses its own short session: a long-lived WS/SSE connection must not hold a
+    request-scoped session, whose autobegun transaction would stay
+    "idle in transaction" for the whole connection.
     """
     if not api_key:
         return None
     key_hash = AgentService.hash_api_key(api_key)
-    agent = await AgentRepository(db).get_agent_by_api_key_hash(key_hash)
-    # INVARIANT: the WS/SSE endpoint keeps this session for the whole connection;
-    # without ending the autobegun transaction the backend stays
-    # "idle in transaction" for as long as the agent is connected, which
-    # blocks CREATE INDEX CONCURRENTLY.
-    await db.commit()
-    return agent
+    async with async_session_maker() as db:
+        return await AgentRepository(db).get_agent_by_api_key_hash(key_hash)
 
 
 # Subprotocol form: "agentspore.v1.key.<API_KEY>". The Sec-WebSocket-Protocol
@@ -92,7 +88,6 @@ def _offered_subprotocols(ws: WebSocket) -> list[str]:
 async def agent_websocket(
     ws: WebSocket,
     api_key: str | None = Query(None, description="Agent API key (af_...)"),
-    db: AsyncSession = Depends(get_db),
 ):
     """WebSocket endpoint for agents.
 
@@ -127,7 +122,7 @@ async def agent_websocket(
     """
     key, transport = extract_ws_key(ws, api_key)
 
-    agent = await authenticate_ws(key, db)
+    agent = await authenticate_ws(key)
     if not agent:
         await ws.close(code=4401, reason="Invalid or missing API key")
         return
@@ -175,7 +170,7 @@ async def agent_websocket(
                     await ws.send_json({"type": "error", "message": "Invalid JSON"})
                     continue
 
-                await _handle_agent_message(agent, msg, ws, db)
+                await _handle_in_short_session(agent, msg, ws)
         finally:
             ping_task.cancel()
 
@@ -195,6 +190,17 @@ async def _ping_loop(ws: WebSocket) -> None:
             await ws.send_json({"type": "ping", "ts": _now_iso()})
     except (asyncio.CancelledError, Exception):
         pass
+
+
+async def _handle_in_short_session(agent: dict, msg: dict[str, Any], ws: WebSocket) -> None:
+    """Run one message on a fresh session.
+
+    INVARIANT: never share a session across messages; closing it ends any
+    transaction an early-return branch left open ("idle in transaction"
+    blocks CREATE INDEX CONCURRENTLY for the life of the connection).
+    """
+    async with async_session_maker() as db:
+        await _handle_agent_message(agent, msg, ws, db)
 
 
 async def _handle_agent_message(
@@ -316,7 +322,6 @@ def _now_iso() -> str:
 @router.get("/events")
 async def agent_events_sse(
     x_api_key: str | None = Header(None, alias="X-API-Key"),
-    db: AsyncSession = Depends(get_db),
 ):
     """Server-Sent Events endpoint — fallback for environments where WebSocket
     is blocked (corporate proxies, restrictive firewalls).
@@ -324,7 +329,7 @@ async def agent_events_sse(
     Agent connects with X-API-Key header. Platform pushes events as text/event-stream.
     Outbound commands (send_dm, ack, etc.) go via regular POST endpoints.
     """
-    agent = await authenticate_ws(x_api_key, db)
+    agent = await authenticate_ws(x_api_key)
     if not agent:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
