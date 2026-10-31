@@ -93,6 +93,21 @@ def _relative(member: tarfile.TarInfo) -> PurePosixPath | None:
     return PurePosixPath(*parts[1:]) if len(parts) > 1 else None
 
 
+def _unpack(tar: tarfile.TarFile, member: tarfile.TarInfo, dest: Path) -> bool:
+    """Extract one plain file/dir below `dest`; True when a symlink was dropped instead."""
+    relative = _relative(member)
+    if member.issym():
+        return True
+    if not (member.isfile() or member.isdir()):
+        raise DeployRejectedError(
+            "source_unsafe", f"not a plain file or directory: {member.name[:80]}"
+        )
+    if relative is not None and not (member.isfile() and is_stripped(relative.name)):
+        member.name = relative.as_posix()
+        tar.extract(member, dest, filter="data")
+    return False
+
+
 def _extract(archive: Path, dest: Path, policy: FetchPolicy) -> None:
     files, total, dropped_links = 0, 0, 0
     deadline = time.monotonic() + policy.extract_timeout
@@ -107,18 +122,7 @@ def _extract(archive: Path, dest: Path, policy: FetchPolicy) -> None:
                     raise DeployRejectedError(
                         "source_too_large", "unpacked source over the file or size cap"
                     )
-                relative = _relative(member)
-                if member.issym():
-                    dropped_links += 1
-                    continue
-                if not (member.isfile() or member.isdir()):
-                    raise DeployRejectedError(
-                        "source_unsafe", f"not a plain file or directory: {member.name[:80]}"
-                    )
-                if relative is None or (member.isfile() and is_stripped(relative.name)):
-                    continue
-                member.name = relative.as_posix()
-                tar.extract(member, dest, filter="data")
+                dropped_links += _unpack(tar, member, dest)
     except (tarfile.TarError, EOFError, OSError) as exc:
         raise DeployRejectedError(
             "source_fetch_failed", f"unreadable archive: {type(exc).__name__}"
