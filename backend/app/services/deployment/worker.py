@@ -128,7 +128,9 @@ class DeploymentWorker:
                 load_manifest(root)
                 await run_prescan(root, self.scanners)
                 tag = f"{lease.sandbox_namespace}:{commit_sha[:12]}"
-                await self.builder.build(BuildRequest(context_dir=root, tag=tag))
+                result = await self.builder.build(BuildRequest(context_dir=root, tag=tag))
+                if result.artifact is not None:  # until the push step consumes the tarball
+                    result.artifact.unlink(missing_ok=True)
         except DeployRejectedError as exc:
             logger.warning("deploy refused deployment={} reason={}", lease.deployment_id, exc)
             return exc.reason_code

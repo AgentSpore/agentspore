@@ -17,10 +17,23 @@ def test_builder_defaults_to_fake(worker):
     assert worker["environment"]["A4_BUILDER"] == "${A4_BUILDER:-fake}"
 
 
-def test_tls_dir_is_mounted_read_only(worker):
-    mounts = [v for v in worker["volumes"] if isinstance(v, str) and "/run/a4-builder-tls" in v]
-    assert len(mounts) == 1
-    assert mounts[0].endswith(":/run/a4-builder-tls:ro")
+def test_tls_dir_is_a_read_only_bind_that_must_exist(worker):
+    (mount,) = [
+        v for v in worker["volumes"] if isinstance(v, dict) and v["target"] == "/run/a4-builder-tls"
+    ]
+    assert mount["type"] == "bind"
+    assert mount["read_only"] is True
+    assert mount["bind"]["create_host_path"] is False
+
+
+def test_memory_limit_covers_the_tmpfs(worker):
+    assert worker["deploy"]["resources"]["limits"]["memory"] == "6g"
+
+
+def test_address_and_proxy_are_passed_through(worker):
+    env = worker["environment"]
+    assert env["A4_BUILDKIT_ADDR"].startswith("${A4_BUILDKIT_ADDR:-")
+    assert env["A4_BUILDER_PROXY_URL"].startswith("${A4_BUILDER_PROXY_URL:-")
 
 
 def test_out_dir_is_a_4g_tmpfs(worker):
