@@ -85,7 +85,10 @@ async def register(
     # Per-IP rate limit: 3 registrations / hour
     ip = _client_ip(request)
     await _check_ip_rate_limit(
-        redis, f"register_rate:{ip}", cfg.register_rate_limit, cfg.register_rate_window_seconds,
+        redis,
+        f"register_rate:{ip}",
+        cfg.register_rate_limit,
+        cfg.register_rate_window_seconds,
     )
 
     # Case-insensitive duplicate check. data.email is already lowercased by the
@@ -115,7 +118,6 @@ async def register(
     )
     db.add(user)
     await db.flush()
-    await FunnelRepository(db).count_event("user_register")
 
     # Persist token in Redis (authoritative TTL)
     await redis.setex(
@@ -123,7 +125,6 @@ async def register(
         cfg.email_verification_ttl_seconds,
         str(user.id),
     )
-
     # Send verification email (best-effort; dev falls back to console log)
     sent = await email_svc.send_verification_email(
         data.email, raw_token, site_base_url(request)
@@ -132,6 +133,7 @@ async def register(
         verify_url = f"{cfg.frontend_url}/verify-email?token={raw_token}"
         logger.warning("Email not sent — dev verify link: {}", verify_url)
 
+    await FunnelRepository(db).count_event("user_register")
     return RegisterResponse()
 
 

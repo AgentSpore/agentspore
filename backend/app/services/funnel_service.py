@@ -7,6 +7,7 @@ never logged, stored or used as a Redis key.
 
 import hashlib
 import hmac
+import ipaddress
 import secrets
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -93,6 +94,17 @@ class FunnelService:
         except (SQLAlchemyError, OSError) as exc:
             logger.warning("funnel record failed: step={} err={}", step, type(exc).__name__)
 
+    @staticmethod
+    def _rate_subject(ip: str) -> str:
+        """IPv6 clients own a /64, so limit and cap key on the network, not the address."""
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return ip
+        if addr.version == 6:
+            return str(ipaddress.ip_network(f"{ip}/64", strict=False).network_address)
+        return ip
+
     async def _salted(self, ip: str, ua: str) -> tuple[str, str, str] | None:
         """Return (day tag, HMAC(IP), HMAC(IP+UA)) under today's salt.
 
@@ -108,6 +120,7 @@ class FunnelService:
         if not salt:
             return None
         key = salt.encode()
+        ip = self._rate_subject(ip)
         ip_hash = hmac.new(key, ip.encode(), hashlib.sha256).hexdigest()
         visitor_hash = hmac.new(key, f"{ip}|{ua}".encode(), hashlib.sha256).hexdigest()
         return tag, ip_hash, visitor_hash
