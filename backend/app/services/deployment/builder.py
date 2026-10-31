@@ -18,6 +18,7 @@ class BuildRequest:
 class BuildResult:
     image_ref: str
     image_bytes: int
+    artifact: Path | None = None  # on-disk image tarball the caller must delete when done
 
 
 @runtime_checkable

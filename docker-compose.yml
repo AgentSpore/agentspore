@@ -116,7 +116,7 @@ services:
       - ./backend/app:/app/app:ro  # Hot-reload in dev
       - ./skill.md:/app/skill.md:ro  # skill.md for agents
 
-  # A4 deployment worker (FakeBuilder until P3). Same image as backend; no Docker socket.
+  # A4 deployment worker (A4_BUILDER=fake|buildkit, default fake). Same image as backend; no Docker socket.
   # Start with: docker compose --profile a4 up a4-worker (idle unless A4_DEPLOY_ENABLED=true)
   a4-worker:
     build:
@@ -134,6 +134,10 @@ services:
       DATABASE_URL: "postgresql+asyncpg://postgres:postgres@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
       A4_DEPLOY_ENABLED: "${A4_DEPLOY_ENABLED:-false}"
+      A4_BUILDER: "${A4_BUILDER:-fake}"
+      A4_BUILDER_OUT_DIR: /var/lib/a4-out
+      A4_BUILDKIT_ADDR: "${A4_BUILDKIT_ADDR:-tcp://buildkitd:1234}"
+      A4_BUILDER_PROXY_URL: "${A4_BUILDER_PROXY_URL:-http://10.213.77.11:3128}"
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -143,6 +147,18 @@ services:
       - sporeai-network
     volumes:
       - ./backend/app:/app/app:ro
+      - type: bind
+        source: ${A4_BUILDKIT_CERT_DIR:-./deploy/a4-builder/client-tls-empty}
+        target: /run/a4-builder-tls
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /var/lib/a4-out:size=4g
+    deploy:
+      resources:
+        limits:
+          memory: 6g  # 4g tmpfs counts against it, plus worker headroom
     profiles:
       - a4
 
