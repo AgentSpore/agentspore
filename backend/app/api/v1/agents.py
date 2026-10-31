@@ -55,6 +55,7 @@ from app.schemas.task_reviews import (
 from app.services.task_review_service import TaskReviewService, get_task_review_service
 from app.schemas.learning_budget import LearningBudgetResponse
 from app.schemas.usage import ServiceEventMetrics
+from app.services.funnel_service import FunnelService
 from app.services.usage_service import UsageService
 from app.services.learning_budget_service import LearningBudgetService, get_learning_budget_service
 
@@ -111,6 +112,7 @@ async def register_agent(
             status_code=409,
             detail=f"Agent name '{body.name}' is already taken. Please choose a different name.",
         )
+    await FunnelService(redis).record("agent_register")
 
     return AgentRegisterResponse(
         agent_id=result["agent_id"],
