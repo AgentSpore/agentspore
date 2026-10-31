@@ -138,6 +138,17 @@ def test_builder_network_is_pinned_and_peers_have_static_ips(stack, services):
     assert hosts == {n: str(ip) for n, ip in ips.items()}
 
 
+def test_networks_disable_ipv6_and_dynamic_range_excludes_static_ips(stack):
+    # Prod hosts listen on [::]: IPv6 on these bridges is off explicitly, not by Docker default.
+    for name, net in stack["networks"].items():
+        assert net["enable_ipv6"] is False, name
+    ip_range = ipaddress.IPv4Network(
+        stack["networks"]["a4-builder"]["ipam"]["config"][0]["ip_range"]
+    )
+    assert ip_range.subnet_of(BUILDER_SUBNET)
+    assert not any(ip in ip_range for ip in BUILDER_IPS.values())
+
+
 def test_builder_subnet_avoids_docker_default_pools_and_is_denied_by_squid():
     # Docker default pools: 172.17-31.0.0/16 and 192.168.0.0/16; the A4 runtime pool is separate.
     for pool in ("172.16.0.0/12", "192.168.0.0/16"):
@@ -379,6 +390,7 @@ def test_runbook_records_p3b_rules_residual_risk_and_sni_checks():
     )
     assert "resolv.conf" in text and "by IP" in text
     assert "ip -4 addr show dev br-" in text and "gateway_mode_ipv4" in text
+    assert "ip -6 addr show dev br-" in text and "10.213.77.1 $p" not in text
     assert "-noservername" in text and "squid -v" in text and "apt-cache policy" in text
     assert "without SNI is matched against the CONNECT target" in text
     assert re.search(r"\bECH\b", text) and "inner SNI" in text

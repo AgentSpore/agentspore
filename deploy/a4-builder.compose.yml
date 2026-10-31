@@ -149,11 +149,15 @@ networks:
     # 10.213.77.0/24: outside Docker's default pools (172.17-31.0.0/16, 192.168.0.0/16) and any
     # route on the host; the A4 runtime address pool must avoid 10.213.0.0/16. Inside squid's
     # 10.0.0.0/8 deny, so a CONNECT to a peer here is refused.
-    ipam: { config: [{ subnet: 10.213.77.0/24 }] }
+    # Dynamic addresses come from .128/25 only, so they cannot take the static .10/.11.
+    ipam: { config: [{ subnet: 10.213.77.0/24, ip_range: 10.213.77.128/25 }] }
+    enable_ipv6: false
     # isolated (Docker 28+, internal networks only): the bridge gets no address, so RUN cannot reach
     # host services listening on 0.0.0.0 through the gateway 10.213.77.1 (docker port-publishing docs).
     driver_opts:
       com.docker.network.bridge.gateway_mode_ipv4: isolated
   a4-mirror-back:
     internal: true
-  a4-upstream: {}
+    enable_ipv6: false
+  a4-upstream:
+    enable_ipv6: false
