@@ -192,7 +192,9 @@ async def test_failing_shutdown_write_does_not_block_sigterm(world, monkeypatch)
     serving = asyncio.create_task(serve(DeploymentWorkerTask(loop_worker)))
     await builder.started.wait()
     os.kill(os.getpid(), signal.SIGTERM)
-    await asyncio.wait_for(serving, 5)
+    done, _ = await asyncio.wait({serving}, timeout=2)
+    serving.cancel()
+    assert done, "serve() kept running after SIGTERM"
     assert claims == 1
     assert not fetch.dests[0].exists()
 
