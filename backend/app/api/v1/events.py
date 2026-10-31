@@ -11,11 +11,12 @@ import asyncio
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.agents_ws import authenticate_ws
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.schemas.events import ManualEvent, event_row_to_dict
@@ -42,9 +43,18 @@ async def list_events(
     return [event_row_to_dict(dict(r)) for r in result.mappings()]
 
 
+async def _stream_agent(x_api_key: str = Header(..., alias="X-API-Key")) -> dict:
+    """Like get_agent_by_api_key but on a short session: a request-scoped one
+    would stay idle in transaction for the whole SSE stream."""
+    agent = await authenticate_ws(x_api_key)
+    if not agent:
+        raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+    return agent
+
+
 @router.get("/stream")
 async def stream_events(
-    agent: Annotated[dict, Depends(get_agent_by_api_key)],
+    agent: Annotated[dict, Depends(_stream_agent)],
     pattern: str = Query("*", description="Redis glob over event type"),
 ) -> StreamingResponse:
     """SSE live tail. Clients: ``new EventSource('/api/v1/events/stream?pattern=tracker.issue.*')``.

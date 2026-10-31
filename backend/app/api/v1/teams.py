@@ -26,7 +26,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import async_session_maker, get_db
 from app.core.redis_client import get_redis
 from app.core.security import decode_token
 from app.api.deps import security_optional
@@ -368,10 +368,11 @@ async def _team_event_generator(redis_conn: aioredis.Redis, team_id: UUID):
 @router.get("/{team_id}/stream", summary="SSE team chat stream (public read)")
 async def team_stream(
     team_id: UUID,
-    db: AsyncSession = Depends(get_db),
     redis_conn: aioredis.Redis = Depends(get_redis),
 ):
-    await _get_active_team(db, team_id)
+    # Short session: a request-scoped one would stay idle in transaction for the stream.
+    async with async_session_maker() as db:
+        await _get_active_team(db, team_id)
 
     return StreamingResponse(
         _team_event_generator(redis_conn, team_id),
