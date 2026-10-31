@@ -100,7 +100,8 @@ async def test_fetcher_unpacks_below_top_dir_and_strips_secret_files(make_tarbal
     ("name", "stripped"),
     [("id_rsa", True), ("id_dsa", True), (".env", True), (".env.local", True), ("a.pem", True),
      ("id_generator.py", False), ("id_utils.py", False), (".env.example", False), (".envrc", False),
-     ("environment.py", False), ("monkey.key.py", False)],
+     ("environment.py", False), ("monkey.key.py", False), ("DEPLOY.PEM", True), ("tls.KEY", True),
+     ("ID_RSA", True), (".ENV", True), (".Env.Local", True), (".ENV.example", False)],
 )  # fmt: skip
 def test_is_stripped_is_exact(name, stripped):
     assert is_stripped(name) is stripped
@@ -109,8 +110,6 @@ def test_is_stripped_is_exact(name, stripped):
 @pytest.mark.parametrize(
     "entry",
     [
-        ("leak", "symlink", "/etc/passwd"),
-        ("inside", "symlink", "real.txt"),
         ("hard", "hardlink", "real.txt"),
         ("dev", "device", None),
         ("../outside.txt", "file", "x"),
@@ -118,7 +117,7 @@ def test_is_stripped_is_exact(name, stripped):
         ("/abs/outside.txt", "file", "x"),
     ],
 )
-async def test_fetcher_rejects_links_devices_and_escaping_paths(
+async def test_fetcher_rejects_hardlinks_devices_and_escaping_paths(
     make_tarball, serve, tmp_path, entry
 ):
     body = make_tarball([("real.txt", "file", "x"), entry])
@@ -140,6 +139,44 @@ async def test_fetcher_enforces_unpacked_file_and_size_caps(make_tarball, serve,
     assert exc.value.reason_code == "source_too_large"
     assert not (tmp_path / "d1").exists()
     assert not (tmp_path / "d2").exists()
+
+
+async def test_fetcher_drops_symlinks_and_deploys_the_rest(make_tarball, serve, tmp_path):
+    body = make_tarball(
+        [
+            ("real.txt", "file", "x"),
+            ("leak", "symlink", "/etc/passwd"),
+            ("inside", "symlink", "real.txt"),
+        ]
+    )
+    dest = tmp_path / "dest"
+    await fetch_source(REPO, SHA, dest, client=serve(body))
+    assert sorted(p.name for p in dest.iterdir()) == ["real.txt"]
+
+
+async def test_fetcher_counts_skipped_members_toward_the_caps(make_tarball, serve, tmp_path):
+    many = make_tarball([(f".env.{i}", "file", "S") for i in range(5)])
+    with pytest.raises(DeployRejectedError) as exc:
+        await fetch_source(REPO, SHA, tmp_path / "d1", FetchPolicy(max_files=4), serve(many))
+    assert exc.value.reason_code == "source_too_large"
+    big = make_tarball([("tls.pem", "file", b"0" * 2048)])
+    with pytest.raises(DeployRejectedError) as exc:
+        await fetch_source(REPO, SHA, tmp_path / "d2", FetchPolicy(max_bytes=1024), serve(big))
+    assert exc.value.reason_code == "source_too_large"
+    top = make_tarball([(f"top{i}", "file", "x") for i in range(3)], prefix="")
+    with pytest.raises(DeployRejectedError) as exc:
+        await fetch_source(REPO, SHA, tmp_path / "d3", FetchPolicy(max_files=2), serve(top))
+    assert exc.value.reason_code == "source_too_large"
+
+
+async def test_fetcher_extraction_has_a_deadline(make_tarball, serve, tmp_path):
+    body = make_tarball([("a.txt", "file", "x")])
+    with pytest.raises(DeployRejectedError) as exc:
+        await fetch_source(
+            REPO, SHA, tmp_path / "dest", FetchPolicy(extract_timeout=-1), serve(body)
+        )
+    assert exc.value.reason_code == "source_fetch_failed"
+    assert not (tmp_path / "dest").exists()
 
 
 async def test_fetcher_stops_reading_at_archive_cap(tmp_path):
@@ -200,6 +237,11 @@ async def test_fetcher_download_timeout(tmp_path):
         ("https://gitlab.com/o/r", SHA),
         ("https://github.com.evil.example/o/r", SHA),
         ("https://github.com:444/o/r", SHA),
+        ("https://github.com:abc/o/r", SHA),
+        ("https://github.com:99999/o/r", SHA),
+        ("https://github.com/../r", SHA),
+        ("https://github.com/o/..", SHA),
+        ("https://github.com/./r", SHA),
         ("https://github.com/o", SHA),
         ("https://github.com/o/r/tree/main", SHA),
         ("https://github.com/o/r?x=1", SHA),

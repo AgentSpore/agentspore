@@ -5,11 +5,13 @@ import re
 import shutil
 import tarfile
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 import httpx
+from loguru import logger
 
 from app.services.deployment.errors import DeployRejectedError
 
@@ -28,13 +30,15 @@ class FetchPolicy:
     max_bytes: int = 200 * 1024 * 1024
     max_files: int = 20_000
     timeout: float = 120.0
+    extract_timeout: float = 60.0
 
 
 DEFAULT_POLICY = FetchPolicy()
 
 
 def is_stripped(name: str) -> bool:
-    """Key material and scanner/ignore configs never reach the build context."""
+    """Key material and scanner/ignore configs never reach the build context (any letter case)."""
+    name = name.lower()
     if name in _KEY_FILES or name in _SCANNER_CONFIGS:
         return True
     if name == ".env" or (name.startswith(".env.") and name not in _ENV_KEPT):
@@ -47,13 +51,12 @@ def _archive_url(repo_url: str, commit_sha: str) -> str:
     match = _REPO_PATH.fullmatch(parts.path)
     if (
         parts.scheme != "https"
-        or parts.hostname != "github.com"
-        or parts.username
-        or parts.password
-        or parts.port
+        or parts.netloc.lower() != "github.com"
         or parts.query
         or parts.fragment
         or match is None
+        or set(match[1]) == {"."}
+        or set(match[2]) == {"."}
         or _SHA.fullmatch(commit_sha) is None
     ):
         raise DeployRejectedError(
@@ -91,29 +94,37 @@ def _relative(member: tarfile.TarInfo) -> PurePosixPath | None:
 
 
 def _extract(archive: Path, dest: Path, policy: FetchPolicy) -> None:
-    files, total = 0, 0
+    files, total, dropped_links = 0, 0, 0
+    deadline = time.monotonic() + policy.extract_timeout
     try:
         with tarfile.open(archive, "r:gz") as tar:
             for member in tar:
-                if not (member.isfile() or member.isdir()):
-                    raise DeployRejectedError(
-                        "source_unsafe", f"not a plain file or directory: {member.name[:80]}"
-                    )
-                relative = _relative(member)
-                if relative is None or (member.isfile() and is_stripped(relative.name)):
-                    continue
+                if time.monotonic() > deadline:
+                    raise DeployRejectedError("source_fetch_failed", "extraction timeout")
                 files += 1
                 total += member.size
                 if files > policy.max_files or total > policy.max_bytes:
                     raise DeployRejectedError(
                         "source_too_large", "unpacked source over the file or size cap"
                     )
+                relative = _relative(member)
+                if member.issym():
+                    dropped_links += 1
+                    continue
+                if not (member.isfile() or member.isdir()):
+                    raise DeployRejectedError(
+                        "source_unsafe", f"not a plain file or directory: {member.name[:80]}"
+                    )
+                if relative is None or (member.isfile() and is_stripped(relative.name)):
+                    continue
                 member.name = relative.as_posix()
                 tar.extract(member, dest, filter="data")
     except (tarfile.TarError, EOFError, OSError) as exc:
         raise DeployRejectedError(
             "source_fetch_failed", f"unreadable archive: {type(exc).__name__}"
         ) from exc
+    if dropped_links:
+        logger.info("fetcher dropped {} symlink members", dropped_links)
 
 
 async def _fetch(client: httpx.AsyncClient, url: str, dest: Path, policy: FetchPolicy) -> None:

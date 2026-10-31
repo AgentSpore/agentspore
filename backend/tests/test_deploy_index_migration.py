@@ -73,6 +73,11 @@ async def test_compose_flyway_disables_the_transactional_lock(compose_file):
     assert LOCK_FLAG in compose_flyway_flags(compose_file)
 
 
+async def test_sdk_user_stand_flyway_disables_the_transactional_lock():
+    stand = (ROOT / "sdk/tests/integration/user_stand.py").read_text()
+    assert f'"{LOCK_FLAG}"' in stand
+
+
 def flyway_migrate(postgres, database, migrations: Path) -> subprocess.CompletedProcess:
     """Run real Flyway on `database` with `migrations` copied in (no bind mount on colima)."""
     ip = postgres.get_docker_client().bridge_ip(postgres.get_wrapped_container().id)
