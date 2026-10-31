@@ -35,10 +35,11 @@ IP_LITERAL = ["-n", "^[0-9.]+$", "^[0-9a-f]*:[0-9a-f:.]*$", r"^\["]
 PLATFORM_INCLUDE = "/etc/squid/platform-dst.conf"
 HTTP_ACCESS = [
     "deny ip_literal",
-    "deny deny_dst",
-    "deny platform_dst",
     "deny !CONNECT",
     "deny CONNECT !SSL_ports",
+    "deny CONNECT !egress_ok",
+    "deny deny_dst",
+    "deny platform_dst",
     "allow CONNECT egress_ok SSL_ports",
     "deny all",
 ]
@@ -296,6 +297,23 @@ def test_proxy_http_access_order_is_exact():
     assert rules == HTTP_ACCESS
 
 
+def test_proxy_resolves_only_allowlisted_names():
+    # A `dst` ACL makes squid resolve the CONNECT host: ahead of the allowlist that leaks via DNS.
+    conf = CONF / "squid.conf"
+    dst_acls = {r[0] for r in _directives(conf, "acl") if len(r) > 1 and r[1] == "dst"}
+    rules = _directives(conf, "http_access")
+    allowlist = rules.index(["deny", "CONNECT", "!egress_ok"])
+    first_dns = min(i for i, r in enumerate(rules) if dst_acls & {w.lstrip("!") for w in r})
+    assert allowlist < first_dns
+
+
+def test_builder_bridge_has_no_host_address(stack):
+    # Isolated internal bridge: no gateway address, so RUN cannot reach host listeners on 0.0.0.0.
+    net = stack["networks"]["a4-builder"]
+    assert net["internal"] is True
+    assert net["driver_opts"]["com.docker.network.bridge.gateway_mode_ipv4"] == "isolated"
+
+
 def test_proxy_has_no_obsolete_directives():
     assert not _directives(CONF / "squid.conf", "dns_v4_first")
 
@@ -360,6 +378,7 @@ def test_runbook_records_p3b_rules_residual_risk_and_sni_checks():
         and "Connection established" in text
     )
     assert "resolv.conf" in text and "by IP" in text
+    assert "ip -4 addr show dev br-" in text and "gateway_mode_ipv4" in text
     assert "-noservername" in text and "squid -v" in text and "apt-cache policy" in text
     assert "without SNI is matched against the CONNECT target" in text
     assert re.search(r"\bECH\b", text) and "inner SNI" in text

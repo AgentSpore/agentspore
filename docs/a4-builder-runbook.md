@@ -8,7 +8,7 @@ compose project; the existing platform stack is not changed by it.
 
 | Service | Role | Networks |
 |---|---|---|
-| `buildkitd` | rootless BuildKit under gVisor (`runtime: runsc`), 1 CPU, 2 GiB, `pids_limit` 512, no host socket, state in an anonymous volume, mTLS-only listener | `a4-builder` (internal) |
+| `buildkitd` | rootless BuildKit under gVisor (`runtime: runsc`), 1 CPU, 2 GiB, `deploy.resources.limits.pids` 512, no host socket, state in an anonymous volume, mTLS-only listener | `a4-builder` (internal) |
 | `mirror-gate` | nginx allowlist in front of the mirror: GET/HEAD of manifests and blobs addressed by `sha256:` digest (tags get 403) for `library/{python,node,golang,rust,alpine,debian,busybox}` only | `a4-builder`, `a4-mirror-back` |
 | `mirror` | `registry:3` (distribution v3.0.0) pull-through cache of Docker Hub, `proxy.ttl` 12 h | `a4-mirror-back`, `a4-upstream` |
 | `egress-proxy` | squid-openssl (built from `Dockerfile.squid`): HTTPS CONNECT to `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `proxy.golang.org`, `crates.io` (plus `index.`/`static.crates.io` for cargo), and the TLS SNI must name one of them too (peek and splice, no interception; a ClientHello without SNI falls back to the CONNECT host, see Accepted residual risk). IP-literal hosts, private, link-local, multicast, reserved ranges, and this host's own addresses (`platform-dst.conf`) are denied | `a4-builder`, `a4-upstream` |
@@ -16,7 +16,8 @@ compose project; the existing platform stack is not changed by it.
 `a4-builder` and `a4-mirror-back` are `internal`: `buildkitd` has no route to the internet or to
 platform networks. `docker.io` in `buildkitd.toml` is mirrored to `mirror-gate:5000`, so base images
 come only from the allowlist; the Dockerfile scanner (P2) is a second layer. A `FROM` must carry a
-digest (`python:3.12-slim@sha256:...`) because the gate refuses tag manifests.
+digest (`python:3.12-slim@sha256:...`) because the gate refuses tag manifests. `a4-builder` sets
+`gateway_mode_ipv4: isolated` (Docker 28+): its bridge has no address, so a `RUN` cannot reach host listeners.
 
 ## Trust model
 
@@ -105,7 +106,7 @@ probe "wget -S -q -O /dev/null $G/sha256:<index digest> 2>&1 | grep HTTP"   # 20
 probe "wget -S -q -O /dev/null $G/3.12-slim 2>&1 | grep HTTP"                # 403: tags refused
 probe "wget -S -q -O /dev/null http://10.213.77.10:5000/v2/library/ubuntu/manifests/latest 2>&1 | grep HTTP"  # 403
 # Denied CONNECT: an ssl-bump port answers "200 Connection established", then aborts. Judge by access.log.
-for h in 169.254.169.254 10.0.0.1 10.213.77.10 203.0.113.7 '[2606:4700::1111]' <host public IP>; do
+for h in 169.254.169.254 10.0.0.1 10.213.77.10 203.0.113.7 '[2606:4700::1111]' '<host public IP>'; do
   probe "printf 'CONNECT $h:443 HTTP/1.1\r\n\r\n' | nc -w 3 10.213.77.11 3128 >/dev/null"; done
 $C logs --tail=10 egress-proxy | grep CONNECT   # all TCP_DENIED_ABORTED/200 ... HIER_NONE/-, never HIER_DIRECT
 # SNI checks (probe needs curl and openssl: use the built a4-builder/squid-openssl:local for s_client)
@@ -113,6 +114,8 @@ curl -x http://10.213.77.11:3128 https://pypi.org/simple/ -o /dev/null -w '%{htt
 openssl s_client -proxy 10.213.77.11:3128 -connect pypi.org:443 -servername example.com    # fails: unexpected eof
 openssl s_client -proxy 10.213.77.11:3128 -connect pypi.org:443 -servername pypi.org       # handshakes
 docker run --rm --entrypoint sh a4-builder/squid-openssl:local -c 'squid -v | head -1'   # Squid Cache: Version 6.14
+ip -4 addr show dev br-$(docker network inspect -f '{{printf "%.12s" .Id}}' a4-builder)  # nothing: bridge has no host address (.1 may belong to a container, so do not nc it)
+probe 'for p in 22 80 443 5432; do nc -z -w2 10.213.77.1 $p && echo OPEN $p; done'  # prints nothing: no host address
 probe 'wget -q -T 5 -O /dev/null http://1.1.1.1'                    # fails: Network unreachable
 probe 'nc -z -w 3 buildkitd 1234 && echo open; echo | nc -w 3 buildkitd 1234 | wc -c'  # no plaintext answer
 ```
@@ -142,8 +145,6 @@ crates mirror) that serve read-only and reject everything else.
 - `squid-openssl` is pinned in `Dockerfile.squid`. On `Version ... not found`, run `apt-cache policy
   squid-openssl` in the pinned base image, set the pin to the candidate, rebuild, repeat the smoke checks.
 - The 4 GiB build-disk and 10 minute limits are enforced by the builder (P3b), not by compose.
-- `buildkitd` under `runsc` is not exercised by CI; check it on the stand before enabling
-  `A4_DEPLOY_ENABLED`.
-- The mirror cache is a 4 GiB tmpfs (counted in the 5 GiB memory limit); registry v3 expires cached content after `proxy.ttl` (12 h, registry v2 has no such key and keeps 7 days). When the
-  cache is full or Docker Hub rate-limits, `mirror-gate` returns 5xx and pulls fail. Recycle the
-  mirror: `$C up -d --force-recreate --no-deps mirror`; check with `$C logs --tail=50 mirror`.
+- `buildkitd` under `runsc` is not exercised by CI; check it on the stand before `A4_DEPLOY_ENABLED`.
+- The mirror cache is a 4 GiB tmpfs (counted in the 5 GiB memory limit); registry v3 expires cached content after `proxy.ttl` (12 h; v2 keeps 7 days).
+  When the cache is full or Docker Hub rate-limits, `mirror-gate` returns 5xx. Recycle: `$C up -d --force-recreate --no-deps mirror`; `$C logs --tail=50 mirror`.
