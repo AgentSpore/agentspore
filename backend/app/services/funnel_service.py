@@ -102,11 +102,13 @@ class FunnelService:
         except ValueError:
             return ip
         if addr.version == 6:
+            if addr.ipv4_mapped:
+                return str(addr.ipv4_mapped)
             return str(ipaddress.ip_network(f"{ip}/64", strict=False).network_address)
         return ip
 
     async def _salted(self, ip: str, ua: str) -> tuple[str, str, str] | None:
-        """Return (day tag, HMAC(IP), HMAC(IP+UA)) under today's salt.
+        """Return (day tag, HMAC(rate subject), HMAC(full IP+UA)) under today's salt.
 
         The salt lives until the next UTC midnight plus a grace hour and then expires on its own.
         """
@@ -120,8 +122,7 @@ class FunnelService:
         if not salt:
             return None
         key = salt.encode()
-        ip = self._rate_subject(ip)
-        ip_hash = hmac.new(key, ip.encode(), hashlib.sha256).hexdigest()
+        ip_hash = hmac.new(key, self._rate_subject(ip).encode(), hashlib.sha256).hexdigest()
         visitor_hash = hmac.new(key, f"{ip}|{ua}".encode(), hashlib.sha256).hexdigest()
         return tag, ip_hash, visitor_hash
 
