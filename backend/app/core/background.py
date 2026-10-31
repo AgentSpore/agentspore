@@ -75,9 +75,11 @@ from uuid import uuid4
 from loguru import logger
 from sqlalchemy import text
 
+from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.redis_client import get_redis
 from app.repositories.webhook_repo import WebhookRepository
+from app.services.deployment.worker import DeploymentWorker
 from app.services.github_service import get_github_service
 from app.services.openviking_service import get_openviking_service
 from app.services.usage_service import UsageService
@@ -673,6 +675,26 @@ class UsagePurgeTask(ScheduledTask):
             await db.commit()
             if usage_count:
                 logger.info("Service usage cleanup: removed {} expired visits", usage_count)
+
+
+class DeploymentWorkerTask(ScheduledTask):
+    """A4 build loop. Runs only inside `python -m app.workers.a4`, never in API processes.
+
+    The single deployment lease row in PostgreSQL already serializes workers, so no
+    Redis leader lock. `A4_DEPLOY_ENABLED` is re-read every step: off means idle.
+    """
+
+    name = "a4_deploy_worker"
+    interval_s = 5
+    lock_ttl_s = None
+
+    def __init__(self, worker: DeploymentWorker) -> None:
+        super().__init__()
+        self.worker = worker
+
+    async def run_once(self) -> None:
+        while get_settings().a4_deploy_enabled and await self.worker.run_once():
+            pass
 
 
 ALL_TASKS: tuple[type[ScheduledTask], ...] = (
