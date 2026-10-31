@@ -1,5 +1,6 @@
 """Hardening gate for the A4 builder stack (`deploy/a4-builder.compose.yml`)."""
 
+import ipaddress
 import re
 from pathlib import Path
 
@@ -34,13 +35,19 @@ IP_LITERAL = ["-n", "^[0-9.]+$", "^[0-9a-f]*:[0-9a-f:.]*$", r"^\["]
 PLATFORM_INCLUDE = "/etc/squid/platform-dst.conf"
 HTTP_ACCESS = [
     "deny ip_literal",
-    "deny deny_dst",
-    "deny platform_dst",
     "deny !CONNECT",
     "deny CONNECT !SSL_ports",
+    "deny CONNECT !egress_ok",
+    "deny deny_dst",
+    "deny platform_dst",
     "allow CONNECT egress_ok SSL_ports",
     "deny all",
 ]
+BUILDER_SUBNET = ipaddress.IPv4Network("10.213.77.0/24")
+BUILDER_IPS = {
+    "mirror-gate": ipaddress.ip_address("10.213.77.10"),
+    "egress-proxy": ipaddress.ip_address("10.213.77.11"),
+}
 SSL_BUMP = ["peek step1", "splice allowed_sni", "terminate all"]
 MIRROR_BASES = {"python", "node", "golang", "rust", "alpine", "debian", "busybox"}
 MIRROR_LOCATIONS = ["= /v2/", "~ MIRROR_REGEX", "/"]
@@ -52,6 +59,11 @@ BUILDKITD_COMMAND = [
     "--config=/etc/buildkit/buildkitd.toml",
     "--oci-worker-no-process-sandbox",
 ]
+
+
+def _acl_deny_dst() -> list[str]:
+    rows = [r for r in _directives(CONF / "squid.conf", "acl") if r[:2] == ["deny_dst", "dst"]]
+    return [net for r in rows for net in r[2:] if ":" not in net]
 
 
 def _directives(path: Path, name: str) -> list[list[str]]:
@@ -101,8 +113,49 @@ def test_buildkitd_runs_under_gvisor_without_privilege(services):
     assert "ALL" in svc.get("cap_drop", [])
     assert svc.get("user") not in (None, "0", "root", 0)
     assert set(svc.get("cap_add", [])) <= {"SETUID", "SETGID"}
-    assert svc["pids_limit"] > 0
+    assert svc["deploy"]["resources"]["limits"]["pids"] == 512
     assert not [k for k in (svc.get("environment") or {}) if "PROXY" in str(k).upper()]
+
+
+def test_pids_are_limited_in_one_place_only(services):
+    # Compose rejects distinct `pids_limit` and `deploy.resources.limits.pids` values.
+    for name, svc in services.items():
+        if "pids" in svc.get("deploy", {}).get("resources", {}).get("limits", {}):
+            assert "pids_limit" not in svc, name
+
+
+def test_builder_network_is_pinned_and_peers_have_static_ips(stack, services):
+    # Docker's embedded DNS (127.0.0.11) refuses queries under runsc: no name lookup, only IPs.
+    net = stack["networks"]["a4-builder"]
+    subnet = ipaddress.ip_network(net["ipam"]["config"][0]["subnet"])
+    assert subnet == BUILDER_SUBNET
+    ips = {
+        n: ipaddress.ip_address(services[n]["networks"]["a4-builder"]["ipv4_address"])
+        for n in ("mirror-gate", "egress-proxy")
+    }
+    assert ips == BUILDER_IPS and all(ip in subnet for ip in ips.values())
+    hosts = {h.split(":")[0]: h.split(":")[1] for h in services["buildkitd"]["extra_hosts"]}
+    assert hosts == {n: str(ip) for n, ip in ips.items()}
+
+
+def test_networks_disable_ipv6_and_dynamic_range_excludes_static_ips(stack):
+    # Prod hosts listen on [::]: IPv6 on these bridges is off explicitly, not by Docker default.
+    for name, net in stack["networks"].items():
+        assert net["enable_ipv6"] is False, name
+    ip_range = ipaddress.IPv4Network(
+        stack["networks"]["a4-builder"]["ipam"]["config"][0]["ip_range"]
+    )
+    assert ip_range.subnet_of(BUILDER_SUBNET)
+    assert not any(ip in ip_range for ip in BUILDER_IPS.values())
+
+
+def test_builder_subnet_avoids_docker_default_pools_and_is_denied_by_squid():
+    # Docker default pools: 172.17-31.0.0/16 and 192.168.0.0/16; the A4 runtime pool is separate.
+    for pool in ("172.16.0.0/12", "192.168.0.0/16"):
+        assert not BUILDER_SUBNET.overlaps(ipaddress.ip_network(pool))
+    # A CONNECT through the proxy to a peer on the builder network stays refused.
+    denied = [ipaddress.IPv4Network(net) for net in _acl_deny_dst()]
+    assert any(BUILDER_SUBNET.subnet_of(net) for net in denied)
 
 
 def test_buildkitd_command_is_exact_and_requires_mtls(services):
@@ -255,6 +308,23 @@ def test_proxy_http_access_order_is_exact():
     assert rules == HTTP_ACCESS
 
 
+def test_proxy_resolves_only_allowlisted_names():
+    # A `dst` ACL makes squid resolve the CONNECT host: ahead of the allowlist that leaks via DNS.
+    conf = CONF / "squid.conf"
+    dst_acls = {r[0] for r in _directives(conf, "acl") if len(r) > 1 and r[1] == "dst"}
+    rules = _directives(conf, "http_access")
+    allowlist = rules.index(["deny", "CONNECT", "!egress_ok"])
+    first_dns = min(i for i, r in enumerate(rules) if dst_acls & {w.lstrip("!") for w in r})
+    assert allowlist < first_dns
+
+
+def test_builder_bridge_has_no_host_address(stack):
+    # Isolated internal bridge: no gateway address, so RUN cannot reach host listeners on 0.0.0.0.
+    net = stack["networks"]["a4-builder"]
+    assert net["internal"] is True
+    assert net["driver_opts"]["com.docker.network.bridge.gateway_mode_ipv4"] == "isolated"
+
+
 def test_proxy_has_no_obsolete_directives():
     assert not _directives(CONF / "squid.conf", "dns_v4_first")
 
@@ -302,7 +372,7 @@ def test_runbook_states_recycle_rules_and_network_limits():
     assert "mktemp -d" in text and "shred -u" in text
     assert "network.host" in text
     assert "cache is full" in text
-    assert "CONNECT 203.0.113.7:443" in text
+    assert "203.0.113.7" in text and "10.213.77.10" in text
 
 
 def test_runbook_records_p3b_rules_residual_risk_and_sni_checks():
@@ -313,6 +383,14 @@ def test_runbook_records_p3b_rules_residual_risk_and_sni_checks():
     assert "domain fronting" in text and "P3c" in text and "devpi" in text
     assert "-servername example.com" in text
     assert "platform-dst.conf.example" in text
+    assert (
+        "10.213.77.11:3128" in text
+        and "TCP_DENIED_ABORTED" in text
+        and "Connection established" in text
+    )
+    assert "resolv.conf" in text and "by IP" in text
+    assert "ip -4 addr show dev br-" in text and "gateway_mode_ipv4" in text
+    assert "ip -6 addr show dev br-" in text and "10.213.77.1 $p" not in text
     assert "-noservername" in text and "squid -v" in text and "apt-cache policy" in text
     assert "without SNI is matched against the CONNECT target" in text
     assert re.search(r"\bECH\b", text) and "inner SNI" in text
