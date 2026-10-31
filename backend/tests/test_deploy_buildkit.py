@@ -338,21 +338,18 @@ async def test_failure_detail_keeps_only_the_last_300_characters(builder, stub, 
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
-class TestPermissionChecks:
-    def test_read_only_out_dir_is_refused(self, ready):
-        out = ready["a4_builder_out_dir"]
-        out.chmod(0o555)
-        try:
-            with pytest.raises(RuntimeError, match="A4_BUILDER_OUT_DIR"):
-                validate_builder_settings(Settings(**ready))
-        finally:
-            out.chmod(0o755)
-
-    def test_unreadable_tls_file_is_refused_by_name(self, ready):
-        key = ready["a4_buildkit_tls_dir"] / "client-key.pem"
-        key.chmod(0o000)
-        try:
-            with pytest.raises(RuntimeError, match="client-key.pem"):
-                validate_builder_settings(Settings(**ready))
-        finally:
-            key.chmod(0o600)
+@pytest.mark.parametrize(
+    ("target", "locked", "restored", "message"),
+    [
+        ("a4_builder_out_dir", 0o555, 0o755, "A4_BUILDER_OUT_DIR"),
+        ("client-key.pem", 0o000, 0o600, "client-key.pem"),
+    ],
+)
+def test_permission_checks(ready, target, locked, restored, message):
+    path = ready.get(target) or ready["a4_buildkit_tls_dir"] / target
+    path.chmod(locked)
+    try:
+        with pytest.raises(RuntimeError, match=message):
+            validate_builder_settings(Settings(**ready))
+    finally:
+        path.chmod(restored)
