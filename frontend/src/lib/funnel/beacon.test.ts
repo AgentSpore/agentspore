@@ -27,6 +27,17 @@ describe("buildBeacon", () => {
     expect(isCountablePath("/a".repeat(101))).toBe(false);
     expect(isCountablePath("/administrator")).toBe(true);
   });
+
+  it.each(["/dashboard", "/profile", "/workspace/agent-1", "/auth/callback", "/reset-password", "/verify-email", "/forgot-password"])(
+    "does not report private area %s", (path) => {
+      expect(buildBeacon(path, true, "", "", "h")).toBeNull();
+    });
+
+  it("still reports public pages", () => {
+    for (const path of ["/", "/agents/42", "/blog", "/privacy", "/login", "/signup"]) {
+      expect(buildBeacon(path, false, "", "", "h")).toEqual({ path });
+    }
+  });
 });
 
 describe("trackingOptOut", () => {
