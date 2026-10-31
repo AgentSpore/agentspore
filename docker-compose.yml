@@ -138,6 +138,7 @@ services:
       A4_BUILDER_OUT_DIR: /var/lib/a4-out
       A4_BUILDKIT_ADDR: "${A4_BUILDKIT_ADDR:-tcp://buildkitd:1234}"
       A4_BUILDER_PROXY_URL: "${A4_BUILDER_PROXY_URL:-http://10.213.77.11:3128}"
+      A4_RECYCLE_GATE_URL: "${A4_RECYCLE_GATE_URL:-http://a4-restart-gate:2375}"
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -145,6 +146,7 @@ services:
         condition: service_healthy
     networks:
       - sporeai-network
+      - a4-control
     volumes:
       - ./backend/app:/app/app:ro
       - type: bind
@@ -474,3 +476,7 @@ volumes:
 networks:
   sporeai-network:
     driver: bridge
+  # Worker <-> a4-restart-gate (deploy/a4-builder.compose.yml) only; no route out, never a4-builder.
+  a4-control:
+    name: a4-control
+    internal: true

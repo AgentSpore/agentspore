@@ -28,7 +28,8 @@ services:
     # INVARIANT(A4-P3a): rootless RUN shares this container's network namespace, so the listener is
     # reachable from untrusted code; mTLS (client cert held only by the worker) protects it.
     # --oci-worker-no-process-sandbox lets RUN kill or outlive daemon processes: one build per
-    # daemon, destroy it (rm -fsv) after every build.
+    # daemon. The worker restarts this container after every build through a4-restart-gate; the
+    # state below is a tmpfs, so the restart wipes all of it.
     command:
       - --addr=tcp://0.0.0.0:1234
       - --tlscert=/run/secrets/a4_buildkit_cert
@@ -43,15 +44,32 @@ services:
     security_opt: ["seccomp=unconfined", "apparmor=unconfined"]
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 2G, pids: 512 }
+        limits: { cpus: "1.0", memory: 6G, pids: 512 }  # the 4g state tmpfs counts against it
     secrets: [a4_buildkit_cert, a4_buildkit_key, a4_buildkit_ca]
     volumes:
-      - /home/user/.local/share/buildkit
       - ./a4-builder/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
     tmpfs:
+      - /home/user/.local/share/buildkit:uid=1000,gid=1000,mode=0700,size=4g
       - /run/user/1000:uid=1000,gid=1000,mode=0700,size=64m
       - /tmp:size=256m
     networks: [a4-builder]
+    healthcheck:
+      # Read through a4-restart-gate's /json: the worker builds only against a daemon that answers mTLS.
+      # The server pair doubles as the client pair (the runbook's server cert has no extendedKeyUsage).
+      test:
+        - CMD
+        - buildctl
+        - --addr=tcp://127.0.0.1:1234
+        - --tlsservername=buildkitd
+        - --tlscacert=/run/secrets/a4_buildkit_ca
+        - --tlscert=/run/secrets/a4_buildkit_cert
+        - --tlskey=/run/secrets/a4_buildkit_key
+        - debug
+        - workers
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
     # runsc: Docker's embedded DNS (127.0.0.11) refuses queries, so peers are addressed by pinned IP.
     extra_hosts: ["mirror-gate:10.213.77.10", "egress-proxy:10.213.77.11"]
     depends_on:
@@ -60,6 +78,33 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+
+  a4-restart-gate:
+    # nginxinc/nginx-unprivileged:1.27-alpine
+    # The only path to the Docker socket: restart and inspect of buildkitd, nothing else
+    # (a4-builder/restart-gate.conf). It is NOT on a4-builder: a RUN step shares buildkitd's
+    # network namespace and could reach it there. Only a4-worker shares a4-control with it.
+    image: nginxinc/nginx-unprivileged@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+    <<: *hardened
+    # The socket is root:docker 0660; nginx runs as uid 101, so it needs the host's docker gid.
+    group_add: ["${A4_DOCKER_GID:?set A4_DOCKER_GID to the host docker group id (getent group docker)}"]
+    volumes:
+      - ./a4-builder/restart-gate.conf:/etc/nginx/conf.d/default.conf:ro
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind: { create_host_path: false }
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2375/v1.44/containers/a4-builder-buildkitd-1/json"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+    networks: [a4-control]
 
   mirror-gate:
     # nginxinc/nginx-unprivileged:1.27-alpine
@@ -143,6 +188,11 @@ secrets:
     file: ${A4_BUILDKIT_CERT_DIR:?set A4_BUILDKIT_CERT_DIR}/ca.pem
 
 networks:
+  # Created by the main compose file (a4-worker): start a4-worker once, or run
+  # `docker network create --internal a4-control`, before `up`.
+  a4-control:
+    external: true
+    name: a4-control
   a4-builder:
     name: a4-builder
     internal: true
