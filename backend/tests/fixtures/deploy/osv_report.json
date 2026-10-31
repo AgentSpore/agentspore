@@ -1,0 +1,20 @@
+{
+  "results": [
+    {
+      "source": {"path": "/work/requirements.txt", "type": "lockfile"},
+      "packages": [
+        {
+          "package": {"name": "django", "version": "3.0.0", "ecosystem": "PyPI"},
+          "vulnerabilities": [
+            {"id": "GHSA-crit-0001", "aliases": ["CVE-2099-0001"], "summary": "critical flaw"},
+            {"id": "GHSA-mod-0002", "aliases": ["CVE-2099-0002"], "summary": "moderate flaw"}
+          ],
+          "groups": [
+            {"ids": ["GHSA-crit-0001", "CVE-2099-0001"], "max_severity": "9.8"},
+            {"ids": ["GHSA-mod-0002", "CVE-2099-0002"], "max_severity": "5.3"}
+          ]
+        }
+      ]
+    }
+  ]
+}
