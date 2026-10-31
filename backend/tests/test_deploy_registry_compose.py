@@ -73,3 +73,12 @@ def test_registry_is_on_neither_control_nor_builder_nor_any_tenant_network(stack
     assert stack["networks"]["a4-registry-net"]["external"] is True
     assert not stack["networks"]["a4-registry-host"].get("internal", False)
     assert list(stack["networks"]) == ["a4-registry-net", "a4-registry-host"]
+
+
+def test_only_a4_worker_joins_the_registry_network():
+    main = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    on_net = [n for n, s in main["services"].items() if "a4-registry-net" in s.get("networks", [])]
+    assert on_net == ["a4-worker"]
+    assert main["networks"]["a4-registry-net"] == {"name": "a4-registry-net", "internal": True}
+    env = main["services"]["a4-worker"]["environment"]
+    assert env["A4_REGISTRY_URL"] == "${A4_REGISTRY_URL:-http://a4-registry:5000}"

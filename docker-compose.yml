@@ -139,6 +139,7 @@ services:
       A4_BUILDKIT_ADDR: "${A4_BUILDKIT_ADDR:-tcp://buildkitd:1234}"
       A4_PKG_MIRROR_HOST: "${A4_PKG_MIRROR_HOST:-10.213.77.12}"
       A4_RECYCLE_GATE_URL: "${A4_RECYCLE_GATE_URL:-http://a4-restart-gate:2375}"
+      A4_REGISTRY_URL: "${A4_REGISTRY_URL:-http://a4-registry:5000}"
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -147,6 +148,7 @@ services:
     networks:
       - sporeai-network
       - a4-control
+      - a4-registry-net
     volumes:
       - ./backend/app:/app/app:ro
       - type: bind
@@ -479,4 +481,8 @@ networks:
   # Worker <-> a4-restart-gate (deploy/a4-builder.compose.yml) only; no route out, never a4-builder.
   a4-control:
     name: a4-control
+    internal: true
+  # Worker <-> a4-registry (deploy/a4-registry.compose.yml) only; no route out.
+  a4-registry-net:
+    name: a4-registry-net
     internal: true
