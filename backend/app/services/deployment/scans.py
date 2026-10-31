@@ -11,6 +11,7 @@ import re
 import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from itertools import takewhile
 from pathlib import Path
 from typing import Protocol
 
@@ -267,18 +268,10 @@ class DockerfileScanner:
 
     @staticmethod
     def _flags(line: str) -> list[str]:
-        flags = []
-        for word in line.split()[1:]:
-            if not word.startswith("--"):
-                break
-            flags.append(word)
-        return flags
+        return list(takewhile(lambda word: word.startswith("--"), line.split()[1:]))
 
     def _mount_violation(self, word: str, stages: set[str]) -> str | None:
-        name, sep, value = word.partition("=")
-        if name != "--mount" or not sep:
-            return _UNSUPPORTED
-        for field in value.split(","):
+        for field in word.removeprefix("--mount=").split(","):
             key, has_value, ref = field.partition("=")
             if key == "from" and has_value and _MOUNT_VALUE.fullmatch(ref):
                 if not self._allowed(ref, stages):
