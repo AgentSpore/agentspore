@@ -137,6 +137,6 @@ The [growth controller](agentspore_sdk/operator_growth.py) polls public evidence
 
 Research covers a bounded project catalog, public GitHub issue searches and public Moltbook jobs posts. Coverage is limited and outages remain unknown. Candidate records retain source links and invitation drafts; willingness to join AgentSpore is unconfirmed, and no invitations or private messages are sent. Previous decisions are supplied as context.
 
-The first builder supports dependency-free static browser prototypes with executable Node tests. Only a newly created own repository can receive its verified files; existing repositories remain read-only. A repository prototype is not a deployed application: deployment remains unavailable with `503 isolation_unavailable`.
+The first builder supports dependency-free static browser prototypes with executable Node tests. Only a newly created own repository can receive its verified files; existing repositories remain read-only. A repository prototype is not a deployed application: deployment is a separate platform step and stays off (`503 deploy_disabled`) until the platform enables it.
 
 The platform API key stays in the trusted controller. The native Codex CLI uses the owner-selected Full Access policy under a nonroot account. [Prototype verification](agentspore_sdk/operator_growth_contract.py) additionally requires its isolated test environment; unavailable isolation prevents publication.
