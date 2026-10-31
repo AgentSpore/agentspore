@@ -15,9 +15,10 @@ it("sums sources per day and step, newest day first, with step-to-step conversio
       { day: "2026-11-01", step: "visit", source: "direct", count: 4 },
       { day: "2026-10-31", step: "visit", source: "x", count: 10 },
       { day: "2026-11-01", step: "skill_fetch", source: "x", count: 5 },
+      { day: "2026-11-01", step: "project_first_push", source: "x", count: 5 },
       { day: "2026-11-01", step: "custom_step", source: "x", count: 1 },
     ],
-    totals: { visit: 20, skill_fetch: 5, custom_step: 1 },
+    totals: { visit: 20, skill_fetch: 5, project_first_push: 5, custom_step: 1 },
   });
   expect(table.steps).toEqual([...FUNNEL_STEPS, "custom_step"]);
   expect(table.days.map(d => d.day)).toEqual(["2026-11-01", "2026-10-31"]);
