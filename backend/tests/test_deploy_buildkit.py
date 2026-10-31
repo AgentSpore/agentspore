@@ -1,13 +1,18 @@
 """A4 P3b-1: BuildKitBuilder argv, limits and refusals against a stub `buildctl`."""
 
 import json
+import os
 import sys
 
 import pytest
 
 from app.core.config import Settings
 from app.services.deployment.builder import Builder, BuildRequest
-from app.services.deployment.buildkit import BuildKitBuilder
+from app.services.deployment.buildkit import (
+    BuildKitBuilder,
+    builder_from_settings,
+    validate_builder_settings,
+)
 from app.services.deployment.errors import DeployRejectedError
 
 DIGEST = "sha256:" + "ab" * 32
@@ -29,6 +34,8 @@ if mode.get("digest"):
     pathlib.Path(meta).write_text(json.dumps(body))
 if mode.get("stdout"):
     print(mode["stdout"])
+if mode.get("stderr"):
+    print(mode["stderr"], file=sys.stderr)
 sys.exit(mode.get("rc", 0))
 """
 
@@ -240,3 +247,120 @@ async def test_oversized_metadata_is_build_failed(builder, stub, context, tmp_pa
         await builder.build(BuildRequest(context_dir=context, tag="t"))
     assert exc.value.reason_code == "build_failed"
     assert list((tmp_path / "out").iterdir()) == []
+
+
+async def test_failure_detail_shows_redacted_stderr(builder, stub, context):
+    _, configure, _ = stub
+    configure(rc=1, stderr="error: pull https://bot:s3cret@mirror.local/v2 denied")
+    with pytest.raises(DeployRejectedError) as exc:
+        await builder.build(BuildRequest(context_dir=context, tag="t"))
+    assert exc.value.reason_code == "build_failed"
+    assert "denied" in exc.value.detail and "s3cret" not in exc.value.detail
+
+
+async def test_gosumdb_is_one_argv_element(builder, stub, context):
+    _, _, argv_file = stub
+    await builder.build(BuildRequest(context_dir=context, tag="t"))
+    argv = json.loads(argv_file.read_text())
+    gosumdb = [a for a in argv if a.startswith("build-arg:GOSUMDB=")]
+    assert gosumdb == ["build-arg:GOSUMDB=sum.golang.org http://10.213.77.12:8083/sumdb"]
+    assert argv[argv.index(gosumdb[0]) - 1] == "--opt"
+
+
+# A4 P3b-2c: `A4_BUILDER=buildkit` is validated when the worker starts, not at the first build.
+TLS_FILES = ("ca.pem", "client.pem", "client-key.pem")
+
+
+@pytest.fixture
+def ready(tmp_path):
+    tls = tmp_path / "tls"
+    tls.mkdir()
+    for name in TLS_FILES:
+        (tls / name).write_text("pem")
+    out = tmp_path / "out"
+    out.mkdir()
+    return dict(
+        _env_file=None,
+        a4_builder="buildkit",
+        a4_buildkit_tls_dir=tls,
+        a4_builder_out_dir=out,
+    )
+
+
+def test_valid_settings_pass_and_build_the_builder(ready):
+    validate_builder_settings(Settings(**ready))
+    assert builder_from_settings(Settings(**ready)) is not None
+
+
+def test_fake_builder_skips_validation(tmp_path):
+    cfg = Settings(_env_file=None, a4_buildkit_tls_dir=tmp_path / "missing")
+    validate_builder_settings(cfg)
+
+
+@pytest.mark.parametrize(
+    "addr",
+    [
+        "buildkitd:1234",
+        "http://buildkitd:1234",
+        "tcp://buildkitd",
+        "tcp://:1",
+        "tcp://h:abc",
+        "tcp://h:99999",
+    ],
+)
+def test_bad_addr_is_refused(ready, addr):
+    with pytest.raises(RuntimeError, match="A4_BUILDKIT_ADDR"):
+        validate_builder_settings(Settings(**ready, a4_buildkit_addr=addr))
+
+
+@pytest.mark.parametrize("name", TLS_FILES)
+def test_missing_tls_file_is_named_without_contents(ready, name):
+    (ready["a4_buildkit_tls_dir"] / name).unlink()
+    with pytest.raises(RuntimeError) as exc:
+        builder_from_settings(Settings(**ready))
+    assert name in str(exc.value) and "pem" not in str(exc.value).replace(name, "")
+
+
+def test_unwritable_out_dir_is_refused(ready, tmp_path):
+    ready["a4_builder_out_dir"] = tmp_path / "absent"
+    with pytest.raises(RuntimeError, match="A4_BUILDER_OUT_DIR"):
+        validate_builder_settings(Settings(**ready))
+
+
+async def test_failure_detail_keeps_only_the_last_300_characters(builder, stub, context):
+    _, configure, _ = stub
+    configure(rc=1, stderr="a" * 5000 + "END-MARK")
+    with pytest.raises(DeployRejectedError) as exc:
+        await builder.build(BuildRequest(context_dir=context, tag="t"))
+    prefix = "buildctl rc=1: "
+    assert len(exc.value.detail) == len(prefix) + 300
+    assert exc.value.detail.endswith("END-MARK")
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+@pytest.mark.parametrize(
+    ("target", "locked", "restored", "message"),
+    [
+        ("a4_builder_out_dir", 0o555, 0o755, "A4_BUILDER_OUT_DIR"),
+        ("client-key.pem", 0o000, 0o600, "client-key.pem"),
+    ],
+)
+def test_permission_checks(ready, target, locked, restored, message):
+    path = ready.get(target) or ready["a4_buildkit_tls_dir"] / target
+    path.chmod(locked)
+    try:
+        with pytest.raises(RuntimeError, match=message):
+            validate_builder_settings(Settings(**ready))
+    finally:
+        path.chmod(restored)
+
+
+async def test_stdout_tail_cut_inside_url_password_drops_the_partial_line(builder, stub, context):
+    # The 4 KiB cut lands inside the password: the leftover `ppp…LEAKMARK@h/x` has no `://`
+    # for the redactor to anchor on, so only dropping the partial first line keeps it out.
+    line = "pull https://user:" + "p" * 5000 + "LEAKMARK@h/x failed"
+    stub[1](tar_bytes=5, rc=1, stdout=line + "\nbuild step 3 failed")
+    with pytest.raises(DeployRejectedError) as exc:
+        await builder.build(BuildRequest(context_dir=context, tag="t"))
+    assert "LEAKMARK" not in exc.value.detail
+    assert "build step 3 failed" in exc.value.detail
