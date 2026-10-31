@@ -218,12 +218,7 @@ def dockerfile_scanner(root: Path, body: str) -> DockerfileScanner:
         f"FROM python@{DIGEST}\r\nRUN --mount=type=bind,target=/x \\\r\n  true\r\n",
         f"FROM --platform=${{TARGETPLATFORM}} python@{DIGEST}\n",
         f"FROM python@{DIGEST}\nCOPY --link x /x\nCOPY --parents x /x\nADD --keep-git-dir x /x\n",
-        (
-            f"FROM python@{DIGEST}\nRUN <<EOF\nFROM evil/img:latest\n"
-            "COPY --from=evil/img:latest /a /b\nEOF\n"
-        ),
-        f"FROM python@{DIGEST}\nRUN <<-EOF\n\tFROM evil\n\tEOF\nCMD x\n",
-        f"FROM python@{DIGEST}\nCOPY <<'A' /a\nx\nA\nCOPY <<B /b\ny\nB\n",
+        f"FROM python@{DIGEST}\n# heredoc <<EOF only in a comment\nCMD x\n",
         f"FROM python@{DIGEST}\nRUN --mount=type=secret,id=x,env=TOKEN true\n",
         f"FROM python@{DIGEST}\n# комментарий \u2014 not code\nCMD x\n",
         f"# comment\nFROM \\\n  python@{DIGEST}\n",
@@ -304,6 +299,13 @@ BS = "\\"  # one backslash
         (f"RUN echo a{BS}{BS}  \nCOPY --from=evil/img:latest /a /b", UNSUPPORTED),
         (f"RUN <<'EO{BS}'\nbody\nEO{BS}\nCOPY --from=evil/img:latest /a /b", UNSUPPORTED),
         ("RUN <<EOF\nbody\n", UNSUPPORTED),
+        ("RUN <<EOF\nFROM evil/img:latest\nCOPY --from=evil/img:latest /a /b\nEOF", UNSUPPORTED),
+        ("RUN <<-EOF\n\tbody\n\tEOF", UNSUPPORTED),
+        ("COPY <<'A' /a\nx\nA", UNSUPPORTED),
+        (f"RUN echo x<<EOF\nCOPY --from=evil/img:latest /a /b {BS}\nEOF", UNSUPPORTED),
+        ('RUN echo "<<EOF"', UNSUPPORTED),
+        ('RUN ["true","<<EOF"]', UNSUPPORTED),
+        ('RUN <<E"OF"', UNSUPPORTED),
         ('RUN <<"E F"\nbody\nE F\n', UNSUPPORTED),
         ("RUN echo $((1<<2))", UNSUPPORTED),
         ("RUN --link x", UNSUPPORTED),
