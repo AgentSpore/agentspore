@@ -9,7 +9,7 @@ import pytest
 
 from app.services.deployment import process
 from app.services.deployment.errors import DeployRejectedError
-from app.services.deployment.process import run_tool
+from app.services.deployment.process import MAX_STDERR, redact, run_tool, run_tool_captured
 
 
 async def test_run_tool_returns_rc_and_stdout(tmp_path):
@@ -75,3 +75,52 @@ async def test_overflow_with_paused_pipe_is_reaped_promptly(tmp_path, monkeypatc
     assert time.monotonic() - started < 2
     with pytest.raises(ProcessLookupError):
         os.kill(int(pid_file.read_text()), 0)
+
+
+async def test_captured_returns_stderr_separately(tmp_path):
+    out = await run_tool_captured(
+        ["sh", "-c", "printf out; printf err >&2; exit 2"], cwd=tmp_path, timeout=5
+    )
+    assert (out.rc, out.stdout, out.stderr) == (2, b"out", b"err")
+
+
+async def test_stderr_keeps_the_tail_within_cap_and_never_fails_the_run(tmp_path):
+    script = "import sys\nsys.stderr.write('head\\n' + 'x' * 300_000 + '\\nTAIL-MARK')"
+    out = await run_tool_captured([sys.executable, "-c", script], cwd=tmp_path, timeout=20)
+    assert len(out.stderr) <= MAX_STDERR
+    assert out.stderr.endswith(b"TAIL-MARK")
+    assert b"head" not in out.stderr
+
+
+async def test_stderr_flood_does_not_block_stdout(tmp_path):
+    script = "import sys\nsys.stderr.write('e' * 2_000_000)\nsys.stdout.write('done')"
+    out = await run_tool_captured([sys.executable, "-c", script], cwd=tmp_path, timeout=20)
+    assert out.stdout == b"done"
+
+
+async def test_credential_urls_are_redacted_on_both_streams(tmp_path):
+    cmd = "echo 'https://u:pw-1@git.example/x'; echo 'fatal: git://tok@h/y' >&2"
+    out = await run_tool_captured(["sh", "-c", cmd], cwd=tmp_path, timeout=5)
+    assert b"pw-1" not in out.stdout and b"tok" not in out.stderr
+    assert b"://***@git.example/x" in out.stdout and b"://***@h/y" in out.stderr
+
+
+async def test_cut_stderr_never_leaves_a_credential_fragment(tmp_path):
+    # The cap cuts inside the URL: the partial first line is dropped, so no password tail stays.
+    pad = MAX_STDERR - len("fragment-secret@host/x\nend") - 8
+    script = (
+        "import sys\n"
+        f"sys.stderr.write('https://user:very-long-' + 'z' * {pad}"
+        " + 'fragment-secret@host/x\\nend')"
+    )
+    out = await run_tool_captured([sys.executable, "-c", script], cwd=tmp_path, timeout=20)
+    assert b"fragment-secret" not in out.stderr
+
+
+async def test_captured_timeout_is_tool_failed(tmp_path):
+    with pytest.raises(DeployRejectedError, match="timeout"):
+        await run_tool_captured(["sleep", "30"], cwd=tmp_path, timeout=0.3)
+
+
+def test_redact_leaves_plain_text_alone():
+    assert redact(b"no url here: a@b") == b"no url here: a@b"
