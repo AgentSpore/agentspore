@@ -8,7 +8,8 @@ compose project; the existing platform stack is not changed by it.
 
 | Service | Role | Networks |
 |---|---|---|
-| `buildkitd` | rootless BuildKit under gVisor (`runtime: runsc`), 1 CPU, 2 GiB, `deploy.resources.limits.pids` 512, no host socket, state in an anonymous volume, mTLS-only listener | `a4-builder` (internal) |
+| `buildkitd` | rootless BuildKit under gVisor (`runtime: runsc`), 1 CPU, 6 GiB memory (4 GiB tmpfs + 2 GiB working set), `deploy.resources.limits.pids` 512, no host socket, read-only rootfs, state in a 4 GiB `exec` tmpfs (a restart wipes it), mTLS-only listener with an mTLS healthcheck | `a4-builder` (internal) |
+| `a4-restart-gate` | nginx in front of the Docker socket (read-only bind, docker group via `A4_DOCKER_GID`): only `POST /v1.NN/containers/a4-builder-buildkitd-1/restart[?t=N]` and `GET .../json` pass, everything else gets 403; no request body is forwarded | `a4-control` only (never `a4-builder`) |
 | `mirror-gate` | nginx allowlist in front of the mirror: GET/HEAD of manifests and blobs addressed by `sha256:` digest (tags get 403) for `library/{python,node,golang,rust,alpine,debian,busybox}` only | `a4-builder`, `a4-mirror-back` |
 | `mirror` | `registry:3` (distribution v3.0.0) pull-through cache of Docker Hub, `proxy.ttl` 12 h | `a4-mirror-back`, `a4-upstream` |
 | `egress-proxy` | squid-openssl (built from `Dockerfile.squid`): HTTPS CONNECT to `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `proxy.golang.org`, `crates.io` (plus `index.`/`static.crates.io` for cargo), and the TLS SNI must name one of them too (peek and splice, no interception; a ClientHello without SNI falls back to the CONNECT host, see Accepted residual risk). IP-literal hosts, private, link-local, multicast, reserved ranges, and this host's own addresses (`platform-dst.conf`) are denied | `a4-builder`, `a4-upstream` |
@@ -31,7 +32,11 @@ digest (`python:3.12-slim@sha256:...`) because the gate refuses tag manifests. `
   untrusted code. The worker passes only the build context: no registry auth, no secrets or ssh
   mounts, output `--output type=oci,dest=<file>`; the worker pushes the image itself.
 - `--oci-worker-no-process-sandbox` lets a `RUN` kill or outlive daemon processes. The rule "one
-  build per daemon" is a security rule: the daemon is destroyed after every build (see Recycle).
+  build per daemon" is a security rule: the worker restarts the daemon after every build (see Recycle).
+- `a4-restart-gate` is root-equivalent access narrowed to two calls by `restart-gate.conf`. It is off
+  `a4-builder` because a `RUN` shares buildkitd's network namespace and reaches every peer there;
+  `a4-control` is `internal` and holds only the gate and `a4-worker`, which opens no listener.
+  A general socket proxy with `containers` POST is refused: it allows creating privileged containers.
 - With runsc's default `--host-uds=none` a unix socket created in the sandbox is not visible to the
   host, and changing that is a host-wide runtime flag, so no socket volume shared with the worker is
   used; mTLS over the internal network replaces it.
@@ -84,29 +89,40 @@ $C ps
 $C down -v          # stop, drop all state
 ```
 
-Recycle: the daemon is destroyed after every build. `$C rm -fsv buildkitd` followed by
-`$C up -d buildkitd`, or in one step `$C up -d --force-recreate --no-deps -V buildkitd`
-(`--no-deps` keeps the mirror and its cache; `-V` does nothing for the mirror's tmpfs, a plain
-recreate already drops it). `--force-recreate` without `-V` keeps the anonymous state volume and
-with it the previous untrusted build's cache; never use it.
+Prerequisites for `up`: `export A4_DOCKER_GID=$(getent group docker | cut -d: -f3)`, and the
+`a4-control` network must exist (the main compose file creates it when `a4-worker` starts, or run
+`docker network create --internal a4-control`).
+
+Recycle: the worker calls the gate after every build (success, failure, timeout, cancel):
+`POST /v1.44/containers/a4-builder-buildkitd-1/restart?t=5`, then polls `GET .../json` until
+`State.Running` and `State.Health.Status == healthy`. A restart discards the container's process
+tree, network namespace and tmpfs state, so the next build starts on an empty daemon. If the restart
+or the wait (90 s) fails, the worker marks the daemon dirty and refuses the next build with
+`tool_failed` (logged) until a retry succeeds; a fresh worker treats the daemon as dirty too.
+Manual recycle: `docker restart a4-builder-buildkitd-1`. The old anonymous state volume kept the
+previous build's cache across `--force-recreate`; the tmpfs has no such volume.
+Gate check (from a container on `a4-control`): `POST .../restart` 204, `GET .../json` 200,
+`GET /v1.44/containers/json` 403, `POST /v1.44/containers/create` 403, `POST .../restart` with a body 413.
 
 ## Enable the BuildKit builder in the worker (preview, not operable yet)
 
-Do not enable this on a live host. Missing before it can work:
-- `buildctl` is not in the backend image, so every build ends in `tool_failed`.
-- `a4-worker` is on `sporeai-network` only; `buildkitd` sits on the internal `a4-builder` network.
-- The per-build `buildkitd` recycle is not implemented, so successive untrusted builds would share a daemon (see `INVARIANT(A4-P3a)` in `deploy/a4-builder.compose.yml`).
+Do not enable this on a live host before the stand check below. `buildctl` is in the backend image
+(moby/buildkit v0.23.2, copied by digest) and the per-build recycle is implemented. Still missing:
+- `a4-worker` is on `sporeai-network` and `a4-control`; `buildkitd` sits on the internal `a4-builder`
+  network, so `A4_BUILDKIT_ADDR` has no route to it yet (a later step).
 - Built tarballs are deleted right after the build; loading or pushing the image is a later step.
+- Verify on the stand under runsc: the rootless snapshotter on the tmpfs state directory, the mTLS
+  healthcheck (server pair used as client pair), `group_add` reaching the socket, the gate checks above.
 
-Once those land, the switch is `A4_BUILDER=buildkit` (default `fake`; roll back by unsetting it) with
+The switch is `A4_BUILDER=buildkit` (default `fake`; roll back by unsetting it) with
 `A4_BUILDKIT_CERT_DIR` (client `ca.pem`, `client.pem`, `client-key.pem`, mounted read-only),
 `A4_BUILDKIT_ADDR` (default `tcp://buildkitd:1234`) and `A4_BUILDER_PROXY_URL`
-(default `http://10.213.77.11:3128`). Tarballs go to a 4 GiB tmpfs; the container limit is 6 GiB.
+(default `http://10.213.77.11:3128`), `A4_RECYCLE_GATE_URL` (default `http://a4-restart-gate:2375`). Tarballs go to a 4 GiB tmpfs; the container limit is 6 GiB.
 The worker checks the tarball's `index.json` digest against buildkitd's and refuses on mismatch.
 
 ## Rollback
 
-`$C down -v` removes the stack and its networks (`a4-builder`, `a4-mirror-back`, `a4-upstream`); revert the PR to remove the files.
+`$C down -v` removes the stack and its networks (`a4-builder`, `a4-mirror-back`, `a4-upstream`; `a4-control` belongs to the main compose file); revert the PR to remove the files.
 
 ## Smoke checks
 
