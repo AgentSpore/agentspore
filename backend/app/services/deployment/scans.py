@@ -152,7 +152,11 @@ _MOUNT_KEYS = frozenset(
     "type target dst destination id sharing mode uid gid required size "
     "ro readonly rw source src env".split()
 )
-_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\x85\u2028\u2029]")
+_CONTROL = re.compile("[\x00-\x08\x0a-\x1f\x7f\x85\xa0\u2028\u2029]")
+_FLAG_NAME = re.compile(r"--[a-z][a-z-]*=")
+_PLATFORM_ARG = re.compile(
+    r"--platform=\$(?:\{(?:BUILD|TARGET)PLATFORM\}|(?:BUILD|TARGET)PLATFORM)"
+)
 _CONTINUATION = re.compile(r"\\[ \t]*$")
 _MOUNT_BARE = frozenset({"required", "ro", "readonly", "rw"})
 _MOUNT_TYPES = frozenset({"cache", "tmpfs", "secret", "bind", "ssh"})
@@ -166,8 +170,11 @@ class DockerfileScanner:
 
     Directives (`syntax`, `escape`, `check`) are refused outright: BuildKit would read the
     file with a different escape character than this scanner and see FROM lines it cannot.
-    Instruction flags are an allowlist grammar (no quotes, escapes or `$`; fixed `--mount` keys),
-    never a blacklist of spellings. Defense in depth: the registry-mirror allowlist (P3) is the
+    Only a strict subset is accepted, everything else is `dockerfile-unsupported`: strict UTF-8
+    (BOM dropped, CRLF ok, non-ASCII only in comments), no ONBUILD, and every flag is a lower-case
+    `--name=value` free of quotes, backslashes and `$` (so `--chown=${UID}` is refused; only
+    `--platform=$BUILDPLATFORM`/`$TARGETPLATFORM` pass) with `--mount` on a fixed key grammar.
+    Never a blacklist of spellings. Defense in depth: the registry-mirror allowlist (P3) is the
     real boundary for which images a build can pull.
     """
 
@@ -185,12 +192,18 @@ class DockerfileScanner:
         path = root / self.dockerfile
         if not path.is_file():
             return [Finding("dockerfile-missing", self.dockerfile, 0, "dockerfile_missing")]
-        text = path.read_bytes().decode("utf-8", errors="replace")
-        for number, physical in enumerate(text.split("\n"), 1):
-            if _CONTROL.search(physical):
+        try:
+            text = path.read_bytes().decode("utf-8").removeprefix("\ufeff")
+        except UnicodeDecodeError:
+            return [Finding(_UNSUPPORTED, self.dockerfile, 1, "base_not_allowed")]
+        lines = [line.removesuffix("\r") for line in text.split("\n")]
+        for number, physical in enumerate(lines, 1):
+            if _CONTROL.search(physical) or (
+                not physical.isascii() and not physical.lstrip(" \t").startswith("#")
+            ):
                 return [Finding(_UNSUPPORTED, self.dockerfile, number, "base_not_allowed")]
         findings, stages = [], set()
-        for number, line in self._logical_lines(text):
+        for number, line in self._logical_lines(lines):
             rule = self._violation(line, stages)
             if rule:
                 findings.append(Finding(rule, self.dockerfile, number, "base_not_allowed"))
@@ -201,6 +214,8 @@ class DockerfileScanner:
             return (
                 "syntax-directive" if directive.group(1).lower() == "syntax" else "parser-directive"
             )
+        if line.split(None, 1)[0].upper() == "ONBUILD":
+            return _UNSUPPORTED
         if rule := self._flag_violation(line, stages):
             return rule
         if (match := _FROM.match(line)) is not None:
@@ -218,11 +233,11 @@ class DockerfileScanner:
 
     def _flag_violation(self, line: str, stages: set[str]) -> str | None:
         for word in self._flags(line):
-            name = word.partition("=")[0].lower()
-            if name.startswith("--mount") or name == "--from":
-                if _FLAG_FORBIDDEN.search(word):
-                    return _UNSUPPORTED
-            if name.startswith("--mount"):
+            if _FLAG_FORBIDDEN.search(word) and not _PLATFORM_ARG.fullmatch(word):
+                return _UNSUPPORTED
+            if _FLAG_NAME.match(word) is None:
+                return _UNSUPPORTED
+            if word.startswith("--mount="):
                 rule = self._mount_violation(word, stages)
                 if rule:
                     return rule
@@ -255,10 +270,10 @@ class DockerfileScanner:
         return None
 
     @staticmethod
-    def _logical_lines(text: str) -> list[tuple[int, str]]:
+    def _logical_lines(lines: list[str]) -> list[tuple[int, str]]:
         """Join continuations like BuildKit (indent kept, comments skipped); number = first line."""
         out, buffer, start = [], "", 0
-        for number, raw in enumerate(text.split("\n"), 1):
+        for number, raw in enumerate(lines, 1):
             stripped = raw.strip(" \t")
             if not stripped or stripped.startswith("#"):
                 if not buffer and stripped:

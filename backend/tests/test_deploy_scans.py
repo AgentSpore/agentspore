@@ -215,7 +215,8 @@ def dockerfile_scanner(root: Path, body: str) -> DockerfileScanner:
         f"FROM python@{DIGEST}\nRUN --mount=type=bind,source=.,target=/x,ro true\n",
         f"FROM python@{DIGEST}\nRUN --mount=type=bind,target=/x \\\n  true\n",
         f"FROM --platform=$BUILDPLATFORM python@{DIGEST}\n",
-        f"FROM python@{DIGEST}\nCOPY --chown=${{UID}}:${{GID}} x /x\n",
+        f"FROM python@{DIGEST}\r\nRUN --mount=type=bind,target=/x \\\r\n  true\r\n",
+        f"FROM --platform=${{TARGETPLATFORM}} python@{DIGEST}\n",
         f"FROM python@{DIGEST}\nRUN --mount=type=secret,id=x,env=TOKEN true\n",
         f"FROM python@{DIGEST}\n# комментарий \u2014 not code\nCMD x\n",
         f"# comment\nFROM \\\n  python@{DIGEST}\n",
@@ -285,6 +286,13 @@ BS = "\\"  # one backslash
         ("RUN --mount=type=bind,target=/x,,from=a true", UNSUPPORTED),
         ("RUN --mount=type=bind,target=${T} true", UNSUPPORTED),
         ("COPY --from='evil/img:1' /a /b", UNSUPPORTED),
+        ('COPY --fr"om"=evil/img:latest /a /b', UNSUPPORTED),
+        ('RUN --mo"unt"=type=bind,from=evil/img:latest,target=/x true', UNSUPPORTED),
+        ("COPY --chown=${UID} x /x", UNSUPPORTED),
+        ("COPY --Chown=1 x /x", UNSUPPORTED),
+        ("ONBUILD COPY --from=evil/img:latest /a /b", UNSUPPORTED),
+        ("ONBUILD RUN --mount=type=bind,from=evil/img:latest,target=/x true", UNSUPPORTED),
+        ("RUN echo é", UNSUPPORTED),
         (
             f"RUN --network=none{BS}\n    --mount=type=bind,from=evil/img:latest,target=/x true",
             "from-not-allowed",
@@ -313,3 +321,38 @@ async def test_dockerfile_with_exotic_whitespace_is_refused(tmp_path, char):
     findings = await DockerfileScanner(frozenset({DIGEST})).scan(tmp_path)
     assert [f.rule_id for f in findings] == [UNSUPPORTED]
     assert findings[0].line == 2
+
+
+@pytest.mark.parametrize(
+    ("raw", "rule"),
+    [
+        (b"\xef\xbb\xbfFROM evil/img:latest\n", "from-not-allowed"),
+        (
+            b"FROM python@"
+            + DIGEST.encode()
+            + b"\nRUN \x85--mount=type=bind,from=evil/i,target=/x\n",
+            UNSUPPORTED,
+        ),
+        (
+            b"FROM python@"
+            + DIGEST.encode()
+            + b"\nRUN \xa0--mount=type=bind,from=evil/i,target=/x\n",
+            UNSUPPORTED,
+        ),
+        (
+            b"FROM python@"
+            + DIGEST.encode()
+            + b"\nRUN \xc2\xa0--mount=type=bind,from=evil/i,target=/x\n",
+            UNSUPPORTED,
+        ),
+    ],
+)
+async def test_dockerfile_bytes_follow_buildkit_or_are_refused(tmp_path, raw, rule):
+    (tmp_path / "Dockerfile").write_bytes(raw)
+    findings = await DockerfileScanner(frozenset({DIGEST})).scan(tmp_path)
+    assert [f.rule_id for f in findings] == [rule]
+
+
+async def test_dockerfile_bom_is_dropped_before_parsing(tmp_path):
+    (tmp_path / "Dockerfile").write_bytes(b"\xef\xbb\xbfFROM python@" + DIGEST.encode() + b"\n")
+    assert await DockerfileScanner(frozenset({DIGEST})).scan(tmp_path) == []
