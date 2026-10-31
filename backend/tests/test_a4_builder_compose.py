@@ -41,6 +41,7 @@ HTTP_ACCESS = [
     "allow CONNECT egress_ok SSL_ports",
     "deny all",
 ]
+SSL_BUMP = ["peek step1", "splice allowed_sni", "terminate all"]
 MIRROR_BASES = {"python", "node", "golang", "rust", "alpine", "debian", "busybox"}
 MIRROR_LOCATIONS = ["= /v2/", "~ MIRROR_REGEX", "/"]
 BUILDKITD_COMMAND = [
@@ -75,7 +76,22 @@ def services(stack) -> dict:
 
 def test_every_image_is_pinned_by_digest(services):
     for name, svc in services.items():
-        assert re.search(r"@sha256:[0-9a-f]{64}$", svc["image"]), name
+        if "build" in svc:
+            dockerfile = (CONF / Path(svc["build"]["dockerfile"]).name).read_text()
+            assert re.search(r"^FROM \S+@sha256:[0-9a-f]{64}$", dockerfile, re.M), name
+        else:
+            assert re.search(r"@sha256:[0-9a-f]{64}$", svc["image"]), name
+
+
+def test_egress_proxy_is_built_with_openssl_for_sni_peek(services):
+    # The stock ubuntu/squid image links GnuTLS, which cannot ssl_bump; squid-openssl can.
+    svc = services["egress-proxy"]
+    assert svc["build"]["dockerfile"] == "Dockerfile.squid"
+    dockerfile = (CONF / "Dockerfile.squid").read_text()
+    assert "squid-openssl" in dockerfile and "USER proxy" in dockerfile
+    entry = (CONF / "squid-entrypoint.sh").read_text()
+    assert "/tmp/ssl" in entry and "BEGIN" not in entry
+    assert not list(CONF.glob("*.pem")) and not list(CONF.glob("*.key"))
 
 
 def test_buildkitd_runs_under_gvisor_without_privilege(services):
@@ -162,6 +178,32 @@ def test_buildkitd_waits_for_healthy_gate_and_proxy(services):
     assert services["egress-proxy"]["healthcheck"]["test"]
 
 
+def test_proxy_checks_tls_sni_by_peek_and_splice_without_interception():
+    conf = CONF / "squid.conf"
+    port = next(r for r in _directives(conf, "http_port") if r[0] == "3128")
+    assert "ssl-bump" in port and "generate-host-certificates=off" in port
+    assert any(a.startswith("cert=/tmp/ssl/") for a in port)
+    rules = [" ".join(r) for r in _directives(conf, "ssl_bump")]
+    assert rules == SSL_BUMP
+    acls = _directives(conf, "acl")
+    assert ["step1", "at_step", "SslBump1"] in acls
+    sni = [r for r in acls if r[:2] == ["allowed_sni", "ssl::server_name"]]
+    assert len(sni) == 1 and set(sni[0][2:]) == EGRESS_DOMAINS
+
+
+def test_platform_file_is_untracked_mounted_strictly_and_checked_by_healthcheck(services):
+    svc = services["egress-proxy"]
+    mounts = [v for v in svc["volumes"] if isinstance(v, dict) and v["target"] == PLATFORM_INCLUDE]
+    assert len(mounts) == 1
+    mount = mounts[0]
+    assert mount["source"] == "./a4-builder/platform-dst.conf" and mount["read_only"] is True
+    assert mount["bind"]["create_host_path"] is False, "a missing file must fail the start"
+    assert (CONF / "platform-dst.conf.example").is_file()
+    assert (CONF / ".gitignore").read_text().split() == ["platform-dst.conf"]
+    health = " ".join(svc["healthcheck"]["test"])
+    assert "platform-dst.conf" in health and "127.0.0.1" in health
+
+
 def test_proxy_allowlist_is_exactly_the_registries_without_reverse_lookup():
     rows = [
         r for r in _directives(CONF / "squid.conf", "acl") if r[:2] == ["egress_ok", "dstdomain"]
@@ -185,13 +227,10 @@ def test_platform_destinations_come_from_an_operator_file_before_the_rules(servi
     first_rule = next(i for i, p in enumerate(lines) if p[:1] == ["http_access"])
     anchor = next(i for i, p in enumerate(lines) if p[:3] == ["acl", "platform_dst", "dst"])
     assert anchor < include < first_rule
-    assert (
-        f"./a4-builder/platform-dst.conf:{PLATFORM_INCLUDE}:ro"
-        in services["egress-proxy"]["volumes"]
-    )
-    shipped = _directives(CONF / "platform-dst.conf", "acl")
+    shipped = _directives(CONF / "platform-dst.conf.example", "acl")
     assert not shipped, "host addresses are written per host, never shipped"
-    assert "212.237.217.228" not in "".join(p.read_text() for p in CONF.iterdir() if p.is_file())
+    shared = [p for p in CONF.iterdir() if p.is_file() and p.name != "platform-dst.conf"]
+    assert "212.237.217.228" not in "".join(p.read_text() for p in shared)
 
 
 def test_proxy_http_access_order_is_exact():
@@ -247,3 +286,13 @@ def test_runbook_states_recycle_rules_and_network_limits():
     assert "network.host" in text
     assert "cache is full" in text
     assert "CONNECT 203.0.113.7:443" in text
+
+
+def test_runbook_records_p3b_rules_residual_risk_and_sni_checks():
+    text = RUNBOOK.read_text()
+    assert "`registry:2`" not in text and "`registry:3`" in text
+    assert "ptrace" in text and "type=oci,dest=" in text and "worker pushes" in text
+    assert "## Accepted residual risk" in text
+    assert "domain fronting" in text and "P3c" in text and "devpi" in text
+    assert "-servername example.com" in text
+    assert "platform-dst.conf.example" in text

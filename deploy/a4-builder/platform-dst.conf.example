@@ -1,4 +1,5 @@
-# Per-host platform destinations denied to builds (operator-written, not committed with real values).
+# Copy to platform-dst.conf (untracked) and fill in per host; the egress proxy refuses to start
+# healthy while this file has no address other than loopback.
 # Add this host's public IPv4 and IPv6 addresses, one `acl` line each, for example:
 #   acl platform_dst dst 192.0.2.10/32
 #   acl platform_dst dst 2001:db8::10/128

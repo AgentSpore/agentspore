@@ -93,20 +93,33 @@ services:
     networks: [a4-mirror-back, a4-upstream]
 
   egress-proxy:
-    # ubuntu/squid:6.6-24.04_edge
-    image: ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c
+    # Built locally: squid-openssl on ubuntu:24.04 (pinned by digest in Dockerfile.squid).
+    build:
+      context: ./a4-builder
+      dockerfile: Dockerfile.squid
+    image: a4-builder/squid-openssl:local
     <<: *hardened
     user: "13:13"
     volumes:
       - ./a4-builder/squid.conf:/etc/squid/squid.conf:ro
-      - ./a4-builder/platform-dst.conf:/etc/squid/platform-dst.conf:ro
+      # Per-host file, untracked; a missing file fails the start instead of creating a directory.
+      - type: bind
+        source: ./a4-builder/platform-dst.conf
+        target: /etc/squid/platform-dst.conf
+        read_only: true
+        bind: { create_host_path: false }
     tmpfs:
       - /var/run/squid:uid=13,gid=13
       - /var/spool/squid:uid=13,gid=13
       - /var/log/squid:uid=13,gid=13
       - /tmp
     healthcheck:
-      test: ["CMD", "squid", "-k", "check", "-f", "/etc/squid/squid.conf"]
+      # Unhealthy while platform-dst.conf holds no address besides the loopback anchor (fail closed).
+      test:
+        - CMD-SHELL
+        - >-
+          squid -k check -f /etc/squid/squid.conf
+          && grep -E '^acl platform_dst dst ' /etc/squid/platform-dst.conf | grep -v 127.0.0.1 | grep -q .
       interval: 5s
       timeout: 3s
       retries: 10
