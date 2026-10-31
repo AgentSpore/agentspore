@@ -1,6 +1,8 @@
 """A4 P2a: run_tool bounds - process-group kill on timeout, streamed output cap."""
 
+import asyncio
 import os
+import sys
 import time
 
 import pytest
@@ -46,3 +48,30 @@ async def test_output_over_cap_is_killed_while_streaming(tmp_path, monkeypatch):
     assert exc.value.reason_code == "tool_failed"
     assert "output over" in exc.value.detail
     assert time.monotonic() - started < 5
+
+
+async def test_overflow_with_paused_pipe_is_reaped_promptly(tmp_path, monkeypatch):
+    # Slow consumer: the child floods the pipe, the stdout transport pauses with unread
+    # data, then the cap fires. Process.wait() must not depend on seeing EOF there.
+    monkeypatch.setattr(process, "MAX_OUTPUT", 1_000)
+    read_capped = process._read_capped
+
+    async def slow_read_capped(stream, name):
+        await asyncio.sleep(0.3)
+        return await read_capped(stream, name)
+
+    monkeypatch.setattr(process, "_read_capped", slow_read_capped)
+    pid_file = tmp_path / "pid"
+    script = (
+        "import os, sys, time\n"
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+        "sys.stdout.buffer.write(b'x' * 4_000_000)\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(60)\n"
+    )
+    started = time.monotonic()
+    with pytest.raises(DeployRejectedError, match="output over"):
+        await run_tool([sys.executable, "-c", script], cwd=tmp_path, timeout=20)
+    assert time.monotonic() - started < 2
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text()), 0)
