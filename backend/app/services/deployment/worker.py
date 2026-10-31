@@ -21,6 +21,8 @@ from app.services.deployment_recovery import DeploymentRecoveryService
 
 Fetch = Callable[[str, str, Path], Awaitable[None]]
 
+SHUTDOWN_WRITE_TIMEOUT = 10.0
+
 
 class LeaseLostError(Exception):
     """The fence expired or moved on while a build was running."""
@@ -67,10 +69,22 @@ class DeploymentWorker:
             logger.warning("deploy lease lost deployment={}", lease.deployment_id)
             return True
         except asyncio.CancelledError:
-            await asyncio.shield(self._record(lease, "worker_shutdown"))
+            await self._record_on_shutdown(lease)
             raise
         await self._record(lease, reason)
         return True
+
+    async def _record_on_shutdown(self, lease: DeploymentLease) -> None:
+        """Best effort and bounded: a dead database must not keep the worker from exiting."""
+        try:
+            async with asyncio.timeout(SHUTDOWN_WRITE_TIMEOUT):
+                await asyncio.shield(self._record(lease, "worker_shutdown"))
+        except Exception as exc:  # noqa: BLE001 (shutdown path: the lease expires and recovery closes the row)
+            logger.error(
+                "deploy shutdown write failed deployment={} error={}",
+                lease.deployment_id,
+                type(exc).__name__,
+            )
 
     async def _record(self, lease: DeploymentLease, reason: str) -> None:
         async with self.sessions.begin() as db:
