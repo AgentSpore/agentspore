@@ -8,7 +8,7 @@ compose project; the existing platform stack is not changed by it.
 
 | Service | Role | Networks |
 |---|---|---|
-| `buildkitd` | rootless BuildKit under gVisor (`runtime: runsc`), 1 CPU, 2 GiB, `deploy.resources.limits.pids` 512, no host socket, state in a 4 GiB tmpfs (a restart wipes it), mTLS-only listener with an mTLS healthcheck, memory limit 6 GiB (4 GiB tmpfs + 2 GiB working set) | `a4-builder` (internal) |
+| `buildkitd` | rootless BuildKit under gVisor (`runtime: runsc`), 1 CPU, 6 GiB memory (4 GiB tmpfs + 2 GiB working set), `deploy.resources.limits.pids` 512, no host socket, read-only rootfs, state in a 4 GiB `exec` tmpfs (a restart wipes it), mTLS-only listener with an mTLS healthcheck | `a4-builder` (internal) |
 | `a4-restart-gate` | nginx in front of the Docker socket (read-only bind, docker group via `A4_DOCKER_GID`): only `POST /v1.NN/containers/a4-builder-buildkitd-1/restart[?t=N]` and `GET .../json` pass, everything else gets 403; no request body is forwarded | `a4-control` only (never `a4-builder`) |
 | `mirror-gate` | nginx allowlist in front of the mirror: GET/HEAD of manifests and blobs addressed by `sha256:` digest (tags get 403) for `library/{python,node,golang,rust,alpine,debian,busybox}` only | `a4-builder`, `a4-mirror-back` |
 | `mirror` | `registry:3` (distribution v3.0.0) pull-through cache of Docker Hub, `proxy.ttl` 12 h | `a4-mirror-back`, `a4-upstream` |

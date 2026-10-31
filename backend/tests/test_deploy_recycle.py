@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from app.core.config import Settings
+from app.services.deployment import recycle as recycle_module
 from app.services.deployment.builder import BuildRequest, BuildResult, FakeBuilder
 from app.services.deployment.buildkit import builder_from_settings
 from app.services.deployment.errors import DeployRejectedError
@@ -60,6 +61,9 @@ async def test_recycle_restarts_then_waits_for_running_healthy():
         (Gate([state()], restart_status=500), {}),
         (Gate([httpx.Response(404)]), {}),
         (Gate([httpx.Response(200, text="not json")]), {}),
+        (Gate([httpx.Response(200, json=[1])]), {}),
+        (Gate([httpx.Response(200, json={"State": None})]), {}),
+        (Gate([httpx.Response(200, json={"State": {"Running": True, "Health": None}})]), {}),
         (Gate([state(health="unhealthy")]), {"ready_timeout": 0.0}),
     ],
 )
@@ -181,3 +185,26 @@ async def test_dirty_daemon_refuses_the_build_and_never_reaches_the_inner_builde
         await RecyclingBuilder(StepBuilder(spy.events), spy).build(REQUEST)
     assert exc.value.reason_code == "tool_failed"
     assert spy.events == ["ensure_clean"]
+
+
+async def test_recycle_while_cancelling_is_cut_short_and_the_daemon_stays_dirty(monkeypatch):
+    monkeypatch.setattr(recycle_module, "CANCEL_RECYCLE_TIMEOUT", 0.05)
+
+    async def hang(request):
+        await asyncio.Event().wait()
+
+    recycler = DaemonRecycler("http://gate", transport=httpx.MockTransport(hang))
+    recycler.dirty = False  # skip the pre-build recycle: only the post-cancel one hangs
+    started = asyncio.Event()
+
+    class Slow(StepBuilder):
+        async def build(self, request):
+            started.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(RecyclingBuilder(Slow([]), recycler).build(REQUEST))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=2)
+    assert recycler.dirty is True
