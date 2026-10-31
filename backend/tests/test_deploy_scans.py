@@ -10,6 +10,7 @@ Fixture shapes follow the real tools:
   osv-scanner is not installed here
 """
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -55,7 +56,7 @@ def log_lines():
 
 
 async def test_scan_secret_found_fails(fake_run, tmp_path, log_lines):
-    run = fake_run(1, (FIXTURES / "gitleaks_report.json").read_bytes())
+    run = fake_run(42, (FIXTURES / "gitleaks_report.json").read_bytes())
     with pytest.raises(DeployRejectedError) as exc:
         await run_prescan(tmp_path, [GitleaksScanner(run)])
     assert exc.value.reason_code == "secret_found"
@@ -68,15 +69,69 @@ async def test_scan_secret_found_fails(fake_run, tmp_path, log_lines):
     assert "SENTINELSECRETVALUE" not in logged
 
 
-async def test_gitleaks_clean_and_failure(fake_run, tmp_path):
+async def test_gitleaks_runs_on_platform_config_not_the_repos(tmp_path):
+    seen = {}
+
+    async def run(argv, *, cwd, timeout, env=None):
+        flags = dict(zip(argv, argv[1:], strict=False))
+        seen["argv"] = argv
+        seen["config"] = Path(flags["--config"]).read_text()
+        seen["ignore"] = Path(flags["--gitleaks-ignore-path"]).read_text()
+        return 0, b"[]"
+
+    await GitleaksScanner(run).scan(tmp_path)
+    assert "--ignore-gitleaks-allow" in seen["argv"]
+    assert seen["argv"][seen["argv"].index("--exit-code") + 1] == "42"
+    assert seen["config"] == "[extend]\nuseDefault = true\n"
+    assert seen["ignore"] == ""
+
+
+@pytest.mark.parametrize(
+    ("rc", "stdout"),
+    [
+        (1, b""),  # gitleaks fatal errors exit 1 with no report: must not read as "clean"
+        (1, b"[]"),
+        (2, b"[]"),
+        (42, b"[]"),
+        (42, b""),
+        (42, b"not json"),
+        (0, b""),
+        (0, b"{}"),
+        (42, b'[{"File": "a.py"}]'),
+        (42, b'["not a dict"]'),
+    ],
+)
+async def test_gitleaks_unusable_report_is_tool_failure(fake_run, tmp_path, rc, stdout):
+    with pytest.raises(DeployRejectedError) as exc:
+        await GitleaksScanner(fake_run(rc, stdout)).scan(tmp_path)
+    assert exc.value.reason_code == "tool_failed"
+
+
+async def test_gitleaks_clean(fake_run, tmp_path):
     assert await GitleaksScanner(fake_run(0, b"[]")).scan(tmp_path) == []
-    assert await GitleaksScanner(fake_run(0, b"")).scan(tmp_path) == []
-    with pytest.raises(DeployRejectedError) as exc:
-        await GitleaksScanner(fake_run(2)).scan(tmp_path)
-    assert exc.value.reason_code == "tool_failed"
-    with pytest.raises(DeployRejectedError) as exc:
-        await GitleaksScanner(fake_run(1, b"not json")).scan(tmp_path)
-    assert exc.value.reason_code == "tool_failed"
+
+
+@pytest.mark.skipif(shutil.which("gitleaks") is None, reason="gitleaks binary not installed")
+async def test_real_gitleaks_ignores_repo_controlled_allowlists(tmp_path):
+    token = "ghp_" + "aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6"
+    (tmp_path / "app.py").write_text(f'x = 1\ntoken = "{token}"\n')
+    (tmp_path / ".gitleaks.toml").write_text('[allowlist]\npaths = [".*"]\n')
+    (tmp_path / "allowed.py").write_text(f'y = "{token}"  # gitleaks:allow\n')
+    findings = await GitleaksScanner().scan(tmp_path)
+    assert sorted((f.rule_id, f.file, f.line) for f in findings) == [
+        ("github-pat", "allowed.py", 1),
+        ("github-pat", "app.py", 2),
+    ]
+
+
+async def test_gitleaksignore_in_the_tree_is_refused_without_running_the_tool(fake_run, tmp_path):
+    (tmp_path / ".gitleaksignore").write_text("app.py:github-pat:2\n")
+    run = fake_run(0, b"[]")
+    findings = await GitleaksScanner(run).scan(tmp_path)
+    assert [(f.rule_id, f.reason_code, f.blocking) for f in findings] == [
+        ("gitleaksignore-present", "source_unsafe", True)
+    ]
+    assert run.calls == []
 
 
 async def test_osv_only_critical_blocks(fake_run, tmp_path):
@@ -95,6 +150,36 @@ async def test_osv_warning_alone_does_not_block(fake_run, tmp_path):
     await run_prescan(tmp_path, [OsvScanner(fake_run(1, report))])
 
 
+async def test_osv_runs_on_empty_platform_config(tmp_path):
+    seen = {}
+
+    async def run(argv, *, cwd, timeout, env=None):
+        config = next(a for a in argv if a.startswith("--config="))
+        seen["config"] = Path(config.removeprefix("--config=")).read_text()
+        return 0, b""
+
+    await OsvScanner(run).scan(tmp_path)
+    assert seen["config"] == ""
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        b"",
+        b"[]",
+        b"not json",
+        b"{}",
+        b'{"results": []}',
+        b'{"results": [{"x": 1}]}',
+        b'{"results": ["a"]}',
+    ],
+)
+async def test_osv_vulnerable_exit_with_unusable_report_is_tool_failure(fake_run, tmp_path, stdout):
+    with pytest.raises(DeployRejectedError) as exc:
+        await OsvScanner(fake_run(1, stdout)).scan(tmp_path)
+    assert exc.value.reason_code == "tool_failed"
+
+
 async def test_osv_critical_fails_and_exit_codes(fake_run, tmp_path):
     with pytest.raises(DeployRejectedError) as exc:
         await run_prescan(
@@ -102,7 +187,7 @@ async def test_osv_critical_fails_and_exit_codes(fake_run, tmp_path):
         )
     assert exc.value.reason_code == "dependency_vulnerable"
     assert await OsvScanner(fake_run(128)).scan(tmp_path) == []
-    assert await OsvScanner(fake_run(0, b'{"results": []}')).scan(tmp_path) == []
+    assert await OsvScanner(fake_run(0)).scan(tmp_path) == []
     with pytest.raises(DeployRejectedError) as exc:
         await OsvScanner(fake_run(127)).scan(tmp_path)
     assert exc.value.reason_code == "tool_failed"
@@ -122,6 +207,10 @@ def dockerfile_scanner(root: Path, body: str) -> DockerfileScanner:
             "FROM build AS final\nCOPY --from=build /a /b\n"
         ),
         "FROM scratch\nCOPY x /x\n",
+        f"FROM python@{DIGEST} AS a\nFROM python@{DIGEST}\nCOPY --from=0 /a /b\n",
+        f"FROM python@{DIGEST} AS a\nRUN --mount=type=bind,from=a,target=/x true\n",
+        f"FROM python@{DIGEST}\nRUN --mount=type=bind,from=img@{DIGEST},target=/x true\n",
+        f"FROM python@{DIGEST}\n# escape is only a word here\n",
         f"# comment\nFROM \\\n  python@{DIGEST}\n",
     ],
 )
@@ -137,6 +226,22 @@ async def test_dockerfile_allows(tmp_path, body):
         ("ARG BASE=x\nFROM ${BASE}\n", "from-not-allowed"),
         (f"# syntax=docker/dockerfile:1\nFROM python@{DIGEST}\n", "syntax-directive"),
         (f"FROM python@{DIGEST}\nCOPY --from=evil/image:1 /a /b\n", "from-not-allowed"),
+        (
+            f"FROM python@{DIGEST}\nRUN --mount=type=bind,from=evil/image:1,target=/x true\n",
+            "from-not-allowed",
+        ),
+        (
+            f"FROM python@{DIGEST}\nRUN --mount=type=cache,target=/c,From=evil true\n",
+            "from-not-allowed",
+        ),
+        (
+            f"FROM python@{DIGEST}\nRUN --mount=type=bind,from=0,target=/x true\n",
+            "from-not-allowed",
+        ),
+        ("FROM 0\n", "from-not-allowed"),
+        (f"# escape=`\nFROM python@{DIGEST}\nRUN echo \\\nFROM evil\n", "parser-directive"),
+        (f"# ESCAPE = `\nFROM python@{DIGEST}\n", "parser-directive"),
+        (f"# check=skip=all\nFROM python@{DIGEST}\n", "parser-directive"),
     ],
 )
 async def test_dockerfile_rejects(tmp_path, body, rule):

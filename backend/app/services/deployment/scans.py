@@ -1,11 +1,14 @@
 """Pre-build gate: gitleaks, osv-scanner and the Dockerfile `FROM` allowlist.
 
 Findings carry rule id, file and line only: scanner output is never forwarded verbatim,
-so a leaked secret value cannot reach logs or `failure detail`.
+so a leaked secret value cannot reach logs or `failure detail`. The scanned tree is
+untrusted, so each tool runs on platform-owned config and every unreadable or
+unexpected report is a `tool_failed`, never a pass.
 """
 
 import json
 import re
+import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +21,7 @@ from app.services.deployment.process import run_tool
 
 TOOL_TIMEOUT = 300.0
 CRITICAL_CVSS = 9.0
+GITLEAKS_FOUND = 42  # gitleaks fatal errors exit 1, so "leaks found" gets its own code
 Runner = Callable[..., Awaitable[tuple[int, bytes]]]
 
 
@@ -34,54 +38,85 @@ class Scanner(Protocol):
     async def scan(self, root: Path) -> list[Finding]: ...
 
 
-def _json(stdout: bytes, tool: str) -> object:
+def _report(stdout: bytes, tool: str) -> object:
     try:
-        return json.loads(stdout) if stdout.strip() else None
+        return json.loads(stdout)
     except ValueError as exc:
         raise DeployRejectedError("tool_failed", f"{tool}: unreadable report") from exc
 
 
+def _bad_shape(tool: str) -> DeployRejectedError:
+    return DeployRejectedError("tool_failed", f"{tool}: unexpected report shape")
+
+
 class GitleaksScanner:
-    """`gitleaks dir`: exit 0 clean, 1 leaks (JSON on stdout), anything else is a tool failure."""
+    """`gitleaks dir` on platform config; repo allowlists and `gitleaks:allow` are ignored."""
 
     def __init__(self, run: Runner = run_tool):
         self.run = run
 
     async def scan(self, root: Path) -> list[Finding]:
-        argv = ["gitleaks", "dir", ".", "--report-format", "json", "--report-path", "-",
-                "--no-banner", "--redact", "--exit-code", "1"]  # fmt: skip
-        rc, out = await self.run(argv, cwd=root, timeout=TOOL_TIMEOUT)
-        if rc not in (0, 1):
+        if (root / ".gitleaksignore").exists():  # gitleaks always reads it from the scanned root
+            return [Finding("gitleaksignore-present", ".gitleaksignore", 0, "source_unsafe")]
+        with tempfile.TemporaryDirectory() as platform:
+            config, ignore = Path(platform) / "gitleaks.toml", Path(platform) / "gitleaksignore"
+            config.write_text("[extend]\nuseDefault = true\n")
+            ignore.write_text("")
+            argv = ["gitleaks", "dir", ".", "--config", str(config),
+                    "--gitleaks-ignore-path", str(ignore), "--ignore-gitleaks-allow",
+                    "--report-format", "json", "--report-path", "-",
+                    "--no-banner", "--redact", "--exit-code", str(GITLEAKS_FOUND)]  # fmt: skip
+            rc, out = await self.run(argv, cwd=root, timeout=TOOL_TIMEOUT)
+        if rc not in (0, GITLEAKS_FOUND):
             raise DeployRejectedError("tool_failed", f"gitleaks exited {rc}")
-        report = _json(out, "gitleaks") or []
-        if not isinstance(report, list):
-            raise DeployRejectedError("tool_failed", "gitleaks: unexpected report shape")
-        return [
-            Finding(str(r["RuleID"]), str(r["File"]), int(r["StartLine"]), "secret_found")
-            for r in report
-        ]
+        report = _report(out, "gitleaks")
+        if not isinstance(report, list) or (rc == GITLEAKS_FOUND and not report):
+            raise _bad_shape("gitleaks")
+        try:
+            return [
+                Finding(str(r["RuleID"]), str(r["File"]), int(r["StartLine"]), "secret_found")
+                for r in report
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise _bad_shape("gitleaks") from exc
 
 
 class OsvScanner:
-    """`osv-scanner scan source`: exit 0 clean, 1 vulnerable, 128 no packages; CVSS >= 9 blocks."""
+    """`osv-scanner scan source` on an empty platform config; only CVSS >= 9 blocks."""
 
     def __init__(self, run: Runner = run_tool):
         self.run = run
 
     async def scan(self, root: Path) -> list[Finding]:
-        argv = ["osv-scanner", "scan", "source", "--recursive", "--format", "json", "."]
-        rc, out = await self.run(argv, cwd=root, timeout=TOOL_TIMEOUT)
-        if rc == 128:
+        with tempfile.TemporaryDirectory() as platform:
+            config = Path(platform) / "osv-scanner.toml"
+            config.write_text("")
+            argv = ["osv-scanner", "scan", "source", f"--config={config}", "--recursive",
+                    "--format", "json", "."]  # fmt: skip
+            rc, out = await self.run(argv, cwd=root, timeout=TOOL_TIMEOUT)
+        if rc in (0, 128):  # 128: no packages found
             return []
-        if rc not in (0, 1):
+        if rc != 1:
             raise DeployRejectedError("tool_failed", f"osv-scanner exited {rc}")
-        report = _json(out, "osv-scanner") or {}
+        report = _report(out, "osv-scanner")
+        if (
+            not isinstance(report, dict)
+            or not isinstance(report.get("results"), list)
+            or not report["results"]
+        ):
+            raise _bad_shape("osv-scanner")
+        try:
+            return self._findings(report["results"], root)
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise _bad_shape("osv-scanner") from exc
+
+    def _findings(self, results: list[dict], root: Path) -> list[Finding]:
         findings = []
-        for result in report.get("results", []) if isinstance(report, dict) else []:
-            lockfile = self._relative(result.get("source", {}).get("path", ""), root)
-            for package in result.get("packages", []):
+        for result in results:
+            lockfile = self._relative(result["source"]["path"], root)
+            for package in result["packages"]:
                 scores = self._scores(package.get("groups", []))
-                for vuln in package.get("vulnerabilities", []):
+                for vuln in package["vulnerabilities"]:
                     score = scores.get(vuln["id"], 0.0)
                     findings.append(
                         Finding(
@@ -109,21 +144,27 @@ class OsvScanner:
             return Path(path).name
 
 
-_SYNTAX = re.compile(r"^#\s*syntax\s*=", re.IGNORECASE)
+_DIRECTIVE = re.compile(r"^#\s*(syntax|escape|check)\s*=", re.IGNORECASE)
 _FROM = re.compile(r"^FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?", re.IGNORECASE)
 _COPY_FROM = re.compile(r"^COPY\s+.*?--from=(\S+)", re.IGNORECASE)
+_MOUNT = re.compile(r"--mount=(\S+)", re.IGNORECASE)
+_MOUNT_FROM = re.compile(r"(?:^|,)from=([^,]*)", re.IGNORECASE)
 _DIGEST = re.compile(r"@(sha256:[0-9a-f]{64})$")
 
 
 class DockerfileScanner:
-    """Base images only by allowlisted digest; local stages and `scratch` ok; no `# syntax=`."""
+    """Base images only by allowlisted digest; local stages and `scratch` ok; no parser directives.
+
+    Directives (`syntax`, `escape`, `check`) are refused outright: BuildKit would read the
+    file with a different escape character than this scanner and see FROM lines it cannot.
+    """
 
     def __init__(self, allowed_digests: frozenset[str], dockerfile: str = "Dockerfile"):
         self.allowed = allowed_digests
         self.dockerfile = dockerfile
 
-    def _allowed(self, ref: str, stages: set[str]) -> bool:
-        if ref.lower() in stages or ref.lower() == "scratch" or ref.isdigit():
+    def _allowed(self, ref: str, stages: set[str], *, stage_index: bool = False) -> bool:
+        if ref.lower() in stages or ref.lower() == "scratch" or (stage_index and ref.isdigit()):
             return True
         match = _DIGEST.search(ref)
         return match is not None and match.group(1) in self.allowed
@@ -140,17 +181,23 @@ class DockerfileScanner:
         return findings
 
     def _violation(self, line: str, stages: set[str]) -> str | None:
-        if _SYNTAX.match(line):
-            return "syntax-directive"
+        if (directive := _DIRECTIVE.match(line)) is not None:
+            return (
+                "syntax-directive" if directive.group(1).lower() == "syntax" else "parser-directive"
+            )
         if (match := _FROM.match(line)) is not None:
             ok = self._allowed(match.group(1), stages)
             if match.group(2):
                 stages.add(match.group(2).lower())
             return None if ok else "from-not-allowed"
         if (match := _COPY_FROM.match(line)) is not None and not self._allowed(
-            match.group(1), stages
+            match.group(1), stages, stage_index=True
         ):
             return "from-not-allowed"
+        for mount in _MOUNT.findall(line):
+            source = _MOUNT_FROM.search(mount)
+            if source is not None and not self._allowed(source.group(1), stages):
+                return "from-not-allowed"
         return None
 
     @staticmethod
