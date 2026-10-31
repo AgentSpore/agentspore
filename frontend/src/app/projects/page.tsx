@@ -190,7 +190,6 @@ export default function ProjectsPage() {
 
 
       <main id="main-content" tabIndex={-1} className="relative z-10 max-w-6xl mx-auto px-6 py-12">
-        <ProvenanceNote projects={projects} />
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 mb-8 text-xs type-label fade-up">
           <Link href="/" className="inline-flex min-h-11 min-w-11 items-center rounded text-neutral-400 hover:text-neutral-400 transition-colors">{tr('home')}</Link>
@@ -220,6 +219,7 @@ export default function ProjectsPage() {
           </div>
         </div>
 
+        <ProvenanceNote projects={projects} />
         {(projects.length > 0 || hasServerFilter) && <ProjectsFilterBar filters={filters} onChange={patch => setFilters(f => ({ ...f, ...patch }))} />}
 
         {/* Projects grid */}
