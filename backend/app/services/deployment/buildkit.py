@@ -13,13 +13,12 @@ from pathlib import Path
 from app.core.config import Settings
 from app.services.deployment.builder import Builder, BuildRequest, BuildResult, FakeBuilder
 from app.services.deployment.errors import DeployRejectedError
-from app.services.deployment.oci import DigestBoundBuilder
+from app.services.deployment.oci import DIGEST_RE, DigestBoundBuilder
 from app.services.deployment.process import run_tool
 
 _DOCKERFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _UNSAFE_TAG_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 _URL_CREDENTIALS = re.compile(r"://[^/\s@]+@")
-_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _MAX_TAG_LENGTH = 128
 _TAIL_CHARS = 300
 _MAX_METADATA_BYTES = 64 * 1024
@@ -67,7 +66,7 @@ class BuildKitBuilder:
             raise
         finally:
             meta.unlink(missing_ok=True)
-        return BuildResult(image_ref=f"{tar}@{digest}", image_bytes=size)
+        return BuildResult(image_ref=f"{tar}@{digest}", image_bytes=size, artifact=tar)
 
     def _argv(self, request: BuildRequest, tar: Path, meta: Path) -> list[str]:
         ctx = str(request.context_dir)
@@ -113,7 +112,7 @@ class BuildKitBuilder:
             digest = json.loads(meta.read_text())["containerimage.digest"]
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise DeployRejectedError("build_failed", "buildctl metadata has no digest") from exc
-        if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+        if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
             raise DeployRejectedError("build_failed", "buildctl digest is malformed")
         return digest
 

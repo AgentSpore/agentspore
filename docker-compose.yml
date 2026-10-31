@@ -136,6 +136,8 @@ services:
       A4_DEPLOY_ENABLED: "${A4_DEPLOY_ENABLED:-false}"
       A4_BUILDER: "${A4_BUILDER:-fake}"
       A4_BUILDER_OUT_DIR: /var/lib/a4-out
+      A4_BUILDKIT_ADDR: "${A4_BUILDKIT_ADDR:-tcp://buildkitd:1234}"
+      A4_BUILDER_PROXY_URL: "${A4_BUILDER_PROXY_URL:-http://10.213.77.11:3128}"
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -145,9 +147,18 @@ services:
       - sporeai-network
     volumes:
       - ./backend/app:/app/app:ro
-      - ${A4_BUILDKIT_CERT_DIR:-/etc/a4-builder/tls}:/run/a4-builder-tls:ro
+      - type: bind
+        source: ${A4_BUILDKIT_CERT_DIR:-/etc/a4-builder/tls}
+        target: /run/a4-builder-tls
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /var/lib/a4-out:size=4g
+    deploy:
+      resources:
+        limits:
+          memory: 6g  # 4g tmpfs counts against it, plus worker headroom
     profiles:
       - a4
 

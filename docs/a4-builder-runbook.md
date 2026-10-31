@@ -90,20 +90,19 @@ Recycle: the daemon is destroyed after every build. `$C rm -fsv buildkitd` follo
 recreate already drops it). `--force-recreate` without `-V` keeps the anonymous state volume and
 with it the previous untrusted build's cache; never use it.
 
-## Enable the BuildKit builder in the worker
+## Enable the BuildKit builder in the worker (preview, not operable yet)
 
-The `a4-worker` service builds with `FakeBuilder` unless told otherwise.
+Do not enable this on a live host. Missing before it can work:
+- `buildctl` is not in the backend image, so every build ends in `tool_failed`.
+- `a4-worker` is on `sporeai-network` only; `buildkitd` sits on the internal `a4-builder` network.
+- The per-build `buildkitd` recycle is not implemented, so successive untrusted builds would share a daemon (see `INVARIANT(A4-P3a)` in `deploy/a4-builder.compose.yml`).
+- Built tarballs are deleted right after the build; loading or pushing the image is a later step.
 
-```bash
-export A4_BUILDKIT_CERT_DIR=/etc/a4-builder/tls   # holds ca.pem, client.pem, client-key.pem (client side only)
-export A4_BUILDER=buildkit A4_DEPLOY_ENABLED=true
-docker compose --profile a4 up -d a4-worker
-```
-
-- Defaults: `A4_BUILDKIT_ADDR=tcp://buildkitd:1234` (matches the server cert SAN), `A4_BUILDER_PROXY_URL=http://10.213.77.11:3128`. The worker must reach `buildkitd` by that name.
-- The worker mounts the cert dir read-only and writes OCI tarballs to a 4 GiB tmpfs at `/var/lib/a4-out`.
-- After each build the worker reads `index.json` from the tarball and refuses with `build_failed` if its single manifest digest differs from buildkitd's; the tarball is then deleted.
-- Back to `A4_BUILDER=fake` (the default) to roll back; no data to clean up.
+Once those land, the switch is `A4_BUILDER=buildkit` (default `fake`; roll back by unsetting it) with
+`A4_BUILDKIT_CERT_DIR` (client `ca.pem`, `client.pem`, `client-key.pem`, mounted read-only),
+`A4_BUILDKIT_ADDR` (default `tcp://buildkitd:1234`) and `A4_BUILDER_PROXY_URL`
+(default `http://10.213.77.11:3128`). Tarballs go to a 4 GiB tmpfs; the container limit is 6 GiB.
+The worker checks the tarball's `index.json` digest against buildkitd's and refuses on mismatch.
 
 ## Rollback
 
