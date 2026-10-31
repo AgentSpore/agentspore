@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     a4_buildkit_tls_dir: Path = Path("/run/a4-builder-tls")
     a4_builder_out_dir: Path = Path("/var/lib/a4-out")
     a4_builder_proxy_url: str = "http://10.213.77.11:3128"
+    a4_recycle_gate_url: str = "http://a4-restart-gate:2375"
+    a4_buildkit_container: str = "a4-builder-buildkitd-1"
+    a4_recycle_api_version: str = "v1.44"
 
     # Redis
     redis_url: str = "redis://redis:6379"

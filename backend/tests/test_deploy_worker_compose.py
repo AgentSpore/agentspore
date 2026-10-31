@@ -1,5 +1,6 @@
 """Static gate: the `a4-worker` service in the main compose file."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -52,3 +53,30 @@ def test_default_cert_source_exists_so_fake_builder_hosts_still_start(worker):
     ]
     default = mount["source"].split(":-", 1)[1].removesuffix("}")
     assert (ROOT / default).is_dir()
+
+
+def test_worker_shares_the_control_network_with_the_gate_only():
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    nets = compose["services"]["a4-worker"]["networks"]
+    assert "a4-control" in nets and "a4-builder" not in nets
+    control = compose["networks"]["a4-control"]
+    assert control["internal"] is True and control["name"] == "a4-control"
+    others = [
+        n for n, s in compose["services"].items() if "a4-control" in (s.get("networks") or [])
+    ]
+    assert others == ["a4-worker"]
+
+
+def test_recycle_gate_defaults_target_the_gate_service(worker):
+    env = worker["environment"]
+    assert env["A4_RECYCLE_GATE_URL"] == "${A4_RECYCLE_GATE_URL:-http://a4-restart-gate:2375}"
+
+
+def test_backend_image_carries_buildctl_pinned_by_digest():
+    dockerfile = (ROOT / "backend" / "Dockerfile").read_text()
+    assert re.search(
+        r"^COPY --from=moby/buildkit@sha256:[0-9a-f]{64} "
+        r"/usr/bin/buildctl /usr/local/bin/buildctl$",
+        dockerfile,
+        re.M,
+    )

@@ -15,6 +15,7 @@ from app.services.deployment.builder import Builder, BuildRequest, BuildResult, 
 from app.services.deployment.errors import DeployRejectedError
 from app.services.deployment.oci import DIGEST_RE, DigestBoundBuilder
 from app.services.deployment.process import run_tool
+from app.services.deployment.recycle import DaemonRecycler, RecyclingBuilder
 
 _DOCKERFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _UNSAFE_TAG_CHARS = re.compile(r"[^A-Za-z0-9._-]")
@@ -125,10 +126,11 @@ class BuildKitBuilder:
 
 
 def builder_from_settings(settings: Settings) -> Builder:
-    """`FakeBuilder` by default; with `A4_BUILDER=buildkit`, a digest-bound `BuildKitBuilder`."""
+    """`FakeBuilder` by default; with `A4_BUILDER=buildkit`, a digest-bound `BuildKitBuilder`
+    that restarts its daemon after every build through the restart gate."""
     if settings.a4_builder == "fake":
         return FakeBuilder()
-    return DigestBoundBuilder(
+    inner = DigestBoundBuilder(
         BuildKitBuilder(
             addr=settings.a4_buildkit_addr,
             tls_dir=settings.a4_buildkit_tls_dir,
@@ -136,3 +138,9 @@ def builder_from_settings(settings: Settings) -> Builder:
             proxy_url=settings.a4_builder_proxy_url,
         )
     )
+    recycler = DaemonRecycler(
+        gate_url=settings.a4_recycle_gate_url,
+        container=settings.a4_buildkit_container,
+        api_version=settings.a4_recycle_api_version,
+    )
+    return RecyclingBuilder(inner, recycler)

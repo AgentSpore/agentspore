@@ -15,6 +15,7 @@ from app.services.deployment.builder import BuildRequest, BuildResult, FakeBuild
 from app.services.deployment.buildkit import BuildKitBuilder, builder_from_settings
 from app.services.deployment.errors import DeployRejectedError
 from app.services.deployment.oci import DigestBoundBuilder, verify_oci_digest
+from app.services.deployment.recycle import RecyclingBuilder
 
 DIGEST = "sha256:" + "ab" * 32
 OTHER = "sha256:" + "cd" * 32
@@ -177,8 +178,9 @@ def test_buildkit_settings_give_bound_buildkit(tmp_path):
         a4_builder_proxy_url="http://10.213.77.11:3128",
     )
     built = builder_from_settings(cfg)
-    assert isinstance(built, DigestBoundBuilder)
-    inner = built.inner
+    assert isinstance(built, RecyclingBuilder)
+    assert isinstance(built.inner, DigestBoundBuilder)
+    inner = built.inner.inner
     assert isinstance(inner, BuildKitBuilder)
     assert (inner.addr, inner.tls_dir, inner.out_dir) == (
         "tcp://buildkitd:1234",
