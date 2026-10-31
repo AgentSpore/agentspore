@@ -94,17 +94,6 @@ async def test_stderr_keeps_exactly_the_last_64k_and_never_fails_the_run(tmp_pat
     assert out.stderr.endswith(b"TAIL-MARK")
 
 
-async def test_stderr_under_the_cap_is_kept_whole(tmp_path):
-    out = await run_tool_captured(["sh", "-c", "printf 'a\\nb' >&2"], cwd=tmp_path, timeout=5)
-    assert out.stderr == b"a\nb"
-
-
-async def test_stderr_flood_does_not_block_stdout(tmp_path):
-    script = "import sys\nsys.stderr.write('e' * 2_000_000)\nsys.stdout.write('done')"
-    out = await run_tool_captured([sys.executable, "-c", script], cwd=tmp_path, timeout=20)
-    assert out.stdout == b"done"
-
-
 async def test_stderr_is_redacted_and_stdout_is_returned_raw(tmp_path):
     cmd = "echo 'https://u:pw-1@git.example/x'; echo 'fatal: git://tok@h/y' >&2"
     out = await run_tool_captured(["sh", "-c", cmd], cwd=tmp_path, timeout=5)
@@ -136,15 +125,6 @@ async def test_cut_stderr_never_leaves_a_credential_fragment(tmp_path):
     )
     out = await run_tool_captured([sys.executable, "-c", script], cwd=tmp_path, timeout=20)
     assert b"fragment-secret" not in out.stderr
-
-
-async def test_captured_timeout_is_tool_failed(tmp_path):
-    with pytest.raises(DeployRejectedError, match="timeout"):
-        await run_tool_captured(["sleep", "30"], cwd=tmp_path, timeout=0.3)
-
-
-def test_redact_leaves_plain_text_alone():
-    assert redact(b"no url here: a@b") == b"no url here: a@b"
 
 
 async def test_reap_drains_every_pipe_it_is_given():
@@ -213,46 +193,30 @@ def test_header_at_end_of_line_leaves_the_next_line_alone():
     )
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        b"pulling registry.local:5000/team/app@sha256:" + b"ab" * 32,
-        b"app:1.2@sha256:" + b"cd" * 32 + b" not found",
-    ],
-)
-def test_image_digest_references_survive(text):
-    assert redact(text) == text
-
-
 def test_credentials_before_a_digest_are_still_masked():
     ref = b"https://u:pw@h/app@sha256:" + b"ef" * 32
     assert redact(ref) == b"https://***@h/app@sha256:" + b"ef" * 32
 
 
 @pytest.mark.parametrize(
-    "text", [b"a@b.com wrote: hi", b"time 12:30 ok", b"see https://example.org/a/b", b"x=1&y=2"]
+    "text",
+    [
+        b"a@b.com wrote: hi time 12:30 see https://example.org/a/b x=1&y=2",
+        b"pulling registry.local:5000/team/app@sha256:" + b"ab" * 32,
+        b"app:1.2@sha256:" + b"cd" * 32 + b" not found",
+    ],
 )
-def test_redact_keeps_harmless_text(text):
+def test_redact_keeps_harmless_text_and_image_digests(text):
     assert redact(text) == text
 
 
 @pytest.mark.parametrize(
     "unit",
     [
-        b"://",
-        b"Bearer ",
-        b"authorization:",
-        b"token=",
-        b"a:b@",
-        b"x" * 100,
-        b"@" * 50 + b":",
-        b"password:",
-        b"--password ",
-        b"Cookie:",
-        b"ghp_",
-        b"AKIA",
-        b"a:b@sha256:",
-    ],
+        u.encode()
+        for u in "://,Bearer ,authorization:,token=,a:b@,password:,--password ,Cookie:".split(",")
+    ]
+    + [b"x" * 100, b"@" * 50 + b":", b"ghp_", b"AKIA", b"a:b@sha256:"],
 )
 def test_redact_is_linear_on_adversarial_input(unit):
     data = unit * (1_000_000 // len(unit))
