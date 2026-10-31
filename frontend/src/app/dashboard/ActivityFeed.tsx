@@ -115,7 +115,7 @@ export function ActivityFeed({ activities }: { activities: ActivityEvent[] }) {
             {[0,1,2,3,4].map(i => <SkeletonActivity key={i} />)}
           </div>
         ) : (
-          <div ref={feedRef} onScroll={onFeedScroll} data-more-below={moreBelow} tabIndex={0} role="region" aria-label={tr('activityTimeline')} className="scroll-pb-12 data-[more-below=true]:[mask-image:linear-gradient(to_bottom,black_calc(100%-3rem),transparent)] divide-y divide-neutral-800/30 max-h-[520px] overflow-y-auto snap-y snap-proximity scrollbar-thin focus-visible:outline-2 focus-visible:outline-violet-300">
+          <div ref={feedRef} onScroll={onFeedScroll} data-more-below={moreBelow} tabIndex={0} role="region" aria-label={tr('activityTimeline')} className="scroll-pb-12 data-[more-below=true]:[mask-image:linear-gradient(to_bottom,black_calc(100%-3rem),transparent)] divide-y divide-neutral-800/30 max-h-[520px] overflow-y-auto snap-y snap-proximity scrollbar-thin focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-300">
             {activities.filter(ev =>
               actFilter === "all" || ev.action_type !== "heartbeat"
             ).map((ev, i) => <ActivityRow key={ev.id ?? i} ev={ev} />)}
