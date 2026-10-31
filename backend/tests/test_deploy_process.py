@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import time
+from typing import cast
 
 import pytest
 
@@ -84,12 +85,17 @@ async def test_captured_returns_stderr_separately(tmp_path):
     assert (out.rc, out.stdout, out.stderr) == (2, b"out", b"err")
 
 
-async def test_stderr_keeps_the_tail_within_cap_and_never_fails_the_run(tmp_path):
-    script = "import sys\nsys.stderr.write('head\\n' + 'x' * 300_000 + '\\nTAIL-MARK')"
+async def test_stderr_keeps_exactly_the_last_64k_and_never_fails_the_run(tmp_path):
+    # Short lines all through: a wrong cap changes the kept size, not just the final marker.
+    script = "import sys\nsys.stderr.write(('x' * 99 + '\\n') * 3000 + 'TAIL-MARK')"
     out = await run_tool_captured([sys.executable, "-c", script], cwd=tmp_path, timeout=20)
-    assert len(out.stderr) <= MAX_STDERR
+    assert 64 * 1024 - 100 <= len(out.stderr) <= 64 * 1024  # literal: the constant is under test
     assert out.stderr.endswith(b"TAIL-MARK")
-    assert b"head" not in out.stderr
+
+
+async def test_stderr_under_the_cap_is_kept_whole(tmp_path):
+    out = await run_tool_captured(["sh", "-c", "printf 'a\\nb' >&2"], cwd=tmp_path, timeout=5)
+    assert out.stderr == b"a\nb"
 
 
 async def test_stderr_flood_does_not_block_stdout(tmp_path):
@@ -124,3 +130,67 @@ async def test_captured_timeout_is_tool_failed(tmp_path):
 
 def test_redact_leaves_plain_text_alone():
     assert redact(b"no url here: a@b") == b"no url here: a@b"
+
+
+async def test_reap_drains_every_pipe_it_is_given():
+    stdout, stderr = asyncio.StreamReader(), asyncio.StreamReader()
+    for stream in (stdout, stderr):
+        stream.feed_data(b"unread" * 50_000)
+        stream.feed_eof()
+
+    class Exited:
+        async def wait(self):
+            return 0
+
+    await process._reap(cast(asyncio.subprocess.Process, Exited()), stdout, stderr)
+    assert await stdout.read(1) == b"" and await stderr.read(1) == b""
+
+
+async def test_run_tool_reaps_with_both_stdout_and_stderr(tmp_path, monkeypatch):
+    seen = []
+    reap = process._reap
+
+    async def spy(proc, *streams):
+        seen.append(len(streams))
+        await reap(proc, *streams)
+
+    monkeypatch.setattr(process, "_reap", spy)
+    await run_tool_captured(["true"], cwd=tmp_path, timeout=5)
+    assert seen == [2]
+
+
+@pytest.mark.parametrize(
+    ("raw", "gone", "kept"),
+    [
+        (b"git clone https://u:pw1@h/x", b"pw1", b"://***@h/x"),
+        (b"fatal: https://u:p/w@ss@host/path", b"w@ss", b"@host/path"),
+        (b"dial u:hunter2@db.local:5432 failed", b"hunter2", b"@db.local:5432"),
+        (b"Authorization: Basic dXNlcjpwdw==", b"dXNlcjpwdw", b"Authorization:"),
+        (b"authorization=Bearer abc.def", b"abc.def", b"authorization="),
+        (b"curl -H 'Bearer sk-123_abc'", b"sk-123_abc", b"Bearer"),
+        (b"GET /x?access_token=ghs_abc&y=1", b"ghs_abc", b"access_token=***&y=1"),
+        (b"env GITHUB_TOKEN=tok123 PASSWORD=pw9 api_key=k1", b"tok123", b"GITHUB_TOKEN=***"),
+        (b"a secret=top\nnext line", b"top", b"next line"),
+    ],
+)
+def test_redact_masks_every_credential_shape(raw, gone, kept):
+    out = redact(raw)
+    assert gone not in out and kept in out
+
+
+@pytest.mark.parametrize(
+    "text", [b"a@b.com wrote: hi", b"time 12:30 ok", b"see https://example.org/a/b", b"x=1&y=2"]
+)
+def test_redact_keeps_harmless_text(text):
+    assert redact(text) == text
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [b"://", b"Bearer ", b"authorization:", b"token=", b"a:b@", b"x" * 100, b"@" * 50 + b":"],
+)
+def test_redact_is_linear_on_adversarial_input(unit):
+    data = unit * (1_000_000 // len(unit))
+    started = time.monotonic()
+    redact(data)
+    assert time.monotonic() - started < 1
