@@ -1,0 +1,49 @@
+# a4-launcher: the narrow trusted service that holds the Docker socket for tenant runtimes.
+# Separate project from a4-builder (own lifecycle: it must outlive builder recycles). Runbook: docs/a4-builder-runbook.md
+#   export A4_DOCKER_GID=$(getent group docker | cut -d: -f3)
+#   export A4_LAUNCHER_IMAGE=<backend image>
+#   docker compose -p a4-launcher -f deploy/a4-launcher.compose.yml --profile a4 up -d
+# Nothing calls it until P4d. It is reachable only on a4-control; no host ports; no DB, Redis or secrets in env.
+
+services:
+  a4-launcher:
+    profiles: [a4]
+    image: ${A4_LAUNCHER_IMAGE:?set A4_LAUNCHER_IMAGE to the backend image}
+    command: ["/app/.venv/bin/python", "-m", "app.launcher"]
+    container_name: agentspore-a4-launcher
+    init: true
+    restart: unless-stopped
+    user: "10001:10001"
+    # The socket is root:docker 0660, so uid 10001 needs the host's docker gid.
+    group_add: ["${A4_DOCKER_GID:?set A4_DOCKER_GID to the host docker group id (getent group docker)}"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      A4_ATTACH: "${A4_ATTACH:-agentspore-backend,agentspore-a4-worker}"
+      A4_TENANT_POOL: "${A4_TENANT_POOL:-10.214.0.0/16}"
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind: { create_host_path: false }
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128M, pids: 64 }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    networks: [a4-control]
+
+networks:
+  # Created by the main compose file (a4-worker); same external network as a4-restart-gate.
+  a4-control:
+    external: true
+    name: a4-control
