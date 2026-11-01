@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from app.launcher.schemas import IMAGE_RE, NS_RE
 from app.services.deployment.errors import DeployRejectedError
 
 MAX_REPLY_BYTES = 64 * 1024
@@ -66,6 +67,27 @@ class LauncherClient:
             raise DeployRejectedError(UNAVAILABLE)
         return runtimes
 
+    async def list_namespaces(self) -> set[str]:
+        """Require complete container and network inventories before deleting anything."""
+        data = await self._call("GET", "/v1/runtimes", _QUICK_SECONDS)
+        names: set[str] = set()
+        for key in ("runtimes", "networks"):
+            entries = data.get(key)
+            if not isinstance(entries, list):
+                raise DeployRejectedError(UNAVAILABLE)
+            for entry in entries:
+                ns = entry.get("namespace") if isinstance(entry, dict) else None
+                if not isinstance(ns, str) or not NS_RE.fullmatch(ns):
+                    raise DeployRejectedError(UNAVAILABLE)
+                names.add(ns)
+        return names
+
+    async def gc_images(self, keep: list[str]) -> None:
+        """Collect only fixed-registry image references; labels are never ownership proof."""
+        if not all(IMAGE_RE.fullmatch(ref) for ref in keep):
+            raise DeployRejectedError(UNAVAILABLE)
+        await self._call("POST", "/v1/images/gc", _STOP_SECONDS, {"keep": keep})
+
     async def aclose(self) -> None:
         await self._http.aclose()
 
@@ -81,7 +103,13 @@ class LauncherClient:
             raise DeployRejectedError(UNAVAILABLE) from exc
         data = _json_object(raw)
         if 200 <= status < 300:
-            if method in {"POST", "DELETE"} and data.get("ok") is not True:
+            if path == "/v1/images/gc":
+                removed = data.get("removed")
+                if not isinstance(removed, list) or not all(
+                    isinstance(ref, str) and IMAGE_RE.fullmatch(ref) for ref in removed
+                ):
+                    raise DeployRejectedError(UNAVAILABLE)
+            elif method in {"POST", "DELETE"} and data.get("ok") is not True:
                 raise DeployRejectedError(UNAVAILABLE)
             return data
         reason = data.get("reason")

@@ -67,7 +67,10 @@ def _runtime_router(launcher: Launcher) -> APIRouter:
 
     @router.get("")
     async def list_runtimes() -> dict[str, list[dict[str, str]]]:
-        return {"runtimes": await launcher.list_runtimes()}
+        return {
+            "runtimes": await launcher.list_runtimes(),
+            "networks": await launcher.list_networks(),
+        }
 
     return router
 
