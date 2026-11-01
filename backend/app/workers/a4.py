@@ -18,12 +18,12 @@ from app.services.deployment_promotion import DeploymentPromotionService
 
 def build_task() -> DeploymentWorkerTask:
     """Wire the worker; `A4_BUILDER` picks the builder. P3 supplies the base-image allowlist."""
+    settings = get_settings()
     scanners: list[Scanner] = [
         GitleaksScanner(),
         OsvScanner(),
-        DockerfileScanner(allowed_digests=frozenset()),
+        DockerfileScanner(allowed_digests=settings.a4_base_image_digests),
     ]
-    settings = get_settings()
     worker = DeploymentWorker(async_session_maker, builder_from_settings(settings), scanners)
     if settings.a4_runtime == "launcher":
         client = LauncherClient(settings.a4_launcher_url)
