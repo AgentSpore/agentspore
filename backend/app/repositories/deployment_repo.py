@@ -1,9 +1,11 @@
 """Durable queue and global fencing in the caller's PostgreSQL transaction."""
 
 import re
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from fastapi import Depends
+from loguru import logger
 from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -457,6 +459,77 @@ class DeploymentRepository:
             {"project": project_id, "handle": handle, "revision": lease.deployment_id},
         )
         return True
+
+    async def activate(self, deployment_id: UUID) -> bool:
+        """Make a promoted revision the project's only active one; the caller commits.
+
+        The project's rows are locked in id order so two concurrent promotions of one project
+        serialize without deadlock; the previous active row becomes superseded before the
+        unique active index is touched.
+        """
+        rows = (
+            (
+                await self.db.execute(
+                    text(
+                        "SELECT id, status, health_successes FROM project_deployments "
+                        "WHERE project_id = (SELECT project_id FROM project_deployments "
+                        "WHERE id = :id) ORDER BY id FOR UPDATE"
+                    ),
+                    {"id": deployment_id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        target = next((row for row in rows if row["id"] == deployment_id), None)
+        if target is None or target["status"] != "promoting" or target["health_successes"] != 3:
+            return False
+        await self.db.execute(
+            text(
+                "UPDATE project_deployments SET status = 'superseded' "
+                "WHERE project_id = (SELECT project_id FROM project_deployments WHERE id = :id) "
+                "AND status = 'active'"
+            ),
+            {"id": deployment_id},
+        )
+        await self.db.execute(
+            text(
+                "UPDATE project_deployments SET status = 'active', "
+                "activated_at = clock_timestamp() WHERE id = :id"
+            ),
+            {"id": deployment_id},
+        )
+        return True
+
+    async def retire_candidates(
+        self, now: datetime, grace: timedelta = timedelta(seconds=30)
+    ) -> list[RowMapping]:
+        """Superseded revisions whose successor has been active longer than the grace period."""
+        result = await self.db.execute(
+            text(
+                "SELECT d.id, d.sandbox_id, d.sandbox_namespace FROM project_deployments d "
+                "WHERE d.status = 'superseded' AND d.retired_at IS NULL AND "
+                "(SELECT min(n.activated_at) FROM project_deployments n "
+                "WHERE n.project_id = d.project_id AND n.activated_at > d.activated_at) "
+                "+ make_interval(secs => CAST(:grace AS double precision)) "
+                "< CAST(:now AS timestamptz) ORDER BY d.id"
+            ),
+            {"now": now, "grace": grace.total_seconds()},
+        )
+        return list(result.mappings().all())
+
+    async def mark_retired(self, deployment_id: UUID) -> bool:
+        """Record that a superseded revision's sandbox is gone; false if already retired."""
+        retired = await self.db.scalar(
+            text(
+                "UPDATE project_deployments SET retired_at = clock_timestamp() "
+                "WHERE id = :id AND status = 'superseded' AND retired_at IS NULL RETURNING id"
+            ),
+            {"id": deployment_id},
+        )
+        if retired is None:
+            logger.warning("deployment {} was not retirable", deployment_id)
+        return retired is not None
 
     async def recovery_snapshot(self) -> DeploymentRecoverySnapshot | None:
         """Capture an active build or expired recovery without retaining locks over I/O."""
