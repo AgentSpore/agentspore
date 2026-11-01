@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from app.core.config import Settings
 from app.services.deployment.builder import Builder, BuildRequest, BuildResult, FakeBuilder
 from app.services.deployment.errors import DeployRejectedError
+from app.services.deployment.image_scan import ImageScannedBuilder, TrivyImageScanner
 from app.services.deployment.oci import DIGEST_RE, DigestBoundBuilder
 from app.services.deployment.process import ToolOutput, redact, run_tool_captured
 from app.services.deployment.recycle import DaemonRecycler, RecyclingBuilder
@@ -188,4 +189,7 @@ def builder_from_settings(settings: Settings) -> Builder:
         api_version=settings.a4_recycle_api_version,
     )
     pusher = RegistryPusher(settings.a4_registry_url, settings.a4_registry_ref_host)
-    return PushingBuilder(RecyclingBuilder(inner, recycler), pusher)
+    scanned = ImageScannedBuilder(
+        RecyclingBuilder(inner, recycler), TrivyImageScanner(settings.a4_builder_out_dir)
+    )
+    return PushingBuilder(scanned, pusher)
