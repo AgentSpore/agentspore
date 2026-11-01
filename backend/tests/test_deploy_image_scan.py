@@ -222,8 +222,10 @@ async def test_scan_binds_exact_pushed_bytes(scan_result, scanner_tool, tmp_path
                     target.write(b"changed")
             elif change == "replacement":
                 data = scan_result.artifact.read_bytes()
-                scan_result.artifact.unlink()
-                scan_result.artifact.write_bytes(data)
+                replacement = tmp_path / "replacement.tar"
+                replacement.write_bytes(data)
+                assert replacement.stat().st_ino != scan_result.artifact.stat().st_ino
+                replacement.replace(scan_result.artifact)
             else:
                 layout = Path(argv[argv.index("--input") + 1].split("@")[0])
                 index = layout / "index.json"
@@ -233,6 +235,7 @@ async def test_scan_binds_exact_pushed_bytes(scan_result, scanner_tool, tmp_path
 
     scanner_tool.side_effect = mutate
     pusher = AsyncMock()
+    pusher.push.return_value = scan_result.image_ref
     builder = PushingBuilder(
         ImageScannedBuilder(
             FakeBuilder(result=scan_result), TrivyImageScanner(tmp_path, run=scanner_tool)
