@@ -31,6 +31,7 @@ from app.core.database import async_session_maker
 from app.core.domains import localize_site_urls
 from app.core.logging import setup_logging
 from app.core.redis_client import close_redis, get_redis, init_redis
+from app.middleware.a4_peer_guard import A4PeerGuardMiddleware
 from app.middleware.service_gateway import ServiceGatewayMiddleware
 from app.services.funnel_service import FunnelService
 from app.observability import configure as configure_observability
@@ -144,6 +145,8 @@ async def service_gateway_client() -> AsyncIterator[httpx.AsyncClient]:
 
 app.state.service_gateway_client_factory = service_gateway_client
 app.add_middleware(ServiceGatewayMiddleware, resources=app.state)
+# Added last so it runs first; see INVARIANT(A4-P4a) in the module.
+app.add_middleware(A4PeerGuardMiddleware)
 
 
 # Self-hosted Swagger UI assets (bypass CDN + CSP)
