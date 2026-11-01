@@ -1,13 +1,18 @@
 """Launcher API against an in-memory Docker daemon (httpx.MockTransport)."""
 
+import asyncio
 import ipaddress
 import json
+import subprocess
+import sys
 
 import httpx
 import pytest
 
+from app.launcher.__main__ import configure
 from app.launcher.app import build_app
 from app.launcher.docker import DockerClient
+from app.launcher.schemas import RuntimeRequest
 from app.launcher.service import Launcher
 from app.launcher.spec import container_body
 from tests.test_launcher_fake import DEP, DIGEST, IMAGE, NS, FakeDaemon
@@ -79,8 +84,6 @@ async def test_launcher_hostconfig_constants(api, daemon):
 
 
 def test_container_body_runtime_is_a_parameter_defaulting_to_runsc():
-    from app.launcher.schemas import RuntimeRequest
-
     req = RuntimeRequest(**BODY)
     assert container_body(req)["HostConfig"]["Runtime"] == "runsc"
     assert container_body(req, "runc")["HostConfig"]["Runtime"] == "runc"
@@ -246,9 +249,7 @@ async def test_start_stop_delete_lifecycle_is_idempotent(api, daemon):
 
 async def test_list_runtimes_filters_by_launcher_labels(api, daemon):
     await put(api, BODY)
-    await api.get("/v1/runtimes")
-    (call,) = [c for c in daemon.calls if c[1] == "/containers/json"]
-    assert call[0] == "GET"
+    daemon.containers["foreign"] = {"Id": "f1", "Config": {"Image": "x", "Labels": {}}}
     listing = (await api.get("/v1/runtimes")).json()["runtimes"]
     assert listing == [
         {
@@ -260,6 +261,10 @@ async def test_list_runtimes_filters_by_launcher_labels(api, daemon):
             "generation": "1",
         }
     ]
+    (query,) = [q for m, p, q in daemon.queries if p == "/containers/json"]
+    flt = json.loads(query["filters"])
+    assert flt == {"label": ["com.agentspore.a4.role=runtime", "com.agentspore.a4.launcher=1"]}
+    assert query["all"] == "true"
 
 
 async def test_image_gc_removes_only_unkept_a4_refs(api, daemon):
@@ -280,7 +285,8 @@ async def test_docker_error_is_redacted_with_reason_code():
     transport = httpx.ASGITransport(app=build_app(launcher))
     async with httpx.AsyncClient(transport=transport, base_url="http://l") as c:
         resp = await c.put(f"/v1/runtimes/{NS}", content=json.dumps(BODY))
-    assert resp.status_code == 502 and resp.json()["reason"] == "docker_error"
+    assert resp.status_code == 502
+    assert resp.json() == {"reason": "docker_error", "docker_status": 500}
     assert "hunter2" not in resp.text and "abcdef" not in resp.text
 
 
@@ -296,8 +302,75 @@ async def test_oversized_docker_reply_is_cut():
 
 
 def test_launcher_imports_no_app_config():
-    import subprocess
-    import sys
-
     code = "import sys, app.launcher.__main__; sys.exit('app.core.config' in sys.modules)"
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def other_ns(n: int) -> tuple[str, dict]:
+    dep = f"{n:032x}"
+    ns = f"a4-{dep}-1"
+    image = f"127.0.0.1:5000/{ns}@sha256:{DIGEST}"
+    return ns, {**BODY, "deployment_id": dep, "image": image}
+
+
+async def test_runtime_cap_429_and_existing_ns_not_blocked(daemon):
+    launcher = Launcher(DockerClient(daemon.transport()), (), POOL, max_runtimes=2)
+    transport = httpx.ASGITransport(app=build_app(launcher))
+    async with httpx.AsyncClient(transport=transport, base_url="http://l") as c:
+        for n in (1, 2):
+            ns, body = other_ns(n)
+            daemon.image_info["RepoDigests"] = [body["image"]]
+            assert (await c.put(f"/v1/runtimes/{ns}", content=json.dumps(body))).status_code == 200
+        daemon.networks["foreign"] = {"sub": "10.214.9.0/28", "Labels": {}, "Containers": {}}
+        ns, body = other_ns(3)
+        daemon.image_info["RepoDigests"] = [body["image"]]
+        over = await c.put(f"/v1/runtimes/{ns}", content=json.dumps(body))
+        assert over.status_code == 429 and over.json()["reason"] == "runtime_cap"
+        ns, body = other_ns(1)
+        daemon.image_info["RepoDigests"] = [body["image"]]
+        again = await c.put(f"/v1/runtimes/{ns}", content=json.dumps(body))
+        assert again.status_code == 200
+    assert len(daemon.networks) == 3
+
+
+@pytest.mark.parametrize(
+    "value,ok",
+    [("1", True), ("256", True), ("0", False), ("257", False), ("x", False), ("²", False)],
+)
+def test_max_runtimes_env_is_parsed_at_startup(monkeypatch, value, ok):
+    monkeypatch.setenv("A4_LAUNCHER_MAX_RUNTIMES", value)
+    if ok:
+        assert configure() is not None
+    else:
+        with pytest.raises(SystemExit):
+            configure()
+
+
+async def test_concurrent_puts_do_not_double_connect(api, daemon):
+    results = await asyncio.gather(*(put(api, BODY) for _ in range(4)))
+    assert [r.status_code for r in results] == [200] * 4
+    names = [c["Container"] for c in daemon.bodies("POST", rf"/networks/{NS}/connect")]
+    assert sorted(names) == sorted(set(names))
+
+
+async def test_pull_stream_beyond_reply_cap_succeeds(api, daemon):
+    daemon.pull_stream = b'{"status":"Downloading"}\n' * (5 * 1024 * 1024 // 25)
+    assert (await put(api, BODY)).status_code == 200
+
+
+async def test_pull_error_line_fails_even_after_a_long_stream(api, daemon):
+    daemon.pull_chunk = 10
+    daemon.pull_stream = b'{"status":"Downloading"}\n' * 5_000 + b'{"error":"denied"}\n'
+    resp = await put(api, BODY)
+    assert resp.status_code == 502 and resp.json()["reason"] == "pull_failed"
+    assert daemon.containers == {}
+
+
+async def test_runtime_cap_counts_only_launcher_owned_networks(daemon):
+    launcher = Launcher(DockerClient(daemon.transport()), (), POOL, max_runtimes=2)
+    for i in range(3):
+        name = f"foreign{i}"
+        daemon.networks[name] = {"sub": f"10.214.{i + 1}.0/28", "Labels": {}, "Containers": {}}
+    transport = httpx.ASGITransport(app=build_app(launcher))
+    async with httpx.AsyncClient(transport=transport, base_url="http://l") as c:
+        assert (await c.put(f"/v1/runtimes/{NS}", content=json.dumps(BODY))).status_code == 200

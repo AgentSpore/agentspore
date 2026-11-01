@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
+from loguru import logger
 
 from app.launcher.docker import DockerError
 from app.launcher.schemas import (
@@ -80,9 +81,9 @@ def build_app(launcher: Launcher) -> FastAPI:
 
     @app.exception_handler(DockerError)
     async def _docker_error(_: Request, exc: DockerError) -> JSONResponse:
+        logger.warning("docker error status={} text={}", exc.status, exc.text)
         return JSONResponse(
-            {"reason": "docker_error", "docker_status": exc.status, "detail": exc.text},
-            status_code=502,
+            {"reason": "docker_error", "docker_status": exc.status}, status_code=502
         )
 
     @app.get("/healthz")

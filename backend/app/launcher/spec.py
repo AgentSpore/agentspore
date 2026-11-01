@@ -1,6 +1,7 @@
 """Docker objects built only from constants and validated request fields."""
 
 import json
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
@@ -8,9 +9,18 @@ from app.launcher.schemas import RuntimeRequest
 
 LP = "com.agentspore.a4."
 RUNTIME = "runsc"
+ARCH = "amd64"
 USER = "10001:10001"
 MEMORY = 256 * 1024 * 1024
 PORT = "8080"
+
+
+@dataclass(frozen=True)
+class Target:
+    """OCI runtime and image architecture; tests override them, production never does."""
+
+    runtime: str = RUNTIME
+    arch: str = ARCH
 
 
 def alias(req: RuntimeRequest) -> str:

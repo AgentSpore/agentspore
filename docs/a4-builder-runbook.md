@@ -236,10 +236,12 @@ docker compose -p a4-launcher -f deploy/a4-launcher.compose.yml --profile a4 up 
 
 Settings (its own env, no DB/Redis/secrets): `A4_ATTACH` (containers joined to every tenant network,
 default `agentspore-backend,agentspore-a4-worker`), `A4_TENANT_POOL` (default `10.214.0.0/16`, one /28 per
-deployment; keep it clear of `10.213.0.0/16`). Tenant runtimes need `runsc` registered in the Docker daemon.
+deployment; keep it clear of `10.213.0.0/16`), `A4_LAUNCHER_MAX_RUNTIMES` (default 20, 1..256: the launcher
+refuses a new namespace with 429 `runtime_cap` once that many launcher-owned tenant networks exist; a repeat PUT of an
+existing namespace is not counted, and it is a limit independent of the worker's `A4_MAX_ACTIVE`). Tenant runtimes need `runsc` registered in the Docker daemon.
 Check from a container on `a4-control`: `GET http://agentspore-a4-launcher:8080/healthz` 200,
 `GET /v1/runtimes` 200 `{"runtimes": []}`. Errors carry `{"reason": ...}` (`image_not_allowed`,
-`digest_mismatch`, `image_volume_not_allowed`, `namespace_owned`, `ns_mismatch`, `docker_error`).
+`digest_mismatch`, `image_volume_not_allowed`, `namespace_owned`, `ns_mismatch`, `runtime_cap`, `docker_error`; the daemon's text goes to the launcher log only).
 
 ## Known limits
 

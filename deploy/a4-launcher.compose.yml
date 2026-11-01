@@ -24,6 +24,7 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
       A4_ATTACH: "${A4_ATTACH:-agentspore-backend,agentspore-a4-worker}"
       A4_TENANT_POOL: "${A4_TENANT_POOL:-10.214.0.0/16}"
+      A4_LAUNCHER_MAX_RUNTIMES: "${A4_LAUNCHER_MAX_RUNTIMES:-20}"
     volumes:
       - type: bind
         source: /var/run/docker.sock

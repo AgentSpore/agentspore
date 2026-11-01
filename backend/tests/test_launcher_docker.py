@@ -17,14 +17,18 @@ import pytest
 from app.launcher.docker import DockerClient, DockerError
 from app.launcher.schemas import LauncherError, RuntimeRequest
 from app.launcher.service import Launcher
+from app.launcher.spec import Target
 
 REGISTRY_IMAGE = "registry@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3"
 SOCK = os.environ.get("DOCKER_HOST", "unix:///var/run/docker.sock").removeprefix("unix://")
 
 
+ENV = {**os.environ, "DOCKER_HOST": f"unix://{SOCK}"}
+
+
 def docker(*args: str, stdin: str | None = None, check: bool = True) -> str:
     done = subprocess.run(
-        ["docker", *args], input=stdin, capture_output=True, text=True, check=False
+        ["docker", *args], input=stdin, capture_output=True, text=True, check=False, env=ENV
     )
     if check and done.returncode:
         raise RuntimeError(done.stderr[-300:])
@@ -32,13 +36,26 @@ def docker(*args: str, stdin: str | None = None, check: bool = True) -> str:
 
 
 @pytest.fixture(scope="module")
-def registry():
+def daemon_socket():
+    """The one socket both the CLI and the launcher transport use; skip when it does not answer."""
+    try:
+        with httpx.Client(transport=httpx.HTTPTransport(uds=SOCK), timeout=5.0) as client:
+            ok = client.get("http://docker/_ping").status_code == 200
+    except httpx.HTTPError:
+        ok = False
+    if not ok:
+        pytest.skip(f"no Docker daemon answers /_ping on {SOCK}")
+
+
+@pytest.fixture(scope="module")
+def registry(daemon_socket):
     name = f"a4p4b-reg-{uuid.uuid4().hex[:8]}"
     done = subprocess.run(
         ["docker", "run", "-d", "--name", name, "-p", "127.0.0.1:5000:5000", REGISTRY_IMAGE],
         capture_output=True,
         text=True,
         check=False,
+        env=ENV,
     )
     if done.returncode:
         pytest.skip("docker or registry image or port 5000 unavailable")
@@ -80,16 +97,15 @@ def dep():
 
 
 @pytest.fixture
-def launcher():
+def launcher(daemon_socket):
     client = DockerClient(httpx.AsyncHTTPTransport(uds=SOCK))
+    arch = docker("info", "--format", "{{.Architecture}}")
+    arch = arch.replace("x86_64", "amd64").replace("aarch64", "arm64")
     return Launcher(
         client,
         (),
         ipaddress.IPv4Network("10.214.0.0/16"),
-        runtime="runc",
-        arch=docker("info", "--format", "{{.Architecture}}")
-        .replace("x86_64", "amd64")
-        .replace("aarch64", "arm64"),
+        Target(runtime="runc", arch=arch),
     )
 
 
@@ -136,7 +152,7 @@ async def test_runtime_hardening_flags(launcher, publish, dep):
     assert f"svc-{dep}" in info["NetworkSettings"]["Networks"][ns]["Aliases"]
 
 
-def test_runtime_runsc_is_stand_only():
+def test_runtime_runsc_is_stand_only(daemon_socket):
     runtimes = json.loads(docker("info", "--format", "{{json .Runtimes}}"))
     if "runsc" not in runtimes:
         pytest.skip("runsc is not registered on this daemon (stand-only assertion)")
@@ -172,6 +188,16 @@ async def test_launch_twice_and_delete_real(launcher, publish, dep):
     assert err.value.status == 409
     assert [r["namespace"] for r in await launcher.list_runtimes() if r["namespace"] == ns] == [ns]
     await launcher.delete(ns)
+    await launcher.delete(ns)
+    assert docker("ps", "-aq", "--filter", f"name={ns}") == ""
+    assert docker("network", "ls", "-q", "--filter", f"name={ns}") == ""
+
+
+async def test_delete_running_runtime_that_ignores_sigterm(launcher, publish, dep):
+    """`sleep` as PID 1 ignores SIGTERM, so stop takes t=10 plus the kill."""
+    ns = f"a4-{dep}-1"
+    await launcher.put(ns, request(dep, publish(ROOT_IMAGE, ns)))
+    await launcher.start(ns)
     await launcher.delete(ns)
     assert docker("ps", "-aq", "--filter", f"name={ns}") == ""
     assert docker("network", "ls", "-q", "--filter", f"name={ns}") == ""
