@@ -5,6 +5,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 SCRIPT = Path(__file__).parents[1] / "scripts/ci_scope.py"
@@ -62,6 +63,18 @@ class ScopeTests(unittest.TestCase):
                 if not path.startswith("db/"):
                     self.assertTrue(all(result.values()))
 
+    def test_scanner_changes_select_native_backend_acceptance(self):
+        for path in (
+            "backend/scripts/install_a4_scanners.py",
+            "scripts/ci/smoke_a4_scanners.py",
+            "scripts/ci/check_a4_scanner_image.py",
+        ):
+            with self.subTest(path=path):
+                self.git("checkout", "-q", self.base)
+                self.write(path)
+                self.commit()
+                self.assertTrue(scope.classify(self.changed())["backend_image"])
+
     def test_missing_invalid_and_zero_base_fail_closed(self):
         for base in ("f" * 40, "0" * 40, "--not-a-ref", None):
             with self.subTest(base=base):
@@ -95,3 +108,65 @@ class ScopeTests(unittest.TestCase):
         self.assertFalse(any(json.loads(result).values()))
         self.assertIn("sdk/agentspore_sdk/mcp_server.py", scope.sdk_python_files(None))
         self.assertIn("sdk/agentspore_sdk/mcp_server.py", scope.sdk_python_files([("M", "sdk/agentspore_sdk/mcp_server.py")]))
+
+
+SCANNER_SPEC = importlib.util.spec_from_file_location(
+    "scanner_image", Path(__file__).parents[2] / "scripts/ci/check_a4_scanner_image.py"
+)
+assert SCANNER_SPEC is not None and SCANNER_SPEC.loader is not None
+scanner_image = importlib.util.module_from_spec(SCANNER_SPEC)
+SCANNER_SPEC.loader.exec_module(scanner_image)
+
+
+class ScannerImageTests(unittest.TestCase):
+    def test_probe_success_isolated_command_and_cleanup(self):
+        result = subprocess.CompletedProcess([], 0, b'{"offline":"passed","online":"not_run"}')
+        empty = subprocess.CompletedProcess([], 0, b'')
+        with patch.object(scanner_image.subprocess, "run", side_effect=[result, empty, empty]) as run:
+            self.assertEqual(scanner_image.probe("sha256:" + "a" * 64, b"script", False),
+                             {"offline": "passed", "online": "not_run"})
+        command = run.call_args_list[0].args[0]
+        self.assertIn("--read-only", command)
+        self.assertIn("10001:10001", command)
+        self.assertEqual(command[command.index("--network") + 1], "none")
+        self.assertNotIn("--volume", command)
+        self.assertEqual(run.call_args_list[0].kwargs["timeout"], 330)
+        name = command[command.index("--name") + 1]
+        self.assertEqual(run.call_args_list[1].args[0], ["docker", "rm", "-f", name])
+
+    def test_timeout_still_cleans_owned_container(self):
+        empty = subprocess.CompletedProcess([], 0, b'')
+        with patch.object(scanner_image.subprocess, "run", side_effect=[
+            subprocess.TimeoutExpired("docker", 330), empty, empty,
+        ]) as run:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                scanner_image.probe("sha256:" + "a" * 64, b"script", True)
+        self.assertEqual(run.call_args_list[1].args[0][:3], ["docker", "rm", "-f"])
+        self.assertEqual(run.call_args_list[2].args[0][:3], ["docker", "ps", "-aq"])
+
+    def test_unexpected_report_and_cleanup_failure_rejected(self):
+        for stdout, remaining in [(b'{"offline":"passed"}', b''),
+                                  (b'{"offline":"passed","online":"passed"}', b'container')]:
+            with self.subTest(stdout=stdout):
+                results = [subprocess.CompletedProcess([], 0, stdout),
+                           subprocess.CompletedProcess([], 0, b''),
+                           subprocess.CompletedProcess([], 0, remaining)]
+                with patch.object(scanner_image.subprocess, "run", side_effect=results):
+                    with self.assertRaises(ValueError):
+                        scanner_image.probe("sha256:" + "a" * 64, b"script", True)
+
+    def test_receipt_source_and_architecture_fail_closed(self):
+        head = "b" * 40
+        image = "sha256:" + "a" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "backend.json"
+            receipt.write_text(json.dumps({"image_id": image, "service": "backend",
+                                           "architecture": "amd64", "source_sha": head}))
+            with patch.object(scanner_image.subprocess, "check_output", return_value=head):
+                wrong_arch = subprocess.CompletedProcess([], 0, f"{image} linux arm64")
+                with patch.object(scanner_image.subprocess, "run", return_value=wrong_arch):
+                    with self.assertRaisesRegex(ValueError, "scanner_image_architecture"):
+                        scanner_image.image_from_receipt(receipt)
+            with patch.object(scanner_image.subprocess, "check_output", return_value="c" * 40):
+                with self.assertRaisesRegex(ValueError, "scanner_image_receipt"):
+                    scanner_image.image_from_receipt(receipt)
