@@ -20,6 +20,27 @@ come only from the allowlist; the Dockerfile scanner (P2) is a second layer. A `
 digest (`python:3.12-slim@sha256:...`) because the gate refuses tag manifests. `a4-builder` sets
 `gateway_mode_ipv4: isolated` (Docker 28+): its bridge has no address, so a `RUN` cannot reach host listeners.
 
+## Worker scanner binaries
+
+The shared backend/worker image installs Gitleaks 8.30.1 and OSV-Scanner 2.7.0 during
+build, using `scripts/install_a4_scanners.py` in the backend build context. Each Linux
+amd64/arm64 asset has a reviewed literal SHA-256 pin; `TARGETARCH` selects the matching
+asset. Unsupported architectures, checksum mismatches, unsafe archive members and
+incorrect ELF architecture fail the build. Executables are installed with mode 0755;
+upstream licenses are retained under `/usr/local/share/licenses/`.
+
+No scanner download occurs when the worker starts. The existing scanner adapters still
+control flags, platform-owned configuration, timeouts and rejection reasons. OSV package
+vulnerability checks require network access; installing its binary does not provide an
+offline vulnerability database or establish production connectivity.
+
+`scripts/ci/smoke_a4_scanners.py` runs the actual adapters against temporary synthetic
+fixtures inside the final image. Its default checks clean/no-package input and a fake
+secret; `--online` additionally requires a known vulnerable dependency to be rejected.
+An offline-only pass does not establish dependency vulnerability coverage. Run native
+image acceptance for both target architectures; the standard production release build
+remains native amd64. This packaging does not enable A4 or provision its worker service.
+
 ## Trust model
 
 - Rootless BuildKit runs every `RUN` with `network.host`, in the daemon's own network namespace.

@@ -32,6 +32,12 @@ RUN uv sync --locked --no-dev
 # Keep in step with the buildkitd image in deploy/a4-builder.compose.yml (v0.23.2-rootless).
 COPY --from=moby/buildkit@sha256:ddd1ca44b21eda906e81ab14a3d467fa6c39cd73b9a39df1196210edcb8db59e /usr/bin/buildctl /usr/local/bin/buildctl
 
+# Install reviewed scanner assets for the target, including native Apple Silicon builds.
+ARG TARGETARCH
+COPY scripts/install_a4_scanners.py /tmp/install_a4_scanners.py
+RUN python /tmp/install_a4_scanners.py "$TARGETARCH" \
+    && rm /tmp/install_a4_scanners.py
+
 # Копируем код приложения
 COPY app/ ./app/
 
