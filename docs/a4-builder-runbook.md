@@ -143,25 +143,69 @@ previous build's cache across `--force-recreate`; the tmpfs has no such volume.
 Gate check (from a container on `a4-control`): `POST .../restart` 204, `GET .../json` 200,
 `GET /v1.44/containers/json` 403, `POST /v1.44/containers/create` 403, `POST .../restart` with a body 413.
 
-## Enable the BuildKit builder in the worker (preview, not operable yet)
+## Enable the production worker after isolated acceptance
 
-Do not enable this on a live host before the stand check below. `buildctl` is in the backend image
-(moby/buildkit v0.23.2, copied by digest) and the per-build recycle is implemented. Still missing:
-- `a4-worker` is on `sporeai-network` and `a4-control`; `buildkitd` sits on the internal `a4-builder`
-  network, so `A4_BUILDKIT_ADDR` has no route to it yet (a later step).
-- Built tarballs are deleted right after the build; loading or pushing the image is a later step.
-- Verify on the stand under runsc: the rootless snapshotter on the tmpfs state directory, the mTLS
-  healthcheck (server pair used as client pair), `group_add` reaching the socket, the gate checks above.
+Status: 2026-11-02, configuration under review; native worker/BuildKit acceptance pending.
+Owner: AgentSpore maintainers. Review before activation and by 2026-12-02.
 
-The switch is `A4_BUILDER=buildkit` (default `fake`; roll back by unsetting it) with
-`A4_BUILDKIT_CERT_DIR` (client `ca.pem`, `client.pem`, `client-key.pem`, mounted read-only),
-`A4_BUILDKIT_ADDR` (default `tcp://buildkitd:1234`) and `A4_PKG_MIRROR_HOST`
-(default `10.213.77.12`; a private IPv4 literal, settings refuse a hostname, loopback and public addresses; it must equal the `pkg-mirror` `ipv4_address` in `deploy/a4-builder.compose.yml` and the address literals in `deploy/a4-builder/pkg-mirror.conf` (`sub_filter`, `proxy_redirect`, the crates `config.json`): changing only the setting breaks downloads), `A4_RECYCLE_GATE_URL` (default `http://a4-restart-gate:2375`). Tarballs go to a 4 GiB tmpfs; the container limit is 6 GiB.
-At start the worker refuses to run with `A4_BUILDER=buildkit` when `A4_BUILDKIT_ADDR` is not
-`tcp://host:port`, a client TLS file (`ca.pem`, `client.pem`, `client-key.pem`) is missing or
-unreadable, or `A4_BUILDER_OUT_DIR` is not a writable directory. The error names the setting or file, never contents.
-A failed build shows the last 300 characters of `buildctl` stderr in the log, with `scheme://user:pass@`
-credentials replaced by `://***@`.
+`deploy/docker-compose.prod.yml` defines the existing worker behind profile `a4`.
+Ordinary deployments omit it. Keep `A4_DEPLOY_ENABLED=false` and `A4_RUNTIME=off`
+until the acceptance below succeeds. Starting a process is not a successful deployment.
+The production worker uses BuildKit; the development compose retains its fake builder.
+
+Supply `A4_WORKER_REPOSITORY` (repository only, no tag or digest) and
+`A4_WORKER_DIGEST` (64 lowercase hex characters, without `sha256:`) from the approved
+scanner-capable release image receipt. The default `invalid.invalid` repository and
+zero digest deliberately identify no approved image. Scanner packaging is tracked in
+PR #279; do not substitute the ordinary backend image without verifying its tools.
+Compose rendering does not validate image-reference syntax: release admission must
+reject malformed/double digests, tags and any image not matching the reviewed receipt.
+Do not enable the profile just because `compose config` succeeds.
+
+The worker reuses the existing `SECRET_KEY`, `POSTGRES_PASSWORD`, DB/Redis endpoints
+and `DOMAINS` bindings, plus `A4_BASE_IMAGE_DIGESTS`. Provide values through the normal
+local deployment mechanism; do not display rendered secret-bearing configuration.
+It receives no GitHub/LLM credentials. Platform networking supplies trusted source
+fetch and OSV HTTPS egress; builder RUN retains only its package/image mirror paths.
+Only the worker joins the existing external `a4-builder` network. BuildKit stays
+solely on that internal isolated network; restart gate and registry keep their existing
+separate networks. The multihomed worker disables IPv4/IPv6 forwarding, drops all
+capabilities and runs no listener. Native tests must prove it cannot become a transit path.
+
+Start the builder, registry and launcher through their existing separate lifecycle
+procedures, with shared internal `a4-control` and `a4-registry-net` established first.
+Preserve project name `a4-builder`: the restart gate targets `a4-builder-buildkitd-1`.
+Provide only client `ca.pem`, `client.pem`, `client-key.pem` in `A4_BUILDKIT_CERT_DIR`;
+mount it read-only. UID/GID 10001 must traverse that directory and read those files;
+verify readability without printing their contents. Do not make the private key public.
+Missing/unreadable client TLS prevents worker startup. No host source or socket is mounted.
+The UID-owned tmpfs paths are `/tmp` (1 GiB: source/scanner temporary state and HOME),
+`/app/logs` (32 MiB), and `/var/lib/a4-out` (4 GiB); their memory counts toward the 6 GiB limit.
+The existing image HTTP healthcheck is disabled because this worker has no HTTP server.
+Verify its process and actual queue progress separately.
+
+Before activation, use an isolated synthetic stack to prove:
+
+- The approved image runs as UID10001, scanners/buildctl work, client TLS is readable,
+  temporary/log/output paths are writable, and a missing TLS file fails startup.
+- Trusted worker source fetch and OSV HTTPS work through the platform network; DB access
+  succeeds. An untrusted RUN cannot reach DB/Redis, restart gate, launcher, registry,
+  metadata, public internet or worker ports, directly or routed through the worker.
+  Use live positive-control endpoints; a closed port alone is not isolation evidence.
+- Before push, Trivy scans the verified OCI build artifact. Critical vulnerabilities
+  reject it with `image_vulnerable`; scanner/tool/database errors fail closed, with no
+  push or launch. This post-build gate is not implemented yet; it remains an activation
+  blocker tracked in #170, comment 6565087321. Pre-build OSV scanning does not replace it.
+- A real fetch→scan→build→verified-OCI-scan→push→launch→three-health-successes→promotion workflow succeeds;
+  a failed replacement preserves the active route. Check daemon recycle on success,
+  failure and cancellation; untrusted state must not survive into the next build.
+- Profile-off rendering needs no A4 values; explicit worker start requires the reviewed
+  digest and existing external network. Record resource baselines and remove only
+  resources owned by the isolated fixture.
+
+Built OCI archives already pass digest validation and are pushed by `PushingBuilder`;
+no new upload path is needed. Disabling admission or setting runtime off does not remove
+existing routes/containers. Stop only the worker for rollback; preserve active services.
 
 When you run `buildctl` by hand, `GOSUMDB` holds a space, so it is one quoted argument:
 `--opt 'build-arg:GOSUMDB=sum.golang.org http://10.213.77.12:8083/sumdb'` (unquoted, the shell splits it
