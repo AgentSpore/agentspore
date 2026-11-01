@@ -374,3 +374,57 @@ async def test_runtime_cap_counts_only_launcher_owned_networks(daemon):
     transport = httpx.ASGITransport(app=build_app(launcher))
     async with httpx.AsyncClient(transport=transport, base_url="http://l") as c:
         assert (await c.put(f"/v1/runtimes/{NS}", content=json.dumps(BODY))).status_code == 200
+
+
+async def test_inventory_includes_owned_network_without_container(api, daemon):
+    assert (await put(api, BODY)).status_code == 200
+    daemon.containers.clear()
+    daemon.networks["foreign"] = {"sub": "10.215.0.0/28", "Labels": {}, "Containers": {}}
+    listing = (await api.get("/v1/runtimes")).json()
+    assert listing["runtimes"] == []
+    assert listing["networks"] == [{"namespace": NS}]
+
+
+async def test_gc_waits_for_pull_to_container_creation():
+    daemon = FakeDaemon()
+    creating, release = asyncio.Event(), asyncio.Event()
+
+    async def transport(req):
+        if req.url.path.endswith("/containers/create"):
+            creating.set()
+            await release.wait()
+        return daemon._handle(req)
+
+    launcher = Launcher(DockerClient(httpx.MockTransport(transport)), (), POOL)
+    launching = asyncio.create_task(launcher.put(NS, RuntimeRequest.model_validate(BODY)))
+    collecting = None
+    try:
+        async with asyncio.timeout(5):
+            await creating.wait()
+            collecting = asyncio.create_task(launcher.gc_images([]))
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(collecting), timeout=0.03)
+            assert not any(path == "/images/json" for _, path, _ in daemon.calls)
+            release.set()
+            await launching
+            await collecting
+    finally:
+        release.set()
+        await launching
+        if collecting is not None:
+            await collecting
+
+
+async def test_gc_preserves_docker_in_use_conflict_without_force():
+    calls = []
+
+    async def boundary(req):
+        calls.append(req)
+        if req.method == "GET":
+            return httpx.Response(200, json=[{"RepoDigests": [IMAGE]}])
+        return httpx.Response(409, json={"message": "image is being used by container"})
+
+    launcher = Launcher(DockerClient(httpx.MockTransport(boundary)), (), POOL)
+    assert await launcher.gc_images([]) == []
+    assert len(calls) == 2 and calls[1].method == "DELETE"
+    assert "force" not in calls[1].url.params

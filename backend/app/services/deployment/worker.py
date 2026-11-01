@@ -18,6 +18,7 @@ from app.services.deployment.fetcher import fetch_source
 from app.services.deployment.launcher_observer import LauncherObserver
 from app.services.deployment.launcher_runtime import LauncherRuntime
 from app.services.deployment.manifest import load_manifest
+from app.services.deployment.runtime_cleanup import RuntimeCleanup
 from app.services.deployment.scans import Scanner, run_prescan
 from app.services.deployment_recovery import DeploymentRecoveryService
 
@@ -55,10 +56,12 @@ class DeploymentWorker:
         self.worker_id: UUID = uuid4()
         self.recovery = DeploymentRecoveryService(sessions, _no_sandbox_observed)
         self.runtime: LauncherRuntime | None = None
+        self.cleanup: RuntimeCleanup | None = None
 
     def attach_runtime(self, runtime: LauncherRuntime) -> None:
         """`A4_RUNTIME=launcher`: start what was pushed, and recover from the launcher listing."""
         self.runtime = runtime
+        self.cleanup = RuntimeCleanup(self.sessions, runtime.client)
         self.recovery = DeploymentRecoveryService(
             self.sessions, LauncherObserver(runtime.client, runtime.status_of)
         )
@@ -67,7 +70,9 @@ class DeploymentWorker:
         """Process one queued job, else recover an expired build; True when anything happened."""
         claimed = await self._claim()
         if claimed is None:
-            return await self.recovery.recover_once()
+            if await self.recovery.recover_once():
+                return True
+            return await self.cleanup.run_once() if self.cleanup is not None else False
         lease, repo_url, commit_sha = claimed
         try:
             reason = await self._supervised(lease, repo_url, commit_sha)
