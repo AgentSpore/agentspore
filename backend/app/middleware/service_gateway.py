@@ -38,9 +38,7 @@ class ServiceGatewayMiddleware:
     ):
         self.app = app
         self.resources = resources
-        self.serve_enabled = (
-            get_settings().a4_serve_enabled if serve_enabled is None else serve_enabled
-        )
+        self._serve_enabled = serve_enabled
         self.domains = domains or get_settings().domains
         self.platform_hosts = frozenset(
             label + domain for domain in self.domains for label in self.PLATFORM_LABELS
@@ -135,6 +133,13 @@ class ServiceGatewayMiddleware:
         async with asyncio.timeout(2), self.resources.service_gateway_db_factory.begin() as db:
             await ServiceGateway(db).record_event(request, route, event)
         return Response(status_code=204)
+
+    @property
+    def serve_enabled(self) -> bool:
+        """Pinned value when given, else the live setting so a settings change needs no restart."""
+        if self._serve_enabled is not None:
+            return self._serve_enabled
+        return get_settings().a4_serve_enabled
 
     async def _require_served(self, route: ServiceRoute) -> None:
         """A4_SERVE_ENABLED=false refuses every route except platform-owned ones."""
