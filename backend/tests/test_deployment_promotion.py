@@ -14,6 +14,7 @@ from test_deployment_queue import deployment_session as deployment_session
 from test_deployment_queue import queue_world as queue_world
 
 from app.repositories.deployment_repo import DeploymentRepository
+from app.schemas.deployments import DeploymentLease, SandboxStopProof
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
 DIGEST = "sha256:" + "b" * 64
@@ -226,3 +227,41 @@ async def test_health_boundary_failure_never_publishes(promotion_world, response
     async with maker() as db:
         assert await db.scalar(text("SELECT active_revision FROM service_routes")) == previous
         assert await db.scalar(text("SELECT status FROM project_deployments")) == "recovering"
+
+
+async def promote_next(maker, request, previous: DeploymentLease) -> DeploymentLease:
+    """Finish the previous build sandbox, then drive a second deploy up to promotion."""
+    async with maker.begin() as db:
+        repo = DeploymentRepository(db)
+        sandbox = f"a4-build-{previous.deployment_id.hex}"
+        assert await repo.confirm_stopped(SandboxStopProof(lease=previous, sandbox_id=sandbox))
+        await repo.enqueue(request.model_copy(update={"idempotency_key": uuid4()}))
+        lease = await repo.claim(uuid4())
+        assert lease is not None
+        assert await repo.record_sandbox(lease, f"a4-build-{lease.deployment_id.hex}")
+        assert await repo.begin_probing(lease, DIGEST)
+        for _ in range(3):
+            assert await repo.record_health(lease, 200)
+    return lease
+
+
+async def test_second_deploy_supersedes_first_and_moves_route(promotion_world):
+    maker, request, first, _ = promotion_world
+    async with maker.begin() as db:
+        repo = DeploymentRepository(db)
+        assert await repo.begin_probing(first, DIGEST)
+        for _ in range(3):
+            assert await repo.record_health(first, 200)
+        assert await repo.promote(first)
+    second = await promote_next(maker, request, first)
+    async with maker.begin() as db:
+        assert await DeploymentRepository(db).promote(second)
+    async with maker() as db:
+        rows = (
+            await db.execute(text("SELECT id, status, activated_at FROM project_deployments"))
+        ).all()
+        states = {row.id: row.status for row in rows}
+        assert states == {first.deployment_id: "superseded", second.deployment_id: "active"}
+        assert all(row.activated_at is not None for row in rows)
+        route = await db.scalar(text("SELECT active_revision FROM service_routes"))
+        assert route == second.deployment_id

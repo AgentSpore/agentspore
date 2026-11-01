@@ -1,9 +1,11 @@
 """Durable queue and global fencing in the caller's PostgreSQL transaction."""
 
 import re
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import Depends
+from loguru import logger
 from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -406,6 +408,36 @@ class DeploymentRepository:
         )
         return status in {"probing", "promoting"}
 
+    async def _activate_row(self, lease: DeploymentLease, project_id: UUID) -> bool:
+        """Supersede the project's previous active row, then activate this one."""
+        eligible = await self.db.scalar(
+            text(
+                "SELECT id FROM project_deployments "
+                "WHERE id = :deployment_id AND status IN ('promoting', 'active') "
+                "AND health_successes = 3 AND EXISTS (SELECT 1 FROM deployment_worker_lease "
+                "WHERE slot = 1 AND expires_at > clock_timestamp()) FOR UPDATE"
+            ),
+            lease.model_dump(),
+        )
+        if eligible is None:
+            return False
+        await self.db.execute(
+            text(
+                "UPDATE project_deployments SET status = 'superseded' "
+                "WHERE project_id = :project AND status = 'active' AND id <> :deployment_id"
+            ),
+            {"project": project_id, "deployment_id": lease.deployment_id},
+        )
+        await self.db.execute(
+            text(
+                "UPDATE project_deployments SET status = 'active', "
+                "activated_at = COALESCE(activated_at, clock_timestamp()) "
+                "WHERE id = :deployment_id"
+            ),
+            {"deployment_id": lease.deployment_id},
+        )
+        return True
+
     async def promote(self, lease: DeploymentLease) -> bool:
         """Publish under slot then project locks; caller commits route and state together."""
         slot = await self._slot()
@@ -437,16 +469,7 @@ class DeploymentRepository:
         )
         if project is None or handle is None:
             return False
-        updated = await self.db.scalar(
-            text(
-                "UPDATE project_deployments SET status = 'active' "
-                "WHERE id = :deployment_id AND status IN ('promoting', 'active') "
-                "AND health_successes = 3 AND EXISTS (SELECT 1 FROM deployment_worker_lease "
-                "WHERE slot = 1 AND expires_at > clock_timestamp()) RETURNING id"
-            ),
-            lease.model_dump(),
-        )
-        if updated is None:
+        if not await self._activate_row(lease, project_id):
             return False
         await self.db.execute(
             text(
@@ -457,6 +480,34 @@ class DeploymentRepository:
             {"project": project_id, "handle": handle, "revision": lease.deployment_id},
         )
         return True
+
+    async def retire_candidates(self, grace: timedelta = timedelta(seconds=30)) -> list[RowMapping]:
+        """Superseded revisions whose successor has been active over `grace` (database clock)."""
+        result = await self.db.execute(
+            text(
+                "SELECT d.id, d.sandbox_id, d.sandbox_namespace FROM project_deployments d "
+                "WHERE d.status = 'superseded' AND d.retired_at IS NULL AND "
+                "(SELECT min(n.activated_at) FROM project_deployments n "
+                "WHERE n.project_id = d.project_id AND n.activated_at > d.activated_at) "
+                "+ make_interval(secs => CAST(:grace AS double precision)) "
+                "< clock_timestamp() ORDER BY d.id"
+            ),
+            {"grace": grace.total_seconds()},
+        )
+        return list(result.mappings().all())
+
+    async def mark_retired(self, deployment_id: UUID) -> bool:
+        """Record that a superseded revision's sandbox is gone; false if already retired."""
+        retired = await self.db.scalar(
+            text(
+                "UPDATE project_deployments SET retired_at = clock_timestamp() "
+                "WHERE id = :id AND status = 'superseded' AND retired_at IS NULL RETURNING id"
+            ),
+            {"id": deployment_id},
+        )
+        if retired is None:
+            logger.warning("deployment {} was not retirable", deployment_id)
+        return retired is not None
 
     async def recovery_snapshot(self) -> DeploymentRecoverySnapshot | None:
         """Capture an active build or expired recovery without retaining locks over I/O."""
