@@ -25,14 +25,17 @@ class Launcher:
         self._d, self._attach, self._pool = docker, attach, pool
         self._target, self._max = target or Target(), max_runtimes
         self._net_lock = asyncio.Lock()
+        self._image_lock = asyncio.Lock()
 
     async def put(self, ns: str, req: RuntimeRequest) -> str:
         m = IMAGE_RE.fullmatch(req.image)
         if not m or m.group(1) != ns:
             raise LauncherError(422, "image_not_allowed")
-        await self._pull_and_verify(req.image)
-        await self._ensure_network(ns, req)
-        return await self._create(ns, req)
+        # INVARIANT(A4): even a late GC request cannot delete between pull and create.
+        async with self._image_lock:
+            await self._pull_and_verify(req.image)
+            await self._ensure_network(ns, req)
+            return await self._create(ns, req)
 
     async def _pull_and_verify(self, ref: str) -> None:
         repo, digest = ref.split("@")
@@ -163,7 +166,21 @@ class Launcher:
             )
         return out
 
+    async def list_networks(self) -> list[dict[str, str]]:
+        """Include owned networks left behind before container creation."""
+        flt = json.dumps({"label": [LP + "role=network", LP + "launcher=1"]})
+        reply = await self._d.call("GET", query("/networks", filters=flt))
+        return [
+            {"namespace": (net.get("Labels") or {}).get(LP + "namespace", "")}
+            for net in reply.json()
+        ]
+
     async def gc_images(self, keep: list[str]) -> list[str]:
+        """Serialize with pulls; Docker refuses deletion of images used by containers."""
+        async with self._image_lock:
+            return await self._gc_images(keep)
+
+    async def _gc_images(self, keep: list[str]) -> list[str]:
         removed = []
         for img in (await self._d.call("GET", "/images/json")).json():
             for ref in img.get("RepoDigests") or []:
