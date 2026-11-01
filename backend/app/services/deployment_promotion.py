@@ -26,17 +26,31 @@ class DeploymentPromotionService:
         async with self.sessions.begin() as db:
             if await DeploymentRepository(db).promote(lease):
                 return True
-        for _ in range(3):
+        delay = 0.2
+        while True:
+            async with self.sessions.begin() as db:
+                repo = DeploymentRepository(db)
+                remaining = await repo.probe_remaining(lease)
+                if remaining is None:
+                    return False
+                if remaining <= 0:
+                    await repo.record_health(lease, 0)
+                    return False
+            deadline = asyncio.get_running_loop().time() + remaining
             try:
-                async with asyncio.timeout(2):
+                async with asyncio.timeout(min(2, remaining)):
                     status_code = await self.health(lease)
             except (TimeoutError, OSError, TransportError):
                 status_code = 0
             async with self.sessions.begin() as db:
                 repo = DeploymentRepository(db)
-                accepted = await repo.record_health(lease, status_code)
+                accepted = await repo.record_health(lease, status_code, startup_retry=True)
                 if await repo.promote(lease):
                     return True
                 if not accepted:
                     return False
-        return False
+            if status_code == 0:
+                await asyncio.sleep(
+                    min(delay, max(0, deadline - asyncio.get_running_loop().time()))
+                )
+                delay = min(delay * 2, 1)
