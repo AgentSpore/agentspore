@@ -328,3 +328,27 @@ def test_buildkitd_rootfs_is_read_only_with_tmpfs_for_every_rootless_write_path(
         "/home/user/.local/tmp",
         "/home/user/.local/share/buildkit",
     }
+
+
+def test_production_worker_connection_preserves_builder_network_boundary(stack, services):
+    production = yaml.safe_load((ROOT / "deploy/docker-compose.prod.yml").read_text())
+    worker = production["services"]["a4-worker"]
+    assert production["networks"]["a4-builder"] == {"external": True, "name": "a4-builder"}
+    assert services["buildkitd"]["networks"] == ["a4-builder"]
+    assert services["a4-restart-gate"]["networks"] == ["a4-control"]
+    assert stack["networks"]["a4-builder"]["internal"] is True
+    for name in ("a4-control", "a4-registry-net"):
+        assert production["networks"][name]["internal"] is True
+        assert production["networks"][name]["enable_ipv6"] is False
+    assert not production["networks"]["sporeai-network"].get("internal", False)
+    assert [
+        name
+        for name, service in production["services"].items()
+        if "a4-builder" in service.get("networks", [])
+    ] == ["a4-worker"]
+    assert worker["sysctls"]["net.ipv4.ip_forward"] == "0"
+    registry = yaml.safe_load((ROOT / "deploy/a4-registry.compose.yml").read_text())
+    assert set(registry["services"]["a4-registry"]["networks"]) == {
+        "a4-registry-net",
+        "a4-registry-host",
+    }

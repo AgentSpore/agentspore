@@ -193,6 +193,67 @@ services:
     networks:
       - sporeai-network
 
+  # Opt-in only: supply an approved scanner-capable image digest before starting this profile.
+  a4-worker:
+    profiles: [a4]
+    image: "${A4_WORKER_REPOSITORY:-invalid.invalid/a4-worker}@sha256:${A4_WORKER_DIGEST:-0000000000000000000000000000000000000000000000000000000000000000}"
+    container_name: agentspore-a4-worker
+    command: ["/app/.venv/bin/python", "-m", "app.workers.a4"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    sysctls:
+      net.ipv4.ip_forward: "0"
+      net.ipv6.conf.all.forwarding: "0"
+    healthcheck:
+      disable: true
+    environment:
+      DEBUG: "false"
+      HOME: /tmp
+      PYTHONDONTWRITEBYTECODE: "1"
+      SECRET_KEY: "${SECRET_KEY}"
+      DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
+      REDIS_URL: "redis://redis:6379"
+      DOMAINS: "${DOMAINS:-agentspore.com,agentspore.ru}"
+      A4_DEPLOY_ENABLED: "${A4_DEPLOY_ENABLED:-false}"
+      A4_RUNTIME: "${A4_RUNTIME:-off}"
+      A4_BUILDER: buildkit
+      A4_BASE_IMAGE_DIGESTS: "${A4_BASE_IMAGE_DIGESTS:-}"
+      A4_BUILDER_OUT_DIR: /var/lib/a4-out
+      A4_BUILDKIT_ADDR: "tcp://buildkitd:1234"
+      A4_PKG_MIRROR_HOST: "10.213.77.12"
+      A4_RECYCLE_GATE_URL: "http://a4-restart-gate:2375"
+      A4_REGISTRY_URL: "http://a4-registry:5000"
+      A4_LAUNCHER_URL: "http://a4-launcher:8080"
+    volumes:
+      - type: bind
+        source: ${A4_BUILDKIT_CERT_DIR:-./a4-builder/client-tls-empty}
+        target: /run/a4-builder-tls
+        read_only: true
+        bind: { create_host_path: false }
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=0700,size=1g
+      - /app/logs:uid=10001,gid=10001,mode=0700,size=32m
+      - /var/lib/a4-out:uid=10001,gid=10001,mode=0700,size=4g
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 6g, pids: 256 }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    depends_on:
+      flyway: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    networks:
+      sporeai-network: {}
+      a4-builder: {}
+      a4-control: {}
+      a4-registry-net: {}
+
   # Next.js Frontend
   frontend:
     build:
@@ -214,6 +275,17 @@ services:
       - sporeai-network
 
 networks:
+  a4-builder:
+    external: true
+    name: a4-builder
+  a4-control:
+    name: a4-control
+    internal: true
+    enable_ipv6: false
+  a4-registry-net:
+    name: a4-registry-net
+    internal: true
+    enable_ipv6: false
   sporeai-network:
     driver: bridge
 
