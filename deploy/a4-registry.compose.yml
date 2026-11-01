@@ -1,0 +1,61 @@
+# A4 image registry: the worker pushes built images here; the runtime pulls them by digest.
+#   docker compose -p a4-registry -f deploy/a4-registry.compose.yml up -d
+# Unauthenticated BY DESIGN: only a4-registry-net (a4-worker alone) and host loopback reach it; it
+# is on neither a4-control, a4-builder nor a tenant network. Deletes are off.
+# a4-registry-host is the only non-internal leg: Docker publishes no port for internal-only
+# containers, and 127.0.0.1:5000 is how the runtime pulls. Nothing else joins it.
+
+services:
+  a4-registry-init:
+    image: registry@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+    entrypoint: ["chown", "-R", "1000:1000", "/var/lib/registry"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    volumes:
+      - a4-registry-data:/var/lib/registry
+
+  a4-registry:
+    # distribution/registry v3.1.2 (published 2026-09-24), index digest from Docker Hub
+    # library/registry:3.1.2, looked up 2026-10-31. v3 reads /etc/distribution/config.yml.
+    image: registry@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+    user: "1000:1000"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "false"
+    ports: ["127.0.0.1:5000:5000"]
+    volumes:
+      - a4-registry-data:/var/lib/registry
+    tmpfs: [/tmp:size=64m]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/v2/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M, pids: 128 }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    depends_on:
+      a4-registry-init: { condition: service_completed_successfully }
+    networks: [a4-registry-net, a4-registry-host]
+
+volumes:
+  a4-registry-data:
+
+networks:
+  # Internal; only a4-worker and a4-registry. Created by the compose file that defines a4-worker;
+  # to start the registry first, run `docker network create --internal a4-registry-net` (never without --internal).
+  a4-registry-net:
+    external: true
+    name: a4-registry-net
+  a4-registry-host:
+    enable_ipv6: false

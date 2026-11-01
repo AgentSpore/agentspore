@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     a4_recycle_gate_url: str = "http://a4-restart-gate:2375"
     a4_buildkit_container: str = "a4-builder-buildkitd-1"
     a4_recycle_api_version: str = "v1.44"
+    a4_registry_url: str = "http://a4-registry:5000"  # unauthenticated, control network only
+    a4_registry_ref_host: str = "127.0.0.1:5000"  # host the runtime pulls from
 
     # Redis
     redis_url: str = "redis://redis:6379"
