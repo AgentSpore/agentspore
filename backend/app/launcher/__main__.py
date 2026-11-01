@@ -8,8 +8,9 @@ import uvicorn
 
 from app.launcher.app import build_app
 from app.launcher.docker import DockerClient
-from app.launcher.service import SUBNET_PREFIX, Launcher
+from app.launcher.service import DEFAULT_MAX_RUNTIMES, SUBNET_PREFIX, Launcher
 
+MAX_RUNTIMES_LIMIT = 256
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 
@@ -20,7 +21,10 @@ def configure() -> Launcher:
     pool = ipaddress.ip_network(os.environ.get("A4_TENANT_POOL", "10.214.0.0/16"))
     if not isinstance(pool, ipaddress.IPv4Network) or pool.prefixlen > SUBNET_PREFIX:
         raise SystemExit("A4_TENANT_POOL: need an IPv4 network of /28 or larger")
-    return Launcher(DockerClient(), attach, pool)
+    cap = os.environ.get("A4_LAUNCHER_MAX_RUNTIMES", str(DEFAULT_MAX_RUNTIMES))
+    if not (cap.isascii() and cap.isdigit() and 1 <= int(cap) <= MAX_RUNTIMES_LIMIT):
+        raise SystemExit(f"A4_LAUNCHER_MAX_RUNTIMES: integer 1..{MAX_RUNTIMES_LIMIT}")
+    return Launcher(DockerClient(), attach, pool, max_runtimes=int(cap))
 
 
 if __name__ == "__main__":

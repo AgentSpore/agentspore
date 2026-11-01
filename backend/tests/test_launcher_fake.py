@@ -1,5 +1,6 @@
 """In-memory Docker daemon behind httpx.MockTransport, shared by the launcher tests."""
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
@@ -20,6 +21,9 @@ class FakeDaemon:
     networks: dict = field(default_factory=dict)
     calls: list = field(default_factory=list)
     image_list: list = field(default_factory=list)
+    pull_stream: bytes = b'{"status":"Pull complete"}\n'
+    queries: list = field(default_factory=list)
+    pull_chunk: int = 0
 
     def __post_init__(self) -> None:
         self.image_info = {
@@ -31,18 +35,26 @@ class FakeDaemon:
         }
 
     def transport(self) -> httpx.MockTransport:
-        return httpx.MockTransport(self._handle)
+        return httpx.MockTransport(self._yielding)
 
     def bodies(self, method: str, path_re: str) -> list[dict]:
         return [b for m, p, b in self.calls if m == method and re.fullmatch(path_re, p)]
+
+    async def _yielding(self, request: httpx.Request) -> httpx.Response:
+        """Yield to the loop per call, so concurrent requests interleave as on a real socket."""
+        await asyncio.sleep(0)
+        return self._handle(request)
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path.removeprefix("/v1.44")
         body: Any = json.loads(request.content) if request.content else None
         self.calls.append((request.method, path, body))
+        self.queries.append((request.method, path, dict(request.url.params)))
         name = path.rsplit("/", 1)[-1]
         if path == "/images/create":
-            return httpx.Response(200, content=b'{"status":"Pull complete"}\n')
+            if self.pull_chunk:
+                return httpx.Response(200, content=self._chunks(self.pull_stream, self.pull_chunk))
+            return httpx.Response(200, content=self.pull_stream)
         if path == "/images/json":
             return httpx.Response(200, json=self.image_list)
         if request.method == "DELETE" and path.startswith("/images/"):
@@ -53,8 +65,9 @@ class FakeDaemon:
             return httpx.Response(
                 200,
                 json=[
-                    {"Name": n, "IPAM": {"Config": [{"Subnet": v["sub"]}]}}
+                    {"Name": n, "Labels": v["Labels"], "IPAM": {"Config": [{"Subnet": v["sub"]}]}}
                     for n, v in self.networks.items()
+                    if self._labelled(request, v["Labels"])
                 ],
             )
         if path == "/networks/create":
@@ -75,11 +88,23 @@ class FakeDaemon:
                 json=[
                     {"Id": c["Id"], "State": "created", "Labels": c["Config"]["Labels"]}
                     for c in self.containers.values()
+                    if self._labelled(request, c["Config"]["Labels"])
                 ],
             )
         if path.startswith("/containers/"):
             return self._container(request.method, path, name)
         return httpx.Response(404, json={"message": "no route"})
+
+    @staticmethod
+    async def _chunks(data: bytes, size: int):
+        for i in range(0, len(data), size):
+            yield data[i : i + size]
+
+    @staticmethod
+    def _labelled(request: httpx.Request, labels: dict) -> bool:
+        """Honour the `filters={"label": ["k=v", ...]}` query like dockerd does."""
+        wanted = json.loads(request.url.params.get("filters", "{}")).get("label", [])
+        return all(labels.get(w.split("=", 1)[0]) == w.split("=", 1)[1] for w in wanted)
 
     def _network(self, method: str, path: str, body):
         parts = path.split("/")

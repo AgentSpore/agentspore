@@ -13,6 +13,7 @@ from app.services.deployment.process import redact
 SOCKET = "/var/run/docker.sock"
 API = "http://docker/v1.44"
 MAX_REPLY = 4 * 1024 * 1024
+PULL_TAIL = 64 * 1024
 
 
 def query(path: str, **params: str) -> str:
@@ -39,7 +40,8 @@ class DockerClient:
         self._http = httpx.AsyncClient(
             transport=transport or httpx.AsyncHTTPTransport(uds=SOCKET),
             base_url=API,
-            timeout=httpx.Timeout(10.0),
+            # read=None: the per-call asyncio.timeout bounds it (stop answers after t + SIGKILL).
+            timeout=httpx.Timeout(connect=5.0, read=None, write=10.0, pool=5.0),
         )
 
     async def call(
@@ -75,3 +77,23 @@ class DockerClient:
         finally:
             await response.aclose()
         return Reply(response.status_code, b"".join(chunks))
+
+    async def pull(self, repo: str, digest: str, timeout: float = 300.0) -> bytes:
+        """Drain the pull progress stream, keeping only its last 64 KiB; return that tail."""
+        request = self._http.build_request(
+            "POST", query("/images/create", fromImage=repo, tag=digest)
+        )
+        tail = b""
+        try:
+            async with asyncio.timeout(timeout):
+                response = await self._http.send(request, stream=True)
+                try:
+                    async for chunk in response.aiter_bytes():
+                        tail = (tail + chunk)[-PULL_TAIL:]
+                finally:
+                    await response.aclose()
+        except (TimeoutError, httpx.HTTPError) as exc:
+            raise DockerError(0, type(exc).__name__) from exc
+        if response.status_code != 200:
+            raise DockerError(response.status_code, redact(tail[:500]).decode("utf-8", "replace"))
+        return tail

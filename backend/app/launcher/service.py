@@ -7,10 +7,10 @@ from typing import Any
 
 from app.launcher.docker import DockerClient, query
 from app.launcher.schemas import IMAGE_RE, LauncherError, RuntimeRequest
-from app.launcher.spec import LP, RUNTIME, container_body, network_body
+from app.launcher.spec import LP, Target, container_body, network_body
 
 SUBNET_PREFIX = 28
-ARCH = "amd64"
+DEFAULT_MAX_RUNTIMES = 20
 
 
 class Launcher:
@@ -19,11 +19,11 @@ class Launcher:
         docker: DockerClient,
         attach: tuple[str, ...],
         pool: ipaddress.IPv4Network,
-        runtime: str = RUNTIME,
-        arch: str = ARCH,
+        target: Target | None = None,
+        max_runtimes: int = DEFAULT_MAX_RUNTIMES,
     ) -> None:
         self._d, self._attach, self._pool = docker, attach, pool
-        self._runtime, self._arch = runtime, arch
+        self._target, self._max = target or Target(), max_runtimes
         self._net_lock = asyncio.Lock()
 
     async def put(self, ns: str, req: RuntimeRequest) -> str:
@@ -36,15 +36,12 @@ class Launcher:
 
     async def _pull_and_verify(self, ref: str) -> None:
         repo, digest = ref.split("@")
-        pull = await self._d.call(
-            "POST", query("/images/create", fromImage=repo, tag=digest), timeout=300.0
-        )
-        if b'"error"' in pull.data:
+        if b'"error"' in await self._d.pull(repo, digest):
             raise LauncherError(502, "pull_failed")
         info = (await self._d.call("GET", f"/images/{ref}/json")).json()
         if ref not in (info.get("RepoDigests") or []):
             raise LauncherError(422, "digest_mismatch")
-        if info.get("Os") != "linux" or info.get("Architecture") != self._arch:
+        if info.get("Os") != "linux" or info.get("Architecture") != self._target.arch:
             raise LauncherError(422, "platform_not_allowed")
         if (info.get("Config") or {}).get("Volumes"):
             raise LauncherError(422, "image_volume_not_allowed")
@@ -55,13 +52,20 @@ class Launcher:
             if reply.status == 200:
                 self._require_owned(reply.json().get("Labels"), ns)
             else:
+                await self._require_capacity()
                 subnet = await self._free_subnet()
                 await self._d.call("POST", "/networks/create", body=network_body(req, str(subnet)))
-        connected = (await self._d.call("GET", f"/networks/{ns}")).json().get("Containers") or {}
-        names = {c.get("Name") for c in connected.values()}
-        for name in self._attach:
-            if name not in names:
-                await self._d.call("POST", f"/networks/{ns}/connect", body={"Container": name})
+            net = (await self._d.call("GET", f"/networks/{ns}")).json()
+            names = {c.get("Name") for c in (net.get("Containers") or {}).values()}
+            for name in self._attach:
+                if name not in names:
+                    await self._d.call("POST", f"/networks/{ns}/connect", body={"Container": name})
+
+    async def _require_capacity(self) -> None:
+        flt = json.dumps({"label": [LP + "role=network", LP + "launcher=1"]})
+        owned = (await self._d.call("GET", query("/networks", filters=flt))).json()
+        if len(owned) >= self._max:
+            raise LauncherError(429, "runtime_cap")
 
     async def _free_subnet(self) -> ipaddress.IPv4Network:
         nets = (await self._d.call("GET", "/networks")).json()
@@ -77,7 +81,7 @@ class Launcher:
         raise LauncherError(503, "pool_exhausted")
 
     async def _create(self, ns: str, req: RuntimeRequest) -> str:
-        body = container_body(req, self._runtime)
+        body = container_body(req, self._target.runtime)
         reply = await self._d.call(
             "POST", query("/containers/create", name=ns), body=body, ok=(201, 409)
         )

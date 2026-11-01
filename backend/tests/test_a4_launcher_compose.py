@@ -60,8 +60,14 @@ def test_only_a4_control_and_no_host_ports(compose, svc):
 
 
 def test_env_has_only_launcher_settings(svc):
-    assert set(svc["environment"]) == {"PYTHONDONTWRITEBYTECODE", "A4_ATTACH", "A4_TENANT_POOL"}
+    assert set(svc["environment"]) == {
+        "PYTHONDONTWRITEBYTECODE",
+        "A4_ATTACH",
+        "A4_TENANT_POOL",
+        "A4_LAUNCHER_MAX_RUNTIMES",
+    }
     assert svc["environment"]["A4_TENANT_POOL"] == "${A4_TENANT_POOL:-10.214.0.0/16}"
+    assert svc["environment"]["A4_LAUNCHER_MAX_RUNTIMES"] == "${A4_LAUNCHER_MAX_RUNTIMES:-20}"
     assert "env_file" not in svc and "secrets" not in svc
 
 
