@@ -22,6 +22,10 @@ PINS = {
         "4061ef4c021ed3c47f203b818f337e351336cc5cd67c0274fc36bd1dfc728dd7",
     ),
 }
+TRIVY_PINS = {
+    "amd64": ("64bit", "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"),
+    "arm64": ("ARM64", "e174dff2a6dba5e3ae41f8d0537a6324405bd08132497340304c6b20e0f16a1f"),
+}
 MAX_BYTES = 256 * 1024 * 1024
 
 
@@ -75,7 +79,7 @@ def check_elf(data: bytes, machine: int) -> None:
 
 
 def install(architecture: str, prefix: Path = Path("/usr/local")) -> None:
-    """Verify both tools and licenses before installing executable image files."""
+    """Verify all tools and licenses before installing executable image files."""
     if architecture not in PINS:
         raise ValueError("scanner_architecture_unsupported")
     suffix, machine, gitleaks_sha, osv_sha = PINS[architecture]
@@ -95,11 +99,20 @@ def install(architecture: str, prefix: Path = Path("/usr/local")) -> None:
         "https://raw.githubusercontent.com/google/osv-scanner/v2.7.0/LICENSE",
         "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     )
-    for data in (gitleaks, osv):
+    trivy_pin = TRIVY_PINS[architecture]
+    trivy_archive = verified_download(
+        "https://github.com/aquasecurity/trivy/releases/download/v0.76.1/"
+        f"trivy_0.76.1_Linux-{trivy_pin[0]}.tar.gz",
+        trivy_pin[1],
+    )
+    trivy = archive_member(trivy_archive, "trivy")
+    trivy_license = archive_member(trivy_archive, "LICENSE")
+    for data in (gitleaks, osv, trivy):
         check_elf(data, machine)
     for name, data, license_data in (
         ("gitleaks", gitleaks, gitleaks_license),
         ("osv-scanner", osv, osv_license),
+        ("trivy", trivy, trivy_license),
     ):
         binary = prefix / "bin" / name
         binary.parent.mkdir(parents=True, exist_ok=True)

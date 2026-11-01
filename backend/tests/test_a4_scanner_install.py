@@ -20,7 +20,11 @@ def test_install_target_and_permissions(monkeypatch, tmp_path: Path, architectur
     elf[18:20] = machine.to_bytes(2, "little")
     archive_bytes = io.BytesIO()
     with tarfile.open(fileobj=archive_bytes, mode="w:gz") as archive:
-        for name, data in [("gitleaks", bytes(elf)), ("LICENSE", b"license")]:
+        for name, data in [
+            ("gitleaks", bytes(elf)),
+            ("trivy", bytes(elf)),
+            ("LICENSE", b"license"),
+        ]:
             info = tarfile.TarInfo(name)
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
@@ -36,7 +40,9 @@ def test_install_target_and_permissions(monkeypatch, tmp_path: Path, architectur
     installer.install(architecture, tmp_path)
     assert f"linux_{suffix}.tar.gz" in urls[0]
     assert urls[1].endswith(f"linux_{architecture}")
-    for name in ["gitleaks", "osv-scanner"]:
+    trivy_arch = "64bit" if architecture == "amd64" else "ARM64"
+    assert urls[3].endswith(f"v0.76.1/trivy_0.76.1_Linux-{trivy_arch}.tar.gz")
+    for name in ["gitleaks", "osv-scanner", "trivy"]:
         binary = tmp_path / "bin" / name
         assert binary.read_bytes() == elf
         assert binary.stat().st_mode & 0o777 == 0o755
@@ -124,6 +130,30 @@ def test_failed_verification_installs_nothing(monkeypatch, tmp_path):
         raise ValueError("scanner_checksum_mismatch")
 
     monkeypatch.setattr(installer, "verified_download", corrupt_download)
+    with pytest.raises(ValueError, match="scanner_checksum_mismatch"):
+        installer.install("amd64", tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_failed_trivy_verification_installs_nothing(monkeypatch, tmp_path):
+    elf = bytearray(64)
+    elf[:6] = b"\x7fELF\x02\x01"
+    elf[18:20] = (62).to_bytes(2, "little")
+    archive_bytes = io.BytesIO()
+    with tarfile.open(fileobj=archive_bytes, mode="w:gz") as archive:
+        for name, data in [("gitleaks", bytes(elf)), ("LICENSE", b"license")]:
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+
+    def download(url, expected):
+        if "/trivy/" in url:
+            raise ValueError("scanner_checksum_mismatch")
+        if url.endswith(".tar.gz"):
+            return archive_bytes.getvalue()
+        return b"license" if url.endswith("LICENSE") else bytes(elf)
+
+    monkeypatch.setattr(installer, "verified_download", download)
     with pytest.raises(ValueError, match="scanner_checksum_mismatch"):
         installer.install("amd64", tmp_path)
     assert list(tmp_path.iterdir()) == []
