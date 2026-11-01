@@ -14,7 +14,7 @@ from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.core.security import decode_token
 from app.models import User
-from app.schemas.usage_observer import UsageObservation, UsageObserverTarget
+from app.schemas.usage_observer import UsageObservation, UsageServiceName
 from app.services.usage_observer_service import UsageObserverService
 from app.services.usage_service import UsageService
 
@@ -133,12 +133,15 @@ def get_usage_service(db: DatabaseSession) -> UsageService:
     return UsageService(db)
 
 
-async def get_usage_observer_metadata(request: Request) -> UsageObservation:
+async def get_usage_observer_metadata(
+    request: Request, service_name: UsageServiceName
+) -> UsageObservation:
     """Authenticate and validate producer transport before any observer database dependency."""
-    return await UsageObserverService.metadata(request, get_settings())
+    return await UsageObserverService.metadata(request, get_settings(), service_name)
 
 
 async def get_usage_observer_service(
+    service_name: UsageServiceName,
     # INVARIANT(U171.7): producer validation must precede database dependencies.
     _observation: Annotated[UsageObservation, Depends(get_usage_observer_metadata)],
     db: Annotated[AsyncSession, Depends(get_db, scope="function")],
@@ -148,8 +151,5 @@ async def get_usage_observer_service(
     """Adapt optional-user lookup to the same function-scoped, pre-response transaction."""
     user = await get_optional_user(db, credentials)
     settings = get_settings()
-    if settings.otkrytka_usage_project_id is None or settings.otkrytka_usage_observer_key is None:
-        raise HTTPException(503, "Usage observer unavailable")
-    target = UsageObserverTarget(project_id=settings.otkrytka_usage_project_id,
-                                 key=settings.otkrytka_usage_observer_key)
+    target = UsageObserverService.target_for(settings, service_name)
     return UsageObserverService(UsageService(db), redis, target, user.id if user else None)

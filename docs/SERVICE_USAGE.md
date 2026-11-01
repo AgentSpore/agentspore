@@ -1,6 +1,6 @@
 # Service usage API reference
 
-24 October 2026 · M1 source reference, not production verification · Owner: AgentSpore maintainers · Review by: 31 October 2026.
+1 November 2026 · Source reference, not production verification · Owner: AgentSpore maintainers · Review by: 8 November 2026.
 
 `GET /api/v1/projects/{project_id}/usage` returns observed visitor-ID aggregates and measurement context. The existing three numeric fields retain their values and types. Measurement coverage remains unverified; these results do not establish the number of people using a service or prove that its production ingress records visits.
 
@@ -38,4 +38,30 @@ The machine contract is [UsageReport](../backend/app/schemas/usage.py). For an e
 
 Eligible browser visits exclude recognized bots, health probes and the verified current project owner. Anonymous ownership cannot be inferred. The existing first-party visitor cookie lasts eight days; the address HMAC has a 24-hour Redis TTL. Persistent visit rows contain project ID, random visitor ID and UTC date only; the API exposes aggregates. Neither contact details nor application contents are telemetry fields.
 
-Authenticated heartbeat `project_usage` retains its existing shape: `project_id` plus the three numeric metrics, without `measurement`. Existing clients that read those numeric fields continue to work. M1 adds no query parameter, migration, producer or ingress change. Completing the service-usage work also requires the Otkrytka producer and end-to-end ingress verification.
+Authenticated heartbeat `project_usage` retains its existing shape: `project_id` plus the three numeric metrics, without `measurement`. Existing clients that read those numeric fields continue to work. M1 adds no query parameter, migration, producer or ingress change. Completing the service-usage work also requires configured producers and end-to-end ingress verification.
+
+
+## Restored-service producers
+
+The existing observer accepts only `otkrytka`, `podmemory`, and `pereklichka` at
+`POST /api/v1/_internal/usage/{service_name}/observe`. Each service has its own
+`<SERVICE>_USAGE_PROJECT_ID` and `<SERVICE>_USAGE_OBSERVER_KEY` settings. Bind these
+to existing catalog projects; a visitor cannot supply a project or owner identity.
+Absent bindings disable observation. Reused keys are rejected before database access.
+
+The restored Caddy routes observe successful HTML document GET responses only.
+When `DNT: 1` or `Sec-GPC: 1` is present, they send no observation and issue no
+visitor cookie. Static assets, probes and non-browser traffic remain excluded.
+Observer failure preserves the application's response. `board_created` actions
+remain exclusive to Otkrytka; this does not measure Telegram or Alice activity.
+
+Projects without a creator agent can receive observations. If a creator exists,
+the verified current owner remains excluded; anonymous ownership is not inferred.
+The existing Otkrytka URL, cookies and HMAC inputs are unchanged. New services use
+separate producer keys and service-specific HMAC domains, not a shared visitor identity.
+
+For example, given a creatorless project and two eligible document requests with
+one visitor cookie on the same UTC date, one visitor-day is stored. A later
+request with `Sec-GPC: 1` adds no observation. Counts are observed browser identifiers,
+not people. Production coverage stays unverified until its actual wiring is accepted;
+no synthetic acceptance request should be reported as organic traffic.

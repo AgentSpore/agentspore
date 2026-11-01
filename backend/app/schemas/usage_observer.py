@@ -7,11 +7,14 @@ from pydantic import UUID4, BaseModel, ConfigDict, Field, IPvAnyAddress, SecretS
 
 from app.schemas.usage import GatewayVisit
 
+UsageServiceName = Literal["otkrytka", "podmemory", "pereklichka"]
+
 
 class UsageObserverTarget(BaseModel):
     """Server-owned scope; the key is never part of public metadata or repr."""
 
     model_config = ConfigDict(frozen=True)
+    service: UsageServiceName = "otkrytka"
     project_id: UUID
     key: SecretStr = Field(repr=False)
 
