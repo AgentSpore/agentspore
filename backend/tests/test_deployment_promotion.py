@@ -1,5 +1,6 @@
 """Fenced promotion of trusted fixtures; no builds or sandbox execution."""
 
+import asyncio
 import importlib
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -265,3 +266,168 @@ async def test_second_deploy_supersedes_first_and_moves_route(promotion_world):
         assert all(row.activated_at is not None for row in rows)
         route = await db.scalar(text("SELECT active_revision FROM service_routes"))
         assert route == second.deployment_id
+
+
+async def test_cold_start_transport_errors_wait_then_require_three_successes(promotion_world):
+    maker, _, lease, previous = promotion_world
+    async with maker.begin() as db:
+        assert await DeploymentRepository(db).begin_probing(lease, DIGEST)
+    health = AsyncMock(side_effect=[0, 0, 200, 200, 200])
+    service = importlib.import_module(
+        "app.services.deployment_promotion"
+    ).DeploymentPromotionService(maker, health)
+    started = asyncio.get_running_loop().time()
+    assert await service.probe_and_promote(lease)
+    assert asyncio.get_running_loop().time() - started >= 0.6
+    assert health.await_count == 5
+    async with maker() as db:
+        assert await db.scalar(text("SELECT health_successes FROM project_deployments")) == 3
+        assert await db.scalar(text("SELECT active_revision FROM service_routes")) != previous
+
+
+@pytest.mark.parametrize("first", [301, 503])
+async def test_http_startup_failure_is_not_retried(promotion_world, first):
+    maker, _, lease, previous = promotion_world
+    async with maker.begin() as db:
+        assert await DeploymentRepository(db).begin_probing(lease, DIGEST)
+    health = AsyncMock(return_value=first)
+    service = importlib.import_module(
+        "app.services.deployment_promotion"
+    ).DeploymentPromotionService(maker, health)
+    assert not await service.probe_and_promote(lease)
+    assert health.await_count == 1
+    async with maker() as db:
+        assert await db.scalar(text("SELECT active_revision FROM service_routes")) == previous
+        assert (
+            await db.scalar(text("SELECT reason_code FROM project_deployments")) == "health_failed"
+        )
+
+
+async def test_startup_retry_keeps_persisted_deadline_on_resume(promotion_world):
+    maker, _, lease, previous = promotion_world
+    async with maker.begin() as db:
+        repo = DeploymentRepository(db)
+        assert await repo.begin_probing(lease, DIGEST)
+        assert await repo.record_health(lease, 0, startup_retry=True)
+        await db.execute(
+            text(
+                "UPDATE project_deployments SET "
+                "probe_started_at=clock_timestamp()-interval '59.7 seconds'"
+            )
+        )
+        assert await repo.begin_probing(lease, DIGEST)
+    health = AsyncMock(return_value=0)
+    service = importlib.import_module(
+        "app.services.deployment_promotion"
+    ).DeploymentPromotionService(maker, health)
+    started = asyncio.get_running_loop().time()
+    assert not await service.probe_and_promote(lease)
+    assert asyncio.get_running_loop().time() - started < 2
+    assert 1 <= health.await_count <= 3
+    async with maker() as db:
+        assert (
+            await db.scalar(text("SELECT reason_code FROM project_deployments")) == "probe_deadline"
+        )
+        assert await db.scalar(text("SELECT active_revision FROM service_routes")) == previous
+
+
+async def test_startup_retry_rechecks_fence_after_backoff(promotion_world):
+    maker, _, lease, previous = promotion_world
+    async with maker.begin() as db:
+        assert await DeploymentRepository(db).begin_probing(lease, DIGEST)
+
+    async def lose_fence(_):
+        async with maker.begin() as db:
+            await db.execute(
+                text(
+                    "UPDATE deployment_worker_lease SET "
+                    "expires_at=clock_timestamp()-interval '1 second'"
+                )
+            )
+        return 0
+
+    health = AsyncMock(side_effect=lose_fence)
+    service = importlib.import_module(
+        "app.services.deployment_promotion"
+    ).DeploymentPromotionService(maker, health)
+    assert not await service.probe_and_promote(lease)
+    assert health.await_count == 1
+    async with maker() as db:
+        assert await db.scalar(text("SELECT active_revision FROM service_routes")) == previous
+        assert await db.scalar(text("SELECT health_successes FROM project_deployments")) == 0
+
+
+async def test_startup_backoff_cancellation_propagates_without_promotion(promotion_world):
+    maker, _, lease, previous = promotion_world
+    async with maker.begin() as db:
+        assert await DeploymentRepository(db).begin_probing(lease, DIGEST)
+    health = AsyncMock(return_value=0)
+    service = importlib.import_module(
+        "app.services.deployment_promotion"
+    ).DeploymentPromotionService(maker, health)
+    task = asyncio.create_task(service.probe_and_promote(lease))
+    try:
+        async with asyncio.timeout(2):
+            while True:
+                async with maker() as db:
+                    remaining = await DeploymentRepository(db).probe_remaining(lease)
+                if health.await_count and remaining is not None:
+                    await asyncio.sleep(0.05)
+                    break
+                await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert health.await_count == 1
+    async with maker() as db:
+        assert await db.scalar(text("SELECT active_revision FROM service_routes")) == previous
+        assert await db.scalar(text("SELECT status FROM project_deployments")) == "probing"
+
+
+async def test_startup_inflight_probe_cannot_extend_remaining_budget(promotion_world):
+    maker, _, lease, previous = promotion_world
+    async with maker.begin() as db:
+        assert await DeploymentRepository(db).begin_probing(lease, DIGEST)
+        await db.execute(
+            text(
+                "UPDATE project_deployments SET "
+                "probe_started_at=clock_timestamp()-interval '59.8 seconds'"
+            )
+        )
+
+    async def slow_health(_):
+        await asyncio.sleep(5)
+        return 200
+
+    health = AsyncMock(side_effect=slow_health)
+    service = importlib.import_module(
+        "app.services.deployment_promotion"
+    ).DeploymentPromotionService(maker, health)
+    started = asyncio.get_running_loop().time()
+    assert not await service.probe_and_promote(lease)
+    assert asyncio.get_running_loop().time() - started < 1
+    assert health.await_count == 1
+    async with maker() as db:
+        assert (
+            await db.scalar(text("SELECT reason_code FROM project_deployments")) == "probe_deadline"
+        )
+        assert await db.scalar(text("SELECT active_revision FROM service_routes")) == previous
+
+
+async def test_transport_failure_after_first_success_is_not_retried(promotion_world):
+    maker, _, lease, previous = promotion_world
+    async with maker.begin() as db:
+        assert await DeploymentRepository(db).begin_probing(lease, DIGEST)
+    health = AsyncMock(side_effect=[0, 200, 0, 200, 200])
+    service = importlib.import_module("app.services.deployment_promotion").DeploymentPromotionService(
+        maker, health
+    )
+    assert not await service.probe_and_promote(lease)
+    assert health.await_count == 3
+    async with maker() as db:
+        assert await db.scalar(text("SELECT active_revision FROM service_routes")) == previous
+        assert await db.scalar(text("SELECT status FROM project_deployments")) == "recovering"
+        assert await db.scalar(text("SELECT reason_code FROM project_deployments")) == "health_failed"

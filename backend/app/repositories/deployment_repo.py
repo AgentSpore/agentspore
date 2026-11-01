@@ -383,7 +383,25 @@ class DeploymentRepository:
         )
         return updated is not None
 
-    async def record_health(self, lease: DeploymentLease, status_code: int) -> bool:
+    async def probe_remaining(self, lease: DeploymentLease) -> float | None:
+        """Read the original probe budget only while the caller owns the live fence."""
+        slot = await self._slot()
+        if not self._matches(slot, lease) or slot["expired"]:
+            return None
+        remaining = await self.db.scalar(
+            text(
+                "SELECT EXTRACT(EPOCH FROM probe_started_at + interval '60 seconds' "
+                "- clock_timestamp()) FROM project_deployments "
+                "WHERE id = :deployment_id AND generation = :generation AND worker_id = :worker_id "
+                "AND status = 'probing'"
+            ),
+            lease.model_dump(),
+        )
+        return float(remaining) if remaining is not None else None
+
+    async def record_health(
+        self, lease: DeploymentLease, status_code: int, *, startup_retry: bool = False
+    ) -> bool:
         """Record a trusted observation; retain the build lease on every outcome."""
         slot = await self._slot()
         if not self._matches(slot, lease) or slot["expired"]:
@@ -391,12 +409,16 @@ class DeploymentRepository:
         status = await self.db.scalar(
             text(
                 "UPDATE project_deployments SET "
-                "status = CASE WHEN :code <> 200 OR clock_timestamp() > "
+                "status = CASE WHEN (:code <> 200 AND "
+                "(NOT :startup_retry OR :code <> 0 OR health_successes > 0)) "
+                "OR clock_timestamp() > "
                 "probe_started_at + interval '60 seconds' THEN 'recovering' "
                 "WHEN health_successes = 2 THEN 'promoting' ELSE 'probing' END, "
-                "reason_code = CASE WHEN :code <> 200 THEN 'health_failed' "
-                "WHEN clock_timestamp() > probe_started_at + interval '60 seconds' "
-                "THEN 'probe_deadline' ELSE NULL END, "
+                "reason_code = CASE WHEN clock_timestamp() > "
+                "probe_started_at + interval '60 seconds' "
+                "THEN 'probe_deadline' WHEN :code <> 200 AND "
+                "(NOT :startup_retry OR :code <> 0 OR health_successes > 0) "
+                "THEN 'health_failed' ELSE NULL END, "
                 "health_successes = CASE WHEN :code = 200 AND clock_timestamp() <= "
                 "probe_started_at + interval '60 seconds' THEN health_successes + 1 ELSE 0 END "
                 "WHERE id = :deployment_id AND generation = :generation AND worker_id = :worker_id "
@@ -404,7 +426,7 @@ class DeploymentRepository:
                 "AND EXISTS (SELECT 1 FROM deployment_worker_lease "
                 "WHERE slot = 1 AND expires_at > clock_timestamp()) RETURNING status"
             ),
-            {**lease.model_dump(), "code": status_code},
+            {**lease.model_dump(), "code": status_code, "startup_retry": startup_retry},
         )
         return status in {"probing", "promoting"}
 
