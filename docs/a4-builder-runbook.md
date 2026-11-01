@@ -227,7 +227,15 @@ RubyGems, apt) are unreachable from a `RUN`; add a mirror location when one is n
 ## a4-launcher (tenant runtime launcher)
 
 `deploy/a4-launcher.compose.yml` runs the only service with the Docker socket for tenant runtimes
-(`python -m app.launcher`, API on `a4-control` port 8080, no host ports). Nothing calls it until P4d.
+(`python -m app.launcher`, API on `a4-control` port 8080, no host ports).
+
+The worker selector `A4_RUNTIME` defaults to `off`: a completed build still ends with
+`runtime_unavailable`. Setting it to `launcher` connects the worker to the control API through
+`A4_LAUNCHER_URL` (default `http://a4-launcher:8080`); the worker must share `a4-control` with the
+launcher. Keep `A4_DEPLOY_ENABLED=false` for this release until the remaining runtime acceptance
+checks and retirement/GC work are complete. The selector alone does not enable deployment.
+To roll back runtime selection, restore `A4_RUNTIME=off` through the normal worker release process;
+this prevents subsequent runtime launches but does not stop existing containers or revert routes.
 
 ```bash
 export A4_DOCKER_GID=$(getent group docker | cut -d: -f3) A4_LAUNCHER_IMAGE=<backend image>
