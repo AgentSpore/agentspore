@@ -224,6 +224,25 @@ crate name that does not exist is a few bytes of one-way signal), and data is no
 upload and Host-header or SNI tricks are gone. Registries that are not mirrored (git hosts, Maven,
 RubyGems, apt) are unreachable from a `RUN`; add a mirror location when one is needed.
 
+## a4-launcher (tenant runtime launcher)
+
+`deploy/a4-launcher.compose.yml` runs the only service with the Docker socket for tenant runtimes
+(`python -m app.launcher`, API on `a4-control` port 8080, no host ports). Nothing calls it until P4d.
+
+```bash
+export A4_DOCKER_GID=$(getent group docker | cut -d: -f3) A4_LAUNCHER_IMAGE=<backend image>
+docker compose -p a4-launcher -f deploy/a4-launcher.compose.yml --profile a4 up -d
+```
+
+Settings (its own env, no DB/Redis/secrets): `A4_ATTACH` (containers joined to every tenant network,
+default `agentspore-backend,agentspore-a4-worker`), `A4_TENANT_POOL` (default `10.214.0.0/16`, one /28 per
+deployment; keep it clear of `10.213.0.0/16`), `A4_LAUNCHER_MAX_RUNTIMES` (default 20, 1..256: the launcher
+refuses a new namespace with 429 `runtime_cap` once that many launcher-owned tenant networks exist; a repeat PUT of an
+existing namespace is not counted, and it is a limit independent of the worker's `A4_MAX_ACTIVE`). Tenant runtimes need `runsc` registered in the Docker daemon.
+Check from a container on `a4-control`: `GET http://agentspore-a4-launcher:8080/healthz` 200,
+`GET /v1/runtimes` 200 `{"runtimes": []}`. Errors carry `{"reason": ...}` (`image_not_allowed`,
+`digest_mismatch`, `image_volume_not_allowed`, `namespace_owned`, `ns_mismatch`, `runtime_cap`, `docker_error`; the daemon's text goes to the launcher log only).
+
 ## Known limits
 
 - The 4 GiB build-disk cap is the `out_dir` volume limit, set in P3b-2; the builder enforces the 1 GiB image cap and the 10 minute timeout.
