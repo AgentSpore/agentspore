@@ -2,6 +2,7 @@
 
 import ipaddress
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -36,6 +37,7 @@ class Settings(BaseSettings):
     a4_max_active: int = 10
     a4_queue_max: int = 10
     a4_builder: Literal["fake", "buildkit"] = "fake"
+    a4_base_image_digests: Annotated[frozenset[str], NoDecode] = frozenset()
     a4_buildkit_addr: str = "tcp://buildkitd:1234"
     a4_buildkit_tls_dir: Path = Path("/run/a4-builder-tls")
     a4_builder_out_dir: Path = Path("/var/lib/a4-out")
@@ -147,6 +149,21 @@ class Settings(BaseSettings):
     # OpenViking (shared agent memory)
     openviking_url: str = ""
     openviking_api_key: str = ""
+
+    @field_validator("a4_base_image_digests", mode="before")
+    @classmethod
+    def _parse_base_image_digests(cls, value: object) -> frozenset[str]:
+        """Accept only explicitly approved SHA-256 digests from a trusted JSON array."""
+        if isinstance(value, str):
+            value = json.loads(value)
+        if not isinstance(value, (list, frozenset)):
+            raise ValueError("A4_BASE_IMAGE_DIGESTS must be a JSON array of SHA-256 digests")
+        if any(
+            not isinstance(digest, str) or re.fullmatch(r"sha256:[a-f0-9]{64}", digest) is None
+            for digest in value
+        ):
+            raise ValueError("A4_BASE_IMAGE_DIGESTS entries must match sha256:[a-f0-9]{64}")
+        return frozenset(value)
 
     @field_validator("a4_pkg_mirror_host")
     @classmethod
