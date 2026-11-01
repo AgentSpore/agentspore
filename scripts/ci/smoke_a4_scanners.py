@@ -2,11 +2,14 @@
 
 import argparse
 import asyncio
+import hashlib
+import os
 import json
 import tempfile
 from pathlib import Path
 
 from app.services.deployment.errors import DeployRejectedError
+from app.services.deployment.process import run_tool
 from app.services.deployment.scans import GitleaksScanner, OsvScanner, run_prescan
 
 
@@ -25,6 +28,17 @@ async def smoke(online: bool) -> dict:
     """Exercise actual binaries on temporary nonsecret files, never a user repository."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
+        rc, version = await run_tool(["trivy", "--version"], cwd=root, timeout=15)
+        if rc != 0 or version.splitlines()[0:1] != [b"Version: 0.76.1"]:
+            raise RuntimeError("trivy_smoke_version")
+        binary = Path("/usr/local/bin/trivy")
+        license_file = Path("/usr/local/share/licenses/trivy/LICENSE")
+        if binary.stat().st_mode & 0o777 != 0o755 or not os.access(binary, os.X_OK):
+            raise RuntimeError("trivy_smoke_permissions")
+        if hashlib.sha256(license_file.read_bytes()).hexdigest() != (
+            "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        ):
+            raise RuntimeError("trivy_smoke_license")
         (root / "README.txt").write_text("Synthetic scanner acceptance fixture.\n")
         if await GitleaksScanner().scan(root) or await OsvScanner().scan(root):
             raise RuntimeError("scanner_smoke_clean_failed")
