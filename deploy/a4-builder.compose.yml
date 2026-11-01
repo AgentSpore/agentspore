@@ -135,8 +135,8 @@ services:
     depends_on: [mirror]
 
   mirror:
-    # registry:3.0.0, pull-through cache of registry-1.docker.io (proxy.ttl exists only in v3)
-    image: registry@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
+    # registry:3.1.2 (looked up 2026-10-31; 3.1.0 fixes GHSA-3p65 pull-through credential leak), pull-through cache of registry-1.docker.io (proxy.ttl exists only in v3)
+    image: registry@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
     <<: *hardened
     user: "1000:1000"
     volumes:
