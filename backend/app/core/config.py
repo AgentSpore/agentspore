@@ -24,6 +24,10 @@ class Settings(BaseSettings):
 
     otkrytka_usage_project_id: UUID | None = None
     otkrytka_usage_observer_key: SecretStr | None = None
+    podmemory_usage_project_id: UUID | None = None
+    podmemory_usage_observer_key: SecretStr | None = None
+    pereklichka_usage_project_id: UUID | None = None
+    pereklichka_usage_observer_key: SecretStr | None = None
 
     # A4 agent deployments (admission only; the flag defaults to off)
     a4_deploy_enabled: bool = False

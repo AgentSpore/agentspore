@@ -60,7 +60,7 @@ class UsageRepository:
             text("""
                 INSERT INTO service_visits (project_id, visitor_id, visit_day)
                 SELECT p.id, :visitor_id, :today
-                FROM projects p JOIN agents a ON a.id = p.creator_agent_id
+                FROM projects p LEFT JOIN agents a ON a.id = p.creator_agent_id
                 WHERE p.id = :project_id
                   AND (CAST(:verified_user_id AS uuid) IS NULL OR a.owner_user_id IS NULL
                        OR a.owner_user_id <> CAST(:verified_user_id AS uuid))
@@ -84,7 +84,7 @@ class UsageRepository:
             text("""
                 INSERT INTO service_action_receipts (project_id, action_day, action, receipt_hash)
                 SELECT p.id, :today, 'board_created', :receipt
-                FROM projects p JOIN agents a ON a.id = p.creator_agent_id
+                FROM projects p LEFT JOIN agents a ON a.id = p.creator_agent_id
                 WHERE p.id = :project_id
                   AND (CAST(:identity AS uuid) IS NULL OR a.owner_user_id IS NULL
                        OR a.owner_user_id <> CAST(:identity AS uuid))
@@ -165,7 +165,7 @@ class UsageRepository:
             text("""
             INSERT INTO service_event_counts (project_id,event_day,event,model,lang,count)
             SELECT p.id,:today,:event,:model,:lang,1
-            FROM projects p JOIN agents a ON a.id=p.creator_agent_id
+            FROM projects p LEFT JOIN agents a ON a.id=p.creator_agent_id
             WHERE p.id=:project AND (CAST(:identity AS uuid) IS NULL
                 OR a.owner_user_id IS NULL OR a.owner_user_id<>CAST(:identity AS uuid))
             ON CONFLICT (project_id,event_day,event,model,lang)

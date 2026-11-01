@@ -48,6 +48,8 @@ def test_source_contract():
 
 
 def request(port, method="GET", path="/", body=None, extra_headers=None):
+    if port == 8080:
+        port = int(os.environ.get("INGRESS_PORT", "8080"))
     connection = HTTPConnection("127.0.0.1", port, timeout=3)
     headers = {
         "Authorization": "Bearer SYNTHETIC",
@@ -117,7 +119,11 @@ class Peer(BaseHTTPRequestHandler):
 
     def upgrade_socket(self):
         assert self.path == "/api/v1/boards/synthetic/ws"
-        assert self.headers["X-Organizer-Token"] == "PRIVATE" and "Authorization" not in self.headers
+        assert self.headers["X-Organizer-Token"] == "PRIVATE"
+        if os.environ.get("SERVICE", "otkrytka") == "otkrytka":
+            assert "Authorization" not in self.headers
+        else:
+            assert self.headers["Authorization"] == "Bearer SYNTHETIC"
         key = self.headers["Sec-WebSocket-Key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
         self.send_response(101)
         self.send_header("Upgrade", "websocket")
@@ -137,12 +143,15 @@ def checks():
         except OSError:
             time.sleep(0.05)
     enabled = os.environ.get("ENABLED") == "1"
+    service = os.environ.get("SERVICE", "otkrytka")
     for method, path, expected in [
         ("GET", "/private?organizer=PRIVATE", "visit"),
         ("POST", "/api/v1/boards?private=PRIVATE", "board_created"),
         ("POST", "/other", None),
         ("GET", "/error", None),
     ]:
+        if expected == "board_created" and service != "otkrytka":
+            expected = None
         request(8000, path="/mode/ok")
         status, headers, body = request(8080, method, path, b"PRIVATE" if method == "POST" else None)
         assert status == (400 if path == "/error" else 200)
@@ -153,7 +162,7 @@ def checks():
         assert len(seen) == int(enabled and expected is not None)
         if seen:
             endpoint, metadata, received_body = seen[0]
-            assert endpoint == "/api/v1/_internal/usage/otkrytka/observe" and not received_body
+            assert endpoint == f"/api/v1/_internal/usage/{service}/observe" and not received_body
             assert metadata["X-Usage-Kind"] == expected
             assert "__Host-visitor=" in headers["Set-Cookie"]
             assert metadata["X-Usage-Visitor-Id"] == VISITOR
@@ -163,8 +172,12 @@ def checks():
             assert "PRIVATE" not in json.dumps(seen)
             assert not {"Cookie", "X-Organizer-Token", "X-Forwarded-For"} & metadata.keys()
         app = state["app"][-1]
-        assert "Authorization" not in app["headers"]
+        if service == "otkrytka":
+            assert "Authorization" not in app["headers"]
+        else:
+            assert app["headers"]["Authorization"] == "Bearer SYNTHETIC"
         assert app["headers"]["X-Organizer-Token"] == "PRIVATE"
+    privacy_checks()
     probe_checks(enabled)
     application_transport_checks()
     if enabled:
@@ -172,6 +185,17 @@ def checks():
     rows = [json.loads(line) for line in Path("/fixture/services.jsonl").read_text().splitlines()]
     assert rows and all(set(row) == {"ts", "service", "method", "status", "duration", "size", "route"} for row in rows)
     print("native ingress checks passed")
+
+
+def privacy_checks():
+    """Do not observe opted-out visits or board actions; preserve application responses."""
+    for header in ("DNT", "Sec-GPC"):
+        for method, path in (("GET", "/"), ("POST", "/api/v1/boards")):
+            request(8000, path="/mode/ok")
+            status, headers, _ = request(8080, method, path, extra_headers={header: "1"})
+            assert status == 200 and "app=synthetic" in headers["Set-Cookie"]
+            assert "__Host-visitor=" not in headers["Set-Cookie"]
+            assert not json.loads(request(8000, path="/state")[2])["seen"]
 
 
 def probe_checks(enabled):
@@ -208,7 +232,7 @@ def application_transport_checks():
     assert not state["seen"] and state["app"][-1]["size"] == len(payload)
     assert state["app"][-1]["digest"] == hashlib.sha256(payload).hexdigest()
     assert state["app"][-1]["headers"]["X-Organizer-Token"] == "PRIVATE"
-    connection = HTTPConnection("127.0.0.1", 8080, timeout=3)
+    connection = HTTPConnection("127.0.0.1", int(os.environ.get("INGRESS_PORT", "8080")), timeout=3)
     connection.request(
         "GET",
         "/api/v1/boards/synthetic/ws",
@@ -256,15 +280,17 @@ def docker(*args, source=None):
 
 
 def configuration():
-    source = (DEPLOY / "restored-services.caddy").read_text().split("podmemory.")[0]
-    source = source.replace("otkrytka.agentspore.com, otkrytka.agentspore.ru", ":8080")
-    source = source.replace("restored-otkrytka:8000", "127.0.0.1:8000").replace("backend:8000", "127.0.0.1:8001")
+    source = (DEPLOY / "restored-services.caddy").read_text()
+    for service, port in (("otkrytka", 8080), ("podmemory", 8082), ("pereklichka", 8083)):
+        source = source.replace(f"{service}.agentspore.com, {service}.agentspore.ru", f":{port}")
+        source = source.replace(f"restored-{service}:8000", "127.0.0.1:8000")
+    source = source.replace("backend:8000", "127.0.0.1:8001")
     logging = (DEPLOY / "Caddyfile").read_text().split("# End service access logging")[0]
     logging = logging.replace("/var/log/caddy/services.jsonl", "/fixture/services.jsonl")
     return "{\n admin off\n auto_https off\n log {\n output discard\n }\n}\n" + logging + source
 
 
-def create_peer(folder, owned):
+def create_peer(folder, owned, service):
     options = (
         ["--cap-drop", "ALL", "--security-opt", "no-new-privileges"]
         + ["--memory", "96m", "--cpus", ".4", "--pids-limit", "32"]
@@ -275,6 +301,7 @@ def create_peer(folder, owned):
         "--network",
         "none",
         *options,
+        "-e", "SERVICE=" + service,
         "--entrypoint",
         "python",
         "python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1",
@@ -288,23 +315,23 @@ def create_peer(folder, owned):
 
 def test_native_ingress(tmp_path):
     """No published ports: synthetic peers and Caddy share one owned namespace."""
-    baseline = set(docker("ps", "-q", "--no-trunc").splitlines())
+    baseline = set(docker("ps", "-aq", "--no-trunc").splitlines())
     owned = []
-    timer = threading.Timer(
-        180,
-        lambda: [
-            subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=10, check=False) for cid in owned
-        ],
-    )
+    def cleanup_owned():
+        for cid in reversed(owned):
+            assert cid in owned and cid not in baseline
+            docker("rm", "-f", cid)
+
+    timer = threading.Timer(180, cleanup_owned)
     timer.start()
     try:
-        for enabled in [True, False]:
-            folder = tmp_path / str(enabled)
+        for service, enabled in [(s, e) for s in ("otkrytka", "podmemory", "pereklichka") for e in (True, False)]:
+            folder = tmp_path / f"{service}-{enabled}"
             folder.mkdir(mode=0o777)
             folder.chmod(0o777)
             (folder / "Caddyfile").write_text(configuration())
             (folder / "peer.py").write_text(Path(__file__).read_text())
-            peer, options = create_peer(folder, owned)
+            peer, options = create_peer(folder, owned, service)
             caddy = docker(
                 "create",
                 "--network",
@@ -312,7 +339,7 @@ def test_native_ingress(tmp_path):
                 *options,
                 "--tmpfs",
                 "/tmp:rw,exec,size=64m,mode=1777",
-                *(["-e", "OTKRYTKA_USAGE_OBSERVER_KEY=" + KEY] if enabled else []),
+                *(["-e", service.upper() + "_USAGE_OBSERVER_KEY=" + KEY] if enabled else []),
                 "--entrypoint",
                 "/bin/sh",
                 "caddy@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d",
@@ -323,7 +350,8 @@ def test_native_ingress(tmp_path):
             owned.append(caddy)
             docker("start", caddy)
             result = docker(
-                "exec", "-e", "ENABLED=" + str(int(enabled)), peer, "python", "/fixture/peer.py", "--checks"
+                "exec", "-e", "ENABLED=" + str(int(enabled)), "-e", "SERVICE=" + service,
+                "-e", "INGRESS_PORT=" + str({"otkrytka": 8080, "podmemory": 8082, "pereklichka": 8083}[service]), peer, "python", "/fixture/peer.py", "--checks"
             )
             assert "native ingress checks passed" in result
             adapted = json.loads(docker("exec", caddy, "/tmp/caddy", "adapt", "--config", "/fixture/Caddyfile"))
@@ -331,16 +359,17 @@ def test_native_ingress(tmp_path):
             assert any(server["listen"] == ["127.0.0.1:8081"] for server in servers)
     finally:
         timer.cancel()
-        for cid in reversed(owned):
-            docker("rm", "-f", cid)
-        assert baseline <= set(docker("ps", "-q", "--no-trunc").splitlines())
+        cleanup_owned()
+        # Other sessions may legitimately stop containers while this isolated fixture runs.
+        assert set(owned).isdisjoint(docker("ps", "-aq", "--no-trunc").splitlines())
 
 
 def test_compose_optional_environment(tmp_path):
     """Resolve only synthetic values, then prove null mappings omit runtime variables."""
     source = (DEPLOY / "docker-compose.prod.yml").read_text()
-    assert source.count("      OTKRYTKA_USAGE_OBSERVER_KEY:\n") == 2
-    assert source.count("      OTKRYTKA_USAGE_PROJECT_ID:\n") == 1
+    for service in ("OTKRYTKA", "PODMEMORY", "PEREKLICHKA"):
+        assert source.count(f"      {service}_USAGE_OBSERVER_KEY:\n") == 2
+        assert source.count(f"      {service}_USAGE_PROJECT_ID:\n") == 1
     compose = tmp_path / "compose.yml"
     compose.write_text(
         "services:\n  probe:\n    image: python@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1\n    network_mode: none\n"

@@ -45,14 +45,14 @@ class UsageObserverRoute(APIRoute):
             )
 
 
-router = APIRouter(prefix="/_internal/usage/otkrytka", route_class=UsageObserverRoute)
+router = APIRouter(prefix="/_internal/usage", route_class=UsageObserverRoute)
 
 
 @router.post(
-    "/observe",
+    "/{service_name}/observe",
     status_code=204,
     response_class=Response,
-    summary="Observe an authenticated Otkrytka visit",
+    summary="Observe an authenticated restored-service visit",
 )
 async def observe_usage(
     request: Request,
