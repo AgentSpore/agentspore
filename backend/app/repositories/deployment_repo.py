@@ -1,7 +1,7 @@
 """Durable queue and global fencing in the caller's PostgreSQL transaction."""
 
 import re
-from datetime import datetime, timedelta
+from datetime import timedelta
 from uuid import UUID
 
 from fastapi import Depends
@@ -408,6 +408,36 @@ class DeploymentRepository:
         )
         return status in {"probing", "promoting"}
 
+    async def _activate_row(self, lease: DeploymentLease, project_id: UUID) -> bool:
+        """Supersede the project's previous active row, then activate this one."""
+        eligible = await self.db.scalar(
+            text(
+                "SELECT id FROM project_deployments "
+                "WHERE id = :deployment_id AND status IN ('promoting', 'active') "
+                "AND health_successes = 3 AND EXISTS (SELECT 1 FROM deployment_worker_lease "
+                "WHERE slot = 1 AND expires_at > clock_timestamp()) FOR UPDATE"
+            ),
+            lease.model_dump(),
+        )
+        if eligible is None:
+            return False
+        await self.db.execute(
+            text(
+                "UPDATE project_deployments SET status = 'superseded' "
+                "WHERE project_id = :project AND status = 'active' AND id <> :deployment_id"
+            ),
+            {"project": project_id, "deployment_id": lease.deployment_id},
+        )
+        await self.db.execute(
+            text(
+                "UPDATE project_deployments SET status = 'active', "
+                "activated_at = COALESCE(activated_at, clock_timestamp()) "
+                "WHERE id = :deployment_id"
+            ),
+            {"deployment_id": lease.deployment_id},
+        )
+        return True
+
     async def promote(self, lease: DeploymentLease) -> bool:
         """Publish under slot then project locks; caller commits route and state together."""
         slot = await self._slot()
@@ -439,16 +469,7 @@ class DeploymentRepository:
         )
         if project is None or handle is None:
             return False
-        updated = await self.db.scalar(
-            text(
-                "UPDATE project_deployments SET status = 'active' "
-                "WHERE id = :deployment_id AND status IN ('promoting', 'active') "
-                "AND health_successes = 3 AND EXISTS (SELECT 1 FROM deployment_worker_lease "
-                "WHERE slot = 1 AND expires_at > clock_timestamp()) RETURNING id"
-            ),
-            lease.model_dump(),
-        )
-        if updated is None:
+        if not await self._activate_row(lease, project_id):
             return False
         await self.db.execute(
             text(
@@ -460,51 +481,8 @@ class DeploymentRepository:
         )
         return True
 
-    async def activate(self, deployment_id: UUID) -> bool:
-        """Make a promoted revision the project's only active one; the caller commits.
-
-        The project's rows are locked in id order so two concurrent promotions of one project
-        serialize without deadlock; the previous active row becomes superseded before the
-        unique active index is touched.
-        """
-        rows = (
-            (
-                await self.db.execute(
-                    text(
-                        "SELECT id, status, health_successes FROM project_deployments "
-                        "WHERE project_id = (SELECT project_id FROM project_deployments "
-                        "WHERE id = :id) ORDER BY id FOR UPDATE"
-                    ),
-                    {"id": deployment_id},
-                )
-            )
-            .mappings()
-            .all()
-        )
-        target = next((row for row in rows if row["id"] == deployment_id), None)
-        if target is None or target["status"] != "promoting" or target["health_successes"] != 3:
-            return False
-        await self.db.execute(
-            text(
-                "UPDATE project_deployments SET status = 'superseded' "
-                "WHERE project_id = (SELECT project_id FROM project_deployments WHERE id = :id) "
-                "AND status = 'active'"
-            ),
-            {"id": deployment_id},
-        )
-        await self.db.execute(
-            text(
-                "UPDATE project_deployments SET status = 'active', "
-                "activated_at = clock_timestamp() WHERE id = :id"
-            ),
-            {"id": deployment_id},
-        )
-        return True
-
-    async def retire_candidates(
-        self, now: datetime, grace: timedelta = timedelta(seconds=30)
-    ) -> list[RowMapping]:
-        """Superseded revisions whose successor has been active longer than the grace period."""
+    async def retire_candidates(self, grace: timedelta = timedelta(seconds=30)) -> list[RowMapping]:
+        """Superseded revisions whose successor has been active over `grace` (database clock)."""
         result = await self.db.execute(
             text(
                 "SELECT d.id, d.sandbox_id, d.sandbox_namespace FROM project_deployments d "
@@ -512,9 +490,9 @@ class DeploymentRepository:
                 "(SELECT min(n.activated_at) FROM project_deployments n "
                 "WHERE n.project_id = d.project_id AND n.activated_at > d.activated_at) "
                 "+ make_interval(secs => CAST(:grace AS double precision)) "
-                "< CAST(:now AS timestamptz) ORDER BY d.id"
+                "< clock_timestamp() ORDER BY d.id"
             ),
-            {"now": now, "grace": grace.total_seconds()},
+            {"grace": grace.total_seconds()},
         )
         return list(result.mappings().all())
 
