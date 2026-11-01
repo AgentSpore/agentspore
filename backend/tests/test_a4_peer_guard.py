@@ -195,3 +195,15 @@ def test_tenant_pool_setting_validated():
     with pytest.raises(ValueError):
         Settings(a4_tenant_pool="not-a-net")
     assert Settings().a4_serve_enabled is True
+
+
+async def test_serve_flag_read_per_request(gateway, monkeypatch):
+    mw = ServiceGatewayMiddleware(inner_app, resources=State(), domains=["agentspore.com"])
+    live = {"on": True}
+    monkeypatch.setattr(
+        "app.middleware.service_gateway.get_settings",
+        lambda: type("S", (), {"a4_serve_enabled": live["on"]})(),
+    )
+    assert mw.serve_enabled is True
+    live["on"] = False
+    assert mw.serve_enabled is False
