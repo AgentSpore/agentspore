@@ -9,17 +9,23 @@ ALTER TABLE project_deployments
     ADD COLUMN activated_at TIMESTAMPTZ,
     ADD COLUMN retired_at TIMESTAMPTZ;
 
--- Rows written before this migration: the unique index below needs one active row per project,
--- so older duplicates become superseded. created_at stands in for the unknown activation time;
--- it keeps the grace sweep able to retire them once a newer revision is activated.
+-- Rows written before this migration. created_at stands in for the unknown activation time.
+-- The unique index below needs one active row per project: keep the row the route points to,
+-- else the newest, and supersede the rest.
 UPDATE project_deployments SET activated_at = created_at WHERE status = 'active';
-UPDATE project_deployments d SET status = 'superseded'
-WHERE d.status = 'active' AND EXISTS (
-    SELECT 1 FROM project_deployments n
-    WHERE n.project_id = d.project_id AND n.status = 'active'
-      AND (n.created_at, n.id) > (d.created_at, d.id)
-);
+WITH keeper AS (
+    SELECT DISTINCT ON (d.project_id) d.id
+    FROM project_deployments d
+    LEFT JOIN service_routes r ON r.project_id = d.project_id AND r.active_revision = d.id
+    WHERE d.status = 'active'
+    ORDER BY d.project_id, (r.active_revision IS NOT NULL) DESC, d.created_at DESC, d.id DESC
+)
+UPDATE project_deployments SET status = 'superseded'
+WHERE status = 'active' AND id NOT IN (SELECT id FROM keeper);
 
+ALTER TABLE project_deployments ADD CONSTRAINT deployment_lifecycle_activated CHECK (
+    status NOT IN ('active', 'superseded') OR activated_at IS NOT NULL
+);
 CREATE UNIQUE INDEX deployment_one_active_per_project ON project_deployments (project_id)
     WHERE status = 'active';
 CREATE INDEX deployment_retire_pending ON project_deployments (project_id)

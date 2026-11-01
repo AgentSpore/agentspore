@@ -121,9 +121,11 @@ async def seed(deployment_session):
             await deployment_session.execute(
                 text(
                     "INSERT INTO project_deployments (project_id, idempotency_key, commit_sha, "
-                    "repository_url, status, created_at, creator_agent_id, owner_user_id) "
+                    "repository_url, status, created_at, activated_at, creator_agent_id, "
+                    "owner_user_id) "
                     "SELECT p.id, :k, :sha, 'https://x/y', :s, "
-                    "clock_timestamp() - CAST(:age AS interval), p.creator_agent_id, "
+                    "clock_timestamp() - CAST(:age AS interval), "
+                    "CASE WHEN :s = 'active' THEN clock_timestamp() END, p.creator_agent_id, "
                     "a.owner_user_id FROM projects p JOIN agents a ON a.id = p.creator_agent_id "
                     "WHERE p.id = :p"
                 ),
