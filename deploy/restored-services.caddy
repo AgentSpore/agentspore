@@ -1,5 +1,5 @@
-(otkrytka_observe) {
- @enabled expression `{env.OTKRYTKA_USAGE_OBSERVER_KEY} != ""`
+(restored_observe) {
+ @enabled expression `{args[1]} != "" && {http.request.header.DNT} != "1" && {http.request.header.Sec-GPC} != "1"`
  handle @enabled {
  request_body {
   set {vars.empty_body}
@@ -14,11 +14,11 @@
   fail_duration 1s
   max_fails 1
   method POST
-  rewrite /api/v1/_internal/usage/otkrytka/observe?
+  rewrite /api/v1/_internal/usage/{args[0]}/observe?
   header_up -*
   header_up Host agentspore.com
   header_up Content-Length 0
-  header_up X-Usage-Observer-Key {env.OTKRYTKA_USAGE_OBSERVER_KEY}
+  header_up X-Usage-Observer-Key {args[1]}
   header_up X-Usage-Request-Id {vars.usage_id}
   header_up X-Usage-Kind {vars.kind}
   header_up X-Usage-Visitor-Id {vars.visitor}
@@ -38,16 +38,16 @@
    response_header_timeout 200ms
   }
   handle_response {
-   @cookie expression `{rp.status_code} == 204 && {rp.header.Set-Cookie} != ""`
+   @cookie expression `{rp.status_code} == 204 && {rp.header.Set-Cookie} != "" && {http.request.header.DNT} != "1" && {http.request.header.Sec-GPC} != "1"`
    header @cookie +Set-Cookie "{rp.header.Set-Cookie}"
   }
  }
  }
 }
-otkrytka.agentspore.com, otkrytka.agentspore.ru {
- import service_access_log otkrytka
- route {
+
+(restored_usage) {
   vars {
+   usage_service {args[0]}
    usage_id {http.request.uuid}
    empty_body ""
    ua {http.request.header.User-Agent}
@@ -77,13 +77,13 @@ otkrytka.agentspore.com, otkrytka.agentspore.ru {
        response_status {resp.status_code}
        response_type {resp.header.Content-Type}
       }
-      import otkrytka_observe
+      import restored_observe {args[0]} {args[1]}
      }
     }
    }
    handle_response @json {
     route {
-     @creation expression `{vars.method} == "POST" && {vars.path} == "/api/v1/boards"`
+     @creation expression `{vars.usage_service} == "otkrytka" && {vars.method} == "POST" && {vars.path} == "/api/v1/boards"`
      handle @creation {
       vars {
        kind board_created
@@ -91,11 +91,17 @@ otkrytka.agentspore.com, otkrytka.agentspore.ru {
        response_status {resp.status_code}
        response_type {resp.header.Content-Type}
       }
-      import otkrytka_observe
+      import restored_observe {args[0]} {args[1]}
      }
     }
    }
   }
+}
+
+otkrytka.agentspore.com, otkrytka.agentspore.ru {
+ import service_access_log otkrytka
+ route {
+  import restored_usage otkrytka {env.OTKRYTKA_USAGE_OBSERVER_KEY}
   reverse_proxy restored-otkrytka:8000 {
    header_up -Authorization
   }
@@ -107,13 +113,19 @@ http://127.0.0.1:8081 {
 }
 
 podmemory.agentspore.com, podmemory.agentspore.ru {
-    import service_access_log podmemory
-	reverse_proxy restored-podmemory:8000 {
-		flush_interval -1
-	}
+ import service_access_log podmemory
+ route {
+  import restored_usage podmemory {env.PODMEMORY_USAGE_OBSERVER_KEY}
+  reverse_proxy restored-podmemory:8000 {
+   flush_interval -1
+  }
+ }
 }
 
 pereklichka.agentspore.com, pereklichka.agentspore.ru {
-    import service_access_log pereklichka
-	reverse_proxy restored-pereklichka:8000
+ import service_access_log pereklichka
+ route {
+  import restored_usage pereklichka {env.PEREKLICHKA_USAGE_OBSERVER_KEY}
+  reverse_proxy restored-pereklichka:8000
+ }
 }

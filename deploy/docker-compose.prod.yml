@@ -24,6 +24,8 @@ services:
       - "443:443/udp"  # HTTP/3
     environment:
       OTKRYTKA_USAGE_OBSERVER_KEY:
+      PODMEMORY_USAGE_OBSERVER_KEY:
+      PEREKLICHKA_USAGE_OBSERVER_KEY:
       # DNS-01 token for the *.<domain> wildcard certificates (Zone:DNS:Edit on every domain).
       CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN, Caddy will not load with an empty or malformed token}"
     volumes:
@@ -100,7 +102,11 @@ services:
     restart: always
     environment:
       OTKRYTKA_USAGE_OBSERVER_KEY:
+      PODMEMORY_USAGE_OBSERVER_KEY:
+      PEREKLICHKA_USAGE_OBSERVER_KEY:
       OTKRYTKA_USAGE_PROJECT_ID:
+      PODMEMORY_USAGE_PROJECT_ID:
+      PEREKLICHKA_USAGE_PROJECT_ID:
       DEBUG: "false"
       UVICORN_WORKERS: "${UVICORN_WORKERS:-4}"
       SECRET_KEY: "${SECRET_KEY}"

@@ -21,7 +21,7 @@ from app.core.background import UsagePurgeTask
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.repositories.usage_repo import UsageRepository
-from app.schemas.usage import UsageVisit
+from app.schemas.usage import ServiceEvent, UsageVisit
 from app.services.agent_service import AgentService
 from app.services.usage_service import UsageService
 
@@ -597,3 +597,37 @@ async def test_usage_report_distinguishes_empty_zero_and_returning_cohort(
         },
     }
     assert not {"visitor_id", "verified_user_id", "ip"} & payload.keys()
+
+
+@pytest.mark.parametrize("identity", ["anonymous", "verified"])
+async def test_creatorless_project_records_visits_events_and_receipts(usage_world, visit, identity):
+    project = usage_world.projects[0]
+    user = usage_world.owner if identity == "verified" else None
+    async with usage_world.maker.begin() as db:
+        await db.execute(
+            text("UPDATE projects SET creator_agent_id=NULL WHERE id=:id"), {"id": project}
+        )
+        repo = UsageRepository(db)
+        observation = visit.model_copy(update={"verified_user_id": user})
+        assert await repo.record_visit(project, observation, TODAY) is True
+        assert await repo.record_visit(project, observation, TODAY) is False
+        await repo.record_event(
+            project, ServiceEvent(event="form_open", model="pixel-8", lang="en"), user, TODAY
+        )
+        await repo.record_action_receipt(project, b"r" * 32, user, TODAY)
+        await repo.record_action_receipt(project, b"r" * 32, user, TODAY)
+        assert await db.scalar(text("SELECT count(*) FROM service_visits")) == 1
+        assert await db.scalar(text("SELECT sum(count) FROM service_event_counts")) == 1
+        assert await db.scalar(text("SELECT count(*) FROM service_action_receipts")) == 1
+
+
+@pytest.mark.parametrize("identity", ["owner", "stranger", "anonymous"])
+async def test_event_owner_exclusion_survives_optional_creator_join(usage_world, identity):
+    user = usage_world.owner if identity == "owner" else uuid4() if identity == "stranger" else None
+    async with usage_world.maker.begin() as db:
+        await UsageRepository(db).record_event(
+            usage_world.projects[0],
+            ServiceEvent(event="form_open", model="pixel-8", lang="en"), user, TODAY,
+        )
+        count = await db.scalar(text("SELECT coalesce(sum(count),0) FROM service_event_counts"))
+        assert count == int(identity != "owner")

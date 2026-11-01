@@ -1,6 +1,8 @@
 """Scoped producer authentication and committed visits on real PostgreSQL/Redis."""
 
 import asyncio
+import hashlib
+import hmac
 import time
 from contextvars import ContextVar
 from datetime import timedelta
@@ -100,6 +102,12 @@ async def test_first_repeat_and_concurrent_retry_preserve_one_visitor(
     visitors = {r.cookies["__Host-visitor"] for r in responses}
     assert len(visitors) == 1 and UUID(next(iter(visitors))).version == 4
     assert next(iter(visitors)) != metadata["X-Usage-Request-Id"]
+    expected = hmac.new(
+        KEY.encode(),
+        b"agentspore:otkrytka:visitor:v1\0" + UUID(metadata["X-Usage-Request-Id"]).bytes,
+        hashlib.sha256,
+    ).digest()
+    assert visitors == {str(UUID(bytes=expected[:16], version=4))}
     cookie = responses[0].headers["set-cookie"].lower()
     assert all(
         s in cookie for s in ("secure", "httponly", "samesite=lax", "path=/", "max-age=691200")
@@ -353,3 +361,56 @@ async def test_late_send_failure_never_sends_second_response(observer_app, metad
     assert sent == ["http.response.start"] and state == {"opened": 1, "committed": 1}
     captured = capsys.readouterr()
     assert "private-marker" not in captured.err + captured.out
+
+
+@pytest.mark.parametrize("service", ["podmemory", "pereklichka"])
+async def test_restored_service_scope_and_actions(
+    observer, metadata, usage_world, monkeypatch, service
+):
+    client, state = observer
+    key = "synthetic-" + service
+    monkeypatch.setenv(service.upper() + "_USAGE_OBSERVER_KEY", key)
+    monkeypatch.setenv(service.upper() + "_USAGE_PROJECT_ID", str(usage_world.projects[1]))
+    get_settings.cache_clear()
+    path = PATH.replace("otkrytka", service)
+    denied = await client.post(path, headers=metadata)
+    assert denied.status_code == 403 and state["opened"] == 0
+    metadata["X-Usage-Observer-Key"] = key
+    accepted = await client.post(path, headers=metadata)
+    assert accepted.status_code == 204
+    async with usage_world.maker() as db:
+        assert (
+            await db.scalar(
+                text("SELECT count(*) FROM service_visits WHERE project_id=:p"),
+                {"p": usage_world.projects[1]},
+            )
+            == 1
+        )
+        assert (
+            await db.scalar(
+                text("SELECT count(*) FROM service_visits WHERE project_id=:p"),
+                {"p": usage_world.projects[0]},
+            )
+            == 0
+        )
+    opened = state["opened"]
+    action = {
+        **metadata,
+        "X-Usage-Kind": "board_created",
+        "X-Usage-Method": "POST",
+        "X-Usage-Content-Type": "application/json",
+        "X-Usage-Path-Class": "board_creation",
+    }
+    assert (await client.post(path, headers=action)).status_code == 400
+    assert state["opened"] == opened
+
+
+async def test_duplicate_service_key_rejected_before_database(
+    observer, metadata, usage_world, monkeypatch
+):
+    client, state = observer
+    monkeypatch.setenv("PODMEMORY_USAGE_OBSERVER_KEY", KEY)
+    monkeypatch.setenv("PODMEMORY_USAGE_PROJECT_ID", str(usage_world.projects[1]))
+    get_settings.cache_clear()
+    result = await client.post(PATH, headers=metadata)
+    assert result.status_code == 503 and state["opened"] == 0
