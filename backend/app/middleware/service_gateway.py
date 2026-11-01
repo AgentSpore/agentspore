@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from loguru import logger
 from pydantic import ValidationError
 from redis.exceptions import RedisError
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.datastructures import State
 from starlette.requests import ClientDisconnect, Request
@@ -28,9 +29,16 @@ class ServiceGatewayMiddleware:
     EVENTS_PATH = "/_agentspore/events"
     EVENT_LIMIT = 512
 
-    def __init__(self, app: ASGIApp, resources: State, domains: list[str] | None = None):
+    def __init__(
+        self,
+        app: ASGIApp,
+        resources: State,
+        domains: list[str] | None = None,
+        serve_enabled: bool | None = None,
+    ):
         self.app = app
         self.resources = resources
+        self._serve_enabled = serve_enabled
         self.domains = domains or get_settings().domains
         self.platform_hosts = frozenset(
             label + domain for domain in self.domains for label in self.PLATFORM_LABELS
@@ -56,6 +64,7 @@ class ServiceGatewayMiddleware:
             is_event = request.method == "POST" and request.url.path == self.EVENTS_PATH
             body = await self._body(request, self.EVENT_LIMIT if is_event else self.BODY_LIMIT)
             route = await self._resolve(handle)
+            await self._require_served(route)
             if is_event:
                 response = await self._event(request, route, body)
                 await response(scope, receive, send)
@@ -124,6 +133,30 @@ class ServiceGatewayMiddleware:
         async with asyncio.timeout(2), self.resources.service_gateway_db_factory.begin() as db:
             await ServiceGateway(db).record_event(request, route, event)
         return Response(status_code=204)
+
+    @property
+    def serve_enabled(self) -> bool:
+        """Pinned value when given, else the live setting so a settings change needs no restart."""
+        if self._serve_enabled is not None:
+            return self._serve_enabled
+        return get_settings().a4_serve_enabled
+
+    async def _require_served(self, route: ServiceRoute) -> None:
+        """A4_SERVE_ENABLED=false refuses every route except platform-owned ones."""
+        if not self.serve_enabled and not await self._is_platform_service(route):
+            raise HTTPException(status_code=503, detail="serve_disabled")
+
+    async def _is_platform_service(self, route: ServiceRoute) -> bool:
+        """Internal-agent routes are exempt from A4_SERVE_ENABLED; a missing creator is not."""
+        async with asyncio.timeout(2), self.resources.service_gateway_db_factory() as db:
+            row = await db.execute(
+                text(
+                    "SELECT a.agent_type = 'internal' FROM projects p "
+                    "JOIN agents a ON a.id = p.creator_agent_id WHERE p.id = :id"
+                ),
+                {"id": route.project_id},
+            )
+            return bool(row.scalar())
 
     async def _resolve(self, handle: str) -> ServiceRoute:
         async with asyncio.timeout(2), self.resources.service_gateway_db_factory() as db:
