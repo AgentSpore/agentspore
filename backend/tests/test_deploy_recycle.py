@@ -12,6 +12,7 @@ from app.services.deployment.builder import BuildRequest, BuildResult, FakeBuild
 from app.services.deployment.buildkit import builder_from_settings
 from app.services.deployment.errors import DeployRejectedError
 from app.services.deployment.recycle import DaemonRecycler, RecyclingBuilder
+from app.services.deployment.registry_push import PushingBuilder
 
 BASE = "/v1.44/containers/a4-builder-buildkitd-1"
 
@@ -124,8 +125,9 @@ def test_settings_wrap_the_buildkit_builder_and_leave_fake_alone(tmp_path):
     built = builder_from_settings(
         Settings(a4_builder="buildkit", a4_buildkit_tls_dir=tmp_path, a4_builder_out_dir=tmp_path)
     )
-    assert isinstance(built, RecyclingBuilder)
-    r = built.recycler
+    assert isinstance(built, PushingBuilder)
+    assert isinstance(built.inner, RecyclingBuilder)
+    r = built.inner.recycler
     assert isinstance(r, DaemonRecycler) and r.dirty is True
     assert r.gate_url == "http://a4-restart-gate:2375" and r.container == "a4-builder-buildkitd-1"
 

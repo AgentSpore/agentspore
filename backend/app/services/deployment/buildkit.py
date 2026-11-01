@@ -18,6 +18,7 @@ from app.services.deployment.errors import DeployRejectedError
 from app.services.deployment.oci import DIGEST_RE, DigestBoundBuilder
 from app.services.deployment.process import ToolOutput, redact, run_tool_captured
 from app.services.deployment.recycle import DaemonRecycler, RecyclingBuilder
+from app.services.deployment.registry_push import PushingBuilder, RegistryPusher
 
 _DOCKERFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _UNSAFE_TAG_CHARS = re.compile(r"[^A-Za-z0-9._-]")
@@ -158,6 +159,9 @@ def validate_builder_settings(settings: Settings) -> None:
         path = settings.a4_buildkit_tls_dir / name
         if not os.access(path, os.R_OK) or not path.is_file():
             raise RuntimeError(f"A4_BUILDKIT_TLS_DIR: {name} is missing or unreadable")
+    registry = urlsplit(settings.a4_registry_url)
+    if registry.scheme != "http" or not registry.hostname or registry.username or registry.query:
+        raise RuntimeError("A4_REGISTRY_URL must look like http://host:port")
     out_dir = settings.a4_builder_out_dir
     if not out_dir.is_dir() or not os.access(out_dir, os.W_OK):
         raise RuntimeError("A4_BUILDER_OUT_DIR must be an existing writable directory")
@@ -165,7 +169,8 @@ def validate_builder_settings(settings: Settings) -> None:
 
 def builder_from_settings(settings: Settings) -> Builder:
     """`FakeBuilder` by default; with `A4_BUILDER=buildkit`, a validated, digest-bound
-    `BuildKitBuilder` that restarts its daemon after every build through the restart gate."""
+    `BuildKitBuilder` that restarts its daemon after every build through the restart gate,
+    then pushes the image to the private registry and returns a digest-only reference."""
     if settings.a4_builder == "fake":
         return FakeBuilder()
     validate_builder_settings(settings)
@@ -182,4 +187,5 @@ def builder_from_settings(settings: Settings) -> Builder:
         container=settings.a4_buildkit_container,
         api_version=settings.a4_recycle_api_version,
     )
-    return RecyclingBuilder(inner, recycler)
+    pusher = RegistryPusher(settings.a4_registry_url, settings.a4_registry_ref_host)
+    return PushingBuilder(RecyclingBuilder(inner, recycler), pusher)
