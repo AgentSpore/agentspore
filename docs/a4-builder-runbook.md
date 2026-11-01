@@ -20,6 +20,25 @@ come only from the allowlist; the Dockerfile scanner (P2) is a second layer. A `
 digest (`python:3.12-slim@sha256:...`) because the gate refuses tag manifests. `a4-builder` sets
 `gateway_mode_ipv4: isolated` (Docker 28+): its bridge has no address, so a `RUN` cannot reach host listeners.
 
+## Worker base-image policy
+
+The worker reads `A4_BASE_IMAGE_DIGESTS` from trusted operator configuration as a JSON
+array of exact lowercase `sha256:` digests with 64 hexadecimal characters. The default
+is empty (`[]`): external base images are rejected; `scratch` and local build stages
+remain supported. Invalid JSON, non-array values, or any invalid entry reject settings
+initialization; entries are never trimmed, case-folded, or silently dropped. Duplicate
+entries are deduplicated. Restart the worker after changing this setting.
+
+`app.workers.a4.build_task()` passes the configured set to the existing Dockerfile
+scanner. This does not replace the mirror gate's repository allowlist or permit tag-only
+references. Operators must independently approve and provision real image digests for
+the permitted repositories; this repository supplies no approved digest catalog. Do not
+use synthetic test digests as deployment configuration or accept policy from agent code.
+
+This interface does not provision the production worker, scanner binaries, builder
+networks, or runtime. Those prerequisites and deployment acceptance remain separate;
+`A4_DEPLOY_ENABLED` still defaults to false and `A4_RUNTIME` to `off`.
+
 ## Trust model
 
 - Rootless BuildKit runs every `RUN` with `network.host`, in the daemon's own network namespace.
