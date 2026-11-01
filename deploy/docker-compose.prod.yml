@@ -104,6 +104,8 @@ services:
       DEBUG: "false"
       UVICORN_WORKERS: "${UVICORN_WORKERS:-4}"
       SECRET_KEY: "${SECRET_KEY}"
+      A4_SERVE_ENABLED: "${A4_SERVE_ENABLED:-true}"
+      A4_TENANT_POOL: "${A4_TENANT_POOL:-10.214.0.0/16}"
       DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
 

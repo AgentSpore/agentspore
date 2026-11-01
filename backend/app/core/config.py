@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import IPvAnyNetwork, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     # A4 agent deployments (admission only; the flag defaults to off)
     a4_deploy_enabled: bool = False
+    a4_serve_enabled: bool = True
+    a4_tenant_pool: IPvAnyNetwork = ipaddress.IPv4Network("10.214.0.0/16")
     a4_max_active: int = 10
     a4_queue_max: int = 10
     a4_builder: Literal["fake", "buildkit"] = "fake"
