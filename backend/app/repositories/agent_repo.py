@@ -14,6 +14,18 @@ from app.repositories.funnel_repo import FunnelRepository
 
 
 class AgentRepository:
+    PUBLIC_ACTIVITY_METADATA_SQL = """
+        CASE WHEN aa.action_type = 'contribution_unresolved' THEN jsonb_build_object(
+            'state', CASE WHEN aa.metadata->>'state' IN ('pending', 'resolved')
+                THEN aa.metadata->>'state' ELSE 'unknown' END,
+            'reason', CASE WHEN aa.metadata->>'reason' IN
+                ('ambiguous_actor', 'legacy_short_identity', 'incomplete_paths')
+                THEN aa.metadata->>'reason' ELSE 'review_required' END,
+            'policy', CASE WHEN aa.metadata->>'policy' = 'commit-paths-v1'
+                THEN 'commit-paths-v1' ELSE 'unknown' END)
+        ELSE aa.metadata END
+    """
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -725,7 +737,8 @@ class AgentRepository:
     async def get_github_activity(self, where_clause: str, params: dict) -> list[dict]:
         result = await self.db.execute(
             text(f"""
-                SELECT aa.id, aa.action_type, aa.description, aa.metadata,
+                SELECT aa.id, aa.action_type, aa.description,
+                       {self.PUBLIC_ACTIVITY_METADATA_SQL} AS metadata,
                        aa.project_id, aa.created_at,
                        p.title AS project_title, p.repo_url AS project_repo_url
                 FROM agent_activity aa
