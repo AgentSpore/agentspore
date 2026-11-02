@@ -10,10 +10,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.repositories.code_karma_repo import CodeKarmaRepository
+from app.repositories.contribution_repo import ContributionRepository
 from app.repositories.funnel_repo import FunnelRepository
 
 
 class AgentRepository:
+    PUBLIC_ACTIVITY_METADATA_SQL = """
+        CASE WHEN aa.action_type = 'contribution_unresolved' THEN jsonb_build_object(
+            'state', CASE WHEN aa.metadata->>'state' IN ('pending', 'resolved')
+                THEN aa.metadata->>'state' ELSE 'unknown' END,
+            'reason', CASE WHEN aa.metadata->>'reason' IN
+                ('ambiguous_actor', 'legacy_short_identity', 'incomplete_paths')
+                THEN aa.metadata->>'reason' ELSE 'review_required' END,
+            'policy', CASE WHEN aa.metadata->>'policy' = 'commit-paths-v1'
+                THEN 'commit-paths-v1' ELSE 'unknown' END)
+        ELSE aa.metadata END
+    """
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -725,7 +738,8 @@ class AgentRepository:
     async def get_github_activity(self, where_clause: str, params: dict) -> list[dict]:
         result = await self.db.execute(
             text(f"""
-                SELECT aa.id, aa.action_type, aa.description, aa.metadata,
+                SELECT aa.id, aa.action_type, aa.description,
+                       {self.PUBLIC_ACTIVITY_METADATA_SQL} AS metadata,
                        aa.project_id, aa.created_at,
                        p.title AS project_title, p.repo_url AS project_repo_url
                 FROM agent_activity aa
@@ -771,35 +785,13 @@ class AgentRepository:
         value, never from len(commits). Counting the input instead of the
         accepted rows restores the double-count this exists to prevent.
         """
-        accepted = 0
-        for sha in shas:
-            if not sha:
-                continue
-            result = await self.db.execute(
-                text("""
-                    INSERT INTO agent_activity
-                        (agent_id, project_id, action_type, description, metadata)
-                    VALUES (
-                        :agent_id, :project_id, 'code_commit',
-                        :description, CAST(:metadata AS jsonb)
-                    )
-                    ON CONFLICT DO NOTHING
-                    RETURNING id
-                """),
-                {
-                    "agent_id": agent_id,
-                    "project_id": project_id,
-                    "description": description or f"Commit {sha}",
-                    "metadata": json.dumps({"commit_sha": sha}),
-                },
-            )
-            if result.first() is not None:
-                accepted += 1
-        if accepted and project_id:
-            await FunnelRepository(self.db).count_first_push(project_id)
-        return accepted
+        return len(await ContributionRepository(self.db).record_commit_identities(
+            agent_id, shas, project_id, description
+        ))
 
-    async def upsert_contributor_points(self, project_id, agent_id, owner_user_id, points: int) -> None:
+    async def upsert_contributor_points(
+        self, project_id, agent_id, owner_user_id, points: int
+    ) -> None:
         await self.db.execute(
             text("""
                 INSERT INTO project_contributors (project_id, agent_id, owner_user_id, contribution_points, tokens_minted)

@@ -22,7 +22,9 @@ from app.core.redis_client import get_redis
 from app.repositories import governance_repo, team_repo
 from app.repositories.agent_event_repo import AgentEventRepository
 from app.repositories.agent_repo import AgentRepository, get_agent_repo
+from app.repositories.contribution_repo import ContributionRepository
 from app.repositories.code_karma_repo import CodeKarmaRepository
+from app.services.contribution_reconciliation import ContributionReconciliationService
 from app.schemas.agents import (
     AgentProfile,
     GitHubActivityItem,
@@ -1436,15 +1438,11 @@ class AgentService:
         # and no increment, so a push counted here and again by the webhook
         # moves code_commits once.
         files_changed = result["files_changed"]
-        owner_user_id = await self.repo.get_agent_owner_user_id(agent["id"])
-        counted = await self.repo.record_commit_shas(
-            agent["id"], [result["sha"]], project_id=project_id,
-            description=f"Pushed {files_changed} files to {project['title']}/{branch}",
+        await ContributionReconciliationService(self.repo).observe(
+            agent["id"], project_id,
+            ContributionReconciliationService.file_candidates(result["sha"], files),
+            f"Pushed {files_changed} files to {project['title']}/{branch}",
         )
-        if counted:
-            await self.repo.increment_commits_and_karma(agent["id"], counted)
-        await self.repo.upsert_contributor_points(project_id, agent["id"], owner_user_id, files_changed * 10)
-        await self.repo.recalculate_share_pct(project_id)
 
         logger.info(
             "Agent %s pushed %d files to project %s/%s (sha=%s)",
@@ -2124,18 +2122,16 @@ class AgentService:
         # Award contributions. Same order as the platform push path: the sha is
         # logged first, and only a newly accepted row moves the counter.
         files_changed = result["files_changed"]
-        owner_user_id = await self.repo.get_agent_owner_user_id(agent["id"])
-        counted = await self.repo.record_commit_shas(
-            agent["id"], [result["sha"]], project_id=project_id,
-            description=f"Pushed {files_changed} files to {project['title']}/{branch}",
+        accepted = await ContributionReconciliationService(self.repo).observe(
+            agent["id"], project_id,
+            ContributionReconciliationService.file_candidates(result["sha"], files),
+            f"Pushed {files_changed} files to {project['title']}/{branch}",
         )
-        if counted:
-            await self.repo.increment_commits_and_karma(agent["id"], counted)
-        await self.repo.upsert_contributor_points(project_id, agent["id"], owner_user_id, files_changed * 10)
-        await self.repo.recalculate_share_pct(project_id)
 
         # Audit + karma
-        await self._audit_and_karma(agent, project_id, method, path_for_match, 200)
+        await ContributionReconciliationService(self.repo).audit_proxy_write(
+            agent["id"], project_id, method, path_for_match, accepted,
+        )
         await self.db.commit()
 
         logger.info(
@@ -2158,18 +2154,8 @@ class AgentService:
     ) -> None:
         """Audit a proxy write operation and award karma."""
 
-        await self.db.execute(
-            text("""
-                INSERT INTO agent_github_actions (agent_id, project_id, method, path, status_code)
-                VALUES (:agent_id, :project_id, :method, :path, :status_code)
-            """),
-            {
-                "agent_id": agent["id"],
-                "project_id": project_id,
-                "method": method,
-                "path": path_for_match,
-                "status_code": status_code,
-            },
+        await ContributionRepository(self.db).record_proxy_audit(
+            agent["id"], project_id, method, path_for_match, status_code,
         )
 
         if status_code < 400:

@@ -626,7 +626,7 @@ class GitHubService:
 
         Creates, updates, and deletes files in a single commit.
         files: [{"path": "src/main.py", "content": "..."}, {"path": "old.py", "delete": True}]
-        Returns: {"sha": "abc1234", "files_changed": 5} or None on failure.
+        Returns: {"sha": "<full 40-character commit SHA>", "files_changed": 5} or None on failure.
         """
         if not await self.initialize():
             return None
@@ -733,7 +733,7 @@ class GitHubService:
                 return None
 
             logger.info("Atomic push: {} files to {}/{} ({})", len(files), name, branch, new_commit_sha[:7])
-            return {"sha": new_commit_sha[:7], "files_changed": len(files)}
+            return {"sha": new_commit_sha, "files_changed": len(files)}
 
         except Exception as e:
             logger.error("push_files_atomic error for {}: {}", name, e)
