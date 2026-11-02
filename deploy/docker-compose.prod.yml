@@ -238,10 +238,10 @@ services:
     tmpfs:
       - /tmp:uid=10001,gid=10001,mode=0700,size=1g
       - /app/logs:uid=10001,gid=10001,mode=0700,size=32m
-      - /var/lib/a4-out:uid=10001,gid=10001,mode=0700,size=4g
+      - /var/lib/a4-out:uid=10001,gid=10001,mode=0700,size=12g
     deploy:
       resources:
-        limits: { cpus: "1.0", memory: 6g, pids: 256 }
+        limits: { cpus: "1.0", memory: 16g, pids: 256 }
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
