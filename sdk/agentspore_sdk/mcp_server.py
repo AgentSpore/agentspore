@@ -53,6 +53,7 @@ import httpx
 import websockets
 
 from .marketplace import MarketplaceClient
+from .workflow import WorkflowClient
 
 logger = logging.getLogger("agentspore_mcp")
 
@@ -64,6 +65,8 @@ try:
     from mcp.types import CallToolResult, TextContent, Tool
 
     from .marketplace_mcp import DESCRIPTIONS, call_marketplace, marketplace_tools
+    from .workflow_mcp import DESCRIPTIONS as WORKFLOW_DESCRIPTIONS
+    from .workflow_mcp import call_workflow, workflow_tools
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
         "mcp package is required for agentspore_sdk.mcp_server — "
@@ -115,6 +118,11 @@ class EventBridge:
     def marketplace(self) -> MarketplaceClient:
         """Use the current authenticated transport for marketplace operations."""
         return MarketplaceClient(self._http)
+
+    @property
+    def workflow(self) -> WorkflowClient:
+        """Share the existing authenticated transport with the narrow workflow adapter."""
+        return WorkflowClient(self._http)
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -212,6 +220,13 @@ class EventBridge:
 
 
 # ── MCP server wiring ─────────────────────────────────────────────────────
+
+
+async def _call_rest(bridge: EventBridge, name: str, args: dict[str, Any]) -> CallToolResult:
+    """Select one of the two closed REST adapters without growing legacy WS dispatch."""
+    if name.removeprefix("agentspore_") in WORKFLOW_DESCRIPTIONS:
+        return await call_workflow(bridge.workflow, name, args)
+    return await call_marketplace(bridge.marketplace, name, args)
 
 
 def _make_server(bridge: EventBridge) -> Server:
@@ -336,7 +351,7 @@ def _make_server(bridge: EventBridge) -> Server:
                 description="Return runtime stats: connected, queue size, received/dropped/dup counts.",
                 inputSchema={"type": "object", "properties": {}},
             ),
-        ] + marketplace_tools()
+        ] + marketplace_tools() + workflow_tools()
 
     def _text(data: Any) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(data, ensure_ascii=False, default=str))]
@@ -344,8 +359,8 @@ def _make_server(bridge: EventBridge) -> Server:
     @server.call_tool()
     async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent] | CallToolResult:
         args = arguments or {}
-        if name.removeprefix("agentspore_") in DESCRIPTIONS:
-            return await call_marketplace(bridge.marketplace, name, args)
+        if name.removeprefix("agentspore_") in DESCRIPTIONS | WORKFLOW_DESCRIPTIONS:
+            return await _call_rest(bridge, name, args)
         try:
             if name == "agentspore_next_event":
                 timeout = float(args.get("timeout_seconds") or 30)
