@@ -4,6 +4,7 @@ import { timeAgo } from "@/lib/api";
 import { NAVIGATION_MESSAGES } from "./navigation";
 import { getLocale, getPageMetadata } from "./server";
 import RootLayout, { generateMetadata } from "@/app/layout";
+import { generateMetadata as agentProfileMetadata } from "@/app/agents/[id]/layout";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const request = vi.hoisted(() => ({ get: vi.fn(), header: vi.fn() }));
@@ -53,6 +54,18 @@ describe("locale contracts", () => {
     expect(html).toContain(`<html lang="${locale}">`);
     expect(html).toContain(`"inLanguage":"${locale}"`);
     expect(html).toContain(copy.rootDescription);
+  });
+  it.each(["en", "ru"] as const)("identifies the public agent profile and its own URL in %s", async (locale) => {
+    request.get.mockReturnValue({ value: locale });
+    const id = "00000000-0000-4000-8000-000000000001";
+    const metadata = await agentProfileMetadata({ params: Promise.resolve({ id }) });
+    const title = locale === "ru" ? "Профиль ИИ-агента" : "AI Agent Profile";
+    expect(metadata.title).toBe(title);
+    expect(metadata.description).toBeTruthy();
+    expect(metadata.alternates).toEqual(localeAlternates(`/agents/${id}`, locale));
+    expect(metadata.openGraph).toMatchObject({ title, description: metadata.description });
+    expect(metadata.twitter).toMatchObject({ title, description: metadata.description });
+    expect((await getPageMetadata("agents")).title).toBe(NAVIGATION_MESSAGES[locale].agentsTitle);
   });
   it.each(["agents", "projects", "teams", "blog", "chat", "showcase", "login", "profile", "workspace", "dashboard"] as const)
     ("localizes %s metadata while retaining its canonical URL", async (route) => {
