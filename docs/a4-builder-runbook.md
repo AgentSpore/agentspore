@@ -180,7 +180,7 @@ mount it read-only. UID/GID 10001 must traverse that directory and read those fi
 verify readability without printing their contents. Do not make the private key public.
 Missing/unreadable client TLS prevents worker startup. No host source or socket is mounted.
 The UID-owned tmpfs paths are `/tmp` (1 GiB: source/scanner temporary state and HOME),
-`/app/logs` (32 MiB), and `/var/lib/a4-out` (4 GiB); their memory counts toward the 6 GiB limit.
+`/app/logs` (32 MiB), and `/var/lib/a4-out` (12 GiB); their memory counts toward the 16 GiB limit.
 The existing image HTTP healthcheck is disabled because this worker has no HTTP server.
 Verify its process and actual queue progress separately.
 
@@ -308,6 +308,39 @@ crate name that does not exist is a few bytes of one-way signal), and data is no
 upload and Host-header or SNI tricks are gone. Registries that are not mirrored (git hosts, Maven,
 RubyGems, apt) are unreachable from a `RUN`; add a mirror location when one is needed.
 
+## Mandatory image vulnerability gate
+
+Status: 2026-11-02, implementation under review; full native worker acceptance remains required before activation.
+
+The BuildKit path verifies the OCI archive, recycles the daemon, then runs pinned Trivy before any
+registry push or runtime launch. CRITICAL findings refuse deployment with `image_vulnerable`.
+Database, scanner and report failures refuse with `tool_failed`; malformed OCI or manifest-binding
+failures may use `build_failed`. Every refusal blocks publication; no bypass exists.
+A report must match the verified configuration digest and rootfs. OSless images may legitimately
+have no package results; this does not mean every embedded binary has vulnerability coverage.
+
+Each sequential worker job downloads both databases into a private output directory, then scans
+offline using that snapshot. Vulnerability DB age is at most 24 hours; Java DB age at most 72 hours.
+Both require timezone-aware timestamps, no future `UpdatedAt`, and `now < NextUpdate`; download time
+never substitutes for database age. Java publication runs daily, while its metadata builder sets a
+72-hour expiry ([cron](https://github.com/aquasecurity/trivy-java-db/blob/main/.github/workflows/cron.yml),
+[metadata builder](https://github.com/aquasecurity/trivy-java-db/blob/main/pkg/builder/builder.go)).
+
+Native amd64 Trivy 0.76.1 measurement retained 3,243,888,946 database bytes, peaked at 5,230,100,480
+output bytes during download and 5,464,391,680 memory bytes, with no OOM. A 4 GiB output mount failed
+with ENOSPC. Production configuration sets limits of 12 GiB output tmpfs and 16 GiB total worker memory for
+one job; database files themselves are capped at 4 GiB. The daemon awaits jobs sequentially; do not
+scale workers against the same builder without a separately verified concurrency design.
+
+The original archive and private verified layout each allow up to 1 GiB of compressed content.
+These are not decompression bounds: hostile layers can expand substantially. Trivy uses private
+`TMPDIR`, `--parallel 1`, a 300-second deadline per invocation and bounded captured output. Tmpfs
+and cgroup limits bound total consumption, but a whole-worker OOM can interrupt cleanup. Trivy
+runs with the worker UID and a minimal subprocess environment; this is not an independent sandbox
+from the credential-bearing parent. Native resource-exhaustion, restart/recovery and full
+fetch-to-HTTPS acceptance must pass before enabling deployment; unit cleanup tests alone do not
+prove worker availability under OOM. Keep deployment flags off until those checks pass.
+
 ## a4-launcher (tenant runtime launcher)
 
 `deploy/a4-launcher.compose.yml` runs the only service with the Docker socket for tenant runtimes
@@ -337,7 +370,7 @@ Check from a container on `a4-control`: `GET http://agentspore-a4-launcher:8080/
 
 ## Known limits
 
-- The 4 GiB build-disk cap is the `out_dir` volume limit, set in P3b-2; the builder enforces the 1 GiB image cap and the 10 minute timeout.
+- Production worker output is capped at 12 GiB; the development fake-builder compose retains 4 GiB. The builder enforces a 1 GiB compressed image cap and a 10 minute build timeout.
 - `buildkitd` under `runsc` is not exercised by CI; check it on the stand before `A4_DEPLOY_ENABLED`.
 - The mirror cache is a 4 GiB tmpfs (counted in the 5 GiB memory limit); registry v3 expires cached content after `proxy.ttl` (12 h; v2 keeps 7 days).
   When the cache is full or Docker Hub rate-limits, `mirror-gate` returns 5xx. Recycle: `$C up -d --force-recreate --no-deps mirror`; `$C logs --tail=50 mirror`.

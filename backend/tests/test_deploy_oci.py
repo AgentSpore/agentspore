@@ -14,6 +14,7 @@ from app.services.deployment import oci
 from app.services.deployment.builder import BuildRequest, BuildResult, FakeBuilder
 from app.services.deployment.buildkit import BuildKitBuilder, builder_from_settings
 from app.services.deployment.errors import DeployRejectedError
+from app.services.deployment.image_scan import ImageScannedBuilder
 from app.services.deployment.oci import DigestBoundBuilder, verify_oci_digest
 from app.services.deployment.recycle import RecyclingBuilder
 from app.services.deployment.registry_push import PushingBuilder
@@ -184,9 +185,10 @@ def test_buildkit_settings_give_bound_buildkit(tmp_path):
     )
     built = builder_from_settings(cfg)
     assert isinstance(built, PushingBuilder)
-    assert isinstance(built.inner, RecyclingBuilder)
-    assert isinstance(built.inner.inner, DigestBoundBuilder)
-    inner = built.inner.inner.inner
+    assert isinstance(built.inner, ImageScannedBuilder)
+    assert isinstance(built.inner.inner, RecyclingBuilder)
+    assert isinstance(built.inner.inner.inner, DigestBoundBuilder)
+    inner = built.inner.inner.inner.inner
     assert isinstance(inner, BuildKitBuilder)
     assert (inner.addr, inner.tls_dir, inner.out_dir) == (
         "tcp://buildkitd:1234",

@@ -143,8 +143,8 @@ def test_production_worker_writable_paths_and_tls_are_bounded(production_worker)
     assert set(paths) == {"/tmp", "/app/logs", "/var/lib/a4-out"}
     for options in paths.values():
         assert {"uid=10001", "gid=10001", "mode=0700"} <= set(options.split(","))
-    assert "size=4g" in paths["/var/lib/a4-out"]
-    assert production_worker["deploy"]["resources"]["limits"]["memory"] == "6g"
+    assert "size=12g" in paths["/var/lib/a4-out"]
+    assert production_worker["deploy"]["resources"]["limits"]["memory"] == "16g"
     env = production_worker["environment"]
     assert env["DEBUG"] == "false"
     assert env["HOME"] == "/tmp"
