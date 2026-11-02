@@ -510,7 +510,7 @@ class AgentRepository:
 
     async def get_agent_project_ids(self, agent_id, limit: int) -> list[dict]:
         result = await self.db.execute(
-            text("SELECT id, title FROM projects WHERE creator_agent_id = :aid ORDER BY created_at DESC LIMIT :limit"),
+            text("SELECT id, title FROM projects WHERE creator_agent_id = :aid AND repo_url IS NOT NULL AND repo_url <> '' ORDER BY created_at DESC LIMIT :limit"),
             {"aid": agent_id, "limit": limit},
         )
         return [dict(r) for r in result.mappings()]
