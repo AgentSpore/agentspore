@@ -47,12 +47,14 @@ import json
 import logging
 import os
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import httpx
 import websockets
 
 from .marketplace import MarketplaceClient
+from .publication import PublicationClient
 from .workflow import WorkflowClient
 
 logger = logging.getLogger("agentspore_mcp")
@@ -67,6 +69,8 @@ try:
     from .marketplace_mcp import DESCRIPTIONS, call_marketplace, marketplace_tools
     from .workflow_mcp import DESCRIPTIONS as WORKFLOW_DESCRIPTIONS
     from .workflow_mcp import call_workflow, workflow_tools
+    from .publication_mcp import DESCRIPTIONS as PUBLICATION_DESCRIPTIONS
+    from .publication_mcp import call_publication, publication_tools
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
         "mcp package is required for agentspore_sdk.mcp_server — "
@@ -88,7 +92,11 @@ class EventQueue(asyncio.Queue[dict[str, Any]]):
 class EventBridge:
     """Keeps a single WS open to AgentSpore and buffers events in a queue."""
 
-    def __init__(self, api_key: str, base_url: str, queue_max: int):
+    def __init__(
+        self, api_key: str, base_url: str, queue_max: int,
+        *, publication_state_dir: Path | None = None,
+    ):
+        self.publication_state_dir = publication_state_dir
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         # Key goes in a header, not the query string — the server logs the
@@ -223,7 +231,10 @@ class EventBridge:
 
 
 async def _call_rest(bridge: EventBridge, name: str, args: dict[str, Any]) -> CallToolResult:
-    """Select one of the two closed REST adapters without growing legacy WS dispatch."""
+    """Dispatch through the closed REST adapters."""
+    if name.removeprefix("agentspore_") in PUBLICATION_DESCRIPTIONS:
+        client = PublicationClient(bridge.workflow, bridge.publication_state_dir)
+        return await call_publication(client, name, args)
     if name.removeprefix("agentspore_") in WORKFLOW_DESCRIPTIONS:
         return await call_workflow(bridge.workflow, name, args)
     return await call_marketplace(bridge.marketplace, name, args)
@@ -351,7 +362,7 @@ def _make_server(bridge: EventBridge) -> Server:
                 description="Return runtime stats: connected, queue size, received/dropped/dup counts.",
                 inputSchema={"type": "object", "properties": {}},
             ),
-        ] + marketplace_tools() + workflow_tools()
+        ] + marketplace_tools() + workflow_tools() + publication_tools()
 
     def _text(data: Any) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(data, ensure_ascii=False, default=str))]
@@ -359,7 +370,7 @@ def _make_server(bridge: EventBridge) -> Server:
     @server.call_tool()
     async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent] | CallToolResult:
         args = arguments or {}
-        if name.removeprefix("agentspore_") in DESCRIPTIONS | WORKFLOW_DESCRIPTIONS:
+        if name.removeprefix("agentspore_") in DESCRIPTIONS | WORKFLOW_DESCRIPTIONS | PUBLICATION_DESCRIPTIONS:
             return await _call_rest(bridge, name, args)
         try:
             if name == "agentspore_next_event":
@@ -452,7 +463,11 @@ async def _amain() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    bridge = EventBridge(api_key=api_key, base_url=base_url, queue_max=queue_max)
+    publication_directory = os.environ.get("AGENTSPORE_PUBLICATION_STATE_DIR")
+    bridge = EventBridge(
+        api_key=api_key, base_url=base_url, queue_max=queue_max,
+        publication_state_dir=Path(publication_directory) if publication_directory else None,
+    )
     bridge.start()
 
     server = _make_server(bridge)

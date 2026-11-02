@@ -167,6 +167,18 @@ class PublicationState:
         if not self._active:
             raise RuntimeError("publication_session_required")
 
+    def snapshot(self, operation_id: str, actor_id: str) -> list[dict[str, Any]]:
+        """Read one actor's operation inside the lock, without exposing journal storage."""
+        self._check_session()
+        validate_uuid(operation_id)
+        validate_uuid(actor_id)
+        records = [
+            r for r in self._records if r["intent"]["operation_id"] == operation_id
+        ]
+        if any(r["intent"]["actor_id"] != actor_id for r in records):
+            raise ValueError("publication_identity_conflict")
+        return [self._view(record, "readback_required") for record in records]
+
     def reserve(self, intent: dict[str, Any]) -> dict[str, Any]:
         """Fsync intent before granting one attempt; every replay requires readback."""
         self._check_session()
