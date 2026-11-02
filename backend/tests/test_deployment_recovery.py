@@ -18,6 +18,7 @@ from test_deployment_active_cleanup import queue_world as queue_world
 
 from app.repositories.deployment_repo import DeploymentRepository
 from app.schemas.deployments import SandboxNamespaceAbsenceProof, SandboxStopProof
+from app.services.deployment_promotion import DeploymentPromotionService
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
 OBSERVED = "c" * 64
@@ -202,3 +203,58 @@ async def test_replaced_global_fence_rejects_late_observation(recovery_world, re
             )
             is None
         )
+
+
+@pytest.mark.parametrize("cause", ["health_failed", "probe_deadline", "lease_expired"])
+async def test_recorded_failure_survives_expired_stop_recovery(
+    promotion_world, recovery_service, cause
+):
+    maker, _, lease, previous = promotion_world
+    identifier = f"a4-build-{lease.deployment_id.hex}"
+    proof = SandboxStopProof(lease=lease, sandbox_id=identifier)
+    if cause != "lease_expired":
+        async with maker.begin() as db:
+            assert await DeploymentRepository(db).begin_probing(lease, "sha256:" + "b" * 64)
+            if cause == "probe_deadline":
+                await db.execute(
+                    text(
+                        "UPDATE project_deployments SET probe_started_at = "
+                        "clock_timestamp() - interval '61 seconds' WHERE id=:id"
+                    ),
+                    {"id": lease.deployment_id},
+                )
+        health = AsyncMock(return_value=503)
+        assert not await DeploymentPromotionService(maker, health).probe_and_promote(lease)
+        assert health.await_count == (1 if cause == "health_failed" else 0)
+    async with maker.begin() as db:
+        repo = DeploymentRepository(db)
+        assert not await repo.confirm_stopped(proof)
+        assert await db.scalar(text("SELECT reason_code FROM project_deployments")) == (
+            None if cause == "lease_expired" else cause
+        )
+        await db.execute(
+            text(
+                "UPDATE deployment_worker_lease SET expires_at = "
+                "clock_timestamp() - interval '1 second'"
+            )
+        )
+    async with maker.begin() as db:
+        repo = DeploymentRepository(db)
+        assert await repo.claim(uuid4()) is None
+        stale = proof.model_copy(
+            update={"lease": lease.model_copy(update={"generation": lease.generation + 1})}
+        )
+        assert not await repo.confirm_stopped(stale)
+    observer = AsyncMock(return_value=proof)
+    assert await recovery_service(maker, observer).recover_once()
+    observer.assert_awaited_once_with(lease, identifier)
+    async with maker() as db:
+        row = (
+            await db.execute(
+                text("SELECT status,reason_code FROM project_deployments WHERE id=:id"),
+                {"id": lease.deployment_id},
+            )
+        ).one()
+        assert tuple(row) == ("failed", cause)
+        assert await db.scalar(SLOT) is None
+        assert await db.scalar(text("SELECT active_revision FROM service_routes")) == previous
