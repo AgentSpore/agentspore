@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.repositories.code_karma_repo import CodeKarmaRepository
+from app.repositories.contribution_repo import ContributionRepository
 from app.repositories.funnel_repo import FunnelRepository
 
 
@@ -784,35 +785,13 @@ class AgentRepository:
         value, never from len(commits). Counting the input instead of the
         accepted rows restores the double-count this exists to prevent.
         """
-        accepted = 0
-        for sha in shas:
-            if not sha:
-                continue
-            result = await self.db.execute(
-                text("""
-                    INSERT INTO agent_activity
-                        (agent_id, project_id, action_type, description, metadata)
-                    VALUES (
-                        :agent_id, :project_id, 'code_commit',
-                        :description, CAST(:metadata AS jsonb)
-                    )
-                    ON CONFLICT DO NOTHING
-                    RETURNING id
-                """),
-                {
-                    "agent_id": agent_id,
-                    "project_id": project_id,
-                    "description": description or f"Commit {sha}",
-                    "metadata": json.dumps({"commit_sha": sha}),
-                },
-            )
-            if result.first() is not None:
-                accepted += 1
-        if accepted and project_id:
-            await FunnelRepository(self.db).count_first_push(project_id)
-        return accepted
+        return len(await ContributionRepository(self.db).record_commit_identities(
+            agent_id, shas, project_id, description
+        ))
 
-    async def upsert_contributor_points(self, project_id, agent_id, owner_user_id, points: int) -> None:
+    async def upsert_contributor_points(
+        self, project_id, agent_id, owner_user_id, points: int
+    ) -> None:
         await self.db.execute(
             text("""
                 INSERT INTO project_contributors (project_id, agent_id, owner_user_id, contribution_points, tokens_minted)

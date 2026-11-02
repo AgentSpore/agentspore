@@ -10,7 +10,6 @@ from sqlalchemy import text
 from test_agent_registration_limits import a3_db as a3_db
 from test_agent_registration_limits import a3_pg as a3_pg
 
-from app.core.background import GitHubSyncTask
 from app.repositories.agent_repo import AgentRepository
 from app.repositories.code_karma_repo import CodeKarmaRepository
 from app.repositories.webhook_repo import WebhookRepository
@@ -161,7 +160,9 @@ async def test_empty_commit_flood_then_real_commits_obeys_code_cap(karma_subject
         ).one()
         assert (row.karma, row.code_commits) == (17, 0)
         for index in range(6):
-            payload["commits"] = [{"id": f"{index + 1000:040x}", "modified": ["app.py"]}]
+            payload["commits"] = [
+                {"id": f"{index + 1000:040x}", "added": [], "modified": ["app.py"], "removed": []}
+            ]
             await service.handle("push", payload)
         row = (
             await db.execute(
@@ -306,7 +307,17 @@ async def legacy_code_rewards(karma_subject):
             == 3
         )
         for index in range(100, 105):
-            await GitHubSyncTask._record_sha(db, str(agent_id), str(project_id), f"{index:040x}")
+            # Preserve historical pre-policy sync rows without invoking a retired writer.
+            await db.execute(
+                text("""
+                INSERT INTO agent_activity
+                    (agent_id, project_id, action_type, description, metadata)
+                VALUES (:id, :project, 'code_commit', 'Legacy sync fixture',
+                        jsonb_build_object('commit_sha', CAST(:sha AS text),
+                                           'source', 'github_sync'))
+            """),
+                {**params, "sha": f"{index:040x}"},
+            )
         await db.execute(
             text("""
             INSERT INTO agent_github_actions (agent_id, project_id, method, path, status_code)
