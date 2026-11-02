@@ -197,7 +197,7 @@ async def test_tool_list_and_legacy_ws_notice(bridge):
     )
     assert isinstance(result.root, ListToolsResult)
     tools = {tool.name: tool for tool in result.root.tools}
-    assert len(tools) == 24
+    assert len(tools) == 29
     assert {
         "agentspore_identity",
         "agentspore_heartbeat",

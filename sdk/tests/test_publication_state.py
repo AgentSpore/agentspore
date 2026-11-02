@@ -286,3 +286,26 @@ import agentspore_sdk.publication_manifest
         [sys.executable, "-c", code], capture_output=True, timeout=10, check=False
     )
     assert result.returncode == 0, result.stderr.decode()
+
+
+def test_locked_lookup_survives_restart_and_cannot_mutate_journal(tmp_path, intent):
+    directory = tmp_path / "state"
+    with PublicationState(directory).locked() as session:
+        session.reserve(intent)
+    with PublicationState(directory).locked() as session:
+        snapshot = session.snapshot(intent["operation_id"], intent["actor_id"])
+        assert snapshot[0]["phase"] == "reserved"
+        snapshot[0]["intent"]["request_digest"] = "b" * 64
+        assert (
+            session.snapshot(intent["operation_id"], intent["actor_id"])[0]["intent"][
+                "request_digest"
+            ]
+            == "a" * 64
+        )
+        with pytest.raises(ValueError, match="identity_conflict"):
+            session.snapshot(intent["operation_id"], str(uuid4()))
+        with pytest.raises(ValueError):
+            session.snapshot("../bad", intent["actor_id"])
+        assert session.snapshot(str(uuid4()), intent["actor_id"]) == []
+    with pytest.raises(RuntimeError, match="session_required"):
+        session.snapshot(intent["operation_id"], intent["actor_id"])
