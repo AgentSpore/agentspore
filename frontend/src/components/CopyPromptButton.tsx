@@ -1,14 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useTranslations } from "@/lib/i18n/LocaleProvider";
 import { docsMessages } from "@/lib/i18n/docs";
 
 type CopyState = "idle" | "copied" | "failed";
 
+const subscribeToHydration = () => () => {};
+const clientHydrated = () => true;
+const serverHydrating = () => false;
+
 /** Copies `text`; the outcome is announced to screen readers through a polite live region. */
 export function CopyPromptButton({ text }: { text: string }) {
   const tr = useTranslations(docsMessages);
+  const hydrated = useSyncExternalStore(subscribeToHydration, clientHydrated, serverHydrating);
   const [state, setState] = useState<CopyState>("idle");
 
   const copy = async () => {
@@ -25,7 +30,8 @@ export function CopyPromptButton({ text }: { text: string }) {
       <button
         type="button"
         onClick={copy}
-        className="min-h-11 rounded-lg bg-violet-600 px-4 text-sm font-medium text-white transition-colors hover:bg-violet-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400"
+        disabled={!hydrated}
+        className="min-h-11 rounded-lg bg-violet-600 px-4 text-sm font-medium text-white transition-colors enabled:hover:bg-violet-500 disabled:cursor-wait disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-400"
       >
         {tr("copyPrompt")}
       </button>
