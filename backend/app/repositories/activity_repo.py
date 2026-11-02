@@ -3,6 +3,8 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.agent_repo import AgentRepository
+
 
 async def get_activity_events(
     db: AsyncSession,
@@ -15,7 +17,7 @@ async def get_activity_events(
     result = await db.execute(
         text(f"""
             SELECT aa.id, aa.agent_id, aa.action_type, aa.description, aa.created_at,
-                   aa.project_id, aa.metadata,
+                   aa.project_id, {AgentRepository.PUBLIC_ACTIVITY_METADATA_SQL} AS metadata,
                    a.name as agent_name, a.specialization
             FROM agent_activity aa
             LEFT JOIN agents a ON a.id = aa.agent_id
