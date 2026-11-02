@@ -22,7 +22,7 @@ digest (`python:3.12-slim@sha256:...`) because the gate refuses tag manifests. `
 
 ## Worker scanner binaries
 
-The shared backend/worker image installs Gitleaks 8.30.1 and OSV-Scanner 2.7.0 during
+The shared backend/worker image installs Gitleaks 8.30.1, OSV-Scanner 2.7.0 and Trivy 0.76.1 during
 build, using `scripts/install_a4_scanners.py` in the backend build context. Each Linux
 amd64/arm64 asset has a reviewed literal SHA-256 pin; `TARGETARCH` selects the matching
 asset. Unsupported architectures, checksum mismatches, unsafe archive members and
@@ -145,19 +145,25 @@ Gate check (from a container on `a4-control`): `POST .../restart` 204, `GET .../
 
 ## Enable the production worker after isolated acceptance
 
-Status: 2026-11-02, configuration under review; native worker/BuildKit acceptance pending.
+Status: 2026-11-02, isolated native worker/BuildKit acceptance completed on source `51205fed`; production activation pending.
 Owner: AgentSpore maintainers. Review before activation and by 2026-12-02.
 
 `deploy/docker-compose.prod.yml` defines the existing worker behind profile `a4`.
 Ordinary deployments omit it. Keep `A4_DEPLOY_ENABLED=false` and `A4_RUNTIME=off`
-until the acceptance below succeeds. Starting a process is not a successful deployment.
+until the reviewed production rollout and connectivity checks complete. Isolated acceptance
+does not enable the production worker. Starting a process is not a successful deployment.
 The production worker uses BuildKit; the development compose retains its fake builder.
 
-Supply `A4_WORKER_REPOSITORY` (repository only, no tag or digest) and
-`A4_WORKER_DIGEST` (64 lowercase hex characters, without `sha256:`) from the approved
-scanner-capable release image receipt. The default `invalid.invalid` repository and
+For a registry image, supply `A4_WORKER_REPOSITORY` (repository only, no tag or digest)
+and `A4_WORKER_DIGEST` (64 lowercase hex characters, without `sha256:`) from its verified
+repository manifest digest. A build receipt's local image ID is not a registry manifest
+digest and must not be substituted here. Alternatively, a reviewed Compose overlay may
+select the exact already-built local image ID from the release receipt with `--pull never`;
+verify that image exists on the target host. The default `invalid.invalid` repository and
 zero digest deliberately identify no approved image. Scanner packaging is tracked in
-PR #279; do not substitute the ordinary backend image without verifying its tools.
+[PR #279](https://github.com/AgentSpore/agentspore/pull/279) and
+[PR #281](https://github.com/AgentSpore/agentspore/pull/281); verify all three scanner tools
+in the selected release image.
 Compose rendering does not validate image-reference syntax: release admission must
 reject malformed/double digests, tags and any image not matching the reviewed receipt.
 Do not enable the profile just because `compose config` succeeds.
@@ -184,7 +190,8 @@ The UID-owned tmpfs paths are `/tmp` (1 GiB: source/scanner temporary state and 
 The existing image HTTP healthcheck is disabled because this worker has no HTTP server.
 Verify its process and actual queue progress separately.
 
-Before activation, use an isolated synthetic stack to prove:
+The isolated native acceptance covers the following requirements; repeat affected checks
+when changing the reviewed image or topology:
 
 - The approved image runs as UID10001, scanners/buildctl work, client TLS is readable,
   temporary/log/output paths are writable, and a missing TLS file fails startup.
@@ -194,14 +201,22 @@ Before activation, use an isolated synthetic stack to prove:
   Use live positive-control endpoints; a closed port alone is not isolation evidence.
 - Before push, Trivy scans the verified OCI build artifact. Critical vulnerabilities
   reject it with `image_vulnerable`; scanner/tool/database errors fail closed, with no
-  push or launch. This post-build gate is not implemented yet; it remains an activation
-  blocker tracked in #170, comment 6565087321. Pre-build OSV scanning does not replace it.
+  push or launch. The mandatory gate shipped in
+  [PR #282](https://github.com/AgentSpore/agentspore/pull/282). Pre-build OSV scanning does not replace it.
 - A real fetch→scan→build→verified-OCI-scan→push→launch→three-health-successes→promotion workflow succeeds;
   a failed replacement preserves the active route. Check daemon recycle on success,
   failure and cancellation; untrusted state must not survive into the next build.
 - Profile-off rendering needs no A4 values; explicit worker start requires the reviewed
   digest and existing external network. Record resource baselines and remove only
   resources owned by the isolated fixture.
+
+The [#287 acceptance receipt](https://github.com/AgentSpore/agentspore/issues/287#issuecomment-6567542797)
+records real scan ENOSPC under the unchanged limits, no push or launch, the old route preserved,
+empty scanner/worker output and a subsequent healthy deployment over verified HTTPS. The
+observation entrypoint delegated the original worker and scanner; it was test-only instrumentation.
+[PR #285](https://github.com/AgentSpore/agentspore/pull/285) preserves the original health failure
+reason during recovery instead of overwriting it with `lease_expired`. These results cover an
+isolated stack, not production activation or public production DNS/TLS.
 
 Built OCI archives already pass digest validation and are pushed by `PushingBuilder`;
 no new upload path is needed. Disabling admission or setting runtime off does not remove
@@ -310,7 +325,7 @@ RubyGems, apt) are unreachable from a `RUN`; add a mirror location when one is n
 
 ## Mandatory image vulnerability gate
 
-Status: 2026-11-02, implementation under review; full native worker acceptance remains required before activation.
+Status: 2026-11-02, implemented in PR #282; isolated native worker acceptance completed, production activation pending.
 
 The BuildKit path verifies the OCI archive, recycles the daemon, then runs pinned Trivy before any
 registry push or runtime launch. CRITICAL findings refuse deployment with `image_vulnerable`.
@@ -337,9 +352,10 @@ These are not decompression bounds: hostile layers can expand substantially. Tri
 `TMPDIR`, `--parallel 1`, a 300-second deadline per invocation and bounded captured output. Tmpfs
 and cgroup limits bound total consumption, but a whole-worker OOM can interrupt cleanup. Trivy
 runs with the worker UID and a minimal subprocess environment; this is not an independent sandbox
-from the credential-bearing parent. Native resource-exhaustion, restart/recovery and full
-fetch-to-HTTPS acceptance must pass before enabling deployment; unit cleanup tests alone do not
-prove worker availability under OOM. Keep deployment flags off until those checks pass.
+from the credential-bearing parent. Native acceptance demonstrated ENOSPC refusal and clean
+recovery through the same worker, plus fetch-to-HTTPS deployment. This does not establish
+whole-worker OOM availability; unit cleanup tests cannot establish it either. Keep deployment
+flags off until the separate reviewed production activation completes.
 
 ## a4-launcher (tenant runtime launcher)
 
@@ -349,8 +365,8 @@ prove worker availability under OOM. Keep deployment flags off until those check
 The worker selector `A4_RUNTIME` defaults to `off`: a completed build still ends with
 `runtime_unavailable`. Setting it to `launcher` connects the worker to the control API through
 `A4_LAUNCHER_URL` (default `http://a4-launcher:8080`); the worker must share `a4-control` with the
-launcher. Keep `A4_DEPLOY_ENABLED=false` for this release until the remaining runtime acceptance
-checks and retirement/GC work are complete. The selector alone does not enable deployment.
+launcher. Isolated runtime and worker acceptance are complete; keep `A4_DEPLOY_ENABLED=false`
+until the separate reviewed production activation completes. The selector alone does not enable deployment.
 To roll back runtime selection, restore `A4_RUNTIME=off` through the normal worker release process;
 this prevents subsequent runtime launches but does not stop existing containers or revert routes.
 
