@@ -54,9 +54,16 @@ def usage_pg():
 
 
 async def prepare_usage_template(pg):
-    """Migrate the container's initial database once without retaining an event-loop pool."""
+    """Migrate a separate template without disabling the container's original database."""
     url = make_url(pg.get_connection_url()).set(drivername="postgresql+asyncpg")
     assert url.database is not None
+    admin = create_async_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    try:
+        async with admin.connect() as conn:
+            await conn.execute(text("CREATE DATABASE usage_template TEMPLATE template0"))
+    finally:
+        await admin.dispose()
+    url = url.set(database="usage_template")
     engine = create_async_engine(url)
     try:
         root = Path(__file__).resolve().parents[2] / "db/migrations"
@@ -77,8 +84,7 @@ async def prepare_usage_template(pg):
     admin = create_async_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
     try:
         async with admin.connect() as conn:
-            name = conn.dialect.identifier_preparer.quote_identifier(url.database)
-            await conn.execute(text(f"ALTER DATABASE {name} ALLOW_CONNECTIONS false"))
+            await conn.execute(text("ALTER DATABASE usage_template ALLOW_CONNECTIONS false"))
     finally:
         await admin.dispose()
 
@@ -96,7 +102,7 @@ async def usage_database(pg):
         async with admin.connect() as conn:
             quote = conn.dialect.identifier_preparer.quote_identifier
             await conn.execute(
-                text(f"CREATE DATABASE {quote(database)} TEMPLATE {quote(url.database)}")
+                text(f"CREATE DATABASE {quote(database)} TEMPLATE usage_template")
             )
             created = True
         engine = create_async_engine(url.set(database=database))

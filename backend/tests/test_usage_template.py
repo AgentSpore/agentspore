@@ -48,7 +48,7 @@ async def test_committed_schema_and_rows_do_not_escape_clone(usage_pg):
                 assert await conn.scalar(text("SELECT to_regclass('service_visits')")) is not None
         assert await clones(admin) == before
         async with admin.connect() as conn:
-            template = make_url(usage_pg.get_connection_url()).database
+            template = "usage_template"
             assert (
                 await conn.scalar(
                     text("SELECT count(*) FROM pg_stat_activity WHERE datname = :name"),
@@ -107,3 +107,25 @@ async def test_leaked_connection_fails_cleanup_without_terminating_it(usage_pg):
             await leaked.invalidate()
             await leaked.close()
         await admin.dispose()
+
+
+async def test_original_database_remains_available_and_independent(usage_pg):
+    url = make_url(usage_pg.get_connection_url()).set(drivername="postgresql+asyncpg")
+    original = create_async_engine(url)
+    try:
+        async with original.begin() as conn:
+            await conn.execute(text("CREATE SCHEMA direct_consumer"))
+            await conn.execute(text("CREATE TABLE direct_consumer.marker (value integer)"))
+            await conn.execute(text("INSERT INTO direct_consumer.marker VALUES (7)"))
+        async with usage_database(usage_pg) as clone:
+            async with clone.connect() as conn:
+                assert await conn.scalar(text("SELECT to_regnamespace('direct_consumer')")) is None
+                assert await conn.scalar(text("SELECT to_regclass('service_visits')")) is not None
+        async with original.begin() as conn:
+            assert await conn.scalar(text("SELECT value FROM direct_consumer.marker")) == 7
+    finally:
+        try:
+            async with original.begin() as conn:
+                await conn.execute(text("DROP SCHEMA IF EXISTS direct_consumer CASCADE"))
+        finally:
+            await original.dispose()
