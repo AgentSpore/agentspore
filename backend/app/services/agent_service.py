@@ -855,6 +855,19 @@ class AgentService:
 
     # ── Projects ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _require_repository(project: dict) -> dict:
+        if not project["repo_url"]:
+            raise HTTPException(status_code=400, detail="Project has no repository")
+        return project
+
+    async def _get_repository_project(self, project_id: UUID, fields: str) -> dict:
+        project = await self.repo.get_project_basic(project_id, fields)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        self._require_repository(project)
+        return project
+
     async def create_project(self, agent: dict, body) -> ProjectResponse:
         """Create a new project with git repo, README, token, and contributor setup."""
 
@@ -1235,9 +1248,7 @@ class AgentService:
         if not pr_number or not isinstance(pr_number, int):
             raise HTTPException(status_code=422, detail="pr_number (int) is required")
 
-        project = await self.repo.get_project_basic(project_id, "title, creator_agent_id, vcs_provider")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await self._get_repository_project(project_id, "title, creator_agent_id, vcs_provider, repo_url")
 
         if str(project["creator_agent_id"]) != str(agent["id"]):
             raise HTTPException(status_code=403, detail="Only project creator can merge PRs")
@@ -1282,9 +1293,7 @@ class AgentService:
     async def list_issue_comments(self, project_id: UUID, issue_number: int) -> dict:
         """List comments for a specific issue."""
 
-        project = await self.repo.get_project_basic(project_id, "title")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await self._get_repository_project(project_id, "title, repo_url")
 
         comments = await self.git.list_issue_comments(project["title"], issue_number)
         return {
@@ -1297,9 +1306,7 @@ class AgentService:
     async def post_issue_comment(self, project_id: UUID, issue_number: int, body_text: str, agent: dict) -> dict:
         """Post a comment on a GitHub/GitLab issue."""
 
-        project = await self.repo.get_project_basic(project_id, "title, repo_url")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await self._get_repository_project(project_id, "title, repo_url")
 
         oauth_token = await self.ensure_github_token(agent)
 
@@ -1333,7 +1340,7 @@ class AgentService:
                        "Use fork + pull request to contribute to this project.",
             )
 
-        if project["vcs_provider"] != "github":
+        if self._require_repository(project)["vcs_provider"] != "github":
             raise HTTPException(status_code=400, detail="Only GitHub projects support git tokens")
 
         # Get owner email for GitHub credit
@@ -1401,7 +1408,7 @@ class AgentService:
                        "Use fork + pull request to contribute to this project.",
             )
 
-        if project["vcs_provider"] != "github":
+        if self._require_repository(project)["vcs_provider"] != "github":
             raise HTTPException(status_code=400, detail="Only GitHub projects support atomic push")
 
         # Always use App installation token for platform push.
@@ -1459,9 +1466,7 @@ class AgentService:
     async def list_project_issues(self, project_id: UUID, state: str) -> dict:
         """List issues for a project."""
 
-        project = await self.repo.get_project_basic(project_id, "title, repo_url, vcs_provider")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await self._get_repository_project(project_id, "title, repo_url, vcs_provider")
 
         vcs = project.get("vcs_provider") or "github"
         try:
@@ -1476,9 +1481,7 @@ class AgentService:
     async def list_project_pull_requests(self, project_id: UUID, state: str) -> dict:
         """List PRs for a project."""
 
-        project = await self.repo.get_project_basic(project_id, "title, vcs_provider")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await self._get_repository_project(project_id, "title, vcs_provider, repo_url")
 
         vcs = project.get("vcs_provider") or "github"
         try:
@@ -1516,9 +1519,7 @@ class AgentService:
     async def list_pr_comments(self, project_id: UUID, pr_number: int) -> dict:
         """List comments on a PR."""
 
-        project = await self.repo.get_project_basic(project_id, "title")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await self._get_repository_project(project_id, "title, repo_url")
 
         comments = await self.git.list_pr_comments(project["title"], pr_number)
         return {
@@ -1531,9 +1532,7 @@ class AgentService:
     async def list_pr_review_comments(self, project_id: UUID, pr_number: int) -> dict:
         """List inline review comments on a PR."""
 
-        project = await self.repo.get_project_basic(project_id, "title")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await self._get_repository_project(project_id, "title, repo_url")
 
         comments = await self.git.list_pr_review_comments(project["title"], pr_number)
         return {
@@ -1548,9 +1547,7 @@ class AgentService:
     async def list_project_commits(self, project_id: UUID, branch: str, limit: int) -> dict:
         """List commits for a project."""
 
-        project = await self.repo.get_project_basic(project_id, "title")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await self._get_repository_project(project_id, "title, repo_url")
 
         commits = await self.git.list_commits(project["title"], branch=branch, limit=limit)
         return {"commits": commits, "branch": branch, "count": len(commits)}
@@ -1558,9 +1555,7 @@ class AgentService:
     async def get_project_file(self, project_id: UUID, file_path: str, branch: str) -> dict:
         """Get a single file from the project's repo."""
 
-        project = await self.repo.get_project_basic(project_id, "title")
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+        project = await self._get_repository_project(project_id, "title, repo_url")
 
         content = await self.git.get_file_content(project["title"], file_path, branch=branch)
         if content is None:
@@ -1974,7 +1969,7 @@ class AgentService:
 
         # Get installation token
 
-        repo_name = self.git._sanitize_repo_name(project["title"])
+        repo_name = self.git._sanitize_repo_name(self._require_repository(project)["title"])
 
         # File write operations (PUT /contents, DELETE /contents) go through
         # push_files_atomic for proper agent attribution and atomic commits.

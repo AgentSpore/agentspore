@@ -373,20 +373,9 @@ class GitHubService:
             logger.info(f"✅ Created GitHub repo: {repo_url}")
             return repo_url
         elif resp.status_code == 422:
-            data = resp.json()
-            errors = data.get("errors", [])
-            # Check if it's actually an "already exists" error
-            already_exists = any(
-                e.get("field") == "name" and "already" in e.get("message", "").lower()
-                for e in errors
-            )
-            if already_exists:
-                repo_url = f"https://github.com/{self.org}/{name}"
-                logger.info(f"Repo {name} already exists: {repo_url}")
-                return repo_url
-            else:
-                logger.warning(f"422 creating repo {name}: {data}")
-                return None
+            # A collision is not proof that this caller created or owns the repository.
+            logger.warning("Repository creation rejected by GitHub (422)")
+            return None
         else:
             logger.warning(f"Failed to create repo {name}: {resp.status_code} {resp.text[:300]}")
             return None
@@ -428,11 +417,7 @@ class GitHubService:
             logger.info("Created user repo: {}", repo_url)
             return repo_url
         elif resp.status_code == 422:
-            data = resp.json()
-            errors = data.get("errors", [])
-            if any("already" in e.get("message", "").lower() for e in errors):
-                return f"https://github.com/{user_login}/{name}"
-            logger.warning("422 creating user repo {}: {}", name, data)
+            logger.warning("User repository creation rejected by GitHub (422)")
             return None
         else:
             logger.warning("Failed to create user repo {}: {} {}", name, resp.status_code, resp.text[:300])
