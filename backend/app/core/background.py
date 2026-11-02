@@ -318,10 +318,10 @@ class _PRSyncCtx(NamedTuple):
 
 
 class GitHubSyncTask(ScheduledTask):
-    """Reconcile agent commit counts against GitHub every 5 minutes.
+    """Observe GitHub commits and reconcile PR outcomes every five minutes.
 
-    Uses GREATEST guards so webhook/atomic-push counters aren't clobbered
-    between cycles (see prior incident in project_commit_counting memory).
+    Commit author names are not authenticated accounting identities. Existing
+    historical counters are preserved; verified ingestion owns new commit credit.
     """
 
     name = "github_sync"
@@ -367,42 +367,22 @@ class GitHubSyncTask(ScheduledTask):
             for project in projects:
                 await self._sync_project(db, github, ov, project, agent_map, agent_commits)
 
-            # GitHub's count is reality for GitHub-hosted work, but it is NOT
-            # the whole truth: this query selects vcs_provider = 'github' only,
-            # so an agent's GitLab commits are invisible here. Overwriting with
-            # the GitHub total would silently zero those.
-            #
-            # So GREATEST stays — but it is no longer the only correction
-            # available. The floor it enforces is now auditable: every
-            # increment written by the push paths carries a commit_sha
-            # (V81), so an operator can compare code_commits against
-            # COUNT(DISTINCT commit_sha) and see exactly where a divergence
-            # came from instead of having to trust the number.
-            #
-            # INVARIANT(commit-count): if this ever becomes a plain
-            # assignment, GitLab-only agents lose their entire history.
-            for agent_id, total in agent_commits.items():
-                await db.execute(
-                    text("""
-                        UPDATE agents SET code_commits = GREATEST(code_commits, :n)
-                        WHERE id = :aid
-                    """),
-                    {"n": total, "aid": agent_id},
-                )
-
+            # INVARIANT(commit-count): remote author names cannot mint commit identity,
+            # contribution points, or a counter floor. GitLab-only and historical
+            # totals remain unchanged; missing credit needs verified reconciliation.
             await self._log_sync_divergence(db, agent_commits)
 
             await db.commit()
 
             if agent_commits:
                 logger.info(
-                    "GitHub sync: updated {} agents across {} projects",
+                    "GitHub sync: observed {} agents across {} projects",
                     len(agent_commits), len(projects),
                 )
 
     async def _sync_project(self, db, github, ov, project, agent_map: dict[str, str],
                             agent_commits: dict[str, int]) -> None:
-        """Attribute one project's commits, accumulating totals into agent_commits."""
+        """Collect observational name matches without granting accounting identity or credit."""
         project_id = str(project["id"])
         repo_url = project["repo_url"] or ""
         repo_name = repo_url.rstrip("/").split("/")[-1] if repo_url else ""
@@ -419,7 +399,6 @@ class GitHubSyncTask(ScheduledTask):
         if not all_commits:
             return
 
-        project_agent_commits: dict[str, int] = {}
         for commit in all_commits:
             author_name = commit.get("author", "")
             if author_name in self.SKIP_AUTHORS:
@@ -427,29 +406,8 @@ class GitHubSyncTask(ScheduledTask):
             agent_id = agent_map.get(author_name.lower())
             if not agent_id:
                 continue
-            project_agent_commits[agent_id] = project_agent_commits.get(agent_id, 0) + 1
             agent_commits[agent_id] = agent_commits.get(agent_id, 0) + 1
-            # The API response carries the real sha. Recording it makes the
-            # sync's own count auditable and lets a push that the webhook
-            # already logged be recognised as the same commit.
-            await self._record_sha(db, agent_id, project_id, commit.get("sha", ""))
-
-        for agent_id, pts in project_agent_commits.items():
-            await db.execute(
-                text("""
-                    INSERT INTO project_contributors
-                        (id, project_id, agent_id, contribution_points)
-                    VALUES (uuid_generate_v4(), :pid, :aid, :pts)
-                    ON CONFLICT (project_id, agent_id)
-                    DO UPDATE SET
-                        contribution_points = GREATEST(
-                            project_contributors.contribution_points,
-                            EXCLUDED.contribution_points
-                        ),
-                        updated_at = NOW()
-                """),
-                {"pid": project_id, "aid": agent_id, "pts": pts},
-            )
+            # These name matches are diagnostic only, including when a webhook is missing.
 
     @staticmethod
     async def _sync_merged_prs(db, github, project_id: str, repo_name: str) -> list[dict]:
@@ -581,34 +539,6 @@ class GitHubSyncTask(ScheduledTask):
             return
         if not ok:
             logger.warning("PR outcome lesson write failed for agent {} ({})", agent_id, pr_key)
-
-    @staticmethod
-    async def _record_sha(db, agent_id: str, project_id: str, sha: str) -> None:
-        """Log one commit by sha; a sha already present for this agent is a no-op.
-
-        This writer never touches code_commits — the counter is moved by the
-        GREATEST statement at the end of the cycle. Adding a fourth increment
-        path here would reintroduce exactly the double-counting V81 prevents.
-        """
-        if not sha:
-            return
-        await db.execute(
-            text("""
-                INSERT INTO agent_activity
-                    (agent_id, project_id, action_type, description, metadata)
-                VALUES (
-                    CAST(:agent_id AS UUID), CAST(:project_id AS UUID), 'code_commit',
-                    :description, CAST(:metadata AS jsonb)
-                )
-                ON CONFLICT DO NOTHING
-            """),
-            {
-                "agent_id": agent_id,
-                "project_id": project_id,
-                "description": f"Commit {sha} (GitHub sync)",
-                "metadata": json.dumps({"commit_sha": sha, "source": "github_sync"}),
-            },
-        )
 
     @staticmethod
     async def _log_sync_divergence(db, agent_commits: dict[str, int]) -> None:

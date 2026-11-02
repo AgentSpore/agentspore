@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.webhook_repo import WebhookRepository
 from app.repositories.agent_repo import AgentRepository
 from app.services.agent_service import AgentService
+from app.services.contribution_reconciliation import ContributionReconciliationService
 
 from loguru import logger
 
@@ -254,15 +255,8 @@ class GitHubWebhookService:
         if head_msg.startswith("Merge pull request #"):
             return {"status": "ignored", "reason": "pr_merge_commit"}
 
-        # Skip contribution if pushed through proxy (already counted there)
-        proxy_push = any(
-            (c.get("author") or {}).get("email", "").endswith("@agents.agentspore.dev")
-            for c in commits
-        )
-        if proxy_push:
-            logger.info("Webhook skip: proxy push by {} to {} (already counted)", ctx["sender_login"], ctx["project"]["title"])
-            return {"status": "ignored", "reason": "proxy_push_already_counted"}
-
+        # Proxy attribution may already be counted; reconcile each commit independently.
+        # Resolve proxy attribution per commit; email alone never establishes identity.
         is_agent = await self.repo.get_agent_by_github_login(ctx["sender_login"]) is not None
         if is_agent:
             changed_files: set[str] = set()
@@ -271,7 +265,7 @@ class GitHubWebhookService:
                 changed_files.update(c.get("modified", []))
             await self._award_contribution_points(
                 project_id, ctx["sender_login"], len(changed_files), len(commits),
-                vcs="github", shas=[c.get("id", "") for c in commits],
+                vcs="github", commits=commits,
             )
             logger.info("Agent push: @{} → {} files, {} commits on {}", ctx["sender_login"], len(changed_files), len(commits), ctx["project"]["title"])
             return {"status": "ok", "type": "agent_push", "files": len(changed_files), "commits": len(commits)}
@@ -348,16 +342,12 @@ class GitHubWebhookService:
 
     async def _award_contribution_points(
         self, project_id, login: str, files_changed: int, commit_count: int = 1,
-        vcs: str = "github", shas: list[str] | None = None,
+        vcs: str = "github", commits: list[dict] | None = None,
     ) -> None:
-        if files_changed <= 0:
-            return
         agent = await self.repo.get_agent_by_vcs_login(login, vcs)
         if not agent:
             return
         agent_id = agent["id"]
-        owner_user_id = agent["owner_user_id"]
-        points = files_changed * 10
         # The webhook payload carries a real sha per commit. Log them and let
         # the accepted count drive the counter, so a push already counted by
         # the proxy push path does not increment a second time here.
@@ -365,13 +355,11 @@ class GitHubWebhookService:
             f"Pushed {files_changed} files via {vcs.capitalize()} "
             f"({commit_count} commit{'s' if commit_count > 1 else ''})"
         )
-        counted = await self.agent_repo.record_commit_shas(
-            agent_id, shas or [], project_id=project_id, description=description,
+        contributions = ContributionReconciliationService.webhook_candidates(commits or [])
+        accepted = await ContributionReconciliationService(self.agent_repo).observe(
+            agent_id, project_id, contributions, description,
         )
-        if counted:
-            await self.repo.increment_commits_and_karma(agent_id, counted)
-        await self.repo.upsert_contributor_points(project_id, agent_id, owner_user_id, points)
-        await self.repo.recalculate_share_pct(project_id)
+        points = sum(len(contributions[sha]["paths"]) for sha in accepted) * 10
         logger.info("Contribution: @{} pushed {} files ({} commits) to project {} (+{} pts)", login, files_changed, commit_count, project_id, points)
 
 
@@ -382,6 +370,7 @@ class GitLabWebhookService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.repo = WebhookRepository(db)
+        self.agent_repo = AgentRepository(db)
 
     # ── Entry point ───────────────────────────────────────────────────────────
 
@@ -560,7 +549,7 @@ class GitLabWebhookService:
                 changed_files.update(c.get("modified", []))
             await self._award_contribution_points_gitlab(
                 project_id, ctx["sender_login"], len(changed_files), len(commits),
-                shas=[c.get("id", "") for c in commits],
+                commits=commits,
             )
             logger.info("Agent push (GitLab): @{} → {} files on {}", ctx["sender_login"], len(changed_files), ctx["project"]["title"])
             return {"status": "ok", "type": "agent_push", "files": len(changed_files)}
@@ -599,25 +588,19 @@ class GitLabWebhookService:
 
     async def _award_contribution_points_gitlab(
         self, project_id, login: str, files_changed: int, commit_count: int = 1,
-        shas: list[str] | None = None,
+        commits: list[dict] | None = None,
     ) -> None:
-        if files_changed <= 0:
-            return
         agent = await self.repo.get_agent_by_vcs_login(login, "gitlab")
         if not agent:
             return
         agent_id = agent["id"]
-        owner_user_id = agent["owner_user_id"]
-        points = files_changed * 10
         description = (
             f"Pushed {files_changed} files via GitLab "
             f"({commit_count} commit{'s' if commit_count > 1 else ''})"
         )
-        counted = await self.agent_repo.record_commit_shas(
-            agent_id, shas or [], project_id=project_id, description=description,
+        contributions = ContributionReconciliationService.webhook_candidates(commits or [])
+        accepted = await ContributionReconciliationService(self.agent_repo).observe(
+            agent_id, project_id, contributions, description,
         )
-        if counted:
-            await self.repo.increment_commits_and_karma(agent_id, counted)
-        await self.repo.upsert_contributor_points(project_id, agent_id, owner_user_id, points)
-        await self.repo.recalculate_share_pct(project_id)
+        points = sum(len(contributions[sha]["paths"]) for sha in accepted) * 10
         logger.info("Contribution: @{} pushed {} files to project {} (+{} pts)", login, files_changed, project_id, points)
