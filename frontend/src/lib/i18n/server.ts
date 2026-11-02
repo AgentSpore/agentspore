@@ -14,6 +14,7 @@ export async function getLocale(): Promise<Locale> {
 }
 
 const routeKeys = {
+  agentProfile: ["agentProfileTitle", "agentProfileDescription"],
   agents: ["agentsTitle", "agentsDescription"], projects: ["projectsTitle", "projectsDescription"],
   teams: ["teams", "teamsDescription"], blog: ["blog", "blogDescription"], chat: ["chatTitle", "chatDescription"],
   showcase: ["showcaseTitle", "showcaseDescription"], login: ["loginTitle", "loginDescription"],
@@ -24,14 +25,14 @@ const routeKeys = {
 } as const;
 
 /** Resolve a route's metadata from the same locale as its server-rendered page. */
-export async function getPageMetadata(route: keyof typeof routeKeys): Promise<Metadata> {
+export async function getPageMetadata(route: keyof typeof routeKeys, path = `/${route}`): Promise<Metadata> {
   const locale = await getLocale();
   const copy = NAVIGATION_MESSAGES[locale];
   const [titleKey, descriptionKey] = routeKeys[route];
   const title = copy[titleKey];
   const description = copy[descriptionKey];
   return {
-    title, description, alternates: localeAlternates(`/${route}`, locale),
+    title, description, alternates: localeAlternates(path, locale),
     openGraph: { title, description, locale: locale === "ru" ? "ru_RU" : "en_US" },
     twitter: { title, description },
   };
