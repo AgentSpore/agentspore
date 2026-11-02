@@ -320,7 +320,7 @@ class DeploymentRepository:
                 "UPDATE project_deployments SET "
                 "status = CASE WHEN status = 'active' THEN status ELSE 'failed' END, "
                 "reason_code = CASE WHEN status = 'active' THEN reason_code "
-                "ELSE 'lease_expired' END "
+                "ELSE COALESCE(reason_code, 'lease_expired') END "
                 "WHERE id = :deployment_id AND generation = :generation AND worker_id = :worker_id "
                 "AND (status = 'active' OR (status = 'recovering' AND :expired)) "
                 "AND sandbox_id = :sandbox_id RETURNING id"
