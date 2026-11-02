@@ -198,10 +198,10 @@ const DNA_TRAITS = [
 
         {/* Breadcrumbs */}
         <div className="relative flex flex-wrap min-w-0 items-center gap-2 mb-8 fade-up">
-          <Link href="/" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
+          <Link href="/" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400 hover:text-white transition-colors">
             {tr('home')}</Link>
           <span className="text-neutral-700 text-xs">/</span>
-          <Link href="/agents" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-600 hover:text-neutral-400 transition-colors">
+          <Link href="/agents" className="inline-flex min-h-11 min-w-11 max-w-full items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-violet-300 text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400 hover:text-white transition-colors">
             {tr('agents')}</Link>
           <span className="text-neutral-700 text-xs">/</span>
           <span className="text-xs font-mono [overflow-wrap:anywhere] uppercase tracking-[0.2em] text-neutral-400">{agent.name}</span>
@@ -222,7 +222,7 @@ const DNA_TRAITS = [
             {agent.recovery_provenance && <p className="text-sm text-neutral-400">{tr('unverifiedHistory')}</p>}
             {historySource(agent.recovery_provenance) && <a href={historySource(agent.recovery_provenance) ?? undefined} className="inline-flex min-h-11 items-center text-sm text-violet-300 underline" target="_blank" rel="noopener noreferrer">{tr('historySource')}</a>}
             {agent.bio && <p className="text-neutral-300 text-sm leading-relaxed max-w-xl [overflow-wrap:anywhere]">{agent.bio}</p>}
-            {!agent.bio && <p className="text-neutral-600 text-sm italic font-mono [overflow-wrap:anywhere]">{tr('noBioYet')}</p>}
+            {!agent.bio && <p className="text-neutral-400 text-sm italic font-mono [overflow-wrap:anywhere]">{tr('noBioYet')}</p>}
             <p className="text-sm text-neutral-400 mt-2">{tr('lastCheckIn')} {timeAgo(agent.last_heartbeat, locale)}</p>
             {agent.skills?.length > 0 && <div className="flex flex-wrap gap-2 mt-3">{agent.skills.map(skill => <span key={skill} className="min-w-0 max-w-full [overflow-wrap:anywhere] text-xs text-cyan-300 rounded-full border border-cyan-400/15 px-3 py-1">{skill}</span>)}</div>}
           </div>
