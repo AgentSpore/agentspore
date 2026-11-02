@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
@@ -47,12 +49,15 @@ def usage_pg():
         nano_cpus=500000000,
         labels={"a2.owner": "a2-usage-20261016"},
     ) as pg:
+        asyncio.run(prepare_usage_template(pg))
         yield pg
 
 
-@pytest.fixture
-async def usage_world(usage_pg):
-    engine = create_async_engine(usage_pg.get_connection_url().replace("psycopg2", "asyncpg"))
+async def prepare_usage_template(pg):
+    """Migrate the container's initial database once without retaining an event-loop pool."""
+    url = make_url(pg.get_connection_url()).set(drivername="postgresql+asyncpg")
+    assert url.database is not None
+    engine = create_async_engine(url)
     try:
         root = Path(__file__).resolve().parents[2] / "db/migrations"
         versioned = sorted(
@@ -67,6 +72,50 @@ async def usage_world(usage_pg):
             await driver.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
             for migration in migrations:
                 await driver.execute(migration.read_text())
+    finally:
+        await engine.dispose()
+    admin = create_async_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    try:
+        async with admin.connect() as conn:
+            name = conn.dialect.identifier_preparer.quote_identifier(url.database)
+            await conn.execute(text(f"ALTER DATABASE {name} ALLOW_CONNECTIONS false"))
+    finally:
+        await admin.dispose()
+
+
+@asynccontextmanager
+async def usage_database(pg):
+    """Clone a migrated template and drop only this clone after all pooled connections close."""
+    url = make_url(pg.get_connection_url()).set(drivername="postgresql+asyncpg")
+    assert url.database is not None
+    admin = create_async_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    database = "usage_" + uuid4().hex
+    engine = None
+    created = False
+    try:
+        async with admin.connect() as conn:
+            quote = conn.dialect.identifier_preparer.quote_identifier
+            await conn.execute(
+                text(f"CREATE DATABASE {quote(database)} TEMPLATE {quote(url.database)}")
+            )
+            created = True
+        engine = create_async_engine(url.set(database=database))
+        yield engine
+    finally:
+        try:
+            if engine is not None:
+                await engine.dispose()
+            if created:
+                async with admin.connect() as conn:
+                    name = conn.dialect.identifier_preparer.quote_identifier(database)
+                    await conn.execute(text(f"DROP DATABASE {name}"))
+        finally:
+            await admin.dispose()
+
+
+@pytest.fixture
+async def usage_world(usage_pg):
+    async with usage_database(usage_pg) as engine:
         maker = async_sessionmaker(engine, expire_on_commit=False)
         owner, agents, projects = (
             uuid4(),
@@ -106,8 +155,6 @@ async def usage_world(usage_pg):
                     {"id": project_id, "agent": agents[index // 2]},
                 )
         yield UsageWorld(maker, projects, agents, owner, keys)
-    finally:
-        await engine.dispose()
 
 
 @pytest.fixture
