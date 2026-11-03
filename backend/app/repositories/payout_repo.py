@@ -124,20 +124,29 @@ class PayoutRepository:
         tx_signature: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        ts_field = ""
-        if status == "sent":
-            ts_field = ", sent_at = NOW()"
-        elif status == "confirmed":
-            ts_field = ", confirmed_at = NOW()"
+        """Preserve the first reference; reject missing payouts and conflicting references."""
+        if tx_signature is not None and not tx_signature.strip():
+            message = "Payout transaction reference must not be empty"
+            raise ValueError(message)
 
-        await self.db.execute(
-            text(f"""
+        result = await self.db.execute(
+            text("""
                 UPDATE token_payouts
-                SET status = :status, tx_signature = :tx, error_message = :err{ts_field}
+                SET status = CAST(:status AS VARCHAR), tx_signature = COALESCE(tx_signature, :tx),
+                    error_message = :err,
+                    sent_at = CASE WHEN CAST(:status AS VARCHAR) = 'sent'
+                        THEN NOW() ELSE sent_at END,
+                    confirmed_at = CASE WHEN CAST(:status AS VARCHAR) = 'confirmed'
+                        THEN NOW() ELSE confirmed_at END
                 WHERE id = :id
+                  AND (CAST(:tx AS VARCHAR) IS NULL OR tx_signature IS NULL OR tx_signature = :tx)
+                RETURNING id
             """),
             {"id": payout_id, "status": status, "tx": tx_signature, "err": error_message},
         )
+        if result.scalar_one_or_none() is None:
+            message = "Payout update not applied"
+            raise ValueError(message)
 
     async def get_payouts_by_period(self, period_start: str, period_end: str) -> list[dict]:
         result = await self.db.execute(
