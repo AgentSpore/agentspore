@@ -8,9 +8,8 @@ import { SkeletonText } from "@/components/Skeleton";
 import { API_URL } from "@/lib/api";
 import { fetchWithAuth, getAuthSnapshot, getServerAuthSnapshot, subscribeAuthChanges } from "@/lib/auth";
 import { buildFunnelTable, type FunnelReport, type FunnelTable } from "@/lib/funnel/report";
-import { localeTag } from "@/lib/i18n/locale";
 import { funnelMessages } from "@/lib/i18n/funnel";
-import { useLocale, useTranslations } from "@/lib/i18n/LocaleProvider";
+import { useTranslations } from "@/lib/i18n/LocaleProvider";
 
 const PERIODS = [7, 30, 90] as const;
 type Period = (typeof PERIODS)[number];
@@ -45,17 +44,16 @@ function useFunnel(days: Period, token: string | null, initializing: boolean, re
 export default function AdminFunnelPage() {
   const auth = useSyncExternalStore(subscribeAuthChanges, getAuthSnapshot, getServerAuthSnapshot);
   const tr = useTranslations(funnelMessages);
-  const { locale } = useLocale();
   const [days, setDays] = useState<Period>(7);
   const [revision, setRevision] = useState(0);
   const state = useFunnel(days, auth.accessToken, auth.generation < 0, revision);
-  const percent = new Intl.NumberFormat(localeTag(locale), { style: "percent", maximumFractionDigits: 1 });
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Header />
       <main id="main-content" tabIndex={-1} className="mx-auto max-w-5xl px-4 py-8 sm:py-12">
         <h1 className="text-2xl font-semibold text-white sm:text-3xl">{tr("title")}</h1>
         <p className="mt-2 text-sm text-neutral-300">{tr("intro")}</p>
+        <p className="mt-2 text-sm text-neutral-400">{tr("coverageNote")}</p>
         <div role="group" aria-label={tr("period")} className="mt-6 flex gap-2">
           {PERIODS.map(value => (
             <button key={value} type="button" aria-pressed={days === value} onClick={() => setDays(value)}
@@ -75,7 +73,7 @@ export default function AdminFunnelPage() {
           {state.kind === "forbidden" && <Notice title={tr("forbiddenTitle")} body={tr("forbiddenBody")} />}
           {state.kind === "ready" && (state.table.days.length === 0
             ? <Notice title={tr("emptyTitle")} body={tr("emptyBody")} />
-            : <FunnelGrid table={state.table} percent={percent} />)}
+            : <FunnelGrid table={state.table} />)}
         </div>
       </main>
     </div>
@@ -92,13 +90,9 @@ function Notice({ title, body, children }: { title: string; body: string; childr
   );
 }
 
-function FunnelGrid({ table, percent }: { table: FunnelTable; percent: Intl.NumberFormat }) {
+function FunnelGrid({ table }: { table: FunnelTable }) {
   const tr = useTranslations(funnelMessages);
   const label = (step: string) => (`step_${step}` in funnelMessages.en ? tr(`step_${step}` as keyof typeof funnelMessages.en) : step);
-  const rate = (step: string) => {
-    const value = table.conversions[step];
-    return value === null || value === undefined ? tr("noData") : percent.format(value);
-  };
   return (
     <div className="overflow-x-auto rounded-xl border border-neutral-800">
       <table className="w-full text-left text-sm">
@@ -120,10 +114,6 @@ function FunnelGrid({ table, percent }: { table: FunnelTable; percent: Intl.Numb
           <tr>
             <th scope="row" className="px-3 py-2">{tr("total")}</th>
             {table.steps.map(step => <td key={step} className="px-3 py-2 text-right tabular-nums">{table.totals[step]}</td>)}
-          </tr>
-          <tr className="text-neutral-300">
-            <th scope="row" className="px-3 py-2">{tr("conversion")}</th>
-            {table.steps.map(step => <td key={step} className="px-3 py-2 text-right tabular-nums">{rate(step)}</td>)}
           </tr>
         </tfoot>
       </table>
