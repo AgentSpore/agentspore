@@ -1,7 +1,7 @@
 # Claiming an ASPORE deposit
 
-15 October 2026 · API contract for local feature/AF-34; not deployed or published.
-Owner: Roman Konnov · Review by: 22 October 2026.
+3 November 2026 · API contract for local fix/181-token2022-20261103; not deployed or published.
+Owner: Roman Konnov · Review by: 10 November 2026.
 
 A public transaction identifier does not authorize crediting its tokens to an account. The deposit endpoint requires the source wallet to sign a claim bound to the authenticated user's UUID and the exact transfer. The address saved in the profile is not ownership proof. Check the supported transfer and amount rules **before sending tokens**; unsupported transfers are not automatically refunded.
 
@@ -45,11 +45,13 @@ Public encoding vector: `user_id` is `00000000-0000-0000-0000-000000000001`; `tx
 ## Supported transfers and amounts
 
 - The server reads `getTransaction` from its configured trusted mainnet RPC using `jsonParsed`, maximum transaction version 0 and `commitment: finalized`. It requires a successful JSON-RPC envelope, the requested first transaction signature, and an explicit `meta.err: null`.
-- There must be exactly one top-level `transfer` or `transferChecked` from the classic SPL Token program. Source, destination and program must be present in parsed account keys; `transferChecked` also requires its mint key. The wallet must be a signer, source token-account owner and the instruction authority.
-- Both token accounts must already exist, with matching configured mint and six decimals before and after the transfer. The destination must belong to treasury; treasury-to-treasury movements cannot be claimed as deposits. Exactly those two token-account balance records are supported.
+- There must be exactly one top-level `transfer` or `transferChecked` from the legacy Token Program (`TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`) or Token-2022 (`TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`). Source, destination and program must be present in parsed account keys; `transferChecked` also requires its mint key. The wallet must be a signer, source token-account owner and the instruction authority. The display label `program: "spl-token"` does not determine the program; `programId` does.
+- Both token accounts must already exist, with matching configured mint and six decimals before and after the transfer. All four source/destination pre/post balance records must supply a string `programId` equal to the transfer instruction's program. Missing, mixed or unknown program metadata is rejected, including older RPC responses that omit it. The destination must belong to treasury; treasury-to-treasury movements cannot be claimed as deposits. Exactly those two token-account balance records are supported.
 - Source debit and treasury destination credit must each equal the instruction's raw integer amount. Display floats and `uiAmountString` are not used for accounting.
 - Amounts must be positive whole UI tokens: raw amount must be divisible by 1,000,000. Fractions are rejected, never rounded or truncated. SPL raw amounts must fit unsigned 64 bits; the credited whole-token balance must fit signed PostgreSQL BIGINT.
-- CPI, batches, delegates, multisig, Token-2022, account creation/closure and other programs are unsupported. Non-token-moving compute-budget instructions are allowed alongside the one transfer. Some exchange or custodial transfers cannot produce the required owner signature; do not send them through this path.
+- CPI (including transfer-hook execution), batches, delegates, multisig, fee-specific instruction types/fields, account creation/closure and other programs are unsupported. Any transfer fee that changes the exact debit/credit amounts is rejected. Non-token-moving compute-budget instructions are allowed alongside the one transfer. Some exchange or custodial transfers cannot produce the required owner signature; do not send them through this path.
+
+The configured ASPORE mint `5ZkjEjfDAPuSg7pRxCRJsJuZ8FByRSyAgAA8SLMMpump` uses Token-2022. Supporting its base transfer instructions does not imply support for every extension: `getTransaction` does not contain the full mint/account extension state. The verifier checks the instruction shape, program attribution and exact balance changes; it does not discover all configured extensions. [Token-2022 documentation](https://www.solana-program.com/docs/token-2022) describes the compatible base instruction layout and distinct program address.
 
 A failure after an already-sent unsupported transfer does not move the on-chain tokens back. Stop and request operator investigation; do not invent another transaction or claim it for another user. A successful local test does not establish public backend availability.
 

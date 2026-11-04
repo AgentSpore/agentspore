@@ -8,6 +8,7 @@ from sqlalchemy import text
 from test_deposit_api import deposit_api as deposit_api
 from test_deposit_api import deposit_claim as deposit_claim
 from test_deposit_api import deposit_db as deposit_db
+from test_deposit_api import deposit_program as deposit_program
 from test_deposit_api import deposit_quantity as deposit_quantity
 from test_deposit_api import deposit_sender as deposit_sender
 from test_deposit_api import deposit_transaction as deposit_transaction

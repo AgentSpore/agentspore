@@ -86,6 +86,7 @@ class DepositTokenBalance(BaseModel):
     account_index: int = Field(ge=0, alias="accountIndex")
     mint: str
     owner: str
+    program_id: str = Field(alias="programId")
     ui_token_amount: DepositTokenAmount = Field(alias="uiTokenAmount")
 
 
