@@ -65,7 +65,6 @@ Redis outage behaviour is a per-task choice (`fail_closed`):
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
@@ -155,10 +154,10 @@ class ScheduledTask(ABC):
                 else None
             )
             try:
-                await self.run_once()
-            except Exception as e:
-                logger.warning("Task {} error: {}", self.name, e)
-            try:
+                try:
+                    await self.run_once()
+                except Exception as e:
+                    logger.warning("Task {} error: {}", self.name, e)
                 # Race the interval sleep against lease loss: a lost lease
                 # must cut the sleep short so we re-acquire on the next loop
                 # iteration instead of sleeping out a lease a non-leader has
@@ -177,17 +176,24 @@ class ScheduledTask(ABC):
                     # of two tasks already cancelled above — TaskGroup is for
                     # supervising concurrent work with error propagation, not
                     # awaiting an already-decided cancellation to finish.
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await asyncio.gather(sleeper, lease_waiter)
+                    await self._drain_cancelled(sleeper, lease_waiter)
             finally:
-                if renewer is not None:
-                    # Await the cancellation before releasing: a renewer caught
-                    # mid-EXPIRE would otherwise re-arm the key we just deleted,
-                    # leaving an orphan lease that blocks the next lock_ttl_s.
-                    renewer.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await renewer
-                await self._release_leader()
+                try:
+                    if renewer is not None:
+                        # Await the cancellation before releasing: a renewer caught
+                        # mid-EXPIRE would otherwise re-arm the key we just deleted,
+                        # leaving an orphan lease that blocks the next lock_ttl_s.
+                        renewer.cancel()
+                        await self._drain_cancelled(renewer)
+                finally:
+                    await self._release_leader()
+
+    @staticmethod
+    async def _drain_cancelled(*tasks: asyncio.Task[object]) -> None:
+        """Ignore child cancellations while preserving caller cancellation and failures."""
+        for result in await asyncio.gather(*tasks, return_exceptions=True):
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                raise result
 
     def _lock_key(self) -> str:
         return f"scheduler:leader:{self.name}"

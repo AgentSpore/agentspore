@@ -1,7 +1,7 @@
 """A4 P1 admission: author gate, flag, hostname, quotas and status on real PostgreSQL."""
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -116,7 +116,7 @@ async def new_project(deployment_session):
 async def seed(deployment_session):
     """Factory: deployments of a project whose created_at is `age` in the past."""
 
-    async def put(project_id, count=1, status="failed", age=timedelta(0)):
+    async def put(project_id, count=1, status="failed", age=timedelta(0), before_today=False):
         for _ in range(count):
             await deployment_session.execute(
                 text(
@@ -124,12 +124,18 @@ async def seed(deployment_session):
                     "repository_url, status, created_at, activated_at, creator_agent_id, "
                     "owner_user_id) "
                     "SELECT p.id, :k, :sha, 'https://x/y', :s, "
-                    "clock_timestamp() - CAST(:age AS interval), "
+                    "CASE WHEN :before_today THEN "
+                    "(date_trunc('day', clock_timestamp() AT TIME ZONE 'UTC') "
+                    "AT TIME ZONE 'UTC') - interval '1 second' "
+                    "ELSE clock_timestamp() - CAST(:age AS interval) END, "
                     "CASE WHEN :s = 'active' THEN clock_timestamp() END, p.creator_agent_id, "
                     "a.owner_user_id FROM projects p JOIN agents a ON a.id = p.creator_agent_id "
                     "WHERE p.id = :p"
                 ),
-                {"p": project_id, "k": uuid4(), "sha": SHA, "s": status, "age": age},
+                {
+                    "p": project_id, "k": uuid4(), "sha": SHA, "s": status,
+                    "age": age, "before_today": before_today,
+                },
             )
         await deployment_session.commit()
 
@@ -214,10 +220,7 @@ async def test_quota_agent_daily_429(enabled, deployment_client, new_project, se
 
 async def test_quota_daily_counts_utc_day_only(enabled, deployment_client, new_project, seed):
     project = await new_project("yesterday-app")
-    since_midnight = datetime.now(UTC) - datetime.now(UTC).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    await seed(project["id"], 5, age=since_midnight + timedelta(seconds=1))
+    await seed(project["id"], 5, before_today=True)
     assert (await deploy(deployment_client, project)).status_code == 202
 
 

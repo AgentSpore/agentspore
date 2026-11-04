@@ -152,6 +152,47 @@ class _CountingTask(ScheduledTask):
             raise RuntimeError("run_once exploded")
 
 
+class _CleanupCancellationTask(ScheduledTask):
+    """Stop a buggy second pass so the regression fails without hanging."""
+
+    name = "test_cleanup_cancellation"
+    interval_s = 60
+    lock_ttl_s = 30
+
+    def __init__(self, hold_work=False) -> None:
+        super().__init__()
+        self.runs = 0
+        self.hold_work = hold_work
+        self.work_started = asyncio.Event()
+
+    async def run_once(self) -> None:
+        self.runs += 1
+        if self.runs > 1:
+            raise asyncio.CancelledError
+        if self.hold_work:
+            self.work_started.set()
+            await asyncio.Event().wait()
+        self._lease_lost.set()
+
+
+class _CancelOwnerOnDrain(asyncio.Task):
+    def __init__(self, coro, owner) -> None:
+        super().__init__(coro)
+        self.owner = owner
+        self.injected = False
+
+    def cancel(self, msg=None):
+        if not self.injected and not self.owner.done():
+            self.injected = True
+            asyncio.get_running_loop().call_soon(self.owner.cancel)
+        return super().cancel(msg)
+
+
+class _FailedRenewalTask(_CleanupCancellationTask):
+    async def _renew_lease(self) -> None:
+        raise RuntimeError("Synthetic renewer failure")
+
+
 async def _run_for(task: ScheduledTask, seconds: float) -> None:
     """Drive the real `start()` loop for a bounded wall time, then cancel it."""
     runner = asyncio.create_task(task.start())
@@ -434,6 +475,84 @@ async def test_lock_ttl_none_bypasses_the_gate_entirely():
     assert task.runs >= 2
     assert redis.evals == [], "an ungated task must not touch the lease at all"
     assert redis.store[task._lock_key()] == "someone-else"
+
+
+@pytest.mark.parametrize(
+    ("phase", "redis_available"),
+    [("children", False), ("children", True), ("renewer", True), ("work", True)],
+)
+@pytest.mark.asyncio
+async def test_parent_cancellation_stops_work_and_releases_lease(
+    phase, redis_available
+):
+    """Preserve shutdown cancellation arriving while cancelled children drain."""
+    task = _CleanupCancellationTask(hold_work=phase == "work")
+    redis = FakeRedis()
+    get_redis = (
+        AsyncMock(return_value=redis)
+        if redis_available
+        else AsyncMock(side_effect=ConnectionError("redis down"))
+    )
+    create_task, gather = asyncio.create_task, asyncio.gather
+    injected = False
+    renewers = []
+    drained = False
+
+    def create_child(coro, *args, **kwargs):
+        if coro.cr_code.co_name == "_renew_lease":
+            child = (
+                _CancelOwnerOnDrain(coro, asyncio.current_task())
+                if phase == "renewer"
+                else create_task(coro, *args, **kwargs)
+            )
+            renewers.append(child)
+            return child
+        return create_task(coro, *args, **kwargs)
+
+    def drain_children(*children, **kwargs):
+        nonlocal injected
+        if phase == "children" and not injected and len(children) == 2:
+            injected = True
+            owner = asyncio.current_task()
+            assert owner is not None
+            asyncio.get_running_loop().call_soon(owner.cancel)
+        return gather(*children, **kwargs)
+
+    with (
+        patch("app.core.background.get_redis", get_redis),
+        patch("app.core.background.asyncio.create_task", create_child),
+        patch("app.core.background.asyncio.gather", drain_children),
+    ):
+        try:
+            runner = asyncio.create_task(task.start())
+            async with asyncio.timeout(2):
+                if phase == "work":
+                    await task.work_started.wait()
+                    runner.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await runner
+                drained = all(child.done() for child in renewers)
+        finally:
+            for child in renewers:
+                child.cancel()
+            await gather(*renewers, return_exceptions=True)
+
+    assert task.runs == 1
+    assert redis.store == {}
+    assert drained
+
+
+@pytest.mark.asyncio
+async def test_renewer_failure_propagates_after_releasing_lease():
+    task = _FailedRenewalTask()
+    redis = FakeRedis()
+    with patch("app.core.background.get_redis", AsyncMock(return_value=redis)):
+        async with asyncio.timeout(2):
+            with pytest.raises(RuntimeError, match="Synthetic renewer failure"):
+                await task.start()
+
+    assert task.runs == 1
+    assert redis.store == {}
 
 
 def test_every_ttl_leaves_room_for_at_least_three_renewals():
