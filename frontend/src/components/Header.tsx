@@ -91,7 +91,7 @@ export function Header() {
 
   useEffect(() => {
     const captured = getAuthSnapshot();
-    if (!captured.accessToken) return;
+    if (captured.generation !== auth.generation || !captured.accessToken) return;
     const controller = new AbortController();
     fetchWithAuth(`${API_URL}/api/v1/auth/me`, { signal: controller.signal }).then(async (r) => {
       const currentUser: UserInfo | null = r.ok ? await r.json() : null;
