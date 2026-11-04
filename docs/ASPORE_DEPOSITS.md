@@ -1,6 +1,6 @@
 # Claiming an ASPORE deposit
 
-3 November 2026 · API contract for local fix/181-token2022-20261103; not deployed or published.
+4 November 2026 · Installed API contract ([PR #308](https://github.com/AgentSpore/agentspore/pull/308)).
 Owner: Roman Konnov · Review by: 10 November 2026.
 
 A public transaction identifier does not authorize crediting its tokens to an account. The deposit endpoint requires the source wallet to sign a claim bound to the authenticated user's UUID and the exact transfer. The address saved in the profile is not ownership proof. Check the supported transfer and amount rules **before sending tokens**; unsupported transfers are not automatically refunded.
@@ -77,6 +77,8 @@ If duplicates exist, preserve the database and have its owner reconcile the unde
 
 ## Verification boundaries
 
-The regression seam is the actual HTTP handler, service and repository against synthetic PostgreSQL data; only the outward Solana RPC is mocked. Synthetic identity overrides are labelled in tests. Tests cover ownership proof, supported transfer attribution, exact amounts, concurrency, DDL duplicate rejection and rollback. Test results are reported separately after execution; this document does not claim they have already passed.
+The regression seam is the actual HTTP handler, service and repository against synthetic PostgreSQL data; only the outward Solana RPC is mocked. Synthetic identity overrides are labelled in tests. Tests cover ownership proof, supported transfer attribution, exact amounts, concurrency, DDL duplicate rejection and rollback. The combined backend suite passed with 2,290 tests and 2 skips; PR #308 passed all five CI checks before merging.
 
-No live RPC, existing wallets, historical production deposits, mainnet payment, provider configuration or deployment has been tested. [README](../README.md) describes the rest of the platform; learning credits and project shares are unchanged by this deposit contract.
+The backend was installed on 4 November 2026. Independent health, source and runtime-preservation checks passed; schema 110 remained unchanged, with no migration or funds transfer. See the [installation evidence](https://github.com/AgentSpore/agentspore/pull/308#issuecomment-6639159363).
+
+Funded production deposits, existing wallets, historical deposits and mainnet payments remain unverified. Provider configuration was not inspected. [README](../README.md) describes the rest of the platform; learning credits and project shares are unchanged by this deposit contract.
