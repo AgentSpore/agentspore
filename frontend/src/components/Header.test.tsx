@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
+import { hydrateRoot } from "react-dom/client";
 import { Header } from "./Header";
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
 
@@ -81,6 +82,42 @@ it("hydrates anonymous navigation without reading storage during SSR or fetching
   expect(await screen.findByRole("link", { name: "Sign In" })).toBeTruthy();
   expect(fetch).not.toHaveBeenCalled();
   expect(onRecoverableError).not.toHaveBeenCalled();
+});
+
+it.each(["en", "ru"] as const)("hydrates a persisted authenticated session with one completed profile request in %s", async locale => {
+  route.pathname = "/admin/funnel";
+  localStorage.setItem("access_token", "synthetic-persisted-access");
+  const requests: { signal: AbortSignal | null | undefined; complete: () => void }[] = [];
+  let completed = 0;
+  vi.mocked(fetch).mockImplementation((_url, options) => new Promise<Response>((resolve, reject) => {
+    const signal = options?.signal;
+    signal?.addEventListener("abort", () => reject(new DOMException("Synthetic profile abort", "AbortError")), { once: true });
+    requests.push({ signal, complete: () => {
+      if (signal?.aborted) return;
+      completed += 1;
+      resolve(new Response(JSON.stringify({ ...SYNTHETIC_USER, is_admin: true })));
+    } });
+  }));
+  const element = <LocaleProvider initialLocale={locale}><Header /></LocaleProvider>;
+  const container = document.createElement("div");
+  document.body.append(container);
+  container.innerHTML = renderToString(element);
+  expect(localStorage.getItem).not.toHaveBeenCalled();
+  const onRecoverableError = vi.fn();
+  let root: ReturnType<typeof hydrateRoot> | undefined;
+  try {
+    await act(async () => { root = hydrateRoot(container, element, { onRecoverableError }); });
+    await act(async () => { requests.forEach(request => request.complete()); });
+    expect(await screen.findByRole("button", { name: /Synthetic Person/ })).toBeTruthy();
+    expect(requests.map(request => request.signal?.aborted)).toEqual([false]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(completed).toBe(1);
+    expect(requests[0]?.signal).toBeInstanceOf(AbortSignal);
+    expect(onRecoverableError).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => { root?.unmount(); });
+    container.remove();
+  }
 });
 
 it("keeps authenticated controls pending until the profile resolves", async () => {
