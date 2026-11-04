@@ -24,6 +24,7 @@ from app.core.database import get_db
 from app.services import payout_service
 
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 
 
 class DepositRpcControl(TypedDict):
@@ -40,8 +41,13 @@ def deposit_sender():
     return Keypair()
 
 
+@pytest.fixture(params=[TOKEN_PROGRAM, TOKEN2022_PROGRAM], ids=["legacy", "token2022"])
+def deposit_program(request):
+    return request.param
+
+
 @pytest.fixture
-def deposit_transaction(deposit_sender):
+def deposit_transaction(deposit_sender, deposit_program):
     source, destination = str(Pubkey.new_unique()), str(Pubkey.new_unique())
     wallet = str(deposit_sender.pubkey())
     tx = str(deposit_sender.sign_message(b"Synthetic transaction identifier"))
@@ -50,6 +56,7 @@ def deposit_transaction(deposit_sender):
             "accountIndex": i,
             "mint": payout_service.ASPORE_TOKEN_MINT,
             "owner": owner,
+            "programId": deposit_program,
             "uiTokenAmount": {"amount": amount, "decimals": 6, "uiAmountString": ui},
         }
         for i, owner, amount, ui in [
@@ -62,7 +69,7 @@ def deposit_transaction(deposit_sender):
     post[1]["uiTokenAmount"].update(amount="4000000", uiAmountString="4")
     instruction = {
         "program": "spl-token",
-        "programId": TOKEN_PROGRAM,
+        "programId": deposit_program,
         "parsed": {
             "type": "transferChecked",
             "info": {
@@ -83,7 +90,7 @@ def deposit_transaction(deposit_sender):
                     {"pubkey": wallet, "signer": True},
                     {"pubkey": source, "signer": False},
                     {"pubkey": destination, "signer": False},
-                    {"pubkey": TOKEN_PROGRAM, "signer": False},
+                    {"pubkey": deposit_program, "signer": False},
                     {"pubkey": payout_service.ASPORE_TOKEN_MINT, "signer": False},
                 ],
                 "instructions": [instruction],

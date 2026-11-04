@@ -117,7 +117,7 @@ class PayoutService:
             raise ValueError("Unable to verify deposit transaction") from exc
 
     @staticmethod
-    def _direct_transfer(message: DepositMessage) -> DepositParsedTransfer:
+    def _direct_transfer(message: DepositMessage) -> tuple[DepositParsedTransfer, str]:
         transfers = []
         keys = {account.pubkey for account in message.account_keys}
         for instruction in message.instructions:
@@ -130,12 +130,15 @@ class PayoutService:
                     or not instruction.data
                 ):
                     raise ValueError("Unsupported compute-budget instruction")
-            elif instruction.program_id == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
-                if instruction.parsed is None:
-                    raise ValueError("A parsed direct transfer is required")
-                transfers.append(instruction.parsed)
-            else:
+                continue
+            if instruction.program_id not in {
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+            }:
                 raise ValueError("Unsupported deposit program")
+            if instruction.parsed is None:
+                raise ValueError("A parsed direct transfer is required")
+            transfers.append((instruction.parsed, instruction.program_id))
         if len(transfers) != 1:
             raise ValueError("Exactly one direct transfer is required")
         return transfers[0]
@@ -163,9 +166,13 @@ class PayoutService:
         return cls._raw_amount(DepositTokenAmount(amount=info.amount, decimals=ASPORE_DECIMALS))
 
     @classmethod
-    def _owned_balance(cls, balance: DepositTokenBalance, owner: str) -> int:
-        if balance.mint != ASPORE_TOKEN_MINT or balance.owner != owner:
-            raise ValueError("Token account ownership differs")
+    def _owned_balance(cls, balance: DepositTokenBalance, owner: str, program: str) -> int:
+        if (
+            balance.mint != ASPORE_TOKEN_MINT
+            or balance.owner != owner
+            or balance.program_id != program
+        ):
+            raise ValueError("Token account ownership or program differs")
         return cls._raw_amount(balance.ui_token_amount)
 
     @classmethod
@@ -178,7 +185,7 @@ class PayoutService:
             account.pubkey == wallet and account.signer for account in message.account_keys
         ):
             raise ValueError("The source owner must sign the transaction")
-        transfer = cls._direct_transfer(message)
+        transfer, program = cls._direct_transfer(message)
         info = transfer.info
         if transfer.type == "transferChecked" and info.mint not in keys:
             raise ValueError("Transfer mint is not in account keys")
@@ -197,12 +204,15 @@ class PayoutService:
             )
         ):
             raise ValueError("Existing source and treasury token accounts are required")
-        debit = cls._owned_balance(before[source], wallet) - cls._owned_balance(
-            after[source], wallet
+        debit = cls._owned_balance(before[source], wallet, program) - cls._owned_balance(
+            after[source], wallet, program
         )
-        credit = cls._owned_balance(after[destination], TREASURY_WALLET) - cls._owned_balance(
+        credit = cls._owned_balance(
+            after[destination], TREASURY_WALLET, program
+        ) - cls._owned_balance(
             before[destination],
             TREASURY_WALLET,
+            program,
         )
         raw = cls._instruction_amount(transfer)
         scale = 10**ASPORE_DECIMALS
