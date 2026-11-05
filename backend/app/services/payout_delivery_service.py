@@ -7,7 +7,14 @@ import base58
 import httpx
 from solders.signature import Signature
 
-from app.schemas.payout_delivery import ReceiptIntent, TokenBalance, solana_hash
+from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
+from app.schemas.payout_delivery import (
+    AllocationIntent,
+    AllocationKey,
+    ReceiptIntent,
+    TokenBalance,
+    solana_hash,
+)
 
 
 def rpc_result(client: httpx.Client, intent: ReceiptIntent, method: str, params: list) -> Any:
@@ -187,3 +194,29 @@ def verify_receipt(client: httpx.Client, intent: ReceiptIntent) -> str:
         RecursionError,
     ):
         return "unresolved"
+
+
+async def admit_intent(repo: PayoutDeliveryRepository, intent: AllocationIntent) -> dict:
+    """Admit or compare an allocation without committing the caller's transaction."""
+    row = await repo.insert(intent)
+    if row is not None:
+        return {"verdict": "accepted", "intent_id": str(row["intent_id"]), "state": row["state"]}
+    # INVARIANT(188): a separate READ COMMITTED statement must see the committed winner.
+    row = await repo.read(
+        AllocationKey.model_validate(
+            intent.model_dump(include={"producer_namespace", "allocation_id"})
+        )
+    )
+    if row is None:
+        return {"verdict": "storage_error"}
+    if any(row[name] != value for name, value in intent.model_dump().items()):
+        return {"verdict": "conflict"}
+    return {"verdict": "replayed", "intent_id": str(row["intent_id"]), "state": row["state"]}
+
+
+async def show_intent(repo: PayoutDeliveryRepository, key: AllocationKey) -> dict:
+    """Return only the durable allocation identity and admitted state."""
+    row = await repo.read(key)
+    if row is None:
+        return {"verdict": "not_found"}
+    return {"verdict": "found", "intent_id": str(row["intent_id"]), "state": row["state"]}
