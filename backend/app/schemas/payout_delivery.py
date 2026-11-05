@@ -35,7 +35,7 @@ def raw_units(value: str) -> str:
 RawUnits = Annotated[str, Field(pattern=r"^(0|[1-9][0-9]{0,19})$"), AfterValidator(raw_units)]
 
 
-class ReceiptIntent(BaseModel):
+class TransferIntent(BaseModel):
     """Require every immutable identity without transport defaults."""
 
     model_config = ConfigDict(strict=True, extra="forbid")
@@ -49,8 +49,6 @@ class ReceiptIntent(BaseModel):
     recipient: PublicKey
     decimals: Annotated[int, Field(ge=0, le=255)]
     raw_amount: Annotated[RawUnits, Field(pattern=r"^[1-9][0-9]*$")]
-    signature: Annotated[str, AfterValidator(lambda value: str(Signature.from_string(value)))]
-    rpc_endpoint: AnyHttpUrl
 
     @model_validator(mode="after")
     def distinct_token_accounts(self) -> Self:
@@ -58,6 +56,29 @@ class ReceiptIntent(BaseModel):
         if len({self.source, self.destination, self.mint, self.program}) != 4:
             raise ValueError
         return self
+
+
+class ReceiptIntent(TransferIntent):
+    """Require the original receipt signature and explicit RPC endpoint."""
+
+    signature: Annotated[str, AfterValidator(lambda value: str(Signature.from_string(value)))]
+    rpc_endpoint: AnyHttpUrl
+
+
+Namespace = Annotated[str, Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")]
+AllocationId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+
+
+class AllocationKey(BaseModel):
+    """Identify a producer's immutable allocation without disclosing its payload."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+    producer_namespace: Namespace
+    allocation_id: AllocationId
+
+
+class AllocationIntent(TransferIntent, AllocationKey):
+    """Require a technical allocation identity and complete transfer payload."""
 
 
 class TokenAmount(BaseModel):
