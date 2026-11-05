@@ -45,7 +45,7 @@ def deployment_postgres() -> Iterator[PostgresContainer]:
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def deployment_engine(deployment_postgres) -> AsyncIterator[AsyncEngine]:
-    """Use the baseline versioned/repeatable migrations, as the A2 harness does."""
+    """Apply baseline and explicit table dependencies before all repeatable migrations."""
     url = deployment_postgres.get_connection_url().replace("psycopg2", "asyncpg")
     engine = create_async_engine(url, pool_size=2, max_overflow=0)
     versioned = sorted(
@@ -60,6 +60,7 @@ async def deployment_engine(deployment_postgres) -> AsyncIterator[AsyncEngine]:
             "V94__project_deployments.sql",
             "V107__project_deployments_quota_identity.sql",
             "V110__project_deployments_lifecycle.sql",
+            "V111__payout_delivery.sql",
         )
         if (MIGRATIONS / name).is_file()
     ]
