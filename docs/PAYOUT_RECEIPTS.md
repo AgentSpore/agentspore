@@ -1,8 +1,8 @@
-2026-11-05 · CLI contract · Issues #187 and #188
+2026-11-05 · CLI contract · Issues #187, #188 and #189
 
-# Payout receipts and immutable intents
+# Payout receipts, immutable intents and leases
 
-The no-argument command compares an explicit payout intent with a trusted Solana RPC response without writing data. The `submit` and `show` commands store and read immutable intents in PostgreSQL. A matching receipt describes the trusted response; it does not independently prove a real payment, create an entitlement, or send funds. Automatic activity accrual and the durable sender remain incomplete.
+The no-argument command compares an explicit payout intent with a trusted Solana RPC response without writing data. The `submit` and `show` commands store and read immutable intents in PostgreSQL. Claim commands coordinate exact intent UUIDs with retained epochs; they do not send payments. A matching receipt describes the trusted response; it does not independently prove a real payment, create an entitlement, or send funds. Automatic activity accrual and the durable sender remain incomplete.
 
 | When | Input | Output | Excluded |
 |---|---|---|---|
@@ -56,3 +56,25 @@ R188.4: Exit codes are 0 for accepted/replayed/found, 5 for invalid input, 6 for
 R188.5: The additive table migration is `db/migrations/V111__payout_delivery.sql`; immutability functions and triggers are installed by `db/migrations/R__payout_delivery_identity.sql`. Existing receipt-only applications ignore this table. Application rollback retains admitted data and the new table; no automatic drop or down migration is provided.
 
 Reproduce synthetic PostgreSQL intake QA with `SECRET_KEY=ci-placeholder-value uv run --frozen python -m pytest -q tests/test_payout_delivery_db.py`; preserve generated evidence outside Git. These checks do not establish entitlement, live chain activity or production mint compatibility. PostgreSQL 16 documents the [separate READ COMMITTED command snapshots](https://www.postgresql.org/docs/16/transaction-iso.html) and [conflict-safe insertion and RETURNING](https://www.postgresql.org/docs/16/sql-insert.html).
+
+## Exact-intent leases (issue #189)
+
+R189.1: A privileged backend operator supplies a committed intent UUID and a worker UUID. Worker identity coordinates processing; it does not authenticate a signer. The existing CLI adds these JSON commands without changing receipt verification or immutable admission.
+
+| Command | Required JSON fields | Successful verdict |
+|---|---|---|
+| `claim` | `intent_id`, `worker_id`, `ttl_seconds` | `claimed` |
+| `renew` | `intent_id`, `worker_id`, `epoch`, `ttl_seconds` | `renewed` |
+| `release` | `intent_id`, `worker_id`, `epoch` | `released` |
+| `recover` | `intent_id`, `worker_id`, `epoch` | `recovered` |
+| `lease-show` | `intent_id` | `found` |
+
+R189.2: UUIDs are required; epoch is a strict integer from 1 to 9223372036854775807, TTL from 1 to 300 seconds. TTL is an operational lease duration, not reward cadence. Unknown fields, bools and floats are rejected. Success exits 0 and returns only `verdict`, `intent_id`, `state`, `epoch`, `worker_id` and UTC ISO8601 `expires_at`; ready rows have null worker/expiry. Use `lease-show` after a lost claim response to recover the persisted fence.
+
+R189.3: Initial claim is epoch 1; a new claim from ready increments it, including for the same worker. Claimed rows are unavailable even when expired. Renew/release require the exact live fence; recover requires the exact expired fence. Renew never shortens or revives a lease. The server clock governs expiry. Mutators lock the exact immutable parent before the child; independent intents do not share a slot. Ordinary invalid transitions and deletion/truncation are rejected; database owners can alter these protections.
+
+R189.4: Each operation installs transaction-local lock_timeout=250ms and statement_timeout=1000ms. These bound individual database waits/statements, not connection setup or total process duration. Success is emitted after commit. Error output contains only a verdict: invalid_input=5, not_found=6, storage_error=8, busy=9, stale=10, unavailable=11. Existing conflict=7 remains. Service/repository callers own rollback; the configured backend bootstrap prerequisite still applies.
+
+R189.5: No automatic worker, signed attempt, prepared/finalized state, broadcast or payment confirmation exists here. A later signed-attempt stage must atomically persist the exact attempt and leave claimed under its live fence before broadcast. Current release/recover filter only claimed. Backlog selection, signing configuration, sender, reconciliation and automatic rewards remain incomplete. Synthetic verification evidence stays outside Git; it does not establish any real payout or signed-attempt guarantee.
+
+R189.6: The additive claim migration is `db/migrations/V112__payout_delivery_claims.sql`; the installed V111 intent table and its repeatable guards are retained. Application rollback retains the child relation and its monotonic generations. PostgreSQL16 defines [the advancing server clock](https://www.postgresql.org/docs/16/functions-datetime.html) and [row-lock NOWAIT behavior](https://www.postgresql.org/docs/16/sql-select.html); relation-lock waits additionally use the stated local timeouts.
