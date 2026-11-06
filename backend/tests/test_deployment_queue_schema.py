@@ -38,5 +38,25 @@ async def test_shared_bootstrap_installs_payout_immutability(request):
     }
     with pytest.raises(DBAPIError) as error:
         async with engine.begin() as connection:
-            await connection.execute(text("TRUNCATE payout_delivery_intents"))
+            await connection.execute(text("TRUNCATE payout_delivery_intents CASCADE"))
+    assert getattr(error.value.orig, "sqlstate") == "23514"
+
+
+@pytest.mark.usefixtures("deployment_engine")
+async def test_shared_bootstrap_installs_claim_guards(request):
+    """Require the shared migration loop to install both enabled claim guards."""
+    engine = request.getfixturevalue("deployment_engine")
+    async with engine.connect() as connection:
+        rows = (
+            await connection.execute(
+                text(
+                    "SELECT tgname, tgenabled::text FROM pg_trigger "
+                    "WHERE tgrelid = 'public.payout_delivery_claims'::regclass AND NOT tgisinternal"
+                )
+            )
+        ).all()
+    assert set(rows) == {("payout_claim_identity", "O"), ("payout_claim_no_truncate", "O")}
+    with pytest.raises(DBAPIError) as error:
+        async with engine.begin() as connection:
+            await connection.execute(text("TRUNCATE payout_delivery_claims"))
     assert getattr(error.value.orig, "sqlstate") == "23514"

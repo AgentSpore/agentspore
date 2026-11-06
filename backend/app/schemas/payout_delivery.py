@@ -1,6 +1,7 @@
 """Strict input and balance evidence for payout receipt verification."""
 
 from typing import Annotated, Literal, Self
+from uuid import UUID
 
 from pydantic import AfterValidator, AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
 from solders.hash import Hash, ParseHashError
@@ -98,3 +99,30 @@ class TokenBalance(BaseModel):
     owner: PublicKey
     program_id: PublicKey = Field(alias="programId")
     token_amount: TokenAmount = Field(alias="uiTokenAmount")
+
+
+class ClaimKey(BaseModel):
+    """Identify one admitted intent for lease coordination."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+    intent_id: UUID
+
+
+class ClaimRequest(ClaimKey):
+    """Require an explicit coordinator and bounded operational TTL."""
+
+    worker_id: UUID
+    ttl_seconds: Annotated[int, Field(ge=1, le=300)]
+
+
+class ClaimFence(ClaimKey):
+    """Identify one exact persisted ownership generation."""
+
+    worker_id: UUID
+    epoch: Annotated[int, Field(ge=1, le=9223372036854775807)]
+
+
+class RenewRequest(ClaimFence):
+    """Renew one live generation without changing its identity."""
+
+    ttl_seconds: Annotated[int, Field(ge=1, le=300)]
