@@ -1,6 +1,7 @@
 """Read-only verification of the deliberately narrow legacy payout receipt shape."""
 
 import struct
+from datetime import UTC
 from typing import Any
 
 import base58
@@ -11,6 +12,7 @@ from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
 from app.schemas.payout_delivery import (
     AllocationIntent,
     AllocationKey,
+    ClaimKey,
     ReceiptIntent,
     TokenBalance,
     solana_hash,
@@ -220,3 +222,33 @@ async def show_intent(repo: PayoutDeliveryRepository, key: AllocationKey) -> dic
     if row is None:
         return {"verdict": "not_found"}
     return {"verdict": "found", "intent_id": str(row["intent_id"]), "state": row["state"]}
+
+
+async def manage_claim(repo: PayoutDeliveryRepository, command: str, request: ClaimKey) -> dict:
+    """Return observed lease facts without owning the caller's transaction."""
+    if command == "lease-show":
+        row = await repo.read_claim(request)
+        verdict = "found"
+        missing = "not_found"
+    else:
+        parent, row = await repo.mutate_claim(command, request)
+        if not parent:
+            return {"verdict": "not_found"}
+        verdict = {
+            "claim": "claimed",
+            "renew": "renewed",
+            "release": "released",
+            "recover": "recovered",
+        }[command]
+        missing = "unavailable" if command == "claim" else "stale"
+    if row is None:
+        return {"verdict": missing}
+    expiry = row["expires_at"]
+    return {
+        "verdict": verdict,
+        "intent_id": str(row["intent_id"]),
+        "state": row["state"],
+        "epoch": row["epoch"],
+        "worker_id": str(row["worker_id"]) if row["worker_id"] else None,
+        "expires_at": expiry.astimezone(UTC).isoformat() if expiry else None,
+    }
