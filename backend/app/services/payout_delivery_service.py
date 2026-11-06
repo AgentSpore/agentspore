@@ -1,5 +1,6 @@
 """Read-only verification of the deliberately narrow legacy payout receipt shape."""
 
+import hashlib
 import struct
 from datetime import UTC
 from typing import Any
@@ -13,9 +14,17 @@ from app.schemas.payout_delivery import (
     AllocationIntent,
     AllocationKey,
     ClaimKey,
+    CompileRequest,
     ReceiptIntent,
+    SignedEnvelope,
     TokenBalance,
+    TransferIntent,
     solana_hash,
+)
+from app.services.payout_transaction import (
+    bind_signed_candidate,
+    compile_signing_request,
+    parse_signed_candidate,
 )
 
 
@@ -252,3 +261,91 @@ async def manage_claim(repo: PayoutDeliveryRepository, command: str, request: Cl
         "worker_id": str(row["worker_id"]) if row["worker_id"] else None,
         "expires_at": expiry.astimezone(UTC).isoformat() if expiry else None,
     }
+
+
+async def compile_payout(repo: PayoutDeliveryRepository, request: CompileRequest) -> dict:
+    """Read an actual live fence and compile only to an internal private-artifact result."""
+    parent = await repo.lock_intent(request)
+    if parent is None:
+        return {"verdict": "not_found"}
+    if not await repo.live_preparation_fence(request):
+        return {"verdict": "stale"}
+    intent = TransferIntent.model_validate(
+        {name: parent[name] for name in TransferIntent.model_fields}
+    )
+    artifact = compile_signing_request(intent, request)
+    return {
+        "verdict": "compiled",
+        "intent_id": str(request.intent_id),
+        "worker_id": str(request.worker_id),
+        "epoch": request.epoch,
+        "message_digest": artifact.message_digest,
+        "_signing_request": artifact.model_dump_json(),
+    }
+
+
+def attempt_response(row: dict, verdict: str) -> dict:
+    """Project only technical identity and exact-wire digest to ordinary output."""
+    return {
+        "verdict": verdict,
+        "intent_id": str(row["intent_id"]),
+        "state": "prepared",
+        "worker_id": str(row["worker_id"]),
+        "epoch": row["epoch"],
+        "transaction_digest": hashlib.sha256(bytes(row["signed_bytes"])).hexdigest(),
+    }
+
+
+async def prepare_attempt(repo: PayoutDeliveryRepository, envelope: SignedEnvelope) -> dict:
+    """Verify exact native material, then atomically retain one live-fenced attempt."""
+    candidate = parse_signed_candidate(envelope.signed_transaction_base64)
+    parent = await repo.lock_intent(envelope)
+    if parent is None:
+        return {"verdict": "not_found"}
+    intent = TransferIntent.model_validate(
+        {name: parent[name] for name in TransferIntent.model_fields}
+    )
+    bind_signed_candidate(intent, candidate, envelope.genesis_hash)
+    values = {
+        "intent_id": envelope.intent_id,
+        "epoch": envelope.epoch,
+        "worker_id": envelope.worker_id,
+        "signed_bytes": candidate.signed_bytes,
+        "first_signature": candidate.first_signature,
+        "recent_blockhash": candidate.recent_blockhash,
+        "last_valid_block_height": envelope.last_valid_block_height,
+    }
+    previous = await repo.read_attempt(envelope)
+    if previous is not None:
+        if any(previous[name] != value for name, value in values.items()):
+            return {"verdict": "conflict"}
+        return attempt_response(previous, "replayed")
+    if not await repo.prepare_fence(envelope):
+        return {"verdict": "stale"}
+    await repo.insert_attempt(values)
+    return attempt_response(values, "prepared")
+
+
+async def show_attempt(repo: PayoutDeliveryRepository, key: ClaimKey) -> dict:
+    """Read committed original identity after an uncertain acknowledgement."""
+    row = await repo.read_attempt(key)
+    return attempt_response(row, "found") if row else {"verdict": "not_found"}
+
+
+async def handle_payout_request(
+    repo: PayoutDeliveryRepository,
+    command: str,
+    request: AllocationKey | AllocationIntent | ClaimKey,
+) -> dict:
+    """Dispatch validated operator requests to the actual domain operations."""
+    if isinstance(request, SignedEnvelope):
+        return await prepare_attempt(repo, request)
+    if isinstance(request, CompileRequest):
+        return await compile_payout(repo, request)
+    if command == "attempt-show" and isinstance(request, ClaimKey):
+        return await show_attempt(repo, request)
+    if isinstance(request, ClaimKey):
+        return await manage_claim(repo, command, request)
+    if isinstance(request, AllocationIntent):
+        return await admit_intent(repo, request)
+    return await show_intent(repo, request)

@@ -3,7 +3,15 @@
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import AfterValidator, AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    AnyHttpUrl,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 from solders.hash import Hash, ParseHashError
 from solders.pubkey import Pubkey
 from solders.signature import Signature
@@ -126,3 +134,49 @@ class RenewRequest(ClaimFence):
     """Renew one live generation without changing its identity."""
 
     ttl_seconds: Annotated[int, Field(ge=1, le=300)]
+
+
+def format_one(value: object) -> int:
+    """Reject bool and every format version except the integer one."""
+    if type(value) is not int or value != 1:
+        raise ValueError
+    return value
+
+
+class PreparationContext(ClaimFence):
+    """Require explicit asserted network and lifetime without live-provider defaults."""
+
+    genesis_hash: Annotated[str, AfterValidator(solana_hash)]
+    last_valid_block_height: RawUnits
+
+
+class CompileRequest(PreparationContext):
+    """Bind one unsigned message to an explicit blockhash and live fence."""
+
+    recent_blockhash: Annotated[str, AfterValidator(solana_hash)]
+
+
+class SigningRequest(CompileRequest):
+    """Carry account-bearing unsigned bytes only through the private artifact channel."""
+
+    format_version: Annotated[Literal[1], BeforeValidator(format_one)] = 1
+    unsigned_message_base64: str
+    message_digest: str
+
+
+class SignedEnvelope(PreparationContext):
+    """Accept only the versioned signed handoff fields, never a claimed signature."""
+
+    format_version: Annotated[Literal[1], BeforeValidator(format_one)]
+    signed_transaction_base64: Annotated[str, Field(min_length=4, max_length=1644, repr=False)]
+
+
+class SignedCandidate(BaseModel):
+    """Hold native-verified material internally without ordinary CLI serialization."""
+
+    model_config = ConfigDict(strict=True, frozen=True)
+    signed_bytes: bytes = Field(repr=False)
+    first_signature: bytes = Field(repr=False)
+    recent_blockhash: str
+    message_bytes: bytes = Field(repr=False)
+    transaction_digest: str
