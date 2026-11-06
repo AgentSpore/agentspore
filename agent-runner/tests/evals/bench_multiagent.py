@@ -29,13 +29,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
-import subprocess
 import sys
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+
+from .eval_workspace import EvalWorkspace
+
+_WORKSPACE = EvalWorkspace()
 
 # ── Provider switcher ─────────────────────────────────────────────────────────
 # Each provider entry: (base_url, default_model, key_env_name)
@@ -126,30 +128,14 @@ class PipelineState:
 
 # ── Stub helpers ──────────────────────────────────────────────────────────────
 
-def _run_safe_local(cmd: str) -> str:
-    """Execute safe local commands (mkdir, python3, find) for real file ops."""
-    safe_prefixes = ("mkdir", "python3 -c", "python3 -m", "find /tmp", "ls /tmp", "cat /tmp")
-    if any(cmd.strip().startswith(p) for p in safe_prefixes):
-        try:
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
-            return (r.stdout or "") + (r.stderr or "")
-        except Exception as e:
-            return f"ERROR: {e}"
-    return None  # not a safe local command — caller should mock
+def _run_safe_local(cmd: str) -> str | None:
+    """Interpret bounded virtual file operations without executing host commands."""
+    return _WORKSPACE.execute(cmd)
 
 
-def _write_to_fs(path: str, content: str) -> None:
-    """Write content to filesystem if path is under /tmp/."""
-    if not path or not path.startswith("/tmp/"):
-        return
-    try:
-        parent = os.path.dirname(path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        with open(path, "w") as f:
-            f.write(content if isinstance(content, str) else json.dumps(content))
-    except Exception:
-        pass
+def _write_to_fs(path: str, content: str) -> str:
+    """Write only to the eval's virtual /tmp workspace."""
+    return _WORKSPACE.write(path, content)
 
 
 def _make_task_stub(state: PipelineState, model: str, role: str, extra_stubs: dict) -> Any:
@@ -234,7 +220,9 @@ def make_reddit_scout_stubs(state: PipelineState, model: str) -> dict[str, Any]:
         content = kwargs.get("content", "")
         if isinstance(content, dict):
             content = json.dumps(content, indent=2)
-        _write_to_fs(path, content)
+        result = _write_to_fs(path, content)
+        if result != "ok":
+            return result
 
         # Capture DM file content
         if "qa_dm" in path:
@@ -253,12 +241,7 @@ def make_reddit_scout_stubs(state: PipelineState, model: str) -> dict[str, Any]:
 
     def read_file(**kwargs: Any) -> str:
         path = str(kwargs.get("path", ""))
-        if os.path.exists(path):
-            try:
-                return open(path).read()
-            except Exception:
-                pass
-        return f"[not found: {path}]"
+        return _WORKSPACE.read(path)
 
     def list_files(**kwargs: Any) -> str:
         return json.dumps([])
@@ -281,9 +264,9 @@ def make_reddit_scout_stubs(state: PipelineState, model: str) -> dict[str, Any]:
             # Read the file specified with -d @/tmp/...json to get to_agent_handle
             import re
             m = re.search(r"-d @(/tmp/\S+)", cmd)
-            if m and os.path.exists(m.group(1)):
+            if m:
                 try:
-                    dm_data = json.load(open(m.group(1)))
+                    dm_data = json.loads(_WORKSPACE.read(m.group(1)))
                     target = dm_data.get("to_agent_handle", "unknown")
                     content = dm_data.get("content", "")
                     state.capture_dm(target, content, "redditscouthosted")
@@ -301,9 +284,9 @@ def make_reddit_scout_stubs(state: PipelineState, model: str) -> dict[str, Any]:
         if "/push" in cmd and "POST" in cmd:
             # Read actual push.json to capture file list
             for pf in ("/tmp/push.json",):
-                if os.path.exists(pf):
+                if _WORKSPACE.read(pf) != "[not found]":
                     try:
-                        data = json.load(open(pf))
+                        data = json.loads(_WORKSPACE.read(pf))
                         state.files_pushed = [fi["path"] for fi in data.get("files", [])]
                     except Exception:
                         pass
@@ -321,7 +304,7 @@ def make_reddit_scout_stubs(state: PipelineState, model: str) -> dict[str, Any]:
             return _BLOG_EMPTY
         if "/api/v1/agents/heartbeat" in cmd:
             return _HB_OK
-        return "[stub:execute] ok"
+        return "[stub:execute] not executed: unsupported command"
 
     # Subagent stubs (used inside task subagent)
     sub_stubs = {
@@ -364,17 +347,11 @@ def make_qa_agent_stubs(
         content = kwargs.get("content", "")
         if isinstance(content, dict):
             content = json.dumps(content, indent=2)
-        _write_to_fs(path, content)
-        return "ok"
+        return _write_to_fs(path, content)
 
     def read_file(**kwargs: Any) -> str:
         path = str(kwargs.get("path", ""))
-        if os.path.exists(path):
-            try:
-                return open(path).read()
-            except Exception:
-                pass
-        return f"[not found: {path}]"
+        return _WORKSPACE.read(path)
 
     def execute(**kwargs: Any) -> str:
         cmd = str(kwargs.get("command", ""))
@@ -393,9 +370,9 @@ def make_qa_agent_stubs(
             return _HB_FINAL
         if "/push" in cmd and "POST" in cmd:
             for pf in ("/tmp/qa_push.json",):
-                if os.path.exists(pf):
+                if _WORKSPACE.read(pf) != "[not found]":
                     try:
-                        data = json.load(open(pf))
+                        data = json.loads(_WORKSPACE.read(pf))
                         state.tests_pushed = [fi["path"] for fi in data.get("files", [])]
                     except Exception:
                         pass
@@ -410,7 +387,7 @@ def make_qa_agent_stubs(
             return _BLOG_OK
         if "/api/v1/blog/posts" in cmd:
             return _BLOG_EMPTY
-        return "[stub:execute] ok"
+        return "[stub:execute] not executed: unsupported command"
 
     sub_stubs = {
         "execute": execute,
@@ -456,13 +433,7 @@ async def run_phase(
 
 
 def _list_dir(path: str) -> list[str]:
-    files = []
-    if not os.path.isdir(path):
-        return files
-    for root, dirs, fnames in os.walk(path):
-        for fn in sorted(fnames):
-            files.append(os.path.relpath(os.path.join(root, fn), path))
-    return files
+    return _WORKSPACE.list_files(path)
 
 
 async def main():
@@ -472,8 +443,7 @@ async def main():
     print("=" * 60, flush=True)
 
     # Clean slate
-    shutil.rmtree("/tmp/proj", ignore_errors=True)
-    shutil.rmtree("/tmp/tests", ignore_errors=True)
+    _WORKSPACE.files.clear()
     state = PipelineState()
 
     # ── Phase 1: RedditScoutAgent ──────────────────────────────────────────
@@ -492,8 +462,8 @@ async def main():
 
     # Print main.py snippet if exists
     main_py = "/tmp/proj/main.py"
-    if os.path.exists(main_py):
-        lines = open(main_py).readlines()
+    if _WORKSPACE.read(main_py) != "[not found]":
+        lines = _WORKSPACE.read(main_py).splitlines(keepends=True)
         print(f"\n  main.py ({len(lines)} lines, first 10):")
         for ln in lines[:10]:
             print(f"    {ln}", end="")

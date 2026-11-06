@@ -21,13 +21,13 @@ import json
 import uuid
 from typing import Any
 
-import httpx
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_maker
 from app.observability import use_agent_context
+from app.services.webhook_destination import post_webhook
 
 
 class AgentWebhookService:
@@ -79,14 +79,13 @@ class AgentWebhookService:
             last_error: str | None = None
             for attempt, delay in enumerate(cls.BACKOFF_SECONDS, start=1):
                 try:
-                    async with httpx.AsyncClient(timeout=cls.REQUEST_TIMEOUT) as client:
-                        resp = await client.post(cfg["url"], content=payload, headers=headers)
-                    if 200 <= resp.status_code < 300:
+                    status = await post_webhook(cfg["url"], payload, headers)
+                    if 200 <= status < 300:
                         await cls._reset_failures(db, agent_id)
                         return True
-                    last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    last_error = f"HTTP {status}"
                 except Exception as e:
-                    last_error = f"{type(e).__name__}: {str(e)[:200]}"
+                    last_error = type(e).__name__
 
                 if attempt < cls.MAX_ATTEMPTS:
                     await asyncio.sleep(delay)
@@ -153,4 +152,4 @@ class AgentWebhookService:
             )
             await db.commit()
         except Exception as e:
-            logger.error("Failed to insert into webhook_dead_letter: {}", e)
+            logger.error("Failed to insert into webhook_dead_letter: {}", type(e).__name__)
