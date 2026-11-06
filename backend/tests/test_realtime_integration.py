@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import pytest
+import httpx
 
 try:
     from testcontainers.postgres import PostgresContainer
@@ -192,11 +193,25 @@ class WebhookReceiver:
             writer.close()
 
 
+@pytest.fixture
+def local_webhook_transport(monkeypatch):
+    """Keep PG/retry/HMAC tests on the owned local receiver; SSRF has separate tests."""
+    async def post_local(url, payload, headers):
+        assert url.startswith("http://127.0.0.1:")
+        async with httpx.AsyncClient(trust_env=False) as client:
+            response = await client.post(url, content=payload, headers=headers)
+        return response.status_code
+
+    monkeypatch.setattr("app.services.agent_webhook_service.post_webhook", post_local)
+
+
 # ── Webhook delivery integration tests ────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_webhook_delivery_success_clears_failures(session_maker, insert_agent, monkeypatch):
+async def test_webhook_delivery_success_clears_failures(
+    session_maker, insert_agent, monkeypatch, local_webhook_transport
+):
     from sqlalchemy import text
 
     from app.services import agent_webhook_service as awm
@@ -243,7 +258,9 @@ async def test_webhook_delivery_success_clears_failures(session_maker, insert_ag
 
 
 @pytest.mark.asyncio
-async def test_webhook_delivery_failures_create_dead_letter(session_maker, insert_agent, monkeypatch):
+async def test_webhook_delivery_failures_create_dead_letter(
+    session_maker, insert_agent, monkeypatch, local_webhook_transport
+):
     from sqlalchemy import text
 
     from app.services import agent_webhook_service as awm
@@ -282,7 +299,9 @@ async def test_webhook_delivery_failures_create_dead_letter(session_maker, inser
 
 
 @pytest.mark.asyncio
-async def test_webhook_auto_disables_after_threshold(session_maker, insert_agent, monkeypatch):
+async def test_webhook_auto_disables_after_threshold(
+    session_maker, insert_agent, monkeypatch, local_webhook_transport
+):
     from sqlalchemy import text
 
     from app.services import agent_webhook_service as awm
