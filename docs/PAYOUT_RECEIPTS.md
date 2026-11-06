@@ -1,4 +1,4 @@
-2026-11-05 · CLI contract · Issues #187, #188 and #189
+2026-11-06 · Stages #187–#189 installed; #190 integration in progress · AgentSpore maintainers
 
 # Payout receipts, immutable intents and leases
 
@@ -75,6 +75,28 @@ R189.3: Initial claim is epoch 1; a new claim from ready increments it, includin
 
 R189.4: Each operation installs transaction-local lock_timeout=250ms and statement_timeout=1000ms. These bound individual database waits/statements, not connection setup or total process duration. Success is emitted after commit. Error output contains only a verdict: invalid_input=5, not_found=6, storage_error=8, busy=9, stale=10, unavailable=11. Existing conflict=7 remains. Service/repository callers own rollback; the configured backend bootstrap prerequisite still applies.
 
-R189.5: No automatic worker, signed attempt, prepared/finalized state, broadcast or payment confirmation exists here. A later signed-attempt stage must atomically persist the exact attempt and leave claimed under its live fence before broadcast. Current release/recover filter only claimed. Backlog selection, signing configuration, sender, reconciliation and automatic rewards remain incomplete. Synthetic verification evidence stays outside Git; it does not establish any real payout or signed-attempt guarantee.
+R189.5: The lease-only stage adds no signed attempt or payment confirmation. The following #190 stage atomically retains an offline signed attempt before any future broadcast. Current release/recover filter only claimed. Backlog selection, signing configuration, sender, reconciliation and automatic rewards remain incomplete. Synthetic verification evidence stays outside Git; it does not establish any real payout or signed-attempt guarantee.
 
 R189.6: The additive claim migration is `db/migrations/V112__payout_delivery_claims.sql`; the installed V111 intent table and its repeatable guards are retained. Application rollback retains the child relation and its monotonic generations. PostgreSQL16 defines [the advancing server clock](https://www.postgresql.org/docs/16/functions-datetime.html) and [row-lock NOWAIT behavior](https://www.postgresql.org/docs/16/sql-select.html); relation-lock waits additionally use the stated local timeouts.
+
+## Offline message preparation and signed admission (issue #190)
+
+R190.1: This explicitly offline milestone compiles an exact legacy Token-2022 TransferChecked message, accepts a complete externally signed envelope, and commits its durable prepared barrier. It does not complete the original configured sign-only provider stage. No actual provider, custody configuration, network lookup, broadcast or automatic reward policy is introduced.
+
+| Command | Input | Ordinary success |
+|---|---|---|
+| `prepare-message --output PATH` | Exact fence, genesis_hash, recent_blockhash, last_valid_block_height | `compiled`, identity/fence and message_digest |
+| `prepare-commit` | format_version=1, exact fence, genesis_hash, last_valid_block_height, signed_transaction_base64 | `prepared` or `replayed`, identity/fence and transaction_digest |
+| `attempt-show` | intent_id | `found`, the persisted prepared identity/fence and transaction_digest |
+
+R190.2: The exact fence is intent_id, worker_id and strict positive BIGINT epoch. Height is a canonical unsigned decimal string from 0 through 18446744073709551615. Format version must be integer 1, never bool/float. Unknown fields are forbidden. The existing JSON size bound, configured-backend prerequisite and command exit codes remain. Invalid/unsupported or parent-mismatched candidates return invalid_input=5; only a valid different retained identity returns conflict=7.
+
+R190.3: Compile reads the real immutable intent and live claimed fence without changing either. Its signing request contains the original context/fence, format_version, unsigned_message_base64 and SHA256 message_digest. The explicitly selected artifact is created exclusively with mode 0600; existing paths and symbolic links are never overwritten. Account-bearing message bytes travel through that private file, never normal stdout/stderr. A compile result does not guarantee that its lease remains live through external signing.
+
+R190.4: Admission requires canonical base64, a 1..1232-byte native legacy transaction, native sanitization and verification of every Ed25519 signature. Exact message bytes are rebuilt with installed SPL/solders from the parent and embedded blockhash. Extra instructions/accounts, nonlegacy versions, partial signatures or changed transfer fields cannot pass. Recipient ownership, account programs/extensions, funds, and signing authority are not proven by these bytes. Genesis and height remain caller assertions, not authenticated network/lifetime evidence.
+
+R190.5: The parent-first bounded lock precedes full parent binding and existing-attempt comparison. A new attempt and the exact live claimed-to-prepared transition commit together. Deferred foreign-key and pair guards reject either incomplete half and mismatched fences, including direct SQL. Prepared retains the old expiry only as provenance; it has no outgoing transition. Old claim/release/recover/renew operations cannot reset it after expiry. Attempt identity, complete bytes, derived first signature/blockhash and asserted height are immutable; first signature is conservatively globally unique.
+
+R190.6: Exact retained-envelope replay remains available after expiry and never creates a replacement. After an uncertain acknowledgement, retry the exact envelope or use attempt-show. Normal output excludes signed/unsigned bytes, first signature, accounts, height, paths, SQL and exception details. Success follows commit; busy/storage errors roll back both halves. A future controlled broadcaster must load the committed original bytes and signature; a timeout, uncertain expiry or null receipt does not establish nonpayment or authorize re-signing.
+
+Offline preparation requires independent current-source verification. No configured signing provider, broadcast or payment confirmation is included.
