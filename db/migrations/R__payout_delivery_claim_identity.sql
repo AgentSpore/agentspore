@@ -8,6 +8,9 @@ BEGIN
             OR (OLD.state = 'claimed' AND NEW.state = 'claimed' AND NEW.epoch = OLD.epoch
                 AND NEW.worker_id = OLD.worker_id AND OLD.expires_at > clock_timestamp()
                 AND NEW.expires_at >= OLD.expires_at)
+            OR (OLD.state = 'claimed' AND NEW.state = 'prepared' AND NEW.epoch = OLD.epoch
+                AND NEW.worker_id = OLD.worker_id AND NEW.expires_at = OLD.expires_at
+                AND OLD.expires_at > clock_timestamp())
             OR (OLD.state = 'claimed' AND NEW.state = 'ready' AND NEW.epoch = OLD.epoch)
         THEN RETURN NEW; END IF;
     END IF;

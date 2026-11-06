@@ -120,3 +120,79 @@ class PayoutDeliveryRepository:
             + " WHERE intent_id = :intent_id AND worker_id = :worker_id AND epoch = :epoch "
             "AND state = 'claimed' AND expires_at " + comparison + " clock_timestamp()"
         )
+
+    async def lock_intent(self, key: ClaimKey) -> dict | None:
+        """Read immutable fields under the same bounded parent-first preparation lock."""
+        await self.claim_budget()
+        row = (
+            (
+                await self.db.execute(
+                    text(
+                        "SELECT * FROM payout_delivery_intents "
+                        "WHERE intent_id = :intent_id FOR UPDATE NOWAIT"
+                    ),
+                    {"intent_id": key.intent_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return dict(row) if row else None
+
+    async def live_preparation_fence(self, key: ClaimKey) -> bool:
+        """Read only a matching live claimed generation without altering it."""
+        return (
+            await self.db.scalar(
+                text(
+                    "SELECT intent_id FROM payout_delivery_claims WHERE intent_id = :intent_id "
+                    "AND worker_id = :worker_id AND epoch = :epoch AND state = 'claimed' "
+                    "AND expires_at > clock_timestamp()"
+                ),
+                key.model_dump(),
+            )
+            is not None
+        )
+
+    async def read_attempt(self, key: ClaimKey) -> dict | None:
+        """Load the committed original bytes; future senders must retain this identity."""
+        await self.claim_budget()
+        row = (
+            (
+                await self.db.execute(
+                    text("SELECT * FROM payout_delivery_attempts WHERE intent_id = :intent_id"),
+                    {"intent_id": key.intent_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return dict(row) if row else None
+
+    async def prepare_fence(self, key: ClaimKey) -> bool:
+        """Leave claimed only under its exact live fence, retaining expiry provenance."""
+        return (
+            await self.db.scalar(
+                text(
+                    "UPDATE payout_delivery_claims SET state "
+                    "= 'prepared' WHERE intent_id = :intent_id "
+                    "AND worker_id = :worker_id AND epoch = :epoch AND state = 'claimed' "
+                    "AND expires_at > clock_timestamp() RETURNING intent_id"
+                ),
+                key.model_dump(),
+            )
+            is not None
+        )
+
+    async def insert_attempt(self, values: dict) -> None:
+        """Insert the full immutable attempt under the caller's atomic prepared transaction."""
+        identity = await self.db.scalar(
+            text(
+                "INSERT INTO payout_delivery_attempts(intent_id, epoch, worker_id, signed_bytes, "
+                "first_signature, recent_blockhash, last_valid_block_height) VALUES "
+                "(:intent_id, :epoch, :worker_id, :signed_bytes, :first_signature, "
+                ":recent_blockhash, :last_valid_block_height) RETURNING intent_id"
+            ),
+            values,
+        )
+        if identity is None:
+            raise RuntimeError("Attempt insert did not return an identity")

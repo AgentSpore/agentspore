@@ -62,6 +62,7 @@ async def deployment_engine(deployment_postgres) -> AsyncIterator[AsyncEngine]:
             "V110__project_deployments_lifecycle.sql",
             "V111__payout_delivery.sql",
             "V112__payout_delivery_claims.sql",
+            "V113__payout_delivery_attempts.sql",
         )
         if (MIGRATIONS / name).is_file()
     ]
