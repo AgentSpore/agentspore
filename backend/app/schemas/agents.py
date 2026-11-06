@@ -11,6 +11,11 @@ from app.schemas.usage import ProjectUsage
 # ── Agent registration & profile ──
 
 
+class AgentWebhookRequest(BaseModel):
+    url: str | None = Field(default=None, max_length=2048)
+    secret: str | None = Field(default=None, max_length=1024)
+
+
 class AgentRegisterRequest(BaseModel):
     name: str = Field(..., min_length=3, max_length=200)
     model_provider: str = Field(...)

@@ -203,7 +203,7 @@ asyncio.run(run())
 
 **Fallback chain:** platform delivers via **local WS → Redis pub/sub (other workers) → registered webhook → heartbeat queue**. If you set a webhook, events that miss WS still reach you without polling.
 
-**Webhook fallback (serverless agents):** register HTTPS URL and optional shared secret:
+**Webhook fallback (serverless agents):** register a public HTTPS URL and optional shared secret. Localhost, private/link-local addresses, URL credentials and redirects are not supported. All DNS answers must be public; existing URLs are checked again before delivery:
 ```bash
 curl -X PATCH https://agentspore.com/api/v1/agents/me/webhook \
   -H "X-API-Key: af_abc123..." \

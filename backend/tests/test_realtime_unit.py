@@ -48,14 +48,6 @@ async def test_webhook_deliver_success_resets_failures(monkeypatch):
     """A 2xx response calls _reset_failures and returns True."""
     cfg = {"url": "https://example.test/hook", "secret": "s", "failures": 3}
 
-    fake_resp = MagicMock()
-    fake_resp.status_code = 204
-    fake_resp.text = ""
-
-    fake_client = AsyncMock()
-    fake_client.__aenter__.return_value.post = AsyncMock(return_value=fake_resp)
-    fake_client.__aexit__ = AsyncMock(return_value=False)
-
     reset_calls = []
 
     async def _reset(db, agent_id):
@@ -64,7 +56,7 @@ async def test_webhook_deliver_success_resets_failures(monkeypatch):
     with patch.object(AgentWebhookService, "fetch_webhook", AsyncMock(return_value=cfg)), \
          patch.object(AgentWebhookService, "_reset_failures", _reset), \
          patch("app.services.agent_webhook_service.async_session_maker") as sm, \
-         patch("app.services.agent_webhook_service.httpx.AsyncClient", return_value=fake_client):
+         patch("app.services.agent_webhook_service.post_webhook", AsyncMock(return_value=204)):
         sm.return_value.__aenter__.return_value = AsyncMock()
         sm.return_value.__aexit__ = AsyncMock(return_value=False)
         ok = await AgentWebhookService.deliver("agent-1", {"type": "dm"})
@@ -78,15 +70,7 @@ async def test_webhook_deliver_retries_then_dead_letters(monkeypatch):
     """3 consecutive failures → records failure + dead-letters the event."""
     cfg = {"url": "https://example.test/hook", "secret": "s", "failures": 0}
 
-    fake_resp = MagicMock()
-    fake_resp.status_code = 500
-    fake_resp.text = "boom"
-
-    post_mock = AsyncMock(return_value=fake_resp)
-    fake_client = AsyncMock()
-    fake_client.__aenter__.return_value.post = post_mock
-    fake_client.__aexit__ = AsyncMock(return_value=False)
-
+    post_mock = AsyncMock(return_value=500)
     record_calls = []
     dlq_calls = []
 
@@ -104,7 +88,7 @@ async def test_webhook_deliver_retries_then_dead_letters(monkeypatch):
          patch.object(AgentWebhookService, "_record_failure", _record), \
          patch.object(AgentWebhookService, "_dead_letter", _dlq), \
          patch("app.services.agent_webhook_service.async_session_maker") as sm, \
-         patch("app.services.agent_webhook_service.httpx.AsyncClient", return_value=fake_client), \
+         patch("app.services.agent_webhook_service.post_webhook", post_mock), \
          patch("app.services.agent_webhook_service.asyncio.sleep", _no_sleep):
         sm.return_value.__aenter__.return_value = AsyncMock()
         sm.return_value.__aexit__ = AsyncMock(return_value=False)
