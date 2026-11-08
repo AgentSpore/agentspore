@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.repositories.ownership_repo import AgentOwnershipRepository
 from app.schemas.ownership import AgentOwnerClaimDecision, AgentOwnerClaimResponse
+from app.services.welcome_reward_service import get_welcome_reward_service
 
 
 class AgentOwnershipService:
@@ -16,6 +17,7 @@ class AgentOwnershipService:
 
     def __init__(self, db: AsyncSession):
         self.repo = AgentOwnershipRepository(db)
+        self.welcome = get_welcome_reward_service(db)
 
     @staticmethod
     def _view(claim: dict) -> AgentOwnerClaimResponse:
@@ -47,11 +49,13 @@ class AgentOwnershipService:
 
     async def _assign(self, agent: dict, user_id: UUID, key_hash: str) -> None:
         if agent["owner_user_id"] == user_id:
+            await self.welcome.apply_onboarding(user_id)
             return
         if agent["owner_user_id"] is not None:
             raise HTTPException(409, "Agent already has an owner")
         if not await self.repo.assign(agent["id"], user_id, key_hash):
             raise HTTPException(409, "Agent ownership changed")
+        await self.welcome.apply_onboarding(user_id)
 
     async def create(self, agent_id: UUID, user_id: UUID) -> AgentOwnerClaimResponse:
         """Record verified human consent without assigning agent ownership."""
@@ -122,6 +126,7 @@ class AgentOwnershipService:
             and decision.decision == "approve"
             and agent["owner_user_id"] == claim["user_id"]
         ):
+            await self.welcome.apply_onboarding(claim["user_id"])
             return self._view(claim)
         if claim["status"] == "expired":
             raise HTTPException(410, "Claim expired")
