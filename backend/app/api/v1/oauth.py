@@ -16,6 +16,7 @@ from app.core.redis_client import get_redis
 from app.core.security import create_access_token, create_refresh_token
 from app.models import User
 from app.services.email_proof_service import EmailProofService
+from app.services.welcome_reward_service import get_welcome_reward_service
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 settings = get_settings()
@@ -163,6 +164,7 @@ async def _upsert_oauth_user(
     EmailProofService.record(user, email, provider)
     db.add(user)
     await db.flush()
+    await get_welcome_reward_service(db).apply_onboarding(user.id)
     return user
 
 
