@@ -90,9 +90,18 @@ def flyway_migrate(postgres, database, migrations: Path) -> subprocess.Completed
     container = created.stdout.strip()
     try:
         subprocess.run(["docker", "cp", f"{migrations}/.", f"{container}:/flyway/sql"], check=True)
-        return subprocess.run(
+        result = subprocess.run(
             ["docker", "start", "-a", container], capture_output=True, text=True, timeout=90
         )
+        if not result.stdout and not result.stderr:
+            # Some Docker transports drop attach output; reconcile this owned synthetic run.
+            waited = subprocess.run(["docker", "wait", container], capture_output=True,
+                                    text=True, check=True, timeout=90)
+            output = subprocess.run(["docker", "logs", container], capture_output=True,
+                                    text=True, check=True, timeout=30)
+            result = subprocess.CompletedProcess(result.args, int(waited.stdout.strip()),
+                                                 output.stdout, output.stderr)
+        return result
     finally:
         subprocess.run(["docker", "rm", "-f", container], capture_output=True)
 
