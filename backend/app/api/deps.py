@@ -167,3 +167,15 @@ async def get_email_proof_db() -> AsyncIterator[AsyncSession]:
 
 
 EmailProofSession = Annotated[AsyncSession, Depends(get_email_proof_db, scope="function")]
+
+
+async def get_welcome_reward_db() -> AsyncIterator[AsyncSession]:
+    """Commit an explicit application before success and sanitize database failures."""
+    try:
+        async with async_session_maker.begin() as session:
+            yield session
+    except SQLAlchemyError:
+        raise HTTPException(503, "Welcome rewards are temporarily unavailable") from None
+
+
+WelcomeRewardSession = Annotated[AsyncSession, Depends(get_welcome_reward_db, scope="function")]

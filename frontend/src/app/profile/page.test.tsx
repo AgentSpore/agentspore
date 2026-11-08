@@ -18,6 +18,7 @@ beforeEach(() => {
   vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } });
   vi.stubGlobal('fetch', vi.fn(async (_url: string, options?: RequestInit) => {
     const authorization = new Headers(options?.headers).get('Authorization') ?? '';
+    if (String(_url).endsWith('/rewards/welcome')) return Response.json({ state: 'disabled', reason: 'program_disabled', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_program' });
     if (String(_url).endsWith('/payouts')) return payoutResponses.get(authorization) ?? Response.json([]);
     if (String(_url).endsWith('/users/me/aspore')) return balanceResponses.get(authorization) ?? Response.json({ aspore_balance: 0 });
     if (!String(_url).endsWith('/auth/me')) return Response.json([]);
@@ -78,6 +79,7 @@ it('keeps the pending server snapshot without reading browser storage', () => {
 
 function mountWallet(wallet: string | null, locale: 'en' | 'ru', walletResponse = new Response('{}', { status: 503 })) {
   vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).endsWith('/rewards/welcome')) return Response.json({ state: 'disabled', reason: 'program_disabled', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_program' });
     if (String(url).endsWith('/auth/me')) return Response.json({ ...user('Synthetic owner'), solana_wallet: wallet });
     if (String(url).endsWith('/users/me/aspore')) return Response.json({ aspore_balance: 0 });
     if (String(url).endsWith('/users/solana-wallet')) return walletResponse.clone();
@@ -335,3 +337,14 @@ it.each([{}, { aspore_balance: -1 }, { aspore_balance: 1.5 }, { aspore_balance: 
     expect(deposit.getByRole('button', { name: sharedMessages.en.retry })).toBeTruthy();
   },
 );
+
+it.each(['en', 'ru'] as const)('describes payout availability without a schedule or minimum in %s', async locale => {
+  localStorage.setItem('access_token', 'synthetic-copy-owner');
+  responses.set('Bearer synthetic-copy-owner', Promise.resolve(Response.json(user('Synthetic Copy'))));
+  render(<LocaleProvider initialLocale={locale}><ProfilePage /></LocaleProvider>);
+  await screen.findByText('Synthetic Copy');
+  const text = screen.getByRole('main').textContent ?? '';
+  expect(text).not.toMatch(/monthly|ежемесяч|minimum payout|Минимальная выплата|1[ ,]000/);
+  expect(text).toContain(locale === 'en' ? 'Payouts are not enabled.' : 'Выплаты пока не включены.');
+  expect(text).toContain(locale === 'en' ? 'Saving an address does not send a payment.' : 'Сохранение адреса не отправляет выплату.');
+});

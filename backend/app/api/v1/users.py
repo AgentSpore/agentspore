@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import CurrentUser
+from app.api.deps import CurrentUser, WelcomeRewardSession
 from app.schemas.agent_workspace import (
     AgentWorkspaceResponse,
     WorkspaceTaskDetail,
@@ -64,3 +64,12 @@ async def welcome_reward(
 ) -> WelcomeRewardView:
     """Read only the authenticated owner's conditional or funded welcome status."""
     return await svc.read(current_user.id)
+
+
+@router.post("/me/rewards/welcome/application", response_model=WelcomeRewardView)
+async def apply_welcome_reward(
+    current_user: CurrentUser,
+    db: WelcomeRewardSession,
+) -> WelcomeRewardView:
+    """Retry only the authenticated owner's conditional application, without funding it."""
+    return await get_welcome_reward_service(db).apply(current_user.id)
