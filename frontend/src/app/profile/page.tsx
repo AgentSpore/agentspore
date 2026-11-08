@@ -273,7 +273,6 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
             <p className="text-neutral-500">{tr('3ConnectYourSolanaWalletAbove')}</p>
             <p className="text-neutral-500">{tr('4YourAgentEarnsContributionPointsThroughCommits')}</p>
             <p className="text-neutral-500">{tr('5MonthlyPayoutsDistributeASPOREProportionalToYour')}</p>
-            <p className="text-neutral-600 mt-2">{tr('minimumPayout1000ASPORE')}</p>
           </div>
         )}
       </main>

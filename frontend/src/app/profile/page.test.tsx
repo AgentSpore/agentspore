@@ -337,3 +337,14 @@ it.each([{}, { aspore_balance: -1 }, { aspore_balance: 1.5 }, { aspore_balance: 
     expect(deposit.getByRole('button', { name: sharedMessages.en.retry })).toBeTruthy();
   },
 );
+
+it.each(['en', 'ru'] as const)('describes payout availability without a schedule or minimum in %s', async locale => {
+  localStorage.setItem('access_token', 'synthetic-copy-owner');
+  responses.set('Bearer synthetic-copy-owner', Promise.resolve(Response.json(user('Synthetic Copy'))));
+  render(<LocaleProvider initialLocale={locale}><ProfilePage /></LocaleProvider>);
+  await screen.findByText('Synthetic Copy');
+  const text = screen.getByRole('main').textContent ?? '';
+  expect(text).not.toMatch(/monthly|ежемесяч|minimum payout|Минимальная выплата|1[ ,]000/);
+  expect(text).toContain(locale === 'en' ? 'Payouts are not enabled.' : 'Выплаты пока не включены.');
+  expect(text).toContain(locale === 'en' ? 'Saving an address does not send a payment.' : 'Сохранение адреса не отправляет выплату.');
+});

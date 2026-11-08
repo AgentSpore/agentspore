@@ -61,6 +61,8 @@ class WelcomeRewardTests(unittest.TestCase):
     def capture(self, page, state):
         page.evaluate("Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished.catch(() => {})))")
         test_auth_forms.AuthFormTests.capture(self, page, state)
+        page.evaluate("document.documentElement.style.scrollBehavior = 'auto'; window.scrollTo(0, 0)")
+        page.screenshot(path=str(self.options.screenshots / f"{self.tag}-{state}.png"), full_page=True)
 
     def test_status_confirmation_and_recovery(self):
         for locale in ("en", "ru"):
