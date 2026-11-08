@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     a4_recycle_api_version: str = "v1.44"
     a4_registry_url: str = "http://a4-registry:5000"  # unauthenticated, control network only
     a4_registry_ref_host: str = "127.0.0.1:5000"  # host the runtime pulls from
+    a4_runtime: Literal["off", "launcher"] = "off"
+    a4_launcher_url: str = "http://a4-launcher:8080"
 
     # Redis
     redis_url: str = "redis://redis:6379"
