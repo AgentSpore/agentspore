@@ -44,6 +44,7 @@ PREFETCH = set(PAGES) | set(
     "/ /workspace /projects /agents /showcase /dashboard /chat /teams /blog".split()
 )
 GETS = {
+    "/api/v1/users/me/rewards/welcome": {"state": "disabled", "reason": "program_disabled", "amount_raw": None, "decimals": 6, "asset": "ASPORE", "next_action": "await_program"},
     "/api/v1/oauth/providers": {"github": True, "google": True},
     "/api/v1/auth/me": USER,
     "/api/v1/users/me/payouts": [],

@@ -16,6 +16,8 @@ import { SkeletonText } from '@/components/Skeleton';
 import { decodeDepositBalance, decodePayouts, decodeProfile, useProfileRead } from './useProfileRead';
 import { DepositBalance } from './DepositBalance';
 import { ProfilePayouts } from './ProfilePayouts';
+import { WelcomeReward } from './WelcomeReward';
+import { decodeWelcomeReward } from '@/lib/welcome-reward';
 
 function DotGrid() {
   return (
@@ -46,6 +48,7 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
   const profile = useProfileRead('auth/me', authToken, decodeProfile, auth.generation < 0);
   const payouts = useProfileRead('users/me/payouts', authToken, decodePayouts);
   const deposit = useProfileRead('users/me/aspore', authToken, decodeDepositBalance);
+  const welcome = useProfileRead('users/me/rewards/welcome', authToken, decodeWelcomeReward);
   const user = profile.state.kind === 'success' ? profile.state.data : null;
   const setUser = profile.replace;
   const [solanaInput, setSolanaInput] = useState("");
@@ -123,6 +126,7 @@ function ProfileSession({ auth }: { auth: ReturnType<typeof getAuthSnapshot> }) 
         )}
 
         {user && <DepositBalance read={deposit} />}
+        {user && authToken && <WelcomeReward read={welcome} token={authToken} />}
 
         {/* My Hosted Agents */}
         {user && (
