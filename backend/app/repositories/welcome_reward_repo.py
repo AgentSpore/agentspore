@@ -1,5 +1,7 @@
 """Welcome reservations share the caller's transaction and stable program lock."""
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -11,6 +13,44 @@ from app.models.user import User
 class WelcomeRewardRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def flush_identity(self) -> None:
+        """Flush core identity changes before entering optional error handling."""
+        await self.db.flush()
+
+    @asynccontextmanager
+    async def onboarding_savepoint(self) -> AsyncGenerator[None]:
+        """Bound optional ledger queries without changing the caller's timeouts."""
+        async with self.db.begin_nested():
+            previous = (
+                await self.db.execute(
+                    text(
+                        "SELECT current_setting('lock_timeout'), "
+                        "current_setting('statement_timeout')"
+                    )
+                )
+            ).one()
+            await self.db.execute(text("SET LOCAL lock_timeout = '250ms'"))
+            await self.db.execute(text("SET LOCAL statement_timeout = '1000ms'"))
+            yield
+            await self.db.execute(
+                text(
+                    "SELECT set_config('lock_timeout', :lock, true), "
+                    "set_config('statement_timeout', :statement, true)"
+                ),
+                {"lock": previous[0], "statement": previous[1]},
+            )
+
+    def transaction_usable(self) -> bool:
+        """Confirm the enclosing identity transaction survived a ledger error."""
+        transaction = self.db.get_transaction()
+        return self.db.is_active and transaction is not None and transaction.is_active
+
+    async def enabled(self) -> bool:
+        """Skip disabled or absent programs without acquiring reserve locks."""
+        return bool(
+            await self.db.scalar(text("SELECT enabled FROM reward_programs WHERE id='welcome'"))
+        )
 
     async def context(
         self, owner: UUID, *, lock: bool = False

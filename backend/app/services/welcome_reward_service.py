@@ -3,6 +3,8 @@
 from uuid import UUID
 
 from fastapi import Depends
+from loguru import logger
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -50,7 +52,10 @@ class WelcomeRewardService:
                 amount_raw=amount,
             )
         if grant is None:
-            return WelcomeRewardView(state="not_applied", reason="not_applied")
+            return WelcomeRewardView(
+                state="not_applied",
+                reason="not_applied" if self._eligible(user, program) else "not_eligible",
+            )
         if grant["state"] == "denied":
             return WelcomeRewardView(state="denied", reason="denied")
         decision = await self.repo.decision(grant["id"])
@@ -68,19 +73,31 @@ class WelcomeRewardService:
 
     @staticmethod
     def _funded_view(user: User | None, grant: dict, decision: dict) -> WelcomeRewardView:
-        if not (
-            user
-            and EmailProofService.has_current_proof(user)
-            and decision["email_proof_at"] == user.email_proof_at
-        ):
+        if not user or not EmailProofService.has_current_proof(user):
             return WelcomeRewardView(
                 state="frozen", reason="email_required", amount_raw=grant["amount_raw"]
+            )
+        if decision["email_proof_at"] != user.email_proof_at:
+            return WelcomeRewardView(
+                state="frozen", reason="risk_review", amount_raw=grant["amount_raw"]
             )
         return WelcomeRewardView(
             state=grant["state"],
             reason="available" if grant["state"] == "available" else "reserved",
             amount_raw=grant["amount_raw"],
         )
+
+    async def apply_onboarding(self, owner: UUID) -> None:
+        """Attempt an unfunded application without aborting a usable identity transaction."""
+        await self.repo.flush_identity()
+        try:
+            async with self.repo.onboarding_savepoint():
+                if await self.repo.enabled():
+                    await self.apply(owner)
+        except DBAPIError as exc:
+            if exc.connection_invalidated or not self.repo.transaction_usable():
+                raise
+            logger.warning("Welcome application unavailable; identity transaction preserved")
 
     async def apply(self, owner: UUID) -> WelcomeRewardView:
         """Record at most one eligible registration application, never a promise."""

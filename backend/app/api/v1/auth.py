@@ -38,6 +38,7 @@ from app.schemas.auth import (
 )
 from app.services.email_proof_service import EmailProofService
 from app.services.email_service import EmailService, get_email_service
+from app.services.welcome_reward_service import get_welcome_reward_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -131,13 +132,12 @@ async def register(
         str(user.id),
     )
     # Send verification email without exposing its bearer link in logs.
-    sent = await email_svc.send_verification_email(
-        data.email, raw_token, site_base_url(request)
-    )
+    sent = await email_svc.send_verification_email(data.email, raw_token, site_base_url(request))
     if not sent:
         logger.warning("Verification email was not sent")
 
     await FunnelRepository(db).count_event("user_register")
+    await get_welcome_reward_service(db).apply_onboarding(user.id)
     return RegisterResponse()
 
 

@@ -189,7 +189,7 @@ async def test_email_snapshot_unlock_and_change_back_hold(admitted):
         """),
             {"owner": admitted.owner},
         )
-        assert (await svc.advance(admitted.owner)).reason == "email_required"
+        assert (await svc.advance(admitted.owner)).reason == "risk_review"
         await db.execute(
             text("""
             INSERT INTO reward_eligibility_decisions(grant_id,owner_user_id,source_event,
@@ -218,7 +218,7 @@ async def test_email_snapshot_unlock_and_change_back_hold(admitted):
             {"owner": admitted.owner},
         )
         view = await svc.read(admitted.owner)
-        assert (view.state, view.reason) == ("frozen", "email_required")
+        assert (view.state, view.reason) == ("frozen", "risk_review")
         assert await WelcomeRewardRepository(db).free_funding() == 0
 
 
