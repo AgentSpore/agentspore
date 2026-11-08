@@ -8,16 +8,29 @@ from app.core.config import get_settings
 from app.core.database import async_session_maker
 from app.core.logging import setup_logging
 from app.services.deployment.buildkit import builder_from_settings
-from app.services.deployment.scans import DockerfileScanner, GitleaksScanner, OsvScanner
+from app.services.deployment.launcher_client import LauncherClient
+from app.services.deployment.launcher_runtime import LauncherRuntime
+from app.services.deployment.scans import DockerfileScanner, GitleaksScanner, OsvScanner, Scanner
 from app.services.deployment.worker import DeploymentWorker
+from app.services.deployment_health import DeploymentHealthProbe
+from app.services.deployment_promotion import DeploymentPromotionService
 
 
 def build_task() -> DeploymentWorkerTask:
     """Wire the worker; `A4_BUILDER` picks the builder. P3 supplies the base-image allowlist."""
-    scanners = [GitleaksScanner(), OsvScanner(), DockerfileScanner(allowed_digests=frozenset())]
-    return DeploymentWorkerTask(
-        DeploymentWorker(async_session_maker, builder_from_settings(get_settings()), scanners)
-    )
+    scanners: list[Scanner] = [
+        GitleaksScanner(),
+        OsvScanner(),
+        DockerfileScanner(allowed_digests=frozenset()),
+    ]
+    settings = get_settings()
+    worker = DeploymentWorker(async_session_maker, builder_from_settings(settings), scanners)
+    if settings.a4_runtime == "launcher":
+        client = LauncherClient(settings.a4_launcher_url)
+        promotion = DeploymentPromotionService(async_session_maker, DeploymentHealthProbe())
+        public_url = f"https://{settings.domains[0]}/"
+        worker.attach_runtime(LauncherRuntime(async_session_maker, client, promotion, public_url))
+    return DeploymentWorkerTask(worker)
 
 
 async def serve(task: ScheduledTask) -> None:

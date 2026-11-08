@@ -8,3 +8,7 @@ class DeployRejectedError(Exception):
         super().__init__(f"{reason_code}: {detail}" if detail else reason_code)
         self.reason_code = reason_code
         self.detail = detail
+
+
+class LeaseLostError(Exception):
+    """The fence expired or moved on while a build was running."""

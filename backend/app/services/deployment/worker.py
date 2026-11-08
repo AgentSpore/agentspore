@@ -13,8 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.repositories.deployment_repo import DeploymentRepository
 from app.schemas.deployments import DeploymentLease, SandboxNamespaceAbsenceProof
 from app.services.deployment.builder import Builder, BuildRequest
-from app.services.deployment.errors import DeployRejectedError
+from app.services.deployment.errors import DeployRejectedError, LeaseLostError
 from app.services.deployment.fetcher import fetch_source
+from app.services.deployment.launcher_observer import LauncherObserver
+from app.services.deployment.launcher_runtime import LauncherRuntime
 from app.services.deployment.manifest import load_manifest
 from app.services.deployment.scans import Scanner, run_prescan
 from app.services.deployment_recovery import DeploymentRecoveryService
@@ -22,10 +24,6 @@ from app.services.deployment_recovery import DeploymentRecoveryService
 Fetch = Callable[[str, str, Path], Awaitable[None]]
 
 SHUTDOWN_WRITE_TIMEOUT = 10.0
-
-
-class LeaseLostError(Exception):
-    """The fence expired or moved on while a build was running."""
 
 
 async def _no_sandbox_observed(lease: DeploymentLease, sandbox_id: str | None):
@@ -56,6 +54,14 @@ class DeploymentWorker:
         self.lease_seconds = lease_seconds
         self.worker_id: UUID = uuid4()
         self.recovery = DeploymentRecoveryService(sessions, _no_sandbox_observed)
+        self.runtime: LauncherRuntime | None = None
+
+    def attach_runtime(self, runtime: LauncherRuntime) -> None:
+        """`A4_RUNTIME=launcher`: start what was pushed, and recover from the launcher listing."""
+        self.runtime = runtime
+        self.recovery = DeploymentRecoveryService(
+            self.sessions, LauncherObserver(runtime.client, runtime.status_of)
+        )
 
     async def run_once(self) -> bool:
         """Process one queued job, else recover an expired build; True when anything happened."""
@@ -71,7 +77,8 @@ class DeploymentWorker:
         except asyncio.CancelledError:
             await self._record_on_shutdown(lease)
             raise
-        await self._record(lease, reason)
+        if reason is not None:
+            await self._record(lease, reason)
         return True
 
     async def _record_on_shutdown(self, lease: DeploymentLease) -> None:
@@ -101,7 +108,9 @@ class DeploymentWorker:
                 return None
             return lease, *await repo.job_source(lease)
 
-    async def _supervised(self, lease: DeploymentLease, repo_url: str, commit_sha: str) -> str:
+    async def _supervised(
+        self, lease: DeploymentLease, repo_url: str, commit_sha: str
+    ) -> str | None:
         """Run the pipeline while renewing the lease; cancel it the moment the fence is lost."""
         job = asyncio.create_task(self._pipeline(lease, repo_url, commit_sha))
         try:
@@ -119,8 +128,11 @@ class DeploymentWorker:
         async with self.sessions.begin() as db:
             return await DeploymentRepository(db).renew(lease, self.lease_seconds)
 
-    async def _pipeline(self, lease: DeploymentLease, repo_url: str, commit_sha: str) -> str:
-        """Return the stable reason code; the temp dir never outlives the call."""
+    async def _pipeline(self, lease: DeploymentLease, repo_url: str, commit_sha: str) -> str | None:
+        """Return the stable reason code, or None once the launcher flow settled the row.
+
+        The temp dir never outlives the call.
+        """
         try:
             with tempfile.TemporaryDirectory(prefix="a4-") as tmp:
                 root = Path(tmp) / "src"
@@ -132,6 +144,9 @@ class DeploymentWorker:
                 # PushingBuilder deletes its own tarball; this covers builders that skip the push
                 if result.artifact is not None:
                     result.artifact.unlink(missing_ok=True)
+            if self.runtime is not None:
+                await self.runtime.launch(lease, result.image_ref)
+                return None
         except DeployRejectedError as exc:
             logger.warning("deploy refused deployment={} reason={}", lease.deployment_id, exc)
             return exc.reason_code
