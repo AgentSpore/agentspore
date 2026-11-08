@@ -3,10 +3,9 @@
 from functools import lru_cache
 
 import httpx
+from loguru import logger
 
 from app.core.config import get_settings
-
-from loguru import logger
 
 
 class EmailService:
@@ -19,7 +18,7 @@ class EmailService:
 
     async def send_email(self, to: str, subject: str, html: str) -> bool:
         if not self.settings.resend_api_key:
-            logger.warning("RESEND_API_KEY not configured, email not sent to {}", to)
+            logger.warning("Email delivery is not configured")
             return False
 
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -35,11 +34,22 @@ class EmailService:
             )
 
         if resp.status_code in (200, 201):
-            logger.info("Email sent to {}: {}", to, subject)
+            logger.info("Email sent")
             return True
 
-        logger.warning("Email send failed ({}): {}", resp.status_code, resp.text)
+        logger.warning("Email send failed ({})", resp.status_code)
         return False
+
+    async def send_email_proof_code(self, to: str, code: str) -> bool:
+        """Send a purpose-bound mailbox proof, never a sign-in link."""
+        return await self.send_email(
+            to, "Confirm your AgentSpore email",
+            f"<p>Your one-time email ownership confirmation code:</p><pre>{code}</pre>"
+            "<p>Submit this code through the AgentSpore email-proof confirmation API. "
+            "It cannot sign you in or reset your password. "
+            "This code expires; request a new one if it no longer works. "
+            "Ignore this message if you did not request it.</p>",
+        )
 
     async def send_verification_email(
         self, to: str, token: str, base_url: str | None = None

@@ -1,16 +1,18 @@
 """Зависимости для API."""
 
 import ipaddress
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from redis.asyncio import Redis
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.database import get_db
+from app.core.database import async_session_maker, get_db
 from app.core.redis_client import get_redis
 from app.core.security import decode_token
 from app.models import User
@@ -153,3 +155,15 @@ async def get_usage_observer_service(
     settings = get_settings()
     target = UsageObserverService.target_for(settings, service_name)
     return UsageObserverService(UsageService(db), redis, target, user.id if user else None)
+
+
+async def get_email_proof_db() -> AsyncIterator[AsyncSession]:
+    """Keep proof transaction errors out of public responses and server tracebacks."""
+    try:
+        async with async_session_maker.begin() as session:
+            yield session
+    except SQLAlchemyError:
+        raise HTTPException(503, "Email verification is temporarily unavailable") from None
+
+
+EmailProofSession = Annotated[AsyncSession, Depends(get_email_proof_db, scope="function")]

@@ -6,9 +6,11 @@ from datetime import datetime, timedelta, timezone
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from loguru import logger
 from sqlalchemy import func, select
 
-from app.api.deps import CurrentUser, DatabaseSession, client_ip as _client_ip
+from app.api.deps import CurrentUser, DatabaseSession, EmailProofSession
+from app.api.deps import client_ip as _client_ip
 from app.core.config import get_settings
 from app.core.domains import site_base_url
 from app.core.redis_client import get_redis
@@ -20,8 +22,11 @@ from app.core.security import (
     verify_password,
 )
 from app.models import User
+from app.repositories.email_proof_repo import EmailProofRepository
 from app.repositories.funnel_repo import FunnelRepository
 from app.schemas.auth import (
+    EmailProofConfirm,
+    EmailProofResponse,
     ForgotPasswordRequest,
     RegisterResponse,
     ResetPasswordRequest,
@@ -31,9 +36,8 @@ from app.schemas.auth import (
     UserLogin,
     UserResponse,
 )
+from app.services.email_proof_service import EmailProofService
 from app.services.email_service import EmailService, get_email_service
-
-from loguru import logger
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -114,6 +118,7 @@ async def register(
         token_balance=0,
         is_verified=False,
         verification_token=token_hash,
+        verification_email=data.email, verification_purpose="registration",
         verification_expires_at=expires_at,
     )
     db.add(user)
@@ -125,13 +130,12 @@ async def register(
         cfg.email_verification_ttl_seconds,
         str(user.id),
     )
-    # Send verification email (best-effort; dev falls back to console log)
+    # Send verification email without exposing its bearer link in logs.
     sent = await email_svc.send_verification_email(
         data.email, raw_token, site_base_url(request)
     )
     if not sent:
-        verify_url = f"{cfg.frontend_url}/verify-email?token={raw_token}"
-        logger.warning("Email not sent — dev verify link: {}", verify_url)
+        logger.warning("Verification email was not sent")
 
     await FunnelRepository(db).count_event("user_register")
     return RegisterResponse()
@@ -165,6 +169,7 @@ async def verify_email(
     if (
         not user
         or user.is_verified
+        or user.verification_purpose not in (None, "registration")
         or not user.verification_token
         or not secrets.compare_digest(user.verification_token, token_hash)
         or user.verification_expires_at is None
@@ -177,11 +182,14 @@ async def verify_email(
 
     # Mark verified and clear token fields
     user.is_verified = True
+    EmailProofService.record(user, user.verification_email, "email_link")
+    user.verification_email = None
+    user.verification_purpose = None
     user.verification_token = None
     user.verification_expires_at = None
     await db.commit()
 
-    logger.info("Email verified for user {}", user.email)
+    logger.info("Email verification completed")
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
@@ -230,6 +238,8 @@ async def resend_verification(
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=cfg.email_verification_ttl_seconds)
 
     user.verification_token = token_hash
+    user.verification_email = user.email
+    user.verification_purpose = "registration"
     user.verification_expires_at = expires_at
     await db.commit()
 
@@ -434,3 +444,26 @@ async def reset_password(
 
     logger.info("Password reset completed for user {}", user.email)
     return {"message": "Password has been reset successfully."}
+
+
+@router.post("/email-proof/request", response_model=EmailProofResponse, status_code=202)
+async def request_email_proof(
+    user: CurrentUser,
+    db: EmailProofSession,
+    redis: aioredis.Redis = Depends(get_redis),
+    email_svc: EmailService = Depends(get_email_service),
+):
+    await EmailProofService(EmailProofRepository(db), redis, email_svc).request(user.id)
+    return EmailProofResponse(message="Check your email for a confirmation code.")
+
+
+@router.post("/email-proof/confirm", response_model=EmailProofResponse)
+async def confirm_email_proof(
+    data: EmailProofConfirm,
+    user: CurrentUser,
+    db: EmailProofSession,
+    redis: aioredis.Redis = Depends(get_redis),
+    email_svc: EmailService = Depends(get_email_service),
+):
+    await EmailProofService(EmailProofRepository(db), redis, email_svc).confirm(user.id, data.code)
+    return EmailProofResponse(message="Current email ownership confirmed.")

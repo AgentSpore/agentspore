@@ -91,3 +91,11 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class EmailProofConfirm(BaseModel):
+    code: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]+$", repr=False)
+
+
+class EmailProofResponse(BaseModel):
+    message: str
