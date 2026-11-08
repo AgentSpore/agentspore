@@ -10,8 +10,10 @@ from app.schemas.agent_workspace import (
     WorkspaceTaskDetail,
     WorkspaceTaskPage,
 )
+from app.schemas.welcome_rewards import WelcomeRewardView
 from app.services.agent_service import AgentService, get_agent_service
 from app.services.agent_workspace_service import AgentWorkspaceService, get_agent_workspace_service
+from app.services.welcome_reward_service import WelcomeRewardService, get_welcome_reward_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -53,3 +55,12 @@ async def agent_task_detail(
 ) -> WorkspaceTaskDetail:
     """Read a private result and safe review history for an authorized owner."""
     return await svc.detail(current_user.id, task_id)
+
+
+@router.get("/me/rewards/welcome", response_model=WelcomeRewardView)
+async def welcome_reward(
+    current_user: CurrentUser,
+    svc: WelcomeRewardService = Depends(get_welcome_reward_service),
+) -> WelcomeRewardView:
+    """Read only the authenticated owner's conditional or funded welcome status."""
+    return await svc.read(current_user.id)
