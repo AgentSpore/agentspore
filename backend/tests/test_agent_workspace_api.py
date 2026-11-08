@@ -1,6 +1,7 @@
 """Owner projections exercise real JWT authentication and PostgreSQL queries."""
 
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -42,6 +43,12 @@ async def workspace_api(marketplace_db):
                 ADD COLUMN last_heartbeat TIMESTAMPTZ;
         """)
         )
+        connection = await db.connection()
+        raw = await connection.get_raw_connection()
+        assert raw.driver_connection is not None
+        for name in ("V114__email_ownership_proof.sql", "R__email_ownership_proof.sql"):
+            migration = Path(__file__).resolve().parents[2] / "db/migrations" / name
+            await raw.driver_connection.execute(migration.read_text())
         for index, owner in enumerate(owners):
             db.add(User(id=owner, name="Synthetic owner", email=f"owner{index}@example.invalid"))
         await db.execute(

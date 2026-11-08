@@ -52,6 +52,8 @@ MIGRATIONS = (
     "V81__commit_sha_dedup.sql",
     "V93__agent_code_karma_limits.sql",
     "V109__funnel_daily.sql",
+    "V114__email_ownership_proof.sql",
+    "R__email_ownership_proof.sql",
 )
 
 

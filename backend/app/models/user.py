@@ -30,6 +30,11 @@ class User(Base):
     verification_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    verification_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    verification_purpose: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    email_proof_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email_proof_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_proof_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
     token_balance: Mapped[int] = mapped_column(Integer, default=0)
     oauth_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     oauth_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

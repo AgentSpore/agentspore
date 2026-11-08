@@ -25,6 +25,8 @@ def _make_user(*, is_verified: bool = True, hashed_password: str = "hashed") -> 
     user.email = "test@example.com"
     user.hashed_password = hashed_password
     user.is_verified = is_verified
+    user.verification_purpose = None
+    user.verification_email = None
     user.verification_token = hashlib.sha256(b"somevalidtoken").hexdigest()
     user.verification_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
     return user
