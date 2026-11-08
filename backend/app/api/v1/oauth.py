@@ -15,6 +15,7 @@ from app.core.domains import match_domain, request_domain
 from app.core.redis_client import get_redis
 from app.core.security import create_access_token, create_refresh_token
 from app.models import User
+from app.services.email_proof_service import EmailProofService
 
 router = APIRouter(prefix="/oauth", tags=["oauth"])
 settings = get_settings()
@@ -121,13 +122,17 @@ async def _upsert_oauth_user(
     # Попытка найти по oauth_id
     result = await db.execute(
         select(User).where(User.oauth_provider == provider, User.oauth_id == oauth_id)
+        .with_for_update().execution_options(populate_existing=True)
     )
     user = result.scalar_one_or_none()
     if user:
+        EmailProofService.record(user, email, provider)
+        await db.flush()
         return user
 
     # Проверить нет ли уже аккаунта с таким email (и прилинковать)
-    result = await db.execute(select(User).where(func.lower(User.email) == email))
+    result = await db.execute(select(User).where(func.lower(User.email) == email)
+        .with_for_update().execution_options(populate_existing=True))
     user = result.scalar_one_or_none()
     if user:
         user.oauth_provider = provider
@@ -141,6 +146,7 @@ async def _upsert_oauth_user(
             user.is_verified = True
             user.verification_token = None
             user.verification_expires_at = None
+        EmailProofService.record(user, email, provider)
         await db.flush()
         return user
 
@@ -154,6 +160,7 @@ async def _upsert_oauth_user(
         token_balance=50,
         is_verified=True,
     )
+    EmailProofService.record(user, email, provider)
     db.add(user)
     await db.flush()
     return user

@@ -20,6 +20,7 @@ from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.core.security import get_password_hash
 from app.models import User
+from app.services.email_proof_service import EmailProofService
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 EMAIL = "claim-owner@example.com"
@@ -118,6 +119,8 @@ async def test_verified_oauth_discards_preregistrant_password(identity_case, pro
         assert user.hashed_password is None
         assert user.verification_token is None and user.verification_expires_at is None
         assert user.oauth_provider == provider
+        assert EmailProofService.has_current_proof(user)
+        assert user.email_proof_source == provider
     replay_password = await case.client.post(
         "/api/v1/auth/login", json={"email": EMAIL, "password": PASSWORD}
     )
@@ -137,6 +140,7 @@ async def test_verified_account_keeps_password(identity_case, provider):
     async with case.world.maker() as db:
         user = await db.get(User, user_id)
         assert user is not None and user.hashed_password == password_hash
+        assert EmailProofService.has_current_proof(user)
     response = await case.client.post(
         "/api/v1/auth/login", json={"email": EMAIL, "password": PASSWORD}
     )
@@ -168,6 +172,7 @@ async def test_google_rejects_unverified_email_without_identity_changes(identity
         assert user is not None and not user.is_verified
         assert user.hashed_password == original_hash
         assert user.oauth_provider is None and user.oauth_id is None
+        assert not EmailProofService.has_current_proof(user)
         assert user.verification_token == "synthetic-verification-digest"
 
 
