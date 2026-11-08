@@ -18,6 +18,7 @@ beforeEach(() => {
   vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } });
   vi.stubGlobal('fetch', vi.fn(async (_url: string, options?: RequestInit) => {
     const authorization = new Headers(options?.headers).get('Authorization') ?? '';
+    if (String(_url).endsWith('/rewards/welcome')) return Response.json({ state: 'disabled', reason: 'program_disabled', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_program' });
     if (String(_url).endsWith('/payouts')) return payoutResponses.get(authorization) ?? Response.json([]);
     if (String(_url).endsWith('/users/me/aspore')) return balanceResponses.get(authorization) ?? Response.json({ aspore_balance: 0 });
     if (!String(_url).endsWith('/auth/me')) return Response.json([]);
@@ -78,6 +79,7 @@ it('keeps the pending server snapshot without reading browser storage', () => {
 
 function mountWallet(wallet: string | null, locale: 'en' | 'ru', walletResponse = new Response('{}', { status: 503 })) {
   vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).endsWith('/rewards/welcome')) return Response.json({ state: 'disabled', reason: 'program_disabled', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'await_program' });
     if (String(url).endsWith('/auth/me')) return Response.json({ ...user('Synthetic owner'), solana_wallet: wallet });
     if (String(url).endsWith('/users/me/aspore')) return Response.json({ aspore_balance: 0 });
     if (String(url).endsWith('/users/solana-wallet')) return walletResponse.clone();
