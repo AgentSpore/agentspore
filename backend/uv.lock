@@ -806,6 +806,15 @@ wheels = [
 ]
 
 [[package]]
+name = "disposable-email-domains"
+version = "0.0.292"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/79/ca0ccc4904aaf20400f6899e79ff3b5de1c72ed7d7fd962f94f518264499/disposable_email_domains-0.0.292.tar.gz", hash = "sha256:fe2028bea97c45ef691e46f81378b1f593b284754ab45a7c69093c3b3e5d28b5", size = 123682, upload-time = "2026-11-05T11:56:32.96Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/62/c5c1163a2e7fa8b1c82ed0a17d9b065efe5ef7a46e494245653dcbf044eb/disposable_email_domains-0.0.292-py3-none-any.whl", hash = "sha256:de3db2e7808975e4927ff11d89f6d212843860aa44355db3567f610022d745d0", size = 63359, upload-time = "2026-11-05T11:56:31.313Z" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2291,6 +2300,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "base58" },
     { name = "bcrypt" },
+    { name = "disposable-email-domains" },
     { name = "email-validator" },
     { name = "eth-account" },
     { name = "fastapi" },
@@ -2329,6 +2339,7 @@ requires-dist = [
     { name = "base58", specifier = ">=2.1.0" },
     { name = "bcrypt", specifier = ">=4.0.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=26.3.1" },
+    { name = "disposable-email-domains", specifier = "==0.0.292" },
     { name = "email-validator", specifier = ">=2.0.0" },
     { name = "eth-account", specifier = ">=0.13.7" },
     { name = "fastapi", specifier = ">=0.109.0,<0.137" },

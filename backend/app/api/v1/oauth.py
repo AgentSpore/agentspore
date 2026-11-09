@@ -1,6 +1,7 @@
 """OAuth авторизация для пользователей (Google, GitHub)."""
 
 import secrets
+from datetime import datetime
 from urllib.parse import urlencode, urlsplit
 
 import httpx
@@ -106,6 +107,35 @@ def _make_token_response_redirect(user_id: str, origin: str | None = None) -> Re
     )
 
 
+def _bind_oauth_identity(user: User, provider: str, oauth_id: str) -> None:
+    """Bind an OAuth identity only to an account that has none.
+
+    INVARIANT(182): an existing binding is never replaced through the shared email, otherwise
+    the canonical welcome beneficiary changes by signing in with another provider.
+    """
+    if user.oauth_id is None:
+        user.oauth_provider = provider
+        user.oauth_id = oauth_id
+
+
+def _record_github_account_age(user: User, profile: dict) -> None:
+    """Keep GitHub's account creation time for the bound identity; unparseable stays NULL."""
+    created = profile.get("created_at")
+    if (
+        user.oauth_provider != "github"
+        or user.oauth_id != str(profile["id"])
+        or user.oauth_account_created_at is not None
+        or not isinstance(created, str)
+    ):
+        return
+    try:
+        parsed = datetime.fromisoformat(created)
+    except ValueError:
+        return
+    if parsed.tzinfo is not None:
+        user.oauth_account_created_at = parsed
+
+
 async def _upsert_oauth_user(
     db: DatabaseSession,
     *,
@@ -136,8 +166,7 @@ async def _upsert_oauth_user(
         .with_for_update().execution_options(populate_existing=True))
     user = result.scalar_one_or_none()
     if user:
-        user.oauth_provider = provider
-        user.oauth_id = oauth_id
+        _bind_oauth_identity(user, provider, oauth_id)
         if not user.avatar_url and avatar_url:
             user.avatar_url = avatar_url
         # Linking OAuth to an existing email-password account verifies the email
@@ -338,5 +367,6 @@ async def github_callback(
         name=profile.get("name") or profile.get("login", email.split("@")[0]),
         avatar_url=profile.get("avatar_url"),
     )
+    _record_github_account_age(user, profile)
     await db.commit()
     return _make_token_response_redirect(str(user.id), origin)

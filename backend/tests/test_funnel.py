@@ -53,6 +53,7 @@ MIGRATIONS = (
     "V93__agent_code_karma_limits.sql",
     "V109__funnel_daily.sql",
     "V114__email_ownership_proof.sql",
+    "V116__welcome_beneficiary_identity.sql",
     "R__email_ownership_proof.sql",
 )
 
