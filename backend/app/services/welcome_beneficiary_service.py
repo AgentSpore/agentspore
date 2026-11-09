@@ -45,6 +45,21 @@ class WelcomeBeneficiaryService:
             holds.append("no_github_identity")
         if not EmailProofService.has_current_proof(user):
             holds.append("no_current_email_proof")
-        if user.email.rpartition("@")[2].lower() in blocklist:
+        if cls.is_disposable_domain(user.email.rpartition("@")[2]):
             holds.append("disposable_email_domain")
         return BeneficiaryAssessment(beneficiary_key=key, holds=tuple(holds))
+
+    @staticmethod
+    def is_disposable_domain(domain: str) -> bool:
+        """Match the domain, its IDNA form and every parent suffix against the blocklist."""
+        domain = domain.strip().strip(".").lower()
+        forms = {domain}
+        try:
+            forms.add(domain.encode("idna").decode("ascii"))
+        except UnicodeError:
+            pass
+        for form in forms:
+            labels = form.split(".")
+            if any(".".join(labels[i:]) in blocklist for i in range(len(labels) - 1)):
+                return True
+        return False

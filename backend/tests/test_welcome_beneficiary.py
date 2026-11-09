@@ -321,3 +321,22 @@ async def test_callback_keeps_existing_time_and_ignores_other_identity(github_ca
     other = User(email="o@example.com", oauth_provider="google", oauth_id="g")
     await github_callback({"id": 42, "created_at": "2020-01-01T00:00:00Z"}, other)
     assert other.oauth_account_created_at is None
+
+
+@pytest.mark.parametrize(
+    "domain,disposable",
+    [
+        ("mailinator.com", True),
+        ("MAILINATOR.com.", True),
+        ("sub.mailinator.com", True),
+        ("a.b.mailinator.com", True),
+        ("xn--rhqv96g.tv", True),
+        ("世界.tv", True),
+        ("mailinator.com.example.org", False),
+        ("example.com", False),
+        ("com", False),
+        ("\ud800.com", False),
+    ],
+)
+def test_disposable_domain_matching(domain, disposable):
+    assert WelcomeBeneficiaryService.is_disposable_domain(domain) is disposable
