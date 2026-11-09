@@ -23,8 +23,9 @@ STORAGE_ERRORS = (
 )
 LOCK_TIMEOUT_SQLSTATE = "55P03"
 # Model imports initialize database settings, and a settings ValidationError echoes env input.
-# Only configuration failures (settings, default secret, malformed or unknown database URL) are masked; ImportError/TypeError from a code defect propagate
-# as an ordinary traceback (code frames and symbol names, no environment values).
+# Only configuration failures (settings, default secret, malformed or unknown database URL)
+# are masked; ImportError/TypeError from a code defect propagate as an ordinary traceback
+# (code frames and symbol names, no environment values).
 try:
     from app.core.config import get_settings
     from app.repositories.welcome_reward_repo import WelcomeRewardRepository
