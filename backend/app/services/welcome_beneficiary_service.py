@@ -1,6 +1,7 @@
 """Derive the one canonical welcome beneficiary and the reasons it cannot be admitted."""
 
 import re
+from contextlib import suppress
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -54,10 +55,8 @@ class WelcomeBeneficiaryService:
         """Match the domain, its IDNA form and every parent suffix against the blocklist."""
         domain = domain.strip().strip(".").lower()
         forms = {domain}
-        try:
+        with suppress(UnicodeError):
             forms.add(domain.encode("idna").decode("ascii"))
-        except UnicodeError:
-            pass
         for form in forms:
             labels = form.split(".")
             if any(".".join(labels[i:]) in blocklist for i in range(len(labels) - 1)):
