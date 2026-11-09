@@ -31,6 +31,7 @@ async def workspace_api(marketplace_db):
                 name TEXT, avatar_url TEXT, is_admin BOOLEAN, is_verified BOOLEAN,
                 verification_token TEXT, verification_expires_at TIMESTAMPTZ,
                 token_balance INTEGER, oauth_provider TEXT, oauth_id TEXT,
+                oauth_account_created_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ DEFAULT NOW(), solana_wallet TEXT,
                 aspore_balance BIGINT, updated_at TIMESTAMPTZ DEFAULT NOW());
         """)
