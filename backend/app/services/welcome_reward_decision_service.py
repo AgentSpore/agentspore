@@ -4,6 +4,7 @@ from app.models.user import User
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.schemas.welcome_reward_decisions import WelcomeRewardDecision, WelcomeRewardDecisionResult
 from app.services.email_proof_service import EmailProofService
+from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
 
 
 class WelcomeRewardDecisionService:
@@ -55,4 +56,8 @@ class WelcomeRewardDecisionService:
             and intent.beneficiary_key != grant["beneficiary_key"]
         ):
             return WelcomeRewardDecisionResult(verdict="conflict")
+        if intent.outcome == "allow":
+            assessment = WelcomeBeneficiaryService.evaluate(user, now)
+            if assessment.holds or assessment.beneficiary_key != intent.beneficiary_key:
+                return WelcomeRewardDecisionResult(verdict="ineligible")
         return None

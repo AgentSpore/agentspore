@@ -48,7 +48,9 @@ class WelcomeRewardDecision(BaseModel):
 class WelcomeRewardDecisionResult(BaseModel):
     """Expose only a fixed verdict and technical receipt identifiers."""
 
-    verdict: Literal["recorded", "replayed", "conflict", "stale", "not_found", "invalid_input"]
+    verdict: Literal[
+        "recorded", "replayed", "conflict", "stale", "not_found", "invalid_input", "ineligible"
+    ]
     decision_id: int | None = None
     revision: int | None = None
 
@@ -56,3 +58,12 @@ class WelcomeRewardDecisionResult(BaseModel):
     def receipt(cls, verdict: Literal["recorded", "replayed"], row: dict) -> Self:
         """Build a receipt without copying private references."""
         return cls(verdict=verdict, decision_id=row["id"], revision=row["revision"])
+
+
+class BeneficiaryAssessment(BaseModel):
+    """Canonical beneficiary key and the ordered reasons that keep an allow on hold."""
+
+    model_config = ConfigDict(frozen=True)
+
+    beneficiary_key: str | None
+    holds: tuple[str, ...]

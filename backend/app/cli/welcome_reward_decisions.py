@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import Awaitable, Callable
 from typing import TextIO
+from uuid import UUID
 
 from asyncpg import exceptions as pg_errors
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
@@ -30,6 +32,7 @@ try:
     from app.core.config import get_settings
     from app.repositories.welcome_reward_repo import WelcomeRewardRepository
     from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
+    from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
     from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
 except (ValueError, OSError, RuntimeError, ArgumentError):
     IMPORT_READY = False
@@ -47,6 +50,8 @@ EXIT_CODES = {
     "configuration_error": 9,
     "stale": 10,
     "busy": 11,
+    "ineligible": 12,
+    "assessed": 0,
 }
 
 
@@ -71,12 +76,11 @@ def unique_object(pairs: list[tuple[str, object]]) -> dict:
     return result
 
 
-async def execute(
-    intent: WelcomeRewardDecision,
-    apply: bool,
+async def in_session(
     session_factory: async_sessionmaker[AsyncSession] | None,
+    work: Callable[[AsyncSession], Awaitable[dict]],
 ) -> dict:
-    """Report success only after transaction completion and engine disposal."""
+    """Run work in one session; report only fixed verdicts, dispose the engine we created."""
     engine = None
     try:
         if session_factory is None:
@@ -85,16 +89,7 @@ async def execute(
             )
             session_factory = async_sessionmaker(engine, expire_on_commit=False)
         async with session_factory() as db:
-            result = await WelcomeRewardDecisionService(WelcomeRewardRepository(db)).record(intent)
-            if apply and result.verdict in {"recorded", "replayed"}:
-                await db.commit()
-            else:
-                await db.rollback()
-            output = result.model_dump(exclude_none=True) | {
-                "applied": apply and result.verdict in {"recorded", "replayed"}
-            }
-            if not apply and result.verdict == "recorded":
-                output = {"verdict": "validated", "applied": False}
+            output = await work(db)
     except STORAGE_ERRORS as error:
         output = {"verdict": "busy" if is_lock_timeout(error) else "storage_error"}
     finally:
@@ -104,6 +99,61 @@ async def execute(
             except STORAGE_ERRORS:
                 output = {"verdict": "storage_error"}
     return output
+
+
+async def execute(
+    intent: WelcomeRewardDecision,
+    apply: bool,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+) -> dict:
+    """Report success only after transaction completion and engine disposal."""
+
+    async def record(db: AsyncSession) -> dict:
+        result = await WelcomeRewardDecisionService(WelcomeRewardRepository(db)).record(intent)
+        if apply and result.verdict in {"recorded", "replayed"}:
+            await db.commit()
+        else:
+            await db.rollback()
+        output = result.model_dump(exclude_none=True) | {
+            "applied": apply and result.verdict in {"recorded", "replayed"}
+        }
+        if not apply and result.verdict == "recorded":
+            output = {"verdict": "validated", "applied": False}
+        return output
+
+    return await in_session(session_factory, record)
+
+
+async def run_assess(
+    user_id: str,
+    destination: TextIO,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> int:
+    """Print the canonical beneficiary key and hold codes; writes nothing, never prints email."""
+    if not IMPORT_READY:
+        output = {"verdict": "configuration_error"}
+    else:
+        try:
+            owner = UUID(user_id)
+        except ValueError:
+            owner = None
+        if owner is None:
+            output = {"verdict": "invalid_input"}
+        else:
+
+            async def assess(db: AsyncSession) -> dict:
+                now = await WelcomeRewardRepository(db).decision_clock()
+                found = await WelcomeBeneficiaryService(WelcomeRewardRepository(db)).assess(
+                    owner, now
+                )
+                await db.rollback()
+                if found is None:
+                    return {"verdict": "not_found"}
+                return {"verdict": "assessed"} | found.model_dump(mode="json")
+
+            output = await in_session(session_factory, assess)
+    destination.write(json.dumps(output) + "\n")
+    return EXIT_CODES[output["verdict"]]
 
 
 async def run(
@@ -131,7 +181,12 @@ async def run(
 
 
 def main(arguments: list[str], source: TextIO, destination: TextIO) -> int:
-    """Accept only the explicit apply flag; never echo invalid arguments."""
+    """Accept only the explicit apply flag or `assess --user-id`; never echo invalid arguments."""
+    if arguments[:1] == ["assess"]:
+        if len(arguments) != 3 or arguments[1] != "--user-id":
+            destination.write('{"verdict": "invalid_input"}\n')
+            return 5
+        return asyncio.run(run_assess(arguments[2], destination))
     if arguments not in ([], ["--apply"]):
         destination.write('{"verdict": "invalid_input"}\n')
         return 5

@@ -53,6 +53,11 @@ class WelcomeRewardRepository:
             await self.db.scalar(text("SELECT enabled FROM reward_programs WHERE id='welcome'"))
         )
 
+    async def user(self, owner: UUID) -> User | None:
+        """Read one user without locking."""
+        query = select(User).where(User.id == owner).execution_options(populate_existing=True)
+        return (await self.db.execute(query)).scalar_one_or_none()
+
     async def context(
         self, owner: UUID, *, lock: bool = False
     ) -> tuple[User | None, dict, dict | None]:

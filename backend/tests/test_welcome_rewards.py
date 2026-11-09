@@ -52,6 +52,7 @@ async def ledger(marketplace_pg):
             )
         for name in (
             "V115__welcome_reward_ledger.sql",
+            "V116__welcome_beneficiary_identity.sql",
             "R__welcome_reward_integrity.sql",
             "R__email_ownership_proof.sql",
         ):
