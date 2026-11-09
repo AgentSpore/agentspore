@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -162,3 +163,54 @@ class WelcomeRewardRepository:
             ),
             {"id": grant_id},
         )
+
+    async def limit_lock_wait(self) -> None:
+        """Bound waits on the shared reward locks; the timeout dies with the transaction."""
+        await self.db.execute(text("SET LOCAL lock_timeout = '10s'"))
+
+    async def decision_clock(self) -> datetime:
+        """Reject stale transaction snapshots before reading or locking decisions."""
+        row = (
+            await self.db.execute(
+                text("SELECT current_setting('transaction_isolation'), clock_timestamp()")
+            )
+        ).one()
+        if row[0] != "read committed":
+            raise ValueError("Reward mutations require READ COMMITTED")
+        return row[1]
+
+    async def decision_evidence(self, evidence_ref: str) -> dict | None:
+        """Look up the global evidence identity after acquiring shared locks."""
+        row = (
+            (
+                await self.db.execute(
+                    text("SELECT * FROM reward_eligibility_decisions WHERE evidence_ref=:evidence"),
+                    {"evidence": evidence_ref},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return dict(row) if row else None
+
+    async def insert_decision(self, payload: dict) -> dict:
+        """Append evidence; the existing trigger alone assigns its revision."""
+        row = (
+            (
+                await self.db.execute(
+                    text("""
+            INSERT INTO reward_eligibility_decisions
+                (grant_id,owner_user_id,source_event,policy_version,outcome,beneficiary_key,
+                 authority_ref,evidence_ref,email_proof_at,issued_at,expires_at)
+            VALUES (:grant_id,:owner_user_id,:source_event,:policy_version,:outcome,
+                    :beneficiary_key,:authority_ref,:evidence_ref,:email_proof_at,
+                    :issued_at,:expires_at)
+            RETURNING id,revision
+        """),
+                    payload,
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return dict(row)
