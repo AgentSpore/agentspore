@@ -1,5 +1,6 @@
 """Operator input and transaction-boundary checks with synthetic references."""
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -151,23 +152,62 @@ async def test_dispose_failure_does_not_claim_success(review, monkeypatch):
     engine.dispose.assert_awaited_once()
 
 
-def test_config_and_arguments_cannot_leak(payload):
-    for arguments, environ in [(["--canary-argument"], {}), ([], {"DEBUG": "canary-config"})]:
-        process = subprocess.run(
-            [sys.executable, "-m", "app.cli.welcome_reward_decisions", *arguments],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=20,
-            env={
-                "SECRET_KEY": "synthetic-decision-test-key",
-                "DATABASE_URL": "postgresql+asyncpg://synthetic:synthetic@database.invalid/synthetic",
-                **environ,
-            },
-        )
-        assert process.returncode in (5, 8)
-        assert "canary" not in process.stdout + process.stderr
-        assert "Traceback" not in process.stderr
+def _run_module(payload, environ, prelude=""):
+    env = {
+        "SECRET_KEY": "synthetic-decision-test-key",
+        "DATABASE_URL": "postgresql+asyncpg://synthetic:synthetic@database.invalid/synthetic",
+        **environ,
+    }
+    code = (
+        prelude
+        + "import runpy;runpy.run_module('app.cli.welcome_reward_decisions',run_name='__main__')"
+    )
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+
+
+def test_argument_cannot_leak(payload):
+    process = _run_module(payload, {}, "import sys;sys.argv[1:]=['--canary-argument'];")
+    assert (process.returncode, process.stdout) == (5, '{"verdict": "invalid_input"}\n')
+    assert "canary" not in process.stderr
+
+
+def test_configuration_failure_is_fixed_verdict_without_env_echo(payload):
+    process = _run_module(payload, {"DEBUG": "canary-config"})
+    assert (process.returncode, process.stdout) == (9, '{"verdict": "configuration_error"}\n')
+    assert "canary" not in process.stdout + process.stderr
+    assert "Traceback" not in process.stderr
+
+
+def test_code_defect_is_not_masked_as_storage_or_configuration(payload):
+    prelude = (
+        "import sys,types;"
+        "sys.modules['app.services.welcome_reward_decision_service']=types.ModuleType('stub');"
+    )
+    process = _run_module(payload, {"APP_CANARY": "canary-env-value"}, prelude)
+    assert process.returncode not in (0, 8, 9) and process.stdout == ""
+    assert "ImportError" in process.stderr
+    assert "canary" not in process.stderr
+
+
+async def test_lock_timeout_reports_busy_then_retry_succeeds(review):
+    ledger, intent = review
+    destination = StringIO()
+    async with ledger.maker.begin() as holder:
+        await holder.execute(text("SELECT 1 FROM reward_programs WHERE id='welcome' FOR UPDATE"))
+        async with asyncio.timeout(30):
+            code = await run(StringIO(intent.model_dump_json()), destination, True, ledger.maker)
+    assert (code, destination.getvalue()) == (11, '{"verdict": "busy"}\n')
+    async with ledger.maker.begin() as db:
+        assert await db.scalar(text("SELECT count(*) FROM reward_eligibility_decisions")) == 0
+    destination = StringIO()
+    assert await run(StringIO(intent.model_dump_json()), destination, True, ledger.maker) == 0
 
 
 async def test_ambiguous_commit_retry_recovers_receipt(review, monkeypatch):

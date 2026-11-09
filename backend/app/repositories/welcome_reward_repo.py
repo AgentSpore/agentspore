@@ -164,6 +164,10 @@ class WelcomeRewardRepository:
             {"id": grant_id},
         )
 
+    async def limit_lock_wait(self) -> None:
+        """Bound waits on the shared reward locks; the timeout dies with the transaction."""
+        await self.db.execute(text("SET LOCAL lock_timeout = '10s'"))
+
     async def decision_clock(self) -> datetime:
         """Reject stale transaction snapshots before reading or locking decisions."""
         row = (

@@ -15,6 +15,7 @@ class WelcomeRewardDecisionService:
     async def record(self, intent: WelcomeRewardDecision) -> WelcomeRewardDecisionResult:
         """Append one reviewed decision or return its exact historical receipt."""
         await self.repo.decision_clock()
+        await self.repo.limit_lock_wait()
         user, program, grant = await self.repo.context(intent.owner_user_id, lock=True)
         previous = await self.repo.decision_evidence(intent.evidence_ref)
         if previous is not None:

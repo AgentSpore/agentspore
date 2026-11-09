@@ -83,9 +83,11 @@ releasing backing; neither directly changes the grant state.
 | `not_found` | Owner or application absent | 6 |
 | `conflict` | Evidence or grant/beneficiary binding differs | 7 |
 | `storage_error` | Configuration, database, commit or cleanup failed; reconcile before retry | 8 |
+| `configuration_error` | Settings or environment could not be loaded at start; fix the configuration, nothing was attempted | 9 |
 | `stale` | Expected revision, policy or email proof changed | 10 |
+| `busy` | A shared reward lock was not granted within 10 seconds (`lock_timeout`); nothing was saved, retry later | 11 |
 
-Errors contain no input references or database details. A cleanup failure after commit can
+Errors contain no input references or database details. Only settings/OS failures at start are masked as `configuration_error`; a code defect (for example an `ImportError` after a rename) ends the process with an ordinary traceback that holds code frames only, never input or environment values. A cleanup failure after commit can
 return `storage_error` even though the append committed; retry the identical input to recover
 its receipt. Dry-run may consume a sequence value, but persists no row. It does not create
 applications, enable the program, fund or advance grants, credit deposits, create payouts,

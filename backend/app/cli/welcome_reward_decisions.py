@@ -18,18 +18,19 @@ STORAGE_ERRORS = (
     pg_errors.InternalClientError,
     OSError,
     ValueError,
-    TypeError,
     RuntimeError,
-    ImportError,
     OverflowError,
 )
-# Model imports initialize database settings; guard that process boundary too.
+LOCK_TIMEOUT_SQLSTATE = "55P03"
+# Model imports initialize database settings, and a settings ValidationError echoes env input.
+# Only configuration failures are masked; ImportError/TypeError from a code defect propagate
+# as an ordinary traceback (code frames and symbol names, no environment values).
 try:
     from app.core.config import get_settings
     from app.repositories.welcome_reward_repo import WelcomeRewardRepository
     from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
     from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
-except STORAGE_ERRORS:
+except (ValueError, OSError):
     IMPORT_READY = False
 else:
     IMPORT_READY = True
@@ -42,8 +43,21 @@ EXIT_CODES = {
     "not_found": 6,
     "conflict": 7,
     "storage_error": 8,
+    "configuration_error": 9,
     "stale": 10,
+    "busy": 11,
 }
+
+
+def is_lock_timeout(error: BaseException | None) -> bool:
+    """Detect lock_timeout through SQLAlchemy's driver wrappers by SQLSTATE."""
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if getattr(error, "sqlstate", None) == LOCK_TIMEOUT_SQLSTATE:
+            return True
+        error = getattr(error, "orig", None) or error.__cause__
+    return False
 
 
 def unique_object(pairs: list[tuple[str, object]]) -> dict:
@@ -64,8 +78,6 @@ async def execute(
     """Report success only after transaction completion and engine disposal."""
     engine = None
     try:
-        if not IMPORT_READY:
-            raise RuntimeError("storage_unavailable")
         if session_factory is None:
             engine = create_async_engine(
                 get_settings().database_url, echo=False, isolation_level="READ COMMITTED"
@@ -82,8 +94,8 @@ async def execute(
             }
             if not apply and result.verdict == "recorded":
                 output = {"verdict": "validated", "applied": False}
-    except STORAGE_ERRORS:
-        output = {"verdict": "storage_error"}
+    except STORAGE_ERRORS as error:
+        output = {"verdict": "busy" if is_lock_timeout(error) else "storage_error"}
     finally:
         if engine is not None:
             try:
@@ -101,8 +113,8 @@ async def run(
 ) -> int:
     """Validate bounded JSON without exposing payloads or database error details."""
     if not IMPORT_READY:
-        destination.write('{"verdict": "storage_error"}\n')
-        return 8
+        destination.write('{"verdict": "configuration_error"}\n')
+        return EXIT_CODES["configuration_error"]
     try:
         payload = source.read(8193)
         if len(payload.encode("utf-8")) > 8192:

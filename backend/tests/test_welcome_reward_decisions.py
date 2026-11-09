@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -164,6 +165,47 @@ async def test_proof_changed_and_changed_back(review):
         assert (await service.record(current)).verdict == "replayed"
 
 
+PAYOUT_MIGRATIONS = (
+    "V29__solana_wallet_payouts.sql",
+    "V30__aspore_balance.sql",
+    "V111__payout_delivery.sql",
+    "V112__payout_delivery_claims.sql",
+    "V113__payout_delivery_attempts.sql",
+)
+SNAPSHOT = text("""SELECT
+    (SELECT jsonb_agg(to_jsonb(p)) FROM reward_programs p),
+    (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM welcome_reward_grants g),
+    (SELECT jsonb_agg(to_jsonb(f)) FROM reward_funding_entries f),
+    (SELECT sum(aspore_balance+token_balance) FROM users),
+    (SELECT count(*) FROM token_payouts),
+    (SELECT count(*) FROM aspore_transactions),
+    (SELECT count(*) FROM payout_delivery_intents),
+    (SELECT count(*) FROM payout_delivery_claims),
+    (SELECT count(*) FROM payout_delivery_attempts)""")
+
+
+@pytest.fixture
+async def payouts(review):
+    """Real payout/deposit tables from the shipped migrations, so a trigger reaching them shows."""
+    ledger, _ = review
+    async with ledger.maker.kw["bind"].begin() as conn:
+        driver = (await conn.get_raw_connection()).driver_connection
+        assert driver is not None
+        for name in PAYOUT_MIGRATIONS:
+            await driver.execute(
+                (Path(__file__).resolve().parents[2] / "db/migrations" / name).read_text()
+            )
+
+
+async def test_allow_leaves_money_state_unchanged(review, payouts):
+    ledger, intent = review
+    async with ledger.maker.begin() as db:
+        before = (await db.execute(SNAPSHOT)).one()
+        service = WelcomeRewardDecisionService(WelcomeRewardRepository(db))
+        assert (await service.record(intent)).verdict == "recorded"
+        assert (await db.execute(SNAPSHOT)).one() == before
+
+
 @pytest.fixture
 async def funded(review):
     ledger, intent = review
@@ -201,7 +243,7 @@ async def test_funded_beneficiary_is_bound(funded):
 
 
 @pytest.mark.parametrize("outcome", ["hold", "deny"])
-async def test_hold_serializes_with_advance_and_preserves_backing(funded, outcome):
+async def test_hold_serializes_with_advance_and_preserves_backing(funded, outcome, payouts):
     ledger, intent = funded
     async with ledger.maker.begin() as db:
         await db.execute(
@@ -213,13 +255,8 @@ async def test_hold_serializes_with_advance_and_preserves_backing(funded, outcom
             text("SELECT email_proof_at FROM users WHERE id=:id"), {"id": ledger.owner}
         )
     candidate = intent.model_copy(update={"email_proof_at": proof, "outcome": outcome})
-    snapshot = text("""SELECT
-        (SELECT jsonb_agg(to_jsonb(p)) FROM reward_programs p),
-        (SELECT jsonb_agg(to_jsonb(g) ORDER BY id) FROM welcome_reward_grants g),
-        (SELECT jsonb_agg(to_jsonb(f)) FROM reward_funding_entries f),
-        (SELECT sum(aspore_balance+token_balance) FROM users)""")
     async with ledger.maker.begin() as writer:
-        before = (await writer.execute(snapshot)).one()
+        before = (await writer.execute(SNAPSHOT)).one()
         blocker = await writer.scalar(text("SELECT pg_backend_pid()"))
         assert (
             await WelcomeRewardDecisionService(WelcomeRewardRepository(writer)).record(candidate)
@@ -241,7 +278,7 @@ async def test_hold_serializes_with_advance_and_preserves_backing(funded, outcom
         view = await task
     assert (view.state, view.reason, view.amount_raw) == ("frozen", "risk_review", 10000000000)
     async with ledger.maker.begin() as db:
-        assert (await db.execute(snapshot)).one() == before
+        assert (await db.execute(SNAPSHOT)).one() == before
         assert await WelcomeRewardRepository(db).free_funding() == 10000000000
 
 
