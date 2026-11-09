@@ -185,6 +185,25 @@ def test_configuration_failure_is_fixed_verdict_without_env_echo(payload):
     assert "Traceback" not in process.stderr
 
 
+CANARY_USER_INFO = "synthetic:" + "canary-password"
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {"DATABASE_URL": "notaurl-canary-password"},
+        {"DATABASE_URL": "nosuchdialect+asyncpg://" + CANARY_USER_INFO + "@database.invalid/x"},
+        {"SECRET_KEY": "super-secret-key-change-in-production"},
+    ],
+    ids=["malformed_url", "unknown_dialect", "default_secret_without_debug"],
+)
+def test_other_configuration_failures_are_fixed_verdict(payload, environ):
+    process = _run_module(payload, environ)
+    assert (process.returncode, process.stdout) == (9, '{"verdict": "configuration_error"}\n')
+    assert "canary" not in process.stdout + process.stderr
+    assert "Traceback" not in process.stderr
+
+
 def test_code_defect_is_not_masked_as_storage_or_configuration(payload):
     prelude = (
         "import sys,types;"

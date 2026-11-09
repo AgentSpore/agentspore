@@ -8,7 +8,7 @@ import sys
 from typing import TextIO
 
 from asyncpg import exceptions as pg_errors
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 STORAGE_ERRORS = (
@@ -23,14 +23,14 @@ STORAGE_ERRORS = (
 )
 LOCK_TIMEOUT_SQLSTATE = "55P03"
 # Model imports initialize database settings, and a settings ValidationError echoes env input.
-# Only configuration failures are masked; ImportError/TypeError from a code defect propagate
+# Only configuration failures (settings, default secret, malformed or unknown database URL) are masked; ImportError/TypeError from a code defect propagate
 # as an ordinary traceback (code frames and symbol names, no environment values).
 try:
     from app.core.config import get_settings
     from app.repositories.welcome_reward_repo import WelcomeRewardRepository
     from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
     from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
-except (ValueError, OSError):
+except (ValueError, OSError, RuntimeError, ArgumentError):
     IMPORT_READY = False
 else:
     IMPORT_READY = True
