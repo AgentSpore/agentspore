@@ -35,17 +35,27 @@ async def review(ledger):
         )
         await db.execute(text("UPDATE reward_programs SET enabled=false"))
         now = await db.scalar(text("SELECT clock_timestamp()"))
+        proof_at = await db.scalar(text("SELECT clock_timestamp() - interval '1 hour'"))
+        await db.execute(
+            text("""
+            UPDATE users SET oauth_provider='github',
+              oauth_id=CASE WHEN id=:owner THEN '1001' ELSE '1002' END,
+              oauth_account_created_at=clock_timestamp() - interval '400 days',
+              is_verified=true, email_proof_email=email, email_proof_source='github',
+              email_proof_at=:proof_at"""),
+            {"owner": ledger.owner, "proof_at": proof_at},
+        )
     intent = WelcomeRewardDecision(
         grant_id=grant_id,
         owner_user_id=ledger.owner,
         source_event=ledger.owner,
         policy_version="welcome-v1",
         outcome="allow",
-        beneficiary_key="canonical-person",
+        beneficiary_key="github:1001",
         authority_ref="synthetic-operator",
         evidence_ref="synthetic-review",
         expected_revision=0,
-        email_proof_at=None,
+        email_proof_at=proof_at,
         issued_at=now,
         expires_at=now + timedelta(hours=1),
     )
@@ -237,9 +247,8 @@ async def test_funded_beneficiary_is_bound(funded):
         ).verdict == "conflict"
         await db.execute(text("UPDATE reward_programs SET tariff_version='welcome-v2'"))
         assert (await service.record(intent)).verdict == "recorded"
-        assert (
-            await WelcomeRewardService(WelcomeRewardRepository(db)).advance(ledger.owner)
-        ).reason == "email_required"
+        view = await WelcomeRewardService(WelcomeRewardRepository(db)).advance(ledger.owner)
+        assert (view.state, view.reason) == ("available", "available")
 
 
 @pytest.mark.parametrize("outcome", ["hold", "deny"])
@@ -297,6 +306,7 @@ async def test_conditional_beneficiary_does_not_reserve(review):
                 "source_event": ledger.other,
                 "grant_id": other_id,
                 "evidence_ref": "other-review",
+                "beneficiary_key": "github:1002",
             }
         )
         assert (await service.record(other)).verdict == "recorded"

@@ -60,9 +60,16 @@ with an alphanumeric character and otherwise containing only letters, digits, `_
 or `-`. Syntax does not establish privacy, identity or uniqueness. Never submit email
 addresses, credentials, raw risk reports or personal details in these fields.
 
-An `allow` requires a canonical beneficiary obtained through a verified matching process.
-An account ID, email address or unverified wallet is not such proof. The writer does not
-invent this key or verify the operator's attestation. Hold and deny decisions also require
+An `allow` requires the canonical beneficiary `github:<numeric GitHub id>` of the owner,
+checked by the writer against the stored OAuth identity (a login, email, account UUID or
+wallet never qualifies) and no hold reason. Reasons, in order: `no_github_identity`,
+`github_account_age_unknown`, `github_account_too_new` (under 30 days at decision time),
+`no_current_email_proof`, `disposable_email_domain` (pinned `disposable-email-domains`
+list, matched on the domain, its IDNA form and every parent suffix). A mismatch or any reason returns `ineligible`. Hold and deny are not checked.
+Run `python -m app.cli.welcome_reward_decisions assess --user-id <uuid>` to print the
+canonical key and reason codes (never the email); it writes nothing. An owner whose account is already bound to another OAuth provider (for example Google)
+keeps `no_github_identity` permanently: this stage has no relink flow. Registration-source
+clusters are not assessed. Hold and deny decisions also require
 the reviewed proof snapshot to match: refresh the snapshot after an email change before
 submitting a new review. Null proof remains null and cannot unlock a grant.
 
@@ -85,6 +92,8 @@ releasing backing; neither directly changes the grant state.
 | `storage_error` | Database, commit or cleanup failed; reconcile before retry | 8 |
 | `configuration_error` | Settings, secret or database URL could not be loaded or parsed at start; fix the configuration, nothing was attempted | 9 |
 | `stale` | Expected revision, policy or email proof changed | 10 |
+| `assessed` | `assess` result with `beneficiary_key` and `holds`; nothing is written | 0 |
+| `ineligible` | Allow beneficiary is not the canonical GitHub identity, or a hold reason applies; nothing was saved | 12 |
 | `busy` | A shared reward lock was not granted within 10 seconds (`lock_timeout`); nothing was saved, retry later | 11 |
 
 Errors contain no input references or database details. Only settings, OS and database-URL failures at start are masked as `configuration_error`; a code defect (for example an `ImportError` after a rename) ends the process with an ordinary traceback that holds code frames only, never input or environment values. A cleanup failure after commit can

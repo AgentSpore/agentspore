@@ -45,6 +45,8 @@ async def ledger(marketplace_pg):
             created_at timestamptz DEFAULT clock_timestamp(),
             email_proof_email text, email_proof_at timestamptz, email_proof_source text,
             aspore_balance bigint DEFAULT 0, token_balance integer DEFAULT 0);
+            CREATE UNIQUE INDEX idx_users_oauth ON users(oauth_provider, oauth_id)
+                WHERE oauth_provider IS NOT NULL;
         """)
         for uid in (owner, other):
             await conn.execute(
@@ -52,6 +54,7 @@ async def ledger(marketplace_pg):
             )
         for name in (
             "V115__welcome_reward_ledger.sql",
+            "V116__welcome_beneficiary_identity.sql",
             "R__welcome_reward_integrity.sql",
             "R__email_ownership_proof.sql",
         ):

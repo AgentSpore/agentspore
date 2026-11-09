@@ -28,6 +28,7 @@ dependencies = [
     "loguru>=0.7.3",
     "logfire[fastapi,httpx,asyncpg,sqlalchemy]>=4.0",
     "prometheus-fastapi-instrumentator>=7.0,<9",
+    "disposable-email-domains==0.0.292",
 ]
 
 [project.optional-dependencies]

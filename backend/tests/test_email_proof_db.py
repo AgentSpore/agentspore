@@ -53,7 +53,8 @@ async def proof_api(request, monkeypatch):
             verification_token text, verification_expires_at timestamptz,
             token_balance integer DEFAULT 0, oauth_provider varchar(50), oauth_id varchar(255),
             created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(),
-            solana_wallet varchar(44), aspore_balance bigint DEFAULT 0);
+            solana_wallet varchar(44), aspore_balance bigint DEFAULT 0,
+            oauth_account_created_at timestamptz);
         """)
         await conn.execute(
             text("INSERT INTO users (id,email,name) VALUES (:id,:email,'Owner')"),
