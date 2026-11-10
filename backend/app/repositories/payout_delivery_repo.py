@@ -236,3 +236,21 @@ class PayoutDeliveryRepository:
             ),
             {"intent_id": key.intent_id, **evidence.model_dump()},
         )
+
+    async def list_phases(self, limit: int) -> list[dict]:
+        """List intent ids with a delivery phase, unfinished first; no amounts or wallets."""
+        rows = await self.db.execute(
+            text(
+                "SELECT i.intent_id, CASE WHEN c.intent_id IS NOT NULL THEN 'confirmed' "
+                "WHEN a.intent_id IS NOT NULL THEN 'prepared' "
+                "WHEN cl.state = 'claimed' AND cl.expires_at <= clock_timestamp() THEN 'expired' "
+                "WHEN cl.state = 'claimed' THEN 'claimed' ELSE 'unclaimed' END AS phase "
+                "FROM payout_delivery_intents i "
+                "LEFT JOIN payout_delivery_claims cl ON cl.intent_id = i.intent_id "
+                "LEFT JOIN payout_delivery_attempts a ON a.intent_id = i.intent_id "
+                "LEFT JOIN payout_delivery_confirmations c ON c.intent_id = i.intent_id "
+                "ORDER BY (c.intent_id IS NOT NULL), i.intent_id LIMIT :limit"
+            ),
+            {"limit": limit},
+        )
+        return [dict(row) for row in rows.mappings()]
