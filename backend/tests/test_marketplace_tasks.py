@@ -9,14 +9,23 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from app.services.agent_service import AgentService
+from tests.pg_evidence import start_with_evidence
 
 
 @pytest.fixture(scope="session")
 def marketplace_pg():
-    with PostgresContainer("postgres:16-alpine", mem_limit="384m", nano_cpus=500000000,
-                           labels={"af03.owner": "af03-backend-20261011"}) as pg:
+    pg = PostgresContainer(
+        "postgres:16-alpine",
+        mem_limit="384m",
+        nano_cpus=500000000,
+        labels={"af03.owner": "af03-backend-20261011"},
+    )
+    start_with_evidence(pg)
+    try:
         print(f"Owned marketplace container: {pg.get_wrapped_container().id}")
         yield pg
+    finally:
+        pg.stop()
 
 
 @pytest.fixture
