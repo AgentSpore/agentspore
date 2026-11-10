@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import sys
 from collections.abc import Awaitable, Callable
@@ -29,9 +30,11 @@ LOCK_TIMEOUT_SQLSTATE = "55P03"
 # are masked; ImportError/TypeError from a code defect propagate as an ordinary traceback
 # (code frames and symbol names, no environment values).
 try:
-    from app.core.config import get_settings
+    from app.core.config import Settings, get_settings
+    from app.repositories.welcome_auto_decision_repo import WelcomeAutoDecisionRepository
     from app.repositories.welcome_reward_repo import WelcomeRewardRepository
     from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
+    from app.services.welcome_auto_decision_service import WelcomeAutoDecisionService
     from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
     from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
 except (ValueError, OSError, RuntimeError, ArgumentError):
@@ -52,6 +55,8 @@ EXIT_CODES = {
     "busy": 11,
     "ineligible": 12,
     "assessed": 0,
+    "auto_decided": 0,
+    "disabled": 13,
 }
 
 
@@ -156,6 +161,104 @@ async def run_assess(
     return EXIT_CODES[output["verdict"]]
 
 
+def auto_service(db: AsyncSession, age: int, limit: int) -> WelcomeAutoDecisionService:
+    """Bind the automatic rules to one session."""
+    return WelcomeAutoDecisionService(
+        WelcomeRewardRepository(db), WelcomeAutoDecisionRepository(db), age, limit
+    )
+
+
+async def approve_in_transaction(
+    db: AsyncSession, application: dict, rules: tuple[int, int], apply: bool
+) -> dict:
+    """One approval per short transaction; dry-run rolls back each."""
+    outcome = await auto_service(db, *rules).approve(application)
+    if apply and outcome == "approved":
+        await db.commit()
+    else:
+        await db.rollback()
+    return {"outcome": outcome}
+
+
+async def auto_decide(
+    session_factory: async_sessionmaker[AsyncSession] | None, rules: tuple[int, int], apply: bool
+) -> dict:
+    """Share one engine across steps and dispose it once; report approvals made before a failure."""
+    engine = None
+    output: dict = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    try:
+        if session_factory is None:
+            engine = create_async_engine(
+                get_settings().database_url, echo=False, isolation_level="READ COMMITTED"
+            )
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        output = await approve_all(session_factory, rules, apply)
+    except STORAGE_ERRORS:
+        output = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    finally:
+        if engine is not None:
+            try:
+                await engine.dispose()
+            except STORAGE_ERRORS:
+                output = output | {"verdict": "storage_error"}
+    return output
+
+
+async def approve_all(
+    session_factory: async_sessionmaker[AsyncSession], rules: tuple[int, int], apply: bool
+) -> dict:
+    """List candidates read-only, then approve them one transaction at a time."""
+
+    async def listing(db: AsyncSession) -> dict:
+        found = await auto_service(db, *rules).candidates()
+        await db.rollback()
+        return {"found": found}
+
+    listed = await in_session(session_factory, listing)
+    if "found" not in listed:
+        return listed | {"approved": 0, "applied": apply}
+    applications, total, remaining = listed["found"]
+    approved = 0
+    for application in applications:
+        if approved >= remaining:
+            break
+        step = functools.partial(
+            approve_in_transaction, application=application, rules=rules, apply=apply
+        )
+        result = await in_session(session_factory, step)
+        if "outcome" not in result:
+            return result | {"approved": approved, "applied": apply}
+        if result["outcome"] == "capped":
+            break
+        approved += result["outcome"] == "approved"
+    return {
+        "verdict": "auto_decided",
+        "approved": approved,
+        "left": total - approved,
+        "applied": apply,
+    }
+
+
+async def run_auto_decide(
+    destination: TextIO,
+    apply: bool = False,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    settings: Settings | None = None,
+) -> int:
+    """Approve rule-satisfying applications; disabled unless both limits are configured."""
+    if not IMPORT_READY:
+        output = {"verdict": "configuration_error"}
+    else:
+        settings = settings if settings is not None else get_settings()
+        rules = (settings.welcome_auto_min_account_age_days, settings.welcome_auto_daily_limit)
+        if min(rules) <= 0:
+            output = {"verdict": "disabled"}
+        else:
+            output = await auto_decide(session_factory, rules, apply)
+    destination.write(json.dumps(output) + "\n")
+    return EXIT_CODES[output["verdict"]]
+
+
 async def run(
     source: TextIO,
     destination: TextIO,
@@ -181,12 +284,17 @@ async def run(
 
 
 def main(arguments: list[str], source: TextIO, destination: TextIO) -> int:
-    """Accept only the explicit apply flag or `assess --user-id`; never echo invalid arguments."""
+    """Accept `--apply`, `assess --user-id` or `auto-decide [--apply]`; never echo others."""
     if arguments[:1] == ["assess"]:
         if len(arguments) != 3 or arguments[1] != "--user-id":
             destination.write('{"verdict": "invalid_input"}\n')
             return 5
         return asyncio.run(run_assess(arguments[2], destination))
+    if arguments[:1] == ["auto-decide"]:
+        if arguments[1:] not in ([], ["--apply"]):
+            destination.write('{"verdict": "invalid_input"}\n')
+            return 5
+        return asyncio.run(run_auto_decide(destination, apply=len(arguments) > 1))
     if arguments not in ([], ["--apply"]):
         destination.write('{"verdict": "invalid_input"}\n')
         return 5

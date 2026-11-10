@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import IPvAnyNetwork, SecretStr, field_validator, model_validator
+from pydantic import Field, IPvAnyNetwork, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -198,6 +198,10 @@ class Settings(BaseSettings):
     # Default covers local Caddy (127.0.0.1) and Docker bridge (172.16.0.0/12).
     # Override in prod: TRUSTED_PROXY_IPS=172.18.0.0/16 (or exact Caddy container IP).
     trusted_proxy_ips: list[str] = ["127.0.0.1", "172.16.0.0/12", "::1"]
+
+    # Automatic welcome approvals; 0 (unset) disables the operator command. Values live in server config.
+    welcome_auto_min_account_age_days: int = Field(default=0, ge=0)
+    welcome_auto_daily_limit: int = Field(default=0, ge=0)
 
     # extra="ignore": an operator's .env may still hold settings of removed features
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
