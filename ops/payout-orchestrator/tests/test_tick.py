@@ -249,11 +249,18 @@ def test_signer_config_error_aborts_run(run, backend, code):
     assert run() != 0
 
 
-def test_commit_conflict_holds_and_alerts(run, backend, capsys):
+def test_commit_conflict_holds_and_is_never_recompiled(run, backend, config, clock, capsys):
     backend.commit_script = ["conflict"]
     run()
     assert alerts(capsys) == [{"alert": "commit_conflict", "intent_id": INTENT}]
     assert backend.sends == []
+    assert json.loads(config.journal_path.read_text())[INTENT]["hold"] == "commit_conflict"
+    backend.expire_all()
+    backend.height = 10_000
+    clock.now += config.lease_ttl_seconds + 1
+    run()
+    assert backend.compiles == 1
+    assert len(backend.sign_calls) == 1
 
 
 def test_stale_waits_for_lvbh_by_height(run, backend):
@@ -376,7 +383,7 @@ def test_height_equal_to_lvbh_is_still_held(run, backend):
 
 
 @pytest.mark.parametrize("sent", ["sent", "unresolved"])
-@pytest.mark.parametrize("verdict", ["failed", "conflict", "unsupported", "storage_error"])
+@pytest.mark.parametrize("verdict", ["failed", "conflict", "unsupported"])
 def test_reconcile_verdict_alerts_and_stops_resending(run, backend, capsys, sent, verdict):
     backend.send_script = [sent if sent != "unresolved" else "preflight_rejected"] * 5
     backend.reconcile_script = [verdict] * 5
@@ -467,5 +474,54 @@ def test_held_intents_do_not_starve_the_rest(run, backend, config):
     for intent in held:
         Journal(config.journal_path).hold(intent, "x", 1.0)
     backend.intents = [*held, INTENT]
+    run()
+    assert INTENT in backend.confirmed
+
+
+@pytest.mark.parametrize(
+    "verdict", ["storage_error", "configuration_error", "not_found", "invalid_input"]
+)
+def test_transient_reconcile_verdict_alerts_without_hold_and_retries(
+    run, backend, config, capsys, verdict
+):
+    backend.reconcile_script = [verdict, "confirmed"]
+    run()
+    assert alerts(capsys) == [{"alert": f"reconcile_{verdict}", "intent_id": INTENT}]
+    assert len(backend.sends) == 1
+    assert "hold" not in (Journal(config.journal_path).get(INTENT) or {})
+    assert INTENT not in backend.confirmed
+    run()
+    assert INTENT in backend.confirmed
+    assert len(backend.sends) == 2
+
+
+def test_race_branch_digest_mismatch_does_not_send(run, backend, config, capsys):
+    backend.attempts[INTENT] = {"wire": "AAAA", "public": {"epoch": 1, "transaction_digest": "x"}}
+    backend.phase = lambda intent: "unclaimed"
+    (config.handoff_dir / f"{INTENT}.1.signed.json").write_text(
+        json.dumps({"signed_transaction_base64": "AAAA"})
+    )
+    run()
+    assert backend.sends == []
+    assert {"alert": "digest_mismatch", "intent_id": INTENT} in alerts(capsys)
+
+
+def test_pause_between_compile_and_sign_releases_without_signing(run, backend, config):
+    backend.hook = lambda name: config.pause_path.touch() if name == "fetch" else None
+    run()
+    assert backend.sign_calls == []
+    assert backend.claims[INTENT]["state"] == "free"
+
+
+def test_stuck_prepared_intents_do_not_consume_per_tick(run, backend, config):
+    stuck = [f"{n:08d}-1111-4111-8111-111111111111" for n in range(6)]
+    for intent in stuck:
+        backend.attempts[intent] = {
+            "wire": "AAAA",
+            "public": {"epoch": 1, "transaction_digest": "x"},
+        }
+    backend.intents = [*stuck, INTENT]
+    backend.send_script = ["sent"] * 6
+    backend.reconcile_script = ["unresolved"] * 6
     run()
     assert INTENT in backend.confirmed

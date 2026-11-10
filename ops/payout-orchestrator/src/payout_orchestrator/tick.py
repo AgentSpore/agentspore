@@ -28,6 +28,7 @@ DELIVERY = "payout_delivery"
 CONFIRMED = {"confirmed", "replayed"}
 RETRYABLE = {"unresolved", "preflight_rejected"}
 DELIVERED = {"sent", "already_processed"}
+HOLD_VERDICTS = {"failed", "conflict", "unsupported"}
 RAW_UNITS = re.compile(r"(0|[1-9][0-9]{0,19})")
 
 
@@ -145,12 +146,12 @@ class Tick:
         return {"intent_id": intent, "worker_id": self.cfg.worker_id, "epoch": epoch}
 
     def handle(self, intent: str, phase: str | None) -> None:
+        """Dispatch one intent by backend phase; held intents are skipped with a `held` alert."""
         if phase == "confirmed":
             return
         if self.held(intent):
             return self.alert("held", intent)
         if phase == "prepared":
-            self.touched.add(intent)
             self.settle(intent, self.call(["attempt-show"], {"intent_id": intent}))
             return None if self.held(intent) else self.deliver(intent)
         if phase == "claimed":
@@ -171,6 +172,7 @@ class Tick:
         return None
 
     def take(self, intent: str, expired: bool) -> int | None:
+        """Claim a free or expired intent when the lvbh gate is open; the epoch, else None."""
         if not self.gate_open(intent, None) or self.signing_stopped:
             return None
         if expired:
@@ -191,6 +193,7 @@ class Tick:
         return claimed["epoch"] if claimed["verdict"] == "claimed" else None
 
     def release(self, intent: str, epoch: int) -> None:
+        """Give the fenced claim back; a refusal is alerted, never ignored."""
         if self.call(["release"], self.fence(intent, epoch))["verdict"] != "released":
             self.alert("release_failed", intent)
 
@@ -217,8 +220,7 @@ class Tick:
         """Return True once an attempt exists for the intent."""
         shown = self.call(["attempt-show"], {"intent_id": intent})
         if shown["verdict"] == "found":
-            self.settle(intent, shown)
-            return True
+            return self.settle(intent, shown) and not self.held(intent)
         if shown["verdict"] != "not_found":
             self.alert(f"attempt_show_{shown['verdict']}", intent)
             return False
@@ -259,6 +261,9 @@ class Tick:
         return True
 
     def sign(self, intent: str, epoch: int) -> bool:
+        if self.cfg.pause_path.exists():
+            self.release(intent, epoch)
+            return False
         code = self.ex.sign(f"{intent}.{epoch}")
         if code in (0, 10):
             if self.paths(intent, epoch)[1].exists():
@@ -282,9 +287,8 @@ class Tick:
             return self.settle(intent, verdict)
         if verdict["verdict"] == "stale":
             self.release(intent, epoch)  # journal keeps the lvbh gate for the recompile
-        else:
-            self.alert(f"commit_{verdict['verdict']}", intent)
-        return False
+            return False
+        return self.hold(intent, f"commit_{verdict['verdict']}")
 
     def settle(self, intent: str, stored: dict) -> bool:
         """Remove the stored epoch's handoff files and journal entry once the digest matches.
@@ -311,14 +315,19 @@ class Tick:
         for _ in range(1 + self.cfg.max_resends):
             sent = self.call(["auto-send"], body)["verdict"]
             if sent == "already_confirmed":
+                self.touched.add(intent)
                 return
             if sent not in DELIVERED | RETRYABLE:
                 return self.alert(f"send_{sent}", intent)
             reconciled = self.call(["auto-reconcile"], body)["verdict"]
             if reconciled in CONFIRMED:
+                self.touched.add(intent)
                 return
             if reconciled != "unresolved":
-                self.hold(intent, f"reconcile_{reconciled}")
+                if reconciled in HOLD_VERDICTS:
+                    self.hold(intent, f"reconcile_{reconciled}")
+                else:
+                    self.alert(f"reconcile_{reconciled}", intent)  # transient: retried next tick
                 return
             if sent in DELIVERED:
                 return

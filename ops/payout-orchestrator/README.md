@@ -85,8 +85,10 @@ Run one tick: `payout-orchestrator <config-path>`.
 - Handoff files left after a crash are cleaned by the next tick once the stored digest
   matches; mismatching files are kept for inspection. Only the stored epoch's files are
   removed; leftovers of earlier epochs are for the operator.
-- A tick fetches up to 4x `per_tick` rows and stops after `per_tick` intents it acted on,
-  so held or waiting intents do not starve the rest.
+- A tick fetches up to 4x `per_tick` rows and stops after `per_tick` intents that made
+  progress (claimed, or confirmed). Held intents and prepared intents that stay
+  unresolved do not use a slot; more than 3x `per_tick` of them can still fill the fetched
+  window, so clear or investigate holds.
 
 ## Development
 
