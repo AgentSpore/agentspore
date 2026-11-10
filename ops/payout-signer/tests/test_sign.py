@@ -169,13 +169,13 @@ def test_pause_created_while_waiting_for_lock_wins(env):
 
 def test_oversized_request_rejected_not_truncated(env):
     path = env.request(env.message())
-    body = json.loads(path.read_text())
-    body["padding"] = "x" * MAX_REQUEST_BYTES
-    path.write_text(json.dumps(body))
-    assert sign_request(env.config, path, env.root / "o.json", now=1.0) is Verdict.REJECTED
+    path.write_text(path.read_text() + " " * MAX_REQUEST_BYTES)
+    out = env.root / "o.json"
+    assert sign_request(env.config, path, out, now=1.0) is Verdict.REJECTED
+    assert not out.exists()
 
 
 def test_deeply_nested_request_is_a_verdict_not_a_crash(env):
     path = env.root / "deep.json"
-    path.write_text("[" * 10000 + "]" * 10000)
+    path.write_text("[" * 16000)
     assert sign_request(env.config, path, env.root / "o.json", now=1.0) is Verdict.REJECTED
