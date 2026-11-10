@@ -109,3 +109,23 @@ return `storage_error` even though the append committed; retry the identical inp
 its receipt. Dry-run may consume a sequence value, but persists no row. It does not create
 applications, enable the program, fund or advance grants, credit deposits, create payouts,
 sign transactions, call RPC endpoints or send mail.
+
+## Link available rewards to payout intents
+
+Run `uv run python -m app.cli.welcome_payouts link [--apply]` from `backend/`. The default is a
+dry run that rolls back every item. With `--apply`, each undenied grant of an enabled program
+that has no payout intent (namespace `welcome`, allocation id = grant id) is handled in its own
+transaction: reservation is advanced until the reward is available, the owner must have a saved
+wallet, and the wallet's Token-2022 associated token account must already exist on chain
+(checked through the server-side network configuration, outside the database transaction;
+no rent is paid for missing accounts, so those grants are skipped as `no_token_account`
+until the account appears). The intent carries the exact grant amount, the configured
+signer as authority and fee payer, and the configured source account.
+
+Output is one JSON object: counts of `linked`, `replayed`, `conflict`, `skipped` by reason, and
+intent ids. It never contains wallets, amounts, emails or the endpoint. Linked grants are no longer
+candidates, so a rerun finds nothing to do; a concurrent linker with the same data yields
+`replayed`, and one with a different wallet yields `conflict` (exit code 7). The stored
+intent is never overwritten.
+Configuration failures exit 9, storage failures 8, bad arguments 5. The command signs
+and sends nothing.
