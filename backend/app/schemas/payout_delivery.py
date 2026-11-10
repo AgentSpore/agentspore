@@ -192,11 +192,19 @@ def plain_endpoint(value: AnyHttpUrl) -> AnyHttpUrl:
     return value
 
 
-class ReconcileRequest(ClaimKey):
+class NetworkRequest(ClaimKey):
     """Name only the persisted attempt, the trusted network and the RPC to ask."""
 
     trusted_genesis_hash: Annotated[str, AfterValidator(solana_hash)]
     rpc_endpoint: Annotated[AnyHttpUrl, AfterValidator(plain_endpoint)]
+
+
+class ReconcileRequest(NetworkRequest):
+    """Confirm the persisted attempt from a finalized receipt."""
+
+
+class SendRequest(NetworkRequest):
+    """Broadcast the exact persisted signed transaction."""
 
 
 class ConfirmationEvidence(BaseModel):

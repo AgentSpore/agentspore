@@ -6,6 +6,7 @@ import json
 
 import base58
 import httpx
+from pydantic import AnyHttpUrl
 from solders.hash import Hash
 from solders.instruction import CompiledInstruction
 from solders.message import Message
@@ -20,6 +21,7 @@ from app.schemas.payout_delivery import (
     ReceiptIntent,
     ReconcileRequest,
     ReconcileTarget,
+    SignedCandidate,
     TokenBalance,
 )
 from app.services.payout_delivery_service import (
@@ -99,25 +101,36 @@ def build_evidence(receipt: dict) -> ConfirmationEvidence:
     )
 
 
+def restore_candidate(target: ReconcileTarget) -> SignedCandidate:
+    """Re-verify the stored bytes natively against the stored intent and first signature."""
+    transfer = target.transfer
+    candidate = parse_signed_candidate(base64.b64encode(target.signed_bytes).decode())
+    bind_signed_candidate(transfer, candidate, transfer.genesis_hash)
+    if candidate.first_signature != target.first_signature:
+        raise InvalidPayoutCandidateError
+    return candidate
+
+
+def receipt_intent(target: ReconcileTarget, endpoint: AnyHttpUrl) -> ReceiptIntent:
+    """Name the stored transfer, its first signature and the RPC to ask."""
+    return ReceiptIntent(
+        **target.transfer.model_dump(),
+        signature=str(Signature.from_bytes(target.first_signature)),
+        rpc_endpoint=endpoint,
+    )
+
+
 def fetch_evidence(
     client: httpx.Client, target: ReconcileTarget, request: ReconcileRequest
 ) -> tuple[str, ConfirmationEvidence | None]:
     """Re-verify stored bytes, then ask the trusted network; only `confirmed` carries evidence."""
-    transfer = target.transfer
-    if request.trusted_genesis_hash != transfer.genesis_hash:
+    if request.trusted_genesis_hash != target.transfer.genesis_hash:
         return "unsupported", None
     try:
-        candidate = parse_signed_candidate(base64.b64encode(target.signed_bytes).decode())
-        bind_signed_candidate(transfer, candidate, transfer.genesis_hash)
-        if candidate.first_signature != target.first_signature:
-            raise InvalidPayoutCandidateError
+        candidate = restore_candidate(target)
     except InvalidPayoutCandidateError:
         return "storage_error", None
-    intent = ReceiptIntent(
-        **transfer.model_dump(),
-        signature=str(Signature.from_bytes(target.first_signature)),
-        rpc_endpoint=request.rpc_endpoint,
-    )
+    intent = receipt_intent(target, request.rpc_endpoint)
     try:
         receipt = fetch_finalized_receipt(client, intent)
         return judge_receipt(receipt, intent, target, candidate.message_bytes)
