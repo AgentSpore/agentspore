@@ -3,7 +3,7 @@
 Host-side driver for one payout tick. It never signs or broadcasts by itself: it
 calls the backend CLIs inside the container (`docker exec`), starts the
 `payout-signer@<intent>.<epoch>` systemd unit, and moves files between them.
-Runtime is stdlib-only Python 3.12.
+Runtime is stdlib-only Python 3.12. systemd units, users and install order: [payout-deploy](../payout-deploy/README.md).
 
 ## Tick order
 
@@ -59,9 +59,13 @@ wallets or endpoints are ever printed.
     pause_path = "<state-dir>/pause"
     per_tick = 5
     # optional: container_request_dir, lease_ttl_seconds (<=300),
-    #           step_timeout_seconds, max_resends
+    #           step_timeout_seconds (keep it above the signer unit's
+    #           TimeoutStartSec, 45 s in payout-deploy), max_resends
 
-Run one tick: `payout-orchestrator <config-path>`.
+Run one tick: `payout-orchestrator <config-path>`. On hosts with
+[payout-deploy](../payout-deploy/README.md) use `systemctl start payout-orchestrator.service`
+instead: the unit clears finished signer instances first (a reused instance name would
+return its old status) and applies the sandbox.
 
 ## Operator runbook
 

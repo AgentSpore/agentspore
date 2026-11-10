@@ -1,0 +1,11 @@
+[Unit]
+Description=Payout orchestrator schedule
+# Shipped disabled. Enabling it is a separate owner decision; see README.
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
