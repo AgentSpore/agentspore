@@ -317,7 +317,7 @@ async def test_pending_lists_unfinished_before_confirmed(prepared, configure, al
     rpc = reconciled.Rpc(intent.genesis_hash, reconciled.build_receipt(intent, wire))
     assert (await auto("auto-reconcile", maker, key, rpc))[0] == 0
     # A later id would sort after the confirmed one by id alone; ordering must still put it first.
-    for number in range(64):
+    for number in range(512):
         async with maker.begin() as db:
             other = await admit_intent(
                 PayoutDeliveryRepository(db),
@@ -325,7 +325,8 @@ async def test_pending_lists_unfinished_before_confirmed(prepared, configure, al
             )
         if UUID(other["intent_id"]) > UUID(key["intent_id"]):
             break
-    code, body = await pending(maker)
+    assert UUID(other["intent_id"]) > UUID(key["intent_id"])
+    code, body = await pending(maker, limit=1000)
     phases = [(item["intent_id"], item["phase"]) for item in body["intents"]]
     assert code == 0 and phases[-1] == (key["intent_id"], "confirmed")
     assert (other["intent_id"], "unclaimed") in phases[:-1]
