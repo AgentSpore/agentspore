@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import sys
 from collections.abc import Awaitable, Callable
@@ -160,6 +161,60 @@ async def run_assess(
     return EXIT_CODES[output["verdict"]]
 
 
+def auto_service(db: AsyncSession, age: int, limit: int) -> WelcomeAutoDecisionService:
+    """Bind the automatic rules to one session."""
+    return WelcomeAutoDecisionService(
+        WelcomeRewardRepository(db), WelcomeAutoDecisionRepository(db), age, limit
+    )
+
+
+async def approve_in_transaction(
+    db: AsyncSession, application: dict, rules: tuple[int, int], apply: bool
+) -> dict:
+    """One approval per short transaction; dry-run rolls back each."""
+    outcome = await auto_service(db, *rules).approve(application)
+    if apply and outcome == "approved":
+        await db.commit()
+    else:
+        await db.rollback()
+    return {"outcome": outcome}
+
+
+async def auto_decide(
+    session_factory: async_sessionmaker[AsyncSession] | None, rules: tuple[int, int], apply: bool
+) -> dict:
+    """List candidates read-only, then approve them one transaction at a time."""
+
+    async def listing(db: AsyncSession) -> dict:
+        found = await auto_service(db, *rules).candidates()
+        await db.rollback()
+        return {"found": found}
+
+    listed = await in_session(session_factory, listing)
+    if "found" not in listed:
+        return listed
+    applications, total, remaining = listed["found"]
+    approved = 0
+    for application in applications:
+        if approved >= remaining:
+            break
+        step = functools.partial(
+            approve_in_transaction, application=application, rules=rules, apply=apply
+        )
+        result = await in_session(session_factory, step)
+        if "outcome" not in result:
+            return result
+        if result["outcome"] == "capped":
+            break
+        approved += result["outcome"] == "approved"
+    return {
+        "verdict": "auto_decided",
+        "approved": approved,
+        "left": total - approved,
+        "applied": apply,
+    }
+
+
 async def run_auto_decide(
     destination: TextIO,
     apply: bool = False,
@@ -171,24 +226,11 @@ async def run_auto_decide(
         output = {"verdict": "configuration_error"}
     else:
         settings = settings if settings is not None else get_settings()
-        age = settings.welcome_auto_min_account_age_days
-        limit = settings.welcome_auto_daily_limit
-        if age <= 0 or limit <= 0:
+        rules = (settings.welcome_auto_min_account_age_days, settings.welcome_auto_daily_limit)
+        if min(rules) <= 0:
             output = {"verdict": "disabled"}
         else:
-
-            async def decide(db: AsyncSession) -> dict:
-                service = WelcomeAutoDecisionService(
-                    WelcomeRewardRepository(db), WelcomeAutoDecisionRepository(db), age, limit
-                )
-                result = await service.run()
-                if apply:
-                    await db.commit()
-                else:
-                    await db.rollback()
-                return result.model_dump() | {"applied": apply}
-
-            output = await in_session(session_factory, decide)
+            output = await auto_decide(session_factory, rules, apply)
     destination.write(json.dumps(output) + "\n")
     return EXIT_CODES[output["verdict"]]
 

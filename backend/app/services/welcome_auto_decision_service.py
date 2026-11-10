@@ -1,24 +1,25 @@
 """Approve undecided welcome applications that satisfy every automatic rule; never reject."""
 
 from datetime import timedelta
+from typing import Literal
 
 from app.models.user import User
 from app.repositories.welcome_auto_decision_repo import WelcomeAutoDecisionRepository
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
-from app.schemas.welcome_reward_decisions import (
-    WelcomeAutoDecisionResult,
-    WelcomeRewardDecision,
-)
+from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
 from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
 
+AUTHORITY_PREFIX = "auto:"
 RULE_VERSION = "v1"
-AUTHORITY_REF = f"auto:{RULE_VERSION}"
+AUTHORITY_REF = f"{AUTHORITY_PREFIX}{RULE_VERSION}"
 DECISION_TTL = timedelta(days=1)
+
+Outcome = Literal["approved", "left", "capped"]
 
 
 class WelcomeAutoDecisionService:
-    """Record approvals through the manual decision writer under a serialized rolling cap."""
+    """Record approvals through the manual decision writer, one short transaction each."""
 
     def __init__(
         self,
@@ -29,24 +30,25 @@ class WelcomeAutoDecisionService:
     ):
         self.repo = repo
         self.auto_repo = auto_repo
-        self.min_account_age = timedelta(days=min_account_age_days)
+        self.min_account_age_days = min_account_age_days
         self.daily_limit = daily_limit
 
-    async def run(self) -> WelcomeAutoDecisionResult:
-        """Approve eligible applications up to the rolling cap, in the caller's transaction."""
+    async def candidates(self) -> tuple[list[dict], int, int]:
+        """Read-only (no program lock): prefiltered applications, undecided total, cap left."""
+        used = await self.auto_repo.approvals_since_day(AUTHORITY_PREFIX)
+        found = await self.auto_repo.eligible_applications(self.min_account_age_days)
+        return found, await self.auto_repo.undecided_count(), max(self.daily_limit - used, 0)
+
+    async def approve(self, application: dict) -> Outcome:
+        """Recount the cap under the run lock, then approve one application in this transaction."""
         await self.repo.decision_clock()
         await self.repo.limit_lock_wait()
         await self.auto_repo.lock()
-        remaining = self.daily_limit - await self.auto_repo.approvals_since_day(AUTHORITY_REF)
-        applications = await self.auto_repo.undecided_applications()
-        approved = 0
-        for application in applications:
-            if approved >= remaining:
-                break
-            approved += await self._approve(application)
-        return WelcomeAutoDecisionResult(approved=approved, left=len(applications) - approved)
+        if await self.auto_repo.approvals_since_day(AUTHORITY_PREFIX) >= self.daily_limit:
+            return "capped"
+        return "approved" if await self._record(application) else "left"
 
-    async def _approve(self, application: dict) -> bool:
+    async def _record(self, application: dict) -> bool:
         user, program, grant = await self.repo.context(application["owner_user_id"])
         if user is None or grant is None or grant["state"] != "application":
             return False
@@ -76,4 +78,5 @@ class WelcomeAutoDecisionService:
 
     def _old_enough(self, user: User, grant: dict) -> bool:
         created = user.oauth_account_created_at
-        return created is not None and grant["created_at"] - created >= self.min_account_age
+        age = timedelta(days=self.min_account_age_days)
+        return created is not None and grant["created_at"] - created >= age

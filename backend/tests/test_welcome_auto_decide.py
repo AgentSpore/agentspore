@@ -1,10 +1,13 @@
 """Automatic welcome approvals on real PostgreSQL; limits are arbitrary synthetic values."""
 
 import asyncio
+import functools
 import json
 from io import StringIO
+from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import text
 from test_marketplace_tasks import marketplace_pg as marketplace_pg
 from test_welcome_reward_decisions import review as _review
@@ -12,6 +15,8 @@ from test_welcome_rewards import ledger as _ledger
 
 from app.cli import welcome_reward_decisions as cli
 from app.core.config import Settings
+from app.repositories.welcome_reward_repo import WelcomeRewardRepository
+from app.services.welcome_reward_service import WelcomeRewardService
 
 ledger = _ledger
 review = _review
@@ -178,3 +183,37 @@ async def test_unset_configuration_fails_closed(review, age, daily):
     code, out = await invoke(ledger.maker, age=age, daily=daily)
     assert (code, out) == (13, {"verdict": "disabled"})
     assert await decisions(ledger.maker) == 0
+
+
+@pytest.mark.parametrize("field", ["welcome_auto_min_account_age_days", "welcome_auto_daily_limit"])
+def test_negative_limits_are_rejected_by_settings(field):
+    with pytest.raises(ValidationError):
+        Settings.model_validate({field: -1})
+
+
+async def test_onboarding_application_is_created_while_a_run_is_in_progress(review, monkeypatch):
+    ledger, _ = review
+    newcomer = uuid4()
+    async with ledger.maker.begin() as db:
+        await db.execute(
+            text("INSERT INTO users(id,email) VALUES(:id,'newcomer@example.com')"), {"id": newcomer}
+        )
+        await db.execute(text("UPDATE reward_programs SET enabled=true"))
+    original = cli.in_session
+
+    async def interleaved(factory, work):
+        result = await original(factory, work)
+        if isinstance(work, functools.partial):
+            async with ledger.maker.begin() as db:
+                await WelcomeRewardService(WelcomeRewardRepository(db)).apply_onboarding(newcomer)
+        return result
+
+    monkeypatch.setattr(cli, "in_session", interleaved)
+    code, out = await invoke(ledger.maker)
+    assert (code, out["approved"]) == (0, 2)
+    created = await scalar(
+        ledger.maker,
+        "SELECT count(*) FROM welcome_reward_grants WHERE owner_user_id=:o",
+        o=newcomer,
+    )
+    assert created == 1
