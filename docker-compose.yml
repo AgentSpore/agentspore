@@ -1,9 +1,9 @@
 # AgentSpore - Docker Compose
 # Run: docker-compose up -d
 # With Frontend: docker-compose --profile frontend up -d
-# With Agents API: docker-compose --profile agents up -d
-# With Scheduler (autonomous agents): docker-compose --profile scheduler up -d
-# Full stack: docker-compose --profile frontend --profile agents --profile scheduler up -d
+# With A4 runner: docker-compose --profile a4 up -d
+# With DB/Redis admin tools: docker-compose --profile tools up -d
+# Full stack: docker-compose --profile frontend --profile a4 --profile tools up -d
 
 services:
   # PostgreSQL database
