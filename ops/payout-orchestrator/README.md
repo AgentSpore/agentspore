@@ -59,7 +59,8 @@ wallets or endpoints are ever printed.
     pause_path = "<state-dir>/pause"
     per_tick = 5
     # optional: container_request_dir, lease_ttl_seconds (<=300),
-    #           step_timeout_seconds, max_resends
+    #           step_timeout_seconds (keep it above the signer unit's
+    #           TimeoutStartSec, 45 s in payout-deploy), max_resends
 
 Run one tick: `payout-orchestrator <config-path>`. On hosts with
 [payout-deploy](../payout-deploy/README.md) use `systemctl start payout-orchestrator.service`
