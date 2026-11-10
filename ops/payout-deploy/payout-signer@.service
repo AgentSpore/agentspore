@@ -1,13 +1,13 @@
 [Unit]
 Description=Payout signer for request %i
 Documentation=https://github.com/AgentSpore/agentspore/tree/main/ops/payout-signer
+CollectMode=inactive
 
 [Service]
 Type=oneshot
 # Keeps ExecMainCode, ExecMainStatus and Result readable after a successful run;
 # without it systemd may unload the finished instance first (README, "Result retention").
 RemainAfterExit=yes
-CollectMode=inactive
 User=payout-signer
 Group=payout-signer
 SupplementaryGroups=payout-handoff
