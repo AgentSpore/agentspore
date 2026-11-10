@@ -1,10 +1,12 @@
 """Strict configuration and credential loading. No defaults: a missing key refuses to start."""
 
+import json
 import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 
 MAX_U63 = 2**63 - 1
@@ -84,3 +86,15 @@ def load_config(path: Path) -> Config:
         ledger_path=_absolute(raw, "ledger_path"),
         **limits,
     )
+
+
+def load_keypair(config: Config) -> Keypair:
+    """Read the Solana JSON-array keypair from the systemd credentials directory only."""
+    directory = os.environ.get("CREDENTIALS_DIRECTORY")
+    if not directory:
+        raise ConfigError("credentials")
+    try:
+        numbers = json.loads((Path(directory) / config.keypair_credential).read_text())
+        return Keypair.from_bytes(bytes(numbers))
+    except (OSError, ValueError, TypeError):
+        raise ConfigError("credentials") from None
