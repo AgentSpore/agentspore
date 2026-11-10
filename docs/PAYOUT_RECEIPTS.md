@@ -119,3 +119,17 @@ R182.4: Network requests run outside any database transaction. A short transacti
 R182.5: Table `payout_delivery_confirmations` (V117) rejects UPDATE, DELETE and TRUNCATE and checks the u64 slot, version and digest shape. These guards do not prove that the RPC was honest or that the verifier ran; the writer and the RPC endpoint are a trusted application boundary.
 
 R182.6: Live-use blocker: the trusted network hash and the RPC endpoint must come from approved server configuration, not from operator or caller JSON, since two values from one caller prove no trust. Until that source exists, only fixtures and synthetic data are verified; no live RPC or funds have been exercised.
+
+R182.7: `attempt-send` broadcasts the exact committed signed transaction of a prepared attempt. Input (stdin JSON) is the same as `attempt-reconcile`: intent_id, trusted_genesis_hash, rpc_endpoint, with the same endpoint rule and no unknown fields. It never builds, alters or re-signs a transaction, and it never writes to the database or marks anything paid; only `attempt-reconcile` stores a confirmation.
+
+| Verdict | Exit | Meaning |
+|---|---|---|
+| `sent` | 0 | RPC accepted the stored wire and returned the stored first signature |
+| `already_processed` | 0 | RPC reports the signature was already processed; success-equivalent, confirm with `attempt-reconcile` |
+| `unresolved` | 2 | Timeout, transport failure, unknown blockhash, malformed or any ambiguous reply; nothing is proven |
+| `unsupported` | 3 | Trusted or reported network differs from the intent's, or the returned signature differs from the stored one |
+| `failed` | 4 | Definite preflight transaction error |
+| `invalid_input` / `not_found` / `storage_error` / `busy` | 5 / 6 / 8 / 9 | As in R182.3; stored bytes that fail native re-verification are `storage_error` |
+| `already_confirmed` | 12 | A confirmation already exists; no RPC call is made |
+
+The persisted attempt is read in a short transaction that is closed before any request. The stored bytes are re-verified natively, then `getGenesisHash` must equal the trusted hash, which must equal the intent's; a mismatch sends nothing. `sendTransaction` carries the stored wire as base64 with `skipPreflight=false`, `preflightCommitment=finalized` and `maxRetries=0`. Requests do not use environment proxy settings. Output is only the verdict; bytes, signature, accounts, endpoint and RPC error text are never printed. Any verdict other than `already_confirmed` leaves a later retry of the same stored bytes allowed; `failed` and `unresolved` never authorize a replacement transaction.

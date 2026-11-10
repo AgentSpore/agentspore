@@ -23,6 +23,7 @@ from app.schemas.payout_delivery import (
     ReceiptIntent,
     ReconcileRequest,
     RenewRequest,
+    SendRequest,
     SignedEnvelope,
 )
 from app.services.payout_delivery_service import handle_payout_request, verify_receipt
@@ -32,6 +33,7 @@ from app.services.payout_reconciliation import (
     record_confirmation,
     show_confirmation,
 )
+from app.services.payout_send import send_stored_wire
 from app.services.payout_transaction import InvalidPayoutCandidateError, parse_signed_candidate
 
 ADMISSION_EXIT_CODES = {
@@ -45,6 +47,8 @@ ADMISSION_EXIT_CODES = {
     "released": 0,
     "recovered": 0,
     "confirmed": 0,
+    "sent": 0,
+    "already_processed": 0,
     "unresolved": 2,
     "unsupported": 3,
     "failed": 4,
@@ -55,6 +59,7 @@ ADMISSION_EXIT_CODES = {
     "busy": 9,
     "stale": 10,
     "unavailable": 11,
+    "already_confirmed": 12,
 }
 
 
@@ -108,6 +113,22 @@ async def reconcile_attempt(
         return await record_confirmation(PayoutDeliveryRepository(db), request, target, evidence)
 
 
+async def send_attempt(
+    session_factory: async_sessionmaker[AsyncSession],
+    request: SendRequest,
+    transport: httpx.BaseTransport | None,
+) -> dict:
+    """Read in a short transaction, broadcast outside any transaction, write nothing."""
+    async with session_factory.begin() as db:
+        target = await load_target(PayoutDeliveryRepository(db), request)
+    if target is None:
+        return {"verdict": "not_found"}
+    if target.stored is not None:
+        return {"verdict": "already_confirmed"}
+    with httpx.Client(timeout=10, transport=transport, trust_env=False) as client:
+        return {"verdict": await asyncio.to_thread(send_stored_wire, client, target, request)}
+
+
 async def dispatch_command(
     command: str,
     intent: AllocationKey | AllocationIntent | ClaimKey,
@@ -117,6 +138,8 @@ async def dispatch_command(
     """Run one command in its own caller-owned transaction, or the split reconcile flow."""
     if isinstance(intent, ReconcileRequest):
         return await reconcile_attempt(session_factory, intent, transport)
+    if isinstance(intent, SendRequest):
+        return await send_attempt(session_factory, intent, transport)
     async with session_factory.begin() as db:
         repo = PayoutDeliveryRepository(db)
         if command == "confirmation-show" and isinstance(intent, ClaimKey):
@@ -213,15 +236,17 @@ async def run_reconcile(
     destination: TextIO,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     transport: httpx.BaseTransport | None = None,
+    command: str = "attempt-reconcile",
 ) -> int:
     """Validate the reference-only request and emit one fixed verdict."""
     try:
         payload = source.read(65537)
-        request = ReconcileRequest.model_validate_json(payload if len(payload) <= 65536 else "")
+        model = SendRequest if command == "attempt-send" else ReconcileRequest
+        request = model.model_validate_json(payload if len(payload) <= 65536 else "")
     except (ValueError, TypeError, OSError, RecursionError):
         result = {"verdict": "invalid_input"}
     else:
-        result = await execute_admission("attempt-reconcile", request, session_factory, transport)
+        result = await execute_admission(command, request, session_factory, transport)
     destination.write(json.dumps(result) + "\n")
     return ADMISSION_EXIT_CODES[result["verdict"]]
 
@@ -240,8 +265,8 @@ def main(arguments: list[str], source: TextIO, destination: TextIO) -> int:
     """Parse only the explicit offline artifact option without echoing invalid arguments."""
     if not arguments:
         return run(source, destination)
-    if arguments == ["attempt-reconcile"]:
-        return asyncio.run(run_reconcile(source, destination))
+    if arguments in (["attempt-reconcile"], ["attempt-send"]):
+        return asyncio.run(run_reconcile(source, destination, command=arguments[0]))
     path = None
     command = arguments[0] if len(arguments) == 1 else ""
     if len(arguments) == 3 and arguments[:2] == ["prepare-message", "--output"]:
