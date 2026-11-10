@@ -176,34 +176,44 @@ def receipt_verdict(receipt: dict, intent: ReceiptIntent) -> str:
     )
 
 
+class NetworkMismatchError(Exception):
+    """The RPC endpoint reports a genesis hash other than the intent's network."""
+
+
+RECEIPT_ERRORS = (
+    httpx.HTTPError,
+    ValueError,
+    TypeError,
+    KeyError,
+    IndexError,
+    OverflowError,
+    RecursionError,
+)
+
+
+def fetch_finalized_receipt(client: httpx.Client, intent: ReceiptIntent) -> Any:
+    """Bind the RPC to the intent's network, then fetch the finalized transaction."""
+    if rpc_result(client, intent, "getGenesisHash", []) != intent.genesis_hash:
+        raise NetworkMismatchError
+    return rpc_result(
+        client,
+        intent,
+        "getTransaction",
+        [
+            intent.signature,
+            {"commitment": "finalized", "encoding": "json", "maxSupportedTransactionVersion": 0},
+        ],
+    )
+
+
 def verify_receipt(client: httpx.Client, intent: ReceiptIntent) -> str:
     """Return a finite verdict; transport or incomplete evidence stays unresolved."""
     try:
-        if rpc_result(client, intent, "getGenesisHash", []) != intent.genesis_hash:
-            return "unsupported"
-        receipt = rpc_result(
-            client,
-            intent,
-            "getTransaction",
-            [
-                intent.signature,
-                {
-                    "commitment": "finalized",
-                    "encoding": "json",
-                    "maxSupportedTransactionVersion": 0,
-                },
-            ],
-        )
+        receipt = fetch_finalized_receipt(client, intent)
         return "unresolved" if receipt is None else receipt_verdict(receipt, intent)
-    except (
-        httpx.HTTPError,
-        ValueError,
-        TypeError,
-        KeyError,
-        IndexError,
-        OverflowError,
-        RecursionError,
-    ):
+    except NetworkMismatchError:
+        return "unsupported"
+    except RECEIPT_ERRORS:
         return "unresolved"
 
 

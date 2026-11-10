@@ -99,4 +99,23 @@ R190.5: The parent-first bounded lock precedes full parent binding and existing-
 
 R190.6: Exact retained-envelope replay remains available after expiry and never creates a replacement. After an uncertain acknowledgement, retry the exact envelope or use attempt-show. Normal output excludes signed/unsigned bytes, first signature, accounts, height, paths, SQL and exception details. Success follows commit; busy/storage errors roll back both halves. A future controlled broadcaster must load the committed original bytes and signature; a timeout, uncertain expiry or null receipt does not establish nonpayment or authorize re-signing.
 
-Offline preparation requires independent current-source verification. No configured signing provider, broadcast or payment confirmation is included.
+Offline preparation requires independent current-source verification. No configured signing provider or broadcast is included.
+
+## Attempt reconciliation and stored confirmation (issue #182)
+
+R182.1: `attempt-reconcile` checks one persisted prepared attempt against a finalized on-chain receipt and stores the confirmation. `confirmation-show` reads it back. Neither signs, sends, credits a reward or touches balances or the legacy payout tables; a confirmation is a delivery fact, not an entitlement.
+
+| Command | Input (stdin JSON) | Ordinary success |
+|---|---|---|
+| `attempt-reconcile` | intent_id, trusted_genesis_hash, rpc_endpoint | `confirmed` or `replayed`: intent_id, state, transaction_digest, finalized_slot, verifier_version |
+| `confirmation-show` | intent_id | `found`, the same stored fact; no RPC call |
+
+R182.2: The caller supplies no amount, account, recipient, signature or bytes; unknown fields are rejected. These come from the persisted intent and attempt, so without an attempt (`not_found`) no RPC call is made. `rpc_endpoint` must be https (plain http only for loopback hosts) and must carry no credentials, query or fragment. The stored bytes are re-verified natively before any request.
+
+R182.3: Verdicts and exit codes: confirmed/replayed/found=0, unresolved=2, unsupported=3, failed=4, invalid_input=5, not_found=6, conflict=7, storage_error=8, busy=9. Only a finalized receipt with no error status, complete matching token balances, program, owners, raw deltas, fee-only lamports, the exact compiled message and all signatures equal to the stored wire is stored. `failed`, `unsupported`, `unresolved` and a null receipt store nothing and never authorize a replacement. A wrong trusted network is `unsupported`.
+
+R182.4: Network requests run outside any database transaction. A short transaction then takes the parent lock (NOWAIT, bounded timeouts), re-reads the attempt and inserts once. Identical evidence reports `replayed`; different evidence reports `conflict` and never overwrites. A later null, error or failing re-check is reported as that fresh verdict and leaves the stored confirmation untouched. After a lost acknowledgement use `confirmation-show` or repeat the command. Output excludes bytes, signatures, accounts, endpoints and RPC bodies.
+
+R182.5: Table `payout_delivery_confirmations` (V117) rejects UPDATE, DELETE and TRUNCATE and checks the u64 slot, version and digest shape. These guards do not prove that the RPC was honest or that the verifier ran; the writer and the RPC endpoint are a trusted application boundary.
+
+R182.6: Live-use blocker: the trusted network hash and the RPC endpoint must come from approved server configuration, not from operator or caller JSON, since two values from one caller prove no trust. Until that source exists, only fixtures and synthetic data are verified; no live RPC or funds have been exercised.

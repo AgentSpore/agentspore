@@ -3,7 +3,12 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.payout_delivery import AllocationIntent, AllocationKey, ClaimKey
+from app.schemas.payout_delivery import (
+    AllocationIntent,
+    AllocationKey,
+    ClaimKey,
+    ConfirmationEvidence,
+)
 
 
 class PayoutDeliveryRepository:
@@ -196,3 +201,38 @@ class PayoutDeliveryRepository:
         )
         if identity is None:
             raise RuntimeError("Attempt insert did not return an identity")
+
+    async def read_reconcile_row(self, key: ClaimKey) -> dict | None:
+        """Join the immutable attempt, its intent and any stored confirmation."""
+        await self.claim_budget()
+        row = (
+            (
+                await self.db.execute(
+                    text(
+                        "SELECT i.genesis_hash, i.mint, i.program, i.source, i.destination, "
+                        "i.authority, i.fee_payer, i.recipient, i.decimals, i.raw_amount, "
+                        "a.signed_bytes, a.first_signature, c.finalized_slot, "
+                        "c.verifier_version, c.evidence_digest "
+                        "FROM payout_delivery_attempts a "
+                        "JOIN payout_delivery_intents i ON i.intent_id = a.intent_id "
+                        "LEFT JOIN payout_delivery_confirmations c ON c.intent_id = a.intent_id "
+                        "WHERE a.intent_id = :intent_id"
+                    ),
+                    {"intent_id": key.intent_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return dict(row) if row else None
+
+    async def insert_confirmation(self, key: ClaimKey, evidence: ConfirmationEvidence) -> None:
+        """Insert the first verified fact; a duplicate raises instead of overwriting."""
+        await self.db.execute(
+            text(
+                "INSERT INTO payout_delivery_confirmations(intent_id, finalized_slot, "
+                "verifier_version, evidence_digest) VALUES "
+                "(:intent_id, :finalized_slot, :verifier_version, :evidence_digest)"
+            ),
+            {"intent_id": key.intent_id, **evidence.model_dump()},
+        )
