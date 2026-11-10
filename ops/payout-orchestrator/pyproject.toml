@@ -5,6 +5,9 @@ description = "Host-side payout tick driver (stdlib only at runtime; never signs
 requires-python = ">=3.12"
 dependencies = []
 
+[project.scripts]
+payout-orchestrator = "payout_orchestrator.cli:main"
+
 [dependency-groups]
 dev = ["pytest>=9.0", "ruff>=0.14", "ty>=0.0.1"]
 
