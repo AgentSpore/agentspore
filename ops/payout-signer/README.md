@@ -16,7 +16,7 @@ signing key never enters the internet-facing backend container.
   wallet balance. Keep that balance small.
 - The ledger is local state on the host; the signer trusts it. Deleting it resets
   the limits, so it lives in the service-private state directory
-  (`StateDirectory=` under `DynamicUser=`), which other users cannot write.
+  (`StateDirectory=` of the `payout-signer` system user), which other users cannot write.
 - The per-recipient limit is counted per destination token account, not per owner
   wallet. A compromised backend can spread the total across many token accounts of
   one owner, so only the per-transfer, total and count limits bound it.
@@ -60,21 +60,13 @@ whether the pause file exists.
 
 ## systemd example
 
-    [Service]
-    Type=oneshot
-    DynamicUser=yes
-    LoadCredential=keypair:<keypair-file>
-    StateDirectory=payout-signer
-    NoNewPrivileges=yes
-    ProtectSystem=strict
-    PrivateNetwork=yes
-    ExecStart=<install-dir>/payout-signer sign --request <request-file> --output <output-file> --config <config-file>
+The shipped unit is [`payout-signer@.service`](../payout-deploy/payout-signer@.service)
+(static `payout-signer` user from sysusers.d, `LoadCredential=`, `PrivateNetwork=yes`,
+handoff group); install steps are in [payout-deploy](../payout-deploy/README.md).
 
 Set `ledger_path` and `pause_file` under `/var/lib/payout-signer/` (the
 `StateDirectory`) and `keypair_credential = "keypair"`. `PrivateNetwork=yes` is
-safe because the signer needs no network. The request and output files must be
-reachable from the unit (for example under the state directory, or via
-`ReadWritePaths=`).
+safe because the signer needs no network.
 
 ## Pause and resume
 

@@ -1,0 +1,63 @@
+name: Payout deploy units
+
+on:
+  pull_request:
+    branches: [main, 'release/**']
+    paths:
+      - 'ops/payout-deploy/**'
+      - 'deploy/payout-network-empty/**'
+      - .github/workflows/payout-deploy.yml
+  push:
+    branches: [main, 'release/**']
+    paths:
+      - 'ops/payout-deploy/**'
+      - 'deploy/payout-network-empty/**'
+      - .github/workflows/payout-deploy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  systemd-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create users, directories and stub programs
+        run: |
+          set -euo pipefail
+          cd ops/payout-deploy
+          sudo install -D -m 0644 payout.sysusers.conf /etc/sysusers.d/payout.conf
+          sudo systemd-sysusers
+          sudo install -D -m 0644 payout.tmpfiles.conf /etc/tmpfiles.d/payout.conf
+          sudo systemd-tmpfiles --create /etc/tmpfiles.d/payout.conf
+          for program in /opt/payout-orchestrator/bin/payout-orchestrator /opt/payout-signer/bin/payout-signer; do
+            sudo install -D -m 0755 /bin/true "$program"
+          done
+          sudo install -d -m 0750 /etc/payout-orchestrator /etc/payout-signer
+          sudo install -m 0640 /dev/null /etc/payout-orchestrator/config.toml
+          sudo install -m 0640 /dev/null /etc/payout-signer/config.toml
+          sudo install -m 0600 /dev/null /etc/payout-signer/keypair.json
+          sudo install -D -m 0644 -t /etc/systemd/system payout-orchestrator.service payout-orchestrator.timer 'payout-signer@.service'
+          sudo ln -s /etc/systemd/system/payout-signer@.service /etc/systemd/system/payout-signer@a.1.service
+      - name: systemd-analyze verify
+        run: |
+          set -euo pipefail
+          out=$(sudo systemd-analyze verify \
+            /etc/systemd/system/payout-orchestrator.service \
+            /etc/systemd/system/payout-orchestrator.timer \
+            /etc/systemd/system/payout-signer@a.1.service 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          # verify can exit 0 while printing warnings; any output fails the job
+          test -z "$out"
+      - name: Exposure scores (informational)
+        run: |
+          sudo systemd-analyze security --no-pager payout-signer@a.1.service payout-orchestrator.service || true
+      - name: No site-specific values in shipped files
+        run: |
+          set -euo pipefail
+          if grep -rEn '([0-9]{1,3}\.){3}[0-9]{1,3}' ops/payout-deploy deploy/payout-network-empty; then
+            exit 1
+          fi
