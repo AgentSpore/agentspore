@@ -199,6 +199,23 @@ class NetworkRequest(ClaimKey):
     rpc_endpoint: Annotated[AnyHttpUrl, AfterValidator(plain_endpoint)]
 
 
+class PendingRequest(BaseModel):
+    """Bound the identifier listing; it carries no filter on amounts or wallets."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+    limit: Annotated[int, Field(ge=1, le=1000)]
+
+
+class NetworkConfig(BaseModel):
+    """Server-side network identity; read from a private file, never from caller input."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+    rpc_endpoint: Annotated[AnyHttpUrl, AfterValidator(plain_endpoint)]
+    trusted_genesis_hash: Annotated[str, AfterValidator(solana_hash)]
+    signer_pubkey: PublicKey
+    source_token_account: PublicKey
+
+
 class ReconcileRequest(NetworkRequest):
     """Confirm the persisted attempt from a finalized receipt."""
 
