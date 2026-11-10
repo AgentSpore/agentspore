@@ -3,7 +3,7 @@
 Host-side driver for one payout tick. It never signs or broadcasts by itself: it
 calls the backend CLIs inside the container (`docker exec`), starts the
 `payout-signer@<intent>.<epoch>` systemd unit, and moves files between them.
-Runtime is stdlib-only Python 3.12.
+Runtime is stdlib-only Python 3.12. systemd units, users and install order: [payout-deploy](../payout-deploy/README.md).
 
 ## Tick order
 

@@ -1,0 +1,50 @@
+[Unit]
+Description=Payout signer for request %i
+Documentation=https://github.com/AgentSpore/agentspore/tree/main/ops/payout-signer
+
+[Service]
+Type=oneshot
+# Keeps ExecMainCode, ExecMainStatus and Result readable after a successful run;
+# without it systemd may unload the finished instance first (README, "Result retention").
+RemainAfterExit=yes
+CollectMode=inactive
+User=payout-signer
+Group=payout-signer
+SupplementaryGroups=payout-handoff
+LoadCredential=keypair:/etc/payout-signer/keypair.json
+StateDirectory=payout-signer
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/payout-handoff
+UMask=0077
+# %i, not %I: the instance is "<intent-uuid>.<epoch>" and %I would turn "-" into "/".
+ExecStart=/opt/payout-signer/bin/payout-signer sign \
+    --request /var/lib/payout-handoff/%i.request.json \
+    --output /var/lib/payout-handoff/%i.signed.json \
+    --config /etc/payout-signer/config.toml
+
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources

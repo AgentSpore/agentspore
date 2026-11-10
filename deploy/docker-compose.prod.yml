@@ -114,6 +114,8 @@ services:
       A4_TENANT_POOL: "${A4_TENANT_POOL:-10.214.0.0/16}"
       DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/sporeai"
       REDIS_URL: "redis://redis:6379"
+      # Empty unless PAYOUT_NETWORK_CONFIG_DIR is set: payout commands then fail closed.
+      PAYOUT_NETWORK_CONFIG_PATH: "${PAYOUT_NETWORK_CONFIG_DIR:+/run/payout-network/network.json}"
 
       LLM_API_KEY: "${OPENROUTER_API_KEY:-}"
       LLM_BASE_URL: "https://openrouter.ai/api/v1"
@@ -190,6 +192,15 @@ services:
       # removing this mount means revisiting that COPY and the manifest test.
       - ../scripts:/app/scripts:ro
       - backend_logs:/app/logs
+      # Server-side payout network config (root-owned, mode 0600). The placeholder keeps the
+      # stack starting where the directory is not provisioned; see ops/payout-deploy/README.md.
+      - type: bind
+        source: ${PAYOUT_NETWORK_CONFIG_DIR:-./payout-network-empty}
+        target: /run/payout-network
+        read_only: true
+        bind: { create_host_path: false }
+    tmpfs:
+      - /run/payout:mode=0700,size=1m
     networks:
       - sporeai-network
 

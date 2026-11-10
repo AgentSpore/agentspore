@@ -1,0 +1,44 @@
+[Unit]
+Description=Payout orchestrator tick
+Documentation=https://github.com/AgentSpore/agentspore/tree/main/ops/payout-orchestrator
+After=docker.service
+Requires=docker.service
+# Pause: while this file exists no tick starts. Site-specific paths go in a drop-in.
+ConditionPathExists=!/var/lib/payout-orchestrator/pause
+
+[Service]
+Type=oneshot
+# Root only for the docker socket and for starting payout-signer@.service.
+User=root
+# A previous tick's finished signer instances are cleared so a repeated instance name
+# runs again instead of reporting a stale result (see README, "Result retention").
+ExecStartPre=-/usr/bin/systemctl stop 'payout-signer@*.service'
+ExecStartPre=-/usr/bin/systemctl reset-failed 'payout-signer@*.service'
+ExecStart=/opt/payout-orchestrator/bin/payout-orchestrator /etc/payout-orchestrator/config.toml
+StateDirectory=payout-orchestrator
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/payout-handoff
+UMask=0027
+TimeoutStartSec=15min
+
+# Root can read the signer's 0600 output files only through this capability.
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+IPAddressDeny=any
