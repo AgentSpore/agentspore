@@ -39,7 +39,7 @@ Runtime is stdlib-only Python 3.12.
 ## Signer exit codes
 
 0 signed and 10 replayed: commit. 11 paused: release the claim, stop claiming for the
-run, keep sending and reconciling. 12 rejected: alert, release. 13 limit_exceeded:
+run, keep sending and reconciling. 12 rejected: alert and hold (the claim is not released and the intent is never taken again until a human clears the hold). 13 limit_exceeded:
 alert, release, stop signing for the run. 14 config_error or anything else: alert and
 abort the run with exit code 3.
 
@@ -65,16 +65,28 @@ Run one tick: `payout-orchestrator <config-path>`.
 
 ## Operator runbook
 
-- Pause: create `pause_path`. The next tick exits 0 at once; ticks already running
-  finish their step. Resume: delete it.
+- Pause: create `pause_path`. The next tick exits 0 at once; a running tick re-checks it
+  before each intent and before each signing, so it stops starting new work and releases a
+  claim it just took. Resume: delete it.
 - Alerts: `signer_rejected`, `signer_limit_exceeded`, `commit_conflict`,
   `digest_mismatch`, `resend_exhausted` need a human; nothing retries a `hold` by itself
   except the next tick's normal flow. `lvbh_unproven` means the chain height is unknown or not yet past the old request: nothing recompiles until it is proven. `signer_config_error` aborts the run: fix the
   signer config first.
+- Hold: `signer_rejected`, `request_malformed`, `signer_no_output`, `digest_mismatch` and
+  `reconcile_<verdict>` (any auto-reconcile verdict other than confirmed/replayed/unresolved)
+  write `"hold": "<reason>"` into the intent's journal entry; every later tick alerts `held`
+  and skips the intent. Clear it only after investigating: pause, delete the intent's key
+  from the journal file (and, for `request_malformed`/`signer_rejected`, its
+  `<intent>.<epoch>.*` handoff files), then resume.
+- Any other unexpected error in one intent is alerted as `step_error` with the exception
+  class name only; the remaining intents still run.
 - Stuck intent: a journal entry blocks recompiling until the old request expired. Do
   not edit the journal by hand while a tick may run.
 - Handoff files left after a crash are cleaned by the next tick once the stored digest
-  matches; mismatching files are kept for inspection.
+  matches; mismatching files are kept for inspection. Only the stored epoch's files are
+  removed; leftovers of earlier epochs are for the operator.
+- A tick fetches up to 4x `per_tick` rows and stops after `per_tick` intents it acted on,
+  so held or waiting intents do not starve the rest.
 
 ## Development
 

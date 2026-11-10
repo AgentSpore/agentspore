@@ -1,9 +1,11 @@
+import os
+import stat
 import subprocess
 
 import pytest
 
 from payout_orchestrator.config import ConfigError, load_config
-from payout_orchestrator.executor import DockerExecutor, ExecutorError, parse_verdict
+from payout_orchestrator.executor import DockerExecutor, ExecutorError, parse_verdict, write_private
 
 
 class Runner:
@@ -51,11 +53,41 @@ def test_parse_verdict_rejects_unsafe_output(raw):
         parse_verdict(raw)
 
 
+def show(code="1", status="13", result="exit-code"):
+    return f"ExecMainCode={code}\nExecMainStatus={status}\nResult={result}\n".encode()
+
+
 def test_sign_reads_exec_main_status(runner):
-    runner.outputs = [(b"", 1), (b"13\n", 0)]
+    runner.outputs = [(b"", 1), (show(), 0)]
     assert DockerExecutor("c1", 5).sign("abc.2") == 13
     assert runner.argv[0] == ["systemctl", "start", "payout-signer@abc.2.service"]
-    assert runner.argv[1][:3] == ["systemctl", "show", "-p"]
+    assert runner.argv[1][:2] == ["systemctl", "show"]
+    assert runner.argv[1][3] == "ExecMainCode,ExecMainStatus,Result"
+
+
+@pytest.mark.parametrize(
+    "out",
+    [
+        show(code="0", status="0", result="success"),  # unit never ran
+        show(code="2", status="9"),  # killed by a signal: status is a signal number
+        show(result="timeout"),
+        show(status="x"),
+        b"",
+    ],
+)
+def test_sign_status_untrusted_unless_normal_exit(runner, out):
+    runner.outputs = [(b"", 1), (out, 0)]
+    with pytest.raises(ExecutorError):
+        DockerExecutor("c1", 5).sign("abc.2")
+
+
+def test_handoff_file_mode_is_0640(tmp_path):
+    previous = os.umask(0)
+    try:
+        write_private(tmp_path / "f", b"x")
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE((tmp_path / "f").stat().st_mode) == 0o640
 
 
 def test_timeout_becomes_executor_error(monkeypatch):

@@ -12,6 +12,7 @@ import base64
 import fcntl
 import hashlib
 import json
+import re
 import sys
 import time
 import uuid
@@ -27,10 +28,20 @@ DELIVERY = "payout_delivery"
 CONFIRMED = {"confirmed", "replayed"}
 RETRYABLE = {"unresolved", "preflight_rejected"}
 DELIVERED = {"sent", "already_processed"}
+RAW_UNITS = re.compile(r"(0|[1-9][0-9]{0,19})")
 
 
 class RunAborted(Exception):
     """Signer configuration failure or an unknown signer status: stop the whole run."""
+
+
+def read_lvbh(request: Path) -> int | None:
+    """The request carries last_valid_block_height as a canonical decimal string; else None."""
+    try:
+        value = json.loads(request.read_text()).get("last_valid_block_height")
+    except (ValueError, AttributeError):
+        return None
+    return int(value) if isinstance(value, str) and RAW_UNITS.fullmatch(value) else None
 
 
 @contextmanager
@@ -47,6 +58,8 @@ def exclusive(path: Path) -> Generator[bool]:
 
 
 class Tick:
+    """One pass over pending intents; holds only per-run state, durable state is the journal."""
+
     def __init__(
         self,
         config: Config,
@@ -59,10 +72,22 @@ class Tick:
         self.journal = journal
         self.clock = clock
         self.signing_stopped = False
+        self.touched: set[str] = set()
 
-    def alert(self, reason: str, intent: str | None) -> None:
-        """One JSON line: fixed reason and intent id only, never amounts, wallets or endpoints."""
-        sys.stderr.write(json.dumps({"alert": reason, "intent_id": intent}) + "\n")
+    def alert(self, reason: str, intent: str | None, error: str | None = None) -> None:
+        """One JSON line: fixed reason, intent id and optional exception class name only."""
+        body = {"alert": reason, "intent_id": intent} | ({"error": error} if error else {})
+        sys.stderr.write(json.dumps(body) + "\n")
+
+    def hold(self, intent: str, reason: str) -> bool:
+        """Journal a hold that every later tick respects until an operator clears it."""
+        self.journal.hold(intent, reason, self.clock())
+        self.alert(reason, intent)
+        return False
+
+    def held(self, intent: str) -> bool:
+        entry = self.journal.get(intent)
+        return bool(entry and entry.get("hold"))
 
     def run(self) -> int:
         if self.cfg.pause_path.exists():
@@ -86,22 +111,32 @@ class Tick:
         except ExecutorError:
             self.alert("link_failed", None)
         try:
-            pending = self.ex.cli(DELIVERY, ["pending", "--limit", str(self.cfg.per_tick)])
+            limit = min(self.cfg.per_tick * 4, 1000)  # held rows must not starve the rest
+            pending = self.ex.cli(DELIVERY, ["pending", "--limit", str(limit)])
         except ExecutorError:
             return self.alert("pending_failed", None)
         if pending["verdict"] != "found":
             return self.alert(f"pending_{pending['verdict']}", None)
-        for item in pending["intents"][: self.cfg.per_tick]:
-            self._guarded(item["intent_id"], item["phase"])
+        for item in pending["intents"]:
+            if len(self.touched) >= self.cfg.per_tick:
+                break
+            self._guarded(item)
 
-    def _guarded(self, intent: str, phase: str) -> None:
+    def _guarded(self, item: dict) -> None:
+        if self.cfg.pause_path.exists():
+            return
         try:
-            intent = str(uuid.UUID(intent))
-            self.handle(intent, phase)
-        except ValueError:
-            self.alert("bad_intent_id", None)
+            intent = str(uuid.UUID(item["intent_id"]))
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return self.alert("bad_intent_id", None)
+        try:
+            self.handle(intent, item.get("phase"))
+        except RunAborted:
+            raise
         except ExecutorError:
             self.alert("step_failed", intent)
+        except Exception as exc:  # noqa: BLE001 (one bad intent must not stop the others)
+            self.alert("step_error", intent, type(exc).__name__)
 
     def call(self, args: list[str], body: dict | None = None) -> dict:
         return self.ex.cli(DELIVERY, args, json.dumps(body) if body is not None else "")
@@ -109,20 +144,25 @@ class Tick:
     def fence(self, intent: str, epoch: int) -> dict:
         return {"intent_id": intent, "worker_id": self.cfg.worker_id, "epoch": epoch}
 
-    def handle(self, intent: str, phase: str) -> None:
+    def handle(self, intent: str, phase: str | None) -> None:
         if phase == "confirmed":
             return
+        if self.held(intent):
+            return self.alert("held", intent)
         if phase == "prepared":
+            self.touched.add(intent)
             self.settle(intent, self.call(["attempt-show"], {"intent_id": intent}))
-            return self.deliver(intent)
+            return None if self.held(intent) else self.deliver(intent)
         if phase == "claimed":
             epoch = self.resume_epoch(intent)
         elif phase in ("unclaimed", "expired"):
             epoch = self.take(intent, expired=phase == "expired")
         else:
             return self.alert("unknown_phase", intent)
-        if epoch is not None and self.sign_and_commit(intent, epoch):
-            self.deliver(intent)
+        if epoch is not None:
+            self.touched.add(intent)
+            if self.sign_and_commit(intent, epoch):
+                self.deliver(intent)
 
     def resume_epoch(self, intent: str) -> int | None:
         lease = self.call(["lease-show"], {"intent_id": intent})
@@ -183,18 +223,27 @@ class Tick:
             self.alert(f"attempt_show_{shown['verdict']}", intent)
             return False
         request, signed, remote = self.paths(intent, epoch)
-        if not self.gate_open(intent, epoch) or (self.signing_stopped and not signed.exists()):
+        no_signing = self.signing_stopped or self.cfg.pause_path.exists()
+        if not self.gate_open(intent, epoch) or (no_signing and not signed.exists()):
             self.release(intent, epoch)
             return False
-        if not request.exists() and not self.compile(intent, epoch, request, remote):
+        if not self.stage_request(intent, epoch, request, remote):
             return False
-        entry = self.journal.get(intent)
-        if entry is None or entry["epoch"] != epoch:
-            lvbh = json.loads(request.read_text())["last_valid_block_height"]
-            self.journal.put(intent, epoch, lvbh, self.clock())
         if not signed.exists() and not self.sign(intent, epoch):
             return False
         return self.commit(intent, epoch, signed)
+
+    def stage_request(self, intent: str, epoch: int, request: Path, remote: str) -> bool:
+        """Have a request file and journal its lvbh (never lowering it) before any signing."""
+        if not request.exists() and not self.compile(intent, epoch, request, remote):
+            return False
+        lvbh = read_lvbh(request)
+        if lvbh is None:
+            return self.hold(intent, "request_malformed")
+        entry = self.journal.get(intent)
+        seen = entry["lvbh"] if entry and entry["epoch"] == epoch else 0
+        self.journal.put(intent, epoch, max(seen, lvbh), self.clock())
+        return True
 
     def compile(self, intent: str, epoch: int, request: Path, remote: str) -> bool:
         self.ex.drop(remote)
@@ -212,11 +261,15 @@ class Tick:
     def sign(self, intent: str, epoch: int) -> bool:
         code = self.ex.sign(f"{intent}.{epoch}")
         if code in (0, 10):
-            return True
-        if code in (11, 12, 13):
-            self.signing_stopped = code != 12
-            if code != 11:
-                self.alert("signer_rejected" if code == 12 else "signer_limit_exceeded", intent)
+            if self.paths(intent, epoch)[1].exists():
+                return True
+            return self.hold(intent, "signer_no_output")
+        if code == 12:
+            return self.hold(intent, "signer_rejected")  # claim stays; take() refuses the intent
+        if code in (11, 13):
+            self.signing_stopped = True
+            if code == 13:
+                self.alert("signer_limit_exceeded", intent)
             self.release(intent, epoch)
             return False
         self.alert("signer_config_error" if code == 14 else "signer_unexpected_status", intent)
@@ -234,9 +287,10 @@ class Tick:
         return False
 
     def settle(self, intent: str, stored: dict) -> bool:
-        """Remove handoff files and the journal entry once the stored digest matches the file.
+        """Remove the stored epoch's handoff files and journal entry once the digest matches.
 
-        The signed file goes last, so a crash mid-cleanup still leaves the evidence to re-check.
+        A mismatch is a persistent hold. The signed file goes last, so a crash
+        mid-cleanup still leaves the evidence to re-check.
         """
         epoch = stored.get("epoch")
         if stored.get("verdict") not in ("prepared", "replayed", "found") or epoch is None:
@@ -245,9 +299,8 @@ class Tick:
         if signed.exists():
             wire = base64.b64decode(json.loads(signed.read_text())["signed_transaction_base64"])
             if hashlib.sha256(wire).hexdigest() != stored.get("transaction_digest"):
-                self.alert("digest_mismatch", intent)
-                return False
-        for leftover in sorted(self.cfg.handoff_dir.glob(f"{intent}.*")):
+                return self.hold(intent, "digest_mismatch")
+        for leftover in sorted(self.cfg.handoff_dir.glob(f"{intent}.{epoch}.*")):
             leftover.unlink(missing_ok=True)
         self.journal.drop(intent)
         return True
@@ -262,6 +315,11 @@ class Tick:
             if sent not in DELIVERED | RETRYABLE:
                 return self.alert(f"send_{sent}", intent)
             reconciled = self.call(["auto-reconcile"], body)["verdict"]
-            if reconciled in CONFIRMED or sent in DELIVERED:
+            if reconciled in CONFIRMED:
+                return
+            if reconciled != "unresolved":
+                self.hold(intent, f"reconcile_{reconciled}")
+                return
+            if sent in DELIVERED:
                 return
         self.alert("resend_exhausted", intent)

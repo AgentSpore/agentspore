@@ -10,9 +10,18 @@ from payout_orchestrator.executor import ExecutorError
 WORKER = "00000000-0000-4000-8000-000000000001"
 INTENT = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"
+GENESIS = "G" * 43
+CONTEXT_KEYS = (
+    "intent_id",
+    "worker_id",
+    "epoch",
+    "genesis_hash",
+    "last_valid_block_height",
+    "format_version",
+)
 
 
-class Crash(Exception):
+class Crash(BaseException):  # process death: step guards must not catch it
     """Simulated process death at a step boundary."""
 
 
@@ -50,6 +59,9 @@ class FakeBackend:
         self.container_files: dict[str, dict] = {}
         self.link_result: dict = {"verdict": "ok", "conflict": 0, "intents": []}
         self.hook = None
+        self.lvbh_override: object = None
+        self.show_script: list[str] = []
+        self.skip_signed = False
 
     def _step(self, name: str, effect):
         self.calls.append(name)
@@ -113,7 +125,7 @@ class FakeBackend:
     def _fenced(self, body) -> dict | None:
         claim = self.claims.get(body["intent_id"])
         live = claim and claim["state"] == "claimed" and claim["epoch"] == body["epoch"]
-        return claim if live else None
+        return claim if live and claim["worker"] == body["worker_id"] else None
 
     def _release(self, args, body):
         claim = self._fenced(body)
@@ -130,10 +142,15 @@ class FakeBackend:
         return {"verdict": "recovered"}
 
     def _attempt_show(self, args, body):
+        if self.show_script:
+            return {"verdict": self.show_script.pop(0)}
         attempt = self.attempts.get(body["intent_id"])
         if not attempt:
             return {"verdict": "not_found"}
         return {"verdict": "found", **attempt["public"]}
+
+    def lvbh(self) -> object:
+        return str(self.chain_height + 150) if self.lvbh_override is None else self.lvbh_override
 
     def _auto_compile(self, args, body):
         if self._fenced(body) is None:
@@ -141,9 +158,14 @@ class FakeBackend:
         self.compiles += 1
         self.container_files[args[2]] = {
             "intent_id": body["intent_id"],
+            "worker_id": body["worker_id"],
             "epoch": body["epoch"],
-            "last_valid_block_height": self.chain_height + 150,
-            "blockhash": f"bh{self.compiles}",
+            "genesis_hash": GENESIS,
+            "last_valid_block_height": self.lvbh(),
+            "recent_blockhash": f"bh{self.compiles}",
+            "format_version": 1,
+            "unsigned_message_base64": base64.b64encode(b"message").decode(),
+            "message_digest": hashlib.sha256(b"message").hexdigest(),
         }
         return {"verdict": "compiled", "epoch": body["epoch"]}
 
@@ -191,16 +213,12 @@ class FakeBackend:
             if instance.rsplit(".", 1)[0] in self.attempts:
                 self.signed_after_attempt += 1
             code = self.sign_exits.pop(0) if self.sign_exits else 0
-            if code in (0, 10):
-                request = (self.handoff / f"{instance}.request.json").read_bytes()
-                wire = b"wire:" + hashlib.sha256(request).digest()
-                intent, epoch = instance.rsplit(".", 1)
-                envelope = {
-                    "intent_id": intent,
-                    "epoch": int(epoch),
-                    "format_version": 1,
-                    "signed_transaction_base64": base64.b64encode(wire).decode(),
-                }
+            if code in (0, 10) and not self.skip_signed:
+                raw = (self.handoff / f"{instance}.request.json").read_bytes()
+                wire = b"wire:" + hashlib.sha256(raw).digest()
+                request = json.loads(raw)
+                envelope = {k: request[k] for k in CONTEXT_KEYS}
+                envelope["signed_transaction_base64"] = base64.b64encode(wire).decode()
                 (self.handoff / f"{instance}.signed.json").write_text(json.dumps(envelope))
             return code
 
