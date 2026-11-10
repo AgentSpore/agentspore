@@ -5,11 +5,13 @@ on:
     branches: [main, 'release/**']
     paths:
       - 'ops/payout-deploy/**'
+      - 'deploy/payout-network-empty/**'
       - .github/workflows/payout-deploy.yml
   push:
     branches: [main, 'release/**']
     paths:
       - 'ops/payout-deploy/**'
+      - 'deploy/payout-network-empty/**'
       - .github/workflows/payout-deploy.yml
 
 permissions:

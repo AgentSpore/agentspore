@@ -16,6 +16,9 @@ StateDirectory=payout-signer
 StateDirectoryMode=0700
 ReadWritePaths=/var/lib/payout-handoff
 UMask=0077
+# Must stay below the orchestrator's step_timeout_seconds (default 60): a signer that outlives
+# the step would be killed by the next tick mid-write, leaving a truncated signed file.
+TimeoutStartSec=45s
 # %i, not %I: the instance is "<intent-uuid>.<epoch>" and %I would turn "-" into "/".
 ExecStart=/opt/payout-signer/bin/payout-signer sign \
     --request /var/lib/payout-handoff/%i.request.json \

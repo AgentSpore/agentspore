@@ -78,6 +78,16 @@ instance of a copy of the unit that runs `/bin/true`:
 `systemctl start t@a.1.service; systemctl show -p ExecMainCode,ExecMainStatus,Result t@a.1.service`
 must print `1`, `0`, `success`.
 
+Also check the key copy: after a test instance of the unit with `LoadCredential=`, run
+`ls /run/credentials/`. If the instance's credential directory is still there while it is
+active (exited), a copy of the key outlives the signing. Readers stay limited to
+`payout-signer` and root, but then add a follow-up change so the orchestrator stops the
+instance right after `systemctl show`; no orchestrator change is made here.
+
+First manual tick checklist: if settling or committing a signed file fails with a permission
+error, look at `CapabilityBoundingSet=CAP_DAC_READ_SEARCH` in `payout-orchestrator.service`
+first (root must read the signer's `0600` output without write bypass).
+
 ## Backend wiring
 
 `auto-compile`, `auto-send` and `auto-reconcile` read a private JSON file named by
@@ -106,7 +116,9 @@ Only after investigating the cause (alert reasons: orchestrator README):
    and `lvbh`: they stop a new signature until the old request has expired. Never delete
    the whole intent key.
 3. For `request_malformed` or `signer_rejected`, also remove the `<intent>.<epoch>.*`
-   files from the handoff directory.
+   files from the handoff directory. For `commit_*` holds remove the stored
+   `<intent>.<epoch>.signed.json` too (it may be truncated); the signer ledger replays
+   the same signature on the next run.
 4. Resume.
 
 ## Enabling the timer

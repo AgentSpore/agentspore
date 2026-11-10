@@ -18,11 +18,13 @@ ExecStart=/opt/payout-orchestrator/bin/payout-orchestrator /etc/payout-orchestra
 StateDirectory=payout-orchestrator
 StateDirectoryMode=0700
 ReadWritePaths=/var/lib/payout-handoff
+# The orchestrator needs neither the signing key nor the signer ledger.
+InaccessiblePaths=-/etc/payout-signer -/var/lib/payout-signer -/run/credentials
 UMask=0027
 TimeoutStartSec=15min
 
-# Root can read the signer's 0600 output files only through this capability.
-CapabilityBoundingSet=CAP_DAC_OVERRIDE
+# Root reads the signer's 0600 output files through this capability; it needs no write bypass.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

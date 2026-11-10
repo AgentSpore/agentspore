@@ -61,7 +61,10 @@ wallets or endpoints are ever printed.
     # optional: container_request_dir, lease_ttl_seconds (<=300),
     #           step_timeout_seconds, max_resends
 
-Run one tick: `payout-orchestrator <config-path>`.
+Run one tick: `payout-orchestrator <config-path>`. On hosts with
+[payout-deploy](../payout-deploy/README.md) use `systemctl start payout-orchestrator.service`
+instead: the unit clears finished signer instances first (a reused instance name would
+return its old status) and applies the sandbox.
 
 ## Operator runbook
 
