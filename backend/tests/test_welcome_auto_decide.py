@@ -217,3 +217,34 @@ async def test_onboarding_application_is_created_while_a_run_is_in_progress(revi
         o=newcomer,
     )
     assert created == 1
+
+
+async def test_failure_after_a_committed_step_reports_the_approvals_made(review, monkeypatch):
+    ledger, _ = review
+    original = cli.in_session
+    steps = []
+
+    async def second_step_busy(factory, work):
+        if not isinstance(work, functools.partial):
+            return await original(factory, work)
+        steps.append(work)
+        return {"verdict": "busy"} if len(steps) == 2 else await original(factory, work)
+
+    monkeypatch.setattr(cli, "in_session", second_step_busy)
+    code, out = await invoke(ledger.maker)
+    assert (code, out) == (11, {"verdict": "busy", "approved": 1, "applied": True})
+    assert await decisions(ledger.maker) == 1
+
+
+async def test_one_engine_is_shared_by_all_steps(review, monkeypatch):
+    ledger, _ = review
+    created = []
+
+    def shared_engine(*args, **kwargs):
+        created.append(1)
+        return ledger.maker.kw["bind"]
+
+    monkeypatch.setattr(cli, "create_async_engine", shared_engine)
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings.model_construct(database_url="x"))
+    code, out = await invoke(None)
+    assert (code, out["approved"], len(created)) == (0, 2, 1)

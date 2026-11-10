@@ -183,6 +183,30 @@ async def approve_in_transaction(
 async def auto_decide(
     session_factory: async_sessionmaker[AsyncSession] | None, rules: tuple[int, int], apply: bool
 ) -> dict:
+    """Share one engine across steps and dispose it once; report approvals made before a failure."""
+    engine = None
+    output: dict = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    try:
+        if session_factory is None:
+            engine = create_async_engine(
+                get_settings().database_url, echo=False, isolation_level="READ COMMITTED"
+            )
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        output = await approve_all(session_factory, rules, apply)
+    except STORAGE_ERRORS:
+        output = {"verdict": "storage_error", "approved": 0, "applied": apply}
+    finally:
+        if engine is not None:
+            try:
+                await engine.dispose()
+            except STORAGE_ERRORS:
+                output = output | {"verdict": "storage_error"}
+    return output
+
+
+async def approve_all(
+    session_factory: async_sessionmaker[AsyncSession], rules: tuple[int, int], apply: bool
+) -> dict:
     """List candidates read-only, then approve them one transaction at a time."""
 
     async def listing(db: AsyncSession) -> dict:
@@ -192,7 +216,7 @@ async def auto_decide(
 
     listed = await in_session(session_factory, listing)
     if "found" not in listed:
-        return listed
+        return listed | {"approved": 0, "applied": apply}
     applications, total, remaining = listed["found"]
     approved = 0
     for application in applications:
@@ -203,7 +227,7 @@ async def auto_decide(
         )
         result = await in_session(session_factory, step)
         if "outcome" not in result:
-            return result
+            return result | {"approved": approved, "applied": apply}
         if result["outcome"] == "capped":
             break
         approved += result["outcome"] == "approved"
