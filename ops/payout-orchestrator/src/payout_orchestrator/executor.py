@@ -2,7 +2,8 @@
 
 The backend CLIs use different exit-code tables (payout_delivery, welcome_payouts and the
 signer all disagree), so callers branch on the JSON `verdict` field, never on an exit code.
-Only the signer's ExecMainStatus is read as a number, because it has no JSON output.
+The signer's JSON verdict goes to the systemd journal, so only its ExecMainStatus is available
+here; it is trusted only when systemd reports a normal exit (ExecMainCode=1).
 """
 
 import json
@@ -59,6 +60,8 @@ def write_private(path: Path, data: bytes) -> None:
 
 
 class DockerExecutor:
+    """Real Executor: `docker exec` for the backend CLIs, `systemctl` for the signer unit."""
+
     def __init__(self, container: str, timeout: int) -> None:
         self.container = container
         self.timeout = timeout
@@ -90,10 +93,17 @@ class DockerExecutor:
     def sign(self, instance: str) -> int:
         unit = f"payout-signer@{instance}.service"
         self._run(["systemctl", "start", unit])  # failing units exit non-zero by design
-        shown = self._run(["systemctl", "show", "-p", "ExecMainStatus", "--value", unit])
+        properties = "ExecMainCode,ExecMainStatus,Result"
+        shown = self._run(["systemctl", "show", "-p", properties, unit])
+        props = dict(
+            line.split("=", 1) for line in shown.stdout.decode().splitlines() if "=" in line
+        )
+        # a unit that never ran or died on a signal reports status 0 with a different code
+        if props.get("ExecMainCode") != "1" or props.get("Result") not in ("success", "exit-code"):
+            raise ExecutorError("no signer status")
         try:
-            return int(shown.stdout.decode().strip())
-        except ValueError:
+            return int(props["ExecMainStatus"])
+        except (KeyError, ValueError):
             raise ExecutorError("no signer status") from None
 
     def block_height(self) -> int | None:

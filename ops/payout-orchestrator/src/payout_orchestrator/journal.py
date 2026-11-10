@@ -25,6 +25,11 @@ class Journal:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp, self.path)
+        directory = os.open(self.path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def get(self, intent: str) -> dict | None:
         return self._load().get(intent)
@@ -32,6 +37,12 @@ class Journal:
     def put(self, intent: str, epoch: int, lvbh: int, at: float) -> None:
         body = self._load()
         body[intent] = {"epoch": epoch, "lvbh": lvbh, "at": at}
+        self._store(body)
+
+    def hold(self, intent: str, reason: str, at: float) -> None:
+        """Mark the intent held; take()/handle skip it until an operator removes the entry."""
+        body = self._load()
+        body.setdefault(intent, {"epoch": 0, "lvbh": 0, "at": at})["hold"] = reason
         self._store(body)
 
     def drop(self, intent: str) -> None:

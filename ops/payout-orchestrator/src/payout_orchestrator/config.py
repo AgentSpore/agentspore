@@ -13,6 +13,8 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class Config:
+    """Validated tick settings; `per_tick` bounds intents acted on, not rows fetched."""
+
     container: str
     worker_id: str
     handoff_dir: Path
