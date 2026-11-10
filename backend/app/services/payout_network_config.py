@@ -19,7 +19,7 @@ def load_network_config(path: str) -> NetworkConfig:
     if not path:
         raise ConfigurationError
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor) as handle:
             info = os.fstat(handle.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
@@ -31,10 +31,11 @@ def load_network_config(path: str) -> NetworkConfig:
 
 
 def intent_matches_config(intent: TransferIntent, config: NetworkConfig) -> bool:
-    """The persisted transfer must use the configured network, signer and source account."""
+    """Require the configured network, the signer as authority and fee payer, and the source."""
     return (
         intent.genesis_hash == config.trusted_genesis_hash
         and intent.authority == config.signer_pubkey
+        and intent.fee_payer == config.signer_pubkey
         and intent.source == config.source_token_account
     )
 

@@ -8,7 +8,6 @@ from typing import Any
 import base58
 import httpx
 from solders.signature import Signature
-from sqlalchemy import text
 
 from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
 from app.schemas.payout_delivery import (
@@ -300,21 +299,9 @@ async def compile_payout(repo: PayoutDeliveryRepository, request: CompileRequest
     }
 
 
-PENDING_SQL = text(
-    "SELECT i.intent_id, CASE WHEN c.intent_id IS NOT NULL THEN 'confirmed' "
-    "WHEN a.intent_id IS NOT NULL THEN 'prepared' "
-    "WHEN cl.state = 'claimed' THEN 'claimed' ELSE 'unclaimed' END AS phase "
-    "FROM payout_delivery_intents i "
-    "LEFT JOIN payout_delivery_claims cl ON cl.intent_id = i.intent_id "
-    "LEFT JOIN payout_delivery_attempts a ON a.intent_id = i.intent_id "
-    "LEFT JOIN payout_delivery_confirmations c ON c.intent_id = i.intent_id "
-    "ORDER BY (c.intent_id IS NOT NULL), i.intent_id LIMIT :limit"
-)
-
-
 async def list_pending(repo: PayoutDeliveryRepository, limit: int) -> dict:
     """List intent identifiers with their delivery phase; nothing else leaves the database."""
-    rows = (await repo.db.execute(PENDING_SQL, {"limit": limit})).mappings().all()
+    rows = await repo.list_phases(limit)
     return {
         "verdict": "found",
         "intents": [{"intent_id": str(row["intent_id"]), "phase": row["phase"]} for row in rows],

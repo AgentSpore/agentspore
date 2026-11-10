@@ -142,9 +142,9 @@ Keys (all required, no others accepted): `rpc_endpoint` (same https rule as R182
 
 | Command | Input | Behaviour |
 |---|---|---|
-| `auto-compile --output PATH` | stdin JSON: intent_id, worker_id, epoch | The persisted transfer must use the configured genesis, signer and source account, else `unsupported`. The live `getGenesisHash` must equal the trusted hash, then a finalized `getLatestBlockhash` is fetched and the existing compile runs. The signing request is created exclusively with mode 0600; an existing path is refused (`invalid_input`). A stale fence is `stale` and writes no file. |
+| `auto-compile --output PATH` | stdin JSON: intent_id, worker_id, epoch | The persisted transfer must use the configured genesis, signer (as authority and fee payer) and source account, else `unsupported`. The live `getGenesisHash` must equal the trusted hash, then a finalized `getLatestBlockhash` is fetched and the existing compile runs. The signing request is created exclusively with mode 0600; an existing path is refused (`invalid_input`). A stale fence is `stale` and writes no file. |
 | `auto-send` | stdin JSON: intent_id | Same as `attempt-send`, network from the file. |
 | `auto-reconcile` | stdin JSON: intent_id | Same as `attempt-reconcile`, network from the file. |
-| `pending --limit N` | none (N from 1 to 1000) | `{"verdict": "found", "intents": [{"intent_id", "phase"}]}`; phase is `unclaimed`, `claimed`, `prepared` or `confirmed`. Confirmed intents are listed last. No amounts or wallets. |
+| `pending --limit N` | none (N from 1 to 1000) | `{"verdict": "found", "intents": [{"intent_id", "phase"}]}`; phase is `unclaimed`, `claimed`, `expired` (a claimed lease past its expiry, no attempt yet), `prepared` or `confirmed`. Confirmed intents are listed last. No amounts or wallets. |
 
 Existing commands and exit codes are unchanged. Output contains only verdicts, identifiers and phases.

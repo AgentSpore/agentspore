@@ -402,7 +402,7 @@ def auto_command(arguments: list[str], source: TextIO, destination: TextIO) -> i
     if len(arguments) == 3 and arguments[:2] == ["auto-compile", "--output"]:
         return asyncio.run(run_auto_compile(source, destination, arguments[2]))
     if len(arguments) == 3 and arguments[:2] == ["pending", "--limit"]:
-        limit = int(arguments[2]) if arguments[2].isdecimal() else 0
+        limit = int(arguments[2]) if arguments[2].isdecimal() and len(arguments[2]) <= 4 else 0
         return asyncio.run(run_pending(destination, limit))
     return None
 
