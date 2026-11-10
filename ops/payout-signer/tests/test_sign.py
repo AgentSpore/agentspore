@@ -2,12 +2,14 @@ import base64
 import json
 import os
 import stat
+import threading
 
 import pytest
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 
-from payout_signer.signer import sign_request
+from payout_signer.ledger import Ledger
+from payout_signer.signer import MAX_REQUEST_BYTES, sign_request
 from payout_signer.verdict import Verdict
 
 from .conftest import LIMITS
@@ -143,3 +145,37 @@ def test_ledger_is_private(env):
 def test_missing_limit_is_config_error(env, key):
     env.write_config(**{key: None})
     assert run(env, env.message()) is Verdict.CONFIG_ERROR
+
+
+def test_pause_created_while_waiting_for_lock_wins(env):
+    raw = env.message()
+    request = env.request(raw)
+    result = []
+    out = env.root / "out.json"
+    with Ledger.locked(env.ledger):
+        worker = threading.Thread(
+            target=lambda: result.append(sign_request(env.config, request, out, now=1.0))
+        )
+        worker.start()
+        worker.join(timeout=0.5)
+        assert worker.is_alive()  # blocked on the flock we hold
+        env.pause.touch()
+    worker.join(timeout=10)
+    assert result == [Verdict.PAUSED]
+    assert not out.exists()
+    with Ledger.locked(env.ledger) as ledger:
+        assert ledger.usage(2.0).transfers == 0
+
+
+def test_oversized_request_rejected_not_truncated(env):
+    path = env.request(env.message())
+    body = json.loads(path.read_text())
+    body["padding"] = "x" * MAX_REQUEST_BYTES
+    path.write_text(json.dumps(body))
+    assert sign_request(env.config, path, env.root / "o.json", now=1.0) is Verdict.REJECTED
+
+
+def test_deeply_nested_request_is_a_verdict_not_a_crash(env):
+    path = env.root / "deep.json"
+    path.write_text("[" * 10000 + "]" * 10000)
+    assert sign_request(env.config, path, env.root / "o.json", now=1.0) is Verdict.REJECTED

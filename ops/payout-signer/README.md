@@ -15,7 +15,18 @@ signing key never enters the internet-facing backend container.
 - Host root compromise: the key is readable, so the loss is bounded by the hot
   wallet balance. Keep that balance small.
 - The ledger is local state on the host; the signer trusts it. Deleting it resets
-  the limits, so it lives in a root-owned state directory.
+  the limits, so it lives in the service-private state directory
+  (`StateDirectory=` under `DynamicUser=`), which other users cannot write.
+- The per-recipient limit is counted per destination token account, not per owner
+  wallet. A compromised backend can spread the total across many token accounts of
+  one owner, so only the per-transfer, total and count limits bound it.
+
+## Backend intent requirements
+
+The signer signs only what it can reproduce itself. The backend intent must have
+`fee_payer` equal to `authority` equal to the signer's public key, and `source`
+equal to the signer's Token-2022 associated token account for the configured mint.
+Any other intent is rejected by design.
 
 ## Commands
 
@@ -39,8 +50,10 @@ whether the pause file exists.
   Solana JSON-array keypair. The key is never read from env or argv.
 - `mint`: the only token mint the signer will move.
 - `decimals`: the mint's decimals; a different value in a request is rejected.
-- `pause_file`: if this path exists, nothing is signed.
-- `ledger_path`: sqlite ledger (created 0600) of issued signatures.
+- `pause_file`: absolute path; if it exists, nothing is signed, including when it
+  appears while a signer waits for the ledger lock.
+- `ledger_path`: absolute path of the sqlite ledger (created 0600) of issued
+  signatures.
 - `max_amount_per_transfer`, `max_amount_per_recipient_24h`,
   `max_amount_total_24h`, `max_transfers_24h`: positive integers in raw base units
   (a count for the last one).

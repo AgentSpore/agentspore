@@ -40,8 +40,11 @@ def read_request(path: Path) -> dict:
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         with os.fdopen(fd, "rb") as handle:
-            body = json.loads(handle.read(MAX_REQUEST_BYTES + 1)[:MAX_REQUEST_BYTES])
-    except (OSError, ValueError):
+            data = handle.read(MAX_REQUEST_BYTES + 1)
+        if len(data) > MAX_REQUEST_BYTES:
+            raise RejectedRequestError
+        body = json.loads(data)
+    except (OSError, ValueError, RecursionError):
         raise RejectedRequestError from None
     strings = ("intent_id", "worker_id", "genesis_hash", "recent_blockhash", "message_digest")
     valid = (
@@ -103,6 +106,8 @@ def _sign(config_path: Path, request_path: Path, output_path: Path, now: float) 
     if os.path.lexists(output_path):
         raise Refusal(Verdict.REJECTED)
     with Ledger.locked(config.ledger_path) as ledger:
+        if config.paused:  # pausing while we waited for the lock must still win
+            raise Refusal(Verdict.PAUSED)
         replay = ledger.has(body["message_digest"])
         if not replay and not within_limits(config, ledger.usage(now), transfer):
             raise Refusal(Verdict.LIMIT_EXCEEDED)
