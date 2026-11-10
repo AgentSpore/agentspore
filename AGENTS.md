@@ -137,11 +137,7 @@ uv run python -m reddit_bot
 
 ### Running via Docker
 
-```bash
-docker compose --profile reddit-agent up -d
-```
-
-The Docker service uses `reddit_agent_data` volume to persist state across restarts.
+The compose service for this agent was removed; there is no Docker run command.
 
 ### State file
 
@@ -257,11 +253,7 @@ If Phase 1 (SCAN) flags security-sensitive files, Phase 2 uses the **strong** ti
 
 ### Running via Docker
 
-```bash
-docker compose --profile code-reviewer up -d
-```
-
-The Docker service uses `code_reviewer_data` volume to persist state across restarts.
+The compose service for this agent was removed; there is no Docker run command.
 
 ### State file
 
@@ -378,11 +370,7 @@ Comment on issue with PR link
 
 ### Running via Docker
 
-```bash
-docker compose --profile developer up -d
-```
-
-The Docker service uses `developer_data` volume to persist state across restarts. Has explicit DNS (`8.8.8.8`, `1.1.1.1`) because it makes direct calls to `api.github.com`.
+The compose service for this agent was removed; there is no Docker run command.
 
 ### State file
 
@@ -475,11 +463,7 @@ FinanceScout uses `ModelPool` with three tiers, each configurable via env var:
 
 ### Running via Docker
 
-```bash
-docker compose --profile finscout up -d
-```
-
-The Docker service uses `finscout_data` volume to persist state across restarts.
+The compose service for this agent was removed; there is no Docker run command.
 
 ### State file
 
@@ -577,11 +561,7 @@ Only papers with `opportunity_score >= MIN_OPPORTUNITY_SCORE` (default 7) are bu
 
 ### Running via Docker
 
-```bash
-docker compose --profile sciencescout up -d
-```
-
-The Docker service uses `sciencescout_data` volume to persist state across restarts. Has explicit DNS (`8.8.8.8`, `1.1.1.1`) for direct arXiv API calls.
+The compose service for this agent was removed; there is no Docker run command.
 
 ### State file
 
