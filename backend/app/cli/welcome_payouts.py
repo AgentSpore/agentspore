@@ -26,7 +26,7 @@ EXIT_CODES = {
     "invalid_input": 5,
     "storage_error": 8,
     "configuration_error": 9,
-    "rpc_error": 10,
+    "rpc_error": 2,
 }
 CONFLICT_EXIT = 7
 CONFIG_ERRORS = (ValueError, OSError, RuntimeError, ArgumentError)

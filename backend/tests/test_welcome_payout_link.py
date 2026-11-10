@@ -25,6 +25,7 @@ from app.services.welcome_payout_link_service import (
     associated_token_account,
 )
 from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
+from app.services.welcome_reward_service import WelcomeRewardService
 
 ledger = _ledger
 review = _review
@@ -360,6 +361,21 @@ async def test_older_blocked_grant_does_not_starve_a_payable_one(linker, chain):
     assert (
         await scalar(ledger.maker, "SELECT recipient FROM payout_delivery_intents") == OTHER_WALLET
     )
+
+
+async def test_committed_frozen_grant_stays_a_candidate_and_links(linker):
+    async with linker.ledger.maker.begin() as db:
+        view = await WelcomeRewardService(WelcomeRewardRepository(db)).advance(linker.ledger.owner)
+    assert view.state == "frozen"
+    state = await scalar(
+        linker.ledger.maker,
+        "SELECT state FROM welcome_reward_grants WHERE owner_user_id=:o",
+        o=linker.ledger.owner,
+    )
+    assert state == "frozen"
+    assert len(await linker.service.candidates(10)) == 1
+    out = await linker.service.link(10, apply=True)
+    assert out["linked"] == 1
 
 
 async def test_cap_bounds_one_run(linker):

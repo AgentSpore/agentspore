@@ -132,4 +132,7 @@ intent ids. It never contains wallets, amounts, emails or the endpoint. Linked g
 candidates, so a rerun does not revisit them; a concurrent linker (or a direct relink) with the
 same data yields `replayed`, and one with a different wallet yields `conflict` (exit code 7).
 The stored intent is never overwritten. Configuration failures exit 9, storage failures 8,
-bad arguments 5, an unreachable RPC endpoint 10. The command signs and sends nothing.
+bad arguments 5, an unreachable RPC endpoint on the once-per-run network check 2 (the same code
+`payout_delivery` uses for a transport failure). A failed lookup of one token account after that
+check is counted as `skipped.rpc_error` and the run still exits 0. Exit codes are per command and
+differ from `payout_delivery`; a caller should branch on the JSON `verdict`. The command signs and sends nothing.
