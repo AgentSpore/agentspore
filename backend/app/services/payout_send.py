@@ -1,10 +1,11 @@
 """Broadcast the exact persisted signed transaction of a prepared attempt; never re-signs."""
 
 import base64
+from typing import Any
 
 import httpx
 
-from app.schemas.payout_delivery import ReconcileTarget, SendRequest
+from app.schemas.payout_delivery import ReceiptIntent, ReconcileTarget, SendRequest
 from app.services.payout_delivery_service import (
     RECEIPT_ERRORS,
     NetworkMismatchError,
@@ -19,7 +20,10 @@ SEND_OPTIONS = {
     "preflightCommitment": "finalized",
     "maxRetries": 0,
 }
+MINT_OPTIONS = {"encoding": "jsonParsed", "commitment": "finalized"}
+ALLOWED_MINT_EXTENSIONS = frozenset({"metadataPointer", "tokenMetadata"})
 PREFLIGHT_FAILURE_CODE = -32002
+SEND_ERRORS = (*RECEIPT_ERRORS, AttributeError)
 
 
 def classify_send_body(body: dict, signature: str) -> str:
@@ -32,17 +36,38 @@ def classify_send_body(body: dict, signature: str) -> str:
         if type(result) is not str:
             raise ValueError
         return "sent" if result == signature else "unsupported"
+    if not isinstance(error, dict):
+        raise ValueError
     data = error.get("data")
     detail = data.get("err") if isinstance(data, dict) else None
     if detail == "AlreadyProcessed" or "already been processed" in str(error.get("message")):
         return "already_processed"
     if detail is not None and detail != "BlockhashNotFound":
-        return "failed" if error.get("code") == PREFLIGHT_FAILURE_CODE else "unresolved"
+        return "preflight_rejected" if error.get("code") == PREFLIGHT_FAILURE_CODE else "unresolved"
     return "unresolved"
 
 
+def mint_supported(account: Any, intent: ReceiptIntent) -> bool:
+    """Accept only a Token-2022 mint with the intent's decimals and allowlisted extensions."""
+    value = account["value"]
+    if value is None:
+        raise ValueError
+    parsed = value["data"]["parsed"]
+    info = parsed["info"]
+    extensions = info.get("extensions", [])
+    if type(extensions) is not list:
+        raise TypeError
+    names = {item["extension"] for item in extensions}
+    return (
+        value["owner"] == intent.program
+        and parsed["type"] == "mint"
+        and info["decimals"] == intent.decimals
+        and names <= ALLOWED_MINT_EXTENSIONS
+    )
+
+
 def send_stored_wire(client: httpx.Client, target: ReconcileTarget, request: SendRequest) -> str:
-    """Re-verify stored bytes, bind the RPC to the trusted network, then send them unchanged."""
+    """Re-verify stored bytes, bind the RPC and the mint, then send the stored wire unchanged."""
     if request.trusted_genesis_hash != target.transfer.genesis_hash:
         return "unsupported"
     try:
@@ -52,6 +77,9 @@ def send_stored_wire(client: httpx.Client, target: ReconcileTarget, request: Sen
     intent = receipt_intent(target, request.rpc_endpoint)
     try:
         if rpc_result(client, intent, "getGenesisHash", []) != intent.genesis_hash:
+            raise NetworkMismatchError
+        mint = rpc_result(client, intent, "getAccountInfo", [intent.mint, MINT_OPTIONS])
+        if not mint_supported(mint, intent):
             raise NetworkMismatchError
         wire = base64.b64encode(target.signed_bytes).decode()
         response = client.post(
@@ -67,5 +95,5 @@ def send_stored_wire(client: httpx.Client, target: ReconcileTarget, request: Sen
         return classify_send_body(response.json(), intent.signature)
     except NetworkMismatchError:
         return "unsupported"
-    except RECEIPT_ERRORS:
+    except SEND_ERRORS:
         return "unresolved"

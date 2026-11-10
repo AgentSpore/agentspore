@@ -60,6 +60,7 @@ ADMISSION_EXIT_CODES = {
     "stale": 10,
     "unavailable": 11,
     "already_confirmed": 12,
+    "preflight_rejected": 13,
 }
 
 
