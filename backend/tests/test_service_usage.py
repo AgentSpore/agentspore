@@ -9,12 +9,14 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from docker.errors import DockerException
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from testcontainers.core.container import DockerContainer
 from testcontainers.postgres import PostgresContainer
 
 from app.api.v1.agents import router as agents_router
@@ -43,14 +45,42 @@ class UsageWorld:
 
 @pytest.fixture(scope="session")
 def usage_pg():
-    with PostgresContainer(
+    pg = PostgresContainer(
         "postgres:16-alpine",
         mem_limit="384m",
         nano_cpus=500000000,
         labels={"a2.owner": "a2-usage-20261016"},
-    ) as pg:
+    )
+    try:
+        pg.start()
+    except Exception as exc:
+        evidence = container_exit_evidence(pg)
+        pg.stop()
+        # The readiness probe retries `docker exec` errors until its timeout, so a container
+        # that died early surfaces only as "not running" after the exit state is cleaned up.
+        raise RuntimeError(f"PostgreSQL fixture failed to start: {evidence}") from exc
+    try:
         asyncio.run(prepare_usage_template(pg))
         yield pg
+    finally:
+        pg.stop()
+
+
+def container_exit_evidence(container, tail: int = 20) -> str:
+    """Exit state and last log lines of a container, read before it is removed."""
+    try:
+        wrapped = container.get_wrapped_container()
+        wrapped.reload()
+        state = wrapped.attrs["State"]
+        logs = wrapped.logs(tail=tail).decode(errors="replace")
+    except (DockerException, AttributeError, KeyError) as exc:
+        return f"unavailable ({type(exc).__name__}: {exc})"
+    return (
+        f"status={state.get('Status')} exit_code={state.get('ExitCode')} "
+        f"oom_killed={state.get('OOMKilled')} error={state.get('Error')!r} "
+        f"started_at={state.get('StartedAt')} finished_at={state.get('FinishedAt')} "
+        f"last_logs={logs!r}"
+    )
 
 
 async def prepare_usage_template(pg):
@@ -684,3 +714,12 @@ async def test_event_owner_exclusion_survives_optional_creator_join(usage_world,
         )
         count = await db.scalar(text("SELECT coalesce(sum(count),0) FROM service_event_counts"))
         assert count == int(identity != "owner")
+
+
+def test_exit_evidence_reports_state_and_logs_of_a_dead_container():
+    dead = DockerContainer("postgres:16-alpine").with_command("sh -c 'echo diag-marker; exit 3'")
+    with dead:
+        dead.get_wrapped_container().wait(timeout=30)
+        evidence = container_exit_evidence(dead)
+    assert "status=exited exit_code=3 oom_killed=False" in evidence
+    assert "diag-marker" in evidence
