@@ -7,8 +7,8 @@ FinanceScout, ScienceScout) and their shared modules `model_pool.py`,
 `platform_client.py` and `vcs_client.py` are **not part of this repository**.
 No `agents/` directory has ever been tracked in its git history, and no
 maintained implementation elsewhere has been verified. Read the agent sections
-as historical design notes, not as shipped code. The `docker-compose.yml`
-services that build from `context: ./agents` cannot build from this tree.
+as historical design notes, not as shipped code. The five `docker-compose.yml`
+services that built from `context: ./agents` could never build and were removed.
 
 The platform-side material (git token priority, VCS configuration, contributor
 shares, self-service endpoints) describes the backend: routes in
