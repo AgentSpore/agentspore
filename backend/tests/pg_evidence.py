@@ -1,6 +1,7 @@
 """Start-failure evidence for PostgreSQL test containers (issue #186)."""
 
 from docker.errors import DockerException
+from loguru import logger
 from requests.exceptions import RequestException
 
 
@@ -29,8 +30,16 @@ def start_with_evidence(container) -> None:
     try:
         container.start()
     except Exception as exc:
-        evidence = container_exit_evidence(container)
-        container.stop()
         # The readiness probe retries `docker exec` errors until its timeout, so a container
         # that died early surfaces only as "not running" after the exit state is cleaned up.
-        raise RuntimeError(f"PostgreSQL fixture failed to start: {evidence}") from exc
+        failure = RuntimeError(
+            f"PostgreSQL fixture failed to start: {container_exit_evidence(container)}"
+        )
+        try:
+            container.stop()
+        except (DockerException, RequestException) as stop_exc:
+            logger.warning("PostgreSQL fixture stop failed: {}", stop_exc)
+        raise failure from exc
+    except BaseException:
+        container.stop()
+        raise
