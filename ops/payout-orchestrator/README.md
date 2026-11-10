@@ -72,12 +72,17 @@ Run one tick: `payout-orchestrator <config-path>`.
   `digest_mismatch`, `resend_exhausted` need a human; nothing retries a `hold` by itself
   except the next tick's normal flow. `lvbh_unproven` means the chain height is unknown or not yet past the old request: nothing recompiles until it is proven. `signer_config_error` aborts the run: fix the
   signer config first.
-- Hold: `signer_rejected`, `request_malformed`, `signer_no_output`, `digest_mismatch` and
-  `reconcile_<verdict>` (any auto-reconcile verdict other than confirmed/replayed/unresolved)
-  write `"hold": "<reason>"` into the intent's journal entry; every later tick alerts `held`
-  and skips the intent. Clear it only after investigating: pause, delete the intent's key
-  from the journal file (and, for `request_malformed`/`signer_rejected`, its
-  `<intent>.<epoch>.*` handoff files), then resume.
+- Hold: `signer_rejected`, `request_malformed`, `signer_no_output`, `digest_mismatch`,
+  `commit_<verdict>` (any prepare-commit verdict other than prepared/replayed/stale) and
+  `reconcile_failed`/`reconcile_conflict`/`reconcile_unsupported` write
+  `"hold": "<reason>"` into the intent's journal entry; every later tick alerts `held` and
+  skips the intent. Other auto-reconcile verdicts (for example `reconcile_storage_error`)
+  only alert and are retried on the next tick, with no hold.
+- Clearing a hold, only after investigating: pause, remove only the `"hold"` field from the
+  intent's journal entry and keep `epoch` and `lvbh` (they gate recompiling until the old
+  request has expired; deleting the whole key lets the next tick sign again while an
+  earlier signature may still be valid). For `request_malformed`/`signer_rejected` also
+  remove the `<intent>.<epoch>.*` handoff files. Then resume.
 - Any other unexpected error in one intent is alerted as `step_error` with the exception
   class name only; the remaining intents still run.
 - Stuck intent: a journal entry blocks recompiling until the old request expired. Do
