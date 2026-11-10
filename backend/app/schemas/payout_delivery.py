@@ -184,8 +184,10 @@ class SignedCandidate(BaseModel):
 
 
 def plain_endpoint(value: AnyHttpUrl) -> AnyHttpUrl:
-    """Keep credentials and query tokens out of operator JSON, logs and shell history."""
+    """Keep credentials and query tokens out of operator JSON; plain http only on loopback."""
     if value.username or value.password or value.query or value.fragment:
+        raise ValueError
+    if value.scheme != "https" and value.host not in {"localhost", "127.0.0.1", "[::1]"}:
         raise ValueError
     return value
 

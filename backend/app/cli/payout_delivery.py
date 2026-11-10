@@ -27,7 +27,6 @@ from app.schemas.payout_delivery import (
 )
 from app.services.payout_delivery_service import handle_payout_request, verify_receipt
 from app.services.payout_reconciliation import (
-    confirmation_response,
     fetch_evidence,
     load_target,
     record_confirmation,
@@ -102,9 +101,8 @@ async def reconcile_attempt(
     with httpx.Client(timeout=10, transport=transport, trust_env=False) as client:
         verdict, evidence = await asyncio.to_thread(fetch_evidence, client, target, request)
     if evidence is None:
-        # A stored confirmation never regresses because a later lookup is null or fails.
-        if target.stored is not None:
-            return confirmation_response(request, target, target.stored, "replayed")
+        # The fresh outcome is reported as is; a stored confirmation is never touched and is
+        # read back with confirmation-show.
         return {"verdict": verdict}
     async with session_factory.begin() as db:
         return await record_confirmation(PayoutDeliveryRepository(db), request, target, evidence)

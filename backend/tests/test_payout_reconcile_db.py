@@ -19,7 +19,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.cli.payout_delivery import run_admission, run_reconcile
 from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
-from app.schemas.payout_delivery import ClaimKey
+from app.schemas.payout_delivery import ClaimKey, ReconcileRequest
 
 native_case = attempts.native_case
 allocation = attempts.allocation
@@ -29,7 +29,7 @@ claims_db = attempts.claims_db
 delivery_db = attempts.delivery_db
 marketplace_pg = attempts.marketplace_pg
 MIGRATIONS = attempts.MIGRATIONS
-ENDPOINT = "http://rpc.invalid"
+ENDPOINT = "https://rpc.invalid"
 
 
 def build_receipt(intent, raw, slot=7):
@@ -251,13 +251,43 @@ async def test_confirmation_conflict_cannot_overwrite_and_lost_ack_lookup(prepar
     code, out = await reconcile(maker, key, other)
     assert code == 7 and json.loads(out)["verdict"] == "conflict"
     assert (await show(maker, key))[1]["finalized_slot"] == "7"
-    for lookup in (None, "failed"):
-        receipt = None if lookup is None else build_receipt(intent, wire)
-        if receipt:
-            break_err(receipt)
-        regress = await reconcile(maker, key, Rpc(intent.genesis_hash, receipt))
-        assert json.loads(regress[1])["verdict"] == "replayed"
+    failed = build_receipt(intent, wire)
+    break_err(failed)
+    other_net = str(Hash.from_bytes(bytes([9]) * 32))
+    for rpc_case, override, verdict in (
+        (Rpc(intent.genesis_hash, None), {}, "unresolved"),
+        (Rpc(intent.genesis_hash, failed), {}, "failed"),
+        (Rpc(intent.genesis_hash, None), {"trusted_genesis_hash": other_net}, "unsupported"),
+    ):
+        fresh = json.loads((await reconcile(maker, key, rpc_case, **override))[1])
+        assert fresh == {"verdict": verdict}
+    assert (await show(maker, key))[1]["finalized_slot"] == "7"
     assert await rows(maker) == 1
+    exact = await reconcile(maker, key, Rpc(intent.genesis_hash, build_receipt(intent, wire, 7)))
+    assert json.loads(exact[1])["verdict"] == "replayed"
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "accepted"),
+    [
+        ("http://rpc.invalid", False),
+        ("https://rpc.invalid", True),
+        ("http://127.0.0.1:8899", True),
+        ("http://localhost", True),
+        ("https://rpc.invalid/?api-key=x", False),
+    ],
+)
+def test_rpc_endpoint_scheme_rule(endpoint, accepted):
+    payload = {
+        "intent_id": "00000000-0000-4000-8000-000000000000",
+        "trusted_genesis_hash": str(Hash.default()),
+        "rpc_endpoint": endpoint,
+    }
+    if accepted:
+        assert ReconcileRequest.model_validate_json(json.dumps(payload))
+    else:
+        with pytest.raises(ValueError):
+            ReconcileRequest.model_validate_json(json.dumps(payload))
 
 
 async def test_reconcile_rpc_outside_transaction(prepared):
