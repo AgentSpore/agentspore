@@ -51,6 +51,14 @@ def _str(raw: dict, key: str) -> str:
     return value
 
 
+def _absolute(raw: dict, key: str) -> Path:
+    """State paths must not depend on the service's working directory."""
+    path = Path(_str(raw, key))
+    if not path.is_absolute():
+        raise ConfigError(key)
+    return path
+
+
 def load_config(path: Path) -> Config:
     """Parse the TOML file; every key is required and unknown keys are refused."""
     try:
@@ -72,7 +80,7 @@ def load_config(path: Path) -> Config:
         keypair_credential=credential,
         mint=mint,
         decimals=_int(raw, "decimals", 0, 255),
-        pause_file=Path(_str(raw, "pause_file")),
-        ledger_path=Path(_str(raw, "ledger_path")),
+        pause_file=_absolute(raw, "pause_file"),
+        ledger_path=_absolute(raw, "ledger_path"),
         **limits,
     )

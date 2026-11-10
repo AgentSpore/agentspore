@@ -52,7 +52,13 @@ def test_missing_limit_refuses_to_load(env, key):
 
 
 def test_unknown_key_and_bad_values_refused(env):
-    for override in ({"extra_key": 1}, {"max_transfers_24h": 0}, {"keypair_credential": "../x"}):
+    for override in (
+        {"extra_key": 1},
+        {"max_transfers_24h": 0},
+        {"keypair_credential": "../x"},
+        {"pause_file": "relative-pause"},
+        {"ledger_path": "relative.sqlite"},
+    ):
         env.write_config(**override)
         with pytest.raises(ConfigError):
             load_config(env.config)
