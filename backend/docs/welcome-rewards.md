@@ -109,3 +109,30 @@ return `storage_error` even though the append committed; retry the identical inp
 its receipt. Dry-run may consume a sequence value, but persists no row. It does not create
 applications, enable the program, fund or advance grants, credit deposits, create payouts,
 sign transactions, call RPC endpoints or send mail.
+
+## Link available rewards to payout intents
+
+Run `uv run python -m app.cli.welcome_payouts link [--apply]` from `backend/`. The default is a
+dry run that rolls back every item. Candidates are grants of an enabled program with a saved
+wallet and no payout intent (namespace `welcome`, allocation id = grant id), whose state is
+frozen or available, or application with a current allow decision. They are read in keyset
+pages ordered by creation time, so a grant that is skipped never hides a later payable one,
+up to 500 grants per run. With `--apply`, each is handled in its own transaction: reservation
+is advanced until the reward is available, and the wallet's Token-2022 associated token account
+must already exist on chain as an initialized account of the program mint owned by that
+wallet. The chain is queried through the server-side network configuration outside the
+database transaction, after one check per run that the endpoint serves the trusted network
+(otherwise nothing is linked and the exit code is 9). No rent is paid for missing accounts,
+so those grants are skipped as `no_token_account` until the account appears. The intent
+carries the exact grant amount, the configured signer as authority and fee payer, and the
+configured source account.
+
+Output is one JSON object: counts of `linked`, `replayed`, `conflict`, `skipped` by reason, and
+intent ids. It never contains wallets, amounts, emails or the endpoint. Linked grants are no longer
+candidates, so a rerun does not revisit them; a concurrent linker (or a direct relink) with the
+same data yields `replayed`, and one with a different wallet yields `conflict` (exit code 7).
+The stored intent is never overwritten. Configuration failures exit 9, storage failures 8,
+bad arguments 5, an unreachable RPC endpoint on the once-per-run network check 2 (the same code
+`payout_delivery` uses for a transport failure). A failed lookup of one token account after that
+check is counted as `skipped.rpc_error` and the run still exits 0. Exit codes are per command and
+differ from `payout_delivery`; a caller should branch on the JSON `verdict`. The command signs and sends nothing.
