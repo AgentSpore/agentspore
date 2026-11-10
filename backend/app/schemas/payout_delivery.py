@@ -1,5 +1,6 @@
 """Strict input and balance evidence for payout receipt verification."""
 
+import hashlib
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
@@ -180,3 +181,60 @@ class SignedCandidate(BaseModel):
     recent_blockhash: str
     message_bytes: bytes = Field(repr=False)
     transaction_digest: str
+
+
+def plain_endpoint(value: AnyHttpUrl) -> AnyHttpUrl:
+    """Keep credentials and query tokens out of operator JSON; plain http only on loopback."""
+    if value.username or value.password or value.query or value.fragment:
+        raise ValueError
+    if value.scheme != "https" and value.host not in {"localhost", "127.0.0.1", "[::1]"}:
+        raise ValueError
+    return value
+
+
+class ReconcileRequest(ClaimKey):
+    """Name only the persisted attempt, the trusted network and the RPC to ask."""
+
+    trusted_genesis_hash: Annotated[str, AfterValidator(solana_hash)]
+    rpc_endpoint: Annotated[AnyHttpUrl, AfterValidator(plain_endpoint)]
+
+
+class ConfirmationEvidence(BaseModel):
+    """Hold the minimal verified fact; no bytes, signature, account or RPC body."""
+
+    model_config = ConfigDict(strict=True, frozen=True)
+    finalized_slot: RawUnits
+    verifier_version: Annotated[int, Field(ge=1)]
+    evidence_digest: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+class ReconcileTarget(BaseModel):
+    """Persisted attempt material and any stored confirmation, read from the database only."""
+
+    model_config = ConfigDict(frozen=True)
+    transfer: TransferIntent
+    signed_bytes: bytes = Field(repr=False)
+    first_signature: bytes = Field(repr=False)
+    stored: ConfirmationEvidence | None
+
+    @property
+    def transaction_digest(self) -> str:
+        """Identify the exact stored wire without exposing it."""
+        return hashlib.sha256(self.signed_bytes).hexdigest()
+
+    @classmethod
+    def from_row(cls, row: dict) -> Self:
+        """Build from a joined attempt/intent/confirmation row."""
+        stored = None
+        if row["evidence_digest"] is not None:
+            stored = ConfirmationEvidence.model_validate(
+                {name: row[name] for name in ConfirmationEvidence.model_fields}
+            )
+        return cls(
+            transfer=TransferIntent.model_validate(
+                {name: row[name] for name in TransferIntent.model_fields}
+            ),
+            signed_bytes=bytes(row["signed_bytes"]),
+            first_signature=bytes(row["first_signature"]),
+            stored=stored,
+        )
