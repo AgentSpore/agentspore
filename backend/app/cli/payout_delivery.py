@@ -21,10 +21,18 @@ from app.schemas.payout_delivery import (
     ClaimRequest,
     CompileRequest,
     ReceiptIntent,
+    ReconcileRequest,
     RenewRequest,
     SignedEnvelope,
 )
 from app.services.payout_delivery_service import handle_payout_request, verify_receipt
+from app.services.payout_reconciliation import (
+    confirmation_response,
+    fetch_evidence,
+    load_target,
+    record_confirmation,
+    show_confirmation,
+)
 from app.services.payout_transaction import InvalidPayoutCandidateError, parse_signed_candidate
 
 ADMISSION_EXIT_CODES = {
@@ -37,6 +45,10 @@ ADMISSION_EXIT_CODES = {
     "renewed": 0,
     "released": 0,
     "recovered": 0,
+    "confirmed": 0,
+    "unresolved": 2,
+    "unsupported": 3,
+    "failed": 4,
     "invalid_input": 5,
     "not_found": 6,
     "conflict": 7,
@@ -77,10 +89,32 @@ def run(source: TextIO, destination: TextIO, transport: httpx.BaseTransport | No
     ]
 
 
+async def reconcile_attempt(
+    session_factory: async_sessionmaker[AsyncSession],
+    request: ReconcileRequest,
+    transport: httpx.BaseTransport | None,
+) -> dict:
+    """Read, ask the network and write in separate transactions; RPC holds no lock."""
+    async with session_factory.begin() as db:
+        target = await load_target(PayoutDeliveryRepository(db), request)
+    if target is None:
+        return {"verdict": "not_found"}
+    with httpx.Client(timeout=10, transport=transport, trust_env=False) as client:
+        verdict, evidence = await asyncio.to_thread(fetch_evidence, client, target, request)
+    if evidence is None:
+        # A stored confirmation never regresses because a later lookup is null or fails.
+        if target.stored is not None:
+            return confirmation_response(request, target, target.stored, "replayed")
+        return {"verdict": verdict}
+    async with session_factory.begin() as db:
+        return await record_confirmation(PayoutDeliveryRepository(db), request, target, evidence)
+
+
 async def execute_admission(
     command: str,
     intent: AllocationKey | AllocationIntent | ClaimKey,
     session_factory: async_sessionmaker[AsyncSession] | None,
+    transport: httpx.BaseTransport | None = None,
 ) -> dict:
     """Own transaction completion and dispose only a locally created engine."""
     engine = None
@@ -88,9 +122,15 @@ async def execute_admission(
         if session_factory is None:
             engine = create_async_engine(get_settings().database_url, echo=False)
             session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        async with session_factory.begin() as db:
-            repo = PayoutDeliveryRepository(db)
-            result = await handle_payout_request(repo, command, intent)
+        if isinstance(intent, ReconcileRequest):
+            result = await reconcile_attempt(session_factory, intent, transport)
+        else:
+            async with session_factory.begin() as db:
+                repo = PayoutDeliveryRepository(db)
+                if command == "confirmation-show" and isinstance(intent, ClaimKey):
+                    result = await show_confirmation(repo, intent)
+                else:
+                    result = await handle_payout_request(repo, command, intent)
     except InvalidPayoutCandidateError:
         result = {"verdict": "invalid_input"}
     except DBAPIError as error:
@@ -136,6 +176,7 @@ async def run_admission(
             "prepare-message": CompileRequest,
             "prepare-commit": SignedEnvelope,
             "attempt-show": ClaimKey,
+            "confirmation-show": ClaimKey,
             "submit": AllocationIntent,
             "show": AllocationKey,
             "claim": ClaimRequest,
@@ -161,6 +202,24 @@ async def run_admission(
     return ADMISSION_EXIT_CODES[result["verdict"]]
 
 
+async def run_reconcile(
+    source: TextIO,
+    destination: TextIO,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> int:
+    """Validate the reference-only request and emit one fixed verdict."""
+    try:
+        payload = source.read(65537)
+        request = ReconcileRequest.model_validate_json(payload if len(payload) <= 65536 else "")
+    except (ValueError, TypeError, OSError, RecursionError):
+        result = {"verdict": "invalid_input"}
+    else:
+        result = await execute_admission("attempt-reconcile", request, session_factory, transport)
+    destination.write(json.dumps(result) + "\n")
+    return ADMISSION_EXIT_CODES[result["verdict"]]
+
+
 def write_signing_request(path: str | None, material: str) -> None:
     """Create an exclusive owner-only artifact without overwriting any existing path."""
     if path is None:
@@ -175,6 +234,8 @@ def main(arguments: list[str], source: TextIO, destination: TextIO) -> int:
     """Parse only the explicit offline artifact option without echoing invalid arguments."""
     if not arguments:
         return run(source, destination)
+    if arguments == ["attempt-reconcile"]:
+        return asyncio.run(run_reconcile(source, destination))
     path = None
     command = arguments[0] if len(arguments) == 1 else ""
     if len(arguments) == 3 and arguments[:2] == ["prepare-message", "--output"]:

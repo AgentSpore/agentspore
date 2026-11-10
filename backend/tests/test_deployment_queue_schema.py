@@ -90,7 +90,7 @@ async def test_shared_bootstrap_installs_attempt_barrier(request):
     }
     with pytest.raises(DBAPIError) as error:
         async with engine.begin() as connection:
-            await connection.execute(text("TRUNCATE payout_delivery_attempts"))
+            await connection.execute(text("TRUNCATE payout_delivery_attempts CASCADE"))
     assert getattr(error.value.orig, "sqlstate") == "23514"
 
 
