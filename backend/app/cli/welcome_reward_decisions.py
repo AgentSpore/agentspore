@@ -29,9 +29,11 @@ LOCK_TIMEOUT_SQLSTATE = "55P03"
 # are masked; ImportError/TypeError from a code defect propagate as an ordinary traceback
 # (code frames and symbol names, no environment values).
 try:
-    from app.core.config import get_settings
+    from app.core.config import Settings, get_settings
+    from app.repositories.welcome_auto_decision_repo import WelcomeAutoDecisionRepository
     from app.repositories.welcome_reward_repo import WelcomeRewardRepository
     from app.schemas.welcome_reward_decisions import WelcomeRewardDecision
+    from app.services.welcome_auto_decision_service import WelcomeAutoDecisionService
     from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
     from app.services.welcome_reward_decision_service import WelcomeRewardDecisionService
 except (ValueError, OSError, RuntimeError, ArgumentError):
@@ -52,6 +54,8 @@ EXIT_CODES = {
     "busy": 11,
     "ineligible": 12,
     "assessed": 0,
+    "auto_decided": 0,
+    "disabled": 13,
 }
 
 
@@ -156,6 +160,39 @@ async def run_assess(
     return EXIT_CODES[output["verdict"]]
 
 
+async def run_auto_decide(
+    destination: TextIO,
+    apply: bool = False,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    settings: Settings | None = None,
+) -> int:
+    """Approve rule-satisfying applications; disabled unless both limits are configured."""
+    if not IMPORT_READY:
+        output = {"verdict": "configuration_error"}
+    else:
+        settings = settings if settings is not None else get_settings()
+        age = settings.welcome_auto_min_account_age_days
+        limit = settings.welcome_auto_daily_limit
+        if age <= 0 or limit <= 0:
+            output = {"verdict": "disabled"}
+        else:
+
+            async def decide(db: AsyncSession) -> dict:
+                service = WelcomeAutoDecisionService(
+                    WelcomeRewardRepository(db), WelcomeAutoDecisionRepository(db), age, limit
+                )
+                result = await service.run()
+                if apply:
+                    await db.commit()
+                else:
+                    await db.rollback()
+                return result.model_dump() | {"applied": apply}
+
+            output = await in_session(session_factory, decide)
+    destination.write(json.dumps(output) + "\n")
+    return EXIT_CODES[output["verdict"]]
+
+
 async def run(
     source: TextIO,
     destination: TextIO,
@@ -181,12 +218,17 @@ async def run(
 
 
 def main(arguments: list[str], source: TextIO, destination: TextIO) -> int:
-    """Accept only the explicit apply flag or `assess --user-id`; never echo invalid arguments."""
+    """Accept `--apply`, `assess --user-id` or `auto-decide [--apply]`; never echo others."""
     if arguments[:1] == ["assess"]:
         if len(arguments) != 3 or arguments[1] != "--user-id":
             destination.write('{"verdict": "invalid_input"}\n')
             return 5
         return asyncio.run(run_assess(arguments[2], destination))
+    if arguments[:1] == ["auto-decide"]:
+        if arguments[1:] not in ([], ["--apply"]):
+            destination.write('{"verdict": "invalid_input"}\n')
+            return 5
+        return asyncio.run(run_auto_decide(destination, apply=len(arguments) > 1))
     if arguments not in ([], ["--apply"]):
         destination.write('{"verdict": "invalid_input"}\n')
         return 5
