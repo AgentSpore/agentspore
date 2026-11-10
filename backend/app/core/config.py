@@ -203,6 +203,9 @@ class Settings(BaseSettings):
     welcome_auto_min_account_age_days: int = Field(default=0, ge=0)
     welcome_auto_daily_limit: int = Field(default=0, ge=0)
 
+    # Private JSON file with the payout network identity; empty disables auto-* payout commands.
+    payout_network_config_path: str = ""
+
     # extra="ignore": an operator's .env may still hold settings of removed features
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

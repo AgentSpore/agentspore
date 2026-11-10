@@ -8,6 +8,7 @@ from typing import Any
 import base58
 import httpx
 from solders.signature import Signature
+from sqlalchemy import text
 
 from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
 from app.schemas.payout_delivery import (
@@ -30,8 +31,13 @@ from app.services.payout_transaction import (
 
 def rpc_result(client: httpx.Client, intent: ReceiptIntent, method: str, params: list) -> Any:
     """Fetch one JSON-RPC result, rejecting incomplete or erroneous envelopes."""
+    return rpc_call(client, str(intent.rpc_endpoint), method, params)
+
+
+def rpc_call(client: httpx.Client, endpoint: str, method: str, params: list) -> Any:
+    """Post one JSON-RPC request to an explicit endpoint and return its checked result."""
     response = client.post(
-        str(intent.rpc_endpoint),
+        endpoint,
         json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
     )
     response.raise_for_status()
@@ -292,6 +298,37 @@ async def compile_payout(repo: PayoutDeliveryRepository, request: CompileRequest
         "message_digest": artifact.message_digest,
         "_signing_request": artifact.model_dump_json(),
     }
+
+
+PENDING_SQL = text(
+    "SELECT i.intent_id, CASE WHEN c.intent_id IS NOT NULL THEN 'confirmed' "
+    "WHEN a.intent_id IS NOT NULL THEN 'prepared' "
+    "WHEN cl.state = 'claimed' THEN 'claimed' ELSE 'unclaimed' END AS phase "
+    "FROM payout_delivery_intents i "
+    "LEFT JOIN payout_delivery_claims cl ON cl.intent_id = i.intent_id "
+    "LEFT JOIN payout_delivery_attempts a ON a.intent_id = i.intent_id "
+    "LEFT JOIN payout_delivery_confirmations c ON c.intent_id = i.intent_id "
+    "ORDER BY (c.intent_id IS NOT NULL), i.intent_id LIMIT :limit"
+)
+
+
+async def list_pending(repo: PayoutDeliveryRepository, limit: int) -> dict:
+    """List intent identifiers with their delivery phase; nothing else leaves the database."""
+    rows = (await repo.db.execute(PENDING_SQL, {"limit": limit})).mappings().all()
+    return {
+        "verdict": "found",
+        "intents": [{"intent_id": str(row["intent_id"]), "phase": row["phase"]} for row in rows],
+    }
+
+
+async def read_transfer(repo: PayoutDeliveryRepository, key: ClaimKey) -> TransferIntent | None:
+    """Read the immutable transfer of one intent, or None when it does not exist."""
+    parent = await repo.lock_intent(key)
+    if parent is None:
+        return None
+    return TransferIntent.model_validate(
+        {name: parent[name] for name in TransferIntent.model_fields}
+    )
 
 
 def attempt_response(row: dict, verdict: str) -> dict:

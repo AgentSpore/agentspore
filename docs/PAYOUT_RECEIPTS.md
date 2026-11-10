@@ -133,3 +133,18 @@ R182.7: `attempt-send` broadcasts the exact committed signed transaction of a pr
 | `already_confirmed` | 12 | A confirmation already exists; no RPC call is made |
 
 The persisted attempt is read in a short transaction that is closed before any request. The stored bytes are re-verified natively, then `getGenesisHash` must equal the trusted hash, which must equal the intent's; a mismatch sends nothing. Before sending, `getAccountInfo` on the mint (`jsonParsed`, `finalized`) must show an account owned by the Token-2022 program, of type mint, with the intent's decimals and only the extensions `metadataPointer` and `tokenMetadata`. Any other extension (transfer fee, transfer hook, confidential transfer, non-transferable, pausable or unknown) gives `unsupported` and nothing is sent; a malformed or missing answer gives `unresolved`. Destination-account checks are out of scope; a missing destination surfaces in preflight. `sendTransaction` carries the stored wire as base64 with `skipPreflight=false`, `preflightCommitment=finalized` and `maxRetries=0`. Requests do not use environment proxy settings. Output is only the verdict; bytes, signature, accounts, endpoint and RPC error text are never printed. Any verdict other than `already_confirmed` leaves a later retry of the same stored bytes allowed; `preflight_rejected` and `unresolved` never authorize a replacement transaction.
+
+## Server-configured automation commands (issue #182)
+
+The `auto-*` commands take no network data from the caller. The RPC endpoint, trusted genesis hash, signer public key and source token account come from a private JSON file whose path is the setting `PAYOUT_NETWORK_CONFIG_PATH`. An empty setting, a missing file, an unknown key, a file that is not a regular file, or a file readable by group or other (mode `& 0o077`) gives `configuration_error` (exit 14), and no value from the file is ever printed.
+
+Keys (all required, no others accepted): `rpc_endpoint` (same https rule as R182.2), `trusted_genesis_hash`, `signer_pubkey`, `source_token_account`.
+
+| Command | Input | Behaviour |
+|---|---|---|
+| `auto-compile --output PATH` | stdin JSON: intent_id, worker_id, epoch | The persisted transfer must use the configured genesis, signer and source account, else `unsupported`. The live `getGenesisHash` must equal the trusted hash, then a finalized `getLatestBlockhash` is fetched and the existing compile runs. The signing request is created exclusively with mode 0600; an existing path is refused (`invalid_input`). A stale fence is `stale` and writes no file. |
+| `auto-send` | stdin JSON: intent_id | Same as `attempt-send`, network from the file. |
+| `auto-reconcile` | stdin JSON: intent_id | Same as `attempt-reconcile`, network from the file. |
+| `pending --limit N` | none (N from 1 to 1000) | `{"verdict": "found", "intents": [{"intent_id", "phase"}]}`; phase is `unclaimed`, `claimed`, `prepared` or `confirmed`. Confirmed intents are listed last. No amounts or wallets. |
+
+Existing commands and exit codes are unchanged. Output contains only verdicts, identifiers and phases.
