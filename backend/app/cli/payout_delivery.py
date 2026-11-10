@@ -110,6 +110,22 @@ async def reconcile_attempt(
         return await record_confirmation(PayoutDeliveryRepository(db), request, target, evidence)
 
 
+async def dispatch_command(
+    command: str,
+    intent: AllocationKey | AllocationIntent | ClaimKey,
+    session_factory: async_sessionmaker[AsyncSession],
+    transport: httpx.BaseTransport | None,
+) -> dict:
+    """Run one command in its own caller-owned transaction, or the split reconcile flow."""
+    if isinstance(intent, ReconcileRequest):
+        return await reconcile_attempt(session_factory, intent, transport)
+    async with session_factory.begin() as db:
+        repo = PayoutDeliveryRepository(db)
+        if command == "confirmation-show" and isinstance(intent, ClaimKey):
+            return await show_confirmation(repo, intent)
+        return await handle_payout_request(repo, command, intent)
+
+
 async def execute_admission(
     command: str,
     intent: AllocationKey | AllocationIntent | ClaimKey,
@@ -122,15 +138,7 @@ async def execute_admission(
         if session_factory is None:
             engine = create_async_engine(get_settings().database_url, echo=False)
             session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        if isinstance(intent, ReconcileRequest):
-            result = await reconcile_attempt(session_factory, intent, transport)
-        else:
-            async with session_factory.begin() as db:
-                repo = PayoutDeliveryRepository(db)
-                if command == "confirmation-show" and isinstance(intent, ClaimKey):
-                    result = await show_confirmation(repo, intent)
-                else:
-                    result = await handle_payout_request(repo, command, intent)
+        result = await dispatch_command(command, intent, session_factory, transport)
     except InvalidPayoutCandidateError:
         result = {"verdict": "invalid_input"}
     except DBAPIError as error:

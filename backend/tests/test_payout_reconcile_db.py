@@ -305,7 +305,7 @@ async def test_confirmation_direct_sql_guards(prepared):
         with pytest.raises(DBAPIError) as error:
             async with maker.begin() as db:
                 await db.execute(text(insert), good | override)
-        assert error.value.orig.sqlstate == state
+        assert getattr(error.value.orig, "sqlstate") == state
     async with maker.begin() as db:
         await db.execute(text(insert), good)
     for sql, state in (
@@ -317,7 +317,7 @@ async def test_confirmation_direct_sql_guards(prepared):
         with pytest.raises(DBAPIError) as error:
             async with maker.begin() as db:
                 await db.execute(text(sql), good if sql == insert else {})
-        assert error.value.orig.sqlstate == state
+        assert getattr(error.value.orig, "sqlstate") == state
 
 
 async def test_prepared_expiry_and_old_commands_unchanged(prepared):

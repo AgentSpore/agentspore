@@ -120,18 +120,25 @@ def fetch_evidence(
     )
     try:
         receipt = fetch_finalized_receipt(client, intent)
-        if receipt is None:
-            return "unresolved", None
-        verdict = receipt_verdict(receipt, intent)
-        if verdict != "matching":
-            return verdict, None
-        if not exact_wire(receipt, target, candidate.message_bytes):
-            return "unsupported", None
-        return "confirmed", build_evidence(receipt)
+        return judge_receipt(receipt, intent, target, candidate.message_bytes)
     except NetworkMismatchError:
         return "unsupported", None
     except RECEIPT_ERRORS:
         return "unresolved", None
+
+
+def judge_receipt(
+    receipt: dict | None, intent: ReceiptIntent, target: ReconcileTarget, message_bytes: bytes
+) -> tuple[str, ConfirmationEvidence | None]:
+    """Only a matching receipt that is also the exact stored wire yields evidence."""
+    if receipt is None:
+        return "unresolved", None
+    verdict = receipt_verdict(receipt, intent)
+    if verdict != "matching":
+        return verdict, None
+    if not exact_wire(receipt, target, message_bytes):
+        return "unsupported", None
+    return "confirmed", build_evidence(receipt)
 
 
 def confirmation_response(
