@@ -7,22 +7,36 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 NAMESPACE = "welcome"
 
+CANDIDATES = """
+    SELECT g.id AS grant_id, g.owner_user_id, g.created_at
+    FROM welcome_reward_grants g
+    JOIN reward_programs p ON p.id = g.program_id
+    JOIN users u ON u.id = g.owner_user_id
+    WHERE p.enabled AND u.solana_wallet IS NOT NULL
+      AND (g.state IN ('frozen', 'available') OR (g.state = 'application' AND EXISTS (
+            SELECT 1 FROM reward_eligibility_decisions d
+            WHERE d.grant_id = g.id AND d.outcome = 'allow'
+              AND d.issued_at <= clock_timestamp() AND d.expires_at > clock_timestamp()
+              AND d.revision = (SELECT max(revision) FROM reward_eligibility_decisions
+                                WHERE grant_id = g.id))))
+      AND NOT EXISTS (
+            SELECT 1 FROM payout_delivery_intents i
+            WHERE i.producer_namespace = :namespace AND i.allocation_id = g.id::text)
+      AND (CAST(:after_at AS timestamptz) IS NULL
+           OR (g.created_at, g.id) > (CAST(:after_at AS timestamptz), CAST(:after_id AS uuid)))
+    ORDER BY g.created_at, g.id LIMIT :limit"""
+
 
 class WelcomePayoutLinkRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def candidates(self, limit: int) -> list[dict]:
-        """Undenied grants of an enabled program that have no payout intent yet."""
+    async def candidates(self, limit: int, after: tuple | None = None) -> list[dict]:
+        """Grants that could be payable, in keyset order after `(created_at, id)`."""
+        after_at, after_id = after or (None, None)
         rows = await self.db.execute(
-            text("""
-            SELECT g.id AS grant_id, g.owner_user_id FROM welcome_reward_grants g
-            JOIN reward_programs p ON p.id = g.program_id
-            WHERE p.enabled AND g.state <> 'denied' AND NOT EXISTS (
-                SELECT 1 FROM payout_delivery_intents i
-                WHERE i.producer_namespace = :namespace AND i.allocation_id = g.id::text)
-            ORDER BY g.created_at, g.id LIMIT :limit"""),
-            {"namespace": NAMESPACE, "limit": limit},
+            text(CANDIDATES),
+            {"namespace": NAMESPACE, "limit": limit, "after_at": after_at, "after_id": after_id},
         )
         return [dict(row) for row in rows.mappings()]
 

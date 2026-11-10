@@ -47,21 +47,53 @@ CONFIG = NetworkConfig.model_validate(
 AMOUNT = "10000000000"
 
 
+PROGRAM_MINT = "5ZkjEjfDAPuSg7pRxCRJsJuZ8FByRSyAgAA8SLMMpump"  # fixed by migration V115
+# Independent vectors from @solana/spl-token 0.4.13
+# getAssociatedTokenAddressSync(mint, owner, true, TOKEN_2022_PROGRAM_ID); wallets are synthetic.
+SYNTHETIC_MINT = str(Pubkey.from_bytes(bytes([3]) * 32))
+SYNTHETIC_ATA = "5HyfqqJF1uGkJr9VLjnJdHcbDLqf8nuD4YSoiTStaP3h"  # (WALLET, SYNTHETIC_MINT)
+WALLET_ATA = "CjnjTtspAbXwsiQAotu9xEtckc4CdRzx8M6t2F9burcV"  # (WALLET, PROGRAM_MINT)
+OTHER_ATA = "3p4WVCTfX74WhaGVXoNjJYc2PYwZN2feHqwa7bV36yLV"  # (OTHER_WALLET, PROGRAM_MINT)
+HOLDERS = {WALLET_ATA: WALLET, OTHER_ATA: OTHER_WALLET}
+
+
 class Chain:
-    """Token account lookup double; flip `exists` or `owner` to change the answer."""
+    """RPC double: the token account exists only at the exact expected address."""
 
     def __init__(self):
         self.exists = True
-        self.owner = str(TOKEN_2022)
+        self.fail = False
+        self.genesis = GENESIS
+        self.program = str(TOKEN_2022)
+        self.mint = PROGRAM_MINT
+        self.holder = None
+        self.state = "initialized"
+        self.hidden = set()
         self.accounts = []
+
+    def account(self, address):
+        info = {
+            "mint": self.mint,
+            "owner": self.holder or HOLDERS[address],
+            "state": self.state,
+        }
+        return {
+            "owner": self.program,
+            "data": {"program": "spl-token-2022", "parsed": {"type": "account", "info": info}},
+        }
 
     def __call__(self, request):
         body = json.loads(request.content)
         if body["method"] == "getGenesisHash":
-            result = GENESIS
+            result = self.genesis
         else:
-            self.accounts.append(body["params"][0])
-            result = {"value": {"owner": self.owner} if self.exists else None}
+            address = body["params"][0]
+            self.accounts.append(address)
+            if self.fail:
+                error = {"code": -32000, "message": "synthetic failure"}
+                return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "error": error})
+            found = self.exists and address in HOLDERS and address not in self.hidden
+            result = {"value": self.account(address) if found else None}
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": result})
 
 
@@ -109,7 +141,7 @@ async def intents(maker):
 async def test_allowed_grant_creates_exact_intent(linker):
     out = await linker.service.link(10, apply=True)
     assert (out["linked"], out["replayed"], out["conflict"]) == (1, 0, 0)
-    assert out["skipped"] == {"not_available": 1}
+    assert out["skipped"] == {}
     maker = linker.ledger.maker
     assert await intents(maker) == 1
     async with maker.begin() as db:
@@ -117,9 +149,12 @@ async def test_allowed_grant_creates_exact_intent(linker):
     grant = await scalar(
         maker, "SELECT id::text FROM welcome_reward_grants WHERE state='available'"
     )
-    ata = str(associated_token_account(Pubkey.from_string(WALLET), Pubkey.from_string(row["mint"])))
     assert (row["producer_namespace"], row["allocation_id"]) == ("welcome", grant)
-    assert (row["raw_amount"], row["destination"], row["recipient"]) == (AMOUNT, ata, WALLET)
+    assert (row["raw_amount"], row["destination"], row["recipient"]) == (
+        AMOUNT,
+        WALLET_ATA,
+        WALLET,
+    )
     assert (row["source"], row["authority"], row["fee_payer"]) == (
         CONFIG.source_token_account,
         CONFIG.signer_pubkey,
@@ -170,33 +205,44 @@ async def hold_decision(linker):
         assert result.verdict == "recorded"
 
 
+OTHER_KEY = str(Pubkey.from_bytes(bytes([9]) * 32))
+
+
 @pytest.mark.parametrize(
     ("reason", "mutation"),
     [
         ("no_wallet", "UPDATE users SET solana_wallet=NULL"),
         ("not_available", "UPDATE users SET email_proof_at=clock_timestamp()"),
         ("not_available", "UPDATE users SET email_proof_at=NULL"),
-        ("no_token_account", "chain.exists"),
-        ("no_token_account", "chain.owner"),
+        ("no_token_account", ("exists", False)),
+        ("no_token_account", ("program", OTHER_KEY)),
+        ("no_token_account", ("state", "frozen")),
+        ("no_token_account", ("mint", OTHER_KEY)),
+        ("no_token_account", ("holder", OTHER_KEY)),
+        ("rpc_error", ("fail", True)),
         ("not_available", "hold"),
         ("not_available", "UPDATE welcome_reward_grants SET state='denied'"),
     ],
 )
 async def test_guards_produce_no_intent(linker, chain, reason, mutation):
-    if mutation == "chain.exists":
-        chain.exists = False
-    elif mutation == "chain.owner":
-        chain.owner = str(Pubkey.from_bytes(bytes([9]) * 32))
+    if isinstance(mutation, tuple):
+        setattr(chain, *mutation)
     elif mutation == "hold":
         await hold_decision(linker)
     else:
         async with linker.ledger.maker.begin() as db:
             await db.execute(text(mutation))
-    out = await linker.service.link(10, apply=True)
-    assert out["linked"] == 0
+    outcome, _ = await linker.service.link_one(linker.ledger.owner, apply=True)
+    assert outcome == reason
+    assert (await linker.service.link(10, apply=True))["linked"] == 0
     assert await intents(linker.ledger.maker) == 0
-    if mutation != "UPDATE welcome_reward_grants SET state='denied'":
-        assert out["skipped"][reason] >= 1
+
+
+def test_associated_token_account_matches_independent_vector():
+    derived = associated_token_account(
+        Pubkey.from_string(WALLET), Pubkey.from_string(SYNTHETIC_MINT)
+    )
+    assert str(derived) == SYNTHETIC_ATA
 
 
 async def test_disabled_program_produces_nothing(linker, chain):
@@ -222,13 +268,17 @@ async def test_dry_run_leaves_no_rows(linker):
     )
 
 
-async def test_cli_output_discloses_nothing(linker, chain, monkeypatch, tmp_path):
+@pytest.fixture
+def configured(monkeypatch, tmp_path):
     path = tmp_path / "network.json"
     path.write_text(CONFIG.model_dump_json())
     path.chmod(0o600)
     monkeypatch.setattr(
         cli, "get_settings", lambda: SimpleNamespace(payout_network_config_path=str(path))
     )
+
+
+async def test_cli_output_discloses_nothing(linker, chain, configured):
     out = io.StringIO()
     code = await cli.run_link(out, True, linker.ledger.maker, httpx.MockTransport(chain))
     assert code == 0
@@ -247,22 +297,99 @@ async def test_cli_rejects_bad_arguments_and_missing_config(monkeypatch):
     assert json.loads(out.getvalue()) == {"verdict": "configuration_error"}
 
 
-async def test_denied_grant_is_not_a_candidate(linker):
+async def test_denied_or_walletless_grant_is_not_a_candidate(linker):
+    assert len(await linker.service.candidates(10)) == 1
     async with linker.ledger.maker.begin() as db:
+        await db.execute(text("UPDATE users SET solana_wallet=NULL"))
+    assert await linker.service.candidates(10) == []
+    async with linker.ledger.maker.begin() as db:
+        await db.execute(text("UPDATE users SET solana_wallet=:w"), {"w": WALLET})
         await db.execute(text("UPDATE welcome_reward_grants SET state='denied'"))
     assert await linker.service.candidates(10) == []
 
 
-async def test_wallet_changed_between_check_and_admission_is_skipped(linker, monkeypatch):
+@pytest.mark.parametrize(
+    ("expected", "change"),
+    [
+        ("wallet_changed", "UPDATE users SET solana_wallet='" + OTHER_WALLET + "'"),
+        ("not_available", "UPDATE users SET email_proof_at=NULL"),
+        ("not_available", "hold"),
+    ],
+)
+async def test_change_between_check_and_admission_is_skipped(linker, monkeypatch, expected, change):
     original = linker.service._precheck
 
     async def checked_then_changed(owner):
         verdict = await original(owner)
-        async with linker.ledger.maker.begin() as db:
-            await db.execute(text("UPDATE users SET solana_wallet=:w"), {"w": OTHER_WALLET})
+        if change == "hold":
+            await hold_decision(linker)
+        else:
+            async with linker.ledger.maker.begin() as db:
+                await db.execute(text(change))
         return verdict
 
     monkeypatch.setattr(linker.service, "_precheck", checked_then_changed)
     outcome, _ = await linker.service.link_one(linker.ledger.owner, apply=True)
-    assert outcome == "wallet_changed"
+    assert outcome == expected
     assert await intents(linker.ledger.maker) == 0
+
+
+async def test_older_blocked_grant_does_not_starve_a_payable_one(linker, chain):
+    ledger = linker.ledger
+    chain.hidden.add(WALLET_ATA)
+    async with ledger.maker.begin() as db:
+        await db.execute(
+            text("UPDATE users SET solana_wallet=:w WHERE id=:o"),
+            {"w": OTHER_WALLET, "o": ledger.other},
+        )
+        await db.execute(
+            text(
+                "INSERT INTO reward_eligibility_decisions(grant_id,owner_user_id,source_event,"
+                "policy_version,outcome,beneficiary_key,authority_ref,evidence_ref,expires_at,"
+                "email_proof_at) SELECT g.id,g.owner_user_id,g.source_event,'welcome-v1','allow',"
+                "'github:1002','op','second',clock_timestamp()+interval '1 hour',u.email_proof_at "
+                "FROM welcome_reward_grants g JOIN users u ON u.id=g.owner_user_id "
+                "WHERE g.owner_user_id=:o"
+            ),
+            {"o": ledger.other},
+        )
+    candidates = await linker.service.candidates(10)
+    assert [c["owner_user_id"] for c in candidates] == [ledger.owner, ledger.other]
+    out = await linker.service.link(1, apply=True)
+    assert (out["linked"], out["skipped"]) == (1, {"no_token_account": 1})
+    assert (
+        await scalar(ledger.maker, "SELECT recipient FROM payout_delivery_intents") == OTHER_WALLET
+    )
+
+
+async def test_cap_bounds_one_run(linker):
+    out = await linker.service.link(1, apply=True, cap=0)
+    assert (out["verdict"], out["linked"]) == ("ok", 0)
+    assert await intents(linker.ledger.maker) == 0
+
+
+async def test_foreign_genesis_links_nothing(linker, chain):
+    chain.genesis = str(Hash.new_unique())
+    assert await linker.service.link(10, apply=True) == {"verdict": "configuration_error"}
+    assert chain.accounts == [] and await intents(linker.ledger.maker) == 0
+
+
+async def test_cli_foreign_genesis_exits_configuration_error(linker, chain, configured):
+    chain.genesis = str(Hash.new_unique())
+    out = io.StringIO()
+    code = await cli.run_link(out, True, linker.ledger.maker, httpx.MockTransport(chain))
+    assert (code, json.loads(out.getvalue())) == (9, {"verdict": "configuration_error"})
+
+
+async def test_cli_masks_settings_failures_and_unready_imports(monkeypatch):
+    def broken():
+        raise ValueError("secret-env-value")
+
+    monkeypatch.setattr(cli, "get_settings", broken)
+    out = io.StringIO()
+    assert await cli.run_link(out) == 9
+    assert out.getvalue() == '{"verdict": "configuration_error"}\n'
+    monkeypatch.setattr(cli, "IMPORT_READY", False)
+    out = io.StringIO()
+    assert await cli.run_link(out) == 9
+    assert "secret-env-value" not in out.getvalue()

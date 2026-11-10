@@ -19,12 +19,31 @@ from app.services.welcome_reward_service import WelcomeRewardService
 TOKEN_2022 = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 ASSOCIATED_TOKEN_PROGRAM = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
 OUTCOMES = {"accepted": "linked", "replayed": "replayed", "conflict": "conflict"}
+RPC_FAILURES = (httpx.HTTPError, ValueError, KeyError, TypeError)
+MAX_ITEMS = 500
 
 
 def associated_token_account(wallet: Pubkey, mint: Pubkey) -> Pubkey:
     """Derive the Token-2022 associated token account address."""
     seeds = [bytes(wallet), bytes(TOKEN_2022), bytes(mint)]
     return Pubkey.find_program_address(seeds, ASSOCIATED_TOKEN_PROGRAM)[0]
+
+
+def usable_token_account(value: dict | None, wallet: str, mint: str) -> bool:
+    """Accept only an initialized Token-2022 account of this mint owned by this wallet."""
+    data = value.get("data") if value else None
+    parsed = data.get("parsed") if isinstance(data, dict) else None
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("info"), dict):
+        return False
+    info = parsed["info"]
+    return (
+        value is not None
+        and value.get("owner") == str(TOKEN_2022)
+        and parsed.get("type") == "account"
+        and info.get("mint") == mint
+        and info.get("owner") == wallet
+        and info.get("state") == "initialized"
+    )
 
 
 class WelcomePayoutLinkService:
@@ -40,22 +59,32 @@ class WelcomePayoutLinkService:
         self.config = config
         self.client = client
 
-    async def candidates(self, limit: int) -> list[dict]:
+    async def candidates(self, limit: int, after: tuple | None = None) -> list[dict]:
         async with self.session_factory() as db:
             try:
-                return await WelcomePayoutLinkRepository(db).candidates(limit)
+                return await WelcomePayoutLinkRepository(db).candidates(limit, after)
             finally:
                 await db.rollback()
 
-    def _account_exists(self, address: Pubkey) -> bool:
-        """Bind the endpoint to the trusted genesis, then look the account up on chain."""
-        endpoint = str(self.config.rpc_endpoint)
-        genesis = rpc_call(self.client, endpoint, "getGenesisHash", [])
+    def _check_genesis(self) -> None:
+        genesis = rpc_call(self.client, str(self.config.rpc_endpoint), "getGenesisHash", [])
         if genesis != self.config.trusted_genesis_hash:
             raise NetworkMismatchError
-        params = [str(address), {"encoding": "base64", "commitment": "finalized"}]
-        value = rpc_call(self.client, endpoint, "getAccountInfo", params)["value"]
-        return value is not None and value["owner"] == str(TOKEN_2022)
+
+    async def _bind_network(self) -> str | None:
+        """Return a failure verdict unless the endpoint serves the trusted network."""
+        try:
+            await asyncio.to_thread(self._check_genesis)
+        except NetworkMismatchError:
+            return "configuration_error"
+        except RPC_FAILURES:
+            return "rpc_error"
+        return None
+
+    def _account_usable(self, address: Pubkey, wallet: str, mint: str) -> bool:
+        params = [str(address), {"encoding": "jsonParsed", "commitment": "finalized"}]
+        result = rpc_call(self.client, str(self.config.rpc_endpoint), "getAccountInfo", params)
+        return usable_token_account(result["value"], wallet, mint)
 
     @staticmethod
     async def _available(db: AsyncSession, owner: UUID) -> bool:
@@ -81,12 +110,15 @@ class WelcomePayoutLinkService:
             address = associated_token_account(
                 Pubkey.from_string(facts["wallet"]), Pubkey.from_string(facts["mint"])
             )
-            exists = await asyncio.to_thread(self._account_exists, address)
         except ValueError:
             return "invalid_wallet", facts
-        except (httpx.HTTPError, KeyError, TypeError, NetworkMismatchError):
+        try:
+            usable = await asyncio.to_thread(
+                self._account_usable, address, facts["wallet"], facts["mint"]
+            )
+        except RPC_FAILURES:
             return "rpc_error", facts
-        if not exists:
+        if not usable:
             return "no_token_account", facts
         return None, facts | {"destination": str(address)}
 
@@ -132,15 +164,25 @@ class WelcomePayoutLinkService:
             finally:
                 await db.rollback()
 
-    async def link(self, limit: int, apply: bool) -> dict:
-        """Process candidates one transaction at a time and report counts and intent ids only."""
+    async def link(self, page_size: int, apply: bool, cap: int = MAX_ITEMS) -> dict:
+        """Walk candidates by keyset pages, so skipped grants never starve later ones."""
         counts: Counter[str] = Counter()
         intents: list[str] = []
-        for candidate in await self.candidates(limit):
-            outcome, intent_id = await self.link_one(candidate["owner_user_id"], apply)
-            counts[outcome] += 1
-            if intent_id and outcome == "linked":
-                intents.append(intent_id)
+        cursor, seen, bound = None, 0, False
+        while seen < cap:
+            page = await self.candidates(min(page_size, cap - seen), cursor)
+            if not page:
+                break
+            if not bound and (failure := await self._bind_network()):
+                return {"verdict": failure}
+            bound = True
+            for candidate in page:
+                outcome, intent_id = await self.link_one(candidate["owner_user_id"], apply)
+                counts[outcome] += 1
+                if intent_id and outcome == "linked":
+                    intents.append(intent_id)
+            seen += len(page)
+            cursor = (page[-1]["created_at"], page[-1]["grant_id"])
         totals = {name: counts.pop(name, 0) for name in ("linked", "replayed", "conflict")}
         return {
             "verdict": "ok",

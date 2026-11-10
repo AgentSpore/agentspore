@@ -113,19 +113,23 @@ sign transactions, call RPC endpoints or send mail.
 ## Link available rewards to payout intents
 
 Run `uv run python -m app.cli.welcome_payouts link [--apply]` from `backend/`. The default is a
-dry run that rolls back every item. With `--apply`, each undenied grant of an enabled program
-that has no payout intent (namespace `welcome`, allocation id = grant id) is handled in its own
-transaction: reservation is advanced until the reward is available, the owner must have a saved
-wallet, and the wallet's Token-2022 associated token account must already exist on chain
-(checked through the server-side network configuration, outside the database transaction;
-no rent is paid for missing accounts, so those grants are skipped as `no_token_account`
-until the account appears). The intent carries the exact grant amount, the configured
-signer as authority and fee payer, and the configured source account.
+dry run that rolls back every item. Candidates are grants of an enabled program with a saved
+wallet and no payout intent (namespace `welcome`, allocation id = grant id), whose state is
+frozen or available, or application with a current allow decision. They are read in keyset
+pages ordered by creation time, so a grant that is skipped never hides a later payable one,
+up to 500 grants per run. With `--apply`, each is handled in its own transaction: reservation
+is advanced until the reward is available, and the wallet's Token-2022 associated token account
+must already exist on chain as an initialized account of the program mint owned by that
+wallet. The chain is queried through the server-side network configuration outside the
+database transaction, after one check per run that the endpoint serves the trusted network
+(otherwise nothing is linked and the exit code is 9). No rent is paid for missing accounts,
+so those grants are skipped as `no_token_account` until the account appears. The intent
+carries the exact grant amount, the configured signer as authority and fee payer, and the
+configured source account.
 
 Output is one JSON object: counts of `linked`, `replayed`, `conflict`, `skipped` by reason, and
 intent ids. It never contains wallets, amounts, emails or the endpoint. Linked grants are no longer
-candidates, so a rerun finds nothing to do; a concurrent linker with the same data yields
-`replayed`, and one with a different wallet yields `conflict` (exit code 7). The stored
-intent is never overwritten.
-Configuration failures exit 9, storage failures 8, bad arguments 5. The command signs
-and sends nothing.
+candidates, so a rerun does not revisit them; a concurrent linker (or a direct relink) with the
+same data yields `replayed`, and one with a different wallet yields `conflict` (exit code 7).
+The stored intent is never overwritten. Configuration failures exit 9, storage failures 8,
+bad arguments 5, an unreachable RPC endpoint 10. The command signs and sends nothing.
