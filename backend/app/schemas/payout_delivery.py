@@ -216,6 +216,12 @@ class NetworkConfig(BaseModel):
     source_token_account: PublicKey
 
 
+class EmptyRequest(BaseModel):
+    """Stdin for commands that take no caller data."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+
 class ReconcileRequest(NetworkRequest):
     """Confirm the persisted attempt from a finalized receipt."""
 
