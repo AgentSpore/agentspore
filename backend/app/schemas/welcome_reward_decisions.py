@@ -60,6 +60,14 @@ class WelcomeRewardDecisionResult(BaseModel):
         return cls(verdict=verdict, decision_id=row["id"], revision=row["revision"])
 
 
+class WelcomeAutoDecisionResult(BaseModel):
+    """Counts of automatic approvals and applications left for manual review."""
+
+    verdict: Literal["auto_decided"] = "auto_decided"
+    approved: int
+    left: int
+
+
 class BeneficiaryAssessment(BaseModel):
     """Canonical beneficiary key and the ordered reasons that keep an allow on hold."""
 
