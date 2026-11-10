@@ -20,6 +20,7 @@ from app.schemas.payout_delivery import (
     ClaimKey,
     ClaimRequest,
     CompileRequest,
+    EmptyRequest,
     NetworkConfig,
     PendingRequest,
     ReceiptIntent,
@@ -38,6 +39,7 @@ from app.services.payout_delivery_service import (
 )
 from app.services.payout_network_config import (
     ConfigurationError,
+    fetch_finalized_height,
     fetch_live_blockhash,
     intent_matches_config,
     load_network_config,
@@ -352,6 +354,28 @@ async def run_auto(
     )
 
 
+def run_block_height(
+    source: TextIO, destination: TextIO, transport: httpx.BaseTransport | None = None
+) -> int:
+    """Report the finalized block height of the configured network; the endpoint stays private."""
+    try:
+        payload = source.read(65537)
+        EmptyRequest.model_validate_json(payload if len(payload) <= 65536 else "")
+    except (ValueError, TypeError, OSError, RecursionError):
+        return emit_result({"verdict": "invalid_input"}, destination)
+    config = configured_network()
+    if config is None:
+        return emit_result({"verdict": "configuration_error"}, destination)
+    try:
+        with httpx.Client(timeout=10, transport=transport, trust_env=False) as client:
+            result = {"verdict": "found", "height": fetch_finalized_height(client, config)}
+    except NetworkMismatchError:
+        result = {"verdict": "unsupported"}
+    except RECEIPT_ERRORS:
+        result = {"verdict": "unresolved"}
+    return emit_result(result, destination)
+
+
 async def run_pending(
     destination: TextIO,
     limit: int,
@@ -399,6 +423,8 @@ def auto_command(arguments: list[str], source: TextIO, destination: TextIO) -> i
     """Route the server-config commands; None leaves the argument list to the older commands."""
     if arguments in (["auto-send"], ["auto-reconcile"]):
         return asyncio.run(run_auto(arguments[0], source, destination))
+    if arguments == ["block-height"]:
+        return run_block_height(source, destination)
     if len(arguments) == 3 and arguments[:2] == ["auto-compile", "--output"]:
         return asyncio.run(run_auto_compile(source, destination, arguments[2]))
     if len(arguments) == 3 and arguments[:2] == ["pending", "--limit"]:
