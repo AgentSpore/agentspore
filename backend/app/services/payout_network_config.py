@@ -47,3 +47,14 @@ def fetch_live_blockhash(client: httpx.Client, config: NetworkConfig) -> tuple[s
         raise NetworkMismatchError
     value = rpc_call(client, endpoint, "getLatestBlockhash", [{"commitment": "finalized"}])["value"]
     return value["blockhash"], str(value["lastValidBlockHeight"])
+
+
+def fetch_finalized_height(client: httpx.Client, config: NetworkConfig) -> int:
+    """Bind the endpoint to the trusted genesis, then return the finalized block height."""
+    endpoint = str(config.rpc_endpoint)
+    if rpc_call(client, endpoint, "getGenesisHash", []) != config.trusted_genesis_hash:
+        raise NetworkMismatchError
+    height = rpc_call(client, endpoint, "getBlockHeight", [{"commitment": "finalized"}])
+    if type(height) is not int or not 0 <= height < 2**64:
+        raise ValueError
+    return height
