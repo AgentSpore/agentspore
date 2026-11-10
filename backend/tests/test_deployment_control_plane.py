@@ -25,6 +25,7 @@ from testcontainers.postgres import PostgresContainer
 from app.api.v1.agents import router
 from app.core.database import get_db
 from app.services.agent_service import AgentService, get_agent_service
+from tests.pg_evidence import start_with_evidence
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
 MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
@@ -39,8 +40,11 @@ def deployment_postgres() -> Iterator[PostgresContainer]:
         nano_cpus=500_000_000,
         pids_limit=128,
     )
-    with container as postgres:
-        yield postgres
+    start_with_evidence(container)
+    try:
+        yield container
+    finally:
+        container.stop()
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
