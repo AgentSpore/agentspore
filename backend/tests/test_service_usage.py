@@ -9,7 +9,6 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from docker.errors import DockerException
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, text
@@ -28,6 +27,7 @@ from app.repositories.usage_repo import UsageRepository
 from app.schemas.usage import ServiceEvent, UsageVisit
 from app.services.agent_service import AgentService
 from app.services.usage_service import UsageService
+from tests.pg_evidence import container_exit_evidence, start_with_evidence
 
 TODAY = date(2026, 10, 16)
 BROWSER = "Mozilla/5.0 AppleWebKit/537.36 Chrome/129.0.0.0 Safari/537.36"
@@ -51,36 +51,12 @@ def usage_pg():
         nano_cpus=500000000,
         labels={"a2.owner": "a2-usage-20261016"},
     )
-    try:
-        pg.start()
-    except Exception as exc:
-        evidence = container_exit_evidence(pg)
-        pg.stop()
-        # The readiness probe retries `docker exec` errors until its timeout, so a container
-        # that died early surfaces only as "not running" after the exit state is cleaned up.
-        raise RuntimeError(f"PostgreSQL fixture failed to start: {evidence}") from exc
+    start_with_evidence(pg)
     try:
         asyncio.run(prepare_usage_template(pg))
         yield pg
     finally:
         pg.stop()
-
-
-def container_exit_evidence(container, tail: int = 20) -> str:
-    """Exit state and last log lines of a container, read before it is removed."""
-    try:
-        wrapped = container.get_wrapped_container()
-        wrapped.reload()
-        state = wrapped.attrs["State"]
-        logs = wrapped.logs(tail=tail).decode(errors="replace")
-    except (DockerException, AttributeError, KeyError) as exc:
-        return f"unavailable ({type(exc).__name__}: {exc})"
-    return (
-        f"status={state.get('Status')} exit_code={state.get('ExitCode')} "
-        f"oom_killed={state.get('OOMKilled')} error={state.get('Error')!r} "
-        f"started_at={state.get('StartedAt')} finished_at={state.get('FinishedAt')} "
-        f"last_logs={logs!r}"
-    )
 
 
 async def prepare_usage_template(pg):
