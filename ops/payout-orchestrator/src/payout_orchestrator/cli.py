@@ -16,5 +16,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     config = load_config(Path(args[0]))
     config.journal_path.parent.mkdir(parents=True, exist_ok=True)
-    executor = DockerExecutor(config.container, config.step_timeout_seconds)
+    executor = DockerExecutor(
+        config.container, config.step_timeout_seconds, config.container_python
+    )
     return Tick(config, executor, Journal(config.journal_path)).run()
