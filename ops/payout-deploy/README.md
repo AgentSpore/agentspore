@@ -36,12 +36,20 @@ there; the setgid bit keeps the group on new files. Config values: `handoff_dir`
 
 ## Install order
 
-1. `install -m 0644 payout.sysusers.conf /etc/sysusers.d/payout.conf && systemd-sysusers`
-2. `install -m 0644 payout.tmpfiles.conf /etc/tmpfiles.d/payout.conf && systemd-tmpfiles --create`
-3. Install the two programs under `/opt` and the config files with the owners and modes above.
-4. `install -m 0644 payout-orchestrator.service payout-orchestrator.timer 'payout-signer@.service' /etc/systemd/system/`
-5. `systemctl daemon-reload`
-6. Backend network config: see "Backend wiring".
+1. `install -D -m 0644 payout.sysusers.conf /etc/sysusers.d/payout.conf && systemd-sysusers /etc/sysusers.d/payout.conf`
+   (`-D`: a stock host may have no `/etc/sysusers.d`; the explicit file argument applies
+   only this file, not every sysusers entry on the host).
+2. `install -D -m 0644 payout.tmpfiles.conf /etc/tmpfiles.d/payout.conf && systemd-tmpfiles --create /etc/tmpfiles.d/payout.conf`
+   (run after step 1: the file names the groups step 1 creates).
+3. Create both state directories by hand, before any pause file:
+   `install -d -m 0700 /var/lib/payout-orchestrator` and
+   `install -d -m 0700 -o payout-signer -g payout-signer /var/lib/payout-signer`.
+   `StateDirectory=` creates them only when a unit starts, and a paused orchestrator never
+   starts, so `touch` of a pause file would fail.
+4. Install the two programs under `/opt` and the config files with the owners and modes above.
+5. `install -m 0644 payout-orchestrator.service payout-orchestrator.timer 'payout-signer@.service' /etc/systemd/system/`
+6. `systemctl daemon-reload`
+7. Backend network config: see "Backend wiring".
 
 ## Dry verification (before anything runs)
 
@@ -72,17 +80,24 @@ instance name again is a no-op and would return the old status; so each tick fir
 carry the epoch, so within one tick an instance is never started twice. Exited instances
 accumulate only until the next tick or reboot.
 
+An active (exited) instance also keeps systemd's copy of the signer credential under
+`/run/credentials/<unit>` until the instance stops. So the orchestrator runs
+`systemctl stop` on the instance right after it has read the three properties; the exit
+status is already in hand and the stop cannot change it. When the status could not be read (timeout, no status), the stop still runs and also ends a signer that may be running; that is safe, because the orchestrator has given up on that signing. A failed stop is only logged as
+the alert `signer_stop_failed`; the `ExecStartPre=` cleanup of the next tick remains the
+fallback.
+
 Not verified on a real systemd (the build host has none): that an unloaded instance loses
 the status. The chosen setting is safe either way. Check on the host once, with a harmless
 instance of a copy of the unit that runs `/bin/true`:
 `systemctl start t@a.1.service; systemctl show -p ExecMainCode,ExecMainStatus,Result t@a.1.service`
 must print `1`, `0`, `success`.
 
-Also check the key copy: after a test instance of the unit with `LoadCredential=`, run
-`ls /run/credentials/`. If the instance's credential directory is still there while it is
-active (exited), a copy of the key outlives the signing. Readers stay limited to
-`payout-signer` and root, but then add a follow-up change so the orchestrator stops the
-instance right after `systemctl show`; no orchestrator change is made here.
+Also check the key copy once on the host: after a tick that signed, run
+`ls /run/credentials/`. The finished instance's credential directory must be gone, because
+the orchestrator stopped the instance right after `systemctl show`. If it is still there,
+look for the `signer_stop_failed` alert; readers of the copy stay limited to `payout-signer`
+and root.
 
 First manual tick checklist: if settling or committing a signed file fails with a permission
 error, look at `CapabilityBoundingSet=CAP_DAC_READ_SEARCH` in `payout-orchestrator.service`

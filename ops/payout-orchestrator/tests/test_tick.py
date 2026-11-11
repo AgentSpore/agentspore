@@ -7,6 +7,7 @@ import os
 import pytest
 
 from payout_orchestrator.config import Config
+from payout_orchestrator.executor import ExecutorError
 from payout_orchestrator.journal import Journal
 from payout_orchestrator.tick import Tick
 
@@ -595,3 +596,29 @@ def test_stuck_prepared_intents_do_not_consume_per_tick(run, backend, config):
     backend.reconcile_script = ["unresolved"] * 6
     run()
     assert INTENT in backend.confirmed
+
+
+@pytest.mark.parametrize("code", [0, 12, 13, 14, 99])
+def test_signer_instance_stopped_right_after_status_read(run, backend, code):
+    backend.sign_exits = [code]
+    run()
+    assert backend.order == ["sign", "stop"]
+    assert backend.stops == backend.sign_calls
+
+
+def test_signer_instance_stopped_when_sign_raises(run, backend, capsys):
+    def fail(name):
+        if name == "sign":
+            raise ExecutorError("step failed")
+
+    backend.hook = fail
+    run()
+    assert backend.stops == [f"{INTENT}.{backend.epoch}"]
+    assert "step_failed" in [a["alert"] for a in alerts(capsys)]
+
+
+def test_signer_stop_failure_alerts_and_keeps_flow(run, backend, capsys):
+    backend.stop_ok = False
+    run()
+    assert INTENT in backend.confirmed
+    assert {"alert": "signer_stop_failed", "intent_id": INTENT} in alerts(capsys)
