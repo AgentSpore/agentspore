@@ -73,9 +73,17 @@ return its old status) and applies the sandbox.
   before each intent and before each signing, so it stops starting new work and releases a
   claim it just took. Resume: delete it.
 - Alerts: `signer_rejected`, `signer_limit_exceeded`, `commit_conflict`,
-  `digest_mismatch`, `resend_exhausted` need a human; nothing retries a `hold` by itself
+  `digest_mismatch`, `resend_exhausted`, `self_paused` need a human; nothing retries a `hold` by itself
   except the next tick's normal flow. `lvbh_unproven` means the chain height is unknown or not yet past the old request: nothing recompiles until it is proven. `signer_config_error` aborts the run: fix the
   signer config first.
+- Self-pause: when `auto-send` answers `preflight_rejected` (hot wallet short of SOL or
+  tokens) or retries end in `resend_exhausted`, the orchestrator raises its alert, creates
+  `pause_path` itself (mode 0600, never removed by it) and alerts
+  `{"alert": "self_paused", "intent_id": "<uuid>", "verdict": "<verdict>"}`. The rest of the
+  tick does nothing, and every later tick exits at the pause file. Reason: each such send
+  burns the intent's single attempt into `unresolved`. Runbook: fund the hot wallet,
+  check the affected intent's state, then delete `pause_path` to resume. If the pause file
+  cannot be created the run aborts with `self_pause_failed` and exit code 3.
 - Hold: `signer_rejected`, `request_malformed`, `signer_no_output`, `digest_mismatch`,
   `commit_<verdict>` (any prepare-commit verdict other than prepared/replayed/stale) and
   `reconcile_failed`/`reconcile_conflict`/`reconcile_unsupported` write
