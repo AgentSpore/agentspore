@@ -1,6 +1,7 @@
 """Tick configuration from a TOML or JSON file; every identifier is a placeholder in the example."""
 
 import json
+import re
 import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -25,6 +26,7 @@ class Config:
     lease_ttl_seconds: int = 300
     step_timeout_seconds: int = 60
     max_resends: int = 2
+    container_python: str = "/app/.venv/bin/python"
 
     @property
     def lock_path(self) -> Path:
@@ -32,6 +34,7 @@ class Config:
 
 
 REQUIRED = ("container", "worker_id", "handoff_dir", "journal_path", "pause_path", "per_tick")
+PYTHON_PATH = re.compile(r"/[A-Za-z0-9._/+-]+")
 PATHS = ("handoff_dir", "journal_path", "pause_path")
 
 
@@ -46,6 +49,8 @@ def load_config(path: Path) -> Config:
     config = Config(**values)
     if not (1 <= config.per_tick <= 1000 and 1 <= config.lease_ttl_seconds <= 300):
         raise ConfigError("config range")
+    if not PYTHON_PATH.fullmatch(config.container_python):
+        raise ConfigError("config container_python")
     if config.max_resends < 0 or config.step_timeout_seconds < 1:
         raise ConfigError("config range")
     return config
