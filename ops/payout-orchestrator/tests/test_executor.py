@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 import subprocess
@@ -30,14 +31,14 @@ def runner(monkeypatch):
 
 def test_cli_runs_docker_exec_and_branches_on_json_not_exit_code(runner):
     runner.outputs = [(b'{"verdict": "claimed", "epoch": 3}\n', 9)]
-    result = DockerExecutor("c1", 5).cli("payout_delivery", ["claim"], '{"a": 1}')
+    result = DockerExecutor("c1", 5, "/py/python").cli("payout_delivery", ["claim"], '{"a": 1}')
     assert result["verdict"] == "claimed"
     assert runner.argv[0] == [
         "docker",
         "exec",
         "-i",
         "c1",
-        "python",
+        "/py/python",
         "-m",
         "app.cli.payout_delivery",
         "claim",
@@ -59,7 +60,7 @@ def show(code="1", status="13", result="exit-code"):
 
 def test_sign_reads_exec_main_status(runner):
     runner.outputs = [(b"", 1), (show(), 0)]
-    assert DockerExecutor("c1", 5).sign("abc.2") == 13
+    assert DockerExecutor("c1", 5, "/py/python").sign("abc.2") == 13
     assert runner.argv[0] == ["systemctl", "start", "payout-signer@abc.2.service"]
     assert runner.argv[1][:2] == ["systemctl", "show"]
     assert runner.argv[1][3] == "ExecMainCode,ExecMainStatus,Result"
@@ -78,7 +79,7 @@ def test_sign_reads_exec_main_status(runner):
 def test_sign_status_untrusted_unless_normal_exit(runner, out):
     runner.outputs = [(b"", 1), (out, 0)]
     with pytest.raises(ExecutorError):
-        DockerExecutor("c1", 5).sign("abc.2")
+        DockerExecutor("c1", 5, "/py/python").sign("abc.2")
 
 
 def test_handoff_file_mode_is_0640(tmp_path):
@@ -96,7 +97,7 @@ def test_timeout_becomes_executor_error(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", boom)
     with pytest.raises(ExecutorError):
-        DockerExecutor("c1", 1).cli("payout_delivery", ["pending"], "")
+        DockerExecutor("c1", 1, "/py/python").cli("payout_delivery", ["pending"], "")
 
 
 def test_load_config_toml_and_unknown_keys(tmp_path):
@@ -127,6 +128,56 @@ def test_load_config_toml_and_unknown_keys(tmp_path):
 )
 def test_block_height_contract(runner, out, expected):
     runner.outputs = [(out, 0)]
-    assert DockerExecutor("c1", 5).block_height() == expected
+    assert DockerExecutor("c1", 5, "/py/python").block_height() == expected
     assert runner.argv[0][-2:] == ["app.cli.payout_delivery", "block-height"]
     assert runner.stdin[0] == b"{}"
+
+
+def test_stop_issues_systemctl_stop_and_reports_success(runner):
+    runner.outputs = [(b"", 0)]
+    assert DockerExecutor("c1", 5, "/py/python").stop("abc.2") is True
+    assert runner.argv[0] == ["systemctl", "stop", "payout-signer@abc.2.service"]
+
+
+@pytest.mark.parametrize("outputs", [[(b"", 1)], [(b"", 5)]])
+def test_stop_failure_reported_not_raised(runner, outputs):
+    runner.outputs = outputs
+    assert DockerExecutor("c1", 5, "/py/python").stop("abc.2") is False
+
+
+def test_stop_timeout_reported_not_raised(monkeypatch):
+    def boom(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, 1)
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert DockerExecutor("c1", 1, "/py/python").stop("abc.2") is False
+
+
+@pytest.fixture
+def base_toml(tmp_path):
+    path = tmp_path / "c.toml"
+    body = (
+        'container = "backend-placeholder"\nworker_id = "w"\nhandoff_dir = "/h"\n'
+        'journal_path = "/j"\npause_path = "/p"\nper_tick = 3\n'
+    )
+    return path, body
+
+
+def test_container_python_defaults_to_app_venv(base_toml):
+    path, body = base_toml
+    path.write_text(body)
+    assert load_config(path).container_python == "/app/.venv/bin/python"
+
+
+def test_container_python_accepts_absolute_path(base_toml):
+    path, body = base_toml
+    path.write_text(body + 'container_python = "/opt/py/bin/python"\n')
+    assert load_config(path).container_python == "/opt/py/bin/python"
+
+
+@pytest.mark.parametrize("value", ["python", "bin/python", "", "/py/python -c x", "/py/\npython"])
+def test_container_python_must_be_absolute_plain_path(base_toml, value):
+    path, body = base_toml
+    path.write_text(body + f"container_python = {json.dumps(value)}\n")
+    with pytest.raises(ConfigError):
+        load_config(path)

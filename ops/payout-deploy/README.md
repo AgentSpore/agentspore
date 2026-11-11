@@ -72,6 +72,13 @@ instance name again is a no-op and would return the old status; so each tick fir
 carry the epoch, so within one tick an instance is never started twice. Exited instances
 accumulate only until the next tick or reboot.
 
+An active (exited) instance also keeps systemd's copy of the signer credential under
+`/run/credentials/<unit>` until the instance stops. So the orchestrator runs
+`systemctl stop` on the instance right after it has read the three properties; the exit
+status is already in hand and the stop cannot change it. A failed stop is only logged as
+the alert `signer_stop_failed`; the `ExecStartPre=` cleanup of the next tick remains the
+fallback.
+
 Not verified on a real systemd (the build host has none): that an unloaded instance loses
 the status. The chosen setting is safe either way. Check on the host once, with a harmless
 instance of a copy of the unit that runs `/bin/true`:

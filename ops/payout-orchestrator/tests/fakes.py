@@ -62,6 +62,9 @@ class FakeBackend:
         self.lvbh_override: object = None
         self.show_script: list[str] = []
         self.skip_signed = False
+        self.order: list[str] = []
+        self.stops: list[str] = []
+        self.stop_ok = True
 
     def _step(self, name: str, effect):
         self.calls.append(name)
@@ -210,6 +213,7 @@ class FakeBackend:
     def sign(self, instance: str) -> int:
         def effect() -> int:
             self.sign_calls.append(instance)
+            self.order.append("sign")
             if instance.rsplit(".", 1)[0] in self.attempts:
                 self.signed_after_attempt += 1
             code = self.sign_exits.pop(0) if self.sign_exits else 0
@@ -223,6 +227,11 @@ class FakeBackend:
             return code
 
         return self._step("sign", effect)
+
+    def stop(self, instance: str) -> bool:
+        self.order.append("stop")
+        self.stops.append(instance)
+        return self.stop_ok
 
     def block_height(self) -> int | None:
         return self.height
