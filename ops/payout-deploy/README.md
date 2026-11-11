@@ -36,12 +36,20 @@ there; the setgid bit keeps the group on new files. Config values: `handoff_dir`
 
 ## Install order
 
-1. `install -m 0644 payout.sysusers.conf /etc/sysusers.d/payout.conf && systemd-sysusers`
-2. `install -m 0644 payout.tmpfiles.conf /etc/tmpfiles.d/payout.conf && systemd-tmpfiles --create`
-3. Install the two programs under `/opt` and the config files with the owners and modes above.
-4. `install -m 0644 payout-orchestrator.service payout-orchestrator.timer 'payout-signer@.service' /etc/systemd/system/`
-5. `systemctl daemon-reload`
-6. Backend network config: see "Backend wiring".
+1. `install -D -m 0644 payout.sysusers.conf /etc/sysusers.d/payout.conf && systemd-sysusers /etc/sysusers.d/payout.conf`
+   (`-D`: a stock host may have no `/etc/sysusers.d`; the explicit file argument applies
+   only this file, not every sysusers entry on the host).
+2. `install -D -m 0644 payout.tmpfiles.conf /etc/tmpfiles.d/payout.conf && systemd-tmpfiles --create /etc/tmpfiles.d/payout.conf`
+   (run after step 1: the file names the groups step 1 creates).
+3. Create both state directories by hand, before any pause file:
+   `install -d -m 0700 /var/lib/payout-orchestrator` and
+   `install -d -m 0700 -o payout-signer -g payout-signer /var/lib/payout-signer`.
+   `StateDirectory=` creates them only when a unit starts, and a paused orchestrator never
+   starts, so `touch` of a pause file would fail.
+4. Install the two programs under `/opt` and the config files with the owners and modes above.
+5. `install -m 0644 payout-orchestrator.service payout-orchestrator.timer 'payout-signer@.service' /etc/systemd/system/`
+6. `systemctl daemon-reload`
+7. Backend network config: see "Backend wiring".
 
 ## Dry verification (before anything runs)
 
