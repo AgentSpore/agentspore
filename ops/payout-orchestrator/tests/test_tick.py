@@ -6,6 +6,7 @@ import json
 import pytest
 
 from payout_orchestrator.config import Config
+from payout_orchestrator.executor import ExecutorError
 from payout_orchestrator.journal import Journal
 from payout_orchestrator.tick import Tick
 
@@ -533,6 +534,17 @@ def test_signer_instance_stopped_right_after_status_read(run, backend, code):
     run()
     assert backend.order == ["sign", "stop"]
     assert backend.stops == backend.sign_calls
+
+
+def test_signer_instance_stopped_when_sign_raises(run, backend, capsys):
+    def fail(name):
+        if name == "sign":
+            raise ExecutorError("step failed")
+
+    backend.hook = fail
+    run()
+    assert backend.stops == [f"{INTENT}.{backend.epoch}"]
+    assert "step_failed" in [a["alert"] for a in alerts(capsys)]
 
 
 def test_signer_stop_failure_alerts_and_keeps_flow(run, backend, capsys):

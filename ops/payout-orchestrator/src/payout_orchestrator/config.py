@@ -49,7 +49,9 @@ def load_config(path: Path) -> Config:
     config = Config(**values)
     if not (1 <= config.per_tick <= 1000 and 1 <= config.lease_ttl_seconds <= 300):
         raise ConfigError("config range")
-    if not PYTHON_PATH.fullmatch(config.container_python):
+    if not isinstance(config.container_python, str) or not PYTHON_PATH.fullmatch(
+        config.container_python
+    ):
         raise ConfigError("config container_python")
     if config.max_resends < 0 or config.step_timeout_seconds < 1:
         raise ConfigError("config range")
