@@ -23,8 +23,9 @@ Runtime is stdlib-only Python 3.12. systemd units, users and install order: [pay
 ## Safety invariants
 
 - Only `auto-send` broadcasts, and only the wire stored by the backend. Nothing is
-  re-signed; `unresolved` and `preflight_rejected` lead to reconcile and a bounded
-  resend (`max_resends`) of the same wire, never to a compile.
+  re-signed; only `unresolved` leads to reconcile and a bounded resend (`max_resends`)
+  of the same wire, never to a compile. `preflight_rejected` and `resend_exhausted`
+  self-pause the orchestrator (see the runbook).
 - A new compile for an intent needs `attempt-show = not_found` and the previous
   unpersisted request's `last_valid_block_height` (lvbh) to have passed. The journal
   (`{intent: {epoch, lvbh, at}}`, atomic write, no bytes) carries that fact across crashes.
@@ -79,9 +80,20 @@ return its old status) and applies the sandbox.
 - Alerts: `signer_stop_failed` (the finished signer instance could not be stopped and may
   still hold its credential copy: run `systemctl stop payout-signer@<intent>.<epoch>.service`;
   the signing verdict is unaffected), `signer_rejected`, `signer_limit_exceeded`, `commit_conflict`,
-  `digest_mismatch`, `resend_exhausted` need a human; nothing retries a `hold` by itself
+  `digest_mismatch`, `resend_exhausted`, `self_paused` need a human; nothing retries a `hold` by itself
   except the next tick's normal flow. `lvbh_unproven` means the chain height is unknown or not yet past the old request: nothing recompiles until it is proven. `signer_config_error` aborts the run: fix the
   signer config first.
+- Self-pause: when `auto-send` answers `preflight_rejected` (the simulation rejected the
+  send, most often because the hot wallet lacks SOL or tokens; any simulation failure
+  counts) or retries end in `resend_exhausted`, the orchestrator raises its alert, creates
+  `pause_path` itself (mode 0600, never removed by it) and alerts
+  `{"alert": "self_paused", "intent_id": "<uuid>", "verdict": "<verdict>"}`. The rest of the
+  tick does nothing, and every later tick exits at the pause file. Reason: each such send
+  burns the intent's single attempt into `unresolved`. `resend_exhausted` can also mean the
+  RPC was unavailable for every resend, not only a spent attempt. Runbook: read the
+  backend send log for the cause first, fix it (fund the hot wallet, restore the RPC),
+  check the affected intent's state, then delete `pause_path` to resume. If the pause file
+  cannot be created the run aborts with `self_pause_failed` and exit code 3.
 - Hold: `signer_rejected`, `request_malformed`, `signer_no_output`, `digest_mismatch`,
   `commit_<verdict>` (any prepare-commit verdict other than prepared/replayed/stale) and
   `reconcile_failed`/`reconcile_conflict`/`reconcile_unsupported` write

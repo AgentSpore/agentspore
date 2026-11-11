@@ -2,6 +2,7 @@ import contextlib
 import fcntl
 import hashlib
 import json
+import os
 
 import pytest
 
@@ -191,13 +192,82 @@ def test_unresolved_never_compiles_and_resends_same_wire(run, backend, capsys):
     assert len(set(backend.sends)) == 1
 
 
-def test_resend_after_preflight_rejected_then_confirmed(run, backend):
-    backend.send_script = ["preflight_rejected", "sent"]
-    backend.reconcile_script = ["unresolved", "confirmed"]
-    run()
-    assert INTENT in backend.confirmed
-    assert len(backend.sends) == 2
+def exhaust_resends(b):
+    b.send_script, b.reconcile_script = ["unresolved"] * 3, ["unresolved"] * 3
+
+
+@pytest.mark.parametrize(
+    ("script", "verdict"),
+    [
+        (lambda b: setattr(b, "send_script", ["preflight_rejected"]), "preflight_rejected"),
+        (exhaust_resends, "resend_exhausted"),
+    ],
+)
+def test_wallet_verdict_self_pauses_and_stops_the_tick(
+    run, backend, config, capsys, script, verdict
+):
+    backend.intents = [INTENT, OTHER]
+    script(backend)
+    assert run() == 0
+    assert config.pause_path.stat().st_mode & 0o777 == 0o600
+    paused = {"alert": "self_paused", "intent_id": INTENT, "verdict": verdict}
+    expected = (
+        [paused]
+        if verdict == "preflight_rejected"
+        else [
+            {"alert": "resend_exhausted", "intent_id": INTENT},
+            paused,
+        ]
+    )
+    assert alerts(capsys) == expected
+    assert backend.sign_calls == [backend.sign_calls[0]]
+    assert OTHER not in backend.claims
     assert len(set(backend.sends)) == 1
+    if verdict == "preflight_rejected":
+        assert backend.calls.count("auto-send") == 1
+        assert "auto-reconcile" not in backend.calls
+    seen = len(backend.calls)
+    assert run() == 0
+    assert len(backend.calls) == seen
+
+
+def test_unwritable_pause_file_aborts_the_run(run, backend, config, capsys, monkeypatch):
+    backend.intents = [INTENT, OTHER]
+    backend.send_script = ["preflight_rejected"]
+
+    real_open = os.open
+
+    def refuse(path, *args, **kwargs):
+        if path == config.pause_path:
+            raise OSError("read-only")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("payout_orchestrator.tick.os.open", refuse)
+    assert run() == 3
+    assert {"alert": "self_pause_failed", "intent_id": INTENT, "verdict": "preflight_rejected"} in (
+        alerts(capsys)
+    )
+    assert OTHER not in backend.claims
+
+
+def test_ordinary_verdicts_do_not_pause(run, backend, config):
+    backend.send_script = ["sent"]
+    backend.reconcile_script = ["unresolved"]
+    run()
+    assert not config.pause_path.exists()
+
+
+def test_existing_pause_file_is_left_as_is(run, backend, config):
+    def operator_pauses(name):
+        if name == "auto-send":
+            config.pause_path.write_text("operator")
+            config.pause_path.chmod(0o640)
+
+    backend.hook = operator_pauses
+    backend.send_script = ["preflight_rejected"]
+    run()
+    assert config.pause_path.read_text() == "operator"
+    assert config.pause_path.stat().st_mode & 0o777 == 0o640
 
 
 @pytest.mark.parametrize("code", [0, 10])
@@ -386,7 +456,7 @@ def test_height_equal_to_lvbh_is_still_held(run, backend):
 @pytest.mark.parametrize("sent", ["sent", "unresolved"])
 @pytest.mark.parametrize("verdict", ["failed", "conflict", "unsupported"])
 def test_reconcile_verdict_alerts_and_stops_resending(run, backend, capsys, sent, verdict):
-    backend.send_script = [sent if sent != "unresolved" else "preflight_rejected"] * 5
+    backend.send_script = [sent] * 5
     backend.reconcile_script = [verdict] * 5
     run()
     assert alerts(capsys) == [{"alert": f"reconcile_{verdict}", "intent_id": INTENT}]
