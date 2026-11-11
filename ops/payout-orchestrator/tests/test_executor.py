@@ -175,7 +175,9 @@ def test_container_python_accepts_absolute_path(base_toml):
     assert load_config(path).container_python == "/opt/py/bin/python"
 
 
-@pytest.mark.parametrize("value", ["python", "bin/python", "", "/py/python -c x", "/py/\npython"])
+@pytest.mark.parametrize(
+    "value", [5, ["/x"], "python", "bin/python", "", "/py/python -c x", "/py/\npython"]
+)
 def test_container_python_must_be_absolute_plain_path(base_toml, value):
     path, body = base_toml
     path.write_text(body + f"container_python = {json.dumps(value)}\n")
