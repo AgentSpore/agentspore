@@ -12,6 +12,7 @@ import base64
 import fcntl
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -26,7 +27,7 @@ from .journal import Journal
 
 DELIVERY = "payout_delivery"
 CONFIRMED = {"confirmed", "replayed"}
-RETRYABLE = {"unresolved", "preflight_rejected"}
+RETRYABLE = {"unresolved"}
 DELIVERED = {"sent", "already_processed"}
 HOLD_VERDICTS = {"failed", "conflict", "unsupported"}
 RAW_UNITS = re.compile(r"(0|[1-9][0-9]{0,19})")
@@ -75,9 +76,16 @@ class Tick:
         self.signing_stopped = False
         self.touched: set[str] = set()
 
-    def alert(self, reason: str, intent: str | None, error: str | None = None) -> None:
-        """One JSON line: fixed reason, intent id and optional exception class name only."""
-        body = {"alert": reason, "intent_id": intent} | ({"error": error} if error else {})
+    def alert(
+        self,
+        reason: str,
+        intent: str | None,
+        error: str | None = None,
+        verdict: str | None = None,
+    ) -> None:
+        """One JSON line: fixed reason, intent id, optional exception class name or verdict."""
+        body = {"alert": reason, "intent_id": intent}
+        body |= ({"error": error} if error else {}) | ({"verdict": verdict} if verdict else {})
         sys.stderr.write(json.dumps(body) + "\n")
 
     def hold(self, intent: str, reason: str) -> bool:
@@ -85,6 +93,20 @@ class Tick:
         self.journal.hold(intent, reason, self.clock())
         self.alert(reason, intent)
         return False
+
+    def _self_pause(self, intent: str, verdict: str) -> None:
+        """Fail closed: create the pause file (never removed here); nothing sends after it.
+
+        INVARIANT(#182): each send that the wallet cannot fund burns the intent's single
+        attempt into `unresolved`; without this pause the timer would burn per_tick more per tick.
+        """
+        try:
+            self.cfg.pause_path.parent.mkdir(parents=True, exist_ok=True)
+            os.close(os.open(self.cfg.pause_path, os.O_WRONLY | os.O_CREAT, 0o600))
+        except OSError:
+            self.alert("self_pause_failed", intent, verdict=verdict)
+            raise RunAborted from None
+        self.alert("self_paused", intent, verdict=verdict)
 
     def held(self, intent: str) -> bool:
         entry = self.journal.get(intent)
@@ -320,21 +342,25 @@ class Tick:
         body = {"intent_id": intent}
         for _ in range(1 + self.cfg.max_resends):
             sent = self.call(["auto-send"], body)["verdict"]
+            if sent == "preflight_rejected":
+                return self._self_pause(intent, sent)
             if sent == "already_confirmed":
                 self.touched.add(intent)
                 return
             if sent not in DELIVERED | RETRYABLE:
                 return self.alert(f"send_{sent}", intent)
             reconciled = self.call(["auto-reconcile"], body)["verdict"]
-            if reconciled in CONFIRMED:
-                self.touched.add(intent)
-                return
             if reconciled != "unresolved":
-                if reconciled in HOLD_VERDICTS:
-                    self.hold(intent, f"reconcile_{reconciled}")
-                else:
-                    self.alert(f"reconcile_{reconciled}", intent)  # transient: retried next tick
-                return
+                return self._finish_reconcile(intent, reconciled)
             if sent in DELIVERED:
                 return
         self.alert("resend_exhausted", intent)
+        self._self_pause(intent, "resend_exhausted")
+
+    def _finish_reconcile(self, intent: str, reconciled: str) -> None:
+        if reconciled in CONFIRMED:
+            self.touched.add(intent)
+        elif reconciled in HOLD_VERDICTS:
+            self.hold(intent, f"reconcile_{reconciled}")
+        else:
+            self.alert(f"reconcile_{reconciled}", intent)  # transient: retried next tick
