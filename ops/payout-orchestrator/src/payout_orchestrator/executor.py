@@ -29,6 +29,10 @@ class Executor(Protocol):
 
     def sign(self, instance: str) -> int: ...
 
+    def stop(self, instance: str) -> bool:
+        """Stop the signer instance so systemd drops its credential copy; False on failure."""
+        ...
+
     def block_height(self) -> int | None:
         """Chain height, or None when it cannot be proven (callers fail closed)."""
         ...
@@ -62,8 +66,9 @@ def write_private(path: Path, data: bytes) -> None:
 class DockerExecutor:
     """Real Executor: `docker exec` for the backend CLIs, `systemctl` for the signer unit."""
 
-    def __init__(self, container: str, timeout: int) -> None:
+    def __init__(self, container: str, timeout: int, python: str) -> None:
         self.container = container
+        self.python = python
         self.timeout = timeout
 
     def _run(self, argv: list[str], stdin: bytes | None = None) -> subprocess.CompletedProcess:
@@ -78,7 +83,7 @@ class DockerExecutor:
         return ["docker", "exec", "-i", self.container, *argv]
 
     def cli(self, module: str, args: list[str], stdin: str = "") -> dict:
-        argv = self._exec("python", "-m", f"app.cli.{module}", *args)
+        argv = self._exec(self.python, "-m", f"app.cli.{module}", *args)
         return parse_verdict(self._run(argv, stdin.encode()).stdout)
 
     def fetch(self, container_path: str, host_path: Path) -> None:
@@ -105,6 +110,13 @@ class DockerExecutor:
             return int(props["ExecMainStatus"])
         except (KeyError, ValueError):
             raise ExecutorError("no signer status") from None
+
+    def stop(self, instance: str) -> bool:
+        argv = ["systemctl", "stop", f"payout-signer@{instance}.service"]
+        try:
+            return self._run(argv).returncode == 0
+        except ExecutorError:
+            return False
 
     def block_height(self) -> int | None:
         """Finalized chain height from the backend `block-height` command; None when unproven."""

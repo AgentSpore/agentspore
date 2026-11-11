@@ -60,7 +60,11 @@ wallets or endpoints are ever printed.
     per_tick = 5
     # optional: container_request_dir, lease_ttl_seconds (<=300),
     #           step_timeout_seconds (keep it above the signer unit's
-    #           TimeoutStartSec, 45 s in payout-deploy), max_resends
+    #           TimeoutStartSec, 45 s in payout-deploy), max_resends,
+    #           container_python (absolute path of the backend interpreter
+    #           inside the container, default "/app/.venv/bin/python":
+    #           the backend image's virtualenv; the `python` on PATH there
+    #           lacks the app's dependencies)
 
 Run one tick: `payout-orchestrator <config-path>`. On hosts with
 [payout-deploy](../payout-deploy/README.md) use `systemctl start payout-orchestrator.service`
@@ -72,7 +76,9 @@ return its old status) and applies the sandbox.
 - Pause: create `pause_path`. The next tick exits 0 at once; a running tick re-checks it
   before each intent and before each signing, so it stops starting new work and releases a
   claim it just took. Resume: delete it.
-- Alerts: `signer_rejected`, `signer_limit_exceeded`, `commit_conflict`,
+- Alerts: `signer_stop_failed` (the finished signer instance could not be stopped and may
+  still hold its credential copy: run `systemctl stop payout-signer@<intent>.<epoch>.service`;
+  the signing verdict is unaffected), `signer_rejected`, `signer_limit_exceeded`, `commit_conflict`,
   `digest_mismatch`, `resend_exhausted` need a human; nothing retries a `hold` by itself
   except the next tick's normal flow. `lvbh_unproven` means the chain height is unknown or not yet past the old request: nothing recompiles until it is proven. `signer_config_error` aborts the run: fix the
   signer config first.

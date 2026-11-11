@@ -80,17 +80,24 @@ instance name again is a no-op and would return the old status; so each tick fir
 carry the epoch, so within one tick an instance is never started twice. Exited instances
 accumulate only until the next tick or reboot.
 
+An active (exited) instance also keeps systemd's copy of the signer credential under
+`/run/credentials/<unit>` until the instance stops. So the orchestrator runs
+`systemctl stop` on the instance right after it has read the three properties; the exit
+status is already in hand and the stop cannot change it. When the status could not be read (timeout, no status), the stop still runs and also ends a signer that may be running; that is safe, because the orchestrator has given up on that signing. A failed stop is only logged as
+the alert `signer_stop_failed`; the `ExecStartPre=` cleanup of the next tick remains the
+fallback.
+
 Not verified on a real systemd (the build host has none): that an unloaded instance loses
 the status. The chosen setting is safe either way. Check on the host once, with a harmless
 instance of a copy of the unit that runs `/bin/true`:
 `systemctl start t@a.1.service; systemctl show -p ExecMainCode,ExecMainStatus,Result t@a.1.service`
 must print `1`, `0`, `success`.
 
-Also check the key copy: after a test instance of the unit with `LoadCredential=`, run
-`ls /run/credentials/`. If the instance's credential directory is still there while it is
-active (exited), a copy of the key outlives the signing. Readers stay limited to
-`payout-signer` and root, but then add a follow-up change so the orchestrator stops the
-instance right after `systemctl show`; no orchestrator change is made here.
+Also check the key copy once on the host: after a tick that signed, run
+`ls /run/credentials/`. The finished instance's credential directory must be gone, because
+the orchestrator stopped the instance right after `systemctl show`. If it is still there,
+look for the `signer_stop_failed` alert; readers of the copy stay limited to `payout-signer`
+and root.
 
 First manual tick checklist: if settling or committing a signed file fails with a permission
 error, look at `CapabilityBoundingSet=CAP_DAC_READ_SEARCH` in `payout-orchestrator.service`

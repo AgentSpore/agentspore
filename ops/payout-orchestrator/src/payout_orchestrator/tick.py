@@ -264,7 +264,13 @@ class Tick:
         if self.cfg.pause_path.exists():
             self.release(intent, epoch)
             return False
-        code = self.ex.sign(f"{intent}.{epoch}")
+        instance = f"{intent}.{epoch}"
+        try:
+            code = self.ex.sign(instance)
+        finally:
+            # best effort, after the status is read: it never changes the verdict
+            if not self.ex.stop(instance):
+                self.alert("signer_stop_failed", intent)
         if code in (0, 10):
             if self.paths(intent, epoch)[1].exists():
                 return True
