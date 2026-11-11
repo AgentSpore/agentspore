@@ -2,6 +2,7 @@ import contextlib
 import fcntl
 import hashlib
 import json
+import os
 
 import pytest
 
@@ -208,15 +209,44 @@ def test_wallet_verdict_self_pauses_and_stops_the_tick(
     script(backend)
     assert run() == 0
     assert config.pause_path.stat().st_mode & 0o777 == 0o600
-    assert {"alert": "self_paused", "intent_id": INTENT, "verdict": verdict} in alerts(capsys)
+    paused = {"alert": "self_paused", "intent_id": INTENT, "verdict": verdict}
+    expected = (
+        [paused]
+        if verdict == "preflight_rejected"
+        else [
+            {"alert": "resend_exhausted", "intent_id": INTENT},
+            paused,
+        ]
+    )
+    assert alerts(capsys) == expected
     assert backend.sign_calls == [backend.sign_calls[0]]
     assert OTHER not in backend.claims
     assert len(set(backend.sends)) == 1
     if verdict == "preflight_rejected":
+        assert backend.calls.count("auto-send") == 1
         assert "auto-reconcile" not in backend.calls
     seen = len(backend.calls)
     assert run() == 0
     assert len(backend.calls) == seen
+
+
+def test_unwritable_pause_file_aborts_the_run(run, backend, config, capsys, monkeypatch):
+    backend.intents = [INTENT, OTHER]
+    backend.send_script = ["preflight_rejected"]
+
+    real_open = os.open
+
+    def refuse(path, *args, **kwargs):
+        if path == config.pause_path:
+            raise OSError("read-only")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("payout_orchestrator.tick.os.open", refuse)
+    assert run() == 3
+    assert {"alert": "self_pause_failed", "intent_id": INTENT, "verdict": "preflight_rejected"} in (
+        alerts(capsys)
+    )
+    assert OTHER not in backend.claims
 
 
 def test_ordinary_verdicts_do_not_pause(run, backend, config):
