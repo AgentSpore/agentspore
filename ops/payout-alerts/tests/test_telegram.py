@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import logging
@@ -76,3 +77,14 @@ def test_token_never_in_exception_or_logs(exc, caplog, capsys):
     captured = capsys.readouterr()
     assert "SECRET" not in text + captured.out + captured.err
     assert "SECRET" not in repr(sender(opener))
+
+
+class BrokenBody(Resp):
+    def read(self):
+        raise http.client.IncompleteRead(b"")
+
+
+@pytest.mark.parametrize("resp", [BrokenBody(), Resp(b"[1]"), Resp(b"not json")])
+def test_odd_responses_become_send_error(resp):
+    with pytest.raises(SendError):
+        sender(lambda r, timeout: resp).send("x")
