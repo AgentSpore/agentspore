@@ -42,7 +42,7 @@ class SyntheticSigner:
 
     def intent(self) -> TransferIntent:
         """Expose only synthetic public identities; no key material leaves this object."""
-        mint, recipient = Pubkey.new_unique(), Pubkey.new_unique()
+        mint, recipient = Pubkey.new_unique(), Keypair().pubkey()
         return TransferIntent(
             genesis_hash=str(Hash.default()),
             mint=str(mint),

@@ -41,7 +41,7 @@ def blockhash():
 
 @pytest.fixture
 def intent(payer):
-    mint, recipient = Pubkey.new_unique(), Pubkey.new_unique()
+    mint, recipient = Pubkey.new_unique(), Keypair().pubkey()
     return TransferIntent(
         genesis_hash=str(Hash.default()),
         mint=str(mint),
@@ -115,7 +115,20 @@ def test_b_bytes_equal_independent_build(intent, blockhash):
 def test_flag_off_builds_a(intent, blockhash):
     message = build_payout_message(intent, blockhash)
     assert len(message.instructions) == 1
-    assert bytes(message) == bytes(build_payout_message(intent, blockhash, create_ata=False))
+    data = bytes([12]) + int(intent.raw_amount).to_bytes(8, "little") + bytes([intent.decimals])
+    transfer = Instruction(
+        TOKEN_2022,
+        data,
+        [
+            AccountMeta(Pubkey.from_string(intent.source), False, True),
+            AccountMeta(Pubkey.from_string(intent.mint), False, False),
+            AccountMeta(Pubkey.from_string(intent.destination), False, True),
+            AccountMeta(Pubkey.from_string(intent.authority), True, False),
+        ],
+    )
+    payer = Pubkey.from_string(intent.fee_payer)
+    expected = Message.new_with_blockhash([transfer], payer, Hash.from_string(blockhash))
+    assert bytes(message) == bytes(expected)
     assert NetworkConfig.model_fields["create_recipient_ata"].default is False
 
 
@@ -168,3 +181,14 @@ def test_digest_covers_create_ix(intent, blockhash):
     assert raw == independent_b_wire(intent, blockhash)
     assert with_create.message_digest == hashlib.sha256(raw).hexdigest()
     assert with_create.message_digest != plain.message_digest
+
+
+def test_off_curve_recipient_rejected_for_b(intent, blockhash):
+    pda, _ = Pubkey.find_program_address([b"vault"], ATA_PROGRAM)
+    assert not pda.is_on_curve()
+    mint = Pubkey.from_string(intent.mint)
+    destination = str(get_associated_token_address(pda, mint, TOKEN_2022))
+    off_curve = intent.model_copy(update={"recipient": str(pda), "destination": destination})
+    with pytest.raises(InvalidPayoutCandidateError):
+        build_payout_message(off_curve, blockhash, create_ata=True)
+    assert len(build_payout_message(off_curve, blockhash).instructions) == 1

@@ -50,7 +50,8 @@ def build_payout_message(
         )
     ]
     if create_ata:
-        if intent.destination != intent.associated_destination():
+        wallet = Pubkey.from_string(intent.recipient)
+        if intent.destination != intent.associated_destination() or not wallet.is_on_curve():
             raise InvalidPayoutCandidateError
         instructions.insert(0, _create_ata_instruction(intent))
     return Message.new_with_blockhash(
