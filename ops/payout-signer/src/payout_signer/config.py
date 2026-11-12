@@ -10,6 +10,7 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 
 MAX_U63 = 2**63 - 1
+KILL_SWITCH_KEY = "max_ata_creations_24h"  # 0 turns the create shape off
 LIMIT_KEYS = (
     "max_amount_per_transfer",
     "max_amount_per_recipient_24h",
@@ -79,7 +80,9 @@ def load_config(path: Path) -> Config:
         mint = Pubkey.from_string(_str(raw, "mint"))
     except ValueError:
         raise ConfigError("mint") from None
-    limits = {key: _int(raw, key, 1, MAX_U63) for key in LIMIT_KEYS}
+    limits = {
+        key: _int(raw, key, 0 if key == KILL_SWITCH_KEY else 1, MAX_U63) for key in LIMIT_KEYS
+    }
     if limits["max_ata_creations_24h"] > limits["max_transfers_24h"]:
         raise ConfigError("max_ata_creations_24h")
     return Config(
