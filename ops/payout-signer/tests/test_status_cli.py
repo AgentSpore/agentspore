@@ -31,6 +31,13 @@ def test_status_numbers_only_and_pause_flag(env):
     assert str(env.mint) not in done.stdout
 
 
+def test_status_prints_creations(env):
+    with Ledger.locked(env.ledger) as ledger:
+        ledger.record("d", "w", 5, now=time.time(), creates_ata=True)
+    body = json.loads(cli("status", "--config", str(env.config)).stdout)
+    assert body["ata_creations"] == {"used": 1, "limit": LIMITS["max_ata_creations_24h"]}
+
+
 def test_status_without_ledger_is_zero_and_creates_nothing(env):
     body = json.loads(cli("status", "--config", str(env.config)).stdout)
     assert body["transfers"]["used"] == 0
@@ -45,7 +52,7 @@ def test_bad_config_exits_config_error(env):
 
 
 @pytest.mark.parametrize("key", list(LIMITS))
-def test_missing_limit_refuses_to_load(env, key):
+def test_config_missing_key_refused(env, key):
     env.write_config(**{key: None})
     with pytest.raises(ConfigError):
         load_config(env.config)
@@ -55,6 +62,7 @@ def test_unknown_key_and_bad_values_refused(env):
     for override in (
         {"extra_key": 1},
         {"max_transfers_24h": 0},
+        {"max_ata_creations_24h": LIMITS["max_transfers_24h"] + 1},
         {"keypair_credential": "../x"},
         {"pause_file": "relative-pause"},
         {"ledger_path": "relative.sqlite"},
