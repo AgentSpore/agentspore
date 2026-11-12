@@ -10,6 +10,7 @@ from payout_signer.ledger import Usage
 class Transfer:
     recipient: str
     amount: int
+    creates_ata: bool = False
 
 
 def within_limits(config: Config, usage: Usage, transfer: Transfer) -> bool:
