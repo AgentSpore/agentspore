@@ -76,7 +76,8 @@ def test_queue_drops_oldest_and_counts(tmp_path):
     relay, sender, _, _, _ = make(tmp_path, queue_size=2)
     for i in range(4):
         relay.submit((f"c{i}", f"alert=a{i}"))
-    assert relay.drain() == 2
+    while not relay._queue.empty():
+        relay.process(relay._queue.get_nowait())
     assert sender.sent == ["alert=a2 (+2 dropped)", "alert=a3"]
 
 

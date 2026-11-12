@@ -33,17 +33,14 @@ jobs:
           sudo systemd-sysusers
           sudo install -D -m 0644 payout.tmpfiles.conf /etc/tmpfiles.d/payout.conf
           sudo systemd-tmpfiles --create /etc/tmpfiles.d/payout.conf
-          for program in /opt/payout-orchestrator/bin/payout-orchestrator /opt/payout-signer/bin/payout-signer /opt/payout-alerts/bin/payout-alerts; do
+          for program in /opt/payout-orchestrator/bin/payout-orchestrator /opt/payout-signer/bin/payout-signer; do
             sudo install -D -m 0755 /bin/true "$program"
           done
           sudo install -d -m 0750 /etc/payout-orchestrator /etc/payout-signer
-          sudo install -d -m 0750 /etc/payout-alerts
-          sudo install -m 0640 /dev/null /etc/payout-alerts/config.toml
-          sudo install -m 0600 /dev/null /etc/payout-alerts/bot-token
           sudo install -m 0640 /dev/null /etc/payout-orchestrator/config.toml
           sudo install -m 0640 /dev/null /etc/payout-signer/config.toml
           sudo install -m 0600 /dev/null /etc/payout-signer/keypair.json
-          sudo install -D -m 0644 -t /etc/systemd/system payout-orchestrator.service payout-orchestrator.timer 'payout-signer@.service' payout-alerts.service
+          sudo install -D -m 0644 -t /etc/systemd/system payout-orchestrator.service payout-orchestrator.timer 'payout-signer@.service'
           sudo ln -s /etc/systemd/system/payout-signer@.service /etc/systemd/system/payout-signer@a.1.service
       - name: systemd-analyze verify
         run: |
@@ -51,7 +48,6 @@ jobs:
           out=$(sudo systemd-analyze verify \
             /etc/systemd/system/payout-orchestrator.service \
             /etc/systemd/system/payout-orchestrator.timer \
-            /etc/systemd/system/payout-alerts.service \
             /etc/systemd/system/payout-signer@a.1.service 2>&1) || { echo "$out"; exit 1; }
           echo "$out"
           # verify can exit 0 while printing warnings; any output fails the job

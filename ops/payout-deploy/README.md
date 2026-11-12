@@ -14,7 +14,7 @@ addresses never go into this repository: put path changes in drop-in overrides
 |---|---|
 | `payout.sysusers.conf` | `/etc/sysusers.d/payout.conf` |
 | `payout.tmpfiles.conf` | `/etc/tmpfiles.d/payout.conf` |
-| `payout-orchestrator.service`, `payout-orchestrator.timer`, `payout-signer@.service`, `payout-alerts.service` | `/etc/systemd/system/` |
+| `payout-orchestrator.service`, `payout-orchestrator.timer`, `payout-signer@.service` | `/etc/systemd/system/` |
 
 ## Layout and modes
 
@@ -26,9 +26,7 @@ addresses never go into this repository: put path changes in drop-in overrides
 | `/etc/payout-signer/config.toml` | `root:payout-signer`, `0640` | signer config |
 | `/etc/payout-signer/keypair.json` | `root:root`, `0600` | key; delivered to the unit by `LoadCredential=`, never readable by other users |
 | `/etc/payout-orchestrator/config.toml` | `root:root`, `0600` | orchestrator config |
-| `/opt/payout-orchestrator`, `/opt/payout-signer`, `/opt/payout-alerts` | `root`, not writable by others | installed programs (`bin/payout-orchestrator`, `bin/payout-signer`, `bin/payout-alerts`) |
-| `/etc/payout-alerts/config.toml`, `/etc/payout-alerts/bot-token` | `root:root`, `0600` | alert forwarder config (`chat_id`, `prefix`) and Telegram bot token |
-| `/var/lib/payout-alerts` | dynamic user, `0700` (StateDirectory) | journal `cursor` |
+| `/opt/payout-orchestrator`, `/opt/payout-signer` | `root`, not writable by others | installed programs (`bin/payout-orchestrator`, `bin/payout-signer`) |
 
 The handoff directory is writable by the group because the signer creates its output
 there; the setgid bit keeps the group on new files. Config values: `handoff_dir`,
@@ -52,25 +50,6 @@ there; the setgid bit keeps the group on new files. Config values: `handoff_dir`
 5. `install -m 0644 payout-orchestrator.service payout-orchestrator.timer 'payout-signer@.service' /etc/systemd/system/`
 6. `systemctl daemon-reload`
 7. Backend network config: see "Backend wiring".
-
-## Telegram alerts (optional)
-
-[payout-alerts](../payout-alerts/README.md) forwards payout alerts to one Telegram chat.
-
-1. Install the program under `/opt/payout-alerts` (launcher `bin/payout-alerts` runs
-   `/usr/bin/python3 -I -B` with the package directory on `sys.path`), like the other two.
-2. `install -D -m 0600 config.toml /etc/payout-alerts/config.toml` (`chat_id = "<chat-id>"`,
-   optional `prefix`) and `install -D -m 0600 bot-token /etc/payout-alerts/bot-token`
-   (the bot token only, one line; never put it into a unit file or a drop-in).
-3. `install -D -m 0644 payout-alerts.service /etc/systemd/system/payout-alerts.service && systemctl daemon-reload`
-4. Send one message first, with the unit's own credential setup:
-   `systemd-run --wait --pipe -p DynamicUser=yes -p LoadCredential=bot-token:/etc/payout-alerts/bot-token -p ReadOnlyPaths=/etc/payout-alerts /opt/payout-alerts/bin/payout-alerts test --config /etc/payout-alerts/config.toml`
-   must exit 0 and the chat must show the test message.
-5. `systemctl enable --now payout-alerts.service`, then `systemctl status payout-alerts.service`.
-
-The unit reads the journal through `SupplementaryGroups=systemd-journal`. Not verified on a
-real host: that this group is enough to follow the payout units' entries; check once by
-raising a harmless failing unit instance and watching the chat.
 
 ## Dry verification (before anything runs)
 
