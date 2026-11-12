@@ -8,14 +8,18 @@ Wants=network-online.target
 Type=simple
 Restart=on-failure
 RestartSec=10s
+# A send in progress can wait through retries; the stop event interrupts the waits.
+TimeoutStopSec=30s
 DynamicUser=yes
 # Reads the journal entries of the payout units; needs no other group.
 SupplementaryGroups=systemd-journal
+# Both files stay root-only on the host; the unit gets private copies (DynamicUser cannot read /etc/payout-alerts).
 LoadCredential=bot-token:/etc/payout-alerts/bot-token
+LoadCredential=config:/etc/payout-alerts/config.toml
 # Holds the journal cursor (`cursor`).
 StateDirectory=payout-alerts
 StateDirectoryMode=0700
-ExecStart=/opt/payout-alerts/bin/payout-alerts run --config /etc/payout-alerts/config.toml
+ExecStart=/opt/payout-alerts/bin/payout-alerts run
 UMask=0077
 
 CapabilityBoundingSet=

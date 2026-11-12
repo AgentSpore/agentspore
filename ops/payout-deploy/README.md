@@ -27,7 +27,7 @@ addresses never go into this repository: put path changes in drop-in overrides
 | `/etc/payout-signer/keypair.json` | `root:root`, `0600` | key; delivered to the unit by `LoadCredential=`, never readable by other users |
 | `/etc/payout-orchestrator/config.toml` | `root:root`, `0600` | orchestrator config |
 | `/opt/payout-orchestrator`, `/opt/payout-signer`, `/opt/payout-alerts` | `root`, not writable by others | installed programs (`bin/payout-orchestrator`, `bin/payout-signer`, `bin/payout-alerts`) |
-| `/etc/payout-alerts/config.toml`, `/etc/payout-alerts/bot-token` | `root:root`, `0600` | alert forwarder config (`chat_id`, `prefix`) and Telegram bot token |
+| `/etc/payout-alerts/config.toml`, `/etc/payout-alerts/bot-token` | `root:root`, `0600` | alert forwarder config (`chat_id`, `prefix`) and Telegram bot token; both reach the unit as credentials (`$CREDENTIALS_DIRECTORY/config`, `/bot-token`) |
 | `/var/lib/payout-alerts` | dynamic user, `0700` (StateDirectory) | journal `cursor` |
 
 The handoff directory is writable by the group because the signer creates its output
@@ -64,7 +64,7 @@ there; the setgid bit keeps the group on new files. Config values: `handoff_dir`
    (the bot token only, one line; never put it into a unit file or a drop-in).
 3. `install -D -m 0644 payout-alerts.service /etc/systemd/system/payout-alerts.service && systemctl daemon-reload`
 4. Send one message first, with the unit's own credential setup:
-   `systemd-run --wait --pipe -p DynamicUser=yes -p LoadCredential=bot-token:/etc/payout-alerts/bot-token -p ReadOnlyPaths=/etc/payout-alerts /opt/payout-alerts/bin/payout-alerts test --config /etc/payout-alerts/config.toml`
+   `systemd-run --wait --pipe -p DynamicUser=yes -p LoadCredential=bot-token:/etc/payout-alerts/bot-token -p LoadCredential=config:/etc/payout-alerts/config.toml /opt/payout-alerts/bin/payout-alerts test`
    must exit 0 and the chat must show the test message.
 5. `systemctl enable --now payout-alerts.service`, then `systemctl status payout-alerts.service`.
 
