@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import threading
 from uuid import UUID
 
@@ -19,7 +20,8 @@ from sqlalchemy.exc import DBAPIError
 
 from app.cli.payout_delivery import run_admission, run_reconcile
 from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
-from app.schemas.payout_delivery import ClaimKey, ReconcileRequest
+from app.schemas.payout_delivery import SYSTEM_PROGRAM, ClaimKey, ReconcileRequest, SignedEnvelope
+from app.services.payout_transaction import build_payout_message
 
 native_case = attempts.native_case
 allocation = attempts.allocation
@@ -32,12 +34,14 @@ MIGRATIONS = attempts.MIGRATIONS
 ENDPOINT = "https://rpc.invalid"
 
 
-def build_receipt(intent, raw, slot=7):
-    """Derive a finalized legacy receipt from the stored synthetic wire."""
+def build_receipt(intent, raw, slot=7, rent=None):
+    """Derive a finalized legacy receipt from the stored synthetic wire.
+
+    `rent` set: shape B that created the destination, paying that rent from the payer.
+    """
     transaction = Transaction.from_bytes(raw)
     message = transaction.message
     keys = [str(key) for key in message.account_keys]
-    instruction = message.instructions[0]
     balances = [
         {
             "accountIndex": keys.index(account),
@@ -54,15 +58,29 @@ def build_receipt(intent, raw, slot=7):
     post = json.loads(json.dumps(balances))
     for balance in post:
         balance["uiTokenAmount"]["amount"] = "10"
+    pre_lamports, post_lamports = [20] * len(keys), [15] + [20] * (len(keys) - 1)
+    inner = []
+    if rent is not None:
+        balances.pop()
+        dest = keys.index(intent.destination)
+        pre_lamports[0], pre_lamports[dest] = 20 + rent, 0
+        post_lamports[dest] = rent
+        system = keys.index(SYSTEM_PROGRAM)
+        inner = [
+            {
+                "index": 0,
+                "instructions": [{"programIdIndex": system, "accounts": [0, dest], "data": "3Bxs"}],
+            }
+        ]
     return {
         "slot": slot,
         "version": "legacy",
         "meta": {
             "err": None,
             "fee": 5,
-            "innerInstructions": [],
-            "preBalances": [20] * len(keys),
-            "postBalances": [15] + [20] * (len(keys) - 1),
+            "innerInstructions": inner,
+            "preBalances": pre_lamports,
+            "postBalances": post_lamports,
             "preTokenBalances": balances,
             "postTokenBalances": post,
         },
@@ -82,6 +100,7 @@ def build_receipt(intent, raw, slot=7):
                         "accounts": list(instruction.accounts),
                         "data": base58.b58encode(instruction.data).decode(),
                     }
+                    for instruction in message.instructions
                 ],
             },
         },
@@ -110,9 +129,8 @@ class Rpc:
         return httpx.MockTransport(self)
 
 
-@pytest.fixture
-async def prepared(attempt_db, signed_envelope, native_case):
-    """A committed prepared attempt, the confirmation schema and a matching receipt."""
+async def commit_prepared(attempt_db, envelope, native_case):
+    """Commit the envelope as a prepared attempt and add the confirmation schema."""
     maker, _, _, key = attempt_db
     async with maker.begin() as db:
         raw = (await (await db.connection()).get_raw_connection()).driver_connection
@@ -121,10 +139,39 @@ async def prepared(attempt_db, signed_envelope, native_case):
             "R__payout_delivery_confirmation_identity.sql",
         ):
             await raw.execute((MIGRATIONS / name).read_text())
-    assert (await attempts.invoke_attempt(maker, "prepare-commit", signed_envelope))[0] == 0
+    assert (await attempts.invoke_attempt(maker, "prepare-commit", envelope))[0] == 0
     intent, _ = native_case
-    wire = base64.b64decode(signed_envelope.signed_transaction_base64)
-    return maker, key, intent, wire
+    return maker, key, intent, base64.b64decode(envelope.signed_transaction_base64)
+
+
+@pytest.fixture
+async def prepared(attempt_db, signed_envelope, native_case):
+    """A committed prepared attempt, the confirmation schema and a matching receipt."""
+    return await commit_prepared(attempt_db, signed_envelope, native_case)
+
+
+@pytest.fixture
+async def prepared_b(attempt_db, native_case):
+    """The same, for a stored shape-B wire (CreateIdempotent, then transfer)."""
+    maker, _, _, key = attempt_db
+    assert (await attempts.leases.invoke_claim(maker, "claim", key | {"ttl_seconds": 300}))[0] == 0
+    intent, signer = native_case
+    blockhash = str(Hash.from_bytes(os.urandom(32)))
+    envelope = SignedEnvelope.model_validate_json(
+        json.dumps(
+            key
+            | {
+                "epoch": 1,
+                "format_version": 1,
+                "genesis_hash": intent.genesis_hash,
+                "last_valid_block_height": "0",
+                "signed_transaction_base64": signer.encode(
+                    build_payout_message(intent, blockhash, create_ata=True)
+                ),
+            }
+        )
+    )
+    return await commit_prepared(attempt_db, envelope, native_case)
 
 
 async def reconcile(maker, key, rpc, **override):
@@ -396,3 +443,24 @@ async def test_reconcile_never_signs_sends_or_credits_and_redacts(prepared):
         rpc.transport,
     )
     assert json.loads(out.getvalue()) == {"verdict": "invalid_input"}
+
+
+async def test_reconcile_shape_b_confirms_created_ata(prepared_b):
+    maker, key, intent, wire = prepared_b
+    receipt = build_receipt(intent, wire, rent=1_513_840)
+    code, out = await reconcile(maker, key, Rpc(intent.genesis_hash, receipt))
+    assert (code, json.loads(out)["verdict"]) == (0, "confirmed") and await rows(maker) == 1
+
+
+async def test_reconcile_shape_b_existing_ata_confirms(prepared_b):
+    maker, key, intent, wire = prepared_b
+    code, out = await reconcile(maker, key, Rpc(intent.genesis_hash, build_receipt(intent, wire)))
+    assert (code, json.loads(out)["verdict"]) == (0, "confirmed") and await rows(maker) == 1
+
+
+async def test_reconcile_shape_b_extra_lamport_delta_unsupported(prepared_b):
+    maker, key, intent, wire = prepared_b
+    receipt = build_receipt(intent, wire, rent=1_513_840)
+    receipt["meta"]["postBalances"][-1] += 1
+    code, _ = await reconcile(maker, key, Rpc(intent.genesis_hash, receipt))
+    assert code == 3 and await rows(maker) == 0
