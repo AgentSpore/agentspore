@@ -16,6 +16,7 @@ from pydantic import (
 from solders.hash import Hash, ParseHashError
 from solders.pubkey import Pubkey
 from solders.signature import Signature
+from solders.token.associated import get_associated_token_address
 
 
 def public_key(value: str) -> str:
@@ -31,6 +32,9 @@ def solana_hash(value: str) -> str:
     except ParseHashError:
         raise ValueError from None
 
+
+ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+SYSTEM_PROGRAM = "11111111111111111111111111111111"
 
 PublicKey = Annotated[str, AfterValidator(public_key)]
 
@@ -66,6 +70,32 @@ class TransferIntent(BaseModel):
         if len({self.source, self.destination, self.mint, self.program}) != 4:
             raise ValueError
         return self
+
+    @model_validator(mode="after")
+    def destination_is_recipient_ata(self) -> Self:
+        """Pin the destination to the recipient's Token-2022 ATA and keep the wallet distinct."""
+        reserved = {
+            self.authority,
+            self.fee_payer,
+            self.source,
+            self.mint,
+            self.program,
+            ATA_PROGRAM,
+            SYSTEM_PROGRAM,
+        }
+        if self.recipient in reserved or self.destination != self.associated_destination():
+            raise ValueError
+        return self
+
+    def associated_destination(self) -> str:
+        """Derive the Token-2022 associated token account of the recipient wallet."""
+        return str(
+            get_associated_token_address(
+                Pubkey.from_string(self.recipient),
+                Pubkey.from_string(self.mint),
+                Pubkey.from_string(self.program),
+            )
+        )
 
 
 class ReceiptIntent(TransferIntent):
@@ -214,6 +244,7 @@ class NetworkConfig(BaseModel):
     trusted_genesis_hash: Annotated[str, AfterValidator(solana_hash)]
     signer_pubkey: PublicKey
     source_token_account: PublicKey
+    create_recipient_ata: bool = False
 
 
 class EmptyRequest(BaseModel):
