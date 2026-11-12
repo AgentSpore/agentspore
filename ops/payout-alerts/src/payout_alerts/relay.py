@@ -69,13 +69,6 @@ class Relay:
                 except queue.Empty:
                     pass
 
-    def drain(self) -> int:
-        count = 0
-        while not self._queue.empty():
-            self.process(self._queue.get_nowait())
-            count += 1
-        return count
-
     def run(self, stop: threading.Event) -> None:
         while not stop.is_set():
             try:
