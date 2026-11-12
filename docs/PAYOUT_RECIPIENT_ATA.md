@@ -6,7 +6,7 @@ A $ASPORE payout can now go to a wallet that has no Token-2022 associated token
 account (ATA) yet: the hot wallet creates that account in the same transaction and
 pays its rent. The behaviour is behind the server-side flag `create_recipient_ata`,
 which is off by default; with the flag off nothing changes. Each creation costs the
-hot wallet about 0.0015 SOL that is never returned to it, so the flag is enabled only
+hot wallet about 0.0021 SOL (`getMinimumBalanceForRentExemption(170)`) that is never returned to it, so the flag is enabled only
 with the signer's creation limit and a funded SOL reserve in place.
 
 Terms used below:
@@ -127,7 +127,9 @@ shape A are unchanged ([PAYOUT_RECEIPTS.md](PAYOUT_RECEIPTS.md)).
 Strictly in this order:
 
 1. Backend release that contains the shape-B code, flag absent: behaviour unchanged.
-2. Pause the orchestrator and the signer. Replace the signer with one that knows
+2. Disable the orchestrator timer, pause the orchestrator and the signer, and wait until
+   `systemctl is-active payout-orchestrator.service` is `inactive` (no tick in flight).
+   Replace the signer with one that knows
    `max_ata_creations_24h` and add that key with `<N>` in the same window
    ([upgrade notes](../ops/payout-signer/README.md#upgrade-notes));
    `payout-signer status` must show `ata_creations`.
@@ -135,9 +137,14 @@ Strictly in this order:
    check that `per_tick` times the rent stays below the reserve.
 4. Set `"create_recipient_ata": true` in the network config file. No restart is needed:
    every backend CLI call is a new process that reads the file again.
-5. Resume, pay one small grant to a wallet without the account, and confirm
-   `auto-reconcile` answers `confirmed` before enabling the timer.
+5. Canary: a resumed tick links every eligible grant and pays up to `per_tick` of them,
+   so set `per_tick = 1`, resume, run one tick by hand
+   (`systemctl start payout-orchestrator.service`) and confirm `auto-reconcile` answers
+   `confirmed` for a wallet that had no account. Then restore `per_tick` and enable the
+   timer.
 
 Rollback: set the flag to `false` (or remove the key); the next compile builds shape A,
-and an already signed shape-B transaction is still sent and reconciled. Signer kill
-switch: `max_ata_creations_24h = 0`.
+and an already signed shape-B transaction is still sent and reconciled. Caution: a grant
+linked while the flag was on whose wallet still has no account then compiles as shape A,
+fails the send preflight and pauses the orchestrator. Before turning the flag off, check
+that no such grant is waiting. Signer kill switch: `max_ata_creations_24h = 0`.
