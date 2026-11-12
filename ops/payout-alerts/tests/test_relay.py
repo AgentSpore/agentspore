@@ -1,4 +1,5 @@
 import logging
+import threading
 
 from payout_alerts.relay import Relay, RelayOptions
 from payout_alerts.telegram import SendError
@@ -121,3 +122,66 @@ def test_suppressed_count_survives_failed_send(tmp_path):
     relay.process(("c3", "alert=a"))
     relay.process(("c4", "alert=a"))
     assert sender.sent[-1] == "alert=a (+1 suppressed)"
+
+
+def test_marker_writes_cursor_without_sending(tmp_path):
+    relay, sender, _, _, cursor = make(tmp_path)
+    relay.process(("m1", None))
+    assert sender.sent == [] and cursor.read_text() == "m1"
+
+
+def test_marker_after_alert_keeps_cursor_order(tmp_path):
+    relay, _, _, _, cursor = make(tmp_path)
+    relay.submit(("c1", "alert=a"))
+    relay.submit(("m2", None))
+    for _ in range(2):
+        relay.process(relay._queue.get_nowait())
+    assert cursor.read_text() == "m2"
+
+
+def test_full_queue_discards_marker_and_keeps_dropped_count(tmp_path):
+    relay, _, _, _, _ = make(tmp_path, queue_size=2)
+    relay.submit(("c1", "alert=a"))
+    relay.submit(("c2", "alert=b"))
+    relay.submit(("m3", None))
+    assert [relay._queue.get_nowait()[0] for _ in range(2)] == ["c1", "c2"]
+    assert relay._dropped == 0
+
+
+def test_alert_evicting_marker_is_not_counted_as_dropped(tmp_path):
+    relay, sender, _, _, _ = make(tmp_path, queue_size=1)
+    relay.submit(("m1", None))
+    relay.submit(("c2", "alert=a"))
+    relay.process(relay._queue.get_nowait())
+    assert sender.sent == ["alert=a"]
+    assert relay._dropped == 0
+
+
+def test_marker_keeps_cursor_while_an_alert_was_evicted(tmp_path):
+    relay, sender, _, _, cursor = make(tmp_path, queue_size=2)
+    cursor.write_text("old")
+    relay.submit(("a1", "alert=a"))
+    relay.submit(("m2", None))
+    relay.submit(("b3", "alert=b"))
+    relay.process(relay._queue.get_nowait())
+    assert cursor.read_text() == "old"
+    relay.process(relay._queue.get_nowait())
+    assert sender.sent[-1].endswith("(+1 dropped)") and cursor.read_text() == "b3"
+    relay.process(("m4", None))
+    assert cursor.read_text() == "m4"
+
+
+def test_stop_during_retry_wait_leaves_cursor_behind_a_queued_marker(tmp_path):
+    stop, cursor = threading.Event(), tmp_path / "cursor"
+    cursor.write_text("old")
+
+    def sleep(seconds):
+        stop.set()
+        return stop.wait(seconds)
+
+    sender = Sender(cursor, [SendError(500, None, "HTTPError")])
+    relay = Relay(sender.send, cursor, RelayOptions(), sleep=sleep)
+    relay.submit(("c1", "alert=a"))
+    relay.submit(("m2", None))
+    relay.run(stop)
+    assert sender.sent == [] and cursor.read_text() == "old"
