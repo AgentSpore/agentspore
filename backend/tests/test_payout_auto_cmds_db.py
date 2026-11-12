@@ -14,9 +14,11 @@ import pytest
 import test_payout_reconcile_db as reconciled
 import test_payout_send_db as sent
 from solders.hash import Hash
+from solders.message import Message
 
 from app.cli import payout_delivery as cli
 from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
+from app.schemas.payout_delivery import ATA_PROGRAM
 from app.services.payout_delivery_service import admit_intent
 
 attempt_db = reconciled.attempt_db
@@ -174,6 +176,25 @@ async def test_auto_compile_writes_exclusive_private_request(
     assert json.loads(output.read_text()) == artifact
     captured = capsys.readouterr()
     assert "secret-path-marker" not in captured.out + captured.err + text_out
+
+
+@pytest.mark.parametrize(("create_ata", "instructions"), [(True, 2), (False, 1)])
+async def test_auto_compile_threads_create_ata_flag(
+    attempt_db, signed_envelope, native_case, configure, tmp_path, fence, create_ata, instructions
+):
+    intent, _ = native_case
+    if intent.fee_payer != intent.authority:
+        pytest.skip("auto-compile admits only the signer as fee payer")
+    configure(intent, create_recipient_ata=create_ata)
+    output = tmp_path / "request.json"
+    code, _ = await compile_auto(attempt_db[0], fence, AutoRpc(intent.genesis_hash), output)
+    assert code == 0
+    raw = base64.b64decode(json.loads(output.read_text())["unsigned_message_base64"])
+    message = Message.from_bytes(raw)
+    assert len(message.instructions) == instructions
+    if create_ata:
+        first = message.instructions[0]
+        assert str(message.account_keys[first.program_id_index]) == ATA_PROGRAM
 
 
 async def test_auto_compile_genesis_mismatch_is_unsupported(
