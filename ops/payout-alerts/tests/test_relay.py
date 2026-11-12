@@ -1,4 +1,5 @@
 import logging
+import threading
 
 from payout_alerts.relay import Relay, RelayOptions
 from payout_alerts.telegram import SendError
@@ -154,3 +155,29 @@ def test_alert_evicting_marker_is_not_counted_as_dropped(tmp_path):
     relay.process(relay._queue.get_nowait())
     assert sender.sent == ["alert=a"]
     assert relay._dropped == 0
+
+
+def test_marker_keeps_cursor_while_an_alert_was_evicted(tmp_path):
+    relay, _, _, _, cursor = make(tmp_path, queue_size=2)
+    cursor.write_text("old")
+    relay.submit(("a1", "alert=a"))
+    relay.submit(("m2", None))
+    relay.submit(("b3", "alert=b"))
+    relay.process(relay._queue.get_nowait())
+    assert cursor.read_text() == "old"
+
+
+def test_stop_during_retry_wait_leaves_cursor_behind_a_queued_marker(tmp_path):
+    stop, cursor = threading.Event(), tmp_path / "cursor"
+    cursor.write_text("old")
+
+    def sleep(seconds):
+        stop.set()
+        return stop.wait(seconds)
+
+    sender = Sender(cursor, [SendError(500, None, "HTTPError")])
+    relay = Relay(sender.send, cursor, RelayOptions(), sleep=sleep)
+    relay.submit(("c1", "alert=a"))
+    relay.submit(("m2", None))
+    relay.run(stop)
+    assert sender.sent == [] and cursor.read_text() == "old"

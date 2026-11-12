@@ -25,8 +25,9 @@ No free-text log line is forwarded.
   with no saved cursor, the newest journal entry's cursor is saved once before following
   (`journalctl -n 1`), so restarts resume right after it, never at `--since=now`.
   If the journal reader dies, the process exits 1. journalctl restarts with backoff.
-- The cursor also advances every 1000 journal entries without alerts, so a restart re-reads
-  at most about that many entries plus the queue.
+- While the queue is not full, the cursor also advances every 1000 non-alert journal entries,
+  so a restart re-reads about that many entries plus the queue. During a delivery outage, or
+  while alerts are dropped, it does not advance that way and a restart can re-read more.
 - journalctl runs under `stdbuf -oL` (coreutils): into a pipe it block-buffers, and a live
   alert would wait until about 4 KiB of later entries arrive.
 - Token: systemd credential `bot-token`; never logged, only exception class and HTTP status.
