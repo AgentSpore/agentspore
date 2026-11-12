@@ -19,13 +19,16 @@ No free-text log line is forwarded.
 
 - Identical texts within 10 minutes are sent once, then `(+N suppressed)`.
 - Queue of 100; oldest dropped when full, shown as `(+N dropped)`.
-- 3 attempts per alert; 429 waits `retry_after` (max 60 s); then the alert is dropped.
+- 3 attempts per alert; 429 waits `retry_after` (max 60 s); 400/401/403/404 are not retried;
+  then the alert is dropped. A dropped alert does not start a dedupe window.
 - The cursor (`$STATE_DIRECTORY/cursor`) moves only after a send or a deliberate drop;
-  first start `--since=now`, later `--after-cursor`. journalctl restarts with backoff.
+  the first non-alert entry also saves a cursor, so a restart does not fall back to
+  `--since=now`; later starts use `--after-cursor`. If the journal reader dies, the process exits 1. journalctl restarts with backoff.
 - Token: systemd credential `bot-token`; never logged, only exception class and HTTP status.
 
 ## Use
 
+    # --config defaults to $CREDENTIALS_DIRECTORY/config (systemd LoadCredential)
     # config.toml: chat_id = "<chat-id>", optional prefix = "[payouts]"
     payout-alerts test --config /etc/payout-alerts/config.toml   # one message, exit 0 on ok
     payout-alerts run  --config /etc/payout-alerts/config.toml   # daemon
