@@ -67,7 +67,7 @@ written; an exclusive file lock serialises concurrent signers.
   is refused with `limit_exceeded` while the single-instruction shape keeps working.
   The signer cannot see whether the recipient account already exists, so every create-then-transfer
   signature counts as one account creation (pessimistic). Each creation costs the
-  wallet about 0.0021 SOL of rent (`getMinimumBalanceForRentExemption(170)`), so the worst-case daily rent spend is the limit
+  wallet about 0.0015 SOL of rent (`getMinimumBalanceForRentExemption(170)`), so the worst-case daily rent spend is the limit
   times that; it must not exceed `max_transfers_24h` (larger values are refused).
 
 ## Upgrade notes

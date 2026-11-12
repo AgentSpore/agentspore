@@ -6,7 +6,7 @@ A $ASPORE payout can now go to a wallet that has no Token-2022 associated token
 account (ATA) yet: the hot wallet creates that account in the same transaction and
 pays its rent. The behaviour is behind the server-side flag `create_recipient_ata`,
 which is off by default; with the flag off nothing changes. Each creation costs the
-hot wallet about 0.0021 SOL (`getMinimumBalanceForRentExemption(170)`) that is never returned to it, so the flag is enabled only
+hot wallet about 0.0015 SOL (`getMinimumBalanceForRentExemption(170)`) that is never returned to it, so the flag is enabled only
 with the signer's creation limit and a funded SOL reserve in place.
 
 Terms used below:
