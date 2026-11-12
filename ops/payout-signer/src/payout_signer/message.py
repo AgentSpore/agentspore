@@ -34,6 +34,8 @@ def validate_message(raw: bytes, signer: Pubkey, mint: Pubkey, decimals: int) ->
         source, mint_key, destination, authority = (keys[i] for i in instruction.accounts)
         data = instruction.data
         amount = int.from_bytes(data[1:9], "little")
+        if wallet is not None:  # the transfer must go to the account this message creates
+            destination = get_associated_token_address(wallet, mint, TOKEN_2022)
         expected = _expected_message(
             (signer, mint, decimals, destination, amount, wallet), message.recent_blockhash
         )
@@ -45,9 +47,7 @@ def validate_message(raw: bytes, signer: Pubkey, mint: Pubkey, decimals: int) ->
     exact = (source, mint_key, authority) == (own_source, mint, signer)
     if not exact or amount < 1 or bytes(expected) != raw:
         raise RejectedMessageError
-    if wallet is None:
-        return Transfer(recipient=str(destination), amount=amount)
-    return Transfer(recipient=str(wallet), amount=amount, creates_ata=True)
+    return Transfer(recipient=str(destination), amount=amount, creates_ata=wallet is not None)
 
 
 def _created_wallet(instruction, keys: list, signer: Pubkey, mint: Pubkey) -> Pubkey:
@@ -59,7 +59,8 @@ def _created_wallet(instruction, keys: list, signer: Pubkey, mint: Pubkey) -> Pu
     ):
         raise RejectedMessageError
     wallet = keys[instruction.accounts[2]]
-    if not wallet.is_on_curve() or wallet in (signer, mint):
+    reserved = (signer, mint, TOKEN_2022, ATA_PROGRAM, SYSTEM_PROGRAM)
+    if not wallet.is_on_curve() or wallet in reserved:
         raise RejectedMessageError
     return wallet
 
