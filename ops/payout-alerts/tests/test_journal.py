@@ -1,7 +1,8 @@
 import json
 import threading
 
-from payout_alerts.journal import UNITS, command, follow, parse_line, seed_cursor
+import payout_alerts.journal as journal
+from payout_alerts.journal import command, follow, parse_line, seed_cursor
 
 ALERT = {"_SYSTEMD_UNIT": "payout-orchestrator.service", "MESSAGE": '{"alert": "a"}'}
 
@@ -9,7 +10,11 @@ ALERT = {"_SYSTEMD_UNIT": "payout-orchestrator.service", "MESSAGE": '{"alert": "
 def test_command_first_start_uses_since_now():
     cmd = command(None)
     assert "--since=now" in cmd and not any(a.startswith("--after-cursor") for a in cmd)
-    assert cmd[0] == "journalctl" and "--follow" in cmd and "--output=json" in cmd
+    assert cmd[2] == "journalctl" and "--follow" in cmd and "--output=json" in cmd
+
+
+def test_command_forces_line_buffered_output():
+    assert command(None)[:2] == ["stdbuf", "-oL"]
 
 
 def test_command_resumes_after_cursor():
@@ -105,7 +110,7 @@ def test_follow_stop_terminates_process(tmp_path):
     assert proc.terminated and len(calls) == 1
 
 
-def test_seed_reads_only_payout_units(tmp_path):
+def test_no_unit_filter_so_new_signer_instances_are_seen(tmp_path):
     seen = []
 
     def run(argv, **_):
@@ -114,5 +119,22 @@ def test_seed_reads_only_payout_units(tmp_path):
 
     seed_cursor(tmp_path / "cursor", run)
     assert seen[0][:2] == ["journalctl", "-n"]
-    for unit in UNITS:
-        assert ["--unit", unit] in [seen[0][i : i + 2] for i in range(len(seen[0]) - 1)]
+    for argv in (seen[0], command(None), command("c0")):
+        assert not any(a == "--unit" or a.startswith("--unit=") for a in argv)
+
+
+def test_marker_after_exactly_mark_every_non_alert_entries(tmp_path, monkeypatch):
+    monkeypatch.setattr(journal, "MARK_EVERY", 3)
+    _, items = run_follow(tmp_path, [Proc([line("c1"), line("c2")])])
+    assert items == []
+    _, items = run_follow(tmp_path, [Proc([line(f"c{n}") for n in range(1, 8)])])
+    assert items == [("c3", None), ("c6", None)]
+
+
+def test_alert_resets_the_marker_count(tmp_path, monkeypatch):
+    monkeypatch.setattr(journal, "MARK_EVERY", 3)
+    lines = [line("c1"), line("c2"), line("c3", '{"alert": "a"}'), line("c4"), line("c5")]
+    _, items = run_follow(tmp_path, [Proc(lines)])
+    assert items == [("c3", "alert=a")]
+    _, items = run_follow(tmp_path, [Proc(lines + [line("c6")])])
+    assert items == [("c3", "alert=a"), ("c6", None)]
