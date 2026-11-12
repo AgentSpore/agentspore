@@ -84,8 +84,8 @@ compiling (`signer_can_fund_ata`). The balance must cover one rent, one signatur
 and the reserve `SIGNER_RESERVE_LAMPORTS`; otherwise the verdict is
 `insufficient_sol` (exit code 15), nothing is compiled or signed and the signer ledger
 is untouched. An RPC failure in this check is `unresolved`. The orchestrator turns any
-non-`compiled` verdict into the alert `compile_insufficient_sol` and releases the
-claim, so the intent is retried on the next tick. Operator action: top up SOL on
+non-`compiled` verdict into the alert `compile_<verdict>` (here
+`compile_insufficient_sol`) and releases the claim, so the intent is retried on the next tick. Operator action: top up SOL on
 `<hot-wallet>`, or turn the flag off.
 
 ## SOL budget inside one tick
