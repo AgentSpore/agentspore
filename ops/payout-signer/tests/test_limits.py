@@ -37,3 +37,11 @@ def test_count_boundary(cfg):
     last = LIMITS["max_transfers_24h"] - 1
     assert within_limits(cfg, Usage(last, 0, {}), Transfer(R, 1))
     assert not within_limits(cfg, Usage(last + 1, 0, {}), Transfer(R, 1))
+
+
+def test_creations_boundary(cfg):
+    last = LIMITS["max_ata_creations_24h"] - 1
+    creating = Transfer(R, 1, creates_ata=True)
+    assert within_limits(cfg, Usage(1, 1, {}, last), creating)
+    assert not within_limits(cfg, Usage(1, 1, {}, last + 1), creating)
+    assert within_limits(cfg, Usage(1, 1, {}, last + 1), Transfer(R, 1))

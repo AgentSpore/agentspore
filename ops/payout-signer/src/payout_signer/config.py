@@ -15,6 +15,7 @@ LIMIT_KEYS = (
     "max_amount_per_recipient_24h",
     "max_amount_total_24h",
     "max_transfers_24h",
+    "max_ata_creations_24h",
 )
 
 
@@ -33,6 +34,7 @@ class Config:
     max_amount_per_recipient_24h: int
     max_amount_total_24h: int
     max_transfers_24h: int
+    max_ata_creations_24h: int
 
     @property
     def paused(self) -> bool:
@@ -78,6 +80,8 @@ def load_config(path: Path) -> Config:
     except ValueError:
         raise ConfigError("mint") from None
     limits = {key: _int(raw, key, 1, MAX_U63) for key in LIMIT_KEYS}
+    if limits["max_ata_creations_24h"] > limits["max_transfers_24h"]:
+        raise ConfigError("max_ata_creations_24h")
     return Config(
         keypair_credential=credential,
         mint=mint,

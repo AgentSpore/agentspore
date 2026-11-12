@@ -104,15 +104,39 @@ def test_count_boundary(env):
 
 
 def test_window_rolls(env):
-    env.write_config(max_transfers_24h=1)
+    env.write_config(max_transfers_24h=1, max_ata_creations_24h=1)
     assert run(env, env.message(1), "a.json", "a.out", now=1000.0) is Verdict.SIGNED
     late = run(env, env.message(2), "b.json", "b.out", now=1000.0 + DAY - 1)
     assert late is Verdict.LIMIT_EXCEEDED
     assert run(env, env.message(3), "c.json", "c.out", now=1000.0 + DAY + 1) is Verdict.SIGNED
 
 
+def test_creations_limit_hit_limit_exceeded(env):
+    for i in range(LIMITS["max_ata_creations_24h"]):
+        assert run(env, env.message_b(), f"{i}.json", f"{i}.out") is Verdict.SIGNED
+    assert run(env, env.message_b(), "x.json", "x.out") is Verdict.LIMIT_EXCEEDED
+    assert not (env.root / "x.out").exists()
+
+
+def test_a_shape_not_counted(env):
+    env.write_config(max_transfers_24h=10, max_ata_creations_24h=1)
+    for i in range(4):
+        assert run(env, env.message(1), f"a{i}.json", f"a{i}.out") is Verdict.SIGNED
+    assert run(env, env.message_b(), "b.json", "b.out") is Verdict.SIGNED
+    assert run(env, env.message_b(), "c.json", "c.out") is Verdict.LIMIT_EXCEEDED
+
+
+def test_replay_not_counted_twice(env):
+    env.write_config(max_ata_creations_24h=1)
+    raw = env.message_b()
+    assert run(env, raw, "a.json", "a.out") is Verdict.SIGNED
+    assert run(env, raw, "b.json", "b.out") is Verdict.REPLAYED
+    with Ledger.locked(env.ledger) as ledger:
+        assert ledger.usage(1_000_001.0).ata_creations == 1
+
+
 def test_replay_identical_and_not_counted(env):
-    env.write_config(max_transfers_24h=1)
+    env.write_config(max_transfers_24h=1, max_ata_creations_24h=1)
     raw = env.message(7)
     assert run(env, raw, "a.json", "a.out") is Verdict.SIGNED
     assert run(env, raw, "b.json", "b.out") is Verdict.REPLAYED
