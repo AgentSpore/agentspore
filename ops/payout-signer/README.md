@@ -10,7 +10,7 @@ signing key never enters the internet-facing backend container.
 - Backend compromise: the attacker can submit any request file, but the signer
   signs only one exact Token-2022 `TransferChecked` from its own associated
   account for the configured mint and decimals, and only within the configured
-  amount, recipient, total and count limits over a rolling 24 hours. Anything else
+  amount, recipient, total, count and account-creation limits over a rolling 24 hours. Anything else
   is refused. The transfer may be preceded by one associated-token-account
   `CreateIdempotent` paid by the signer; it is signed only if the new account is the
   derived Token-2022 account of the transfer's recipient wallet (on-curve, not the
@@ -45,8 +45,8 @@ output file is created exclusively with mode 0600; existing paths and symbolic
 links are refused. The ledger row is committed and fsynced before the output is
 written; an exclusive file lock serialises concurrent signers.
 
-`status` prints numbers only: usage in the last 24 hours against each limit, and
-whether the pause file exists.
+`status` prints numbers only: usage in the last 24 hours against each limit
+(including `ata_creations`), and whether the pause file exists.
 
 ## Config (TOML, every key required, no defaults, unknown keys refused)
 
@@ -59,8 +59,20 @@ whether the pause file exists.
 - `ledger_path`: absolute path of the sqlite ledger (created 0600) of issued
   signatures.
 - `max_amount_per_transfer`, `max_amount_per_recipient_24h`,
-  `max_amount_total_24h`, `max_transfers_24h`: positive integers in raw base units
-  (a count for the last one).
+  `max_amount_total_24h`: positive integers in raw base units.
+- `max_transfers_24h`, `max_ata_creations_24h`: positive counts. The signer cannot
+  see whether the recipient account already exists, so every create-then-transfer
+  signature counts as one account creation (pessimistic). Each creation costs the
+  wallet about 0.0015 SOL of rent, so the worst-case daily rent spend is the limit
+  times that; it must not exceed `max_transfers_24h` (larger values are refused).
+
+## Upgrade notes
+
+`max_ata_creations_24h` is a new required key. A config without it is refused
+(`config_error`, exit 14); a config with it is refused by an older signer (unknown
+key). Replace the signer and add the key in the same maintenance window, under the
+pause file. An existing ledger gets its `creates_ata` column (default 0) on first
+open, under the file lock; earlier rows count as non-creations.
 
 ## systemd example
 
