@@ -1,6 +1,7 @@
 """Telegram Bot API sender. The token lives in one private attribute; the URL carrying it is
 built inside `send` and never reaches a log line or an exception message."""
 
+import http.client
 import json
 import os
 import urllib.error
@@ -24,6 +25,8 @@ def read_token() -> str:
 
 
 class TelegramSender:
+    """Sends text to one chat; holds the bot token privately."""
+
     def __init__(
         self,
         token: str,
@@ -46,18 +49,18 @@ class TelegramSender:
         request = urllib.request.Request(url, data=data, method="POST")  # noqa: S310 (url is the fixed https://api.telegram.org prefix, scheme cannot vary)
         try:
             with self._opener(request, timeout=self._timeout) as response:
-                ok = json.loads(response.read()).get("ok") is True
+                answer = json.loads(response.read())
         except urllib.error.HTTPError as exc:
             raise SendError(exc.code, _retry_after(exc), type(exc).__name__) from None
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, http.client.HTTPException) as exc:
             raise SendError(None, None, type(exc).__name__) from None
-        if not ok:
+        if not (isinstance(answer, dict) and answer.get("ok") is True):
             raise SendError(None, None, "NotOk")
 
 
 def _retry_after(exc: urllib.error.HTTPError) -> float | None:
     try:
         value = json.loads(exc.read())["parameters"]["retry_after"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, http.client.HTTPException):
         return None
     return float(value) if isinstance(value, int | float) else None

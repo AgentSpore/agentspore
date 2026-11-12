@@ -86,3 +86,38 @@ def test_failure_logs_class_and_status_only(tmp_path, caplog):
     relay, _, _, _, _ = make(tmp_path, failures=[SendError(401, None, "HTTPError")] * 3)
     relay.process(("c1", "alert=a"))
     assert "HTTPError" in caplog.text and "401" in caplog.text
+
+
+def test_dedupe_marked_only_after_successful_send(tmp_path):
+    err = SendError(None, None, "OSError")
+    relay, sender, clock, _, _ = make(tmp_path, failures=[err] * 3)
+    relay.process(("c1", "alert=a"))
+    clock.now = 60
+    relay.process(("c2", "alert=a"))
+    assert sender.sent == ["alert=a"]
+
+
+def test_stop_during_retry_wait_ends_retries_and_keeps_cursor(tmp_path):
+    relay, sender, _, _, cursor = make(tmp_path, failures=[SendError(500, None, "HTTPError")] * 3)
+    relay._sleep = lambda seconds: True
+    cursor.write_text("old")
+    relay.process(("c1", "alert=a"))
+    assert len(sender.seen_cursor) == 1 and cursor.read_text() == "old"
+
+
+def test_permanent_4xx_not_retried(tmp_path):
+    relay, sender, _, sleeps, _ = make(tmp_path, failures=[SendError(401, None, "HTTPError")] * 3)
+    relay.process(("c1", "alert=a"))
+    assert len(sender.seen_cursor) == 1 and sleeps == []
+
+
+def test_suppressed_count_survives_failed_send(tmp_path):
+    relay, sender, clock, _, _ = make(tmp_path, window=600)
+    relay.process(("c1", "alert=a"))
+    clock.now = 10
+    relay.process(("c2", "alert=a"))
+    clock.now = 700
+    sender.failures = [SendError(None, None, "OSError")] * 3
+    relay.process(("c3", "alert=a"))
+    relay.process(("c4", "alert=a"))
+    assert sender.sent[-1] == "alert=a (+1 suppressed)"
