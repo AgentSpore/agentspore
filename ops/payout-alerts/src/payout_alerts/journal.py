@@ -13,14 +13,16 @@ from .relay import Item, read_cursor, write_cursor
 log = logging.getLogger("payout_alerts")
 UNITS = ("payout-orchestrator.service", "payout-signer@*.service")
 MAX_BACKOFF = 60.0
-JOURNAL_TAIL = ["journalctl", "-n", "1", "--output=json", "--no-pager"]
+UNIT_ARGS = [arg for unit in UNITS for arg in ("--unit", unit)]
+# Seed with the follow filter: on journalctl before v256 `--after-cursor` skips one entry
+# blindly, so a cursor outside the filter would drop the first payout entry after it.
+JOURNAL_TAIL = ["journalctl", "-n", "1", "--output=json", "--no-pager", *UNIT_ARGS]
 
 
 def command(cursor: str | None) -> list[str]:
     """journalctl argv; the cursor is our own, advanced only after delivery."""
     start = f"--after-cursor={cursor}" if cursor else "--since=now"
-    units = [arg for unit in UNITS for arg in ("--unit", unit)]
-    return ["journalctl", "--follow", "--output=json", "--no-pager", start, *units]
+    return ["journalctl", "--follow", "--output=json", "--no-pager", start, *UNIT_ARGS]
 
 
 def parse_line(line: str) -> tuple[str | None, str | None]:
@@ -36,7 +38,7 @@ def parse_line(line: str) -> tuple[str | None, str | None]:
 
 
 def seed_cursor(cursor_path: Path, run: Callable) -> None:
-    """With no saved cursor, save the newest journal entry's, so the first start and every
+    """With no saved cursor, save the newest payout-unit entry's, so the first start and every
     later restart resume right after it instead of at `--since=now`. Nothing is saved when
     the journal cannot be read or is empty."""
     if read_cursor(cursor_path) is not None:

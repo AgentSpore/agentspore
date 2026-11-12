@@ -1,7 +1,7 @@
 import json
 import threading
 
-from payout_alerts.journal import command, follow, parse_line
+from payout_alerts.journal import UNITS, command, follow, parse_line, seed_cursor
 
 ALERT = {"_SYSTEMD_UNIT": "payout-orchestrator.service", "MESSAGE": '{"alert": "a"}'}
 
@@ -103,3 +103,16 @@ def test_follow_stop_terminates_process(tmp_path):
     proc = Proc([line("c1"), line("c2")], on_read=stop.set)
     calls, _ = run_follow(tmp_path, [proc], stop)
     assert proc.terminated and len(calls) == 1
+
+
+def test_seed_reads_only_payout_units(tmp_path):
+    seen = []
+
+    def run(argv, **_):
+        seen.append(argv)
+        return Seed("c0")
+
+    seed_cursor(tmp_path / "cursor", run)
+    assert seen[0][:2] == ["journalctl", "-n"]
+    for unit in UNITS:
+        assert ["--unit", unit] in [seen[0][i : i + 2] for i in range(len(seen[0]) - 1)]
