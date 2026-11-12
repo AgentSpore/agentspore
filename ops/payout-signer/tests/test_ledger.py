@@ -1,4 +1,5 @@
 import multiprocessing
+import sqlite3
 import stat
 
 from payout_signer.config import load_config
@@ -34,6 +35,24 @@ def test_usage_sums_per_recipient(env):
         ledger.record("c", "r2", 3, now=1.0)
         usage = ledger.usage(2.0)
     assert (usage.transfers, usage.total, usage.per_recipient) == (3, 15, {"r1": 12, "r2": 3})
+
+
+def test_old_ledger_gets_column(env):
+    old = sqlite3.connect(env.ledger)
+    old.execute(
+        "CREATE TABLE signatures (message_digest TEXT PRIMARY KEY, recipient TEXT NOT NULL,"
+        " amount TEXT NOT NULL, signed_at INTEGER NOT NULL) WITHOUT ROWID"
+    )
+    old.execute("INSERT INTO signatures VALUES ('old', 'r', '5', 1000)")
+    old.commit()
+    old.close()
+    for _ in range(2):  # a second open must not try to add the column again
+        with Ledger.locked(env.ledger) as ledger:
+            assert ledger.usage(1001.0).ata_creations == 0
+    with Ledger.locked(env.ledger) as ledger:
+        ledger.record("new", "w", 1, now=1002.0, creates_ata=True)
+        usage = ledger.usage(1003.0)
+    assert (usage.transfers, usage.ata_creations) == (2, 1)
 
 
 def _worker(barrier, config_path, index):

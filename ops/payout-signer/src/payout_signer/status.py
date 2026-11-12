@@ -17,6 +17,7 @@ def status(config_path: Path, now: float | None = None) -> dict:
         "window_seconds": WINDOW_SECONDS,
         "transfers": {"used": usage.transfers, "limit": config.max_transfers_24h},
         "total": {"used": usage.total, "limit": config.max_amount_total_24h},
+        "ata_creations": {"used": usage.ata_creations, "limit": config.max_ata_creations_24h},
         "recipient_max": {
             "used": max(usage.per_recipient.values(), default=0),
             "limit": config.max_amount_per_recipient_24h,

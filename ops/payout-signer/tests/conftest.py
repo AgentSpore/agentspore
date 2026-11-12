@@ -24,6 +24,7 @@ LIMITS = {
     "max_amount_per_recipient_24h": 1500,
     "max_amount_total_24h": 2500,
     "max_transfers_24h": 3,
+    "max_ata_creations_24h": 2,
 }
 DECIMALS = 6
 
