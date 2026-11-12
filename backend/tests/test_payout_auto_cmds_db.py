@@ -416,16 +416,20 @@ async def test_pending_lists_unfinished_before_confirmed(prepared, configure, al
     configure(intent)
     rpc = reconciled.Rpc(intent.genesis_hash, reconciled.build_receipt(intent, wire))
     assert (await auto("auto-reconcile", maker, key, rpc))[0] == 0
-    # A later id would sort after the confirmed one by id alone; ordering must still put it first.
-    for number in range(512):
-        async with maker.begin() as db:
-            other = await admit_intent(
-                PayoutDeliveryRepository(db),
-                allocation.model_copy(update={"allocation_id": f"o{number}"}),
-            )
-        if UUID(other["intent_id"]) > UUID(key["intent_id"]):
-            break
-    assert UUID(other["intent_id"]) > UUID(key["intent_id"])
+    # An id above every random v4 id would sort after the confirmed one by id alone;
+    # ordering must still put the unfinished intent first.
+    top = UUID(int=2**128 - 1)
+    async with maker.begin() as db:
+        other = await admit_intent(
+            PayoutDeliveryRepository(db), allocation.model_copy(update={"allocation_id": "o0"})
+        )
+        await db.execute(text("SET LOCAL session_replication_role = replica"))
+        await db.execute(
+            text("UPDATE payout_delivery_intents SET intent_id = :top WHERE intent_id = :old"),
+            {"top": top, "old": other["intent_id"]},
+        )
+    other["intent_id"] = str(top)
+    assert top > UUID(key["intent_id"])
     code, body = await pending(maker, limit=1000)
     phases = [(item["intent_id"], item["phase"]) for item in body["intents"]]
     assert code == 0 and phases[-1] == (key["intent_id"], "confirmed")
