@@ -46,6 +46,8 @@ def test_unsafe_values_replaced_and_unknown_keys_dropped():
 def failed(result="exit-code", unit="payout-signer@a.1.service"):
     return {
         "_SYSTEMD_UNIT": "init.scope",
+        "_PID": "1",
+        "_UID": "0",
         "MESSAGE_ID": UNIT_FAILED_ID,
         "UNIT": unit,
         "UNIT_RESULT": result,
@@ -61,3 +63,9 @@ def test_unit_failed_success_foreign_and_unsafe_result():
     assert alert_text(failed(result="success")) is None
     assert alert_text(failed(unit="nginx.service")) is None
     assert alert_text(failed(result="bad result!")) == "unit_failed payout-signer@a.1.service ?"
+
+
+def test_unit_failed_from_another_process_is_ignored():
+    for pid, uid in (("4242", "1000"), ("4242", "0"), ("1", "1000"), (None, None)):
+        forged = {**failed(), "_PID": pid, "_UID": uid}
+        assert alert_text(forged) is None

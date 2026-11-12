@@ -24,6 +24,11 @@ def alert_text(entry: dict) -> str | None:
 
 
 def _unit_failed(entry: dict) -> str | None:
+    # INVARIANT(#182): only PID 1 may report a failed unit. MESSAGE_ID, UNIT and UNIT_RESULT are
+    # set by the sender, and any local user can write to the journal; `_PID`/`_UID` are set by
+    # journald from the sender's credentials. (`journalctl --unit` used to do this check.)
+    if entry.get("_PID") != "1" or entry.get("_UID") != "0":
+        return None
     unit, result = entry.get("UNIT"), entry.get("UNIT_RESULT")
     if isinstance(unit, str) and WATCHED_UNIT.fullmatch(unit) and result and result != "success":
         return f"unit_failed {unit} {safe(result)}"
