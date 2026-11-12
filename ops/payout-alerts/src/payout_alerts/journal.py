@@ -11,12 +11,12 @@ from .parse import alert_text
 from .relay import Item, read_cursor, write_cursor
 
 log = logging.getLogger("payout_alerts")
-UNITS = ("payout-orchestrator.service", "payout-signer@*.service")
 MAX_BACKOFF = 60.0
-UNIT_ARGS = [arg for unit in UNITS for arg in ("--unit", unit)]
-# Seed with the follow filter: on journalctl before v256 `--after-cursor` skips one entry
-# blindly, so a cursor outside the filter would drop the first payout entry after it.
-JOURNAL_TAIL = ["journalctl", "-n", "1", "--output=json", "--no-pager", *UNIT_ARGS]
+# INVARIANT(#182): no `--unit` filter. journalctl expands a `--unit` glob once, at start,
+# against unit names already in the journal, so every new `payout-signer@<intent>.<epoch>`
+# instance would be invisible; parse.WATCHED_UNIT does the filtering instead. Unfiltered,
+# the seed cursor also always names an entry the follow command will see.
+JOURNAL_TAIL = ["journalctl", "-n", "1", "--output=json", "--no-pager"]
 
 
 def command(cursor: str | None) -> list[str]:
@@ -32,7 +32,6 @@ def command(cursor: str | None) -> list[str]:
         "--output=json",
         "--no-pager",
         start,
-        *UNIT_ARGS,
     ]
 
 
@@ -49,7 +48,7 @@ def parse_line(line: str) -> tuple[str | None, str | None]:
 
 
 def seed_cursor(cursor_path: Path, run: Callable) -> None:
-    """With no saved cursor, save the newest payout-unit entry's, so the first start and every
+    """With no saved cursor, save the newest journal entry's, so the first start and every
     later restart resume right after it instead of at `--since=now`. Nothing is saved when
     the journal cannot be read or is empty."""
     if read_cursor(cursor_path) is not None:
