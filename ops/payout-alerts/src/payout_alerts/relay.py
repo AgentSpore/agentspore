@@ -15,7 +15,7 @@ log = logging.getLogger("payout_alerts")
 MAX_WAIT = 60.0
 PERMANENT = frozenset({400, 401, 403, 404})
 
-Item = tuple[str, str]  # (journal cursor, alert text)
+Item = tuple[str, str | None]  # (journal cursor, alert text); text None = cursor marker
 
 
 def read_cursor(path: Path) -> str | None:
@@ -60,15 +60,18 @@ class Relay:
         self._dropped = 0
 
     def submit(self, item: Item) -> None:
-        """Queue an item; when full the oldest is dropped and counted."""
+        """Queue an item; when full the oldest alert is dropped and counted. A cursor marker
+        never evicts anything: on a full queue it is discarded, uncounted."""
         while True:
             try:
                 self._queue.put_nowait(item)
                 return
             except queue.Full:
+                if item[1] is None:
+                    return
                 try:
-                    self._queue.get_nowait()
-                    self._dropped += 1
+                    if self._queue.get_nowait()[1] is not None:
+                        self._dropped += 1
                 except queue.Empty:
                     pass
 
@@ -82,8 +85,12 @@ class Relay:
             self.process(item)
 
     def process(self, item: Item) -> None:
-        """Send one alert unless it is a recent duplicate, then advance the cursor."""
+        """Send one alert unless it is a recent duplicate, then advance the cursor; a marker
+        (no text) only advances the cursor."""
         cursor, text = item
+        if text is None:
+            write_cursor(self._cursor_path, cursor)
+            return
         admitted = self._admit(text)
         sent = self._deliver(admitted[0]) if admitted is not None else False
         if sent is None:
