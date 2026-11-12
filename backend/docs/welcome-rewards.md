@@ -119,11 +119,15 @@ frozen or available, or application with a current allow decision. They are read
 pages ordered by creation time, so a grant that is skipped never hides a later payable one,
 up to 500 grants per run. With `--apply`, each is handled in its own transaction: reservation
 is advanced until the reward is available, and the wallet's Token-2022 associated token account
-must already exist on chain as an initialized account of the program mint owned by that
-wallet. The chain is queried through the server-side network configuration outside the
-database transaction, after one check per run that the endpoint serves the trusted network
-(otherwise nothing is linked and the exit code is 9). No rent is paid for missing accounts,
-so those grants are skipped as `no_token_account` until the account appears. The intent
+is checked on chain. The chain is queried through the server-side network configuration outside
+the database transaction, after one check per run that the endpoint serves the trusted network
+(otherwise nothing is linked and the exit code is 9). With `create_recipient_ata` off (the
+default) the account must already exist as an initialized account of the program mint owned
+by that wallet; no rent is paid, and other grants are skipped as `no_token_account` until the
+account appears. With the flag on, a missing account is accepted and the payout creates it,
+paid by the hot wallet; an unusable account at that address is skipped as `bad_token_account`
+and an unusual wallet as `invalid_wallet`
+([PAYOUT_RECIPIENT_ATA.md](../../docs/PAYOUT_RECIPIENT_ATA.md#link-verdicts-backendappserviceswelcome_payout_link_servicepy)). The intent
 carries the exact grant amount, the configured signer as authority and fee payer, and the
 configured source account.
 

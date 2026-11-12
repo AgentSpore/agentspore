@@ -105,6 +105,12 @@ return its old status) and applies the sandbox.
   request has expired; deleting the whole key lets the next tick sign again while an
   earlier signature may still be valid). For `request_malformed`/`signer_rejected` also
   remove the `<intent>.<epoch>.*` handoff files. Then resume.
+- `compile_<verdict>`: `auto-compile` answered something other than `compiled`; the claim
+  is released and the next tick tries again. `compile_insufficient_sol` appears only with
+  the backend flag `create_recipient_ata` on: the hot wallet lacks SOL for one account rent,
+  the fee and the reserve. Nothing was signed; fund the hot wallet or turn the flag off.
+  Keep `per_tick` times that rent below the reserve, because the check sees one finalized
+  balance for every compile of a tick ([PAYOUT_RECIPIENT_ATA.md](../../docs/PAYOUT_RECIPIENT_ATA.md#sol-budget-inside-one-tick)).
 - Any other unexpected error in one intent is alerted as `step_error` with the exception
   class name only; the remaining intents still run.
 - Stuck intent: a journal entry blocks recompiling until the old request expired. Do
