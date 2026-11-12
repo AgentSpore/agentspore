@@ -46,7 +46,12 @@ def line(cursor, message="x"):
     return json.dumps(entry) + "\n"
 
 
-def run_follow(tmp_path, procs, stop=None):
+class Seed:
+    def __init__(self, cursor=None):
+        self.stdout = json.dumps({"__CURSOR": cursor}) + "\n" if cursor else ""
+
+
+def run_follow(tmp_path, procs, stop=None, seed=None):
     stop, calls, items = stop or threading.Event(), [], []
 
     def popen(cmd, **kwargs):
@@ -56,7 +61,7 @@ def run_follow(tmp_path, procs, stop=None):
             return Proc([])
         return procs.pop(0)
 
-    follow(tmp_path / "cursor", items.append, stop, popen=popen)
+    follow(tmp_path / "cursor", items.append, stop, popen, lambda *a, **k: Seed(seed))
     return calls, items
 
 
@@ -67,9 +72,23 @@ def test_follow_restarts_after_last_cursor_even_for_non_alerts(tmp_path):
     assert "--since=now" in calls[0] and "--after-cursor=c2" in calls[1]
 
 
-def test_follow_persists_first_non_alert_cursor(tmp_path):
+def test_follow_seeds_cursor_from_latest_entry_before_following(tmp_path):
+    calls, _ = run_follow(tmp_path, [Proc([])], seed="c0")
+    assert (tmp_path / "cursor").read_text() == "c0"
+    assert "--after-cursor=c0" in calls[0]
+
+
+def test_crash_before_send_resumes_before_the_alert(tmp_path):
+    first = Proc([line("c1", '{"alert": "a"}'), line("c2")])
+    run_follow(tmp_path, [first], seed="c0")
+    calls, items = run_follow(tmp_path, [Proc([])])
+    assert items == [] and "--after-cursor=c0" in calls[0]
+    assert (tmp_path / "cursor").read_text() == "c0"
+
+
+def test_follow_does_not_write_cursor_for_entries(tmp_path):
     run_follow(tmp_path, [Proc([line("c1"), line("c2")])])
-    assert (tmp_path / "cursor").read_text() == "c1"
+    assert not (tmp_path / "cursor").exists()
 
 
 def test_follow_resumes_from_cursor_file_and_keeps_it(tmp_path):

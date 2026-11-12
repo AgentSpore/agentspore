@@ -97,6 +97,14 @@ def test_dedupe_marked_only_after_successful_send(tmp_path):
     assert sender.sent == ["alert=a"]
 
 
+def test_stop_during_retry_wait_ends_retries_and_keeps_cursor(tmp_path):
+    relay, sender, _, _, cursor = make(tmp_path, failures=[SendError(500, None, "HTTPError")] * 3)
+    relay._sleep = lambda seconds: True
+    cursor.write_text("old")
+    relay.process(("c1", "alert=a"))
+    assert len(sender.seen_cursor) == 1 and cursor.read_text() == "old"
+
+
 def test_permanent_4xx_not_retried(tmp_path):
     relay, sender, _, sleeps, _ = make(tmp_path, failures=[SendError(401, None, "HTTPError")] * 3)
     relay.process(("c1", "alert=a"))

@@ -85,7 +85,10 @@ class Relay:
         """Send one alert unless it is a recent duplicate, then advance the cursor."""
         cursor, text = item
         admitted = self._admit(text)
-        if admitted is not None and self._deliver(admitted[0]):
+        sent = self._deliver(admitted[0]) if admitted is not None else False
+        if sent is None:
+            return
+        if admitted is not None and sent:
             now = self._clock()
             self._seen = {k: v for k, v in self._seen.items() if now - v[0] < self._window}
             self._seen[text] = (now, 0)
@@ -105,8 +108,9 @@ class Relay:
         notes += [f"+{dropped} dropped"] if dropped else []
         return (f"{text} ({', '.join(notes)})" if notes else text), dropped
 
-    def _deliver(self, body: str) -> bool:
-        """True when sent. Permanent 4xx answers are not retried: the alert is dropped."""
+    def _deliver(self, body: str) -> bool | None:
+        """True when sent, False when dropped (permanent 4xx or retries used up), None when
+        a retry wait was interrupted by stop: the cursor must then stay where it is."""
         for attempt in range(1, self._attempts + 1):
             try:
                 self._send(body)
@@ -115,7 +119,9 @@ class Relay:
                 log.warning("send failed: %s status=%s attempt=%d", exc.kind, exc.status, attempt)
                 if exc.status in PERMANENT:
                     break
-                if attempt < self._attempts:
-                    self._sleep(min(exc.retry_after or 2.0**attempt, MAX_WAIT))
+                if attempt < self._attempts and self._sleep(
+                    min(exc.retry_after or 2.0**attempt, MAX_WAIT)
+                ):
+                    return None
         log.error("alert dropped after failed send")
         return False
