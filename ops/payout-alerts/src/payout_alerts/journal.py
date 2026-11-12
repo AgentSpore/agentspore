@@ -63,6 +63,16 @@ def seed_cursor(cursor_path: Path, run: Callable) -> None:
         write_cursor(cursor_path, cursor)
 
 
+def next_item(cursor: str | None, text: str | None, quiet: int) -> tuple[Item | None, int]:
+    """(item to submit, new count of entries since the last submit): an alert, or a marker
+    once MARK_EVERY non-alert entries have passed."""
+    if not cursor:
+        return None, quiet
+    if text or quiet + 1 >= MARK_EVERY:
+        return (cursor, text), 0
+    return None, quiet + 1
+
+
 def follow(
     cursor_path: Path,
     submit: Callable[[Item], None],
@@ -80,11 +90,9 @@ def follow(
             backoff = 1.0
             cursor, text = parse_line(line)
             last = cursor or last
-            if cursor:
-                quiet = 0 if text else quiet + 1
-                if text or quiet >= MARK_EVERY:
-                    submit((cursor, text))
-                    quiet = 0
+            item, quiet = next_item(cursor, text, quiet)
+            if item:
+                submit(item)
             if stop.is_set():
                 proc.terminate()
                 return
