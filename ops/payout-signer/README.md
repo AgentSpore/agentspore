@@ -15,7 +15,9 @@ signing key never enters the internet-facing backend container.
   `CreateIdempotent` paid by the signer; it is signed only if the new account is the
   derived Token-2022 account of an on-curve recipient wallet (not the signer, the mint
   or a program id), the transfer pays exactly that account, and the whole message
-  equals the signer's own build byte for byte.
+  equals the signer's own build byte for byte. The backend produces this shape only with
+  its `create_recipient_ata` flag on ([PAYOUT_RECIPIENT_ATA.md](../../docs/PAYOUT_RECIPIENT_ATA.md)).
+  The signer does not inspect mint extensions; the backend's pre-send mint check does.
 - Host root compromise: the key is readable, so the loss is bounded by the hot
   wallet balance. Keep that balance small.
 - The ledger is local state on the host; the signer trusts it. Deleting it resets
@@ -65,7 +67,7 @@ written; an exclusive file lock serialises concurrent signers.
   is refused with `limit_exceeded` while the single-instruction shape keeps working.
   The signer cannot see whether the recipient account already exists, so every create-then-transfer
   signature counts as one account creation (pessimistic). Each creation costs the
-  wallet about 0.0015 SOL of rent, so the worst-case daily rent spend is the limit
+  wallet about 0.0015 SOL of rent (`getMinimumBalanceForRentExemption(170)`), so the worst-case daily rent spend is the limit
   times that; it must not exceed `max_transfers_24h` (larger values are refused).
 
 ## Upgrade notes

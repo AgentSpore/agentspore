@@ -135,9 +135,11 @@ otherwise it mounts an empty placeholder directory and leaves the setting empty,
 without the file starts as before and the payout commands answer `configuration_error`
 (fail closed). Put the file at `<that dir>/network.json`, owner `root`, mode `0600`
 (group or other bits are refused). A directory is mounted, not the file, so replacing the
-file keeps the mount current; restart the backend after changing it. The compose file also
+file keeps the mount current; each backend CLI call reads it anew, no restart. The compose file also
 gives the container a small `tmpfs` at `/run/payout`, where `auto-compile` writes request
 files that the orchestrator copies out and removes.
+
+Rollout order and rollback for the `create_recipient_ata` flag: [PAYOUT_RECIPIENT_ATA.md](../../docs/PAYOUT_RECIPIENT_ATA.md#enabling).
 
 ## Pause and resume
 
