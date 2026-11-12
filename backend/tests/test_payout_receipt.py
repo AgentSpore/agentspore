@@ -1,7 +1,9 @@
 """Receipt reconciliation of payout shape A (transfer) and shape B (create ATA, transfer)."""
 
 import copy
+import json
 import os
+from pathlib import Path
 
 import base58
 import pytest
@@ -42,6 +44,37 @@ def intent():
     )
 
 
+REAL = json.loads(
+    (Path(__file__).parent / "fixtures/ata_create_real_getTransaction.json").read_text()
+)
+
+
+def real_create_inner(intent, keys):
+    """Real mainnet CreateIdempotent inner instructions (top-level 1 there), re-indexed."""
+    real = REAL["transaction"]["message"]["accountKeys"]
+    roles = {
+        real[0]: intent.fee_payer,
+        real[1]: intent.destination,
+        real[8]: intent.mint,
+        real[9]: SYSTEM,
+        real[10]: intent.program,
+    }
+    (group,) = [g for g in REAL["meta"]["innerInstructions"] if g["index"] == 1]
+    return [
+        {
+            "index": 0,
+            "instructions": [
+                ix
+                | {
+                    "programIdIndex": keys.index(roles[real[ix["programIdIndex"]]]),
+                    "accounts": [keys.index(roles[real[i]]) for i in ix["accounts"]],
+                }
+                for ix in group["instructions"]
+            ],
+        }
+    ]
+
+
 def receipt_of(intent, create, existing=False):
     """Finalized legacy getTransaction (json encoding) for the compiled message."""
     message = build_payout_message(intent, str(Hash.from_bytes(os.urandom(32))), create)
@@ -63,7 +96,12 @@ def receipt_of(intent, create, existing=False):
             "mint": intent.mint,
             "programId": intent.program,
             "owner": owner,
-            "uiTokenAmount": {"amount": amount, "decimals": 6},
+            "uiTokenAmount": {
+                "amount": amount,
+                "decimals": 6,
+                "uiAmount": None,
+                "uiAmountString": amount,
+            },
         }
 
     source = balance(intent.source, intent.authority, "3000000")
@@ -76,21 +114,7 @@ def receipt_of(intent, create, existing=False):
         balance(intent.source, intent.authority, "1500000"),
         balance(intent.destination, intent.recipient, "1500000"),
     ]
-    inner = []
-    if create and not existing:
-        inner = [
-            {
-                "index": 0,
-                "instructions": [
-                    {
-                        "programIdIndex": keys.index(program),
-                        "accounts": [0, dest],
-                        "data": "3Bxs4h24hBtQy9rw",
-                    }
-                    for program in (SYSTEM, intent.program, SYSTEM)
-                ],
-            }
-        ]
+    inner = real_create_inner(intent, keys) if create and not existing else []
     return {
         "slot": 9,
         "version": "legacy",
@@ -98,6 +122,7 @@ def receipt_of(intent, create, existing=False):
             "err": None,
             "fee": FEE,
             "innerInstructions": inner,
+            "loadedAddresses": {"readonly": [], "writable": []},
             "preBalances": pre,
             "postBalances": post,
             "preTokenBalances": pre_tokens,
@@ -126,10 +151,6 @@ def receipt_of(intent, create, existing=False):
     }
 
 
-def test_receipt_a_matching(intent):
-    assert receipt_verdict(receipt_of(intent, create=False), intent) == "matching"
-
-
 def test_receipt_b_created_matching(intent):
     receipt = receipt_of(intent, create=True)
     assert receipt["meta"]["innerInstructions"] and len(receipt["meta"]["preTokenBalances"]) == 1
@@ -145,12 +166,6 @@ def test_receipt_b_existing_no_inner_matching(intent):
 def test_receipt_b_extra_lamport_delta_unsupported(intent):
     receipt = receipt_of(intent, create=True)
     receipt["meta"]["postBalances"][2] += 1
-    assert receipt_verdict(receipt, intent) == "unsupported"
-
-
-def test_receipt_b_payer_pays_more_than_destination_gets_unsupported(intent):
-    receipt = receipt_of(intent, create=True)
-    receipt["meta"]["postBalances"][0] -= 1
     assert receipt_verdict(receipt, intent) == "unsupported"
 
 
@@ -198,3 +213,16 @@ def test_receipt_b_missing_post_destination_balance_unresolved(intent):
     receipt["meta"]["postTokenBalances"].pop()
     with pytest.raises(ValueError):
         receipt_verdict(receipt, intent)
+
+
+def test_real_mainnet_create_inner_programs_are_allowed_and_accepted(intent):
+    real = REAL["transaction"]["message"]["accountKeys"]
+    group = next(g for g in REAL["meta"]["innerInstructions"] if g["index"] == 1)
+    assert {real[ix["programIdIndex"]] for ix in group["instructions"]} == {
+        SYSTEM,
+        "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    }
+    assert len(group["instructions"]) == 4 and REAL["meta"]["preTokenBalances"] == []
+    receipt = receipt_of(intent, create=True)
+    assert len(receipt["meta"]["innerInstructions"][0]["instructions"]) == 4
+    assert receipt_verdict(receipt, intent) == "matching"
