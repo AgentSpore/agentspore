@@ -89,7 +89,10 @@ class Relay:
         (no text) only advances the cursor."""
         cursor, text = item
         if text is None:
-            write_cursor(self._cursor_path, cursor)
+            # INVARIANT(#182): while an evicted alert is counted only in memory (`_dropped`),
+            # a marker must not move the cursor past it, or a restart loses that alert silently.
+            if not self._dropped:
+                write_cursor(self._cursor_path, cursor)
             return
         admitted = self._admit(text)
         sent = self._deliver(admitted[0]) if admitted is not None else False
