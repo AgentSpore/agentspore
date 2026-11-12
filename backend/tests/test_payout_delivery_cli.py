@@ -15,6 +15,7 @@ from solders.hash import Hash
 from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.signature import Signature
+from solders.token.associated import get_associated_token_address
 from spl.token.constants import TOKEN_2022_PROGRAM_ID
 from spl.token.instructions import TransferCheckedParams, transfer_checked
 
@@ -24,7 +25,8 @@ from app.cli.payout_delivery import run
 @pytest.fixture(params=[False, True], ids=["distinct-payer", "shared-payer"])
 def transfer_message(request):
     keys = [Pubkey.from_bytes(bytes([n]) * 32) for n in range(1, 7)]
-    payer, authority, source, destination, mint, recipient = keys
+    payer, authority, source, _, mint, recipient = keys
+    destination = get_associated_token_address(recipient, mint, TOKEN_2022_PROGRAM_ID)
     if request.param:
         payer = authority
     instruction = transfer_checked(

@@ -278,7 +278,9 @@ async def manage_claim(repo: PayoutDeliveryRepository, command: str, request: Cl
     }
 
 
-async def compile_payout(repo: PayoutDeliveryRepository, request: CompileRequest) -> dict:
+async def compile_payout(
+    repo: PayoutDeliveryRepository, request: CompileRequest, create_ata: bool = False
+) -> dict:
     """Read an actual live fence and compile only to an internal private-artifact result."""
     parent = await repo.lock_intent(request)
     if parent is None:
@@ -288,7 +290,7 @@ async def compile_payout(repo: PayoutDeliveryRepository, request: CompileRequest
     intent = TransferIntent.model_validate(
         {name: parent[name] for name in TransferIntent.model_fields}
     )
-    artifact = compile_signing_request(intent, request)
+    artifact = compile_signing_request(intent, request, create_ata)
     return {
         "verdict": "compiled",
         "intent_id": str(request.intent_id),
@@ -370,12 +372,13 @@ async def handle_payout_request(
     repo: PayoutDeliveryRepository,
     command: str,
     request: AllocationKey | AllocationIntent | ClaimKey,
+    create_ata: bool = False,
 ) -> dict:
     """Dispatch validated operator requests to the actual domain operations."""
     if isinstance(request, SignedEnvelope):
         return await prepare_attempt(repo, request)
     if isinstance(request, CompileRequest):
-        return await compile_payout(repo, request)
+        return await compile_payout(repo, request, create_ata)
     if command == "attempt-show" and isinstance(request, ClaimKey):
         return await show_attempt(repo, request)
     if isinstance(request, ClaimKey):

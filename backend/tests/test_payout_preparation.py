@@ -14,6 +14,7 @@ from solders.keypair import Keypair
 from solders.message import Message, MessageV0
 from solders.pubkey import Pubkey
 from solders.signature import Signature
+from solders.token.associated import get_associated_token_address
 from solders.transaction import Transaction, VersionedTransaction
 from spl.token.constants import TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID
 from spl.token.instructions import TransferCheckedParams, transfer_checked
@@ -41,15 +42,16 @@ class SyntheticSigner:
 
     def intent(self) -> TransferIntent:
         """Expose only synthetic public identities; no key material leaves this object."""
+        mint, recipient = Pubkey.new_unique(), Keypair().pubkey()
         return TransferIntent(
             genesis_hash=str(Hash.default()),
-            mint=str(Pubkey.new_unique()),
+            mint=str(mint),
             program="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
             source=str(Pubkey.new_unique()),
-            destination=str(Pubkey.new_unique()),
+            destination=str(get_associated_token_address(recipient, mint, TOKEN_2022_PROGRAM_ID)),
             authority=str(self._authority.pubkey()),
             fee_payer=str(self._payer.pubkey()),
-            recipient=str(Pubkey.new_unique()),
+            recipient=str(recipient),
             decimals=6,
             raw_amount="10",
         )

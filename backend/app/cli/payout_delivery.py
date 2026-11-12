@@ -175,7 +175,9 @@ async def auto_compile_attempt(
     except RECEIPT_ERRORS:
         return {"verdict": "unresolved"}
     async with session_factory.begin() as db:
-        return await handle_payout_request(PayoutDeliveryRepository(db), "prepare-message", request)
+        return await handle_payout_request(
+            PayoutDeliveryRepository(db), "prepare-message", request, config.create_recipient_ata
+        )
 
 
 async def dispatch_command(

@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from asyncpg import exceptions as pg_errors
 from solders.pubkey import Pubkey
+from solders.token.associated import get_associated_token_address
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
@@ -52,6 +53,13 @@ async def delivery_db(request):
 def allocation():
     fields = ("mint", "source", "destination", "authority", "fee_payer", "recipient")
     payload = {name: str(Pubkey.from_bytes(bytes([n]) * 32)) for n, name in enumerate(fields, 1)}
+    payload["destination"] = str(
+        get_associated_token_address(
+            Pubkey.from_string(payload["recipient"]),
+            Pubkey.from_string(payload["mint"]),
+            Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
+        )
+    )
     return AllocationIntent(
         **payload,
         producer_namespace="synthetic",
@@ -106,7 +114,21 @@ async def test_conflict_preserves_every_variable_payload_field(delivery_db, allo
     async with maker.begin() as db:
         original = await admit_intent(PayoutDeliveryRepository(db), allocation)
     out = io.StringIO()
-    changed = allocation.model_copy(update={field: value})
+    update = {field: value}
+    if field in ("mint", "destination", "recipient"):  # destination must stay the derived ATA
+        mint = str(value) if field == "mint" else allocation.mint
+        owner = str(value) if field in ("destination", "recipient") else allocation.recipient
+        update |= {
+            "recipient": owner,
+            "destination": str(
+                get_associated_token_address(
+                    Pubkey.from_string(owner),
+                    Pubkey.from_string(mint),
+                    Pubkey.from_string(allocation.program),
+                )
+            ),
+        }
+    changed = allocation.model_copy(update=update)
     assert await run_admission("submit", io.StringIO(changed.model_dump_json()), out, maker) == 7
     assert json.loads(out.getvalue()) == {"verdict": "conflict"}
     async with maker() as db:
