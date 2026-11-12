@@ -124,6 +124,20 @@ shape A are unchanged ([PAYOUT_RECEIPTS.md](PAYOUT_RECEIPTS.md)).
 
 ## Enabling
 
-The ordered rollout is in [payout-deploy](../ops/payout-deploy/README.md#enabling-recipient-account-creation).
-Rollback: set the flag to `false` (or remove the key) and restart the backend, as for
-any change of that file.
+Strictly in this order:
+
+1. Backend release that contains the shape-B code, flag absent: behaviour unchanged.
+2. Pause the orchestrator and the signer. Replace the signer with one that knows
+   `max_ata_creations_24h` and add that key with `<N>` in the same window
+   ([upgrade notes](../ops/payout-signer/README.md#upgrade-notes));
+   `payout-signer status` must show `ata_creations`.
+3. Fund `<hot-wallet>` with SOL for the creations you allow plus fees and the reserve;
+   check that `per_tick` times the rent stays below the reserve.
+4. Set `"create_recipient_ata": true` in the network config file. No restart is needed:
+   every backend CLI call is a new process that reads the file again.
+5. Resume, pay one small grant to a wallet without the account, and confirm
+   `auto-reconcile` answers `confirmed` before enabling the timer.
+
+Rollback: set the flag to `false` (or remove the key); the next compile builds shape A,
+and an already signed shape-B transaction is still sent and reconciled. Signer kill
+switch: `max_ata_creations_24h = 0`.

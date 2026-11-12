@@ -135,29 +135,11 @@ otherwise it mounts an empty placeholder directory and leaves the setting empty,
 without the file starts as before and the payout commands answer `configuration_error`
 (fail closed). Put the file at `<that dir>/network.json`, owner `root`, mode `0600`
 (group or other bits are refused). A directory is mounted, not the file, so replacing the
-file keeps the mount current; restart the backend after changing it. The compose file also
+file keeps the mount current; each backend CLI call reads it anew, no restart. The compose file also
 gives the container a small `tmpfs` at `/run/payout`, where `auto-compile` writes request
 files that the orchestrator copies out and removes.
 
-## Enabling recipient account creation
-
-Optional flag `create_recipient_ata` in `network.json` (default `false`): the hot wallet
-creates a missing Token-2022 account of the recipient and pays its rent. Behaviour,
-verdicts and the SOL budget rule: [PAYOUT_RECIPIENT_ATA.md](../../docs/PAYOUT_RECIPIENT_ATA.md).
-Strictly in this order:
-
-1. Backend release that contains the shape-B code, flag absent: behaviour unchanged.
-2. Pause both. Replace the signer with one that knows `max_ata_creations_24h` and add the
-   key `<N>` in the same window ([upgrade notes](../payout-signer/README.md#upgrade-notes));
-   `payout-signer status` must show `ata_creations`.
-3. Fund `<hot-wallet>` with SOL for the creations you allow plus fees and the reserve; check
-   that `per_tick` times the rent stays below the reserve.
-4. Set `"create_recipient_ata": true` in `network.json`, restart the backend.
-5. Resume, pay one small grant to a wallet without the account, and confirm
-   `auto-reconcile` answers `confirmed` before enabling the timer.
-
-Rollback: flag `false` and restart; an already signed shape-B transaction is still sent
-and reconciled. Signer kill switch: `max_ata_creations_24h = 0`.
+Rollout order and rollback for the `create_recipient_ata` flag: [PAYOUT_RECIPIENT_ATA.md](../../docs/PAYOUT_RECIPIENT_ATA.md#enabling).
 
 ## Pause and resume
 
