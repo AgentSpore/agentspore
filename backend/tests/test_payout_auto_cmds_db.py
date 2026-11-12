@@ -253,6 +253,11 @@ async def test_compile_insufficient_sol_no_signature(
     before = await attempt_state(attempt_db[0])
     result_code, text_out = await compile_auto(attempt_db[0], fence, rpc, output)
     assert (result_code, json.loads(text_out)["verdict"]) == (code, verdict)
+    balance_calls = [r["params"] for r in rpc.requests if r["method"] == "getBalance"]
+    assert balance_calls == [[intent.authority, {"commitment": "finalized"}]]
+    assert [
+        r["params"] for r in rpc.requests if r["method"] == "getMinimumBalanceForRentExemption"
+    ] == [[170]]
     if verdict != "compiled":
         assert not output.exists()
         assert await attempt_state(attempt_db[0]) == before

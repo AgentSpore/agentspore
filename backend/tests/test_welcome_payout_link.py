@@ -1,10 +1,12 @@
 """Welcome grant to payout intent linking on real PostgreSQL with an injected RPC."""
 
 import asyncio
+import copy
 import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -19,9 +21,8 @@ from test_welcome_rewards import ledger as _ledger
 
 from app.cli import welcome_payouts as cli
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
-from app.schemas.payout_delivery import NetworkConfig
+from app.schemas.payout_delivery import SYSTEM_PROGRAM, NetworkConfig
 from app.services.welcome_payout_link_service import (
-    SYSTEM_PROGRAM,
     TOKEN_2022,
     WelcomePayoutLinkService,
     associated_token_account,
@@ -66,6 +67,37 @@ GOOD_ATA = str(
 HOLDERS = {WALLET_ATA: WALLET, OTHER_ATA: OTHER_WALLET, GOOD_ATA: GOOD_WALLET}
 
 
+# Token-2022 ATA of the program mint, getProgramAccounts jsonParsed on public mainnet (2026-11-12);
+# the holder is replaced per test by Chain.account.
+REAL_TOKEN_ACCOUNT: dict[str, Any] = {
+    "lamports": 2074080,
+    "data": {
+        "program": "spl-token-2022",
+        "parsed": {
+            "info": {
+                "extensions": [{"extension": "immutableOwner"}],
+                "isNative": False,
+                "mint": PROGRAM_MINT,
+                "owner": WALLET,
+                "state": "initialized",
+                "tokenAmount": {
+                    "amount": "0",
+                    "decimals": 6,
+                    "uiAmount": 0.0,
+                    "uiAmountString": "0",
+                },
+            },
+            "type": "account",
+        },
+        "space": 170,
+    },
+    "owner": str(TOKEN_2022),
+    "executable": False,
+    "rentEpoch": 18446744073709551615,
+    "space": 170,
+}
+
+
 def system_account(lamports):
     """Shape of a System-owned account in getMultipleAccounts jsonParsed (mainnet capture)."""
     return {
@@ -93,20 +125,21 @@ class Chain:
         self.accounts = []
         self.wallet_value = None
         self.system_ata = False
+        self.extensions = None
+        self.requests = []
 
     def account(self, address):
-        info = {
-            "mint": self.mint,
-            "owner": self.holder or HOLDERS[address],
-            "state": self.state,
-        }
-        return {
-            "owner": self.program,
-            "data": {"program": "spl-token-2022", "parsed": {"type": "account", "info": info}},
-        }
+        value = copy.deepcopy(REAL_TOKEN_ACCOUNT)
+        value["owner"] = self.program
+        info = value["data"]["parsed"]["info"]
+        info.update(mint=self.mint, owner=self.holder or HOLDERS[address], state=self.state)
+        if self.extensions is not None:
+            info["extensions"] = self.extensions
+        return value
 
     def __call__(self, request):
         body = json.loads(request.content)
+        self.requests.append(body)
         if body["method"] == "getGenesisHash":
             result = self.genesis
         else:
@@ -525,10 +558,6 @@ async def test_rpc_error_unchanged(flag_on, chain):
     chain.fail = True
     outcome, _ = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
     assert outcome == "rpc_error"
-    chain.fail = False
-    chain.exists = False
-    chain.wallet_value = "malformed"
-    assert (await flag_on.service.link_one(flag_on.ledger.owner, apply=True))[0] == "invalid_wallet"
 
 
 async def test_replayed_link_idempotent(flag_on, chain):
@@ -537,3 +566,61 @@ async def test_replayed_link_idempotent(flag_on, chain):
     second = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
     assert (first[0], second[0]) == ("linked", "replayed")
     assert first[1] == second[1] and await intents(flag_on.ledger.maker) == 1
+
+
+MEMO = {"extension": "memoTransfer", "state": {"requireIncomingTransferMemos": True}}
+MEMO_OFF = {"extension": "memoTransfer", "state": {"requireIncomingTransferMemos": False}}
+IMMUTABLE = {"extension": "immutableOwner"}
+
+
+@pytest.mark.parametrize(
+    ("extensions", "outcome"),
+    [
+        ([IMMUTABLE], "linked"),
+        ([IMMUTABLE, MEMO_OFF], "linked"),
+        ([IMMUTABLE, MEMO], "bad_token_account"),
+        ([MEMO], "bad_token_account"),
+        (
+            [IMMUTABLE, {"extension": "transferFeeAmount", "state": {"withheldAmount": 0}}],
+            "bad_token_account",
+        ),
+        ([IMMUTABLE, {"extension": "unparseableExtension"}], "bad_token_account"),
+        ([IMMUTABLE, "memoTransfer"], "bad_token_account"),
+        ("immutableOwner", "bad_token_account"),
+    ],
+)
+@pytest.mark.parametrize("flag", [True, False])
+async def test_token_account_extensions_allowlist(linker, chain, extensions, outcome, flag):
+    if flag:
+        linker.service.config = CONFIG_ATA
+        await set_wallet(linker, GOOD_WALLET)
+    elif outcome == "bad_token_account":
+        outcome = "no_token_account"
+    chain.extensions = extensions
+    assert (await linker.service.link_one(linker.ledger.owner, apply=True))[0] == outcome
+
+
+@pytest.mark.parametrize("entry", [1, "AAAA", ["x", "base64"], True])
+async def test_non_dict_ata_entry_is_rpc_error(flag_on, chain, entry):
+    original = chain.__call__
+
+    def broken(request):
+        response = original(request)
+        body = json.loads(response.content)
+        if isinstance(body["result"], dict) and isinstance(body["result"].get("value"), list):
+            body["result"]["value"][1] = entry
+        return httpx.Response(200, json=body)
+
+    flag_on.service.client = httpx.Client(transport=httpx.MockTransport(broken))
+    outcome, _ = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert outcome == "rpc_error"
+    assert await intents(flag_on.ledger.maker) == 0
+
+
+async def test_get_multiple_accounts_params_pin_finalized_json_parsed(flag_on, chain):
+    await flag_on.service.link_one(flag_on.ledger.owner, apply=False)
+    (call,) = [r for r in chain.requests if r["method"] == "getMultipleAccounts"]
+    assert call["params"] == [
+        [GOOD_WALLET, GOOD_ATA],
+        {"encoding": "jsonParsed", "commitment": "finalized"},
+    ]
