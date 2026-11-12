@@ -35,6 +35,7 @@ from app.services.payout_delivery_service import (
     handle_payout_request,
     list_pending,
     read_transfer,
+    rpc_call,
     verify_receipt,
 )
 from app.services.payout_network_config import (
@@ -79,7 +80,13 @@ ADMISSION_EXIT_CODES = {
     "already_confirmed": 12,
     "preflight_rejected": 13,
     "configuration_error": 14,
+    "insufficient_sol": 15,
 }
+
+# No transfer-fee constant exists elsewhere: one signature at the base 5000 lamports.
+ATA_ACCOUNT_BYTES = 170
+SIGNATURE_FEE_LAMPORTS = 5000
+SIGNER_RESERVE_LAMPORTS = 10_000_000
 
 
 # Supported configuration, SQLAlchemy, raw driver and transport failures stay private.
@@ -148,6 +155,18 @@ async def send_attempt(
         return {"verdict": await asyncio.to_thread(send_stored_wire, client, target, request)}
 
 
+def signer_can_fund_ata(client: httpx.Client, config: NetworkConfig) -> bool:
+    """True when the signer holds rent for one ATA, one fee and the reserve."""
+    endpoint = str(config.rpc_endpoint)
+    rent = rpc_call(client, endpoint, "getMinimumBalanceForRentExemption", [ATA_ACCOUNT_BYTES])
+    balance = rpc_call(
+        client, endpoint, "getBalance", [config.signer_pubkey, {"commitment": "finalized"}]
+    )["value"]
+    if any(type(number) is not int or number < 0 for number in (rent, balance)):
+        raise ValueError
+    return balance >= rent + SIGNATURE_FEE_LAMPORTS + SIGNER_RESERVE_LAMPORTS
+
+
 async def auto_compile_attempt(
     session_factory: async_sessionmaker[AsyncSession],
     fence: ClaimFence,
@@ -164,6 +183,10 @@ async def auto_compile_attempt(
     try:
         with httpx.Client(timeout=10, transport=transport, trust_env=False) as client:
             blockhash, height = await asyncio.to_thread(fetch_live_blockhash, client, config)
+            if config.create_recipient_ata and not await asyncio.to_thread(
+                signer_can_fund_ata, client, config
+            ):
+                return {"verdict": "insufficient_sol"}
         request = CompileRequest(
             **fence.model_dump(),
             genesis_hash=config.trusted_genesis_hash,

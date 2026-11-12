@@ -15,6 +15,7 @@ import test_payout_reconcile_db as reconciled
 import test_payout_send_db as sent
 from solders.hash import Hash
 from solders.message import Message
+from sqlalchemy import text
 
 from app.cli import payout_delivery as cli
 from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
@@ -34,11 +35,25 @@ ENDPOINT = "https://rpc-private.invalid/secret-path-marker"
 BLOCKHASH = str(Hash.new_unique())
 
 
+RENT_170 = 1_513_840  # getMinimumBalanceForRentExemption(170), public mainnet capture
+THRESHOLD = RENT_170 + 5000 + 10_000_000
+
+
 class AutoRpc(sent.SendRpc):
-    """Add getLatestBlockhash to the send RPC double."""
+    """Add getLatestBlockhash and the signer balance calls to the send RPC double."""
+
+    balance = THRESHOLD
+    rent: object = RENT_170
 
     def __call__(self, request):
         body = json.loads(request.content)
+        if body["method"] in ("getBalance", "getMinimumBalanceForRentExemption"):
+            self.requests.append(body)
+            if body["method"] == "getBalance":
+                result = {"context": {"slot": 1}, "value": self.balance}
+            else:
+                result = self.rent
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": result})
         if body["method"] == "getLatestBlockhash":
             self.requests.append(body)
             value = {"blockhash": BLOCKHASH, "lastValidBlockHeight": 1234}
@@ -195,6 +210,65 @@ async def test_auto_compile_threads_create_ata_flag(
     if create_ata:
         first = message.instructions[0]
         assert str(message.account_keys[first.program_id_index]) == ATA_PROGRAM
+
+
+async def attempt_state(maker):
+    async with maker.begin() as db:
+        rows = await db.execute(
+            text(
+                "SELECT 'a', count(*) FROM payout_delivery_attempts UNION ALL "
+                "SELECT state, count(*) FROM payout_delivery_claims GROUP BY state"
+            )
+        )
+        return sorted(rows.all())
+
+
+@pytest.mark.parametrize(
+    ("balance", "rent", "verdict", "code"),
+    [
+        (THRESHOLD - 1, RENT_170, "insufficient_sol", 15),
+        (THRESHOLD, RENT_170, "compiled", 0),
+        (THRESHOLD, "1513840", "unresolved", 2),
+    ],
+)
+async def test_compile_insufficient_sol_no_signature(
+    attempt_db,
+    signed_envelope,
+    native_case,
+    configure,
+    tmp_path,
+    fence,
+    balance,
+    rent,
+    verdict,
+    code,
+):
+    intent, _ = native_case
+    if intent.fee_payer != intent.authority:
+        pytest.skip("auto-compile admits only the signer as fee payer")
+    configure(intent, create_recipient_ata=True)
+    rpc = AutoRpc(intent.genesis_hash)
+    rpc.balance, rpc.rent = balance, rent
+    output = tmp_path / "request.json"
+    before = await attempt_state(attempt_db[0])
+    result_code, text_out = await compile_auto(attempt_db[0], fence, rpc, output)
+    assert (result_code, json.loads(text_out)["verdict"]) == (code, verdict)
+    if verdict != "compiled":
+        assert not output.exists()
+        assert await attempt_state(attempt_db[0]) == before
+
+
+async def test_flag_off_never_asks_for_balance(
+    attempt_db, signed_envelope, native_case, configure, tmp_path, fence
+):
+    intent, _ = native_case
+    if intent.fee_payer != intent.authority:
+        pytest.skip("auto-compile admits only the signer as fee payer")
+    configure(intent)
+    rpc = AutoRpc(intent.genesis_hash)
+    rpc.balance = 0
+    assert (await compile_auto(attempt_db[0], fence, rpc, tmp_path / "r.json"))[0] == 0
+    assert "getBalance" not in rpc.methods
 
 
 async def test_auto_compile_genesis_mismatch_is_unsupported(
