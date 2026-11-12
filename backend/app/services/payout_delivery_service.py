@@ -1,4 +1,4 @@
-"""Read-only verification of the deliberately narrow legacy payout receipt shape."""
+"""Read-only verification of the two deliberately narrow legacy payout receipt shapes."""
 
 import hashlib
 import struct
@@ -11,6 +11,8 @@ from solders.signature import Signature
 
 from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
 from app.schemas.payout_delivery import (
+    ATA_PROGRAM,
+    SYSTEM_PROGRAM,
     AllocationIntent,
     AllocationKey,
     ClaimKey,
@@ -81,12 +83,9 @@ def message_flags(keys: list, header: dict) -> dict:
     }
 
 
-def message_matches(message: dict, intent: ReceiptIntent) -> bool:
-    """Bind compiled accounts, payer and signer/writable flags to the exact transfer."""
-    keys = message["accountKeys"]
-    solana_hash(message["recentBlockhash"])
-    flags = message_flags(keys, message["header"])
-    expected = {
+def expected_message(intent: ReceiptIntent, create: bool) -> tuple[dict, list]:
+    """Return the exact account flags and instructions of shape A, or B when `create`."""
+    flags = {
         intent.program: (False, False),
         intent.mint: (False, False),
         intent.source: (False, True),
@@ -94,28 +93,70 @@ def message_matches(message: dict, intent: ReceiptIntent) -> bool:
         intent.authority: (True, intent.authority == intent.fee_payer),
         intent.fee_payer: (True, True),
     }
+    instructions = [
+        (
+            [intent.program, intent.source, intent.mint, intent.destination, intent.authority],
+            struct.pack("<BQB", 12, int(intent.raw_amount), intent.decimals),
+        )
+    ]
+    if create:
+        flags |= {
+            intent.recipient: (False, False),
+            SYSTEM_PROGRAM: (False, False),
+            ATA_PROGRAM: (False, False),
+        }
+        instructions.insert(
+            0,
+            (
+                [
+                    ATA_PROGRAM,
+                    intent.fee_payer,
+                    intent.destination,
+                    intent.recipient,
+                    intent.mint,
+                    SYSTEM_PROGRAM,
+                    intent.program,
+                ],
+                b"\x01",
+            ),
+        )
+    return flags, instructions
+
+
+def message_matches(message: dict, intent: ReceiptIntent, create: bool = False) -> bool:
+    """Bind compiled accounts, payer, flags and instruction order to the exact payout shape."""
+    keys = message["accountKeys"]
+    solana_hash(message["recentBlockhash"])
+    flags = message_flags(keys, message["header"])
+    actual = []
+    for instruction in message["instructions"]:
+        if not isinstance(instruction["data"], str):
+            raise TypeError
+        indices = [instruction["programIdIndex"], *instruction["accounts"]]
+        if any(type(index) is not int or not 0 <= index < len(keys) for index in indices):
+            raise ValueError
+        actual.append(([keys[index] for index in indices], base58.b58decode(instruction["data"])))
+    expected, expected_instructions = expected_message(intent, create)
     if len(keys) != len(expected) or flags != expected or keys[0] != intent.fee_payer:
         return False
-    (instruction,) = message["instructions"]
-    if not isinstance(instruction["data"], str):
-        raise TypeError
-    indices = [instruction["programIdIndex"], *instruction["accounts"]]
+    return actual == expected_instructions
+
+
+def inner_instructions_match(inner: list, keys: list, intent: ReceiptIntent, create: bool) -> bool:
+    """Shape A runs no CPI; shape B only System and Token-2022 (ATA creation and its init)."""
+    if not create:
+        return inner == []
+    allowed = {SYSTEM_PROGRAM, intent.program}
+    indices = [ix["programIdIndex"] for group in inner for ix in group["instructions"]]
     if any(type(index) is not int or not 0 <= index < len(keys) for index in indices):
         raise ValueError
-    accounts = [keys[index] for index in indices]
-    return accounts == [
-        intent.program,
-        intent.source,
-        intent.mint,
-        intent.destination,
-        intent.authority,
-    ] and base58.b58decode(instruction["data"]) == struct.pack(
-        "<BQB", 12, int(intent.raw_amount), intent.decimals
-    )
+    return all(keys[index] in allowed for index in indices)
 
 
-def token_snapshot(balances: list, keys: list, intent: ReceiptIntent) -> dict | None:
-    """Require exactly the two complete historical token balances."""
+def token_snapshot(
+    balances: list, keys: list, intent: ReceiptIntent, new_destination: bool = False
+) -> dict | None:
+    """Require both complete token balances; a destination created in-flight counts as 0."""
     result = {}
     for raw in balances:
         balance = TokenBalance.model_validate(raw)
@@ -129,17 +170,27 @@ def token_snapshot(balances: list, keys: list, intent: ReceiptIntent) -> dict | 
         ) != (intent.mint, intent.program, owner, intent.decimals):
             return None
         result[key] = int(balance.token_amount.amount)
+    if new_destination:
+        result.setdefault(intent.destination, 0)
     if set(result) != {intent.source, intent.destination}:
         raise ValueError
     return result
 
 
-def lamports_match(meta: dict, keys: list) -> bool:
-    """Require complete lamport deltas containing only the transaction fee."""
+def lamports_match(meta: dict, keys: list, intent: ReceiptIntent, create: bool = False) -> bool:
+    """Require complete lamport deltas: the fee, plus in shape B the rent paid into the ATA."""
     pre, post, fee = meta["preBalances"], meta["postBalances"], meta["fee"]
     if any(type(value) is not int or value < 0 for value in [*pre, *post, fee]):
         raise ValueError
-    return len(pre) == len(keys) and post == [pre[0] - fee, *pre[1:]]
+    if len(pre) != len(keys):
+        return False
+    rent, expected = 0, list(pre)
+    if create:
+        dest = keys.index(intent.destination)
+        rent = post[dest] - pre[dest]
+        expected[dest] += rent
+    expected[0] -= fee + rent
+    return rent >= 0 and post == expected
 
 
 def receipt_verdict(receipt: dict, intent: ReceiptIntent) -> str:
@@ -154,18 +205,22 @@ def receipt_verdict(receipt: dict, intent: ReceiptIntent) -> str:
         if not isinstance(meta["err"], (str, dict)) or not meta["err"]:
             raise ValueError
         return "failed"
-    if receipt["version"] != "legacy" or meta["innerInstructions"] != []:
-        return "unsupported"
     message = transaction["message"]
+    count = len(message["instructions"])
+    if not count:
+        raise ValueError
+    create = count == 2
+    keys = message["accountKeys"]
     if (
-        not message_matches(message, intent)
+        receipt["version"] != "legacy"
+        or count not in (1, 2)
+        or not inner_instructions_match(meta["innerInstructions"], keys, intent, create)
+        or not message_matches(message, intent, create)
         or len(signatures) != message["header"]["numRequiredSignatures"]
+        or not lamports_match(meta, keys, intent, create)
     ):
         return "unsupported"
-    keys = message["accountKeys"]
-    if not lamports_match(meta, keys):
-        return "unsupported"
-    before = token_snapshot(meta["preTokenBalances"], keys, intent)
+    before = token_snapshot(meta["preTokenBalances"], keys, intent, create)
     after = token_snapshot(meta["postTokenBalances"], keys, intent)
     amount = int(intent.raw_amount)
     return (
