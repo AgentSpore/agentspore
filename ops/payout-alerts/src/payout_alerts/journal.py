@@ -34,6 +34,19 @@ def parse_line(line: str) -> tuple[str | None, str | None]:
     return cursor, alert_text(entry)
 
 
+def _handle(
+    line: str, last: str | None, cursor_path: Path, submit: Callable[[Item], None]
+) -> str | None:
+    """Queue an alert line; the first non-alert cursor is saved while no cursor exists yet.
+    Returns the newest cursor seen."""
+    cursor, text = parse_line(line)
+    if cursor and text:
+        submit((cursor, text))
+    elif cursor and read_cursor(cursor_path) is None:
+        write_cursor(cursor_path, cursor)
+    return cursor or last
+
+
 def follow(
     cursor_path: Path,
     submit: Callable[[Item], None],
@@ -47,12 +60,7 @@ def follow(
         proc = spawn(command(last or read_cursor(cursor_path)), stdout=subprocess.PIPE, text=True)
         for line in proc.stdout or ():
             backoff = 1.0
-            cursor, text = parse_line(line)
-            last = cursor or last
-            if cursor and text:
-                submit((cursor, text))
-            elif cursor and read_cursor(cursor_path) is None:
-                write_cursor(cursor_path, cursor)
+            last = _handle(line, last, cursor_path, submit)
             if stop.is_set():
                 proc.terminate()
                 return
