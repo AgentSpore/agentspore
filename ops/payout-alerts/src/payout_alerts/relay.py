@@ -91,6 +91,9 @@ class Relay:
         if text is None:
             # INVARIANT(#182): while an evicted alert is counted only in memory (`_dropped`),
             # a marker must not move the cursor past it, or a restart loses that alert silently.
+            # Markers stay held until the next alert is sent successfully (or a restart). After a
+            # failed or duplicate send the hold protects nothing, and a restart may replay up to
+            # the old pre-marker amount; this is accepted.
             if not self._dropped:
                 write_cursor(self._cursor_path, cursor)
             return

@@ -28,6 +28,8 @@ No free-text log line is forwarded.
 - While the queue is not full, the cursor also advances every 1000 non-alert journal entries,
   so a restart re-reads about that many entries plus the queue. During a delivery outage, or
   while alerts are dropped, it does not advance that way and a restart can re-read more.
+  After an alert is evicted from a full queue, the cursor does not advance this way until the
+  next alert is sent, and a restart can re-read more.
 - journalctl runs under `stdbuf -oL` (coreutils): into a pipe it block-buffers, and a live
   alert would wait until about 4 KiB of later entries arrive.
 - Token: systemd credential `bot-token`; never logged, only exception class and HTTP status.

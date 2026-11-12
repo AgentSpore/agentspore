@@ -158,13 +158,17 @@ def test_alert_evicting_marker_is_not_counted_as_dropped(tmp_path):
 
 
 def test_marker_keeps_cursor_while_an_alert_was_evicted(tmp_path):
-    relay, _, _, _, cursor = make(tmp_path, queue_size=2)
+    relay, sender, _, _, cursor = make(tmp_path, queue_size=2)
     cursor.write_text("old")
     relay.submit(("a1", "alert=a"))
     relay.submit(("m2", None))
     relay.submit(("b3", "alert=b"))
     relay.process(relay._queue.get_nowait())
     assert cursor.read_text() == "old"
+    relay.process(relay._queue.get_nowait())
+    assert sender.sent[-1].endswith("(+1 dropped)") and cursor.read_text() == "b3"
+    relay.process(("m4", None))
+    assert cursor.read_text() == "m4"
 
 
 def test_stop_during_retry_wait_leaves_cursor_behind_a_queued_marker(tmp_path):
