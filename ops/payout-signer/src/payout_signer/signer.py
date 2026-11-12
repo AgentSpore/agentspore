@@ -112,7 +112,13 @@ def _sign(config_path: Path, request_path: Path, output_path: Path, now: float) 
         if not replay and not within_limits(config, ledger.usage(now), transfer):
             raise Refusal(Verdict.LIMIT_EXCEEDED)
         if not replay:
-            ledger.record(body["message_digest"], transfer.recipient, transfer.amount, now)
+            ledger.record(
+                body["message_digest"],
+                transfer.recipient,
+                transfer.amount,
+                now,
+                transfer.creates_ata,
+            )
         _write_envelope(output_path, body, raw, signer)
     return Verdict.REPLAYED if replay else Verdict.SIGNED
 

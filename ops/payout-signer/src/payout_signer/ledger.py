@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS signatures (
     message_digest TEXT PRIMARY KEY,
     recipient TEXT NOT NULL,
     amount TEXT NOT NULL,
-    signed_at INTEGER NOT NULL
+    signed_at INTEGER NOT NULL,
+    creates_ata INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID
 """
 
@@ -25,10 +26,18 @@ class Usage:
     transfers: int
     total: int
     per_recipient: dict[str, int]
+    ata_creations: int = 0
 
 
 def _create_private(path: Path) -> None:
     os.close(os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600))
+
+
+def _add_creates_ata_column(db: sqlite3.Connection) -> None:
+    """Upgrade a ledger written before ATA creations were counted; runs under the flock."""
+    columns = {row[1] for row in db.execute("PRAGMA table_info(signatures)")}
+    if "creates_ata" not in columns:
+        db.execute("ALTER TABLE signatures ADD COLUMN creates_ata INTEGER NOT NULL DEFAULT 0")
 
 
 class Ledger:
@@ -53,6 +62,7 @@ class Ledger:
             try:
                 db.execute("PRAGMA synchronous=FULL")
                 db.execute(SCHEMA)
+                _add_creates_ata_column(db)
                 yield cls(db)
             finally:
                 db.close()
@@ -60,7 +70,7 @@ class Ledger:
     @classmethod
     def read_usage(cls, path: Path, now: float) -> Usage:
         if not path.exists():
-            return Usage(0, 0, {})
+            return Usage(0, 0, {}, 0)
         with cls.locked(path) as ledger:
             return ledger.usage(now)
 
@@ -70,16 +80,20 @@ class Ledger:
 
     def usage(self, now: float) -> Usage:
         rows = self._db.execute(
-            "SELECT recipient, amount FROM signatures WHERE signed_at > ?",
+            "SELECT recipient, amount, creates_ata FROM signatures WHERE signed_at > ?",
             (int(now) - WINDOW_SECONDS,),
         ).fetchall()
         per_recipient: dict[str, int] = defaultdict(int)
-        for recipient, amount in rows:
+        for recipient, amount, _ in rows:
             per_recipient[recipient] += int(amount)
-        return Usage(len(rows), sum(per_recipient.values()), dict(per_recipient))
+        creations = sum(creates for _, _, creates in rows)
+        return Usage(len(rows), sum(per_recipient.values()), dict(per_recipient), creations)
 
-    def record(self, digest: str, recipient: str, amount: int, now: float) -> None:
+    def record(
+        self, digest: str, recipient: str, amount: int, now: float, creates_ata: bool = False
+    ) -> None:
         """Commit durably (synchronous=FULL fsyncs) before the caller writes any output."""
         self._db.execute(
-            "INSERT INTO signatures VALUES (?, ?, ?, ?)", (digest, recipient, str(amount), int(now))
+            "INSERT INTO signatures VALUES (?, ?, ?, ?, ?)",
+            (digest, recipient, str(amount), int(now), int(creates_ata)),
         )
