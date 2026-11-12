@@ -22,7 +22,18 @@ JOURNAL_TAIL = ["journalctl", "-n", "1", "--output=json", "--no-pager", *UNIT_AR
 def command(cursor: str | None) -> list[str]:
     """journalctl argv; the cursor is our own, advanced only after delivery."""
     start = f"--after-cursor={cursor}" if cursor else "--since=now"
-    return ["journalctl", "--follow", "--output=json", "--no-pager", start, *UNIT_ARGS]
+    # INVARIANT(#182): journalctl block-buffers stdout into a pipe, so without stdbuf a live
+    # alert waits in its buffer until about 4 KiB of later entries arrive (seen on the host).
+    return [
+        "stdbuf",
+        "-oL",
+        "journalctl",
+        "--follow",
+        "--output=json",
+        "--no-pager",
+        start,
+        *UNIT_ARGS,
+    ]
 
 
 def parse_line(line: str) -> tuple[str | None, str | None]:

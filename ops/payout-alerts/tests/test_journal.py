@@ -9,7 +9,11 @@ ALERT = {"_SYSTEMD_UNIT": "payout-orchestrator.service", "MESSAGE": '{"alert": "
 def test_command_first_start_uses_since_now():
     cmd = command(None)
     assert "--since=now" in cmd and not any(a.startswith("--after-cursor") for a in cmd)
-    assert cmd[0] == "journalctl" and "--follow" in cmd and "--output=json" in cmd
+    assert cmd[2] == "journalctl" and "--follow" in cmd and "--output=json" in cmd
+
+
+def test_command_forces_line_buffered_output():
+    assert command(None)[:2] == ["stdbuf", "-oL"]
 
 
 def test_command_resumes_after_cursor():
