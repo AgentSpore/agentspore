@@ -169,6 +169,15 @@ def test_receipt_b_extra_lamport_delta_unsupported(intent):
     assert receipt_verdict(receipt, intent) == "unsupported"
 
 
+def test_receipt_b_negative_rent_unsupported(intent):
+    receipt = receipt_of(intent, create=True, existing=True)
+    post = receipt["meta"]["postBalances"]
+    dest = receipt["transaction"]["message"]["accountKeys"].index(intent.destination)
+    post[dest] -= 1_000
+    post[0] += 1_000
+    assert receipt_verdict(receipt, intent) == "unsupported"
+
+
 def test_receipt_b_wrong_owner_unsupported(intent):
     receipt = receipt_of(intent, create=True)
     receipt["meta"]["postTokenBalances"][1]["owner"] = str(Keypair().pubkey())
@@ -200,7 +209,6 @@ def test_receipt_b_instruction_shape_unsupported(intent, mutation):
         instructions.reverse()
     elif mutation == "drop_create":
         instructions.pop(0)
-        receipt = copy.deepcopy(receipt)
     elif mutation == "three":
         instructions.append(copy.deepcopy(instructions[1]))
     else:
