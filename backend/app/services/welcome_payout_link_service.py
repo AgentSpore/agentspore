@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
 from app.repositories.welcome_payout_link_repo import NAMESPACE, WelcomePayoutLinkRepository
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
-from app.schemas.payout_delivery import AllocationIntent, NetworkConfig
+from app.schemas.payout_delivery import SYSTEM_PROGRAM, AllocationIntent, NetworkConfig
 from app.services.payout_delivery_service import NetworkMismatchError, admit_intent, rpc_call
 from app.services.welcome_reward_service import WelcomeRewardService
 
@@ -29,6 +29,25 @@ def associated_token_account(wallet: Pubkey, mint: Pubkey) -> Pubkey:
     return Pubkey.find_program_address(seeds, ASSOCIATED_TOKEN_PROGRAM)[0]
 
 
+def allowed_extensions(info: dict) -> bool:
+    """Only extensions that cannot make a plain transferChecked fail."""
+    extensions = info.get("extensions", [])
+    if not isinstance(extensions, list):
+        return False
+    for item in extensions:
+        name = item.get("extension") if isinstance(item, dict) else None
+        if name == "memoTransfer":
+            state = item.get("state")
+            if (
+                not isinstance(state, dict)
+                or state.get("requireIncomingTransferMemos") is not False
+            ):
+                return False
+        elif name != "immutableOwner":
+            return False
+    return True
+
+
 def usable_token_account(value: dict | None, wallet: str, mint: str) -> bool:
     """Accept only an initialized Token-2022 account of this mint owned by this wallet."""
     data = value.get("data") if value else None
@@ -43,7 +62,27 @@ def usable_token_account(value: dict | None, wallet: str, mint: str) -> bool:
         and info.get("mint") == mint
         and info.get("owner") == wallet
         and info.get("state") == "initialized"
+        and allowed_extensions(info)
     )
+
+
+def plain_system_account(value: dict | None) -> bool:
+    """True for an absent account or a System-owned one with no data."""
+    if value is None:
+        return True
+    return (
+        isinstance(value, dict) and value.get("owner") == SYSTEM_PROGRAM and value.get("space") == 0
+    )
+
+
+def ata_creation_verdict(values: list, wallet: str, mint: str) -> str | None:
+    """Failure verdict for shape B (create ATA, then transfer), None when admissible."""
+    wallet_value, ata_value = values
+    if not Pubkey.from_string(wallet).is_on_curve() or not plain_system_account(wallet_value):
+        return "invalid_wallet"
+    if plain_system_account(ata_value) or usable_token_account(ata_value, wallet, mint):
+        return None
+    return "bad_token_account"
 
 
 class WelcomePayoutLinkService:
@@ -86,6 +125,28 @@ class WelcomePayoutLinkService:
         result = rpc_call(self.client, str(self.config.rpc_endpoint), "getAccountInfo", params)
         return usable_token_account(result["value"], wallet, mint)
 
+    def _wallet_and_ata(self, wallet: str, address: Pubkey) -> list:
+        params = [[wallet, str(address)], {"encoding": "jsonParsed", "commitment": "finalized"}]
+        result = rpc_call(self.client, str(self.config.rpc_endpoint), "getMultipleAccounts", params)
+        values = result["value"]
+        if not isinstance(values, list) or len(values) != 2:
+            raise ValueError
+        if any(entry is not None and not isinstance(entry, dict) for entry in values):
+            raise ValueError
+        return values
+
+    async def _chain_verdict(self, facts: dict, address: Pubkey) -> str | None:
+        """Ask the chain; None means the grant can be linked."""
+        wallet, mint = facts["wallet"], facts["mint"]
+        try:
+            if self.config.create_recipient_ata:
+                values = await asyncio.to_thread(self._wallet_and_ata, wallet, address)
+                return ata_creation_verdict(values, wallet, mint)
+            usable = await asyncio.to_thread(self._account_usable, address, wallet, mint)
+        except RPC_FAILURES:
+            return "rpc_error"
+        return None if usable else "no_token_account"
+
     @staticmethod
     async def _available(db: AsyncSession, owner: UUID) -> bool:
         """Advance reservation until available; the owner row stays locked in this transaction."""
@@ -112,14 +173,8 @@ class WelcomePayoutLinkService:
             )
         except ValueError:
             return "invalid_wallet", facts
-        try:
-            usable = await asyncio.to_thread(
-                self._account_usable, address, facts["wallet"], facts["mint"]
-            )
-        except RPC_FAILURES:
-            return "rpc_error", facts
-        if not usable:
-            return "no_token_account", facts
+        if verdict := await self._chain_verdict(facts, address):
+            return verdict, facts
         return None, facts | {"destination": str(address)}
 
     def _intent(self, facts: dict) -> AllocationIntent:

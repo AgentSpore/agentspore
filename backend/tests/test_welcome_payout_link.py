@@ -1,15 +1,18 @@
 """Welcome grant to payout intent linking on real PostgreSQL with an injected RPC."""
 
 import asyncio
+import copy
 import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
 
 import httpx
 import pytest
 from solders.hash import Hash
+from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from sqlalchemy import text
 from test_marketplace_tasks import marketplace_pg as marketplace_pg
@@ -18,7 +21,7 @@ from test_welcome_rewards import ledger as _ledger
 
 from app.cli import welcome_payouts as cli
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
-from app.schemas.payout_delivery import NetworkConfig
+from app.schemas.payout_delivery import SYSTEM_PROGRAM, NetworkConfig
 from app.services.welcome_payout_link_service import (
     TOKEN_2022,
     WelcomePayoutLinkService,
@@ -45,6 +48,7 @@ CONFIG = NetworkConfig.model_validate(
         "source_token_account": str(Pubkey.from_bytes(bytes([2]) * 32)),
     }
 )
+CONFIG_ATA = CONFIG.model_copy(update={"create_recipient_ata": True})
 AMOUNT = "10000000000"
 
 
@@ -55,7 +59,55 @@ SYNTHETIC_MINT = str(Pubkey.from_bytes(bytes([3]) * 32))
 SYNTHETIC_ATA = "5HyfqqJF1uGkJr9VLjnJdHcbDLqf8nuD4YSoiTStaP3h"  # (WALLET, SYNTHETIC_MINT)
 WALLET_ATA = "CjnjTtspAbXwsiQAotu9xEtckc4CdRzx8M6t2F9burcV"  # (WALLET, PROGRAM_MINT)
 OTHER_ATA = "3p4WVCTfX74WhaGVXoNjJYc2PYwZN2feHqwa7bV36yLV"  # (OTHER_WALLET, PROGRAM_MINT)
-HOLDERS = {WALLET_ATA: WALLET, OTHER_ATA: OTHER_WALLET}
+# Shape B needs an on-curve wallet; the byte-pattern wallets above are not.
+GOOD_WALLET = str(Keypair().pubkey())
+GOOD_ATA = str(
+    associated_token_account(Pubkey.from_string(GOOD_WALLET), Pubkey.from_string(PROGRAM_MINT))
+)
+HOLDERS = {WALLET_ATA: WALLET, OTHER_ATA: OTHER_WALLET, GOOD_ATA: GOOD_WALLET}
+
+
+# Token-2022 ATA of the program mint, getProgramAccounts jsonParsed on public mainnet (2026-11-12);
+# the holder is replaced per test by Chain.account.
+REAL_TOKEN_ACCOUNT: dict[str, Any] = {
+    "lamports": 2074080,
+    "data": {
+        "program": "spl-token-2022",
+        "parsed": {
+            "info": {
+                "extensions": [{"extension": "immutableOwner"}],
+                "isNative": False,
+                "mint": PROGRAM_MINT,
+                "owner": WALLET,
+                "state": "initialized",
+                "tokenAmount": {
+                    "amount": "0",
+                    "decimals": 6,
+                    "uiAmount": 0.0,
+                    "uiAmountString": "0",
+                },
+            },
+            "type": "account",
+        },
+        "space": 170,
+    },
+    "owner": str(TOKEN_2022),
+    "executable": False,
+    "rentEpoch": 18446744073709551615,
+    "space": 170,
+}
+
+
+def system_account(lamports):
+    """Shape of a System-owned account in getMultipleAccounts jsonParsed (mainnet capture)."""
+    return {
+        "data": ["", "base64"],
+        "executable": False,
+        "lamports": lamports,
+        "owner": SYSTEM_PROGRAM,
+        "rentEpoch": 18446744073709551615,
+        "space": 0,
+    }
 
 
 class Chain:
@@ -71,30 +123,40 @@ class Chain:
         self.state = "initialized"
         self.hidden = set()
         self.accounts = []
+        self.wallet_value = None
+        self.system_ata = False
+        self.extensions = None
+        self.requests = []
 
     def account(self, address):
-        info = {
-            "mint": self.mint,
-            "owner": self.holder or HOLDERS[address],
-            "state": self.state,
-        }
-        return {
-            "owner": self.program,
-            "data": {"program": "spl-token-2022", "parsed": {"type": "account", "info": info}},
-        }
+        value = copy.deepcopy(REAL_TOKEN_ACCOUNT)
+        value["owner"] = self.program
+        info = value["data"]["parsed"]["info"]
+        info.update(mint=self.mint, owner=self.holder or HOLDERS[address], state=self.state)
+        if self.extensions is not None:
+            info["extensions"] = self.extensions
+        return value
 
     def __call__(self, request):
         body = json.loads(request.content)
+        self.requests.append(body)
         if body["method"] == "getGenesisHash":
             result = self.genesis
         else:
             address = body["params"][0]
+            if body["method"] == "getMultipleAccounts":
+                address = address[1]
             self.accounts.append(address)
             if self.fail:
                 error = {"code": -32000, "message": "synthetic failure"}
                 return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "error": error})
             found = self.exists and address in HOLDERS and address not in self.hidden
-            result = {"value": self.account(address) if found else None}
+            value = self.account(address) if found else None
+            if body["method"] == "getMultipleAccounts":
+                if value is None and self.system_ata:
+                    value = system_account(1_000_000)
+                value = [self.wallet_value, value]
+            result = {"value": value}
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": result})
 
 
@@ -409,3 +471,156 @@ async def test_cli_masks_settings_failures_and_unready_imports(monkeypatch):
     out = io.StringIO()
     assert await cli.run_link(out) == 9
     assert "secret-env-value" not in out.getvalue()
+
+
+@pytest.fixture
+async def flag_on(linker):
+    linker.service.config = CONFIG_ATA
+    async with linker.ledger.maker.begin() as db:
+        await db.execute(text("UPDATE users SET solana_wallet=:w"), {"w": GOOD_WALLET})
+    return linker
+
+
+async def test_ata_absent_links_flag_on(flag_on, chain):
+    chain.exists = False
+    outcome, intent_id = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert outcome == "linked" and intent_id
+    maker = flag_on.ledger.maker
+    assert await scalar(maker, "SELECT destination FROM payout_delivery_intents") == GOOD_ATA
+    assert await scalar(maker, "SELECT recipient FROM payout_delivery_intents") == GOOD_WALLET
+
+
+async def test_ata_absent_skips_flag_off(linker, chain):
+    chain.exists = False
+    outcome, _ = await linker.service.link_one(linker.ledger.owner, apply=True)
+    assert outcome == "no_token_account"
+    assert await intents(linker.ledger.maker) == 0
+
+
+async def test_ata_exists_usable_links(flag_on):
+    outcome, _ = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert outcome == "linked"
+
+
+async def test_system_owned_funded_ata_links(flag_on, chain):
+    chain.exists, chain.system_ata = False, True
+    outcome, _ = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert outcome == "linked"
+
+
+async def test_wrong_program_at_ata_bad_token_account(flag_on, chain):
+    chain.program = OTHER_KEY
+    outcome, _ = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert outcome == "bad_token_account"
+    assert await intents(flag_on.ledger.maker) == 0
+
+
+@pytest.mark.parametrize(
+    "mutation", [("mint", OTHER_KEY), ("holder", OTHER_KEY), ("state", "frozen")]
+)
+async def test_wrong_mint_or_owner_at_ata_bad_token_account(flag_on, chain, mutation):
+    setattr(chain, *mutation)
+    out = await flag_on.service.link(10, apply=True)
+    assert (out["linked"], out["skipped"]) == (0, {"bad_token_account": 1})
+    assert await intents(flag_on.ledger.maker) == 0
+
+
+async def set_wallet(linker, wallet):
+    async with linker.ledger.maker.begin() as db:
+        await db.execute(text("UPDATE users SET solana_wallet=:w"), {"w": wallet})
+
+
+async def test_wallet_off_curve_invalid_wallet(flag_on, chain):
+    pda, _ = Pubkey.find_program_address([b"seed"], Pubkey.from_bytes(bytes([5]) * 32))
+    assert not pda.is_on_curve()
+    await set_wallet(flag_on, str(pda))
+    chain.exists = False
+    outcome, _ = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert outcome == "invalid_wallet"
+    assert await intents(flag_on.ledger.maker) == 0
+
+
+@pytest.mark.parametrize(
+    "wallet_value",
+    [
+        system_account(1) | {"owner": str(TOKEN_2022)},
+        system_account(1) | {"data": ["AAEC", "base64"], "space": 3},
+    ],
+)
+async def test_wallet_not_system_owned_invalid_wallet(flag_on, chain, wallet_value):
+    chain.wallet_value = wallet_value
+    outcome, _ = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert outcome == "invalid_wallet"
+    assert await intents(flag_on.ledger.maker) == 0
+
+
+async def test_rpc_error_unchanged(flag_on, chain):
+    chain.fail = True
+    outcome, _ = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert outcome == "rpc_error"
+
+
+async def test_replayed_link_idempotent(flag_on, chain):
+    chain.exists = False
+    first = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    second = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert (first[0], second[0]) == ("linked", "replayed")
+    assert first[1] == second[1] and await intents(flag_on.ledger.maker) == 1
+
+
+MEMO = {"extension": "memoTransfer", "state": {"requireIncomingTransferMemos": True}}
+MEMO_OFF = {"extension": "memoTransfer", "state": {"requireIncomingTransferMemos": False}}
+IMMUTABLE = {"extension": "immutableOwner"}
+
+
+@pytest.mark.parametrize(
+    ("extensions", "outcome"),
+    [
+        ([IMMUTABLE], "linked"),
+        ([IMMUTABLE, MEMO_OFF], "linked"),
+        ([IMMUTABLE, MEMO], "bad_token_account"),
+        ([MEMO], "bad_token_account"),
+        (
+            [IMMUTABLE, {"extension": "transferFeeAmount", "state": {"withheldAmount": 0}}],
+            "bad_token_account",
+        ),
+        ([IMMUTABLE, {"extension": "unparseableExtension"}], "bad_token_account"),
+        ([IMMUTABLE, "memoTransfer"], "bad_token_account"),
+        ("immutableOwner", "bad_token_account"),
+    ],
+)
+@pytest.mark.parametrize("flag", [True, False])
+async def test_token_account_extensions_allowlist(linker, chain, extensions, outcome, flag):
+    if flag:
+        linker.service.config = CONFIG_ATA
+        await set_wallet(linker, GOOD_WALLET)
+    elif outcome == "bad_token_account":
+        outcome = "no_token_account"
+    chain.extensions = extensions
+    assert (await linker.service.link_one(linker.ledger.owner, apply=True))[0] == outcome
+
+
+@pytest.mark.parametrize("entry", [1, "AAAA", ["x", "base64"], True])
+async def test_non_dict_ata_entry_is_rpc_error(flag_on, chain, entry):
+    original = chain.__call__
+
+    def broken(request):
+        response = original(request)
+        body = json.loads(response.content)
+        if isinstance(body["result"], dict) and isinstance(body["result"].get("value"), list):
+            body["result"]["value"][1] = entry
+        return httpx.Response(200, json=body)
+
+    flag_on.service.client = httpx.Client(transport=httpx.MockTransport(broken))
+    outcome, _ = await flag_on.service.link_one(flag_on.ledger.owner, apply=True)
+    assert outcome == "rpc_error"
+    assert await intents(flag_on.ledger.maker) == 0
+
+
+async def test_get_multiple_accounts_params_pin_finalized_json_parsed(flag_on, chain):
+    await flag_on.service.link_one(flag_on.ledger.owner, apply=False)
+    (call,) = [r for r in chain.requests if r["method"] == "getMultipleAccounts"]
+    assert call["params"] == [
+        [GOOD_WALLET, GOOD_ATA],
+        {"encoding": "jsonParsed", "commitment": "finalized"},
+    ]
