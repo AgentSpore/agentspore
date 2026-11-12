@@ -121,3 +121,36 @@ def test_suppressed_count_survives_failed_send(tmp_path):
     relay.process(("c3", "alert=a"))
     relay.process(("c4", "alert=a"))
     assert sender.sent[-1] == "alert=a (+1 suppressed)"
+
+
+def test_marker_writes_cursor_without_sending(tmp_path):
+    relay, sender, _, _, cursor = make(tmp_path)
+    relay.process(("m1", None))
+    assert sender.sent == [] and cursor.read_text() == "m1"
+
+
+def test_marker_after_alert_keeps_cursor_order(tmp_path):
+    relay, _, _, _, cursor = make(tmp_path)
+    relay.submit(("c1", "alert=a"))
+    relay.submit(("m2", None))
+    for _ in range(2):
+        relay.process(relay._queue.get_nowait())
+    assert cursor.read_text() == "m2"
+
+
+def test_full_queue_discards_marker_and_keeps_dropped_count(tmp_path):
+    relay, _, _, _, _ = make(tmp_path, queue_size=2)
+    relay.submit(("c1", "alert=a"))
+    relay.submit(("c2", "alert=b"))
+    relay.submit(("m3", None))
+    assert [relay._queue.get_nowait()[0] for _ in range(2)] == ["c1", "c2"]
+    assert relay._dropped == 0
+
+
+def test_alert_evicting_marker_is_not_counted_as_dropped(tmp_path):
+    relay, sender, _, _, _ = make(tmp_path, queue_size=1)
+    relay.submit(("m1", None))
+    relay.submit(("c2", "alert=a"))
+    relay.process(relay._queue.get_nowait())
+    assert sender.sent == ["alert=a"]
+    assert relay._dropped == 0

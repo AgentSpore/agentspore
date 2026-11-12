@@ -12,6 +12,7 @@ from .relay import Item, read_cursor, write_cursor
 
 log = logging.getLogger("payout_alerts")
 MAX_BACKOFF = 60.0
+MARK_EVERY = 1000  # non-alert entries between cursor markers
 # INVARIANT(#182): no `--unit` filter. journalctl expands a `--unit` glob once, at start,
 # against unit names already in the journal, so every new `payout-signer@<intent>.<epoch>`
 # instance would be invisible; parse.WATCHED_UNIT does the filtering instead. Unfiltered,
@@ -72,15 +73,18 @@ def follow(
     """Read journalctl until `stop`; restart it with backoff whenever it exits."""
     spawn: Callable = popen or subprocess.Popen
     seed_cursor(cursor_path, run or subprocess.run)
-    backoff, last = 1.0, None
+    backoff, last, quiet = 1.0, None, 0
     while not stop.is_set():
         proc = spawn(command(last or read_cursor(cursor_path)), stdout=subprocess.PIPE, text=True)
         for line in proc.stdout or ():
             backoff = 1.0
             cursor, text = parse_line(line)
             last = cursor or last
-            if cursor and text:
-                submit((cursor, text))
+            if cursor:
+                quiet = 0 if text else quiet + 1
+                if text or quiet >= MARK_EVERY:
+                    submit((cursor, text))
+                    quiet = 0
             if stop.is_set():
                 proc.terminate()
                 return
