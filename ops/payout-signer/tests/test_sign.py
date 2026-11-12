@@ -118,6 +118,13 @@ def test_creations_limit_hit_limit_exceeded(env):
     assert not (env.root / "x.out").exists()
 
 
+def test_zero_creations_limit_refuses_shape_b_keeps_a(env):
+    env.write_config(max_ata_creations_24h=0)
+    assert run(env, env.message_b(), "b.json", "b.out") is Verdict.LIMIT_EXCEEDED
+    assert not (env.root / "b.out").exists()
+    assert run(env, env.message(1), "a.json", "a.out") is Verdict.SIGNED
+
+
 def test_a_shape_not_counted(env):
     env.write_config(max_transfers_24h=10, max_ata_creations_24h=1)
     for i in range(4):

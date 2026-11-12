@@ -60,8 +60,10 @@ written; an exclusive file lock serialises concurrent signers.
   signatures.
 - `max_amount_per_transfer`, `max_amount_per_recipient_24h`,
   `max_amount_total_24h`: positive integers in raw base units.
-- `max_transfers_24h`, `max_ata_creations_24h`: positive counts. The signer cannot
-  see whether the recipient account already exists, so every create-then-transfer
+- `max_transfers_24h`, `max_ata_creations_24h`: counts, positive for the first.
+  `max_ata_creations_24h = 0` is a kill switch: every create-then-transfer request
+  is refused with `limit_exceeded` while the single-instruction shape keeps working.
+  The signer cannot see whether the recipient account already exists, so every create-then-transfer
   signature counts as one account creation (pessimistic). Each creation costs the
   wallet about 0.0015 SOL of rent, so the worst-case daily rent spend is the limit
   times that; it must not exceed `max_transfers_24h` (larger values are refused).
