@@ -109,7 +109,7 @@ class Env:
         transfer_metas = [
             AccountMeta(self.ata, False, True),
             AccountMeta(self.mint, False, False),
-            AccountMeta(ata, False, True),
+            AccountMeta(tweak.get("dest") or ata, False, True),
             AccountMeta(signer, True, False),
         ]
         transfer = Instruction(TOKEN_2022, data, transfer_metas)
