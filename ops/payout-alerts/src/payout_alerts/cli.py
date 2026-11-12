@@ -52,7 +52,7 @@ def run(sender: TelegramSender, popen: Callable | None = None) -> int:
     def read_journal() -> None:
         try:
             follow(cursor_path, relay.submit, stop, popen)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 (a dead reader must stop the process for any error)
             log.error("journal reader failed: %s", type(exc).__name__)
             failed.set()
             stop.set()
