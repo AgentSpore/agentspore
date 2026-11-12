@@ -68,8 +68,9 @@ there; the setgid bit keeps the group on new files. Config values: `handoff_dir`
    must exit 0 and the chat must show the test message.
 5. `systemctl enable --now payout-alerts.service`, then `systemctl status payout-alerts.service`.
 
-The unit reads the journal through `SupplementaryGroups=systemd-journal`. Check once after
-install: with the signer pause file in place, `systemctl start payout-signer@probe.1.service`
+The unit reads the journal through `SupplementaryGroups=systemd-journal` and runs
+`journalctl` under `stdbuf` (coreutils): `command -v stdbuf journalctl` must print both. Check
+once after install: with the signer pause file in place, `systemctl start payout-signer@probe.1.service`
 fails with exit 11 without signing; the chat must show `unit_failed payout-signer@probe.1.service exit-code`
 within seconds. Then `systemctl stop` and `systemctl reset-failed` that instance.
 
