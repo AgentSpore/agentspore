@@ -13,6 +13,7 @@ from .relay import Item, read_cursor, write_cursor
 log = logging.getLogger("payout_alerts")
 UNITS = ("payout-orchestrator.service", "payout-signer@*.service")
 MAX_BACKOFF = 60.0
+JOURNAL_TAIL = ["journalctl", "-n", "1", "--output=json", "--no-pager"]
 
 
 def command(cursor: str | None) -> list[str]:
@@ -34,17 +35,19 @@ def parse_line(line: str) -> tuple[str | None, str | None]:
     return cursor, alert_text(entry)
 
 
-def _handle(
-    line: str, last: str | None, cursor_path: Path, submit: Callable[[Item], None]
-) -> str | None:
-    """Queue an alert line; the first non-alert cursor is saved while no cursor exists yet.
-    Returns the newest cursor seen."""
-    cursor, text = parse_line(line)
-    if cursor and text:
-        submit((cursor, text))
-    elif cursor and read_cursor(cursor_path) is None:
+def seed_cursor(cursor_path: Path, run: Callable) -> None:
+    """With no saved cursor, save the newest journal entry's, so the first start and every
+    later restart resume right after it instead of at `--since=now`. Nothing is saved when
+    the journal cannot be read or is empty."""
+    if read_cursor(cursor_path) is not None:
+        return
+    try:
+        out = run(JOURNAL_TAIL, capture_output=True, text=True, timeout=10, check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return
+    cursor = parse_line(out.strip())[0]
+    if cursor:
         write_cursor(cursor_path, cursor)
-    return cursor or last
 
 
 def follow(
@@ -52,15 +55,20 @@ def follow(
     submit: Callable[[Item], None],
     stop: threading.Event,
     popen: Callable | None = None,
+    run: Callable | None = None,
 ) -> None:
     """Read journalctl until `stop`; restart it with backoff whenever it exits."""
     spawn: Callable = popen or subprocess.Popen
+    seed_cursor(cursor_path, run or subprocess.run)
     backoff, last = 1.0, None
     while not stop.is_set():
         proc = spawn(command(last or read_cursor(cursor_path)), stdout=subprocess.PIPE, text=True)
         for line in proc.stdout or ():
             backoff = 1.0
-            last = _handle(line, last, cursor_path, submit)
+            cursor, text = parse_line(line)
+            last = cursor or last
+            if cursor and text:
+                submit((cursor, text))
             if stop.is_set():
                 proc.terminate()
                 return

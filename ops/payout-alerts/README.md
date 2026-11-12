@@ -22,8 +22,9 @@ No free-text log line is forwarded.
 - 3 attempts per alert; 429 waits `retry_after` (max 60 s); 400/401/403/404 are not retried;
   then the alert is dropped. A dropped alert does not start a dedupe window.
 - The cursor (`$STATE_DIRECTORY/cursor`) moves only after a send or a deliberate drop;
-  the first non-alert entry also saves a cursor, so a restart does not fall back to
-  `--since=now`; later starts use `--after-cursor`. If the journal reader dies, the process exits 1. journalctl restarts with backoff.
+  with no saved cursor, the newest journal entry's cursor is saved once before following
+  (`journalctl -n 1`), so restarts resume right after it, never at `--since=now`.
+  If the journal reader dies, the process exits 1. journalctl restarts with backoff.
 - Token: systemd credential `bot-token`; never logged, only exception class and HTTP status.
 
 ## Use
