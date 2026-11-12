@@ -12,13 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.repositories.payout_delivery_repo import PayoutDeliveryRepository
 from app.repositories.welcome_payout_link_repo import NAMESPACE, WelcomePayoutLinkRepository
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
-from app.schemas.payout_delivery import AllocationIntent, NetworkConfig
+from app.schemas.payout_delivery import SYSTEM_PROGRAM, AllocationIntent, NetworkConfig
 from app.services.payout_delivery_service import NetworkMismatchError, admit_intent, rpc_call
 from app.services.welcome_reward_service import WelcomeRewardService
 
 TOKEN_2022 = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 ASSOCIATED_TOKEN_PROGRAM = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
-SYSTEM_PROGRAM = "11111111111111111111111111111111"
 OUTCOMES = {"accepted": "linked", "replayed": "replayed", "conflict": "conflict"}
 RPC_FAILURES = (httpx.HTTPError, ValueError, KeyError, TypeError)
 MAX_ITEMS = 500
@@ -28,6 +27,25 @@ def associated_token_account(wallet: Pubkey, mint: Pubkey) -> Pubkey:
     """Derive the Token-2022 associated token account address."""
     seeds = [bytes(wallet), bytes(TOKEN_2022), bytes(mint)]
     return Pubkey.find_program_address(seeds, ASSOCIATED_TOKEN_PROGRAM)[0]
+
+
+def allowed_extensions(info: dict) -> bool:
+    """Only extensions that cannot make a plain transferChecked fail."""
+    extensions = info.get("extensions", [])
+    if not isinstance(extensions, list):
+        return False
+    for item in extensions:
+        name = item.get("extension") if isinstance(item, dict) else None
+        if name == "memoTransfer":
+            state = item.get("state")
+            if (
+                not isinstance(state, dict)
+                or state.get("requireIncomingTransferMemos") is not False
+            ):
+                return False
+        elif name != "immutableOwner":
+            return False
+    return True
 
 
 def usable_token_account(value: dict | None, wallet: str, mint: str) -> bool:
@@ -44,6 +62,7 @@ def usable_token_account(value: dict | None, wallet: str, mint: str) -> bool:
         and info.get("mint") == mint
         and info.get("owner") == wallet
         and info.get("state") == "initialized"
+        and allowed_extensions(info)
     )
 
 
@@ -111,6 +130,8 @@ class WelcomePayoutLinkService:
         result = rpc_call(self.client, str(self.config.rpc_endpoint), "getMultipleAccounts", params)
         values = result["value"]
         if not isinstance(values, list) or len(values) != 2:
+            raise ValueError
+        if any(entry is not None and not isinstance(entry, dict) for entry in values):
             raise ValueError
         return values
 
