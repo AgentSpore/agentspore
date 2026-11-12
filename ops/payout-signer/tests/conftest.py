@@ -16,6 +16,8 @@ from solders.pubkey import Pubkey
 from solders.token.associated import get_associated_token_address
 
 TOKEN_2022 = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
+ATA_PROGRAM = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+SYSTEM = Pubkey.default()
 BLOCKHASH = Hash.from_bytes(bytes(range(32)))
 LIMITS = {
     "max_amount_per_transfer": 1000,
@@ -84,6 +86,35 @@ class Env:
             instructions.append(Instruction(program, data, metas))
         payer = tweak.get("payer") or self.signer.pubkey()
         return bytes(Message.new_with_blockhash(instructions, payer, BLOCKHASH))
+
+    def message_b(self, wallet: Pubkey | None = None, amount: int = 100, **tweak: Any) -> bytes:
+        """Create-idempotent then transfer; keyword tweaks produce one malformation each."""
+        wallet = wallet or Keypair().pubkey()
+        signer = self.signer.pubkey()
+        ata = get_associated_token_address(wallet, self.mint, TOKEN_2022)
+        create_metas = [
+            AccountMeta(tweak.get("payer") or signer, True, True),
+            AccountMeta(tweak.get("ata") or ata, False, True),
+            AccountMeta(tweak.get("owner") or wallet, False, False),
+            AccountMeta(tweak.get("create_mint") or self.mint, False, False),
+            AccountMeta(tweak.get("system") or SYSTEM, False, False),
+            AccountMeta(tweak.get("token_program") or TOKEN_2022, False, False),
+        ]
+        if tweak.get("swap"):
+            create_metas[1], create_metas[2] = create_metas[2], create_metas[1]
+        create = Instruction(
+            tweak.get("ata_program") or ATA_PROGRAM, tweak.get("data", b"\x01"), create_metas
+        )
+        data = bytes([12]) + amount.to_bytes(8, "little") + bytes([DECIMALS])
+        transfer_metas = [
+            AccountMeta(self.ata, False, True),
+            AccountMeta(self.mint, False, False),
+            AccountMeta(ata, False, True),
+            AccountMeta(signer, True, False),
+        ]
+        transfer = Instruction(TOKEN_2022, data, transfer_metas)
+        instructions = [create, transfer] + ([transfer] if tweak.get("extra") else [])
+        return bytes(Message.new_with_blockhash(instructions, signer, BLOCKHASH))
 
     def request(self, raw: bytes, name: str = "request.json", digest: str | None = None) -> Path:
         body = {

@@ -11,14 +11,18 @@ signing key never enters the internet-facing backend container.
   signs only one exact Token-2022 `TransferChecked` from its own associated
   account for the configured mint and decimals, and only within the configured
   amount, recipient, total and count limits over a rolling 24 hours. Anything else
-  is refused.
+  is refused. The transfer may be preceded by one associated-token-account
+  `CreateIdempotent` paid by the signer; it is signed only if the new account is the
+  derived Token-2022 account of the transfer's recipient wallet (on-curve, not the
+  signer, not the mint) for the configured mint, byte-for-byte as the signer builds it.
 - Host root compromise: the key is readable, so the loss is bounded by the hot
   wallet balance. Keep that balance small.
 - The ledger is local state on the host; the signer trusts it. Deleting it resets
   the limits, so it lives in the service-private state directory
   (`StateDirectory=` of the `payout-signer` system user), which other users cannot write.
-- The per-recipient limit is counted per destination token account, not per owner
-  wallet. A compromised backend can spread the total across many token accounts of
+- For the single-instruction shape the per-recipient limit is counted per destination
+  token account, not per owner wallet; for the create-then-transfer shape it is
+  counted per owner wallet. A compromised backend can spread the total across many token accounts of
   one owner, so only the per-transfer, total and count limits bound it.
 
 ## Backend intent requirements
