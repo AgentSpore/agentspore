@@ -14,11 +14,14 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class Config:
+    """Validated settings: target chat and an optional message prefix."""
+
     chat_id: str
     prefix: str = ""
 
 
 def load_config(path: Path) -> Config:
+    """Read and validate the TOML config; raises ConfigError."""
     try:
         raw = tomllib.loads(path.read_text())
     except (OSError, tomllib.TOMLDecodeError) as exc:
