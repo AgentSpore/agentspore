@@ -1,0 +1,10 @@
+[Unit]
+Description=Pending welcome applications signal, at most every 6 hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
