@@ -395,3 +395,17 @@ it('hides the legacy wallet section while the stepper shows an unfinished wallet
   expect(screen.queryByPlaceholderText(accountMessages.en.solanaWalletAddress)).toBeNull();
   expect(screen.queryByText(accountMessages.en.walletSolana)).toBeNull();
 });
+
+it('keeps the legacy wallet input when the welcome state is disabled and the stepper has nothing to offer', async () => {
+  const welcome = { state: 'disabled', reason: 'program_disabled', amount_raw: null, decimals: 6, asset: 'ASPORE', next_action: 'none',
+    steps: ['email', 'wallet', 'application', 'review', 'payout'].map(id => ({ id, done: false })),
+    hold_reasons: [], payout: null, wait_until: null, next_step: 'none', actions: [] };
+  vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL) => {
+    if (String(url).endsWith('/rewards/welcome')) return Response.json(welcome);
+    if (String(url).endsWith('/auth/me')) return Response.json(user('Synthetic owner'));
+    return Response.json([]);
+  }));
+  localStorage.setItem('access_token', 'synthetic-wallet-session');
+  render(<LocaleProvider initialLocale="en"><ProfilePage /></LocaleProvider>);
+  expect(await screen.findByPlaceholderText(accountMessages.en.solanaWalletAddress)).toBeTruthy();
+});

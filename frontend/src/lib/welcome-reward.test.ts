@@ -23,9 +23,11 @@ it('formats exact raw units without rounding the smallest unit', () => {
 });
 
 const stepIds = ['email', 'wallet', 'application', 'review', 'payout'];
-const withSteps = (delta: object, nextStep: string) => decodeWelcomeReward({
-  ...disabled, ...delta, steps: stepIds.map(id => ({ id, done: false })), hold_reasons: [], payout: null, wait_until: null, next_step: nextStep, actions: [],
+const withSteps = (delta: object, nextStep: string, extra: object = {}) => decodeWelcomeReward({
+  ...disabled, ...delta, steps: stepIds.map(id => ({ id, done: false })), hold_reasons: [], payout: null, wait_until: null, next_step: nextStep, actions: [], ...extra,
 });
+const live = { state: 'application', reason: 'risk_review', next_action: 'await_review' };
+const owns = (data: ReturnType<typeof decodeWelcomeReward>) => welcomeWalletFlags({ kind: 'success', data }).ownsWallet;
 it.each([
   ['disabled', { state: 'disabled', reason: 'program_disabled' }],
   ['denied', { state: 'denied', reason: 'denied', next_action: 'none' }],
@@ -38,4 +40,11 @@ it.each([
 it('owns the wallet field while the stepper is live and the wallet step is undone', () => {
   const data = withSteps({ state: 'application', reason: 'risk_review', next_action: 'await_review' }, 'change_email');
   expect(welcomeWalletFlags({ kind: 'success', data }).ownsWallet).toBe(true);
+});
+it('leaves the wallet field to the profile once a payout exists, even if the wallet was disconnected', () => {
+  expect(owns(withSteps(live, 'wait_payout', { payout: { state: 'pending', signature: null } }))).toBe(false);
+});
+it('owns the wallet field for relink_github only when the relink link is offered', () => {
+  expect(owns(withSteps(live, 'relink_github'))).toBe(false);
+  expect(owns(withSteps(live, 'relink_github', { actions: [{ id: 'github_relink', path: '/api/v1/relink' }] }))).toBe(true);
 });

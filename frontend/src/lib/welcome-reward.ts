@@ -80,12 +80,19 @@ export function showsRewardReason(data: WelcomeRewardStatus): boolean {
     && !ACTION_STEPS.includes(progress.nextStep);
 }
 
-/** Which wallet notes to show, and whether a live stepper (next step not 'none') has an unfinished wallet step and so owns the wallet field. */
+const WALLET_OWNING_STEPS: readonly string[] = ['bind_wallet', 'confirm_email', 'change_email'];
+/** The stepper owns the wallet only while it renders a control that leads to the wallet step. */
+function stepperOffersWallet(progress: WelcomeProgress): boolean {
+  if (progress.payout || !progress.steps.some(step => step.id === 'wallet' && !step.done)) return false;
+  return WALLET_OWNING_STEPS.includes(progress.nextStep) || (progress.nextStep === 'relink_github' && !!progress.githubRelinkPath);
+}
+
+/** Which wallet notes to show, and whether the stepper owns the wallet field. */
 export function welcomeWalletFlags(state: { kind: string; data?: WelcomeRewardStatus }) {
   const data = state.kind === 'success' ? state.data : undefined;
   const active = !!data && data.state !== 'disabled';
   return {
-    ownsWallet: data?.progress?.nextStep !== 'none' && !!data?.progress?.steps.some(step => step.id === 'wallet' && !step.done),
+    ownsWallet: !!data?.progress && stepperOffersWallet(data.progress),
     walletNote: active ? 'walletNoteWelcomeActive' : 'connectYourSolanaWalletToReceiveMonthlyASPORE',
     earnNote: active ? 'earnNoteWelcomeActive' : '5MonthlyPayoutsDistributeASPOREProportionalToYour',
   } as const;
