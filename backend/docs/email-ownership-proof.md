@@ -22,6 +22,16 @@ Deployment requires V114 and the `R__email_ownership_proof.sql` repeatable migra
 
 ## Changing the account email
 
-`POST /api/v1/users/me/email/change` `{new_email, current_password}` sends a single-use link to the new address (`{frontend_url}/confirm-email-change#token=...`; the token sits in the fragment so mail previews and servers never see it). Password accounts must send the current password; OAuth-only accounts must hold a current email proof. Disposable domains get 422. A taken, unchanged or usable address all get the same 202 body, so the endpoint does not reveal which accounts exist. One request per cooldown window per user (429 after).
+`POST /api/v1/users/me/email/change` `{new_email, current_password}` returns 202 and mails a single-use link (`{frontend_url}/confirm-email-change#token=...`; the token sits in the fragment so mail previews and servers never see it). Mail is sent after the pending change is committed; a provider failure is logged and never changes the reply. Taken, unchanged and usable addresses get the same 202 body. One request per cooldown window per user (429 after). Disposable domains get 422.
 
-`POST /api/v1/users/me/email/change/confirm` `{token}` (authenticated, single-use, same TTL as email verification) switches the email, records a fresh `email_link` proof for it and notifies the old address. The pending change reuses the `verification_*` columns with purpose `email_change`; the old address stays active until confirmation. The database trigger clears the previous proof, so an existing reward decision, bound to the old proof, no longer matches: the welcome grant returns to risk review and its beneficiary key never changes.
+- Password accounts send the current password (403 otherwise); the link goes to the new address.
+- Accounts without a password need a current email proof, then change in two steps: the first link goes to the CURRENT address, and only after it is confirmed is the link sent to the new one. A stolen session alone cannot move such an account to an attacker's mailbox. The two tokens have their own purposes (`email_change_old`, `email_change`), their own single-use keys, and cannot stand in for each other.
+- While the welcome reward is reserved or allowed and not yet paid out, the request is refused with 409: the grant is bound to the address it was reserved under, and a different address would leave it in review with no way out. After the payout is confirmed the change is open.
+
+`POST /api/v1/users/me/email/change/confirm` `{token}` (authenticated, single-use, same TTL as email verification) either approves the first step or switches the email, records a fresh `email_link` proof and notifies the old address. The pending change reuses the `verification_*` columns; the old address stays active until confirmation. The database trigger clears the previous proof when the email changes.
+
+Known gaps:
+
+- Pending password-reset links (`password_reset:{token}`) are not indexed by user, so a change does not revoke a reset link already mailed to the old address; it expires with its TTL. Sessions (refresh tokens) also stay valid until they expire.
+- The confirmation page `/confirm-email-change` belongs to the frontend track and is not part of this change; until it ships the links lead nowhere.
+- `users_verification_purpose` (V114) lists only `registration` and `email_proof`; a migration must add `email_change` and `email_change_old` before this ships.

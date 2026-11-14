@@ -1,8 +1,9 @@
 """Users API — /users/me/* endpoints for the authenticated user."""
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from redis import asyncio as aioredis
 
 from app.api.deps import CurrentUser, EmailProofSession, WelcomeRewardSession
@@ -81,16 +82,24 @@ async def apply_welcome_reward(
     return await get_welcome_reward_service(db).apply(current_user.id)
 
 
-@router.post("/me/email/change", response_model=EmailChangeResponse, status_code=202)
-async def request_email_change(
-    data: EmailChangeRequest,
-    user: CurrentUser,
+async def get_email_change_service(
     db: EmailProofSession,
+    background: BackgroundTasks,
     redis: aioredis.Redis = Depends(get_redis),
     mail: EmailService = Depends(get_email_service),
+) -> EmailChangeService:
+    """Mail is queued on `background`, so it leaves only after the transaction commits."""
+    return EmailChangeService(EmailProofRepository(db), redis, mail, background)
+
+
+ChangeService = Annotated[EmailChangeService, Depends(get_email_change_service, scope="function")]
+
+
+@router.post("/me/email/change", response_model=EmailChangeResponse, status_code=202)
+async def request_email_change(
+    data: EmailChangeRequest, user: CurrentUser, service: ChangeService
 ) -> EmailChangeResponse:
-    """Send a confirmation link to the new address; the current email stays active until then."""
-    service = EmailChangeService(EmailProofRepository(db), redis, mail)
+    """Send a confirmation link; the current email stays active until it is confirmed."""
     return EmailChangeResponse(
         message=await service.request(user.id, data.new_email, data.current_password)
     )
@@ -98,12 +107,10 @@ async def request_email_change(
 
 @router.post("/me/email/change/confirm", response_model=EmailChangeResponse)
 async def confirm_email_change(
-    data: EmailChangeConfirm,
-    user: CurrentUser,
-    db: EmailProofSession,
-    redis: aioredis.Redis = Depends(get_redis),
-    mail: EmailService = Depends(get_email_service),
+    data: EmailChangeConfirm, user: CurrentUser, service: ChangeService
 ) -> EmailChangeResponse:
-    """Single-use POST confirm (a mail preview GET cannot consume the link)."""
-    await EmailChangeService(EmailProofRepository(db), redis, mail).confirm(user.id, data.token)
-    return EmailChangeResponse(message="Email changed.")
+    """Single-use POST confirm (a mail preview GET cannot consume the link).
+
+    Called once for the current-address link of a password-less account, then for the new one.
+    """
+    return EmailChangeResponse(message=await service.confirm(user.id, data.token))

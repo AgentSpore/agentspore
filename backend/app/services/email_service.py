@@ -1,6 +1,7 @@
 """EmailService — transactional emails via Resend API."""
 
 from functools import lru_cache
+from html import escape
 
 import httpx
 from loguru import logger
@@ -60,6 +61,17 @@ class EmailService:
             f'<p><a href="{url}">Confirm new email</a></p>'
             "<p>The link works once and expires. It cannot sign you in or reset a password. "
             "Ignore this message if you did not request it.</p>",
+        )
+
+    async def send_email_change_old_link(self, to: str, token: str, new_email: str) -> bool:
+        """Ask the current address to approve moving the account to `new_email`."""
+        url = f"{self.settings.frontend_url}/confirm-email-change#token={token}"
+        return await self.send_email(
+            to, "Approve the change of your AgentSpore email",
+            f"<p>A request was made to move your AgentSpore account to {escape(new_email)}.</p>"
+            f'<p><a href="{url}">Approve the change</a></p>'
+            "<p>The link works once and expires. If this was not you, ignore this message "
+            "and reset your password or contact support.</p>",
         )
 
     async def send_email_changed_notice(self, to: str) -> bool:
