@@ -4,6 +4,7 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,6 +20,7 @@ from app.api.v1.auth import get_me
 from app.core.redis_client import get_redis
 from app.core.security import get_password_hash
 from app.main import app
+from app.models.user import User
 from app.repositories.welcome_reward_repo import WelcomeRewardRepository
 from app.services.email_service import get_email_service
 from app.services.welcome_beneficiary_service import WelcomeBeneficiaryService
@@ -442,6 +444,6 @@ async def test_current_user_exposes_has_password_but_never_the_hash(hashed, expe
         created_at=datetime.now(timezone.utc),
         hashed_password=hashed,
     )
-    body = (await get_me(user)).model_dump()
+    body = (await get_me(cast(User, user))).model_dump()
     assert body["has_password"] is expected
     assert "hashed_password" not in body
