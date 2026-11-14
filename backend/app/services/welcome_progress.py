@@ -32,6 +32,12 @@ ACTIONS = {
         ),
     ],
     "relink_github": [WelcomeAction(id="github_relink", method="GET", path="/api/v1/oauth/github")],
+    "change_email": [
+        WelcomeAction(id="email_change", method="POST", path="/api/v1/users/me/email/change"),
+        WelcomeAction(
+            id="email_change_confirm", method="POST", path="/api/v1/users/me/email/change/confirm"
+        ),
+    ],
     "bind_wallet": [
         WelcomeAction(id="wallet_bind", method="PATCH", path="/api/v1/users/solana-wallet")
     ],

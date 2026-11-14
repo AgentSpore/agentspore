@@ -132,7 +132,11 @@ async def test_disposable_email_and_young_github_account_are_reported(card):
     await confirm_email(card)
     body = await view(card)
     assert body["hold_reasons"] == ["disposable_email"]
-    assert body["next_step"] == "change_email" and body["actions"] == []
+    assert body["next_step"] == "change_email"
+    assert [(a["method"], a["path"]) for a in body["actions"]] == [
+        ("POST", "/api/v1/users/me/email/change"),
+        ("POST", "/api/v1/users/me/email/change/confirm"),
+    ]
     await sql(
         card,
         "UPDATE users SET email='synthetic@example.com', "

@@ -60,7 +60,11 @@ async def proof_api(request, monkeypatch):
             text("INSERT INTO users (id,email,name) VALUES (:id,:email,'Owner')"),
             {"id": owner, "email": "owner@example.com"},
         )
-        for name in ("V114__email_ownership_proof.sql", "R__email_ownership_proof.sql"):
+        for name in (
+            "V114__email_ownership_proof.sql",
+            "R__email_ownership_proof.sql",
+            "V118__email_change_purposes.sql",
+        ):
             await raw.driver_connection.execute(
                 (Path(__file__).resolve().parents[2] / "db/migrations" / name).read_text()
             )
@@ -245,3 +249,16 @@ async def test_database_failure_rolls_back_proof(proof_api, phase, caplog):
         assert private not in caplog.text
     async with ctx.maker() as db:
         assert not EmailProofService.has_current_proof(await db.get(User, ctx.owner))
+
+
+@pytest.mark.parametrize("purpose", ["email_change", "email_change_old"])
+async def test_email_change_purposes_satisfy_the_real_users_constraint(proof_api, purpose):
+    async with proof_api.maker.begin() as db:
+        await db.execute(
+            text("UPDATE users SET verification_purpose=:p WHERE id=:o"),
+            {"p": purpose, "o": proof_api.owner},
+        )
+        stored = await db.scalar(
+            text("SELECT verification_purpose FROM users WHERE id=:o"), {"o": proof_api.owner}
+        )
+    assert stored == purpose

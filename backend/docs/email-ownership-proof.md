@@ -34,4 +34,4 @@ Known gaps:
 
 - Pending password-reset links (`password_reset:{token}`) are not indexed by user, so a change does not revoke a reset link already mailed to the old address; it expires with its TTL. Sessions (refresh tokens) also stay valid until they expire.
 - The confirmation page `/confirm-email-change` belongs to the frontend track and is not part of this change; until it ships the links lead nowhere.
-- `users_verification_purpose` (V114) lists only `registration` and `email_proof`; a migration must add `email_change` and `email_change_old` before this ships.
+- V118 extends `users_verification_purpose` with `email_change` and `email_change_old`; deploy it before the backend.

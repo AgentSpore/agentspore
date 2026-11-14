@@ -26,6 +26,8 @@ class WelcomeAction(BaseModel):
         "wallet_bind",
         "welcome_application",
         "github_relink",
+        "email_change",
+        "email_change_confirm",
     ]
     method: Literal["GET", "POST", "PATCH"]
     path: str
