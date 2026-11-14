@@ -27,11 +27,11 @@ An authenticated user can explicitly retry with `POST /api/v1/users/me/rewards/w
 
 `advance(owner)` first freezes an admitted application against available ledger funding. A subsequent call may unlock it after current-email proof matches the latest decision's proof timestamp. The stable program/owner key prevents tariff-version replay. A trusted canonical beneficiary key is also required and unique; an email, wallet string or account ID alone is not proof of a unique person.
 
-The trusted operator writer records reviewed attestations through a controlled CLI, never a user's approval flag. A unique economic beneficiary is established only by the canonical GitHub identity; a trusted anti-abuse source remains a launch prerequisite.
+The trusted operator writer records reviewed attestations through a controlled CLI, never a user's approval flag. A unique economic beneficiary is established by the verified email address (one reward per mailbox) and by the payout wallet (one reward per wallet); a GitHub account is not required. Every grant is still decided manually by the operator; a trusted anti-abuse source remains a launch prerequisite.
 
 ### Automatic decisions
 
-`python -m app.cli.welcome_reward_decisions auto-decide [--apply]` approves undecided applications that satisfy every rule and leaves all others untouched for manual review; it never rejects, funds, enables the program, signs or sends. Rules: the canonical beneficiary is `github:<id>`, the current-email proof is valid, the beneficiary assessment has no holds, the GitHub account is at least the configured number of days old at application time, the beneficiary is not already approved on another grant, and the rolling 24-hour count of automatic approvals is below the configured cap. Applications that already carry any decision (including manual hold or deny) are never considered.
+`python -m app.cli.welcome_reward_decisions auto-decide [--apply]` approves undecided applications that satisfy every rule and leaves all others untouched for manual review; it never rejects, funds, enables the program, signs or sends. Rules: the current-email proof is valid, the beneficiary assessment has no holds, the account is at least the configured number of days old at application time (the GitHub account when one is bound, otherwise the platform account), the beneficiary is not already approved on another grant, and the rolling 24-hour count of automatic approvals is below the configured cap. Applications that already carry any decision (including manual hold or deny) are never considered.
 
 Settings `WELCOME_AUTO_MIN_ACCOUNT_AGE_DAYS` and `WELCOME_AUTO_DAILY_LIMIT` have no effective default: unset or zero (negative values fail settings validation) makes the command do nothing and print `{"verdict": "disabled"}` with exit code 13 (fail closed). Values live only in server configuration.
 
@@ -68,15 +68,16 @@ with an alphanumeric character and otherwise containing only letters, digits, `_
 or `-`. Syntax does not establish privacy, identity or uniqueness. Never submit email
 addresses, credentials, raw risk reports or personal details in these fields.
 
-An `allow` requires the canonical beneficiary `github:<numeric GitHub id>` of the owner,
-checked by the writer against the stored OAuth identity (a login, email, account UUID or
-wallet never qualifies) and no hold reason. Reasons, in order: `no_github_identity`,
-`github_account_age_unknown`, `github_account_too_new` (under 30 days at decision time),
-`no_current_email_proof`, `disposable_email_domain` (pinned `disposable-email-domains`
+An `allow` requires the canonical beneficiary `email:<sha256 hex>` of the owner, checked by
+the writer against the stored verified email, and no hold reason. The key hashes the
+normalized address: lower-cased, IDNA domain, any `+tag` dropped from the local part, and for
+`gmail.com` / `googlemail.com` the dots dropped and `googlemail.com` mapped to `gmail.com`.
+The raw address is never part of the key. Reasons, in order: `github_account_age_unknown`,
+`github_account_too_new` (only when a GitHub identity is bound; under 30 days at decision
+time), `no_current_email_proof`, `disposable_email_domain` (pinned `disposable-email-domains`
 list, matched on the domain, its IDNA form and every parent suffix). A mismatch or any reason returns `ineligible`. Hold and deny are not checked.
 Run `python -m app.cli.welcome_reward_decisions assess --user-id <uuid>` to print the
-canonical key and reason codes (never the email); it writes nothing. An owner whose account is already bound to another OAuth provider (for example Google)
-keeps `no_github_identity` permanently: this stage has no relink flow. Registration-source
+canonical key and reason codes (never the email); it writes nothing. Registration-source
 clusters are not assessed. Hold and deny decisions also require
 the reviewed proof snapshot to match: refresh the snapshot after an email change before
 submitting a new review. Null proof remains null and cannot unlock a grant.
@@ -101,7 +102,7 @@ releasing backing; neither directly changes the grant state.
 | `configuration_error` | Settings, secret or database URL could not be loaded or parsed at start; fix the configuration, nothing was attempted | 9 |
 | `stale` | Expected revision, policy or email proof changed | 10 |
 | `assessed` | `assess` result with `beneficiary_key` and `holds`; nothing is written | 0 |
-| `ineligible` | Allow beneficiary is not the canonical GitHub identity, or a hold reason applies; nothing was saved | 12 |
+| `ineligible` | Allow beneficiary is not the canonical email key, or a hold reason applies; nothing was saved | 12 |
 | `busy` | A shared reward lock was not granted within 10 seconds (`lock_timeout`); nothing was saved, retry later | 11 |
 
 Errors contain no input references or database details. Only settings, OS and database-URL failures at start are masked as `configuration_error`; a code defect (for example an `ImportError` after a rename) ends the process with an ordinary traceback that holds code frames only, never input or environment values. A cleanup failure after commit can
@@ -135,6 +136,8 @@ Output is one JSON object: counts of `linked`, `replayed`, `conflict`, `skipped`
 intent ids. It never contains wallets, amounts, emails or the endpoint. Linked grants are no longer
 candidates, so a rerun does not revisit them; a concurrent linker (or a direct relink) with the
 same data yields `replayed`, and one with a different wallet yields `conflict` (exit code 7).
+A wallet that already has a welcome payout intent for another grant is skipped as
+`wallet_already_rewarded`; no second reward is linked to it.
 The stored intent is never overwritten. Configuration failures exit 9, storage failures 8,
 bad arguments 5, an unreachable RPC endpoint on the once-per-run network check 2 (the same code
 `payout_delivery` uses for a transport failure). A failed lookup of one token account after that

@@ -205,6 +205,10 @@ class WelcomePayoutLinkService:
                 facts = await WelcomePayoutLinkRepository(db).payout_facts(owner)
                 if not facts or facts["wallet"] != checked["wallet"]:
                     return "wallet_changed", None
+                if await WelcomePayoutLinkRepository(db).wallet_rewarded_elsewhere(
+                    facts["wallet"], facts["grant_id"]
+                ):
+                    return "wallet_already_rewarded", None
                 try:
                     intent = self._intent(facts | {"destination": checked["destination"]})
                 except ValidationError:

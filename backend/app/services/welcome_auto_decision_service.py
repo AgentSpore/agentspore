@@ -55,7 +55,7 @@ class WelcomeAutoDecisionService:
         now = await self.repo.decision_clock()
         assessment = WelcomeBeneficiaryService.evaluate(user, now)
         key = assessment.beneficiary_key
-        if assessment.holds or key is None or not self._old_enough(user, grant):
+        if assessment.holds or not self._old_enough(user, grant):
             return False
         if await self.auto_repo.beneficiary_approved_elsewhere(key, grant["id"]):
             return False
@@ -77,6 +77,7 @@ class WelcomeAutoDecisionService:
         return result.verdict in {"recorded", "replayed"}
 
     def _old_enough(self, user: User, grant: dict) -> bool:
-        created = user.oauth_account_created_at
+        github = user.oauth_provider == "github"
+        created = user.oauth_account_created_at if github else user.created_at
         age = timedelta(days=self.min_account_age_days)
         return created is not None and grant["created_at"] - created >= age

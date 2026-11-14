@@ -33,14 +33,15 @@ class WelcomeAutoDecisionRepository:
         )
 
     async def eligible_applications(self, min_age_days: int) -> list[dict]:
-        """Undecided applications with a GitHub identity old enough at application time."""
+        """Undecided applications whose account (GitHub if bound, else platform) is old enough."""
         rows = (
             await self.db.execute(
                 text(f"""
             SELECT g.* FROM welcome_reward_grants g JOIN users u ON u.id=g.owner_user_id
-            WHERE {UNDECIDED} AND u.oauth_provider='github'
-              AND u.oauth_account_created_at IS NOT NULL
-              AND g.created_at - u.oauth_account_created_at >= make_interval(days => :days)
+            WHERE {UNDECIDED}
+              AND g.created_at - CASE WHEN u.oauth_provider='github'
+                  THEN u.oauth_account_created_at ELSE u.created_at END
+                  >= make_interval(days => :days)
             ORDER BY g.created_at, g.id
         """),
                 {"days": min_age_days},
